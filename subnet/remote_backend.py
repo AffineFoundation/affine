@@ -431,23 +431,94 @@ class RemoteController(Controller):
         save(self.state/(epoch+'-audit-manifest.json'),audit_manifest);reports={}
         from .hourly_policy import cutoff
         audit_until=cutoff(manifest,'audit')
+        def _defer_report(audit_manifest, receipt, reason, at):
+            # Historical manifests may predate the signed cutoff field. They
+            # still need an explicit no-credit report so infrastructure failure
+            # cannot abort the learning loop. New manifests use the stricter
+            # commitment_transport.deferred constructor.
+            from .commitment_transport import unchecked, deferred
+            if cutoff(audit_manifest,'audit') is not None:
+                return deferred(audit_manifest,receipt,reason,at)
+            # Direct-R2 historical receipts predate the artifact-list schema.
+            # Keep them explicitly no-credit without pretending they were
+            # scientifically checked.
+            if 'artifacts' not in receipt:
+                return dict(epoch=audit_manifest['epoch'],submission_sha256=receipt['sha256'],
+                            commitment_status=reason,deferred_at=at,accepted=[],outcomes=[],
+                            assurance={'status':'deferred','reason':reason},
+                            training_eligibility='fully-audited-only')
+            report=unchecked(audit_manifest,receipt)
+            report['commitment_status']=reason; report['deferred_at']=at
+            for outcome in report.get('outcomes',[]): outcome['failure_kind']=reason
+            return report
         def verify_one(item):
             miner,receipt=item
             submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner,commitment_ref=dict(miner=miner,commitment_sha256=receipt['sha256'],**{k:b[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')}))for b in receipt['artifacts']if b['slot']in selected_slots[miner]]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
             try:
                 if audit_until is not None and time.time()>=audit_until:raise TimeoutError('signed audit cutoff elapsed')
                 extra={'observe_until':audit_until}if audit_until is not None and hasattr(self.jobs,'queue')else {}
+                # Epoch 84 contains legacy direct-R2 receipts without the
+                # structured artifact list required for a new audit job. If a
+                # prior job has already exhausted, retain it as no-credit
+                # deferred evidence instead of creating an endless retry.
+                if 'artifacts' not in receipt:
+                    record=self.state/(epoch+'-verify-'+miner[:8]+'.json')
+                    if record.exists():
+                        prior=json.loads(record.read_text())
+                        prior_report=self.state/(prior.get('job_id','')+'-report.json')
+                        if not prior_report.exists():
+                            reason='infrastructure_deferred'
+                            return miner,receipt,{'deferred_report':_defer_report(audit_manifest,receipt,reason,time.time())}
                 remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,submissions=submissions,**extra)
                 if audit_until is not None and time.time()>=audit_until:raise TimeoutError('original report arrived after cutoff; retained for forensic audit')
                 return miner,receipt,remote
-            except (TimeoutError,RuntimeError)as exc:
-                if audit_until is None:raise
+            except RuntimeError as exc:
+                # An exhausted/expired verifier lease is an infrastructure
+                # outcome, not a scientific rejection. Preserve the signed
+                # commitment as deferred and let the sampled audit budget
+                # continue; only validated reports earn training credit.
+                if 'exhausted or expired' not in str(exc):
+                    raise
                 from .commitment_transport import deferred
-                reason='budget_deferred'if time.time()>=audit_until else 'infrastructure_deferred'
-                report=deferred(audit_manifest,receipt,reason,time.time())
+                reason='budget_deferred' if audit_until is not None and time.time()>=audit_until else 'infrastructure_deferred'
+                report=_defer_report(audit_manifest,receipt,reason,time.time())
+                save(self.state/(epoch+'-'+miner+'-deferral.json'),dict(report=report,error_type=type(exc).__name__,observed_at=time.time()))
+                return miner,receipt,{'deferred_report':report}
+            except TimeoutError as exc:
+                if audit_until is None:
+                    raise
+                from .commitment_transport import deferred
+                reason='budget_deferred' if time.time()>=audit_until else 'infrastructure_deferred'
+                report=_defer_report(audit_manifest,receipt,reason,time.time())
                 save(self.state/(epoch+'-'+miner+'-deferral.json'),dict(report=report,error_type=type(exc).__name__,observed_at=time.time()))
                 return miner,receipt,{'deferred_report':report}
         selected_items=list(receipts.items())
+        if not manifest.get('submission_transport_policy'):
+            # Historical direct-R2 receipts have no structured artifact slots.
+            # Reuse any already authenticated report; otherwise record a
+            # deferred no-credit result and never enqueue a retrying job.
+            legacy_items=[]
+            for miner,receipt in receipts.items():
+                if 'artifacts' in receipt:
+                    legacy_items.append((miner,receipt)); continue
+                record=self.state/(epoch+'-verify-'+miner[:8]+'.json')
+                report=None
+                if record.exists():
+                    prior=json.loads(record.read_text())
+                    reportpath=self.state/(prior.get('job_id','')+'-report.json')
+                    if reportpath.exists(): report=json.loads(reportpath.read_text())
+                if report is None:
+                    # A new direct-R2 receipt is still a valid audit input. It
+                    # has no child artifact inventory, but the frozen object
+                    # itself is exactly what the verifier's legacy path
+                    # expects. Only historical jobs that already have an
+                    # exhausted/missing report are deferred by verify_one.
+                    legacy_items.append((miner,receipt))
+                else:
+                    reports[miner]=report
+                    save(self.state/(epoch+'-'+miner+'-report.json'),report)
+                    self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
+            selected_items=legacy_items
         if manifest.get('submission_transport_policy'):
             from .commitment_transport import unchecked
             selected_items=[(m,r)for m,r in receipts.items()if selected_slots[m]]

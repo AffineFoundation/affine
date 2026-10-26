@@ -24,7 +24,7 @@ class GPURuntime(Runtime):
         torch.use_deterministic_algorithms(True)
         if model_files(checkpoint)!=files:raise ValueError('GPU checkpoint allowlist mismatch')
         self.tokenizer=AutoTokenizer.from_pretrained(checkpoint,local_files_only=True,trust_remote_code=False)
-        self.model=AutoModelForCausalLM.from_pretrained(checkpoint,local_files_only=True,trust_remote_code=False,use_safetensors=True,dtype=torch.bfloat16,attn_implementation='eager').to('cuda').eval()
+        self.model=AutoModelForCausalLM.from_pretrained(checkpoint,local_files_only=True,trust_remote_code=False,use_safetensors=True,dtype=getattr(torch,approved_profile['dtype']),attn_implementation='eager').to('cuda').eval()
         self.configure(environment,harness)
         from toploc import build_proofs_base64
         from .proofs import verify_mapped_proofs

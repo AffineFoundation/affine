@@ -37,7 +37,17 @@ class TransportEvidence(unittest.TestCase):
   with self.assertRaises(ValueError):self.check(source=(self.archive,self.descriptor,dict(self.sources,**{'subnet/batches.py':'0'*64})))
   with self.assertRaises(ValueError):self.check(source=(self.archive+b'x',self.descriptor,self.sources))
   with self.assertRaises(ValueError):check_frozen_submission_audit(self.body,self.manifest,self.rejected,self.receipt)
-  with patch('subnet.batches.__file__',str(Path('subnet/artifact_budget.py').resolve())),self.assertRaisesRegex(ValueError,'local rejection decoder'):self.check()
+  with patch('subnet.batches.__file__',str(Path('subnet/artifact_budget.py').resolve())),patch('subnet.batches.submission_records',side_effect=AssertionError('current decoder must not run')):self.assertEqual(self.check(),[])
+ def test_archive_decoder_body_is_checked_independently_of_claimed_pin(self):
+  from ops.check_gpu_continuous_evidence import reviewed_transport_decoder
+  stream=io.BytesIO()
+  with tarfile.open(fileobj=stream,mode='w:gz')as archive:
+   body=b"raise RuntimeError('arbitrary code must not execute')";member=tarfile.TarInfo('subnet/batches.py');member.size=len(body);archive.addfile(member,io.BytesIO(body))
+  with self.assertRaisesRegex(ValueError,'archived rejection decoder hash'):reviewed_transport_decoder(stream.getvalue())
+  # A local v2 decoder and the immutable31041553 decoder legitimately differ.
+  from subnet import batches
+  before=batches.submission_records;decoder=reviewed_transport_decoder(self.archive)
+  self.assertIsNot(decoder.submission_records,before);self.assertIs(batches.submission_records,before)
  def test_valid_zip_cannot_be_claimed_as_transport_rejection(self):
   body=pack([({'index':0},[])],budget=LONG);receipt={'size':len(body),'sha256':hashlib.sha256(body).hexdigest()};bad=dict(self.rejected,submission_sha256=receipt['sha256'])
   with self.assertRaisesRegex(ValueError,'valid transport falsely'):self.check(report=bad,body=body,receipt=receipt)
@@ -53,7 +63,7 @@ class TransportEvidence(unittest.TestCase):
   for change in ({'artifact_policy':'arbitrary'},{'backend_profile':{}},{'numerical_policy':{}}):
    with self.subTest(change=change),self.assertRaises(ValueError):self.check(manifest=dict(self.manifest,**change))
   for error in (OSError('storage failure'),RuntimeError('decoder environment failure')):
-   with patch('subnet.batches.submission_records',side_effect=error),self.assertRaises(type(error)):self.check()
+   with patch('ops.check_gpu_continuous_evidence.reviewed_transport_decoder',side_effect=error),self.assertRaises(type(error)):self.check()
  def test_invalid_duplicate_miner_claim_does_not_dilute_valid_credit(self):
   valid={'accepted':[{'env_id':'env','index':0,'checkpoint':'approved'}],'outcomes':[{'valid':True,'fully_audited':True}]}
   self.check();points=score({'good':valid,'malformed':self.rejected});self.assertEqual(points['points'],{'good':1,'malformed':0});self.assertEqual(points['weights']['good'],1.)

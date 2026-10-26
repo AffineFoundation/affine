@@ -69,7 +69,24 @@ class MinerProgress:
             pass
 
 class Miner:
-    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None):
+    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None, *, complete_group_transport=None, mimo_replicas=1):
+        if type(mimo_replicas) is not int or mimo_replicas not in (1, 2, 4):
+            raise ValueError('local MiMo replicas must be one, two or four')
+        if mimo_replicas != 1:
+            from .forced_sampling import MIMO_GROUP_VERSION
+            if manifest.get('sampling_contract', {}).get('version') != MIMO_GROUP_VERSION:
+                raise ValueError('parallel replicas require the MiMo complete-group protocol')
+        self._mimo_replicas = mimo_replicas
+        if 'group_contract' in manifest:
+            from .batch_contract import for_manifest as group_contract, CompleteGroupContract
+            from .complete_group_transport import CompleteGroupTransport
+            transport = complete_group_transport or CompleteGroupTransport()
+            self.batch_contract = group_contract(manifest, supported_features=transport.features)
+            if not isinstance(self.batch_contract, CompleteGroupContract):
+                raise ValueError('complete-group manifest required')
+            from .complete_group_mining import initialize
+            initialize(self, identity, manifest, checkpoint, capability, state_path, progress_path, transport)
+            return
         from .batches import compression_for_manifest
         compression_for_manifest(manifest)
         check_runtime_profile(manifest)
@@ -101,6 +118,31 @@ class Miner:
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
             raise ValueError('stale local miner state')
 
+    def close(self):
+        if getattr(self, '_closed', False):
+            return
+        # Stop replicas while the journal is open, then release every task view.
+        owner = getattr(self, 'runtime', None)
+        # Borrowed views must release their model aliases before the owning
+        # backend closes and returns its inactive CUDA allocations.
+        runtimes = [runtime for runtime in getattr(self, 'runtimes', {}).values()
+                    if runtime is not owner] + [owner]
+        seen = set()
+        for runtime in runtimes:
+            if runtime is None or id(runtime) in seen:
+                continue
+            seen.add(id(runtime))
+            close_runtime = getattr(runtime, 'close', None)
+            if callable(close_runtime):
+                close_runtime()
+        self.runtime = None
+        self.runtimes = {}
+        journal = getattr(self, '_group_journal', None)
+        if journal is not None:
+            journal.close()
+            self._group_journal = None
+        self._closed = True
+
     def _prepared(self):
         from .commitment_transport import pair_artifact,check_prepared_cumulative
         prepared=list(getattr(self,'_prepared_pairs',[]))
@@ -117,7 +159,12 @@ class Miner:
         observer = getattr(self, "progress", None)
         if observer is not None: observer.record(event, batches=len(self.batches), **fields)
 
-    def search(self, index, seed=0, max_attempts=100, env_id=None):
+    def search(self, index, seed=0, max_attempts=None, env_id=None):
+        if hasattr(self, '_group_transport'):
+            from .complete_group_mining import search
+            return search(self, index, seed=seed, max_attempts=max_attempts, env_id=env_id)
+        if max_attempts is None:
+            max_attempts = 100
         contract=self.manifest.get('sampling_contract')
         if contract is not None:
             if type(seed)is not int or not 0<=seed<contract['max_attempts']:
@@ -192,6 +239,9 @@ class Miner:
         raise RuntimeError('search budget exhausted')
 
     def upload(self):
+        if hasattr(self, '_group_transport'):
+            from .complete_group_mining import upload
+            return upload(self)
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch upload window closed')
         if self.manifest.get('submission_transport_policy'):

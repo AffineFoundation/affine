@@ -1,0 +1,31 @@
+{
+  "epoch": "sanitized-epoch171",
+  "checkpoint": {
+    "id": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "K": 4,
+  "L": 4,
+  "max_batches": 9,
+  "sampling_contract": {
+    "calibration": {
+      "backend_profile_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "cdf_abs_error": 5.946898244302279e-05,
+      "checkpoint": "2222222222222222222222222222222222222222222222222222222222222222",
+      "harness_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "logprob_atol": 0.00212860107421875,
+      "model_runtime_revision": "sanitized-runtime-fixture",
+      "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "toploc_exp_mismatches": 0,
+      "toploc_mant_err_mean": 0,
+      "toploc_mant_err_median": 0,
+      "version": "cached-prefill-calibration-v1"
+    },
+    "generation": "cached-eager-inverse-cdf",
+    "max_attempts": 1000,
+    "randomness": "1111111111111111111111111111111111111111111111111111111111111111",
+    "support_adjudication": "exact-cached-replay-v1",
+    "verification": "prefill-cdf-calibrated",
+    "version": "forced-inverse-cdf-prefill-miner-bound-v5"
+  },
+  "sampling_source_hash": "6666666666666666666666666666666666666666666666666666666666666666"
+}

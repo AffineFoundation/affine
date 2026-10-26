@@ -14,6 +14,17 @@ DEFAULT = {'version': 'text-tools-v1', 'policy': 'autoregressive', 'max_output_t
 
 
 def normalize(config=None):
+    if isinstance(config, dict) and config.get('version') == 'text-tools-mimo-complete-group-v1':
+        from .complete_group_harness import normalize_mimo
+        return normalize_mimo(config)
+    if isinstance(config, dict) and config.get('version') == 'text-tools-complete-group-long-v1':
+        from .complete_group_harness import normalize as normalize_group
+        value = normalize_group(dict(config))
+        if type(value['temperature']) not in (int, float) or not math.isfinite(value['temperature']) or not 0 < value['temperature'] <= 4:
+            raise ValueError('temperature')
+        if type(value['top_p']) not in (int, float) or not 0 < value['top_p'] <= 1:
+            raise ValueError('top_p')
+        return value
     value = dict(DEFAULT); value.update(config or {})
     if value['version'] not in HARNESS_REGISTRY or value['policy'] not in ('autoregressive', 'candidates', 'visible-copy-candidates', 'public-mrcr-shell-candidates'):
         raise ValueError('unsupported harness or policy')
@@ -247,6 +258,14 @@ HARNESS_REGISTRY={
     'plain-transcript-v1': {'render':_plain_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'text-tools-window-v1': {'render':_window_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
 }
+
+from .complete_group_harness import render_mimo, unbound_sample
+HARNESS_REGISTRY['text-tools-mimo-complete-group-v1'] = {
+    'render': render_mimo, 'action': _text_action, 'observations': _text_observations,
+    'sample': unbound_sample}
+HARNESS_REGISTRY['text-tools-complete-group-long-v1'] = {
+    'render': _chat_render, 'action': _text_action, 'observations': _text_observations,
+    'sample': unbound_sample}
 
 
 def render(tokenizer,messages,tools=(),config=None):

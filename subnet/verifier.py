@@ -9,7 +9,10 @@ from .storage import sha
 from .protocol import entry, entries, sample_key, classification,harness_for
 from .auditing import select, assurance
 
-def verify(data, manifest, checkpoint):
+def verify(data, manifest, checkpoint, *, miner=None):
+    if 'group_contract' in manifest:
+        from .complete_group_verification import verify as verify_group
+        return verify_group(data, manifest, checkpoint, miner=miner)
     check_runtime_profile(manifest)
     definitions = entries(manifest)
     runtime = None

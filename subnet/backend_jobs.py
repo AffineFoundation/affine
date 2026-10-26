@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -276,17 +276,21 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False,pro
     if data is None and not allow_empty:raise ValueError('GPU bounded search found no complete batch before epoch window closed')
     return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,search_stopped_at_capacity=capacity_reached,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
 
-def validate(envelope, authority, now=None):
+def validate(envelope, authority, now=None, *, allow_public_mimo=False):
     """Strict authorization/policy admission, including signed subset semantics."""
-    return _validate(envelope,authority,now,resolve_source=True)
+    return _validate(envelope,authority,now,resolve_source=True,allow_public_mimo=allow_public_mimo)
 
-def _validate(envelope, authority, now=None, *, resolve_source, required_source_files=None):
+def _validate(envelope, authority, now=None, *, resolve_source, required_source_files=None, allow_public_mimo=False):
     """Workers defer source-dependent semantics until pinned imports are installed."""
     job=signed(envelope,authority);now=time.time() if now is None else now
     if job.get('schema')!=1 or job.get('role') not in ROLES:raise ValueError('job role/schema')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
     if any(type(job.get(k)) not in (int,float) for k in ('created_at','expires_at')) or not job['created_at']<=now<job['expires_at'] or job['expires_at']-job['created_at']>86400:raise ValueError('job expired/time budget')
     manifest=signed(job['manifest'],authority)
+    from .mimo_worker import selected as mimo_selected
+    if mimo_selected(job,manifest):
+        from .mimo_worker import validate as validate_mimo
+        return validate_mimo(envelope,authority,now,allow_public=allow_public_mimo)
     from .backend_profiles import resolve
     resolve(manifest)
     from .artifact_budget import for_manifest
@@ -429,6 +433,7 @@ def checkpoint(manifest, workspace, cache=None):
 
 def audit(data, manifest, runtime, *, commitment_miner=None):
     from .forced_sampling import assurance as sampling_assurance
+    from .fast_prefill_audit import NumericalAmbiguity
     from .batches import submission_records,SubmissionRejected
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
@@ -474,7 +479,7 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
                 tokens.add(signature)
                 if number in selected_indices:
                     try:verified=selected.verify(rollout,probs)
-                    except InvalidSample:raise
+                    except (InvalidSample,NumericalAmbiguity):raise
                     except Exception as error:
                         if policy.get('version')=='bounded-random-v1':
                             raise RuntimeError('audit execution failed; retry without miner penalty') from error
@@ -487,6 +492,8 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
             if number in selected_indices:
                 accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
             outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
+        except NumericalAmbiguity as error:
+            outcomes.append(dict(batch=number,valid=None,fully_audited=False,failure_kind='numerical_ambiguous',reason=str(error)[:300]))
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
     return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
@@ -578,8 +585,14 @@ def initial_configuration(manifest,job):
     if first is None:raise ValueError('no authorized mining samples for model role')
     return first,harness_for(first,first['indices'][0])
 
-def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
-    job,manifest=_validate(envelope,authority,resolve_source=False)
+def execute(envelope, authority, workspace, cache=None, runtime_factory=None, *, assert_lease=None, trainer_state_root=None, training_context=None, allow_public_mimo=False):
+    job,manifest=_validate(envelope,authority,resolve_source=False,allow_public_mimo=allow_public_mimo)
+    from .mimo_worker import selected as mimo_selected
+    if mimo_selected(job,manifest):
+        from .mimo_worker import execute as execute_mimo
+        return execute_mimo(envelope,authority,workspace,cache,runtime_factory,assert_lease=assert_lease,
+                            trainer_state_root=trainer_state_root,training_context=training_context,
+                            allow_public=allow_public_mimo)
     root=Path(__file__).resolve().parent.parent
     for name,expected in job['source_files'].items():
         if (root/name).is_symlink() or digest(root/name)!=expected:raise ValueError('worker source mismatch')
@@ -768,8 +781,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('job');parser.add_argument('--authority',required=True);parser.add_argument('--workspace',required=True);parser.add_argument('--checkpoint-cache')
+    parser.add_argument('--allow-public-mimo',action='store_true',help='Run only explicitly signed and qualified public MiMo releases')
     args=parser.parse_args();data=Path(args.job).read_bytes()
     if len(data)>4_000_000:raise ValueError('job envelope size budget')
-    report=execute(json.loads(data),args.authority,args.workspace,args.checkpoint_cache)
+    report=execute(json.loads(data),args.authority,args.workspace,args.checkpoint_cache,allow_public_mimo=args.allow_public_mimo)
     print(json.dumps(dict(job_id=report['job_id'],role=report['role'],success=True,checkpoint=report.get('new_checkpoint',{}).get('id',report['checkpoint']))))
 if __name__=='__main__':main()

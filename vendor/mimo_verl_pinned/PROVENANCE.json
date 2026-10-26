@@ -1,0 +1,41 @@
+{
+  "repository": "https://github.com/XiaomiMiMo/verl",
+  "revision": "a2ad9f6160b03ff2d47e59832bfb6b289f37c917",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "verl/trainer/ppo/core_algos.py",
+      "sha256": "812512d3569ed22ff972d4e419235d314b06eb5c8503f929fdc1010dee2f556b",
+      "bytes": 106905
+    },
+    {
+      "path": "verl/trainer/ppo/v1/trainer_base.py",
+      "sha256": "7d36aec878a5086b55a5b425b08951d5c3cacd3d050ad922fe2277dad95b9a77",
+      "bytes": 122664
+    },
+    {
+      "path": "verl/utils/torch_functional.py",
+      "sha256": "cb37d045dec2161d637e2633032cc97c97334e5547cea62dace42630c9683259",
+      "bytes": 40136
+    },
+    {
+      "path": "verl/utils/megatron/optimizer.py",
+      "sha256": "c831c36b8686f46e8460dc4d76984259cb6edb99318a8444108bf00705d471ef",
+      "bytes": 11551
+    },
+    {
+      "path": "recipes/code/config/train.yaml",
+      "sha256": "9ed0d08639999df3cee1a42badff26b6aafb79d3e164669b5313394c969e19c6",
+      "bytes": 5324
+    },
+    {
+      "path": "scripts/code/train.sh",
+      "sha256": "5ecc41adaa8f5ae01b3003ee1b50a1bfbe0c1692777c735d144ce5bd8d8489a0",
+      "bytes": 5510
+    }
+  ]
+}

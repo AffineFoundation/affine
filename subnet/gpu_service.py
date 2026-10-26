@@ -62,9 +62,21 @@ def owned_mining_job_fields(config,manifest,round_number):
             raise ValueError('one bounded owned mining schedule or static subset')
         if type(round_number)is not int or round_number<0:raise ValueError('owned mining round')
         subset=schedule[round_number%len(schedule)]
-    if subset is None:return {}
+    fields={}
+    # Keep the owned canary's search schedule explicit in the signed job
+    # envelope.  The backend validates this policy, but omitting it silently
+    # falls back to the eight-task round-robin default and can exhaust the
+    # bounded search without completing a K/L batch.  This is an operator
+    # scheduling hint; external miners retain the public task pool.
+    policy=config.get('owned_search_policy')
+    if policy is not None:
+        if (not isinstance(policy,dict)
+                or set(policy)!={'version','active_tasks','dwell_attempts'}):
+            raise ValueError('owned search policy')
+        fields['owned_search_policy']=dict(policy)
+    if subset is None:return fields
     from .backend_jobs import mining_definitions
-    fields={'mining_subset':subset}
+    fields['mining_subset']=subset
     mining_definitions(manifest,fields)
     return fields
 
@@ -370,7 +382,8 @@ def run(config,once=False):
                 status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:
-            log.exception('GPU epoch paused for retry');save(state/'health.json',dict(status='error_retry',error_type=type(error).__name__,time=time.time(),epoch=status.get('active',{}).get('epoch') if status.get('active') else None))
+            import traceback
+            log.exception('GPU epoch paused for retry');save(state/'health.json',dict(status='error_retry',error_type=type(error).__name__,error=str(error)[:1000],traceback=traceback.format_exc()[-6000:],controller_process_marker='local-math-v2',time=time.time(),epoch=status.get('active',{}).get('epoch') if status.get('active') else None))
             if once:raise
             time.sleep(30)
 

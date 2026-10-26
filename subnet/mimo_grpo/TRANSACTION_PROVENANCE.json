@@ -1,0 +1,15 @@
+{
+  "source_path": "state/root-audits/20261012-fixed-group-grpo-v1/complete-group-hf-service-candidate-v1/reference/update_transaction.py",
+  "source_sha256": "45a6ac366cbe24414b12c2894a9dd1e2149314d02c4f1abcab9d8bcef6a2decc",
+  "adaptations": [
+    "version/report schema for MiMo trainer",
+    "MAX_FILES raised 256 to 16384 for bounded local optimizer shards"
+  ],
+  "unchanged": [
+    "single update journal",
+    "owner-only lock",
+    "lost publication acknowledgement reconciliation",
+    "model-only publication",
+    "interrupted update fail-closed"
+  ]
+}

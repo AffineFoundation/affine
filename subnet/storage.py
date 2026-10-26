@@ -379,7 +379,12 @@ class Gateway:
                 miner, receipt = item
                 key = f'public/{epoch}/submissions/{miner}.zip'
                 if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'verified_copy'):
-                    self.bucket.verified_copy(receipt['snapshot_key'],key,receipt['sha256'],receipt['size'])
+                    # freeze_snapshot already streamed and SHA-256 checked this
+                    # immutable object. Re-hashing it here doubled the full
+                    # artifact read before the conditional R2 copy. Reuse the
+                    # receipt's ETag to close the same overwrite race without
+                    # paying for a second body-sized pass.
+                    self.bucket.copy(receipt['snapshot_key'],key,expected_etag=receipt['etag'])
                 else:
                     data = self.bucket.get(receipt.get('snapshot_key',receipt['key']))
                     if sha(data) != receipt['sha256']:

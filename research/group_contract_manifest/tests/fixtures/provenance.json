@@ -1,0 +1,31 @@
+{
+  "fixture": "legacy_epoch171.json",
+  "scope": "Literal sanitized allowlisted contract projection; not a signed full manifest",
+  "authenticated_envelope_sha256": "807c6c00a675ef2b3360013978cae0dbcb5ee99f498ba8495be0ff2081c52f98",
+  "source_path": "state/live-math-launch-preparation-v1/distributed-preparation/live-controller-v1/controller-state/nonpayable-live-reward-math-v1--1791834602-171-first-signed-manifest.json",
+  "signer": "3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd",
+  "signature_checked_locally": true,
+  "omitted": "All capabilities, URLs, registrations, checkpoint objects, and unrelated runtime fields",
+  "synthetic_fields": [
+    "epoch",
+    "checkpoint.id",
+    "sampling_source_hash",
+    "sampling_contract.randomness",
+    "sampling_contract.calibration digest fields",
+    "sampling_contract.calibration.model_runtime_revision"
+  ],
+  "unchanged_fields": [
+    "K",
+    "L",
+    "max_batches",
+    "sampling_contract versions/shape/attempt count/methods",
+    "sampling_contract.calibration numeric bounds"
+  ],
+  "legacy_reference_root": "state/root-audits/20261010-cap9-training512-preparation/composed-v2/mining-source/subnet",
+  "legacy_source_sha256": {
+    "batch_quotas.py": "6d3de2decbf7d4dcd3a91bde36f294712c1f6f19a0186d3d36d1b638ccd471b3",
+    "controller.py": "3fdba88891281093b5bec51064c2b3368935f7c1cb548481ff895b54d9f0e8b0",
+    "forced_sampling.py": "9e0c0e57bb0f0269c6c84808bfa480f01f44813e4851ab9776404651a2a3a5ae",
+    "fast_prefill_audit.py": "619746b042944b219ef2f964edfc73461695502573a9c5a18578f9b2583847c6"
+  }
+}

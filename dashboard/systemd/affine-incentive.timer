@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Affine public miner incentives every block interval
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=12s
+AccuracySec=1s
+Unit=affine-incentive.service
+
+[Install]
+WantedBy=timers.target

@@ -48,7 +48,7 @@ def delegated_capability(manifest,delegated):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--gateway',required=True);p.add_argument('--authority',required=True)
     p.add_argument('--source-bundle-sha256');p.add_argument('--manifest-url');p.add_argument('--current-url');p.add_argument('--key');p.add_argument('--cap-file');p.add_argument('--state',default='state/miner');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
-    p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=50)
+    p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=None)
     p.add_argument('--compression-level',type=int,choices=range(10),help='assert the signed manifest DEFLATE level; omitted follows manifest (historical default 6)')
     a=p.parse_args()
     if a.manifest_url and a.current_url:p.error('--manifest-url and --current-url are mutually exclusive')
@@ -60,8 +60,8 @@ def main():
             time.sleep(10)
 
 def run(a):
-    budget=getattr(a,'search_budget',50)
-    if type(budget)is not int or not 1<=budget<=128:raise ValueError('search budget must be between 1 and 128')
+    requested_budget=getattr(a,'search_budget',None)
+    if requested_budget is not None and (type(requested_budget)is not int or not 1<=requested_budget<=128):raise ValueError('search budget must be between 1 and 128')
     delegated=json.loads(Path(a.cap_file).read_text()) if a.cap_file else None
     if not a.key and not delegated: raise ValueError('--key or --cap-file is required')
     key=SimpleNamespace(id=delegated['identity']) if delegated else identity(a.key)
@@ -83,6 +83,22 @@ def run(a):
             if current.get('transport_policy')=='direct-r2-v1' and manifest.get('transport_policy')!='direct-r2-v1':raise ValueError('direct R2 transport downgrade')
             expected_source=getattr(a,'source_bundle_sha256',None)
             if expected_source and manifest.get('source_bundle',{}).get('sha256')!=expected_source:raise ValueError('source changed; rerun signed-source bootstrap')
+            if manifest.get('model_runtime_revision') == 'qwen3_5-mimo-v1':
+                # External miners explicitly follow a ROOT-qualified public
+                # opening. A job/client flag cannot bypass release evidence.
+                from .mimo_release_policy import policy_for_manifest
+                policy_for_manifest(manifest,a.authority,allow_public=True)
+            from .batch_contract import for_manifest, CompleteGroupContract, REQUIRED_CLIENT_FEATURES
+            contract=for_manifest(manifest,supported_features=REQUIRED_CLIENT_FEATURES)
+            if isinstance(contract,CompleteGroupContract):
+                if requested_budget is not None and requested_budget<contract.group_size:
+                    raise ValueError('search budget cannot be smaller than signed N')
+                # A larger legacy command-line ceiling is not an alternative
+                # search range: the signed group always uses exactly N draws.
+                budget=contract.group_size
+                if delegated:raise ValueError('complete groups require the signing miner key')
+            else:
+                budget=50 if requested_budget is None else requested_budget
             from .batches import compression_for_manifest
             level=compression_for_manifest(manifest)
             requested=getattr(a,'compression_level',None)

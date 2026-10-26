@@ -13,6 +13,7 @@ import shlex
 import sqlite3
 import subprocess
 import time
+from nacl.exceptions import BadSignatureError
 from ops.live_reward_writer import approved_source_members
 from ops.live_reward_source_approval import apply_source_approvals, source_verifiers
 from ops.verifier_workforce import authenticate_supplements, authorize_worker
@@ -99,23 +100,33 @@ def run(original_config, writer_pointer, authority, output, future_config=None, 
     if len(paths)>16:raise ValueError('bounded future retention configs')
     configs=retention_configs(original,[json.loads(Path(path).read_text())for path in paths],writer,sources)
     ledger_path=output/'completed-cache-retention.json';ledger=json.loads(ledger_path.read_text())if ledger_path.exists()else{}
-    candidates={};endpoints={}
+    candidates={};endpoints={};deferred=[]
     with sqlite3.connect(Path(writer['queue_database']).as_uri()+'?mode=ro',uri=True)as db:
         db.row_factory=sqlite3.Row
         for row in db.execute("select * from jobs where status='complete' and role='verify' order by rowid desc"):
             row=dict(row);token=digest(dict(job=row['id'],worker=row['worker'],attempt=row['attempt'],report=row['report_digest']))
             if token in ledger:continue
-            job=signed(json.loads(row['envelope']),authority);manifest=signed(job['manifest'],authority)
-            config=configs.get(manifest['source_bundle']['sha256'])
-            if config is None:continue
-            workers={e['worker_identity']:e for e in config['remote']['roles']['verify']}
-            if row['worker']not in workers:raise ValueError('configured completed-worker identity required')
-            authorize_worker(row['worker'],manifest,job,row,db,
-                source_verifiers(writer,manifest,job),writer['_verifier_workforce'])
-            endpoint=workers[row['worker']];group=digest(dict(identity=row['worker'],workspace=endpoint['workspace']))
-            if len(candidates.setdefault(group,[]))>=per_worker:continue
-            plans=completed_replicas(row,authority,{k:e['workspace']for k,e in workers.items()},sources,now=time.time())
-            candidates[group].append((token,plans));endpoints[group]=endpoint
+            try:
+                job=signed(json.loads(row['envelope']),authority);manifest=signed(job['manifest'],authority)
+                config=configs.get(manifest['source_bundle']['sha256'])
+                if config is None:continue
+                workers={e['worker_identity']:e for e in config['remote']['roles']['verify']}
+                if row['worker']not in workers:raise ValueError('configured completed-worker identity required')
+                authorize_worker(row['worker'],manifest,job,row,db,
+                    source_verifiers(writer,manifest,job),writer['_verifier_workforce'])
+                endpoint=workers[row['worker']];group=digest(dict(identity=row['worker'],workspace=endpoint['workspace']))
+                if len(candidates.get(group,[]))>=per_worker:continue
+                plans=completed_replicas(row,authority,{k:e['workspace']for k,e in workers.items()},sources,now=time.time())
+                if not plans:raise ValueError('completed job has no disposable input replicas')
+            except (ValueError,KeyError,TypeError,BadSignatureError) as error:
+                # Historical failures cannot authorize deletion or starve other
+                # independently authenticated rows. Never ledger the rejection:
+                # a future reviewed authorization may make it eligible.
+                deferred.append(dict(job_id=row['id'],worker=row['worker'],
+                    stage='completed-job-authorization',error_type=type(error).__name__,
+                    reason=str(error)[:200],retained=True,miner_penalty=False))
+                continue
+            candidates.setdefault(group,[]).append((token,plans));endpoints[group]=endpoint
     helper=Path(__file__).with_name('submission_retention.py').read_text();helper_sha=hashlib.sha256(helper.encode()).hexdigest();bucket=Bucket(original['bucket'])
     def retire(item):
         group,items=item; endpoint=endpoints[group];plans=[p for _,batch in items for p in batch]
@@ -146,9 +157,10 @@ def run(original_config, writer_pointer, authority, output, future_config=None, 
             except Exception as error:errors.append(dict(group=group,error_type=type(error).__name__,miner_penalty=False))
     if apply:atomic(ledger_path,ledger)
     result=dict(observed_at=time.time(),apply=apply,workers=summary,errors=errors,
+                deferred_jobs=deferred,deferred_count=len(deferred),
                 removed_bytes=sum(r['removed_bytes']for r in summary.values()),model_caches_removed=False,
                 reports_removed=False,R2_objects_removed=False,miner_penalties=False)
-    atomic(output/'last-run.json',result);print(json.dumps({k:result[k]for k in ['apply','removed_bytes','errors']}),flush=True)
+    atomic(output/'last-run.json',result);print(json.dumps({k:result[k]for k in ['apply','removed_bytes','errors','deferred_count']}),flush=True)
     return result
 
 if __name__=='__main__':

@@ -66,10 +66,24 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, *, mimo_cache_bytes=None, mimo_factory=None, role='verify', trainer_state_root=None, allow_public_mimo=False):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
+        if type(allow_public_mimo) is not bool: raise ValueError('explicit local MiMo public execution flag')
+        self.allow_public_mimo=allow_public_mimo
+        if role not in ('verify','train','evaluate'): raise ValueError('worker role')
+        self.role=role
+        self.trainer_state_root=Path(trainer_state_root) if trainer_state_root is not None else None
+        if role=='train' and (self.trainer_state_root is None or not self.trainer_state_root.is_absolute()):
+            raise ValueError('trainer requires explicit stable absolute state root')
+        self.training_context=None
         self.checkpoint_caches=dict(checkpoint_caches or {})
+        self.mimo_cache_bytes=mimo_cache_bytes
+        self.mimo_factory=mimo_factory
+        self.mimo_source_sha256=None
+        self._mimo_execution_lock=threading.Lock()
+        if mimo_cache_bytes is not None and (type(mimo_cache_bytes) is not int or mimo_cache_bytes < 64*1024**3):
+            raise ValueError('MiMo cache must hold at least one bounded checkpoint')
         self.workspace.mkdir(parents=True,exist_ok=True); self.workspace.chmod(0o700)
         if not self.url.startswith(('https://','http://127.0.0.1:','http://localhost:')):
             raise ValueError('coordinator requires TLS or local SSH forwarding')
@@ -82,16 +96,19 @@ class Worker:
         return authenticate(response.json(),self.authority)
 
     def once(self):
-        claim=self.request('claim',role='verify')['claim']
+        claim=self.request('claim',role=self.role)['claim']
         if claim is None: return False
         job=authenticate(claim['job'],self.authority)
-        if digest(job)!=claim['job_sha256'] or job['role']!='verify': raise ValueError('claim job binding')
+        if digest(job)!=claim['job_sha256'] or job['role']!=self.role: raise ValueError('claim job binding')
         # Retry workspace differs by lease attempt; the immutable signed job ID
         # remains unchanged. No previous attempt directory is overwritten.
         attempt=self.workspace/job['job_id']/('attempt-'+str(claim['attempt']))
         attempt.mkdir(parents=True,exist_ok=False); attempt.chmod(0o700)
         jobpath=attempt/'job.json'; jobpath.write_bytes(canonical(claim['job'])); jobpath.chmod(0o600)
         stopped=threading.Event(); lost=threading.Event()
+        def assert_lease():
+            if lost.is_set() or time.time()>=claim['lease_until']:
+                raise ValueError('original queue lease lost or expired')
         def renew():
             while not stopped.wait(max(1,min(30,(claim['lease_until']-time.time())/3))):
                 try:
@@ -110,17 +127,53 @@ class Worker:
                 '--authority',self.authority,'--workspace',str(runspace)]
             approved=job['manifest']['payload']['checkpoint']
             approved_cache=self.checkpoint_caches.get(approved['id'])
+            selected_cache=None
             if approved_cache and checkpoint_cache_candidate(approved_cache,approved['files']):
+                selected_cache=approved_cache
                 command+=['--checkpoint-cache',str(approved_cache)]
             elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
+                selected_cache=cache
                 command+=['--checkpoint-cache',str(cache)]
-            with (attempt/'worker.log').open('xb') as output:
-                (attempt/'worker.log').chmod(0o600)
-                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment)
-            if lost.is_set(): raise ValueError('lease expired during execution; retained diagnostic only')
-            if result.returncode:
-                self.request('fail',job_id=job['job_id'],token=claim['token']); return True
-            report=json.loads((runspace/'jobs'/job['job_id']/'report.json').read_text())
+            from .mimo_worker import selected as mimo_selected
+            is_mimo=mimo_selected(job,job['manifest']['payload'])
+            if is_mimo:
+                # Explicit opt-in. Reuse this worker's factory across claims,
+                # rather than launching one model-loading subprocess per job.
+                from .mimo_worker import validate,source_guard,persistent_factory,execute
+                validate(claim['job'],self.authority,allow_public=self.allow_public_mimo)
+                source_sha=source_guard(job)
+                if self.mimo_source_sha256 not in (None,source_sha):
+                    raise ValueError('restart MiMo worker for changed source closure')
+                if self.role in ('verify','evaluate') and self.mimo_factory is None:
+                    if self.mimo_cache_bytes is None:
+                        raise ValueError('MiMo job needs explicit persistent cache configuration')
+                    self.mimo_factory=persistent_factory(self.workspace/'mimo-cache',max_bytes=self.mimo_cache_bytes)
+                if self.role == 'train':
+                    if job.get('trainer_worker')!=self.identity:
+                        raise ValueError('signed job belongs to a different trainer')
+                    if self.training_context is None:
+                        from .mimo_training_worker import TrainingContext
+                        self.training_context=TrainingContext()
+                self.mimo_source_sha256=source_sha
+                if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':
+                    raise ValueError('MiMo worker process CUDA environment profile')
+                try:
+                    with self._mimo_execution_lock:
+                        report=execute(claim['job'],self.authority,runspace,cache=selected_cache,runtime_factory=self.mimo_factory,
+                            assert_lease=assert_lease,trainer_state_root=self.trainer_state_root,
+                            training_context=self.training_context,allow_public=self.allow_public_mimo)
+                except Exception as error:
+                    # Infrastructure failures are retries, not negative miner evidence.
+                    (attempt/'worker-error.json').write_bytes(canonical({'error_type':type(error).__name__}))
+                    self.request('fail',job_id=job['job_id'],token=claim['token']);return True
+            else:
+                with (attempt/'worker.log').open('xb') as output:
+                    (attempt/'worker.log').chmod(0o600)
+                    result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment)
+                if result.returncode:
+                    self.request('fail',job_id=job['job_id'],token=claim['token']); return True
+                report=json.loads((runspace/'jobs'/job['job_id']/'report.json').read_text())
+            assert_lease()
             # Persist the exact report before transport; every retry uses the
             # same report bytes and fresh authenticated request nonce.
             pending=attempt/'pending-report.json';pending.write_bytes(canonical(report));pending.chmod(0o600)
@@ -130,9 +183,20 @@ class Worker:
                 except (requests.RequestException,ValueError):
                     if lost.is_set() or time.time()>=claim['lease_until']: raise
                     time.sleep(2)
+            if is_mimo:
+                from .mimo_worker import cleanup_acknowledged_inputs
+                cleanup_acknowledged_inputs(runspace/'jobs'/job['job_id'])
             return True
         finally:
             stopped.set(); thread.join(timeout=31)
+
+    def close(self):
+        if self.training_context is not None:
+            self.training_context.close()
+            self.training_context=None
+        if self.mimo_factory is not None:
+            self.mimo_factory.close()
+            self.mimo_factory=None
 
 
 def serve(worker, pause=time.sleep):
@@ -155,6 +219,10 @@ def main():
     parser.add_argument('--seed-file',required=True); parser.add_argument('--authority',required=True)
     parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
+    parser.add_argument('--role',choices=('verify','train','evaluate'),default='verify')
+    parser.add_argument('--trainer-state-root',help='Stable absolute local optimizer/model lineage root, outside attempt workspaces')
+    parser.add_argument('--mimo-cache-bytes',type=int,help='Opt in to persistent MiMo audit jobs with this bounded checkpoint cache')
+    parser.add_argument('--allow-public-mimo',action='store_true',help='Run only explicitly signed and qualified public MiMo releases')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
     caches={}
@@ -163,10 +231,13 @@ def main():
         if len(bytes.fromhex(identifier))!=32 or not Path(local).is_absolute():raise ValueError('exact checkpoint cache mapping')
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches)
-    if args.once:
-        worker.once()
-        return
-    serve(worker)
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,mimo_cache_bytes=args.mimo_cache_bytes,role=args.role,trainer_state_root=args.trainer_state_root,allow_public_mimo=args.allow_public_mimo)
+    try:
+        if args.once:
+            worker.once()
+            return
+        serve(worker)
+    finally:
+        worker.close()
 
 if __name__=='__main__': main()

@@ -136,6 +136,28 @@ TRANSPORT_REJECTION_SOURCES={
     'subnet/backend_jobs.py':'d8a4d011265ba0127eb62a18135e2a6385514e850ddc4fbf5facef3c014066ed',
     'subnet/batches.py':'30968ea0f9869c3954a9339482d328f243dbb8dccaad64b7851372b938cbbf9d'}
 
+def reviewed_transport_decoder(source_body):
+    """Load only the immutable reviewed decoder, never today's local substitute.
+
+    The caller first checks archive authentication and full source inventory.
+    This is a fixed SHA whitelist, not execution of arbitrary claimed modules.
+    No extraction or mutation of subnet.batches/sys.modules occurs.
+    """
+    import types
+    name='subnet/batches.py';values=[]
+    with tarfile.open(fileobj=io.BytesIO(source_body),mode='r:gz')as archive:
+        for member in archive:
+            path=member.name[2:]if member.name.startswith('./')else member.name
+            if path!=name:continue
+            require(member.isfile()and not member.issym()and 0<member.size<=1024**2,'GPU reviewed archived rejection decoder entry')
+            with archive.extractfile(member)as stream:value=stream.read(1024**2+1)
+            require(len(value)==member.size,'GPU reviewed archived rejection decoder size');values.append(value)
+    require(len(values)==1 and hashlib.sha256(values[0]).hexdigest()==TRANSPORT_REJECTION_SOURCES[name],'GPU reviewed archived rejection decoder hash')
+    decoder=types.ModuleType('subnet._reviewed_transport_decoder_'+TRANSPORT_REJECTION_SOURCES[name]);decoder.__package__='subnet';decoder.__file__='authenticated-archive:'+name
+    exec(compile(values[0],decoder.__file__,'exec'),decoder.__dict__)
+    return decoder
+
+
 def check_frozen_submission_audit(body,manifest,audit,receipt,*,rejection_source=None):
     """Read-only qualification after signed manifest/job/report authentication.
 
@@ -152,13 +174,10 @@ def check_frozen_submission_audit(body,manifest,audit,receipt,*,rejection_source
             'GPU reviewed transport rejection source')
         check_source_bundle(source_body,descriptor,sources)
         from subnet.artifact_budget import for_manifest
-        from subnet.batches import submission_records,SubmissionRejected
-        from subnet import batches as local_decoder
-        require(hashlib.sha256(Path(local_decoder.__file__).read_bytes()).hexdigest()==
-            TRANSPORT_REJECTION_SOURCES['subnet/batches.py'],'GPU reviewed local rejection decoder')
+        decoder=reviewed_transport_decoder(source_body)
         budget=for_manifest(manifest)
-        try:submission_records(body,budget=budget,max_batches=manifest.get('max_batches',4))
-        except SubmissionRejected as error:
+        try:decoder.submission_records(body,budget=budget,max_batches=manifest.get('max_batches',4))
+        except decoder.SubmissionRejected as error:
             expected=dict(submission_rejected=True,rejection_stage='transport',accepted=[],
                 training_eligibility='fully-audited-only',outcomes=[dict(batch=None,valid=False,
                     reason=str(error),rejection_stage='transport')])

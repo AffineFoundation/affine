@@ -1,0 +1,42 @@
+{
+  "enabled": false,
+  "authority_seed_file": "/operator/private/mimo-authority.seed",
+  "release_policy": null,
+  "state_root": "/operator/state/mimo-qualified-run",
+  "tokenizer_directory": "/operator/assets/mimo-tokenizer",
+  "bucket": {
+    "bucket": "REPLACE_WITH_OPERATOR_BUCKET",
+    "endpoint": "https://REPLACE_ACCOUNT.r2.cloudflarestorage.com",
+    "credentials_file": "/operator/private/r2.env"
+  },
+  "queue_database": "/operator/state/mimo-qualified-run/roles.sqlite3",
+  "queue_server": {"host": "127.0.0.1", "port": 19183},
+  "workers": {},
+  "chain": {"network": "finney", "netuid": 120},
+  "trainer_config": {},
+  "adapters": {
+    "discovery_key": "private/mimo/REPLACE_RUN/current.json",
+    "initial_checkpoint_keys": {},
+    "source_bundle_key": "sources/REPLACE_EXACT_ARCHIVE_SHA256.tar.gz",
+    "source_files": {},
+    "runtime_versions": {},
+    "trainer_worker": "REPLACE_REGISTERED_TRAINER_PUBLIC_KEY",
+    "publisher_id": "REPLACE_PUBLISHER_PUBLIC_KEY",
+    "trainer_role_config_file": "/operator/private/mimo-trainer-role.json",
+    "job_seconds": 1800
+  },
+  "lifecycle": {
+    "collection_seconds": 1200,
+    "max_tasks": 512,
+    "first_round": 0,
+    "previous_discovery_sha256": null
+  },
+  "audit_scheduler": {
+    "enabled": true,
+    "directory": "/operator/state/mimo-qualified-run/auditor",
+    "max_inflight": 8,
+    "budget_per_tick": 8,
+    "job_seconds": 900,
+    "max_execution_retries": 3
+  }
+}
