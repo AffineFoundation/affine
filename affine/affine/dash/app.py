@@ -33,6 +33,8 @@ from .readers import (
     load_public_benchmarks,
     snapshot,
 )
+from .document import document_response
+from .live_prices import public_prices, price_events, run_quote_refresh, run_exchange_quotes
 from .stream import snapshot_events
 from .tmc import (
     enrich_snapshot,
@@ -111,6 +113,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         ingest_task = asyncio.create_task(_ingest_loop())
         market_task = asyncio.create_task(run_market_stream(cfg))
+        price_task = asyncio.create_task(run_quote_refresh(cfg))
+        exchange_task = asyncio.create_task(run_exchange_quotes())
         reg_task = asyncio.create_task(run_reg_history_loop(cfg))
         dataset_task = asyncio.create_task(_dataset_loop())
         log.info("affine-dash serving state_dir=%s website=%s",
@@ -118,7 +122,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         try:
             yield
         finally:
-            for task in (ingest_task, market_task, reg_task, dataset_task):
+            for task in (ingest_task, market_task, price_task, exchange_task, reg_task, dataset_task):
                 task.cancel()
                 try:
                     await task
@@ -136,6 +140,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if (path == "/" or path.endswith((".html", ".js", ".css"))):
             response.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
         return response
+
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"])
+    def api_document(request: Request):
+        return document_response(request, WEBSITE_DIR)
 
     @app.get("/api/v1/snapshot")
     def api_snapshot(request: Request):
@@ -279,6 +287,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return JSONResponse({"error": "unavailable", "source": "tmc"},
                                 status_code=503)
         return _json(market, max_age=5, request=request)
+
+    @app.get("/api/v1/market/prices")
+    def api_prices():
+        quote = public_prices(market_for_snapshot(cfg))
+        return JSONResponse(quote or {"error":"unavailable"},
+                            status_code=200 if quote else 503,
+                            headers={"Cache-Control":"no-store"})
+
+    @app.get("/api/v1/market/prices/stream")
+    async def api_price_stream(request: Request):
+        return StreamingResponse(price_events(cfg, request), media_type="text/event-stream",
+                                 headers={"Cache-Control":"no-store", "X-Accel-Buffering":"no"})
 
     @app.get("/api/v1/market/reg-history")
     def api_reg_history(request: Request):

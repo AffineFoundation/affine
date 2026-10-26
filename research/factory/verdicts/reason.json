@@ -1,0 +1,113 @@
+{
+  "arm": "reason",
+  "S_curve": [
+    {
+      "round": 1,
+      "gstep": 0,
+      "S_held": -0.1058,
+      "n": 96
+    },
+    {
+      "round": 2,
+      "gstep": 50,
+      "S_held": -0.11346,
+      "n": 96
+    },
+    {
+      "round": 3,
+      "gstep": 100,
+      "S_held": -0.10465,
+      "n": 96
+    },
+    {
+      "round": 4,
+      "gstep": 150,
+      "S_held": -0.10012,
+      "n": 96
+    },
+    {
+      "round": 5,
+      "gstep": 200,
+      "S_held": -0.09453,
+      "n": 96
+    },
+    {
+      "round": 6,
+      "gstep": 250,
+      "S_held": -0.09367,
+      "n": 96
+    },
+    {
+      "round": 7,
+      "gstep": 300,
+      "S_held": -0.08634,
+      "n": 96
+    },
+    {
+      "round": 8,
+      "gstep": 350,
+      "S_held": -0.08958,
+      "n": 96
+    },
+    {
+      "round": 9,
+      "gstep": 400,
+      "S_held": -0.08606,
+      "n": 96
+    },
+    {
+      "round": 10,
+      "gstep": 450,
+      "S_held": -0.08476,
+      "n": 96
+    },
+    {
+      "round": 11,
+      "gstep": 500,
+      "S_held": -0.08539,
+      "n": 96
+    },
+    {
+      "round": 12,
+      "gstep": 550,
+      "S_held": -0.08414,
+      "n": 96
+    },
+    {
+      "round": 13,
+      "gstep": 600,
+      "S_held": -0.08713,
+      "n": 96
+    }
+  ],
+  "bench": [
+    {
+      "step": 0,
+      "score": 0.04,
+      "note": "base floor"
+    },
+    {
+      "step": 250,
+      "score": 0.0,
+      "job": "fb-38c4454a07b6",
+      "exits": {
+        "ContextWindowExceededError": 5,
+        "LimitsExceeded": 4,
+        "RepeatedAction": 16
+      }
+    },
+    {
+      "step": 500,
+      "score": 0.0,
+      "job": "fb-80f49f94aa53",
+      "exits": {
+        "ContextWindowExceededError": 2,
+        "LimitsExceeded": 6,
+        "RepeatedAction": 17
+      }
+    }
+  ],
+  "verdict": "untested (recipe-confounded)",
+  "notes": "Killed at milestone 2 per kill rule (both benches <= 0.04 floor, S_held plateaued). Direct dissociation: S_held improved ~25% (-0.113 -> -0.084 over rounds 2-12, kept thoughts 4 -> ~10/384) while bench fell BELOW floor (0.04 -> 0.0 at step250 and step500), so bench does not track S. Two implementation bugs were found and fixed before the run was valid: (1) raw insertion of z into the teacher's open <think> assistant channel made lift negative for ANY z including oracle prefixes of y (fixed by scoring z as a user-channel hint; oracle teacher-think hints score up to +0.10, confirming positive headroom); (2) the held-out scorer only had the train rollout cache, so every S_held died on KeyError (nan). Residual caveats: (a) the miner's thoughts remained truncated 256-token <think> rambles; RAFT kept only ~2% per round, so the selection signal was thin; (b) the bench collapse (RepeatedAction 16-21/25) is shared by ALL family arms incl. witness/worldmodel at step250/500, i.e. the common backbone SFT recipe itself destroys agentic behavior, capping what any scoring rule could show. Under the operative definition (bench rises above floor tracking S_held) the answer is clearly no; the confound means a gentler SFT recipe could in principle change the picture. First two s_curve.jsonl rows (nan) and one duplicate round-1 row are artifacts of the buggy/killed early runs and are excluded here.",
+  "amendment": "AMENDED 2026-08-23 18:35Z by operator: verdict downgraded from 'not-isomorphic' to 'untested (recipe-confounded)'. Two reasons. (1) Confound: ctrl (plain CE, no scoring rule) later benched 0.0 with the identical RepeatedAction collapse (fb-00bc8b2d1992), and a serving-path control (untrained base served from local dir, fb-c566d39f91c8) behaved healthily - so the collapse is caused by the shared SFT recipe (LoRA lr=1e-4 on plain-rendered teacher rollouts), not by this arm's scoring rule. (2) Power: the 'floor' is 1/25 (base 0.04; a local-dir re-bench of the same base weights scored 0/25), so bench movement near the floor is within single-task noise at n=25. Retest conditions: non-collapsing recipe (LR ablation arms ctrl_lr2e5/ctrl_lr5e5/grounded_lr2e5 pending) and n>=50 panels or intermediate metrics (patches submitted, format survival) for bottom-end power. Mechanistic findings (inert specificity term; 2% thought-keep rate; negative-lift fix) remain valid."
+}

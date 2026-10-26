@@ -1,0 +1,91 @@
+{
+  "arm": "contrastive",
+  "S_curve": [
+    {
+      "gstep": 0,
+      "S_held": -0.10907
+    },
+    {
+      "gstep": 50,
+      "S_held": -0.10792
+    },
+    {
+      "gstep": 100,
+      "S_held": -0.09581
+    },
+    {
+      "gstep": 150,
+      "S_held": -0.09824
+    },
+    {
+      "gstep": 200,
+      "S_held": -0.10425
+    },
+    {
+      "gstep": 250,
+      "S_held": -0.09761
+    },
+    {
+      "gstep": 300,
+      "S_held": -0.09692
+    },
+    {
+      "gstep": 350,
+      "S_held": -0.08776
+    },
+    {
+      "gstep": 400,
+      "S_held": -0.09057
+    },
+    {
+      "gstep": 450,
+      "S_held": -0.088
+    },
+    {
+      "gstep": 500,
+      "S_held": -0.08805
+    },
+    {
+      "gstep": 550,
+      "S_held": -0.08899
+    },
+    {
+      "gstep": 600,
+      "S_held": -0.08932
+    }
+  ],
+  "bench": [
+    {
+      "step": 0,
+      "score": 0.04,
+      "note": "base Qwen/Qwen3-8B floor"
+    },
+    {
+      "step": 250,
+      "score": 0.0,
+      "n_resolved": 0,
+      "n": 25,
+      "job": "fb-6cc5ec696d53",
+      "exits": {
+        "ContextWindowExceededError": 13,
+        "RepeatedAction": 12
+      },
+      "note": "replicated 0.0 in 4 additional runs (fb-2a81, fb-e439, fb-95b4, fb-319e); duplicates came from harness re-execution of the single step250 submission, not separate operators"
+    },
+    {
+      "step": 500,
+      "score": 0.0,
+      "n_resolved": 0,
+      "n": 25,
+      "job": "fb-13e48c814286",
+      "exits": {
+        "ContextWindowExceededError": 4,
+        "LimitsExceeded": 6,
+        "RepeatedAction": 15
+      }
+    }
+  ],
+  "verdict": "untested (recipe-confounded)",
+  "notes": "Killed at milestone 2 per kill rule (both milestones <= 0.04 floor, S_held flat). S_held moved only -0.109 -> -0.088 over 600 steps (~0.02, plateaued after step ~350) while bench DROPPED from 0.04 to 0.0 at step250 and step500, with degenerate behavior (12-17/25 RepeatedAction exits, zero Submitted, wall time 60-90s vs 296s for base). Key mechanistic finding from component diagnostic (128 thoughts, 32 turns, all with distractors): the specificity term never fires - distractor lift max(0, lift(y_distractor)) was 0.0 on 100% of sampled thoughts, so the contrastive score degenerates to the plain reason score in practice. Raw hint lift was negative for 97% of base-miner thoughts (median -0.064), so RAFT kept only 0-11/384 thoughts per round (~2%); training was therefore dominated by the 1:1 backbone CE distillation on teacher rollouts, which itself appears to induce the RepeatedAction degeneracy. No ctrl comparison available: ctrl_step250 bench run failed (score null in results.jsonl). Ops notes: fixed two bugs in reason_family_loop.py (Scorer used the train rollout cache for held-out tids so S_held was always NaN n=0 - patched to merged {**cache,**hcache}; added checkpoint resume + PYTORCH_CUDA_ALLOC_CONF=expandable_segments after silent OOM crash-restarts were resetting the adapter to base each restart). Bench budget: 2 intentional submissions of 3 allowed (step250, step500); the 4 extra step250 jobs were unintended harness-level duplicates of the first submission.",
+  "amendment": "AMENDED 2026-08-23 18:35Z by operator: verdict downgraded from 'not-isomorphic' to 'untested (recipe-confounded)'. Two reasons. (1) Confound: ctrl (plain CE, no scoring rule) later benched 0.0 with the identical RepeatedAction collapse (fb-00bc8b2d1992), and a serving-path control (untrained base served from local dir, fb-c566d39f91c8) behaved healthily - so the collapse is caused by the shared SFT recipe (LoRA lr=1e-4 on plain-rendered teacher rollouts), not by this arm's scoring rule. (2) Power: the 'floor' is 1/25 (base 0.04; a local-dir re-bench of the same base weights scored 0/25), so bench movement near the floor is within single-task noise at n=25. Retest conditions: non-collapsing recipe (LR ablation arms ctrl_lr2e5/ctrl_lr5e5/grounded_lr2e5 pending) and n>=50 panels or intermediate metrics (patches submitted, format survival) for bottom-end power. Mechanistic findings (inert specificity term; 2% thought-keep rate; negative-lift fix) remain valid."
+}

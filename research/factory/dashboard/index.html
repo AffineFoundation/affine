@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>factory — distillation sweep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" />
+<style>
+:root {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", monospace;
+  --color-bg: #1c1c1c;
+  --color-bg-deep: #181818;
+  --color-surface: #1f1f1f;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-subtle: rgba(255, 255, 255, 0.04);
+  --color-border-hover: rgba(255, 255, 255, 0.10);
+  --color-fg: #e5e5e5;
+  --color-fg-2: #a1a1a1;
+  --color-fg-3: rgba(229, 229, 229, 0.45);
+  --color-fg-4: rgba(229, 229, 229, 0.25);
+  --color-ok: #44ff9a;
+  --color-bad: #ff4747;
+  --color-warn: #f5e663;
+  --color-accent: #5ac8fa;
+  --color-gold: #f3c449;
+  --color-activity: #ff9b4e;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: -0.15px;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum";
+  min-height: 100%;
+}
+::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; }
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--color-gold); }
+::selection { color: var(--color-fg); background: rgba(90, 200, 250, 0.25); }
+
+/* ---------- nav ---------- */
+.top-nav {
+  position: sticky; top: 0; z-index: 30;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+.nav-inner {
+  height: 48px; padding: 0 20px;
+  display: flex; align-items: center; gap: 12px;
+}
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-mark {
+  width: 14px; height: 14px;
+  border: 1px solid var(--color-gold);
+  background: rgba(243, 196, 73, 0.12);
+}
+.brand-name { font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+.brand-sub { font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.live-status {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.06em; color: var(--color-fg-3);
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-ok);
+  box-shadow: 0 0 6px rgba(68, 255, 154, 0.6);
+}
+.live-dot.stale { background: var(--color-bad); box-shadow: 0 0 6px rgba(255, 71, 71, 0.6); }
+
+/* ---------- market bar ---------- */
+.market-bar {
+  border-top: 1px solid rgba(243, 196, 73, 0.22);
+  border-bottom: 1px solid var(--color-border);
+  background: #161616;
+}
+.market-bar-inner {
+  display: flex; align-items: center; justify-content: center;
+  flex-wrap: wrap; gap: 8px 28px;
+  min-height: 36px; padding: 8px 20px;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.02em;
+}
+.market-item { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.market-item .k {
+  color: var(--color-fg-3); text-transform: uppercase;
+  letter-spacing: 0.08em; font-size: 10px;
+}
+.market-item b { font-weight: 500; color: var(--color-fg); }
+.market-item b.gold { color: var(--color-gold); }
+.market-item .u { color: var(--color-fg-4); font-size: 10px; }
+
+/* ---------- page ---------- */
+.page {
+  max-width: 1680px; margin: 0 auto;
+  padding: 24px 20px 80px;
+  display: flex; flex-direction: column; gap: 48px;
+}
+
+/* ---------- panes ---------- */
+.pane {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 12px 10px 8px;
+}
+.pane-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 8px; padding: 0 4px;
+}
+.pane-title {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--color-gold);
+}
+.pane-caption { font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+.pane svg { display: block; width: 100%; height: auto; }
+
+.chip-row { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 0 4px 4px; }
+.stat-chip {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--font-mono); font-size: 11px;
+}
+.stat-chip .sw { width: 8px; height: 8px; align-self: center; flex: none; }
+.stat-chip .k { color: var(--color-fg-3); letter-spacing: 0.04em; }
+.stat-chip b { color: var(--color-fg); font-weight: 500; }
+.stat-chip b.dim { color: var(--color-fg-4); font-weight: 400; }
+
+/* ---------- sections ---------- */
+.section-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+.section-title {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--color-fg);
+}
+.section-caption { font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+
+/* ---------- tables ---------- */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.data-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+table.data-table th {
+  font-size: 10px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--color-fg-3);
+  text-align: left; padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+table.data-table th.r, table.data-table td.r { text-align: right; }
+table.data-table tbody tr {
+  border-bottom: 1px solid var(--color-border-subtle);
+  transition: background 0.15s;
+}
+table.data-table tbody tr:hover { background: rgba(90, 200, 250, 0.06); }
+table.data-table td { padding: 8px 12px; vertical-align: middle; color: var(--color-fg-2); white-space: nowrap; }
+table.data-table td.when { color: var(--color-fg-3); }
+table.data-table tbody tr.degen td { background: rgba(255, 71, 71, 0.04); }
+table.data-table tbody tr.degen td:first-child { box-shadow: inset 3px 0 0 var(--color-bad); }
+
+.arm-cell { display: inline-flex; align-items: center; gap: 8px; color: var(--color-fg); }
+.arm-dot { width: 8px; height: 8px; flex: none; }
+.score-cell { display: inline-flex; align-items: center; gap: 8px; }
+.score-cell b { font-weight: 500; color: var(--color-fg); }
+.bar {
+  display: inline-block; width: 48px; height: 3px;
+  border-radius: 2px; background: var(--color-border);
+  overflow: hidden; position: relative;
+}
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--color-ok); }
+
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 72px; height: 18px; padding: 0 7px;
+  border: 1px solid; border-radius: 2px;
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.badge.ok { border-color: rgba(68, 255, 154, 0.35); color: var(--color-ok); }
+.badge.degen { background: rgba(255, 71, 71, 0.08); border-color: rgba(255, 71, 71, 0.35); color: rgba(255, 71, 71, 0.9); }
+.badge.pending { border-style: dashed; border-color: var(--color-border-hover); color: var(--color-fg-4); }
+
+.exit-list { color: var(--color-fg-3); font-size: 11px; }
+.exit-list .hot { color: var(--color-activity); }
+
+td.role { white-space: normal; max-width: 420px; color: var(--color-fg-3); font-size: 11px; }
+td.mono-dim { color: var(--color-fg-3); font-size: 11px; }
+
+.empty { padding: 24px 12px; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-4); }
+
+footer {
+  border-top: 1px solid var(--color-border);
+  padding: 16px 20px 28px;
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.06em; color: var(--color-fg-4);
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  max-width: 1680px; margin: 0 auto;
+}
+@media (max-width: 720px) { .page { gap: 36px; } }
+</style>
+</head>
+<body>
+
+<nav class="top-nav">
+  <div class="nav-inner">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">factory</span>
+      <span class="brand-sub">distillation sweep · sn120</span>
+    </div>
+    <div class="nav-right">
+      <span class="live-status"><span class="live-dot" id="live-dot"></span><span id="live-text">connecting…</span></span>
+    </div>
+  </div>
+  <div class="market-bar">
+    <div class="market-bar-inner" id="market-bar">
+      <span class="market-item"><span class="k">loading</span></span>
+    </div>
+  </div>
+</nav>
+
+<main class="page">
+
+  <div class="pane">
+    <div class="pane-head">
+      <h2 class="pane-title">swe score vs training step</h2>
+      <p class="pane-caption">fraction resolved on swe-rebench panel · dashed = teacher 0.32 / base 0.04</p>
+    </div>
+    <div id="chart"></div>
+    <div class="chip-row" id="legend"></div>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="section-title">results</h2>
+      <span class="section-caption">latest run per arm · step, deduped</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr>
+          <th>arm</th><th class="r">step</th><th class="r">score</th><th class="r">resolved</th>
+          <th class="r">wall</th><th>exits</th><th>status</th><th>when</th>
+        </tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="results-empty" hidden>no results yet</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="section-title">fleet</h2>
+      <span class="section-caption" id="fleet-caption"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr>
+          <th>arm</th><th>pod</th><th>gpu</th><th class="r">$/h</th><th>role</th>
+        </tr></thead>
+        <tbody id="fleet-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>factory dashboard · reads results.jsonl + fleet.json live</span>
+  <span id="foot-status">polling every 30s</span>
+</footer>
+
+<script>
+"use strict";
+
+const ARM_ORDER = ["ctrl","witness","worldmodel","surgeon","reason","contrastive","grounded","abduction"];
+const ARM_COLORS = {
+  ctrl:        "#a1a1a1",
+  witness:     "#5ac8fa",
+  worldmodel:  "#44ff9a",
+  surgeon:     "#ff9b4e",
+  reason:      "#f3c449",
+  contrastive: "#c084fc",
+  grounded:    "#ff6e9c",
+  abduction:   "#6ee7d8",
+};
+const armColor = a => ARM_COLORS[a] || "#e5e5e5";
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const fmtScore = v => (v == null ? "—" : v.toFixed(2));
+function fmtWall(s) {
+  if (s == null) return "—";
+  const m = Math.floor(s / 60), r = Math.round(s % 60);
+  return m > 0 ? `${m}m${String(r).padStart(2,"0")}s` : `${r}s`;
+}
+function fmtWhen(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  return d.toLocaleString("en-US", {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hour12:false}).toLowerCase();
+}
+const shortExit = k => k === "ContextWindowExceededError" ? "CtxWindow" : k;
+
+function fmtExits(exits, flagged) {
+  if (!exits) return "—";
+  const parts = Object.entries(exits).sort((a,b) => b[1]-a[1]).slice(0,3)
+    .map(([k,v]) => {
+      const hot = flagged && k === "RepeatedAction";
+      return `<span class="${hot ? "hot" : ""}">${esc(shortExit(k))}×${v}</span>`;
+    });
+  return `<span class="exit-list">${parts.join(" · ")}</span>`;
+}
+
+/* ---------- chart ---------- */
+function renderChart(data) {
+  const W = 1000, H = 340, L = 52, R = 96, T = 16, B = 34;
+  const iw = W - L - R, ih = H - T - B;
+
+  const series = {};
+  for (const r of data.results) (series[r.arm] ||= []).push(r);
+  for (const a in series) series[a].sort((p,q) => p.step - q.step);
+
+  const maxStep = Math.max(1000, ...data.results.map(r => r.step || 0));
+  const yMax = Math.max(0.4, ...data.results.map(r => r.score || 0) , (data.teacher?.score || 0) + 0.05);
+  const x = s => L + (s / maxStep) * iw;
+  const y = v => T + ih - (v / yMax) * ih;
+
+  let g = "";
+
+  // y gridlines + labels
+  for (let v = 0; v <= yMax + 1e-9; v += 0.1) {
+    const yy = y(v);
+    g += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="rgba(255,255,255,0.04)" />`;
+    g += `<text x="${L-8}" y="${yy+3.5}" text-anchor="end" fill="rgba(229,229,229,0.45)" font-size="10">${v.toFixed(1)}</text>`;
+  }
+  // x ticks
+  const xticks = [0, 250, 500, 750, 1000].filter(s => s <= maxStep);
+  for (const s of xticks) {
+    const xx = x(s);
+    g += `<line x1="${xx}" y1="${T}" x2="${xx}" y2="${T+ih}" stroke="rgba(255,255,255,0.03)" />`;
+    g += `<text x="${xx}" y="${H-12}" text-anchor="middle" fill="rgba(229,229,229,0.45)" font-size="10">${s}</text>`;
+  }
+
+  // reference lines
+  const refs = [
+    { v: data.teacher?.score ?? 0.32, label: `teacher ${fmtScore(data.teacher?.score ?? 0.32)}`, color: "#f3c449" },
+    { v: data.base?.score ?? 0.04, label: `base ${fmtScore(data.base?.score ?? 0.04)}`, color: "rgba(229,229,229,0.45)" },
+  ];
+  for (const ref of refs) {
+    const yy = y(ref.v);
+    g += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${ref.color}" stroke-width="1" stroke-dasharray="5 4" opacity="0.8" />`;
+    g += `<text x="${W-R+8}" y="${yy+3.5}" fill="${ref.color}" font-size="10">${esc(ref.label)}</text>`;
+  }
+
+  // arm lines
+  const arms = [...new Set([...ARM_ORDER, ...Object.keys(series)])].filter(a => series[a]);
+  const labels = [];
+  for (const arm of arms) {
+    const pts = series[arm];
+    const c = armColor(arm);
+    if (pts.length > 1) {
+      const d = pts.map((p,i) => `${i ? "L" : "M"}${x(p.step).toFixed(1)},${y(p.score).toFixed(1)}`).join(" ");
+      g += `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.5" opacity="0.9" />`;
+    }
+    for (const p of pts) {
+      g += `<circle cx="${x(p.step).toFixed(1)}" cy="${y(p.score).toFixed(1)}" r="3.5" fill="${c}" opacity="0.9">` +
+           `<title>${esc(arm)} @ step ${p.step}: ${fmtScore(p.score)} (${p.n_resolved}/${p.n})</title></circle>`;
+    }
+    const last = pts[pts.length - 1];
+    labels.push({ arm, c, x: x(last.step) + 7, y: y(last.score) - 6 });
+  }
+  // De-overlap end-of-line labels: cluster by x, stack upward 11px apart.
+  const clusters = {};
+  for (const lb of labels) (clusters[Math.round(lb.x / 20)] ||= []).push(lb);
+  for (const key in clusters) {
+    const group = clusters[key].sort((a,b) => a.y - b.y);
+    for (let i = group.length - 2; i >= 0; i--) {
+      if (group[i].y > group[i+1].y - 11) group[i].y = group[i+1].y - 11;
+    }
+  }
+  for (const lb of labels) {
+    g += `<text x="${lb.x.toFixed(1)}" y="${lb.y.toFixed(1)}" fill="${lb.c}" font-size="10" opacity="0.85">${esc(lb.arm)}</text>`;
+  }
+
+  // axes
+  g += `<line x1="${L}" y1="${T+ih}" x2="${W-R}" y2="${T+ih}" stroke="rgba(255,255,255,0.12)" />`;
+  g += `<line x1="${L}" y1="${T}" x2="${L}" y2="${T+ih}" stroke="rgba(255,255,255,0.12)" />`;
+
+  document.getElementById("chart").innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" font-family="IBM Plex Mono, monospace">${g}</svg>`;
+
+  // legend chips: latest score per arm
+  const legend = ARM_ORDER.map(arm => {
+    const pts = series[arm];
+    const last = pts && pts[pts.length - 1];
+    const val = last ? `<b>${fmtScore(last.score)}</b> <b class="dim">@${last.step}</b>` : `<b class="dim">—</b>`;
+    return `<span class="stat-chip"><span class="sw" style="background:${armColor(arm)}"></span>` +
+           `<span class="k">${esc(arm)}</span> ${val}</span>`;
+  }).join("");
+  document.getElementById("legend").innerHTML = legend;
+}
+
+/* ---------- tables ---------- */
+function renderResults(data) {
+  const rows = [...data.results].sort((a,b) =>
+    (ARM_ORDER.indexOf(a.arm) - ARM_ORDER.indexOf(b.arm)) || (a.step - b.step));
+  const body = document.getElementById("results-body");
+  document.getElementById("results-empty").hidden = rows.length > 0;
+  body.innerHTML = rows.map(r => {
+    const flagged = (r.flags || []).includes("degenerate");
+    const badge = flagged
+      ? `<span class="badge degen">degenerate</span>`
+      : `<span class="badge ok">${esc(r.state || "completed")}</span>`;
+    const barW = Math.round((r.score || 0) / 0.4 * 48);
+    return `<tr class="${flagged ? "degen" : ""}">
+      <td><span class="arm-cell"><span class="arm-dot" style="background:${armColor(r.arm)}"></span>${esc(r.arm)}</span></td>
+      <td class="r">${r.step}</td>
+      <td class="r"><span class="score-cell"><b>${fmtScore(r.score)}</b><span class="bar"><i style="width:${barW}px"></i></span></span></td>
+      <td class="r">${r.n_resolved}/${r.n}</td>
+      <td class="r">${fmtWall(r.wall_s)}</td>
+      <td>${fmtExits(r.exits, flagged)}</td>
+      <td>${badge}</td>
+      <td class="when">${fmtWhen(r.ts)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderFleet(data) {
+  const pods = data.fleet.pods || {};
+  const arms = [...new Set([...ARM_ORDER, ...Object.keys(pods)])].filter(a => pods[a]);
+  document.getElementById("fleet-body").innerHTML = arms.map(arm => {
+    const p = pods[arm];
+    return `<tr>
+      <td><span class="arm-cell"><span class="arm-dot" style="background:${armColor(arm)}"></span>${esc(arm)}</span></td>
+      <td>${esc(p.pod || "—")}</td>
+      <td>${esc(p.gpu || "—")}</td>
+      <td class="r">$${(p.price ?? 0).toFixed(1)}</td>
+      <td class="role">${esc(p.role || "—")}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("fleet-caption").textContent =
+    `${arms.length} pods · $${data.fleet.price_per_h.toFixed(1)}/h total`;
+}
+
+function renderMarket(data) {
+  const f = data.fleet, p = f.bench_panel || {};
+  const item = (k, v, gold, u) =>
+    `<span class="market-item"><span class="k">${k}</span><b class="${gold ? "gold" : ""}">${esc(v)}</b>${u ? `<span class="u">${esc(u)}</span>` : ""}</span>`;
+  document.getElementById("market-bar").innerHTML = [
+    item("teacher", f.teacher || "—", true),
+    item("miner", f.miner || "—", false),
+    item("panel", `swe-rebench n=${p.n ?? "?"} seed=${p.seed ?? "?"}`, false),
+    item("milestones", (f.milestones_steps || []).join("/"), false),
+    item("fleet", `$${f.price_per_h.toFixed(1)}`, true, "/h"),
+    item("results", String(data.n_raw_rows), false, "rows"),
+  ].join("");
+}
+
+/* ---------- polling ---------- */
+async function refresh() {
+  const dot = document.getElementById("live-dot");
+  const txt = document.getElementById("live-text");
+  try {
+    const res = await fetch("/api/data", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    renderMarket(data);
+    renderChart(data);
+    renderResults(data);
+    renderFleet(data);
+    dot.classList.remove("stale");
+    txt.textContent = "live · updated " + new Date().toLocaleTimeString("en-US", {hour12:false});
+  } catch (e) {
+    dot.classList.add("stale");
+    txt.textContent = "disconnected · retrying";
+  }
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

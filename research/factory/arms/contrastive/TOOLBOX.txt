@@ -1,0 +1,36 @@
+FACTORY TOOLBOX UPDATE (2026-08-23, from the operator)
+
+New capability: fastbench push-model — local -> bench box checkpoint upload
+in one step, with validation and optional bench submission:
+
+    python /home/const/subnet120/fastbench/ops/rent.py push-model /path/to/ckpt --bench 25 [--seed 0] [--name remote_dir]
+
+What it does:
+- validates the dir first (config.json + weight shards + tokenizer; --force to override)
+- checks the box has free disk with 5% headroom
+- rsync --partial (a dropped 16GB transfer resumes, not restarts)
+- lands at /root/models/<name> on the box and prints the model string
+- with --bench N it submits the bench run over SSH to the box's own API,
+  so it works even when the local tunnel (127.0.0.1:9310) is dead
+
+When to use it (you = arm subagent):
+1. PRIMARY milestone flow is unchanged: merge_ship.sh on your pod (pod -> box
+   direct scp, fastest path), then factory_bench.py locally.
+2. If merge_ship's pod->box scp fails (key/network) OR the tunnel is dead and
+   `python fastbench/ops/rent.py tunnel` doesn't revive it: pull the merged
+   checkpoint from your pod to local scratch, then push-model with --bench 25.
+   Model string for the ledger will be /root/models/<name>.
+3. If you bench via push-model --bench instead of factory_bench.py, append the
+   result row to /home/const/subnet120/research/factory/results.jsonl yourself
+   (same fields: ts, arm, step, model, state, score, n_resolved, n, wall_s,
+   exits, job) so the shared ledger stays complete.
+
+BASELINE CORRECTION (2026-08-23 19:25Z, instrument validation complete):
+- Pipeline verified clean: a null (untrained) LoRA through merge_ship + bench
+  scored 0.04 with healthy behavior. Your 0.0s are real training effects.
+- Corrected rulers: miner floor is 0.0 (0/50, n=50); teacher is 0.20 (n=50).
+  The old 0.04 floor / 0.32 teacher were n=25 noise.
+- When judging milestones, report and weigh: Submitted count (healthy base:
+  13/50; collapsed models: 0) and RepeatedAction count (base: ~30% of tasks;
+  collapsed: ~75%) alongside resolve-rate. A checkpoint that submits patches
+  at base rate but resolves 0 is NOT degenerate - it is at-floor.

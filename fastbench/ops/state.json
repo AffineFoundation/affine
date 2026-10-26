@@ -1,0 +1,10 @@
+{
+ "pod": "fastbench",
+ "executor": "fbb1135f-cffe-4962-9389-150ec0e0852b",
+ "gpu": "B200",
+ "price_per_hour": 44.8,
+ "ssh": "root@REDACTED_IP -p 20300",
+ "n_cpu": 208,
+ "disk_gb": 6372,
+ "rented_at": 1787428113.244621
+}

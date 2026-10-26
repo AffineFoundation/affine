@@ -1,0 +1,79 @@
+{
+  "teacher": "Qwen/Qwen3.6-35B-A3B",
+  "miner": "Qwen/Qwen3-8B",
+  "teacher_baseline_seed0_n25": 0.32,
+  "bench_box": "root@REDACTED_IP -p 20300",
+  "bench_url": "http://127.0.0.1:9310",
+  "pods": {
+    "grounded": {
+      "ssh": "root@REDACTED_IP -p 40300",
+      "gpu": "8xB300",
+      "pod": "golden-raven-71",
+      "price": 64.0,
+      "role": "arm + experience datagen"
+    },
+    "contrastive": {
+      "ssh": "root@REDACTED_IP -p 40050",
+      "gpu": "8xB300",
+      "pod": "noble-wolf-b2",
+      "price": 64.0,
+      "role": "arm"
+    },
+    "reason": {
+      "ssh": "root@REDACTED_IP -p 40050",
+      "gpu": "8xB300",
+      "pod": "lunar-fox-ec",
+      "price": 64.0,
+      "role": "arm"
+    },
+    "abduction": {
+      "ssh": "root@REDACTED_IP -p 40051",
+      "gpu": "8xB300",
+      "pod": "lunar-hawk-bc",
+      "price": 64.0,
+      "role": "arm"
+    },
+    "witness": {
+      "ssh": "root@REDACTED_IP -p 40299",
+      "gpu": "8xH200",
+      "pod": "lunar-eagle-17",
+      "price": 32.0,
+      "role": "arm"
+    },
+    "surgeon": {
+      "ssh": "root@REDACTED_IP -p 40300",
+      "gpu": "8xEdition",
+      "pod": "zesty-hawk-eb",
+      "price": 14.8,
+      "role": "arm"
+    },
+    "worldmodel": {
+      "ssh": "root@REDACTED_IP -p 40301",
+      "gpu": "8xEdition",
+      "pod": "cosmic-lion-c5",
+      "price": 14.8,
+      "role": "arm (was kl; token-KL invalid: teacher 248k vs miner 151k vocab)"
+    },
+    "ctrl": {
+      "ssh": "root@REDACTED_IP -p 36784",
+      "gpu": "8xEdition",
+      "pod": "noble-shark-a8",
+      "price": 10.4,
+      "role": "arm (baseline yardstick)"
+    }
+  },
+  "milestones_steps": [
+    250,
+    500,
+    1000
+  ],
+  "bench_panel": {
+    "n": 25,
+    "seed": 0
+  },
+  "exclude_instances_file": "bench_seed0_exclude.json",
+  "teacher_baseline_n50": 0.2,
+  "miner_floor_n50": 0.0,
+  "baseline_notes": "2026-08-23 validation: null LoRA through merge/ship/serve scored 0.04 with healthy exits (pipeline clean). Base n=50: 0/50 resolved, 13 Submitted, 16 RepeatedAction (floor is zero; latent loop tendency ~30%). Teacher n=50: 0.20, matches public SWE-rebench 24.7%. Low-end judgment must use Submitted-rate and RepeatedAction-rate, not just resolve-rate: healthy base submits ~26% of tasks; collapsed checkpoints submit 0.",
+  "serving_correction": "2026-08-24 09:50Z: all benches before 08:30Z ran greedy (temperature 0.0) with thinking force-disabled (FASTBENCH_DISABLE_THINKING=1). Greedy + repeat_limit=8 converts any training-induced sharpening into RepeatedAction death, so pre-correction 0.0s overstate training damage. Server patched for per-job temperature + enable_thinking; corrected runs use temp 0.7 (+think for think-trained ckpts) and ledger rows carry both fields. Never compare rows across serving configs. Corrected floor (n=25, t0.7): base 0/25, 9 Submitted. First nonzero trained ckpts: witness_think step500 and grounded_think step250, both 0.04 with thinking on."
+}

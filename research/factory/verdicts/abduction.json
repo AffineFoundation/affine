@@ -1,0 +1,140 @@
+{
+  "arm": "abduction",
+  "S_curve": [
+    {
+      "gstep": 0,
+      "S_held": 0.13339
+    },
+    {
+      "gstep": 0,
+      "S_held": 0.11774
+    },
+    {
+      "gstep": 50,
+      "S_held": 0.07364
+    },
+    {
+      "gstep": 100,
+      "S_held": 0.12125
+    },
+    {
+      "gstep": 150,
+      "S_held": 0.16378
+    },
+    {
+      "gstep": 200,
+      "S_held": 0.13994
+    },
+    {
+      "gstep": 250,
+      "S_held": 0.18691
+    },
+    {
+      "gstep": 300,
+      "S_held": 0.2192
+    },
+    {
+      "gstep": 350,
+      "S_held": 0.18498
+    },
+    {
+      "gstep": 400,
+      "S_held": 0.19566
+    },
+    {
+      "gstep": 450,
+      "S_held": 0.21848
+    },
+    {
+      "gstep": 500,
+      "S_held": 0.18151
+    },
+    {
+      "gstep": 550,
+      "S_held": 0.18755
+    },
+    {
+      "gstep": 600,
+      "S_held": 0.17828
+    },
+    {
+      "gstep": 650,
+      "S_held": 0.2219
+    },
+    {
+      "gstep": 700,
+      "S_held": 0.22134
+    },
+    {
+      "gstep": 750,
+      "S_held": 0.20926
+    },
+    {
+      "gstep": 800,
+      "S_held": 0.23947
+    },
+    {
+      "gstep": 850,
+      "S_held": 0.22229
+    },
+    {
+      "gstep": 900,
+      "S_held": 0.25306
+    },
+    {
+      "gstep": 950,
+      "S_held": 0.22421
+    },
+    {
+      "gstep": 1000,
+      "S_held": 0.25171
+    }
+  ],
+  "bench": [
+    {
+      "step": 0,
+      "score": 0.04,
+      "n_resolved": 1,
+      "n": 25,
+      "note": "base Qwen/Qwen3-8B reference"
+    },
+    {
+      "step": 250,
+      "score": 0.0,
+      "n_resolved": 0,
+      "n": 25,
+      "exits": {
+        "ContextWindowExceededError": 6,
+        "RepeatedAction": 19
+      },
+      "job": "fb-e3e3c40eab2d"
+    },
+    {
+      "step": 500,
+      "score": 0.0,
+      "n_resolved": 0,
+      "n": 25,
+      "exits": {
+        "ContextWindowExceededError": 7,
+        "LimitsExceeded": 2,
+        "RepeatedAction": 16
+      },
+      "job": "fb-03b5f1e48bfd"
+    },
+    {
+      "step": 1000,
+      "score": 0.0,
+      "n_resolved": 0,
+      "n": 25,
+      "exits": {
+        "ContextWindowExceededError": 3,
+        "LimitsExceeded": 1,
+        "RepeatedAction": 21
+      },
+      "job": "fb-bc100e3d84f7"
+    }
+  ],
+  "verdict": "untested for isomorphism (recipe-confounded); mechanism Goodhart-vulnerable (template collapse)",
+  "notes": "S_held rose 2.1x (0.118 -> 0.252 over 20 rounds, n=96 held-out; two gstep-0 entries are independent pre-training measurements) while SWE-bench fell from the 0.04 base floor to 0.0 at all three milestones, with RepeatedAction dominating exits (19-21/25). Copy-paste Goodharting did NOT appear: 8-gram containment of z in e was 0.000 at base, step50, step250, step500, and step1000 (12 held-out samples each; see arms/abduction/thought_samples_*.jsonl). The Goodhart mode was instead template/mode collapse: median thought length shrank from ~205 words (base) to ~35 (step1000), and 5/12 step1000 thoughts were the identical generic sentence 'Let me check the environment state to understand what's happening' - the unbudgeted-z lift signal is exploitable by short generic filler that carries no world-state content. Caveat: ctrl_step250 also benched 0.0 with the same RepeatedAction profile, so the CE-backbone training itself collapses the policy and the bench differential vs ctrl has no dynamic range (floor effect); the abduction-specific contribution is indistinguishable from zero rather than measurably negative. Ops notes: patched a scorer bug on this pod (Scorer needed held-out rollouts merged into its cache, else S_held was nan every round); trained with batch 1/accum 16 + expandable_segments after CUDA OOM crashes at batch 2/accum 8 (effective batch unchanged at 16).",
+  "amendment": "AMENDED 2026-08-23 20:25Z by operator, consistent with reason/contrastive. (1) The bench-side claim is downgraded: ctrl (plain CE) collapsed identically (fb-00bc8b2d1992) and instrument validation (null LoRA fb-13935838fca4 healthy at 0.04; base 0/50 at n=50) shows the floor is 0.0 with no dynamic range, so 'S up, bench down' cannot be attributed to the abduction rule. (2) The Goodhart finding STANDS and is recipe-independent: S_held rose 0.118->0.252 while thoughts mode-collapsed to ~35-word generic templates (5/12 identical at step1000), verbatim obs-copy overlap 0.000 throughout. The abduction lift as implemented rewards generic filler; any wave-2 retest must add a template/entropy penalty or length-normalized specificity term before this rule is viable."
+}

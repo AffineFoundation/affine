@@ -1,0 +1,57 @@
+/* Uniform chart grid, 2026-10-25. Every tile is the same size: title row, chart with axes, one-line legend. */
+#main{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:16px!important;align-items:start!important;padding-top:12px}
+@media(min-width:1800px){#main{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
+@media(max-width:1099px){#main{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:699px){#main{grid-template-columns:minmax(0,1fr)!important;gap:12px!important}}
+#main>section{display:flex!important;flex-direction:column;gap:8px;align-self:start;width:100%;aspect-ratio:3/2;height:auto;min-width:0;min-height:0!important;overflow:hidden;margin:0!important;padding:12px 14px!important;border:1px solid var(--line)!important;border-radius:4px;background:var(--bg)}
+#main>section[hidden]{display:none!important}
+#main>section>*{margin:0!important}
+
+/* Title row: title + current reading on one line. */
+#main>section>.section-heading{flex:none;display:flex!important;align-items:baseline;justify-content:space-between;gap:8px;height:22px;min-height:0;overflow:hidden;white-space:nowrap}
+#main>section h1,#main>section h2{font-size:15px!important;line-height:22px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-wrap:nowrap}
+#main>section .miner-title-group{min-width:0;overflow:hidden}
+#main>section .section-heading .reading{font-size:15px!important;line-height:22px;min-width:0!important}
+#main>section .section-heading .miner-reading,#main>section .section-heading .measurement-reading,#main>section .section-heading .sp-reading{display:flex!important;flex-direction:row!important;align-items:baseline;gap:3px;padding:0!important}
+#main>section .section-heading .reading-change,#main>section .section-heading .sp-sub,#main>section .section-heading .reading-label{display:none!important}
+
+/* Boilerplate and per-tile controls removed. */
+#main .miner-context,#main .chart-control,#main .sp-controls,#main .flip-context,#main .sp-note,#main .sp-subhead,#main .sp-funnel,#main .incentive-unit-control,#main #incentive-status{display:none!important}
+
+/* Chart area fills the remaining space identically in every tile. */
+#main>section>.chart-wrap,#main>section>.heatmap-wrap,#main>section>.sp-plot,#main>section>.flip-table-wrap{flex:1 1 0;width:100%;min-width:0;min-height:0!important;height:auto!important;max-height:none!important;max-width:none!important;aspect-ratio:auto!important;position:relative}
+#main>section>.chart-wrap svg{width:100%;height:100%}
+#main>section>.sp-plot svg{width:100%!important;height:100%!important;min-height:0!important;overflow:hidden}
+#main>section>.heatmap-wrap{display:block}
+#main #incentive-grid{height:100%;width:auto;max-width:100%;aspect-ratio:1;min-height:0;margin:0 auto}
+#main #incentive-axes{height:100%!important}
+#main .flip-table-wrap{overflow:auto;border-radius:3px}
+#main .flip-table th,#main .flip-table td{padding:5px 8px;font-size:11px}
+#main #panel-mining .sp-plot,#main #panel-weights .sp-plot{overflow:auto}
+#main #panel-mining .sp-plot svg{display:none!important}
+#main .sp-status{gap:3px;font-size:11px;line-height:1.35}
+#main .sp-status div{grid-template-columns:96px minmax(0,1fr);gap:8px;padding-bottom:3px}
+
+/* Legend: one line, never wraps. */
+#main>section>.legend{flex:none;display:flex!important;flex-wrap:nowrap!important;align-items:center;gap:10px!important;height:16px;min-height:0;overflow:hidden;white-space:nowrap;font:10px/16px var(--mono)!important;color:var(--muted)}
+#main>section>.legend[hidden]{display:none!important}
+#main>section>.legend span,#main>section>.legend>*{flex:none;white-space:nowrap!important;overflow-wrap:normal!important;min-width:0}
+#main>section>.legend .incentive-color-legend{display:flex;flex-wrap:nowrap;gap:10px;margin:0}
+#main>section>.legend .swatch{width:8px;height:8px}
+#main>section>.chart-wrap svg,#main>section>.sp-plot svg{overflow:visible!important}
+@media(max-width:699px){#main>section>.legend{gap:8px!important}}
+@media(max-width:699px){header nav a[href^="#"]{display:none}header nav{min-width:0}}
+/* v2: Incentive bars fill the tile like every other chart; weights + mining tiles removed. */
+#main #incentive-grid[data-view='bars']{width:100%;height:100%;max-width:none;aspect-ratio:auto;margin:0}
+#main #incentive-axes{inset:0;width:100%!important}
+#panel-weights,#panel-mining{display:none!important}
+/* v4: title explanation popovers (placed outside the tile by grid.js). */
+#main>section .has-explain{cursor:help;text-decoration:underline dotted;text-decoration-color:var(--axis);text-underline-offset:4px;text-decoration-thickness:1px;outline:none}
+#main>section .has-explain::after{content:'i';display:inline-flex;align-items:center;justify-content:center;width:11px;height:11px;margin-left:6px;border:1px solid var(--axis);border-radius:50%;font:9px/1 var(--mono);color:var(--muted);vertical-align:2px;text-decoration:none}
+#main>section .has-explain:hover,#main>section .has-explain[aria-expanded="true"]{text-decoration-color:var(--muted)}
+#main>section .has-explain:focus-visible{outline:1px solid var(--ink);outline-offset:2px}
+.tile-explain{position:fixed;z-index:50;max-width:320px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font:11px/1.55 var(--mono);box-shadow:0 6px 20px #0006;pointer-events:none}
+.tile-explain[hidden]{display:none}
+:root[data-theme="light"] .tile-explain{box-shadow:0 6px 20px #0001}
+/* v5: Performance tile removed (kept in DOM for network.js, hidden from the grid). */
+#main>section[aria-labelledby="evaluation-title"]{display:none!important}

@@ -1,0 +1,162 @@
+{
+ "version": "affine-site-bans-v1",
+ "generated_at": 1793027389.5704744,
+ "generated_at_cr": "2026-10-26 09:09 CR (UTC-6)",
+ "chain_block": 9368649,
+ "netuid": 120,
+ "ban_list_updated_at_cr": "2026-10-25 08:40:21 CR (UTC-6)",
+ "count": 12,
+ "banned": [
+  {
+   "uid": null,
+   "hotkey": "5C4htAPa3RNhqxLWjkmXTpeoq84PmwpjNud3pcMHSZ5jKs6L",
+   "hotkey_short": "5C4h\u2026Ks6L",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823644.3153598,
+   "banned_at_cr": "2026-10-24 00:34 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 484,
+   "hotkey": "5ForneM9zGYCmyLkkStqGyBpM1p5ZDaChVjrf9CBj3cZj18s",
+   "hotkey_short": "5For\u2026j18s",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823660.8385706,
+   "banned_at_cr": "2026-10-24 00:34 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 501,
+   "hotkey": "5C4hwyBiuRNwVkxCppMAs49Xp3st5DGTyjFjNnhPfVFkEBHH",
+   "hotkey_short": "5C4h\u2026EBHH",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823677.7121904,
+   "banned_at_cr": "2026-10-24 00:34 CR (UTC-6)",
+   "audits_failed": [
+    115,
+    122,
+    132
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 541,
+   "hotkey": "5C4hsAn4h9Vrou8MsfDorAWaEtKaXpMm4gsh7y5Wngsiagex",
+   "hotkey_short": "5C4h\u2026agex",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823687.3670313,
+   "banned_at_cr": "2026-10-24 00:34 CR (UTC-6)",
+   "audits_failed": [
+    115,
+    124,
+    129,
+    132
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 464,
+   "hotkey": "5C4hw8JS3viwDTNR6vVf7ZXgn3GQd2GFJwdWJRcWYXCenx7R",
+   "hotkey_short": "5C4h\u2026nx7R",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823702.0610924,
+   "banned_at_cr": "2026-10-24 00:35 CR (UTC-6)",
+   "audits_failed": [
+    115,
+    130
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 490,
+   "hotkey": "5EN7jgUEn7MsseUWSvdBh1ZDsq6EJ2uxr6Bbn5RTsfJnKmVG",
+   "hotkey_short": "5EN7\u2026KmVG",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823709.4014175,
+   "banned_at_cr": "2026-10-24 00:35 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 512,
+   "hotkey": "5C4hu3embtQVmYjFex3yhb2TMM8rmpkscEsP7nwiWv8payMV",
+   "hotkey_short": "5C4h\u2026ayMV",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823733.4968617,
+   "banned_at_cr": "2026-10-24 00:35 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 558,
+   "hotkey": "5C4hytx5XFNz4mNhuogwfp62tjeS4m2t5L1Y4tuLX9C2RbtW",
+   "hotkey_short": "5C4h\u2026RbtW",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823761.7520206,
+   "banned_at_cr": "2026-10-24 00:36 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 549,
+   "hotkey": "5C4hxs4qcPCRKAGDXdZVuRphHcfuSQ8aTsrhdQWG6Y1CZR4a",
+   "hotkey_short": "5C4h\u2026ZR4a",
+   "banned_since_epoch": 115,
+   "banned_at": 1792823806.6888976,
+   "banned_at_cr": "2026-10-24 00:36 CR (UTC-6)",
+   "audits_failed": [
+    115
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 553,
+   "hotkey": "5C4hzM3JF2JpPi5dxMpksP4Ap8xZ6DV6uTTkbqCB3zBd1uXz",
+   "hotkey_short": "5C4h\u20261uXz",
+   "banned_since_epoch": 130,
+   "banned_at": 1792885324.318893,
+   "banned_at_cr": "2026-10-24 17:42 CR (UTC-6)",
+   "audits_failed": [
+    130,
+    132
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 491,
+   "hotkey": "5C4huX9WzRNEXjpkrKSFwbLhxfy63eTJWgmX9LkzVPA8aB5z",
+   "hotkey_short": "5C4h\u2026aB5z",
+   "banned_since_epoch": 132,
+   "banned_at": 1792894579.2840939,
+   "banned_at_cr": "2026-10-24 20:16 CR (UTC-6)",
+   "audits_failed": [
+    132
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  },
+  {
+   "uid": 307,
+   "hotkey": "5FafLsjJaw8WkHoWPsPo9ui9DcctueqELFP97imZLTZdGhMV",
+   "hotkey_short": "5Faf\u2026GhMV",
+   "banned_since_epoch": 135,
+   "banned_at": 1792939136.9294105,
+   "banned_at_cr": "2026-10-25 08:38 CR (UTC-6)",
+   "audits_failed": [
+    135
+   ],
+   "reason": "TOPLOC audit: InvalidSample"
+  }
+ ]
+}

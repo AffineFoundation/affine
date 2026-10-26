@@ -1,0 +1,8 @@
+  thoughts kept=4/384 median_lift=-0.0533
+[W823 13:41:03.063937379 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 9690939392 bytes (free: 5431230464, total: 287428640768).
+CKPT_SAVED /dshare/ckpt/reason/step50
+ROUND 2 S_held=-0.11346 n=96
+  thoughts kept=5/384 median_lift=-0.0533
+CKPT_SAVED /dshare/ckpt/reason/step100
+ROUND 3 S_held=-0.10465 n=96
+  thoughts kept=7/383 median_lift=-0.0567

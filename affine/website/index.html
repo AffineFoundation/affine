@@ -1,399 +1,91 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
-  <title>Affine</title>
-  <meta name="description" content="Affine is Bittensor subnet 120: a king-of-the-hill competition for open-weight language models, scored by teacher-anchored distillation duels instead of an LLM judge. Live validator dashboard: reigning king, duel queue, history, benchmarks." />
-  <link rel="canonical" href="https://affine.io/" />
-  <link rel="me" href="https://x.com/affine_io" />
-  <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Affine" />
-  <meta property="og:url" content="https://affine.io/" />
-  <meta property="og:title" content="Affine — Bittensor subnet 120" />
-  <meta property="og:description" content="King-of-the-hill subnet for open-weight language models. Miners submit checkpoints; the validator duels each challenger against the reigning king with a teacher-anchored distillation score, never an LLM judge." />
-  <meta property="og:image" content="https://affine.io/affine-mark.png" />
-  <meta property="og:image:width" content="256" />
-  <meta property="og:image:height" content="256" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:site" content="@affine_io" />
-  <meta name="twitter:creator" content="@affine_io" />
-  <meta name="twitter:title" content="Affine — Bittensor subnet 120" />
-  <meta name="twitter:description" content="King-of-the-hill subnet for open-weight language models, scored by teacher-anchored distillation duels. Live validator dashboard." />
-  <meta name="twitter:image" content="https://affine.io/affine-mark.png" />
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    "@id": "https://affine.io/#organization",
-    "name": "Affine",
-    "alternateName": ["Affine SN120", "Bittensor subnet 120"],
-    "url": "https://affine.io/",
-    "legalName": "Affine Tech",
-    "logo": "https://affine.io/affine-mark.png",
-    "email": "hello@affine.io",
-    "contactPoint": {
-      "@type": "ContactPoint",
-      "email": "hello@affine.io",
-      "contactType": "customer support",
-      "availableLanguage": "en"
-    },
-    "description": "Affine is Bittensor subnet 120: a king-of-the-hill competition for open-weight language models. Miners submit fine-tuned checkpoints; the Affine validator duels each challenger against the reigning king and scores both with a teacher-anchored distillation metric, never an LLM judge. The crowned model is published and served openly.",
-    "sameAs": [
-      "https://x.com/affine_io",
-      "https://github.com/AffineFoundation/affine"
-    ]
-  }
-  </script>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="icon" href="affine-mark.png" type="image/png" />
-  <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=83" />
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark light">
+<script>try{const theme=localStorage.getItem("affine:theme");if(theme==="light")document.documentElement.dataset.theme=theme;}catch{}if(document.documentElement.dataset.theme==="light")document.querySelector('meta[name="theme-color"]').content="#ffffff";</script>
+<meta name="description" content="Affine subnet 120: flip-incentive scoring (LIVE), incentive, batches, performance, env probe and training metrics.">
+<title>Affine · Subnet 120</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/network.css?v=20261020-video-nav">
+<link rel="stylesheet" href="/site-metrics.css?v=20261022-mathprobe">
+<link rel="stylesheet" href="/flip.css?v=20261025-grid">
+<link rel="stylesheet" href="/grid.css?v=20261025-grid9">
+<script src="/performance-series.js?v=train-reference-v3" defer></script>
+<script src="/network.js?v=20261025-grid6" defer></script>
+<script defer src="/network-desktop.js?v=20261021-charts"></script>
+<script defer src="/site-metrics.js?v=20261025-grid9"></script>
+<script defer src="/flip.js?v=20261025-grid11"></script>
+<script defer src="/grid.js?v=20261025-grid11"></script>
+<script defer src="/bans.js?v=20261025-bans1"></script>
 </head>
 <body>
-  <header class="top-nav">
-    <div class="nav-inner">
-      <a class="brand" href="./">
-        <img src="favicon.svg" width="18" height="18" alt="" aria-hidden="true" />
-        <span class="brand-name">AFFINE</span>
-      </a>
-      <div class="nav-center">
-        <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
-        <a href="./llms.txt" class="nav-chip" id="nav-llms">llms.txt</a>
-        <a class="nav-chip" href="#kings" id="nav-kings">Kings</a>
-        <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
-        <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
-        <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
-        <!-- Chat = your own sandboxed agent running the current king: sign in
-             at chat.affine.io/affine and a personal container is provisioned.
-             The lightweight inline chat is still reachable at #chat. -->
-        <a class="nav-chip nav-chip-chat" href="https://chat.affine.io/affine" id="nav-chat">Chat</a>
-      </div>
-      <div class="nav-right">
-        <a class="nav-icon"
-           href="https://github.com/AffineFoundation/affine"
-           target="_blank" rel="noopener noreferrer"
-           title="GitHub — AffineFoundation/affine" aria-label="GitHub">
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58
-              0-.29-.01-1.05-.02-2.06-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76
-              -1.09-.75.08-.73.08-.73 1.21.09 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1
-              .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22
-              -.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23.96-.27 1.98-.4 3-.4s2.04.13 3 .4
-              c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22
-              0 4.61-2.81 5.62-5.48 5.92.43.37.81 1.1.81 2.22 0 1.61-.01 2.9-.01 3.29
-              0 .32.21.7.82.58C20.56 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z"/>
-          </svg>
-        </a>
-        <a class="nav-icon"
-           href="https://x.com/affine_io"
-           target="_blank" rel="me noopener noreferrer"
-           title="X — @affine_io" aria-label="X (Twitter)">
-          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231
-              -5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm
-              -1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/>
-          </svg>
-        </a>
-      </div>
-    </div>
-    <div class="market-bar" id="market-bar" aria-label="SN120 market">
-      <div class="market-bar-inner" id="market-bar-inner">
-        <span class="market-item dim">SN120 market…</span>
-      </div>
-    </div>
-    <!-- wvk 25 fork notice (posted 2026-09-26; wvk 26 flip postponed 2026-09-30, not at 14:00 UTC:
-         python ops/v20/banner_wvk25.py --remove). Static so the notice shows even
-         when the dashboard API is down. -->
-    <div class="fork-notice" id="fork-notice" role="note">
-      <div class="fork-notice-inner">
-        <span class="fork-notice-tag">FORK NOTICE</span>
-        <span class="fork-notice-text">
-          wvk 25 live 2026-09-27: crown floor δ 0.20 → 0.10 sd (operator directive).
-          Upcoming fork wvk 26 (announced as 25) — <b>postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands</b>. Noticed contents, not in effect: teacher →
-          <code>GLM-5.3-Flash</code>, 262k context, miner empty-thought rule,
-          sequential stopping, R cap. Reign 22 stands. Miners: serve
-          <code>--max-model-len 262144</code>.
-        </span>
-        <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Fork history: wvk 25 · § Upcoming fork: wvk 26 →</a>
-      </div>
-    </div>
-  </header>
+<a class="skip-link" href="#main">Skip to measurements</a>
+<header>
+<a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 500 500" aria-hidden="true" focusable="false"><path d="M250.004 1.66602C387.157 1.66625 498.341 112.851 498.341 250.004C498.341 387.156 387.156 498.341 250.004 498.341C112.851 498.341 1.66629 387.156 1.66602 250.004C1.66602 112.851 112.851 1.66619 250.004 1.66602ZM74.9541 374.866C113.948 429.435 177.821 465.007 250.004 465.007C322.186 465.007 386.06 429.435 425.054 374.866H74.9541ZM338.333 341.533H421.404L338.332 201.217L338.333 341.533ZM78.6113 341.533H160V204.057L78.6113 341.533ZM249.167 211.667C217.411 211.667 191.667 237.411 191.667 269.167C191.667 300.923 217.411 326.667 249.167 326.667C280.923 326.667 306.667 300.923 306.667 269.167C306.667 237.411 280.923 211.667 249.167 211.667ZM220.13 37.0586C115.527 51.5994 35 141.398 35 250.004C35.0001 276.856 39.9238 302.559 48.916 326.259L220.13 37.0586ZM451.094 326.251C460.084 302.553 465.007 276.854 465.007 250.004C465.007 141.4 384.485 51.6033 279.885 37.0596L451.094 326.251ZM174.242 180H325.772L250.007 52.0244L174.242 180Z"/></svg><span>FFINE</span></a>
+<nav aria-label="Appearance and project links"><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to light mode" aria-pressed="false" title="Switch to light mode"><svg class="theme-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5"/><path d="M10 1v2m0 14v2M1 10h2m14 0h2M3.6 3.6 5 5m10 10 1.4 1.4M3.6 16.4 5 15M15 5l1.4-1.4"/></svg><svg class="theme-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M16.8 12A7.2 7.2 0 0 1 8 3.2 7.2 7.2 0 1 0 16.8 12Z"/></svg></button><a href="https://video.affine.io/" title="Affine Video" aria-label="Affine Video">Video <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3 9 9 3M3 3h6v6"/></svg></a><a href="#flip-credit" title="Flip credit">Flip</a><a href="#flip-share" title="Flip share leaderboard">Share</a><a href="#panel-probe" title="Env probe">Probe</a><a href="/llms.txt">llms.txt <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 6h8M7 3l3 3-3 3"/></svg></a><a href="https://github.com/AffineFoundation/affine">GitHub <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3 9 9 3M3 3h6v6"/></svg></a></nav>
+</header>
+<aside class="market-prices" aria-label="Market prices and submitted groups">
+<dl><div class="market-price"><dt>TAO <span class="price-currency">USD</span></dt><dd><span id="tao-price">—</span><span id="tao-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price"><dt>Alpha <span class="price-subnet">120</span><span class="price-currency">USD</span></dt><dd><span id="alpha-price">—</span><span id="alpha-price-tao" class="price-secondary"></span><span id="alpha-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price batch-total"><dt>Groups</dt><dd><span id="batches-total" aria-label="Total submitted groups">—</span></dd></div></dl>
+</aside>
+<div class="desktop-epoch-control" role="group" aria-label="Shared chart epoch"><label id="desktop-epoch-label" for="desktop-epoch-slider">Epoch —</label><div class="history-navigation"><button id="desktop-epoch-previous" class="history-step" type="button" aria-label="Previous shared epoch" disabled>‹</button><input id="desktop-epoch-slider" class="history-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Shared chart epoch" disabled><button id="desktop-epoch-next" class="history-step" type="button" aria-label="Next shared epoch" disabled>›</button></div></div>
+<main id="main" tabindex="-1" data-state="loading" aria-busy="true">
+<section class="miner-section incentive-section" aria-labelledby="incentive-title">
+<div class="section-heading"><h1 id="incentive-title">Incentive</h1><div class="miner-reading"><span class="reading" id="incentive-value" aria-live="polite">—</span><span id="incentive-value-unit" class="reading-unit">α</span></div></div>
+<div class="miner-context"><div class="epoch-control"><label id="incentive-slider-label" for="incentive-slider"><span>—</span><span>—</span></label><div class="history-navigation"><button id="incentive-previous" class="history-step" type="button" aria-label="Previous emission epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="incentive-slider" class="history-slider" type="range" min="0" max="1" value="0" step="1" aria-label="Emission chain epoch" disabled><button id="incentive-next" class="history-step" type="button" aria-label="Next emission epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div></div><div class="miner-view-control" role="group" aria-label="Incentive chart view"><button id="incentive-view-grid" type="button" aria-pressed="true" aria-controls="incentive-grid" disabled>Grid</button><button id="incentive-view-bars" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>Bars</button></div></div>
+<div id="incentive-wrap" class="heatmap-wrap"><svg id="incentive-axes" class="miner-bar-axes" aria-hidden="true" hidden></svg><div id="incentive-grid" class="incentive-grid" role="group" aria-label="Miner emission by UID in the selected chain epoch"></div><p id="incentive-empty" class="empty">Loading chain emissions.</p><output id="incentive-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="incentive-legend" class="legend heatmap-legend"><span class="grid-legend-static"><i class="swatch" style="background:var(--incentive)"></i>Emission per UID</span><div id="incentive-color-legend" class="incentive-color-legend" aria-label="Emission per miner per epoch"></div><span id="incentive-status" class="sr-only">360-block tempo</span><div class="miner-view-control incentive-unit-control" role="group" aria-label="Emission value unit"><button id="incentive-unit-alpha" type="button" aria-pressed="true" aria-controls="incentive-grid">Alpha</button><button id="incentive-unit-tao" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>TAO</button><button id="incentive-unit-usd" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>USD</button></div></div>
+</section>
 
-  <!-- Top charts, 2×2: score + Margin (σ) over Margin (abs) + reg price —
-       the scored quantity plus the margin half of the crown rule
-       (margin > max(2·SE, δ); also median |z| ≥ 80 and B pass ≥ 0.30) plus
-       the price of a seat at the table. Two scoring eras share the history:
-       per-byte nats (min(R, G), δ = 0.002) until wvk 21 and teacher-sd units
-       (min(z_R, typ_c, z_A), δ = 0.20 sd) since wvk 22 (2026-09-18 20:41 UTC);
-       every chart keeps ONE continuous x axis with a dotted line at that
-       boundary and plots a unit-free quantity (z, per-era z-score, or
-       margin/δ) so both eras share the y scale; raw values + units live in
-       the tooltips (charts.js ERAS / eraZScorer / eraBoundary). -->
+<section id="flip-credit" class="flip-section" aria-labelledby="flip-credit-title">
+<div class="section-heading"><h2 id="flip-credit-title">Flip credit</h2><div class="measurement-reading"><span class="reading" id="flip-credit-value" aria-live="polite">—</span><span id="flip-credit-change" class="reading-change"></span></div></div>
+<div class="chart-wrap" id="flip-credit-wrap"><svg id="flip-credit-chart" role="group" aria-label="Flip credit over epochs"></svg><p id="flip-credit-empty" class="empty">Loading flip scores.</p><output id="flip-credit-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="flip-credit-legend" class="legend chart-legend" aria-label="Flip credit series"></div>
+</section>
+<section id="flip-share" class="flip-section" aria-labelledby="flip-share-title">
+<div class="section-heading"><h2 id="flip-share-title">Flip share</h2><div class="measurement-reading"><span class="reading" id="flip-share-value" aria-live="polite">—</span><span class="reading-label" id="flip-share-label">miners</span></div></div>
+<div class="flip-table-wrap" role="region" aria-label="Flip share leaderboard" tabindex="0">
+<table class="flip-table" id="flip-share-table">
+<thead><tr><th scope="col">UID</th><th scope="col" class="num" title="Current share of miner weight">Share</th><th scope="col" class="num" title="All-time: cumulative flip credit since E93, no decay (drives Share)">Score</th><th scope="col" class="num" title="Flip credit summed over the 10 most recent credit epochs only">Last 10</th><th scope="col" class="num" title="All-time fail→pass tasks">F→P</th><th scope="col" class="num" title="All-time pass→fail tasks">P→F</th><th scope="col" class="num" title="All-time tasks with no change">Null</th><th scope="col" class="num" title="Flip rate: F→P ÷ all scored tasks">Flip %</th><th scope="col" class="num" title="Net rate: (F→P − P→F) ÷ all scored tasks">Net %</th></tr></thead>
+<tbody id="flip-share-body"><tr><td colspan="9" class="flip-loading">Loading…</td></tr></tbody>
+</table>
+</div>
+<div id="flip-share-legend" class="legend chart-legend"></div>
+</section>
+<section class="miner-section" aria-labelledby="miner-title" hidden>
+<div class="section-heading"><div class="miner-title-group"><h2 id="miner-title">Miner contributions</h2></div><div class="miner-reading"><span class="reading" id="miner-value" aria-live="polite">—</span><span class="reading-label">miners</span><span id="miner-change" class="reading-change"></span></div></div>
+<div class="miner-context"><div class="epoch-control"><label id="miner-epoch-label" for="miner-epoch-slider">Epoch —</label><div class="history-navigation"><button id="miner-epoch-previous" class="history-step" type="button" aria-label="Previous contribution epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="miner-epoch-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Contribution epoch" disabled><button id="miner-epoch-next" class="history-step" type="button" aria-label="Next contribution epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div></div><span id="miner-epoch" class="sr-only">Loading epoch records</span><span id="miner-extra" class="miner-extra" hidden></span><div class="miner-view-control" role="group" aria-label="Miner chart view"><button id="miner-view-grid" type="button" disabled aria-pressed="true" aria-controls="miner-grid">Grid</button><button id="miner-view-bars" type="button" disabled aria-pressed="false" aria-controls="miner-grid">Bars</button></div></div>
+<div class="heatmap-wrap"><svg id="miner-bar-axes" class="miner-bar-axes" aria-hidden="true" hidden></svg><div id="miner-grid" class="miner-grid" role="group" aria-label="Submitted batches by miner UID"></div><p id="miner-empty" class="empty" hidden>Miner records unavailable.</p><output id="miner-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div class="legend heatmap-legend" id="miner-grid-legend" aria-label="Submitted batches per UID"><span><i class="swatch level-0"></i>0</span><span><i class="swatch level-1"></i>1</span><span><i class="swatch level-2"></i>2</span><span><i class="swatch level-3"></i>3+ batches</span></div>
+<div id="miner-bar-legend" class="legend heatmap-legend" hidden>Batches by miner UID</div>
+</section>
+<section aria-labelledby="evaluation-title">
+<div class="section-heading"><h2 id="evaluation-title">Performance</h2><div class="measurement-reading"><span class="reading" id="evaluation-value" aria-live="polite">—</span><span id="evaluation-change" class="reading-change"></span></div></div>
+<div class="chart-control evaluation-controls"><label id="evaluation-slider-label" for="evaluation-slider">Epoch —</label><div class="history-navigation"><button id="evaluation-previous" class="history-step" type="button" aria-label="Previous evaluation" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="evaluation-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Performance evaluation" disabled><button id="evaluation-next" class="history-step" type="button" aria-label="Next evaluation" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div><div class="miner-view-control evaluation-view-control" role="group" aria-label="Performance chart view"><button id="evaluation-view-trend" type="button" disabled aria-pressed="true" aria-controls="evaluation-chart">Trend</button><button id="evaluation-view-results" type="button" disabled aria-pressed="false" aria-controls="evaluation-chart">Results</button></div></div>
+<div class="chart-wrap" id="evaluation-wrap"><svg id="evaluation-chart" role="group" aria-label="Measured performance over time"></svg><p id="evaluation-empty" class="empty">Loading evaluations.</p><output id="evaluation-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="evaluation-legend" class="legend chart-legend" hidden></div>
+</section>
+<section aria-labelledby="batch-title">
+<div class="section-heading"><h2 id="batch-title">Batches per epoch</h2><div class="measurement-reading"><span class="reading" id="batch-value" aria-live="polite">—</span><span id="batch-change" class="reading-change"></span></div></div>
 
-  <section class="hero" id="evolution">
-    <div class="hero-inner">
-      <div class="hero-split">
-        <div class="hero-pane">
-          <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Score</h2>
-            <p class="hero-caption">best side per duel · z-scored within its era · dotted line = wvk 22</p>
-            <button type="button" class="expand-btn" data-chart="hero-score"
-              title="expand score" aria-label="Expand score chart">⤢</button>
-          </div>
-          <div class="hero-scroll">
-            <svg id="hero-chart-score" role="img" aria-label="Best per-side turn score per duel, z-scored within its era"></svg>
-          </div>
-        </div>
-        <div class="hero-pane">
-          <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Margin (σ)</h2>
-            <p class="hero-caption">paired z vs king · dashed = 2σ · dotted line = wvk 22 · losses below −8σ clipped</p>
-            <button type="button" class="expand-btn" data-chart="hero-margin"
-              title="expand Margin (σ)" aria-label="Expand Margin (σ) chart">⤢</button>
-          </div>
-          <div class="hero-scroll">
-            <svg id="hero-chart-margin" role="img" aria-label="Paired duel z vs king"></svg>
-          </div>
-        </div>
-        <div class="hero-pane">
-          <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Margin (abs)</h2>
-            <p class="hero-caption">paired margin ÷ its era's δ (0.002 nats/byte · 0.20 sd) · dashed = δ · dotted line = wvk 22</p>
-            <button type="button" class="expand-btn" data-chart="hero-margin-abs"
-              title="expand Margin (abs)" aria-label="Expand Margin (abs) chart">⤢</button>
-          </div>
-          <div class="hero-scroll">
-            <svg id="hero-chart-margin-abs" role="img" aria-label="Paired margin per duel as a multiple of its era's δ crown floor"></svg>
-          </div>
-        </div>
-        <div class="hero-pane">
-          <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Registration price</h2>
-            <p class="hero-caption" id="reg-price-meta">tmc burn history</p>
-            <button type="button" class="expand-btn" data-chart="reg-price"
-              title="expand registration price"
-              aria-label="Expand registration price chart">⤢</button>
-          </div>
-          <div class="hero-scroll">
-            <svg id="reg-price-chart" role="img"
-              aria-label="SN120 registration burn history"></svg>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+<div class="chart-control evaluation-controls batch-controls"><label id="batch-slider-label" for="batch-slider">Epoch —</label><div class="history-navigation"><button id="batch-previous" class="history-step" type="button" aria-label="Previous batch epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="batch-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Batch epoch" disabled><button id="batch-next" class="history-step" type="button" aria-label="Next batch epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div><div class="miner-view-control batch-view-control" role="group" aria-label="Batch chart view"><button id="batch-view-bars" type="button" disabled aria-pressed="true" aria-controls="batch-chart">Bars</button><button id="batch-view-trend" type="button" disabled aria-pressed="false" aria-controls="batch-chart">Trend</button></div></div>
+<div class="chart-wrap" id="batch-wrap"><svg id="batch-chart" role="group" aria-label="Batch outcomes by epoch"></svg><p id="batch-empty" class="empty">Loading epoch records.</p><output id="batch-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="batch-legend" class="legend chart-legend" aria-label="Selected epoch batch outcomes" hidden></div>
+</section>
 
-  <main class="page">
-    <!-- Organization block: what Affine is, in plain words, plus the official
-         channels. Kept short so the dashboard stays first. -->
-    <section class="section about" id="about">
-      <div class="section-head">
-        <h2 class="section-title">About Affine</h2>
-        <span class="section-right note">Bittensor subnet 120 · open-weight model competition</span>
-      </div>
-      <div class="about-body">
-        <p>
-          <strong>Affine</strong> is <a href="https://bittensor.com" target="_blank" rel="noopener noreferrer">Bittensor</a>
-          subnet 120 (SN120): a king-of-the-hill competition for open-weight language models.
-          Miners upload fine-tuned checkpoints; the Affine validator duels each challenger against the
-          reigning king on held-out agent trajectories and scores both with one teacher-anchored
-          distillation metric — how well the model's own reasoning predicts a fixed teacher model's next
-          action — never an LLM judge. The winner is crowned king, earns the subnet's emissions, and its
-          weights are published and served openly. This site is the live validator dashboard.
-        </p>
-        <ul class="about-links">
-          <li><a href="./llms.txt">llms.txt — rules, submit path, public data</a></li>
-          <li><a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener noreferrer">GitHub — AffineFoundation/affine</a></li>
-          <li><a href="https://x.com/affine_io" target="_blank" rel="me noopener noreferrer">X — @affine_io</a></li>
-          <li><a href="https://discord.com/channels/799672011265015819/1381987595881414656" target="_blank" rel="noopener noreferrer">Discord — SN120 channel (Bittensor server)</a></li>
-          <li><a href="https://chat.affine.io/affine" target="_blank" rel="noopener noreferrer">Chat with the reigning king</a></li>
-        </ul>
-        <p class="about-org">Operated by <strong>Affine Tech</strong> · contact <a href="mailto:hello@affine.io">hello@affine.io</a></p>
-      </div>
-    </section>
-    <!-- Kings vs teacher: average score per held-out benchmark and per datagen
-         environment group, one row per reign. Data: api/v1/matrix (built by
-         ops/kingboard). Monitoring only — never part of the score. -->
-    <!-- Kings vs teacher (api/v1/matrix, built by ops/kingboard): average score
-         0-100 per held-out benchmark / datagen environment, rows = teacher,
-         kings newest first, genesis. Explanations live in tooltips only. -->
-    <section class="section" id="kings">
-      <div class="section-head">
-        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then reference models (italic: open checkpoints of the genesis family benchmarked for comparison, not kings), then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the cells the row has, with its n/N coverage when partial; full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. ‡ = cap-bound (over 20% of the model's replies hit the completion cap and scored 0: a lower bound); ⚖ = judge-graded (an LLM judge graded the rollouts: advisory, never part of the score). † = trained environment (a datagen source in D uses this benchmark's environment — policy, tools, scorer — on generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot: τ² airline / retail / telecom; τ³ banking and Gaia2 stay clean held-outs). On the header the mark means the environment is in D; on a cell it means the king was crowned after the admission. ‡ on a column header = trained on since the date in its tooltip (epoch N): king-failed trials from that suite enter the dataset D directly (bench_fail group); cells from cards before that date are held-out measurements, cells of kings crowned after it are trained-on (nothing is removed from totals). ‡ on a cell value stays the cap-bound mark. ⚠ = contaminated (leak audit): some SWE-bench trials fetched upstream code because the sandboxes had outbound internet; the number shown and counted is the score over the trials that did not leak, the raw score is in the tooltip. The agentic set (Terminal-Bench 2, τ²/τ³-bench, SWE-bench Pro) forms its own column group as cards land. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
-      </div>
-      <div class="table-scroll" id="kings-bench-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="environments">
-      <div class="section-head">
-        <h2 class="section-title">Environments <span class="info" title="Datagen environments (the sources of the duel corpus D), grouped by fold group. Value = solve rate over sampled (T=0.8) rollouts of the king seat plus the coverage backfill (greedy T=0 runs are shown in the tooltip, not pooled); the teacher row = teacher_* rollouts; blank under 5 graded rollouts, greyed italics under 30; environments without a grader (affine_wiki) stay blank. Same rows, tint and total rule as the Benchmarks table. Hover a header for the environment's full name, a cell for solved / graded and the 95% interval.">ⓘ</span></h2>
-      </div>
-      <div class="table-scroll" id="kings-env-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="reign">
-      <div class="section-head">
-        <h2 class="section-title">Reign <span class="info" title="Payout rule (since 2026-09-14): a crown is paid for at most 72 hours after it is won. Every crown inside its window gets one equal share (2 paid crowns = 50/50, 3 = thirds); an older crown earns nothing even while it still holds the throne for duels; no paid crown = the emission burns. Throne and duel rules are unchanged. Live paid set: api/v1/snapshot → payout; rule text: api/v1/contract → payout; details in llms.txt → Payout rule.">ⓘ</span></h2>
-        <span class="section-right" id="reign-meta"></span>
-      </div>
-      <div id="reign-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="queue">
-      <div class="section-head">
-        <h2 class="section-title">Queue</h2>
-        <span class="section-right" id="queue-meta"></span>
-      </div>
-      <div id="queue-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="history">
-      <div class="section-head">
-        <h2 class="section-title">History <span class="info" id="history-info" title="">ⓘ</span></h2>
-        <span class="section-right" id="history-meta" hidden></span>
-      </div>
-      <div class="filter-bar">
-        <input id="filter-input" type="search" placeholder="filter hotkey / repo / event" autocomplete="off" spellcheck="false" />
-      </div>
-      <div class="table-scroll" id="history-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="fails">
-      <div class="section-head">
-        <h2 class="section-title">fails</h2>
-        <span class="section-right" id="fails-meta"></span>
-      </div>
-      <div class="table-scroll" id="fails-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="intake">
-      <div class="section-head">
-        <h2 class="section-title">intake</h2>
-        <span class="section-right note" id="intake-meta">reveal → decision · not the duel queue</span>
-      </div>
-      <div id="intake-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="audits">
-      <div class="section-head">
-        <h2 class="section-title">audits</h2>
-        <span class="section-right note" id="audits-meta">post-crown exploit review · policy, not consensus</span>
-      </div>
-      <div id="audits-wrap"><div class="empty">loading…</div></div>
-    </section>
-  </main>
-
-  <footer class="site-footer" id="site-footer">
-    <div class="site-footer-inner">
-      <span class="site-footer-brand">Affine · Bittensor subnet 120</span>
-      <nav class="site-footer-links" aria-label="Official channels">
-        <a href="https://x.com/affine_io" target="_blank" rel="me noopener noreferrer">Follow @affine_io on X</a>
-        <a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="https://discord.com/channels/799672011265015819/1381987595881414656" target="_blank" rel="noopener noreferrer">Discord</a>
-        <a href="./llms.txt">llms.txt</a>
-        <a href="https://chat.affine.io/affine" target="_blank" rel="noopener noreferrer">Chat</a>
-      </nav>
-      <span class="site-footer-copy">© 2026 Affine Tech · <a href="mailto:hello@affine.io">hello@affine.io</a> · <a href="https://affine.io/">affine.io</a></span>
-    </div>
-  </footer>
-
-  <div id="chart-modal" class="chart-modal" hidden>
-    <div class="chart-modal-backdrop" id="chart-modal-backdrop"></div>
-    <div class="chart-modal-sheet" role="dialog" aria-modal="true"
-         aria-labelledby="chart-modal-title">
-      <div class="chart-modal-head">
-        <h2 class="section-title" id="chart-modal-title">chart</h2>
-        <span class="section-right" id="chart-modal-caption"></span>
-        <button type="button" class="duel-panel-close" id="chart-modal-close"
-          aria-label="Close">✕</button>
-      </div>
-      <div class="chart-modal-body">
-        <div class="chart-modal-chart">
-          <svg id="chart-modal-svg" role="img" aria-label="expanded chart"></svg>
-        </div>
-        <div class="chart-modal-detail" id="chart-modal-detail"></div>
-      </div>
-    </div>
-  </div>
-
-  <section id="duel-page" class="duel-page" hidden>
-    <div class="duel-page-inner">
-      <div class="duel-page-head">
-        <button type="button" class="back-btn" id="duel-back"
-          aria-label="Back to dashboard">←</button>
-        <h2 class="section-title" id="duel-page-title">duel</h2>
-        <span class="section-right" id="duel-page-meta"></span>
-      </div>
-      <div id="duel-page-body"></div>
-    </div>
-  </section>
-
-  <section id="dataset-page" class="duel-page" hidden>
-    <div class="duel-page-inner">
-      <div class="duel-page-head">
-        <button type="button" class="back-btn" id="dataset-back"
-          aria-label="Back to dashboard">←</button>
-        <h2 class="section-title">dataset</h2>
-        <span class="section-right" id="dataset-page-meta"></span>
-      </div>
-      <div id="dataset-page-body"></div>
-    </div>
-  </section>
-
-  <section id="audits-page" class="duel-page" hidden>
-    <div class="duel-page-inner">
-      <div class="duel-page-head">
-        <button type="button" class="back-btn" id="audits-back"
-          aria-label="Back to dashboard">←</button>
-        <h2 class="section-title" id="audits-page-title">audit</h2>
-        <span class="section-right" id="audits-page-meta"></span>
-      </div>
-      <div id="audits-page-body"></div>
-    </div>
-  </section>
-
-  <section id="metrics-page" class="duel-page metrics-page" hidden>
-    <div class="duel-page-inner">
-      <div class="duel-page-head">
-        <button type="button" class="back-btn" id="metrics-back"
-          aria-label="Back to dashboard">←</button>
-        <h2 class="section-title">duel metrics</h2>
-        <span class="section-right" id="gates-meta"></span>
-      </div>
-      <div class="metric-grid metric-grid--page" id="gates-wrap">
-        <div class="empty">loading…</div>
-      </div>
-    </div>
-  </section>
-
-  <section id="chat-page" class="duel-page chat-page" hidden>
-    <div class="duel-page-inner chat-page-inner">
-      <div class="duel-page-head">
-        <button type="button" class="back-btn" id="chat-back"
-          aria-label="Back to dashboard">←</button>
-        <h2 class="section-title">chat with the king</h2>
-        <span class="section-right" id="chat-page-meta"></span>
-      </div>
-      <div class="chat-banner" id="chat-banner" hidden></div>
-      <div class="chat-log" id="chat-log">
-        <div class="chat-intro">
-          Talk directly to the reigning SN120 king — the live model this
-          dashboard crowns. Conversations are not stored server-side and
-          replies stream straight from the GPU pod serving it.
-        </div>
-      </div>
-      <form class="chat-input-bar" id="chat-form">
-        <textarea id="chat-input" rows="1" maxlength="8000"
-          placeholder="message the king…" autocomplete="off"
-          spellcheck="false"></textarea>
-        <button type="submit" class="chat-send" id="chat-send"
-          aria-label="Send message">send</button>
-      </form>
-    </div>
-  </section>
-
-  <script type="module" src="app.js?v=94"></script>
+</main>
+<section id="bans" class="bans" aria-labelledby="bans-title">
+<div class="section-heading"><h2 id="bans-title">Banned miners</h2><div class="measurement-reading"><span class="reading" id="bans-count">—</span><span class="reading-label">UIDs</span></div></div>
+<p class="bans-desc">A miner is hard-banned when the sidecar TOPLOC audit finds its rollouts were not generated by the claimed model and checkpoint (audit verdict InvalidSample). Banned miners' groups are stripped from training and they receive 0 weight; their flip score is still computed and shown. The ban follows the hotkey's key, so re-registering does not clear it.</p>
+<div class="bans-table-wrap" role="region" aria-label="Banned miners" tabindex="0">
+<table class="flip-table bans-table"><thead><tr><th scope="col">UID</th><th scope="col">Hotkey</th><th scope="col">Banned since</th><th scope="col">Audits failed</th><th scope="col">Reason</th></tr></thead>
+<tbody id="bans-body"><tr><td colspan="5">Loading…</td></tr></tbody></table></div>
+<p class="bans-asof" id="bans-asof"></p>
+</section>
+<footer><span class="footer-identity"><span class="footer-brand">Affine</span><span aria-hidden="true">·</span><span>Subnet 120</span></span><div class="footer-actions"><span id="connection" role="status">Connecting</span><button id="copy-view" type="button" aria-label="Copy link to this view">Copy view</button><span id="copy-view-status" class="sr-only" role="status"></span></div></footer>
+<noscript><p class="noscript">Enable JavaScript to view measurements, or read <a href="/llms.txt">llms.txt</a>.</p></noscript>
 </body>
 </html>

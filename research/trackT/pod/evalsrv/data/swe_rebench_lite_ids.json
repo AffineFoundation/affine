@@ -1,0 +1,33 @@
+{
+  "dataset": "nebius/SWE-rebench-leaderboard",
+  "split": "test",
+  "namespace": "swerebench",
+  "note": "Pinned 25-instance SWE-rebench lite suite (one task per repo) for Affine advisory benches. Advisory only — never feeds S*.",
+  "instance_ids": [
+    "PennyLaneAI__pennylane-7671",
+    "conan-io__conan-18444",
+    "deepset-ai__haystack-9527",
+    "feder-observatory__stellarphot-519",
+    "lmstudio-ai__venvstacks-197",
+    "matthewwithanm__python-markdownify-230",
+    "pybamm-team__PyBaMM-5061",
+    "python-pillow__Pillow-9023",
+    "sympy__sympy-28122",
+    "tobymao__sqlglot-5189",
+    "trinodb__trino-python-client-564",
+    "vyperlang__vyper-4677",
+    "yt-dlp__yt-dlp-13403",
+    "zopefoundation__persistent-220",
+    "BQSKit__bqskit-337",
+    "JonathonReinhart__scuba-269",
+    "agronholm__anyio-935",
+    "biopython__biopython-5005",
+    "bodo-ai__PyDough-368",
+    "catalystneuro__neuroconv-1406",
+    "geopandas__geopandas-3591",
+    "marcosschroh__dataclasses-avroschema-870",
+    "open-telemetry__opentelemetry-python-4614",
+    "psf__black-4676",
+    "python-trio__trio-3280"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+ "crowns": {
+  "sub_r0020_1787414453": {
+   "reign": 1,
+   "status": "pre_integration"
+  },
+  "sub_r0040_1787419948": {
+   "reign": 2,
+   "status": "pre_integration"
+  },
+  "sub_r0070_1787428182": {
+   "reign": 3,
+   "status": "pre_integration"
+  },
+  "sub_r0100_1787437038": {
+   "reign": 4,
+   "status": "pre_integration"
+  },
+  "sub_r0120_1787442518": {
+   "reign": 5,
+   "status": "pre_integration"
+  },
+  "sub_r0130_1787445234": {
+   "reign": 5,
+   "status": "pre_integration"
+  },
+  "sub_r0240_1787475271": {
+   "reign": 6,
+   "status": "pre_integration"
+  },
+  "sub_r0260_1787480919": {
+   "reign": 6,
+   "status": "pre_integration"
+  },
+  "sub_r0270_1787483662": {
+   "reign": 6,
+   "status": "pre_integration"
+  },
+  "sub_r0280_1787486448": {
+   "reign": 6,
+   "status": "benched",
+   "job_id": "fb-3553c1926ec3",
+   "note": "calibration job; adapter merged manually during integration",
+   "score": 0.0,
+   "n_resolved": 0,
+   "wall_s": 464.7
+  },
+  "sub_r0290_1787489240": {
+   "reign": 6,
+   "status": "pre_integration"
+  }
+ }
+}

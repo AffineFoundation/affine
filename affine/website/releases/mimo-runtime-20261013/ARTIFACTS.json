@@ -1,0 +1,24 @@
+{
+  "artifacts": {
+    "requirements.lock.txt": {
+      "bytes": 2593,
+      "sha256": "57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875",
+      "url": "https://affine.io/releases/mimo-runtime-20261013/57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875/requirements.lock.txt"
+    },
+    "toploc-0.1.6-cp312-cp312-linux_x86_64.whl": {
+      "bytes": 10189554,
+      "sha256": "84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205",
+      "url": "https://affine.io/releases/mimo-runtime-20261013/84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205/toploc-0.1.6-cp312-cp312-linux_x86_64.whl"
+    }
+  },
+  "cuda": "13.0",
+  "model_weights_included": false,
+  "network_activated": false,
+  "platform": "linux-x86_64",
+  "prepared_code_revision": "96016dd0",
+  "prepared_code_url": "https://github.com/AffineFoundation/affine/tree/96016dd0",
+  "python": "3.12",
+  "runtime_release": "mimo-runtime-20261013",
+  "status": "prepared-not-active",
+  "version": "mimo-runtime-public-distribution-v1"
+}

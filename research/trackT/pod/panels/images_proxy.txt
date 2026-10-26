@@ -1,0 +1,16 @@
+swerebench/sweb.eval.x86_64.bqskit_1776_bqskit-337:latest
+swerebench/sweb.eval.x86_64.jonathonreinhart_1776_scuba-269:latest
+swerebench/sweb.eval.x86_64.pennylaneai_1776_pennylane-7671:latest
+swerebench/sweb.eval.x86_64.agronholm_1776_anyio-935:latest
+swerebench/sweb.eval.x86_64.biopython_1776_biopython-5005:latest
+swerebench/sweb.eval.x86_64.bodo-ai_1776_pydough-368:latest
+swerebench/sweb.eval.x86_64.catalystneuro_1776_neuroconv-1406:latest
+swerebench/sweb.eval.x86_64.conan-io_1776_conan-18444:latest
+swerebench/sweb.eval.x86_64.deepset-ai_1776_haystack-9527:latest
+swerebench/sweb.eval.x86_64.feder-observatory_1776_stellarphot-519:latest
+swerebench/sweb.eval.x86_64.geopandas_1776_geopandas-3591:latest
+swerebench/sweb.eval.x86_64.lmstudio-ai_1776_venvstacks-197:latest
+swerebench/sweb.eval.x86_64.marcosschroh_1776_dataclasses-avroschema-870:latest
+swerebench/sweb.eval.x86_64.matthewwithanm_1776_python-markdownify-230:latest
+swerebench/sweb.eval.x86_64.open-telemetry_1776_opentelemetry-python-4614:latest
+swerebench/sweb.eval.x86_64.psf_1776_black-4676:latest

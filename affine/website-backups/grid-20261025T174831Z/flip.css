@@ -1,0 +1,41 @@
+/* Flip shadow panels — reuse Affine tokens from network.css */
+.shadow-pill{
+  display:inline-flex;align-items:center;align-self:center;
+  padding:4px 9px;border:1px solid color-mix(in srgb,var(--accepted) 55%,var(--line));
+  border-radius:999px;color:var(--accepted);font:10px/1 var(--mono);
+  letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+}
+.shadow-inline{
+  display:inline-block;margin-left:.45em;padding:2px 7px;
+  border:1px solid color-mix(in srgb,var(--accepted) 45%,var(--line));
+  border-radius:999px;color:var(--accepted);font:10px/1.4 var(--mono);
+  letter-spacing:.06em;vertical-align:middle;text-transform:uppercase;
+}
+.flip-section .flip-context{
+  margin:0 0 14px;font:11px/1.55 var(--mono);color:var(--muted);max-width:64ch;
+}
+.flip-table-wrap{
+  position:relative;max-height:420px;overflow:auto;
+  border:1px solid var(--line);border-radius:4px;background:var(--surface);
+}
+.flip-table{
+  width:100%;border-collapse:collapse;font:12px/1.45 var(--mono);
+  font-variant-numeric:tabular-nums;color:var(--ink);
+}
+.flip-table th,.flip-table td{
+  padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;
+}
+.flip-table thead th{
+  position:sticky;top:0;z-index:1;background:var(--bg);color:var(--muted);
+  font-weight:400;letter-spacing:.04em;text-transform:uppercase;font-size:10px;
+}
+.flip-table th.num,.flip-table td.num{text-align:right}
+.flip-table tbody tr:hover td{background:var(--hover)}
+.flip-table .flip-loading{color:var(--muted);text-align:center;padding:28px}
+.flip-table .hotkey{color:var(--muted);font-size:10px;margin-left:8px}
+#flip-credit-wrap{height:280px}
+@media(max-width:700px){
+  #flip-credit-wrap{height:240px}
+  .flip-table th,.flip-table td{padding:8px 9px}
+  nav .shadow-pill{display:none}
+}

@@ -1,0 +1,9 @@
+{
+  "arm": "grounded",
+  "verdict": "score Goodhart-broken as implemented (template-minable); underlying signal real; retest running with cross-turn normalization",
+  "overfit_audit": {
+    "file": "arms/grounded/overfit_audit.json",
+    "summary": "step1000 miner emits one boilerplate thought on 9/12 turns; wrong-turn/own-turn lift ratio 1.37 (paired diff 0.000) => S_held 0.20->0.33 measured format-priming, not understanding. Base thoughts DO carry situational signal (own>wrong 25/36 paired, median +0.053), so the mechanism is salvageable via normalized score: lift(own) - mean lift(shuffled turns). Echo mining absent (8-gram overlap 0.000).",
+    "wave2_fix": "cross-turn-normalized lift, K=2 controls, running as grounded_think"
+  }
+}

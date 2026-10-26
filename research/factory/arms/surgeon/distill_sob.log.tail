@@ -1,0 +1,7 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+examples=6181 with_pair=1764 skipped_long=102
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 9888.02it/s]
+step 10/1000 ce=1.3998 dloss=0.1063 lr=2.00e-05
+step 20/1000 ce=1.1489 dloss=0.0814 lr=4.00e-05
+step 30/1000 ce=0.7582 dloss=0.0289 lr=6.00e-05

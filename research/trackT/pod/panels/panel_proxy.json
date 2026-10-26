@@ -1,0 +1,25 @@
+{
+ "dataset": "nebius/SWE-rebench-leaderboard",
+ "split": "test",
+ "namespace": "swerebench",
+ "n": 16,
+ "seed": 0,
+ "instance_ids": [
+  "BQSKit__bqskit-337",
+  "JonathonReinhart__scuba-269",
+  "PennyLaneAI__pennylane-7671",
+  "agronholm__anyio-935",
+  "biopython__biopython-5005",
+  "bodo-ai__PyDough-368",
+  "catalystneuro__neuroconv-1406",
+  "conan-io__conan-18444",
+  "deepset-ai__haystack-9527",
+  "feder-observatory__stellarphot-519",
+  "geopandas__geopandas-3591",
+  "lmstudio-ai__venvstacks-197",
+  "marcosschroh__dataclasses-avroschema-870",
+  "matthewwithanm__python-markdownify-230",
+  "open-telemetry__opentelemetry-python-4614",
+  "psf__black-4676"
+ ]
+}

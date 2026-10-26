@@ -1,0 +1,40 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+arm=grounded train_turns=3044 held=89
+backbone examples=5934
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 4807.55it/s]
+ROUND 1 S_held=0.22024 n=89
+  thoughts kept=333/384 median_lift=0.1715
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+arm=grounded train_turns=3044 held=89
+backbone examples=5934
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 4793.02it/s]
+ROUND 1 S_held=0.19727 n=89
+  thoughts kept=331/384 median_lift=0.1877
+[W823 13:35:43.054746340 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 9716105216 bytes (free: 7975075840, total: 287428640768).
+  step 25/1000
+  step 50/1000
+CKPT_SAVED /dshare/ckpt/grounded/step50
+ROUND 2 S_held=0.03285 n=89
+  thoughts kept=301/384 median_lift=0.1154
+  step 75/1000
+  step 100/1000
+CKPT_SAVED /dshare/ckpt/grounded/step100
+ROUND 3 S_held=0.15015 n=89
+  thoughts kept=316/384 median_lift=0.1565
+  step 125/1000
+  step 150/1000
+CKPT_SAVED /dshare/ckpt/grounded/step150
+ROUND 4 S_held=0.12253 n=89
+  thoughts kept=312/384 median_lift=0.1379
+  step 175/1000
+  step 200/1000
+CKPT_SAVED /dshare/ckpt/grounded/step200
+ROUND 5 S_held=0.23674 n=89
+  thoughts kept=321/384 median_lift=0.1560
+  step 225/1000
+  step 250/1000
+CKPT_SAVED /dshare/ckpt/grounded/step250
+ROUND 6 S_held=0.30496 n=89
+  thoughts kept=336/384 median_lift=0.2076
