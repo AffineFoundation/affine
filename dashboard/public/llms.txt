@@ -24,6 +24,139 @@ Finalized learning evidence: https://affine.io/history.json
 Expected coordinator authority public key:
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
+Scoring notice (2026-10-26): LIVE on-chain mech-0 weights use **flip-incentive**
+scoring (https://affine.io/scores.json) with **symmetric net credit** since the
+12:00 PM CR (UTC-6) weight window on October 26, 2026 (epoch 148). A gain and a
+loss on the same task now count the same. See "Flip-incentive LIVE scoring" below.
+The MiMo complete-group mining contract is unchanged.
+
+Gate notice (2026-10-26): from epoch 152 (3:04 PM CR) a trained checkpoint is promoted
+only if it is not worse than its parent on a private random probe sample; a RED epoch
+pays zero flip credit. Training parameters are published per epoch in the mining.json
+`training` block. See "Checkpoint promotion gate" below.
+
+## Checkpoint promotion gate (LIVE from epoch 152) — added October 26, 2026
+
+**Status: LIVE.** A newly trained checkpoint becomes the next mining head only if
+it is **not worse** than its parent on a private random sample of the env probe.
+
+How it works, per epoch N mining on head H:
+
+1. When N opens, the validator draws a fresh **private** uniform sample S of
+   1000 `affine_math` probe tasks (out of 7,496) from a secret seed and publishes
+   only a hash commitment. The seed and indices are revealed 2 epochs later on
+   https://affine.io/gate/index.json.
+2. H's probe results on S are reused from the env probe.
+3. After training, candidate C is probed on S **minus every task in epoch N's
+   batch** (batch tasks are dropped from both sides, so training on a task
+   cannot help C pass the gate).
+4. **GREEN** if the paired z-score of C vs H is above −1 **and** C's
+   max-token cap-hit rate is below 0.20 (at least 200 tasks evaluated). C is
+   promoted and the next epoch mines from C.
+5. **RED** otherwise. C is discarded, the epoch finalizes as no-update, and the
+   next epoch mines from H again.
+
+Rewards: a RED epoch pays **zero flip credit** to every miner in that epoch (no
+debit). Flip pairs skip the discarded candidate, so the next GREEN epoch is
+scored from H's probe to its own candidate. Other epochs in the scoring window
+keep paying, and the non-zero weight floor is unchanged.
+
+Unchanged: the mining contract, nonces, TOPLOC/sampling verify, bans and the
+weight floor. Batch pre/post results are logged for analysis only and do not
+gate. Public metadata: `formula.promotion_gate` on https://affine.io/scores.json
+and https://affine.io/gate/index.json (commitments, verdicts, z, cap rate).
+
+Code: https://github.com/AffineFoundation/affine/tree/validator/v829i-promotion-gate-20261026/ops/promotion_gate_v829i
+
+## Published training parameters (mining.json `training` block) — added October 26, 2026
+
+Every epoch, https://affine.io/mining.json carries an additive `training` object
+(also at https://affine.io/training.json) generated from the live signed
+lifecycle config and the live trainer host config, not hand-copied. Existing
+fields are unchanged; clients that ignore unknown keys keep working. The block
+is only present when it describes the same epoch and head checkpoint as the
+rest of mining.json.
+
+| Field | Meaning (values at epoch 152) |
+| --- | --- |
+| `head.checkpoint`, `head.optimizer_step` | Head being mined (189de412…, step 106) |
+| `optimizer` | AdamW (CPU fp32 masters), lr 1e-6, betas [0.9, 0.999], eps 1e-8, weight decay 0.01 (bias and 1-D params excluded), grad-norm clip 1.0, 1 optimizer step per epoch, optimizer moments not persisted |
+| `schedule` | Constant lr; after a cold optimizer restart (rollback or discarded candidate) lr × 0.5 for 3 steps; per-step relative update capped at `drift_cap_rel` = 2e-5 |
+| `loss` | GRPO, vanilla dual-clip PPO (clip 0.2, dual clip 3.0), `seq-mean-token-sum-norm`, low-variance KL 0.02 to the base checkpoint, entropy 0, no advantage std-normalisation, overlong soft penalty 0.5 from 6000 to 8192 tokens, derail masking |
+| `batch` | Up to 256 groups × 8 rollouts. One claim per task (earliest R2 `received_at`); admitted unique tasks are ordered by `sha256([seed, miner, env_id, index])` with a seed drawn after the deadline; the first 256 train |
+| `sampling` | temperature 1.0, top-k 20, top-p 0.95; `affine_math` max output 8192 tokens, context 12288 |
+| `collection_seconds` | Signed upload window length (1200 s from epoch 152) |
+| `promotion_gate` | sample 1000 of 7,496, z > −1, cap-hit < 0.20, min 200 tasks, RED = zero credit |
+| `sources` | sha256 of the signed lifecycle config and trainer host operator config used |
+
+No seeds, private task ids or the private gate sample are published.
+
+
+## Flip-incentive LIVE scoring (symmetric net credit) — updated October 26, 2026
+
+**Status: LIVE.** On-chain mech-0 weights are set hourly from the flip scores.
+The MiMo complete-group mining contract (8-nonce groups, nonces 0–7, mixed
+correct/wrong) is **unchanged**; no new miner client is required.
+
+### What changed on October 26, 2026
+
+| | Before (Oct 23 – Oct 26 11:38 AM CR) | Now (`credit_mode = "symmetric"`) |
+| --- | --- | --- |
+| fail→pass on a task | `+ −ln(p̂)` (large on hard tasks) | **+1** |
+| pass→fail on a task | `− −ln(1 − p̂)` (small on hard tasks) | **−1** |
+| Pure noise (true pass rate unchanged) | earned a positive amount in expectation on hard tasks | **earns 0 in expectation** |
+| Negative net | absorbed | **kept and carried forward** |
+
+The whole scoring window (credit epochs from 93) is recomputed under the new
+rule on every scorer run, so the change applies to your full history, not only
+to new epochs.
+
+### Formula (live)
+
+For each pair of consecutive published probe epochs `(E → E_next)`:
+
+1. **Join** the DISPATCH-selected batches (`miner`, task `index`) of the epoch
+   that trained from probe `E`'s checkpoint with the validator's probe result for
+   that task at `E` and at `E_next`.
+2. **Per-task credit = change in estimated pass probability.** With one probe
+   sample per side that is: fail→pass = **+1**, pass→fail = **−1**,
+   fail→fail = pass→pass = 0. Gains and losses have exactly the same size, so
+   random flips cancel out and only real, repeatable improvement adds up.
+3. **Net score:** your `flip_score` is the **net sum** over every pair in the
+   window. A negative net is not reset to zero: it stays in your score and later
+   gains must pay it off first.
+4. **Shares:** `max(0, flip_score) / sum` over miners. Clipping at zero happens
+   only at this final step. Banned miners get 0. Unearned or unregistered mass
+   burns to UID 0. A hard non-zero floor guarantees the weight vector is never
+   all-zero.
+
+### TOPLOC / sampling verify gate (unchanged)
+
+| Rule | Effect |
+| --- | --- |
+| TOPLOC or sampling verify **fail** / structural reject | No flip credit on that batch, and it is not packed into GRPO |
+| Not yet audited | Earns normally (pending pass-through) until an audit result is joined; a later fail strips it |
+| Tolerances | Unchanged |
+| Nonces / mixed-outcome admission | Unchanged |
+
+Public metadata: `formula.credit_mode`, `formula.symmetric_weight` and
+`formula.sampling_verify_gate` on https://affine.io/scores.json.
+
+### Env probe (inputs)
+
+- Continuous partial coverage + bounded bandit top-k sampling on `affine_math`.
+- Index / series: https://affine.io/probe/index.json · https://affine.io/probe/series.json
+- Lagged per-task dumps (after 2 sealed probe epochs): https://affine.io/probe/tasks/
+
+### What miners should do
+
+Keep submitting under the October 13 MiMo complete-group contract below. Submit
+batches that make the model genuinely better on the tasks you are dispatched:
+a task you break costs exactly as much as a task you fix. Submission format,
+nonces, runtime and proof transport do not change.
+
+Code: https://github.com/AffineFoundation/affine/tree/prod/validator-20261026-symmetric-credit/subnet/flip
+
 ## What changes at this cutover
 
 This is a new model run and a new miner contract. Upgrade the canonical client

@@ -1,0 +1,25 @@
+--- src/probe_daemon.py	2026-10-26 14:29:19.085984988 -0600
++++ gate/probe_daemon.py	2026-10-26 14:36:17.165301423 -0600
+@@ -170,6 +170,14 @@
+     if p.returncode != 0: raise RuntimeError(f'podctl {args[0]} rc={p.returncode}: {p.stderr[-300:]}')
+     return json.loads(p.stdout.strip().splitlines()[-1])
+ 
++# ---------- promotion gate (Jacob pt682u 2026-10-26) ----------
++GATE_BUSY = Path('/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/GATE-BUSY.json')
++def _gate_busy(max_age=2400):
++    """The promotion gate is fetching/serving/probing a candidate on the pod: do not fetch, serve or start a run.
++    Stale (> max_age s) or unreadable lock = not busy, so a dead gate can never block the probe."""
++    try: return time.time() - float(json.loads(GATE_BUSY.read_text())['at']) < max_age
++    except Exception: return False
++
+ # ---------- lifecycle (read-only) ----------
+ def current():
+     d = json.loads((LIFE / 'CURRENT.json').read_text()); c = d['checkpoint']
+@@ -360,6 +368,7 @@
+     except Exception as e:
+         log(event='lag_per_task_tick_error', error=f'{type(e).__name__}: {e}')
+     if led['state'] == 'published': return 'idle'
++    if _gate_busy(): return 'yield_promotion_gate'   # 2026-10-26 promotion gate owns the pod (fetch/serve/run C on S)
+     st = pod('status')
+     if cfg.get('yield_to_evaluator'):      # only meaningful if the probe ever shares the evaluator GPU again
+         busy, job = evaluator_busy()

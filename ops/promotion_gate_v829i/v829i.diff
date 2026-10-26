@@ -1,0 +1,132 @@
+--- src/release-v829h-collect1200-signed/mimo_v829_train_gate_launcher.py	2026-10-26 13:42:30.000000000 -0600
++++ release/stage/mimo_v829_train_gate_launcher.py	2026-10-26 14:44:13.577080587 -0600
+@@ -42,6 +42,18 @@
+ keeps its planned window. Only values in V829H_COLLECTION_SECONDS are accepted (fail closed otherwise).
+ A sibling release with COLLECTION_SECONDS = 1800 is the one-step revert. max_tasks (256), trainer,
+ gate, sidecar, bans, TOPLOC, nonces, roster: unchanged.
++
++v8.2.9i (Jacob pt682u 2026-10-26 14:25 CR; t684u 14:39 CR "go"): checkpoint PROMOTION GATE, operator flag
++staged/PROMOTION-GATE.json (sibling of TRAIN-CONTROL.json; absent / enabled!=true = exact v8.2.9h behaviour).
++When enabled, an epoch whose training produced candidate C (status updated) is held (tick returns "training")
++until the promotion-gate service writes its decision for (head H, candidate C):
++  green -> the original updated result (C promoted; next epoch mines from C);
++  red   -> no-update onto H, exactly like an operator pause (next epoch mines from H; flip lineage trained=False, so the
++           epoch's miners earn zero flip credit).
++No decision within decision_timeout_seconds after TRAINING-RESULT -> fail open (promote, marker GATE-TIMEOUT).
++After a live RED the next epoch's trainer job is held until the pod trainer is restored to H (TRAINER-RESTORED), at
++most restore_wait_seconds after its seal, then that epoch is a no-update (never trains on a wrong base).
++Trainer math, gate, sidecar, bans, TOPLOC, nonces, collection window, roster: unchanged.
+ """
+ from __future__ import annotations
+ import argparse, ast, importlib.util, json, sys, textwrap, time
+@@ -748,6 +760,102 @@
+     return dict(v829h=True, collection_seconds=COLLECTION_SECONDS, accepted=list(V829H_COLLECTION_SECONDS))
+ 
+ 
++# ---- v8.2.9i promotion gate ----
++PG_FLAG = FLAG_PATH.parent / "PROMOTION-GATE.json"
++PG_STATE = Path("/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/epochs")
++PG_DEFAULTS = dict(decision_timeout_seconds=3600, restore_wait_seconds=1200)
++
++
++def pg_flag():
++    try:
++        doc = json.loads(PG_FLAG.read_bytes())
++        return dict(PG_DEFAULTS, **doc) if type(doc) is dict and doc.get("enabled") is True else None
++    except Exception:
++        return None
++
++
++def _pg_read(path):
++    try:
++        return json.loads(Path(path).read_bytes())
++    except Exception:
++        return None
++
++
++def install_v829i_promotion_gate(Lifecycle):
++    prior = Lifecycle._training
++
++    def _training(self, directory, opening, dispatch, current, now):
++        f = pg_flag()
++        if f is None:
++            return prior(self, directory, opening, dispatch, current, now)
++        d = Path(directory)
++        e = int(d.name)
++        H = current["checkpoint"]["id"]
++        ctl = train_control()
++        # (1) after a live RED, never enqueue a trainer job before the pod trainer is back on H
++        if not (d / "TRAINING-JOB.json").exists() and (ctl is None or ctl.get("mode") == "train"):
++            prev = PG_STATE / str(e - 1)
++            pdec = _pg_read(prev / "DECISION.json") or {}
++            pfin = _pg_read(d.parent / str(e - 1) / "FINALIZED.json") or {}
++            pres = (pfin.get("payload") or pfin).get("result") or {}
++            if (pdec.get("decision") == "red" and pdec.get("head") == H and str(pres.get("reason", "")).startswith("promotion-gate-red")
++                    and not (prev / "TRAINER-RESTORED.json").exists()):
++                first = self.__dict__.setdefault("_v829i_restore_wait", {}).setdefault(e, time.time())
++                if time.time() - first < float(f["restore_wait_seconds"]):
++                    if self.__dict__.setdefault("_v829i_logged", set()).isdisjoint({("restore", e)}):
++                        self.__dict__["_v829i_logged"].add(("restore", e))
++                        print(json.dumps(dict(component="promotion-gate-v829i", epoch=e, status="waiting-trainer-restore", head=H[:12])), flush=True)
++                    return None
++                m = __import__("subnet.backend_jobs", fromlist=["signed"]).signed(opening, self.identity.id)
++                (d / "PROMOTION-GATE-RESTORE-PENDING.json").write_text(json.dumps(dict(
++                    version="sn120-promotion-gate-v829i", epoch=m.get("epoch"), status="no-update", head=H,
++                    reason="trainer not restored to head within restore_wait_seconds"), indent=2, sort_keys=True) + chr(10))
++                join_audit_population(self, directory)
++                return dict(status="no-update", checkpoint=current["checkpoint"], optimizer_step=current["optimizer_step"],
++                            checkpoint_authorization=current.get("checkpoint_authorization"), reason="promotion-gate-restore-pending")
++        cache = self.__dict__.setdefault("_v829i_results", {})
++        res = cache.get(str(d))
++        if res is None:
++            res = prior(self, directory, opening, dispatch, current, now)
++            if res is None:
++                return None
++        if res.get("status") != "updated":
++            return res
++        cache[str(d)] = res
++        C = res["checkpoint"]["id"]
++        dec = _pg_read(PG_STATE / str(e) / "DECISION.json") or {}
++        marker = dict(version="sn120-promotion-gate-v829i", epoch_index=e, head=H, candidate=C)
++        if dec.get("head") == H and dec.get("candidate") == C and dec.get("decision") in ("green", "red"):
++            ev = dec.get("evaluated") or {}
++            marker.update(decision=dec["decision"], reasons=dec.get("reasons"), paired_z=ev.get("z"), paired_tasks=ev.get("n"),
++                          candidate_cap_rate=ev.get("c_cap_rate"), head_pass=ev.get("h_pass"), candidate_pass=ev.get("c_pass"),
++                          red_credit=dec.get("red_credit", "zero"))
++            (d / "PROMOTION-GATE.json").write_text(json.dumps(marker, indent=2, sort_keys=True) + chr(10))
++            print(json.dumps(dict(component="promotion-gate-v829i", **{k: v for k, v in marker.items() if k != "reasons"})), flush=True)
++            cache.pop(str(d), None)
++            if dec["decision"] == "green":
++                return res
++            return dict(status="no-update", checkpoint=current["checkpoint"], optimizer_step=current["optimizer_step"],
++                        checkpoint_authorization=current.get("checkpoint_authorization"),
++                        reason="promotion-gate-red-e%d-%s-kept-%s" % (e, C[:8], H[:8]))
++        rp = d / "TRAINING-RESULT.json"
++        t0 = rp.stat().st_mtime if rp.exists() else time.time()
++        if time.time() - t0 > float(f["decision_timeout_seconds"]):
++            marker.update(decision="timeout-promote", reason="no gate decision within %ss" % f["decision_timeout_seconds"])
++            (d / "PROMOTION-GATE.json").write_text(json.dumps(marker, indent=2, sort_keys=True) + chr(10))
++            print(json.dumps(dict(component="promotion-gate-v829i", **marker)), flush=True)
++            cache.pop(str(d), None)
++            return res
++        if self.__dict__.setdefault("_v829i_logged", set()).isdisjoint({("hold", e)}):
++            self.__dict__["_v829i_logged"].add(("hold", e))
++            print(json.dumps(dict(component="promotion-gate-v829i", epoch=e, status="holding-for-gate", head=H[:12], candidate=C[:12])), flush=True)
++        return None
++
++    _training.__qualname__, _training.__module__ = prior.__qualname__, prior.__module__
++    Lifecycle._training = _training
++    return dict(v829i=True, flag=str(PG_FLAG), enabled_now=pg_flag() is not None)
++
++
+ def main():
+     spec = importlib.util.spec_from_file_location("affine_v828_launcher", V828_DIR / "mimo_v828_launcher.py")
+     v828 = importlib.util.module_from_spec(spec)
+@@ -766,6 +874,7 @@
+     v824, v828_meta = v828.compose(uid, parent, operator, Lifecycle, Coordinator, methods, module, workers)
+     v829_meta = install_v829(module, Lifecycle)
+     v829_meta['v829h'] = install_v829h_collection(Lifecycle)
++    v829_meta['v829i'] = install_v829i_promotion_gate(Lifecycle)
+     import subnet.distributed_roles as _job_queue  # the role/job queue (NOT the lifecycle mimo_coordinator)
+     v829_meta['v829d_verify_workers'] = install_v829d_verifier_roster(_job_queue.Coordinator)
+     v829_meta['v829d_roster_class'] = _job_queue.Coordinator.__module__ + '.' + _job_queue.Coordinator.__name__

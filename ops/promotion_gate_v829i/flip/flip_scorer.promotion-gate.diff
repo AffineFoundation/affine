@@ -1,0 +1,47 @@
+--- src/flip/flip_scorer.py	2026-10-26 13:41:02.000000000 -0600
++++ scorer/flip_scorer.py	2026-10-26 14:46:31.290173003 -0600
+@@ -228,6 +228,15 @@
+     return None, "no_training_from_probe_checkpoint"
+ 
+ 
++def gate_decision(epochs_root: Path, epoch: int) -> str | None:
++    """Promotion gate verdict recorded by the lifecycle (epochs/<e>/PROMOTION-GATE.json), or None."""
++    p = Path(epochs_root) / str(epoch) / "PROMOTION-GATE.json"
++    try:
++        return json.loads(p.read_text()).get("decision") if p.exists() else None
++    except Exception:
++        return None
++
++
+ CREDIT_MODES = ("surprise_asymmetric", "symmetric")
+ 
+ 
+@@ -624,6 +633,8 @@
+         hk2uid = hotkey_uid_map(Path(paths["live_scores"]))
+         uid_info = dict(source="legacy_previous_scores", n=len(hk2uid))
+     credit_rule = form.get("credit_epoch_rule") or "training_from_probe_checkpoint"
++    pg = dict(form.get("promotion_gate") or {})
++    red_zero = (pg.get("red_credit") or "zero") == "zero"
+     ckpt_of = {p["epoch"]: p.get("checkpoint_id") for p in pubs}
+     lineage = (load_finalized_lineage(Path(paths["epochs_root"]), min(ckpt_of), max(ckpt_of))
+                if ckpt_of and credit_rule == "training_from_probe_checkpoint" else {})
+@@ -657,6 +668,11 @@
+                     pt_parent = per_epoch_pt[e_parent]
+         else:
+             e_credit, credit_reason = e_from, "legacy_pair_first_epoch"
++        # 2026-10-26 promotion gate (Jacob pt682u): a RED epoch's candidate was discarded; its miners get ZERO flip credit
++        # (not a debit). RED epochs finalize no-update, so lineage already skips them; this is the explicit guard.
++        if e_credit is not None and red_zero and gate_decision(Path(paths["epochs_root"]), e_credit) == "red":
++            gaps.append(dict(epoch=e_from, epoch_to=e_to, credit_epoch=e_credit, reason="promotion_gate_red_zero_credit"))
++            e_credit, credit_reason = None, "promotion_gate_red_zero_credit"
+         disp = load_dispatch(Path(paths["epochs_root"]), e_credit) if e_credit is not None else []
+         if not disp:
+             gaps.append(dict(epoch=e_from, epoch_to=e_to, credit_epoch=e_credit,
+@@ -938,6 +954,7 @@
+             min_epoch=min_epoch,
+             window_pairs=wp,
+             credit_epoch_rule=credit_rule,
++            promotion_gate=dict(red_credit=(pg.get("red_credit") or "zero"), note=pg.get("note")),
+             share_mode=share_mode,
+             no_authenticity_guard=True,
+             sampling_verify_gate=dict(

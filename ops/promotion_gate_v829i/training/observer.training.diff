@@ -1,0 +1,33 @@
+--- observer.orig.py	2026-10-26 15:04:18.322637320 -0600
++++ observer.new.py	2026-10-26 15:04:18.458638400 -0600
+@@ -363,6 +363,21 @@
+     return result
+ 
+ 
++# 2026-10-26 (Jacob t685u): additive public `training` block, generated from the live signed lifecycle
++# config + trainer host config by promotion-gate/code/training_params.py. Merged only when it describes the
++# same epoch and head checkpoint as this projection; any problem simply omits the field.
++TRAINING_PARAMS = Path('/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/TRAINING-PARAMS.public.json')
++
++
++def _merge_training(result):
++    if not result.get('checkpoint') or not TRAINING_PARAMS.is_file():
++        return
++    params = json.loads(TRAINING_PARAMS.read_bytes())
++    if (type(params) is dict and params.get('epoch') == result.get('epoch')
++            and (params.get('head') or {}).get('checkpoint') == result['checkpoint']):
++        result['training'] = params
++
++
+ def publish(observer, *, now=None):
+     now = time.time() if now is None else now
+     error = None
+@@ -381,6 +396,8 @@
+             raise ValueError('MiMo checkpoint cursor advanced during projection')
+     except Exception as exc:
+         result = base_document(observer['authority'], now); error = type(exc).__name__
++    try: _merge_training(result)
++    except Exception: result.pop('training', None)
+     target = Path(observer['target']); atomic(target, result); target.chmod(0o644)
+     return dict(status=result['status'], accepting_submissions=result['accepting_submissions'],
+         epoch=result.get('epoch'), error=error)

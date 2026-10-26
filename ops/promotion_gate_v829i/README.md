@@ -1,0 +1,23 @@
+# SN120 checkpoint promotion gate (lifecycle host v8.2.9i) + public training params
+
+Approved by Jacob 2026-10-26 (pt682u design, t684u go-live, t685u training params). Live from epoch 152
+(3:04 PM CR, UTC-6).
+
+* `mimo_v829_train_gate_launcher.v829i.py` / `v829i.diff`: v829h + `install_v829i_promotion_gate`. Behind
+  `staged/PROMOTION-GATE.json` (`enabled: true`). GREEN -> promote; RED -> no-update onto the head
+  (`reason promotion-gate-red-...`); no decision after `decision_timeout_seconds` -> fail-open promote.
+* `gate_core.py`: private sample draw, commitment, paired z / cap-hit decision (z > -1, cap < 0.20, >= 200 tasks).
+* `gate_service.py` (`affine-promotion-gate.service`): per epoch draws the private sample, keeps the head generation
+  on the trainer pod, probes the candidate on sample minus batch on the probe pod, writes DECISION.json, restores the
+  trainer on RED, publishes commitments/verdicts to https://affine.io/gate/index.json (seed revealed 2 epochs later).
+* `pod/`: `gate_fetch.py` (probe pod checkpoint fetch), `trainer_keep.py` (trainer pod keep/restore).
+* `probe_daemon.gate.diff`: env-probe daemon yields the probe pod while the gate is busy.
+* `flip/`: flip scorer explicit RED = zero credit guard + lineage test (RED-then-GREEN, rollback composition).
+* `training/`: `training_params.py` (`affine-training-params.service`) builds the additive mining.json `training`
+  block and https://affine.io/training.json from the live signed lifecycle config, trainer host config, CURRENT and
+  the epoch manifest; `observer.training.diff` merges it into mining.json when epoch + head match.
+* `backtest/`: e125-e150 backtest (20 and 100 seeds).
+
+Revert: set `enabled: false` in `staged/PROMOTION-GATE.json` (instant, old behaviour); full revert
+`REVERT=1 FROM_EPOCH=<N> activate_v829i.sh` (back to release-v829h-collect1200-signed).
+Excluded: seeds, private samples, signed private operator configs, keys.

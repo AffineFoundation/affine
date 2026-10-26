@@ -1,0 +1,12 @@
+[Unit]
+Description=Affine SN120 public training params (training block for mining.json, /training.json; read-only from live signed configs)
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code
+ExecStart=/usr/bin/python3 -B /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/training_params.py --watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

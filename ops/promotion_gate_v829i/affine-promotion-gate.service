@@ -1,0 +1,16 @@
+# SN120 checkpoint promotion gate service (Jacob pt682u/t684u 2026-10-26). Reads lifecycle state, drives the probe pod for
+# candidate probes, writes gate decisions consumed by lifecycle release v8.2.9i. Mode from staged/PROMOTION-GATE.json.
+[Unit]
+Description=Affine SN120 promotion gate (private-sample candidate probe + promote/discard decision)
+After=network-online.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/gate_service.py
+Restart=always
+RestartSec=20
+UMask=0077
+StandardOutput=append:/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/gate.log
+StandardError=append:/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/gate.log
+[Install]
+WantedBy=default.target
