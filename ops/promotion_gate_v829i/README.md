@@ -29,3 +29,9 @@ Excluded: seeds, private samples, signed private operator configs, keys.
 * `site/site-metrics.js` (+ `site-metrics.gate.diff`): "Post-probe (gate)" segment and pre/post probe times + verdict in the
   Epoch timings chart; new "Promotion gate" panel (chart and table views, expand button).
 * `gate_service.py` no longer reveals the sample seed or indices; only the commitment is published.
+
+## First gated epoch (e152)
+RED: candidate 8b9d5816 vs head 189de412, paired z -1.129, cap-hit 11.8%, n 965 (35 batch tasks dropped). Lifecycle finalized
+no-update onto 189de412 (`promotion-gate-red-e152-8b9d5816-kept-189de412`), trainer pod restored in 30 s, e153 mines on 189de412.
+Fix shipped during e152: a vLLM replica died mid-run (inductor-cache race), so the gate now re-serves dead replicas and
+reruns partial candidate probes (`gate_reserve`, `gate_run_partial_retry`).

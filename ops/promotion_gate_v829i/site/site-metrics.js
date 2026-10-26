@@ -435,7 +435,8 @@
   const r=ents.find(g=>g.index===selectedIndex)||ents[ents.length-1];
   setReading(p,r?(r.verdict==='promoted'?'GREEN':'RED'):'—',r?'E'+r.index+' · z '+fmt(r.z,2)+' · cap '+pct(r.candidate_cap_rate,1):'',(fin(c.total)?fmt(c.promoted,0)+' promoted · '+fmt(c.rejected,0)+' rejected':'')+(curTxt?' · now '+curTxt:''));
   if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
-  if(p.view===1){p.svg.style.display='none';empty(p,null);
+  /* Grid tiles hide view buttons: the expanded tile (chart-expand.js) shows the full verdict table. */
+  if(p.view===1||p.section.classList.contains('cx-open')){p.svg.style.display='none';empty(p,null);
    const t=h('table','sp-table');t.innerHTML='<thead><tr><th>Epoch</th><th>Verdict</th><th>H → C</th><th>z</th><th>Cap-hit</th><th>n</th><th>Decided</th><th>Reason</th></tr></thead>';const tb=h('tbody');
    for(const g of ents.slice().reverse()){const tr=h('tr');['E'+g.epoch,g.verdict==='promoted'?'GREEN promoted':'RED rejected',String(g.head).slice(0,8)+' → '+String(g.candidate).slice(0,8),fmt(g.z,2),pct(g.candidate_cap_rate,1),fmt(g.n,0),utc(g.timestamps?.decided_at),g.reason||'—'].forEach(v=>tr.append(h('td','',v)));tb.append(tr);}
    t.append(tb);plot.append(t);return;}

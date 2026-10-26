@@ -155,7 +155,14 @@ def fetch_and_serve(C, f, tl):
         return 'fetching'
     tl.setdefault('fetched', time.time())
     if st.get('served') != tl['candidate']:
-        if not st.get('serve_procs') or st.get('serve_ckpt') != tl['candidate']:
+        # a replica that died after start (e.g. vLLM inductor-cache race) leaves serve_procs < replicas forever: re-serve
+        dead = (st.get('serve_ckpt') == tl['candidate'] and st.get('serve_procs') and st.get('serve_procs') < st.get('replicas', 8)
+                and time.time() - tl.get('serve_start', 0) > 150)
+        if not st.get('serve_procs') or st.get('serve_ckpt') != tl['candidate'] or dead:
+            if dead:
+                tl['reserves'] = tl.get('reserves', 0) + 1
+                tl.pop('served', None)
+                log(event='gate_reserve', candidate=tl['candidate'][:12], serve_procs=st.get('serve_procs'), reserves=tl['reserves'])
             podctl('serve', tl['candidate'], str(f['gmu'])); tl['serve_start'] = time.time()
         return 'serving'
     tl.setdefault('served', time.time())
@@ -163,10 +170,20 @@ def fetch_and_serve(C, f, tl):
 
 
 def run_candidate(e, C, tasks, seed, f, tl):
-    name = 'gate-e%06d-%s' % (e, C[:12])
+    att = int(tl.get('run_attempt', 0))
+    name = 'gate-e%06d-%s' % (e, C[:12]) + ('' if att == 0 else '-r%d' % att)
     st = podctl('status'); r = st['runs'].get(name, {})
     if r.get('result'):
         res = json.loads(pod('cat %s/runs/%s/result.json' % (PODD, name)))
+        got = len(((res.get('envs') or {}).get(f['env']) or {}).get('per_task') or {})
+        if got < 0.9 * len(tasks) and att < 3:
+            # partial run (replica died mid-run): discard and rerun the full candidate probe on fresh replicas
+            log(event='gate_run_partial_retry', epoch=e, candidate=C[:12], got=got, need=len(tasks), attempt=att + 1)
+            fresh = tl.get('serve_start', 0) > tl.get('run_start', 0)  # already re-served after the failed run
+            tl['run_attempt'] = att + 1; tl.pop('run_start', None)
+            if not fresh:
+                tl.pop('served', None); podctl('serve', C, str(f['gmu'])); tl['serve_start'] = time.time()
+            return None
         return res
     if not r.get('running') and 'run_start' not in tl:
         plan = dict(run_name=name, checkpoint_id=C, seed=hashlib.sha256(('%s:%s:gate-run' % (seed, C)).encode()).hexdigest(),
