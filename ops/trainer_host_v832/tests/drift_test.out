@@ -1,0 +1,74 @@
+{"sample_log_row": {"component": "trainer-host-v832", "event": "drift-control", "version": "v832-drift-control-v1", "optimizer_step": 1, "fresh_moments_at_start": true, "steps_since_fresh_before": 0, "lr_factor": 0.5, "effective_lr": 5e-07, "restart_lr_warm_steps": 3, "restart_lr_scale": 0.5, "drift_cap_rel": 3e-06, "pre_cap_rel": 8.532144647425132e-06, "post_cap_rel": 1.6701842846167487e-06, "pre_cap_dW": 0.0002300327404674847, "post_cap_dW": 4.5029366466737156e-05, "weight_norm": 26.96071737800472, "tensors": 5, "tensors_capped": 4, "tensor_cap_scale_min": 0.0017782617433928177, "global_scale": 1.0, "min_factor": 0.00177469543017664, "cap_fired": true, "max_tensor_rel_pre": 0.0016853536950538577, "max_tensor_rel_post": 2.9950297826678956e-06, "zero_norm_tensors": 0, "projected_changed_elements_precap": 11250, "seconds": 0.004817443999854731}}
+{
+ "off_bitwise_equal_to_v831": true,
+ "restart_lr": {
+  "first_step_update_ratio": 0.4997865475168404,
+  "factors": [
+   0.5,
+   0.5,
+   0.5,
+   1.0,
+   1.0
+  ],
+  "fresh_detected": true,
+  "lr_restored": true
+ },
+ "warm_not_scaled": {
+  "fresh_detected": false,
+  "lr_factor": 1.0
+ },
+ "cap_cold": {
+  "pre_cap_rel": 8.532144647425132e-06,
+  "post_cap_rel": 7.142594608316159e-06,
+  "measured_global_rel": 7.142594608316159e-06,
+  "max_tensor_rel": 1.9990102392074264e-05,
+  "tensors_capped": 3,
+  "global_scale": 1.0,
+  "cap_fired": true,
+  "bf16_projection_ok": true,
+  "moments_equal_uncapped_twin": true,
+  "lr_factor": 0.5,
+  "bound_ok": true
+ },
+ "cap_warm3": {
+  "pre_cap_rel": 4.9513586265784805e-06,
+  "post_cap_rel": 4.760543659292955e-06,
+  "measured_global_rel": 4.760543659292968e-06,
+  "max_tensor_rel": 1.999170828647303e-05,
+  "tensors_capped": 2,
+  "global_scale": 1.0,
+  "cap_fired": true,
+  "bf16_projection_ok": true,
+  "moments_equal_uncapped_twin": null,
+  "lr_factor": 0.5,
+  "bound_ok": true
+ },
+ "cap_global": {
+  "pre_cap_rel": 8.532144647425132e-06,
+  "post_cap_rel": 1.6701842846167487e-06,
+  "measured_global_rel": 1.670184284616749e-06,
+  "max_tensor_rel": 2.9950297826678956e-06,
+  "global_scale": 1.0,
+  "tensors_capped": 4,
+  "bound_ok": true
+ },
+ "deterministic": true,
+ "loose_cap_noop": {
+  "cap_fired": false,
+  "bitwise": true
+ },
+ "settings_validation": {
+  "off_default": [
+   null,
+   0,
+   1.0
+  ],
+  "prod": [
+   2e-05,
+   3,
+   0.5
+  ],
+  "accepted_bad": []
+ }
+}
+ALL PASS

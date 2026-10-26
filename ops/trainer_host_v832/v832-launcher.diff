@@ -1,0 +1,206 @@
+--- base/mimo_host_trainer_v83.py	2026-10-25 21:26:51.000000000 -0600
++++ stage/mimo_host_trainer_v83.py	2026-10-26 13:12:52.073597985 -0600
+@@ -44,9 +44,9 @@
+ import argparse, ast, hashlib, importlib.util, inspect, json, os, runpy, textwrap
+ from pathlib import Path
+ 
+-VERSION = 'affine-mimo-trainer-host-v831'
++VERSION = 'affine-mimo-trainer-host-v832'
+ TRITON_CACHE = '/workspace/affine-mimo-trainer-prod/triton-cache-v831'
+-SCOPE = 'sn120-mimo-trainer-host-overrides-v8.3.1'
++SCOPE = 'sn120-mimo-trainer-host-overrides-v8.3.2'
+ P = Path(__file__).resolve().parent
+ HOST_FILES = ('mimo_host_trainer_v83.py', 'v83_dp.py', 'v83_fast_kernels.py', 'v83_kernels_policy.py', 'math_levels.json', 'v8210_optimizer_offpath.py', 'v8211_batched.py', 'v824_optimizer_fast.py', 'v824_staging_fast.py',
+               'v824_publication_fast.py', 'patched/mimo_grpo.transaction.py', 'patched/mimo_grpo.publication.py',
+@@ -61,6 +61,147 @@
+                'part_concurrency', 'shard_concurrency', 'optimizer_step_threads', 'drop_unresolved',
+                'optimizer_persistence', 'loss_agg_mode', 'loss_scale',
+                'dp_world', 'dp_port', 'dp_token_budget', 'dp_max_rows', 'training_kernels'}
++# v8.3.2 optimizer drift control (Jacob 2026-10-26 13:06 CR). OPTIONAL engine keys; absent / None / 0 / 1.0 = OFF (v8.3.1 behaviour).
++DRIFT_KEYS = {'drift_cap_rel', 'restart_lr_warm_steps', 'restart_lr_scale'}
++DRIFT_FP32_MARGIN = 1e-3
++DRIFT_OFF = dict(drift_cap_rel=None, restart_lr_warm_steps=0, restart_lr_scale=1.0)
++
++
++def drift_settings(engine):
++    """-> (drift_cap_rel or None, restart_lr_warm_steps, restart_lr_scale), validated; defaults are OFF."""
++    cap = engine.get('drift_cap_rel', DRIFT_OFF['drift_cap_rel'])
++    warm = engine.get('restart_lr_warm_steps', DRIFT_OFF['restart_lr_warm_steps'])
++    scale = engine.get('restart_lr_scale', DRIFT_OFF['restart_lr_scale'])
++    if cap is not None and not (type(cap) is float and 0 < cap <= 1):
++        raise ValueError('drift_cap_rel must be None or a float in (0, 1]')
++    if not (type(warm) is int and 0 <= warm <= 100):
++        raise ValueError('restart_lr_warm_steps must be an int in [0, 100]')
++    if not (type(scale) is float and 0 < scale <= 1):
++        raise ValueError('restart_lr_scale must be a float in (0, 1]')
++    return cap, warm, scale
++
++
++def _fresh_moments(opt):
++    """True if every AdamW state is absent or has all-zero moments (new optimizer or fresh-moments cold recovery)."""
++    for name, _ in opt.parameters:
++        state = opt.optimizer.state.get(opt.masters[name])
++        if state and (bool(state['exp_avg'].any()) or bool(state['exp_avg_sq'].any())):
++            return False
++    return True
++
++
++def controlled_step(opt, gradients, inner, cap, warm, scale, emit=None):
++    """v8.3.2: ONE AdamW step (inner = the unchanged v8.3.1 pipelined step) with
++    (a) restart LR: lr x scale for the first `warm` steps after fresh optimizer moments (detected once per optimizer object);
++    (b) drift cap: after the step, per tensor scale the fp32 master update so ||dW_t||/||W_t|| <= cap, then one global factor so
++        ||dW||/||W|| <= cap over all tensors; the bf16 parameters are re-projected from the capped masters.
++    Runs only on the worker (rank 0, which owns the single CPU AdamW); helper ranks receive these exact bf16 weights by
++    dist.broadcast(src=0) at the next job, so all ranks are identical by construction. Adam moments are not modified."""
++    import math, time, torch
++    t0 = time.monotonic()
++    if not getattr(opt, '_v832_checked', False):
++        opt._v832_fresh_at_start = _fresh_moments(opt)
++        opt._v832_since_fresh = 0 if opt._v832_fresh_at_start else None
++        opt._v832_checked = True
++    since = opt._v832_since_fresh
++    lr_factor = scale if (since is not None and since < warm) else 1.0
++    old = {name: opt.masters[name].detach().clone() for name, _ in opt.parameters} if cap else None
++    groups = opt.optimizer.param_groups
++    saved = [g['lr'] for g in groups]
++    try:
++        if lr_factor != 1.0:
++            for g in groups:
++                g['lr'] = g['lr'] * lr_factor
++        result = inner(opt, gradients)
++    finally:
++        for g, lr in zip(groups, saved):
++            g['lr'] = lr
++    info = dict(version='v832-drift-control-v1', optimizer_step=opt.global_step, fresh_moments_at_start=opt._v832_fresh_at_start,
++                steps_since_fresh_before=since, lr_factor=lr_factor, effective_lr=saved[0] * lr_factor if saved else None,
++                restart_lr_warm_steps=warm, restart_lr_scale=scale, drift_cap_rel=cap)
++    if cap:
++        previous_threads = torch.get_num_threads()
++        torch.set_num_threads(max(previous_threads, getattr(opt, 'step_threads', 1)))
++        try:
++            result, info = _drift_cap(opt, result, info, old, cap)
++        finally:
++            torch.set_num_threads(previous_threads)
++    if since is not None:
++        opt._v832_since_fresh = since + 1
++    info['seconds'] = time.monotonic() - t0
++    result = dict(result, drift_control=info)
++    (emit or (lambda row: print(json.dumps(row, sort_keys=True), flush=True)))(dict(component='trainer-host-v832', event='drift-control', **info))
++    return result
++
++
++def _drift_cap(opt, result, info, old, cap):
++    import math, torch
++    if True:
++        f64 = torch.float64
++        rows = []
++        for name, _ in opt.parameters:
++            o = old[name]; m = opt.masters[name].detach()
++            dn = float(torch.linalg.vector_norm(m - o, dtype=f64)); wn = float(torch.linalg.vector_norm(o, dtype=f64))
++            rows.append((name, dn, wn))
++        W = math.sqrt(math.fsum(wn * wn for _, _, wn in rows))
++        pre = math.sqrt(math.fsum(dn * dn for _, dn, _ in rows)) / W
++        target = cap * (1.0 - DRIFT_FP32_MARGIN)   # fp32 rounding of old + f*(new-old) must not push a tensor past `cap`
++        per = [min(1.0, target * wn / dn) if dn > 0 and wn > 0 else 1.0 for _, dn, wn in rows]
++        mid = math.sqrt(math.fsum((s * dn) ** 2 for s, (_, dn, _) in zip(per, rows))) / W
++        gscale = min(1.0, target / mid) if mid > 0 else 1.0
++        # (sum dn_t^2 s_t^2)/(sum W_t^2) <= cap^2 once every tensor is capped, so the global factor only binds through fp32 rounding;
++        # it is still applied and re-measured so the logged global bound is a measured fact, not an assumption.
++        params = dict(opt.parameters)
++        def apply(name, f):
++            o = old[name]; m = opt.masters[name]; parameter = params[name]
++            m.copy_(o + (opt._v832_new[name] - o) * f)
++            parameter.copy_(m.detach().to(device=parameter.device, dtype=parameter.dtype))
++            return float(torch.linalg.vector_norm(m.detach() - o, dtype=f64))
++        factors = {}; post = {}; capped = 0
++        with torch.no_grad():
++            opt._v832_new = {}
++            for s, (name, dn, wn) in zip(per, rows):
++                f = s * gscale; factors[name] = f; post[name] = dn
++                capped += s < 1.0
++                if f < 1.0:
++                    opt._v832_new[name] = opt.masters[name].detach().clone()
++                    post[name] = apply(name, f)
++                    for _ in range(4):                     # exact per-tensor bound despite fp32 rounding
++                        if wn == 0 or post[name] / wn <= cap:
++                            break
++                        factors[name] *= cap / (post[name] / wn) * (1.0 - DRIFT_FP32_MARGIN)
++                        post[name] = apply(name, factors[name])
++            post_rel = math.sqrt(math.fsum(v * v for v in post.values())) / W
++            repass = 1.0
++            if post_rel > cap:
++                repass = cap / post_rel * (1.0 - DRIFT_FP32_MARGIN)
++                for name, dn, wn in rows:
++                    if name not in opt._v832_new:
++                        opt._v832_new[name] = opt.masters[name].detach().clone()
++                    factors[name] *= repass
++                    post[name] = apply(name, factors[name])
++                post_rel = math.sqrt(math.fsum(v * v for v in post.values())) / W
++            del opt._v832_new
++            changed = 0
++            for name, parameter in opt.parameters:
++                changed += int((opt.masters[name].detach().to(parameter.dtype) != old[name].to(parameter.dtype)).sum())
++                old[name] = None
++        max_post = max((post[n] / wn for n, _, wn in rows if wn > 0), default=0.0)
++        max_pre = max((dn / wn for _, dn, wn in rows if wn > 0), default=0.0)
++        if post_rel > cap or max_post > cap:
++            opt.failed = True
++            raise ValueError('v8.3.2 drift cap bound not met')
++        if not all(torch.isfinite(opt.masters[n]).all() for n, _ in opt.parameters):
++            opt.failed = True
++            raise ValueError('v8.3.2 drift cap produced a non-finite master')
++        info.update(pre_cap_rel=pre, post_cap_rel=post_rel, pre_cap_dW=pre * W, post_cap_dW=post_rel * W, weight_norm=W,
++                    tensors=len(rows), tensors_capped=int(capped), tensor_cap_scale_min=min(per), global_scale=gscale * repass,
++                    min_factor=min(factors.values()), cap_fired=bool(capped or gscale * repass < 1.0),
++                    max_tensor_rel_pre=max_pre, max_tensor_rel_post=max_post,
++                    zero_norm_tensors=sum(1 for _, _, wn in rows if wn == 0),
++                    projected_changed_elements_precap=result.get('projected_changed_elements'))
++        result = dict(result, projected_changed_elements=changed)
++    return result, info
+ LOSS_AGG_MODES = ('config', 'seq-mean-token-mean')
+ 
+ 
+@@ -136,7 +277,7 @@
+                          'engine', 'admission'} and config['version'] == VERSION and config['scope'] == SCOPE,
+          'exact v8.3 trainer host configuration')
+     need(set(config['host_files']) == set(HOST_FILES) and set(config['original_methods']) == set(SITES)
+-         and set(config['engine']) == ENGINE_KEYS and type(config['engine']['drop_unresolved']) is bool
++         and ENGINE_KEYS <= set(config['engine']) <= ENGINE_KEYS | DRIFT_KEYS and type(config['engine']['drop_unresolved']) is bool
+          and config['engine']['optimizer_persistence'] in PERSISTENCE and config['engine']['fast_stage'] is True
+          and config['engine']['loss_agg_mode'] in LOSS_AGG_MODES and type(config['engine']['loss_scale']) is float
+          and 0 < config['engine']['loss_scale'] <= 1024
+@@ -148,6 +289,7 @@
+          and type(config['engine']['dp_max_rows']) is int and 1 <= config['engine']['dp_max_rows'] <= 1024
+          and type(config['engine']['training_kernels']) is dict,
+          'exact v8.3 host inventory')
++    drift_settings(config['engine'])
+     for name, digest_ in config['host_files'].items():
+         path = P / name
+         need(path.is_file() and not path.is_symlink() and file_sha(path) == digest_, 'exact admitted host file ' + name)
+@@ -264,6 +406,7 @@
+ 
+     pipelined = fast_opt.PipelinedCPUAdamW.step
+     threads = engine['optimizer_step_threads']
++    drift_cap, restart_warm, restart_scale = drift_settings(engine)
+ 
+     def step(self, gradients):
+         if not hasattr(self, '_pinned'):
+@@ -273,7 +416,9 @@
+             # pinned host staging only when CUDA exists (production); plain host buffers otherwise
+             self._pinned = [torch.empty(peak, dtype=torch.float32, pin_memory=torch.cuda.is_available()) for _ in range(2)]
+             self._copy_stream = None
+-        return pipelined(self, gradients)
++        if drift_cap is None and (restart_warm == 0 or restart_scale == 1.0):
++            return pipelined(self, gradients)      # flags OFF: exactly the v8.3.1 step
++        return controlled_step(self, gradients, pipelined, drift_cap, restart_warm, restart_scale)
+     step.__qualname__ = optimizer.CPUAdamW.step.__qualname__
+     optimizer.CPUAdamW.step = step
+     if engine['optimizer_persistence'] == 'none':
+@@ -309,6 +454,7 @@
+                 engine=engine, drop_unresolved=batched.DROP_UNRESOLVED,
+                 loss_agg_mode=batched.LOSS_AGG_MODE, loss_scale=batched.LOSS_SCALE, math_levels=len(batched.MATH_LEVELS),
+                 drop_policy=batched.DROP_POLICY, optimizer_persistence=engine['optimizer_persistence'],
++                drift_control=dict(drift_cap_rel=drift_cap, restart_lr_warm_steps=restart_warm, restart_lr_scale=restart_scale),
+                 sites=sorted(SITES))
+ 
+ 
