@@ -1,0 +1,72 @@
+--- /home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/release-v829g-auditseconds-signed/mimo_v829_train_gate_launcher.py	2026-10-25 20:25:28.034996200 +0000
++++ /home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/release-v829h-collect1200-signed/mimo_v829_train_gate_launcher.py	2026-10-26 19:42:30.883160055 +0000
+@@ -34,6 +34,14 @@
+   - still-leased jobs of a non-newest epoch are left to finish (a verifier cannot be pre-empted) but
+     count against the 2/2 capacity, so newest-epoch jobs are not queued behind them and left to age.
+ Trainer job lifetime (14400), gate, train control, bans, TOPLOC, nonces, roster: unchanged.
++
++v8.2.9h (Jacob 2026-10-26 13:38 CR "Cut gather to 20 minutes"): miner collection window
++(lifecycle collection_seconds, signed manifest deadline = start + collection_seconds) 1800 s ->
++COLLECTION_SECONDS. Same epoch-BOUNDARY pattern as the v8.2.4 max_tasks 128<->256 switch: CURRENT.json
++is re-stamped to COLLECTION_SECONDS only while the current epoch has no PLAN yet; an in-flight epoch
++keeps its planned window. Only values in V829H_COLLECTION_SECONDS are accepted (fail closed otherwise).
++A sibling release with COLLECTION_SECONDS = 1800 is the one-step revert. max_tasks (256), trainer,
++gate, sidecar, bans, TOPLOC, nonces, roster: unchanged.
+ """
+ from __future__ import annotations
+ import argparse, ast, importlib.util, json, sys, textwrap, time
+@@ -61,6 +69,9 @@
+ TRAIN_JOB_SECONDS = 14400
+ # v8.2.9g (Jacob 2026-10-25): expensive-audit (verify role) job lifetime cap (was 1800 in v829d).
+ AUDIT_JOB_SECONDS = 7200
++# v8.2.9h (Jacob 2026-10-26): miner collection window, switched only at an epoch boundary.
++COLLECTION_SECONDS = 1200
++V829H_COLLECTION_SECONDS = (1200, 1800)
+ 
+ 
+ def need(ok, why):
+@@ -707,6 +718,36 @@
+     return sorted(V829D_VERIFY_WORKERS)
+ 
+ 
++def install_v829h_collection(Lifecycle):
++    """v8.2.9h: boundary re-stamp of CURRENT.collection_seconds (pattern of v8.2.4 max_tasks)."""
++    need(COLLECTION_SECONDS in V829H_COLLECTION_SECONDS, "v829h collection window")
++    from subnet.controller import save_manifest
++    prior_current = Lifecycle._current
++
++    def _current(self):
++        target = COLLECTION_SECONDS
++        path = self.root / 'CURRENT.json'
++        if path.is_file() and not path.is_symlink():
++            current = json.loads(path.read_bytes())
++            stamped = current.get('collection_seconds')
++            if stamped in V829H_COLLECTION_SECONDS and stamped != target:
++                planned = (self.root / 'epochs' / str(current['epoch_index']) / 'PLAN.json').exists()
++                if planned:
++                    self.collection_seconds = stamped              # in-flight epoch keeps its planned window
++                else:
++                    save_manifest(path, dict(current, collection_seconds=target))  # epoch-boundary re-stamp
++                    print(json.dumps(dict(component="collection-seconds-v829h", epoch_index=current['epoch_index'],
++                                          previous=stamped, collection_seconds=target)), flush=True)
++                    self.collection_seconds = target
++            elif stamped == target:
++                self.collection_seconds = target
++        return prior_current(self)
++
++    _current.__qualname__, _current.__module__ = prior_current.__qualname__, prior_current.__module__
++    Lifecycle._current = _current
++    return dict(v829h=True, collection_seconds=COLLECTION_SECONDS, accepted=list(V829H_COLLECTION_SECONDS))
++
++
+ def main():
+     spec = importlib.util.spec_from_file_location("affine_v828_launcher", V828_DIR / "mimo_v828_launcher.py")
+     v828 = importlib.util.module_from_spec(spec)
+@@ -724,6 +765,7 @@
+         v828._paths.private_json(args.v828_operator_config))
+     v824, v828_meta = v828.compose(uid, parent, operator, Lifecycle, Coordinator, methods, module, workers)
+     v829_meta = install_v829(module, Lifecycle)
++    v829_meta['v829h'] = install_v829h_collection(Lifecycle)
+     import subnet.distributed_roles as _job_queue  # the role/job queue (NOT the lifecycle mimo_coordinator)
+     v829_meta['v829d_verify_workers'] = install_v829d_verifier_roster(_job_queue.Coordinator)
+     v829_meta['v829d_roster_class'] = _job_queue.Coordinator.__module__ + '.' + _job_queue.Coordinator.__name__

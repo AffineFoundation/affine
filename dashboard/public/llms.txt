@@ -485,8 +485,8 @@ Its optimizer state stays durable locally; publication uploads the new model
 and reports, not the optimizer. A retry after publication recovers the original
 transaction instead of applying the same gradient update again.
 
-Collection initially targets 30 minutes; the target is a complete epoch in under
-one hour. Actual signed start/deadline and measured stage times are authoritative,
+Collection targets 20 minutes from epoch e152 (30 minutes through e151); the
+target is a complete epoch in under one hour. Actual signed start/deadline and measured stage times are authoritative,
 not a service-level guarantee in this guide. Audits have independent deadlines
 and must not hold back training or checkpoint publication. A fresh model download
 can consume part of the first collection window; the nine-group cap does not
