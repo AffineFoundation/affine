@@ -116,7 +116,10 @@
       ['Net credit', '--incentive'],
     ]);
 
-    const W = 640, H = 260;
+    /* 640x260 in a tile; sized to the plot area when the tile is expanded (chart-expand.js). */
+    const host = svg.closest('.cx-open') && svg.parentElement, hr = host && host.getBoundingClientRect();
+    const hk = hr && hr.width >= 50 && hr.height >= 50 ? Math.max(1, Math.min(1.6, hr.width / 800)) : 0;
+    const W = hk ? Math.round(hr.width / hk) : 640, H = hk ? Math.round(hr.height / hk) : 260;
     const L = 48, R = W - 16, T = 16, B = H - 36;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 
@@ -139,7 +142,7 @@
 
     const slot = (R - L) / Math.max(n, 1);
     const gap = 1;
-    const bw = Math.max(2, Math.min(12, (slot * 0.84 - 2 * gap) / 3));
+    const bw = Math.max(2, Math.min(hk ? 18 : 12, (slot * 0.84 - 2 * gap) / 3));
     rows.forEach((r, i) => {
       const cx = x(i);
       const hFp = Math.max(0, B - yBar(r.fail_to_pass));
@@ -167,7 +170,7 @@
     if (d) svg.append(el('path', { d, class: 'plot-line', stroke: 'var(--incentive)', fill: 'none', 'stroke-width': 2 }));
 
     rows.forEach((r, i) => {
-      if (i === 0 || i === n - 1 || n <= 10 || i % Math.ceil(n / 8) === 0) {
+      if (i === 0 || i === n - 1 || n <= 10 || i % Math.ceil(n / Math.max(4, Math.round(8 * W / 640))) === 0) {
         svg.append(el('text', { x: x(i), y: B + 18, 'text-anchor': 'middle' }, 'E' + r.epoch));
       }
     });
@@ -279,9 +282,11 @@
     throw lastErr || new Error('flip scores unavailable');
   }
 
+  let lastShadow = null;
   async function refresh() {
     try {
       const shadow = await loadFlipScores();
+      lastShadow = shadow;
       drawCredit(shadow);
       drawShare(shadow);
       const conn = $('connection');
@@ -310,4 +315,5 @@
   refresh();
   setInterval(refresh, 90_000);
   window.addEventListener('affine:theme', refresh);
+  window.addEventListener('affine:chart-resize', () => { if (lastShadow) drawCredit(lastShadow); });
 })();

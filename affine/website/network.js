@@ -1163,6 +1163,7 @@
   const resizeObserver='ResizeObserver' in window?new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(render,100);}):null;
   if(resizeObserver)resizeObserver.observe($('main'));
   else window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(render,100);});
+  window.addEventListener('affine:chart-resize',()=>{clearTimeout(resizeTimer);if(data)render();});
   document.fonts?.ready.then(()=>{if(data)render();});
   async function refresh() {
     try {

@@ -1,0 +1,30 @@
+/* Chart expand (chart-expand.js), 2026-10-26. */
+#main>section{position:relative}
+.cx-btn{position:absolute;right:8px;bottom:8px;z-index:3;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:1px solid transparent;border-radius:3px;background:transparent;color:var(--muted);cursor:pointer;opacity:.45;transition:opacity .15s,border-color .15s,background .15s}
+.cx-btn svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+#main>section:hover>.cx-btn,.cx-btn:focus-visible{opacity:1}
+.cx-btn:hover,.cx-btn:focus-visible{border-color:var(--line);background:var(--surface);color:var(--ink);outline:none}
+@media(hover:none){.cx-btn{opacity:.7}}
+.cx-holder{width:100%;min-width:0}
+.cx-backdrop{position:fixed;inset:0;z-index:1000;background:color-mix(in srgb,var(--bg) 78%,transparent);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.cx-backdrop[hidden]{display:none}
+html.cx-lock{overflow:hidden}
+html.cx-lock .tile-explain{z-index:1002}
+#main>section.cx-open{position:fixed!important;z-index:1001;left:50%;top:50%;width:min(90vw,1600px)!important;height:min(80vh,1000px)!important;aspect-ratio:auto!important;transform:translate(-50%,-50%);padding:18px 22px!important;gap:12px;box-shadow:0 18px 60px #0009;overflow:visible!important}
+#main>section.cx-open>.section-heading{height:28px;padding-right:40px}
+#main>section.cx-open h1,#main>section.cx-open h2{font-size:18px!important;line-height:28px!important}
+#main>section.cx-open .section-heading .reading{font-size:18px!important;line-height:28px}
+#main>section.cx-open>.legend{height:20px;font-size:12px!important;line-height:20px!important}
+#main>section.cx-open>.legend .swatch{width:10px;height:10px}
+#main>section.cx-open>.cx-btn{top:16px;right:16px;bottom:auto;width:32px;height:32px;opacity:1;border-color:var(--line);color:var(--ink)}
+#main>section.cx-open>.cx-btn svg{width:13px;height:13px}
+#main>section.cx-open>.chart-wrap svg text,#main>section.cx-open>.heatmap-wrap svg text{font-size:13px}
+#main>section.cx-open>.chart-wrap,#main>section.cx-open>.sp-plot{overflow:visible}
+#main>section.cx-open>.sp-plot svg{overflow:hidden!important}
+:root[data-theme="light"] #main>section.cx-open{box-shadow:0 18px 60px #0002}
+@media(max-width:699px){
+ #main>section.cx-open{left:0;top:0;width:100vw!important;height:100vh!important;height:100dvh!important;transform:none;border-radius:0;border:0!important;padding:14px 14px calc(14px + env(safe-area-inset-bottom))!important}
+ #main>section.cx-open>.cx-btn{top:10px;right:10px}
+ #main>section.cx-open h1,#main>section.cx-open h2,#main>section.cx-open .section-heading .reading{font-size:16px!important}
+}
+@media(prefers-reduced-motion:no-preference){#main>section.cx-open{animation:cx-in .16s ease-out}@keyframes cx-in{from{opacity:0}to{opacity:1}}}

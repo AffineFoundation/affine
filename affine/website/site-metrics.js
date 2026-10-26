@@ -11,6 +11,8 @@
  const ago=t=>{if(!fin(t))return '—';const s=Math.max(0,Date.now()/1000-t);return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+' min ago':(s/3600).toFixed(1)+' h ago';};
  const el=(tag,attrs={},text)=>{const n=document.createElementNS(ns,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n;};
  const h=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
+ /* Chart box in viewBox units: 480x230 in a tile; sized to the plot area when the tile is expanded (chart-expand.js). */
+ const box=(svg,W=480,H=230)=>{const host=svg.closest('.cx-open')&&svg.parentElement;const r=host&&host.getBoundingClientRect();if(!r||r.width<50||r.height<50)return{W,H};const k=Math.max(1,Math.min(1.6,r.width/640));return{W:Math.round(r.width/k),H:Math.round(r.height/k)};};
 
  function panel(id,title,color,views,legend){
   const s=document.createElement('section');s.className='site-panel';s.id='panel-'+id;s.setAttribute('aria-labelledby','sp-'+id);
@@ -65,7 +67,7 @@
 
  /* Generic epoch chart: stacked bars and/or a line, x = epoch label. */
  function chart(p,rows,series,opts={}){
-  const svg=p.svg;svg.replaceChildren();svg.setAttribute('viewBox','0 0 480 230');p.tip.hidden=true;
+  const svg=p.svg,{W,H}=box(p.svg);svg.replaceChildren();svg.setAttribute('viewBox','0 0 '+W+' '+H);p.tip.hidden=true;
   const vals=rows.map(r=>series.map(s=>s.get(r)));
   const usable=vals.some(v=>v.some(fin));empty(p,usable?null:(opts.emptyText||'No measurements yet.'));if(!usable)return;
   const stackTotals=vals.map(v=>opts.stacked?v.reduce((a,b)=>a+(fin(b)?b:0),0):Math.max(...v.filter(fin)));
@@ -73,7 +75,7 @@
   let hi=opts.max!==undefined?opts.max:Math.max(...stackTotals.filter(fin));
   if(hi===lo)hi=lo+1;
   if(opts.max===undefined){const span=hi-lo,mag=10**Math.floor(Math.log10(span)),step=[1,2,2.5,5,10].map(n=>n*mag).find(n=>n*4>=span)||mag*10;hi=Math.ceil(hi/step)*step;if(lo<0)lo=Math.floor(lo/step)*step;}
-  const L=46,R=470,T=12,B=190,w=R-L,n=rows.length,x=i=>L+w*(i+.5)/n,y=v=>B-(B-T)*(v-lo)/(hi-lo);
+  const L=46,R=W-10,T=12,B=H-40,w=R-L,n=rows.length,x=i=>L+w*(i+.5)/n,y=v=>B-(B-T)*(v-lo)/(hi-lo);
   for(const t of [lo,(lo+hi)/2,hi]){svg.append(el('line',{x1:L,x2:R,y1:y(t),y2:y(t),class:'sp-guide'}),el('text',{x:L-8,y:y(t)+4,'text-anchor':'end'},opts.tick?opts.tick(t):fmt(t,3)));}
   if(lo<0)svg.append(el('line',{x1:L,x2:R,y1:y(0),y2:y(0),class:'sp-zero'}));
   const selected=rows.findIndex(r=>r.index===selectedIndex);
@@ -90,14 +92,14 @@
    svg.append(el('path',{d,class:'sp-line',stroke:'var('+s.color+')'}));
   });
   const label=opts.label||(r=>'E'+r.index);
-  const every=Math.max(1,Math.ceil(n/8));
+  const every=Math.max(1,Math.ceil(n/Math.max(4,Math.round(8*W/480))));
   rows.forEach((r,i)=>{if(i===0||i===n-1||i===focus||(i%every===0&&Math.abs(i-focus)>every/2&&n-1-i>every/2))svg.append(el('text',{x:x(i),y:B+18,'text-anchor':'middle'},label(r)));
    const hit=el('rect',{x:x(i)-w/n/2,y:T,width:w/n,height:B-T+22,fill:'transparent',tabindex:0,role:'img','aria-label':label(r)+': '+series.map((s,si)=>s.label+' '+fmt(vals[i][si],4)).join(', ')});
    const show=()=>{const lines=series.map((s,si)=>s.label+': '+(s.fmt?s.fmt(vals[i][si]):fmt(vals[i][si],4)));if(opts.extra)lines.push(...[].concat(opts.extra(r)).filter(Boolean));tip(p,opts.title?opts.title(r):'Epoch '+r.index,opts.headline?opts.headline(r):(series[0].fmt?series[0].fmt(vals[i][0]):fmt(vals[i][0],4)),lines);};
    hit.addEventListener('pointerenter',show);hit.addEventListener('pointermove',show);hit.addEventListener('focus',show);
    hit.addEventListener('pointerleave',()=>p.tip.hidden=true);hit.addEventListener('blur',()=>p.tip.hidden=true);
    svg.append(hit);});
-  svg.append(el('text',{x:(L+R)/2,y:225,'text-anchor':'middle'},opts.axis||'Epoch'));
+  svg.append(el('text',{x:(L+R)/2,y:H-5,'text-anchor':'middle'},opts.axis||'Epoch'));
  }
 
  function focusRow(rows){return rows.find(r=>r.index===selectedIndex)||rows[rows.length-1];}
@@ -215,8 +217,8 @@
  /* Stacked epoch bars with optional right-axis line, regime bands and event markers. */
  function roChart(svg,tipEl,rows,bars,o){
   svg.replaceChildren();tipEl.hidden=true;
-  const H=o.height,W=480;svg.setAttribute('viewBox','0 0 '+W+' '+H);
-  const L=46,R=o.line?436:470,T=o.top||12,B=H-40,w=R-L,n=rows.length;
+  const {W,H}=box(svg,480,o.height);svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  const L=46,R=o.line?W-44:W-10,T=o.top||12,B=H-40,w=R-L,n=rows.length;
   const vals=rows.map(r=>bars.map(s=>{const v=s.get(r);return fin(v)?v:null;}));
   const tot=vals.map(v=>v.reduce((a,b)=>a+(b||0),0));
   let hi=Math.max(1,...tot);{const mag=10**Math.floor(Math.log10(hi)),step=[1,2,2.5,5,10].map(k=>k*mag).find(k=>k*4>=hi)||mag*10;hi=Math.ceil(hi/step)*step;}
@@ -240,7 +242,7 @@
   for(const m of o.markers||[]){const i=rows.findIndex(r=>r.index===m.index);if(i<0)continue;const xm=L+w*i/n;
    svg.append(el('line',{x1:xm,x2:xm,y1:m.label?(m.y||T)+2:T,y2:B,stroke:'var(--muted)','stroke-dasharray':'3 3','stroke-width':1}));
    const tx=el('text',{x:m.side==='left'?xm-4:xm+4,y:(m.y||T)+(m.dy||0),'text-anchor':m.side==='left'?'end':'start'},m.label);tx.style.fill='var(--ink)';svg.append(tx);}
-  const every=Math.max(1,Math.ceil(n/8));
+  const every=Math.max(1,Math.ceil(n/Math.max(4,Math.round(8*W/480))));
   rows.forEach((r,i)=>{if(i===0||i===n-1||i===focusI||(i%every===0&&Math.abs(i-focusI)>every/2&&n-1-i>every/2))svg.append(el('text',{x:x(i),y:B+18,'text-anchor':'middle'},'E'+r.index));
    const hit=el('rect',{x:x(i)-w/n/2,y:T,width:w/n,height:B-T+22,fill:'transparent',tabindex:0,role:'img','aria-label':'E'+r.index+': '+o.aria(r)});
    const show=()=>{tipEl.replaceChildren(h('span','','Epoch '+r.index),h('b','',o.headline(r)));for(const line of o.lines(r))tipEl.append(h('small','',line));tipEl.hidden=false;};
@@ -367,7 +369,7 @@
 
  function drawProbeTrends(p,pts,names){
   const svg=p.svg;svg.replaceChildren();
-  const W=480,H=230;svg.setAttribute('viewBox','0 0 '+W+' '+H);p.tip.hidden=true;
+  const {W,H}=box(svg);svg.setAttribute('viewBox','0 0 '+W+' '+H);p.tip.hidden=true;
   const usable=pts.some(pt=>names.some(n=>fin(pt.envs?.[n]?.p)));
   empty(p,usable?null:'No probe measurements yet.');if(!usable)return;
   const L=40,R=W-10,T=10,B=H-36,w=R-L,n=Math.max(pts.length,1);
@@ -384,7 +386,7 @@
     const e=pt.envs?.[name];if(!fin(e?.p))return;
    });
   });
-  const every=Math.max(1,Math.ceil(n/7));
+  const every=Math.max(1,Math.ceil(n/Math.max(4,Math.round(7*W/480))));
   pts.forEach((pt,i)=>{
    if(i===0||i===n-1||i%every===0)svg.append(el('text',{x:x(i),y:B+16,'text-anchor':'middle'},'E'+pt.epoch_index));
    const hit=el('rect',{x:x(i)-w/n/2,y:T,width:Math.max(w/n,8),height:B-T+20,fill:'transparent',tabindex:0,role:'img','aria-label':'E'+pt.epoch_index});
@@ -426,6 +428,7 @@
  document.getElementById('desktop-epoch-previous')?.addEventListener('click',()=>setTimeout(follow));
  document.getElementById('desktop-epoch-next')?.addEventListener('click',()=>setTimeout(follow));
  window.addEventListener('affine:theme',render);
+ window.addEventListener('affine:chart-resize',render);
 
  let fingerprint='';
  async function refresh(){
