@@ -66,3 +66,8 @@ exclusively, otherwise FileExistsError), delete only the failed train row, resta
 Idempotent retry: `recovery/recover_failed_job.sh` (EPOCH=N) is the generic version for the live v8.3.2 worker; it always
 moves the failed job's `workspace/<job>` aside before the re-issue and converts any hardlinked keep of the head to copies.
 Retries inside one queue row use distinct attempt-N dirs and are unaffected; only a cross-row re-issue of the same job id collided.
+
+## Env probe pass-rate chart restored (Jacob pt694u, 2026-10-26 7:28 PM CR)
+The pre-t693 Env probe pass-rate-over-time line chart (probe/series.json) is back as its own full-width tile
+(#panel-probetrend), directly below the Net change per epoch chart at the top. Same drawing code as before
+(drawProbeTrends), expand button and title explanation kept. Diffs: site/*.probe-trend-restore.diff.

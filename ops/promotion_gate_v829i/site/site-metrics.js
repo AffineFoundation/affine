@@ -12,7 +12,7 @@
  const el=(tag,attrs={},text)=>{const n=document.createElementNS(ns,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n;};
  const h=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
  /* Chart box in viewBox units: 480x230 in a tile; sized to the plot area when the tile is expanded (chart-expand.js). */
- const box=(svg,W=480,H=230)=>{const host=svg.closest('.cx-open')&&svg.parentElement;const r=host&&host.getBoundingClientRect();if(!r||r.width<50||r.height<50)return{W,H};const k=Math.max(1,Math.min(1.6,r.width/640));return{W:Math.round(r.width/k),H:Math.round(r.height/k)};};
+ const box=(svg,W=480,H=230)=>{const host=svg.closest('.cx-open,.probe-trend-hero')&&svg.parentElement;const r=host&&host.getBoundingClientRect();if(!r||r.width<50||r.height<50)return{W,H};const k=Math.max(1,Math.min(1.6,r.width/640));return{W:Math.round(r.width/k),H:Math.round(r.height/k)};};
 
  function panel(id,title,color,views,legend){
   const s=document.createElement('section');s.className='site-panel';s.id='panel-'+id;s.setAttribute('aria-labelledby','sp-'+id);
@@ -30,6 +30,7 @@
   weights:panel('weights','Weights · v9','accepted',['Bars','Table'],[]),
   heldout:panel('heldout','Held-out score','performance',['All','Last 20'],[['Held-out solve rate','--performance']]),
   probe:panel('probe','Net change per epoch','performance',[],[['Net ≥ 0','--performance'],['Net < 0','--rejected'],['✓ promoted · ✗ rejected (gate)','--axis'],['faded = pre-gate full probe','--unchecked']]),
+  probetrend:panel('probetrend','Env probe','performance',[],[]),
   mining:panel('mining','Mining status','incentive',[],[]),
   groups:panel('groups','Groups per epoch','accepted',['All','Last 20'],[['Groups','--accepted']]),
   miners:panel('miners','Miners per epoch','incentive',['All','Last 20'],[['Miners sealed','--incentive']]),
@@ -49,6 +50,9 @@
     Pre-gate epochs: full env-probe pass rate of the checkpoint vs its parent (same optimizer step − 1), shown faded. */
  main.prepend(P.probe.section);
  P.probe.section.classList.add('net-hero');
+ /* Env probe pass rate over time (restored t694u): directly below the net-change chart. */
+ P.probe.section.after(P.probetrend.section);
+ P.probetrend.section.classList.add('probe-trend-hero');
  (()=>{const note=h('p','sp-note');note.append(
    document.createTextNode('Net change = post-probe pass rate − pre-probe pass rate. Green ≥ 0, red < 0. ✓/✗ marks the gate verdict (pass unless clearly worse). '),
    Object.assign(document.createElement('a'),{href:'/gate.json',textContent:'gate.json'}),
@@ -373,7 +377,7 @@
   return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
  }
  function probeLegend(names,extra){
-  const L=P.probe.section.querySelector('.sp-legend');L.replaceChildren();
+  const L=P.probetrend.section.querySelector('.sp-legend');L.replaceChildren();
   for(const name of names){
    const span=h('span');const i=h('i','swatch');i.style.background=envColor(names,name);
    span.append(i,document.createTextNode(envShort(name)));L.append(span);
@@ -510,7 +514,22 @@
   chart(p,ents,[{label:'Promoted · cap-hit',type:'bar',color:'--performance',get:g=>g.verdict==='promoted'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'},{label:'Rejected · cap-hit',type:'bar',color:'--rejected',get:g=>g.verdict==='rejected'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'}],{min:0,tick:v=>pct(v,0),headline:g=>g.verdict==='promoted'?'GREEN promoted':'RED rejected',extra:g=>[...gateLines(g),g.reason?'Reason: '+g.reason:null]});
  }
 
- function render(){try{drawGate();}catch(error){console.error('site-metrics gate',error);}try{drawProbe();}catch(error){console.error('site-metrics net',error);}if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}}
+ function drawProbeTrend(){
+  const p=P.probetrend;p.svg.style.display='';
+  const pts=probePoints();
+  if(!pts.length){setReading(p,'—','','Probe series unavailable');empty(p,'Probe series unavailable.');p.svg.replaceChildren();probeLegend([]);return;}
+  const names=probeEnvNames(pts),cur=pts[pts.length-1],primary=probePrimary(cur,names);
+  const curEnv=names.length===1?cur.envs?.[names[0]]:null;
+  const nLabel=names.length===1
+    ? (envShort(names[0])+' · n='+fmt(curEnv?.n,0)+' · epoch E'+cur.epoch_index+' · updated '+ago(probeData.updated_at||cur.finished_at))
+    : (names.length+' envs · epoch E'+cur.epoch_index+' · updated '+ago(probeData.updated_at||cur.finished_at));
+  const sub=names.length===1?'pass rate':(names.length?'mean pass rate':'');
+  setReading(p,pct(primary,1),sub,nLabel);
+  probeLegend(names);
+  drawProbeTrends(p,pts,names);
+ }
+
+ function render(){try{drawGate();}catch(error){console.error('site-metrics gate',error);}try{drawProbe();}catch(error){console.error('site-metrics net',error);}try{drawProbeTrend();}catch(error){console.error('site-metrics probe',error);}if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}}
 
  // Follow the shared desktop epoch slider (same rows as network.js).
  let sharedRows=[];
@@ -527,15 +546,15 @@
  async function refresh(){
   try{const r=await fetch('/site-metrics.json',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('unavailable');
    const next=await r.json();const key=JSON.stringify([next.epochs,next.heldout,next.weights,next.mining]);data=next;
-   if(key!==fingerprint){fingerprint=key;render();}else{drawMining();try{drawProbe();}catch{}}
-  }catch{if(!data)for(const p of Object.values(P)){if(p.id==='probe')continue;setReading(p,'—','','Data temporarily unavailable');empty(p,'Data temporarily unavailable.');}}
+   if(key!==fingerprint){fingerprint=key;render();}else{drawMining();try{drawProbe();drawProbeTrend();}catch{}}
+  }catch{if(!data)for(const p of Object.values(P)){if(p.id==='probe'||p.id==='probetrend')continue;setReading(p,'—','','Data temporarily unavailable');empty(p,'Data temporarily unavailable.');}}
  }
  let probeFingerprint='';
  async function refreshProbe(){
   try{const r=await fetch('/probe/series.json',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('unavailable');
    const next=await r.json();const key=JSON.stringify([next.updated_at,next.points?.length,next.points?.slice(-1)?.[0]?.checkpoint_id]);
-   probeData=next;if(key!==probeFingerprint){probeFingerprint=key;drawProbe();}
-  }catch{if(!probeData){setReading(P.probe,'—','','Probe series unavailable');empty(P.probe,'Probe series unavailable.');}}
+   probeData=next;if(key!==probeFingerprint){probeFingerprint=key;drawProbe();try{drawProbeTrend();}catch{}}
+  }catch{if(!probeData){for(const q of [P.probe,P.probetrend]){setReading(q,'—','','Probe series unavailable');empty(q,'Probe series unavailable.');}}}
  }
  let gateFingerprint='';
  async function refreshGate(){
