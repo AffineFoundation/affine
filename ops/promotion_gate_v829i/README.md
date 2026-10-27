@@ -52,3 +52,14 @@ sample minus the batch (gate.json head_pass/candidate_pass), outlined in the ver
 (dashed outline = rejected); hover shows z, cap-hit, n and the threshold used. Pre-gate epochs: full env-probe pass rate vs
 the parent checkpoint (optimizer step − 1), faded and labelled pre-gate. Expand button unchanged (chart-expand.js).
 Files: site/site-metrics.js, site/grid.js, site/site-metrics.css (+ *.net-change.diff).
+
+## e154 incident and fix (t694, 2026-10-26 6:15 PM CR)
+The first job after the first GREEN promotion (e154, from 317edbd5) failed 3/3 attempts with
+`checkpoint local state changed: config.json`. The owned trainer worker keeps the checkpoint it just produced in memory and
+guards its files by (dev, inode, size, mtime, ctime). `trainer_keep.py keep` hardlinked those files at 23:25Z; adding a
+link changes the inode ctime, so the guard rejected the next job. (e152/e153 did not hit this because the worker had been
+restarted after the keep, or the keep already existed.) Fix: `pod/trainer_keep.py` now copies (keep and restore) instead
+of hardlinking, adds `unlink` to convert an existing keep, and never prunes the keep of the pod's CURRENT head.
+Recovery: `recovery/recover_e154.sh` (recover_e140.sh pattern + drain): stop lifecycle/watcher, drain worker, unlink the
+317edbd5 keep, move the failed job's workspace attempt dirs aside (same job id is re-issued and attempt-N dirs are created
+exclusively, otherwise FileExistsError), delete only the failed train row, restart watcher and lifecycle.
