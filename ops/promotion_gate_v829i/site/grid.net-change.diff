@@ -1,0 +1,20 @@
+--- grid.orig.js	2026-10-26 18:02:17.107347837 -0600
++++ grid.js	2026-10-26 18:02:17.151348186 -0600
+@@ -17,7 +17,7 @@
+  }
+  for(const id of ['panel-weights','panel-mining'])document.getElementById(id)?.remove();
+  {const tm=document.getElementById('panel-timing'),ho=document.getElementById('panel-heldout');if(tm&&ho)ho.before(tm);}
+- {let prev=document.getElementById('panel-heldout');for(const el of [document.getElementById('panel-probe'),document.getElementById('panel-miners'),main.querySelector(':scope>section[aria-labelledby="batch-title"]'),document.getElementById('panel-groups')]){if(prev&&el){prev.after(el);prev=el;}}}
++ {let prev=document.getElementById('panel-heldout');for(const el of [document.getElementById('panel-miners'),main.querySelector(':scope>section[aria-labelledby="batch-title"]'),document.getElementById('panel-groups')]){if(prev&&el){prev.after(el);prev=el;}}}
+  new MutationObserver(split).observe(main,{childList:true,subtree:true});split();
+ })();
+ /* Title explanations, 2026-10-25: hover/focus/tap a tile title; the popover is placed outside the tile. */
+@@ -30,7 +30,7 @@
+   'flip-share-title':['Live flip-scoring leaderboard (scores.json), sorted by share. Share: current share of miner weight. Score: all-time flip credit since E93 (no decay), which drives Share. Last 10: credit from the 10 most recent credit epochs only. F\u2192P / P\u2192F / Null: all-time tasks moved fail\u2192pass, pass\u2192fail, or unchanged. Flip %: F\u2192P \u00f7 all scored tasks. Net %: (F\u2192P \u2212 P\u2192F) \u00f7 all scored tasks.'],
+   'evaluation-title':['Mean reward of the evaluator on a fixed set of 32 affine_math tasks (same seed every run, 8,192-token output budget), one point per completed checkpoint evaluation. Higher means more of the fixed tasks solved.',1],
+   'sp-heldout':['Share of a fixed 32-problem affine_math set solved by each checkpoint, labelled by the training epoch that produced it. These problems come from the held-out split, which never becomes miner tasks or training data, so this measures generalization rather than training fit.'],
+-  'sp-probe':['Pass rate of each new checkpoint on fresh random affine_math tasks, drawn with a seed fixed only after the checkpoint is published. It samples thousands of tasks per checkpoint, so it is far less noisy than the 32-problem held-out score. Pass = correct \u00f7 (correct + wrong + unresolved).'],
++  'sp-probe':['Net change per epoch, shown at the top. Each bar is the candidate checkpoint\u2019s pass rate minus its parent\u2019s on affine_math, in percentage points (square-root scale). Green = net \u2265 0, red = net < 0. Gated epochs (from E152): post-probe of the candidate C minus pre-probe of the head H on the same private random sample with that epoch\u2019s batch removed; \u2713 PROMOTED / \u2717 REJECTED marks the gate verdict, which tests paired z (pass unless clearly worse), so a slightly red bar can still be promoted. Faded bars before the gate: full env-probe pass rate vs the parent checkpoint (independent task draws). Hover a bar for z, cap-hit, n and the threshold used.'],
+   'sp-miners':['Number of distinct miners whose submission was sealed into each epoch\u2019s frozen population. Hover a bar for registered miners and rejected submissions.'],
+   'batch-title':['Total batches (rollout groups) miners submitted each epoch, counted from the signed frozen population of sealed submissions. Hover a bar for that epoch\u2019s count and how many tasks were selected for training.',1],
+   'sp-groups':['Total rollout groups miners submitted during each epoch\u2019s collection window (one group = one task\u2019s set of rollouts). Every group is generated for that epoch\u2019s current checkpoint; nothing carries over between epochs.'],

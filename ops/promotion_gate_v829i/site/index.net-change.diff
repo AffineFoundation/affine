@@ -1,0 +1,22 @@
+--- index.orig.html	2026-10-26 17:58:52.089721519 -0600
++++ index.html	2026-10-26 18:02:30.715455785 -0600
+@@ -11,16 +11,16 @@
+ <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+ <link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
+ <link rel="stylesheet" href="/network.css?v=20261020-video-nav">
+-<link rel="stylesheet" href="/site-metrics.css?v=20261022-mathprobe">
++<link rel="stylesheet" href="/site-metrics.css?v=20261026-net1">
+ <link rel="stylesheet" href="/flip.css?v=20261025-grid">
+ <link rel="stylesheet" href="/grid.css?v=20261025-grid9">
+ <link rel="stylesheet" href="/chart-expand.css?v=20261026-expand1">
+ <script src="/performance-series.js?v=train-reference-v3" defer></script>
+ <script src="/network.js?v=20261026-expand1" defer></script>
+ <script defer src="/network-desktop.js?v=20261021-charts"></script>
+-<script defer src="/site-metrics.js?v=20261026-gate3"></script>
++<script defer src="/site-metrics.js?v=20261026-net1"></script>
+ <script defer src="/flip.js?v=20261026-expand1"></script>
+-<script defer src="/grid.js?v=20261025-grid11"></script>
++<script defer src="/grid.js?v=20261026-net1"></script>
+ <script defer src="/bans.js?v=20261025-bans1"></script>
+ <script defer src="/chart-expand.js?v=20261026-expand1"></script>
+ </head>

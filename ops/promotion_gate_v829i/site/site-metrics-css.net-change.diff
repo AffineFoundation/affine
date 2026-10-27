@@ -1,0 +1,10 @@
+--- site-metrics.orig.css	2026-10-26 18:02:17.107347837 -0600
++++ site-metrics.css	2026-10-26 18:04:27.652383416 -0600
+@@ -58,3 +58,7 @@
+ #panel-rollouts .sp-subhead{margin:18px 0 6px;font:400 11px var(--mono);color:var(--muted);text-transform:none;letter-spacing:0}
+ #panel-rollouts .sp-plot-intake{min-height:140px}
+ @media(max-width:560px){#panel-rollouts .sp-farrow{display:none}#panel-rollouts .sp-fstep{flex-basis:calc(50% - 8px)}}
++
++/* Net change per epoch hero (t693u): full-width first tile. */
++#main>section#panel-probe.net-hero:not(.cx-open){grid-column:1/-1;aspect-ratio:auto!important;height:400px!important}
++@media(max-width:699px){#main>section#panel-probe.net-hero:not(.cx-open){height:280px!important}}

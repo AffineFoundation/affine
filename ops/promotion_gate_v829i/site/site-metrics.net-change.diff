@@ -1,0 +1,138 @@
+--- site-metrics.orig.js	2026-10-26 17:58:52.089721519 -0600
++++ site-metrics.js	2026-10-26 18:04:27.568382749 -0600
+@@ -29,7 +29,7 @@
+  const P={
+   weights:panel('weights','Weights · v9','accepted',['Bars','Table'],[]),
+   heldout:panel('heldout','Held-out score','performance',['All','Last 20'],[['Held-out solve rate','--performance']]),
+-  probe:panel('probe','Env probe','performance',[],[]),
++  probe:panel('probe','Net change per epoch','performance',[],[['Net ≥ 0','--performance'],['Net < 0','--rejected'],['✓ promoted · ✗ rejected (gate)','--axis'],['faded = pre-gate full probe','--unchecked']]),
+   mining:panel('mining','Mining status','incentive',[],[]),
+   groups:panel('groups','Groups per epoch','accepted',['All','Last 20'],[['Groups','--accepted']]),
+   miners:panel('miners','Miners per epoch','incentive',['All','Last 20'],[['Miners sealed','--incentive']]),
+@@ -44,14 +44,16 @@
+  place(P.mining,'#panel-heldout');
+  place(P.groups,'#main>section[aria-labelledby="batch-title"]');
+  for(const k of ['miners','rollouts','grad','loss','timing','gate'])main.append(P[k].section);
+- /* Large Env probe trend chart at bottom of homepage (multi-env ready; driven by miner env list). */
+- main.append(P.probe.section);
+- P.probe.section.classList.add('probe-hero');
++ /* Net change per epoch (Jacob t693u): converted Env probe pass-rate chart, moved to the top of the page, full width.
++    Bar = candidate pass rate minus parent pass rate. Gated epochs (E152+): C vs H on the private gate sample minus that epoch's batch.
++    Pre-gate epochs: full env-probe pass rate of the checkpoint vs its parent (same optimizer step − 1), shown faded. */
++ main.prepend(P.probe.section);
++ P.probe.section.classList.add('net-hero');
+  (()=>{const note=h('p','sp-note');note.append(
+-   document.createTextNode('Pass rate vs epoch · fresh random tasks per checkpoint · seeded after publish · miner envs only (today: affine_math) · not the held-out evaluator. '),
+-   Object.assign(document.createElement('a'),{href:'/probe/series.json',textContent:'series.json'}),
++   document.createTextNode('Net change = post-probe pass rate − pre-probe pass rate. Green ≥ 0, red < 0. ✓/✗ marks the gate verdict (pass unless clearly worse). '),
++   Object.assign(document.createElement('a'),{href:'/gate.json',textContent:'gate.json'}),
+    document.createTextNode(' · '),
+-   Object.assign(document.createElement('a'),{href:'/probe/index.json',textContent:'index.json'})
++   Object.assign(document.createElement('a'),{href:'/probe/series.json',textContent:'series.json'})
+  );P.probe.section.append(note);})();
+ 
+  let data=null,selectedIndex=null;
+@@ -413,20 +415,83 @@
+   svg.append(el('text',{x:(L+R)/2,y:H-5,'text-anchor':'middle'},'Epoch'));
+  }
+ 
++ /* Net-change rows: pre-gate from the probe series (checkpoint vs parent), gated from the gate ledger (C vs H on the gate sample). */
++ function netRows(){
++  const ents=(gateData?.entries||[]).filter(g=>fin(g.epoch)&&fin(g.candidate_pass)&&fin(g.head_pass));
++  const firstGate=ents.length?Math.min(...ents.map(g=>g.epoch)):Infinity;
++  const pts=probePoints(),names=probeEnvNames(pts),rows=[],seen=new Set();
++  pts.forEach((pt,i)=>{
++   const id=pt.checkpoint_id;if(!id||seen.has(id))return;seen.add(id);
++   const ep=pt.epoch_index-1,step=pt.optimizer_step;if(!(ep<firstGate)||!fin(step))return;
++   let par=null;for(let j=i-1;j>=0;j--){if(pts[j].optimizer_step===step-1&&pts[j].checkpoint_id!==id){par=pts[j];break;}}
++   const pc=probePrimary(pt,names),pp=probePrimary(par,names);if(!par||!fin(pc)||!fin(pp))return;
++   const e=names.length===1?pt.envs?.[names[0]]:null,ep0=names.length===1?par.envs?.[names[0]]:null;
++   rows.push({index:ep,kind:'pre',net:pc-pp,c:pc,hp:pp,cid:id,hid:par.checkpoint_id,n:e?.n,hn:ep0?.n,step,probeEpoch:pt.epoch_index,parentEpoch:par.epoch_index});
++  });
++  for(const g of ents)rows.push({index:g.epoch,kind:'gate',net:g.candidate_pass-g.head_pass,c:g.candidate_pass,hp:g.head_pass,cid:g.candidate,hid:g.head,n:g.n,g});
++  return rows.sort((a,b)=>a.index-b.index);
++ }
++ const pp=(v,d=2)=>fin(v)?(v>0?'+':v<0?'−':'')+Math.abs(100*v).toFixed(d)+' pp':'—';
++ const ruleText=t=>t?'z '+(t.z_inclusive?'≥ ':'> ')+fmt(t.z_min,1)+' · cap-hit < '+pct(t.cap_max,0)+' · n ≥ '+fmt(t.min_tasks,0):'—';
++ function drawNet(p,rows){
++  const svg=p.svg;svg.replaceChildren();p.tip.hidden=true;
++  const r0=svg.getBoundingClientRect(),big=p.section.classList.contains('cx-open');
++  const k=Math.max(1,Math.min(1.3,(r0.width||960)/960));
++  const W=r0.width>50?Math.round(r0.width/k):960,H=r0.height>50?Math.round(r0.height/k):260;
++  svg.setAttribute('viewBox','0 0 '+W+' '+H);
++  empty(p,rows.length?null:'No net-change measurements yet.');if(!rows.length)return;
++  const L=56,R=W-12,T=24,B=H-30,w=R-L,n=rows.length,mid=(T+B)/2,half=(B-T)/2;
++  const maxAbs=Math.max(0.02,...rows.map(r=>Math.abs(r.net)));
++  /* Signed log scale (linear below 0.2 pp) so a ±1 pp gate result stays visible next to a −60 pp collapse. */
++  const C0=0.002,sl=v=>Math.log1p(Math.abs(v)/C0),y=v=>mid-Math.sign(v)*Math.min(1,sl(v)/sl(maxAbs))*half;
++  for(const t of [0.005,0.02,0.1,0.5].filter(t=>t<=maxAbs*1.001)){
++   for(const v of [t,-t]){svg.append(el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'sp-guide'}),el('text',{x:L-8,y:y(v)+4,'text-anchor':'end'},pp(v,1).replace(' pp','')));}
++  }
++  svg.append(el('line',{x1:L,x2:R,y1:mid,y2:mid,class:'sp-zero'}),el('text',{x:L-8,y:mid+4,'text-anchor':'end'},'0'));
++  svg.append(el('text',{x:12,y:mid,'text-anchor':'middle',transform:'rotate(-90 12 '+mid+')'},'pp (log scale)'));
++  /* Gated epochs get wider slots so their verdict labels stay readable. */
++  const ng=rows.filter(r=>r.kind==='gate').length,gw=ng>12?1.5:ng>6?2.5:4,wt=rows.map(r=>r.kind==='gate'?gw:1),tot=wt.reduce((a,b)=>a+b,0);
++  const x0=[];{let acc=0;for(const v of wt){x0.push(L+w*acc/tot);acc+=v;}}
++  const sw=i=>w*wt[i]/tot,x=i=>x0[i]+sw(i)/2,bwi=i=>Math.max(2,Math.min(i>=0&&wt[i]>1?56:34,sw(i)*.72));
++  const g0=rows.findIndex(r=>r.kind==='gate');
++  if(g0>0){const gx=x0[g0];svg.append(el('line',{x1:gx,x2:gx,y1:T-14,y2:B,class:'sp-zero','stroke-dasharray':'3 3'}),el('text',{x:gx-4,y:T-6,'text-anchor':'end'},'← pre-gate (full probe vs parent)'),el('text',{x:gx+4,y:T-6,'text-anchor':'start'},'gate live →'));}
++  const sel=rows.findIndex(r=>r.index===selectedIndex),focus=sel>=0?sel:n-1;
++  rows.forEach((r,i)=>{
++   const pos=r.net>=0,top=Math.min(y(r.net),mid),hgt=Math.max(1.5,Math.abs(y(r.net)-mid));
++   const color='var(--'+(pos?'performance':'rejected')+')';
++   const bw=bwi(i),bar=el('rect',{x:x(i)-bw/2,y:pos?top:mid,width:bw,height:hgt,class:'sp-rise'});
++   bar.style.fill=color;bar.style.opacity=r.kind==='pre'?(i===focus?.6:.42):1;
++   if(r.kind==='gate'){const ok=r.g.verdict==='promoted';bar.style.stroke='var(--'+(ok?'performance':'rejected')+')';bar.style.strokeWidth='2';if(!ok)bar.style.strokeDasharray='4 2';}  /* fill = net sign, outline = verdict */
++   svg.append(bar);
++   if(r.kind==='gate'){const ok=r.g.verdict==='promoted',ly=pos?Math.max(T+10,top-6):Math.min(B-4,mid+hgt+14);
++    const t=el('text',{x:x(i),y:ly,'text-anchor':'middle','font-weight':'700'},(ok?'✓':'✗')+(sw(i)>=64||big?' '+(ok?'PROMOTED':'REJECTED'):''));t.style.fill='var(--'+(ok?'performance':'rejected')+')';svg.append(t);}
++  });
++  const every=Math.max(1,Math.ceil(n/Math.max(6,Math.round(16*W/960))));
++  rows.forEach((r,i)=>{
++   if(i===0||i===n-1||i===focus||r.kind==='gate'||(i%every===0&&Math.abs(i-focus)>every/2&&n-1-i>every/2&&(g0<0||Math.abs(i-g0)>every/2)))svg.append(el('text',{x:x(i),y:B+16,'text-anchor':'middle'},'E'+r.index));
++   const hit=el('rect',{x:x0[i],y:T,width:sw(i),height:B-T+22,fill:'transparent',tabindex:0,role:'img','aria-label':'E'+r.index+' net '+pp(r.net)+(r.kind==='gate'?' '+r.g.verdict:' pre-gate')});
++   const show=()=>{
++    if(r.kind==='gate'){const g=r.g,ok=g.verdict==='promoted';
++     tip(p,'Epoch '+r.index+' · '+(ok?'PROMOTED':'REJECTED'),pp(r.net),['C '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' vs H '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+' · same '+fmt(g.n,0)+' gate-sample tasks, batch removed',
++      'z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),'Threshold used: '+ruleText(g.thresholds),
++      (!ok&&r.net>=0)||(ok&&r.net<0)?(ok?'Red but promoted':'Green but rejected')+': the gate passes unless C is clearly worse (paired z), not on the sign of the net':null,g.reason?'Reason: '+g.reason:null].filter(Boolean));}
++    else tip(p,'Epoch '+r.index+' · pre-gate',pp(r.net),['Full env probe: '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+(fin(r.n)?' (n '+fmt(r.n,0)+')':'')+' vs parent '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+(fin(r.hn)?' (n '+fmt(r.hn,0)+')':''),
++      'Step '+fmt(r.step,0)+' · probed as E'+r.probeEpoch+' head · parent E'+r.parentEpoch,'Independent random tasks per checkpoint, not a paired gate sample; no gate verdict']);
++   };
++   hit.addEventListener('pointerenter',show);hit.addEventListener('pointermove',show);hit.addEventListener('focus',show);
++   hit.addEventListener('pointerleave',()=>p.tip.hidden=true);hit.addEventListener('blur',()=>p.tip.hidden=true);svg.append(hit);
++  });
++ }
+  function drawProbe(){
+   const p=P.probe;p.svg.style.display='';
+   p.section.querySelector('.sp-plot .sp-table')?.remove();
+-  const pts=probePoints();
+-  if(!pts.length){setReading(p,'—','','Probe series unavailable');empty(p,'Probe series unavailable.');p.svg.replaceChildren();probeLegend([]);return;}
+-  const names=probeEnvNames(pts),cur=pts[pts.length-1],primary=probePrimary(cur,names);
+-  const curEnv=names.length===1?cur.envs?.[names[0]]:null;
+-  const nLabel=names.length===1
+-    ? (envShort(names[0])+' · n='+fmt(curEnv?.n,0)+' · epoch E'+cur.epoch_index+' · updated '+ago(probeData.updated_at||cur.finished_at))
+-    : (names.length+' envs · epoch E'+cur.epoch_index+' · updated '+ago(probeData.updated_at||cur.finished_at));
+-  const sub=names.length===1?'pass rate':(names.length?'mean pass rate':'');
+-  setReading(p,pct(primary,1),sub,nLabel);
+-  probeLegend(names);
+-  drawProbeTrends(p,pts,names);
++  const rows=netRows();
++  if(!rows.length){setReading(p,'—','',probeData?'No net-change data yet':'Probe series unavailable');empty(p,probeData?'No net-change data yet.':'Probe series unavailable.');p.svg.replaceChildren();return;}
++  const r=rows.find(x=>x.index===selectedIndex)||rows[rows.length-1];
++  const rd=p.section.querySelector('.reading');
++  setReading(p,pp(r.net)+' · E'+r.index+' '+(r.kind==='gate'?(r.g.verdict==='promoted'?'✓ PROMOTED':'✗ REJECTED'):'pre-gate'),'','');
++  rd.style.color='var(--'+(r.net>=0?'performance':'rejected')+')';
++  drawNet(p,rows);
+  }
+ 
+  function drawGate(){
+@@ -445,7 +510,7 @@
+   chart(p,ents,[{label:'Promoted · cap-hit',type:'bar',color:'--performance',get:g=>g.verdict==='promoted'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'},{label:'Rejected · cap-hit',type:'bar',color:'--rejected',get:g=>g.verdict==='rejected'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'}],{min:0,tick:v=>pct(v,0),headline:g=>g.verdict==='promoted'?'GREEN promoted':'RED rejected',extra:g=>[...gateLines(g),g.reason?'Reason: '+g.reason:null]});
+  }
+ 
+- function render(){try{drawGate();}catch(error){console.error('site-metrics gate',error);}if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}try{drawProbe();}catch(error){console.error('site-metrics probe',error);}}
++ function render(){try{drawGate();}catch(error){console.error('site-metrics gate',error);}try{drawProbe();}catch(error){console.error('site-metrics net',error);}if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}}
+ 
+  // Follow the shared desktop epoch slider (same rows as network.js).
+  let sharedRows=[];

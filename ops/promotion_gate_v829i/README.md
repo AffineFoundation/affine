@@ -44,3 +44,11 @@ are still rejected on 100/100 seeds.
 `monitor/flip_freeze.gate-red-expected.diff`: the weight-freshness monitor treats a frozen flip digest as expected (warning,
 not failure) only when no new env-probe result finished since the last digest change and the span contains a gate RED or
 no-update epoch.
+
+## Net change per epoch chart (Jacob pt693u, 2026-10-26 5:58 PM CR)
+The Env probe pass-rate tile is now "Net change per epoch", the first, full-width tile on affine.io. Each bar = candidate
+pass rate − parent pass rate (pp, signed log scale). Green ≥ 0, red < 0. Gated epochs (E152+): C vs H on the private gate
+sample minus the batch (gate.json head_pass/candidate_pass), outlined in the verdict colour with ✓ PROMOTED / ✗ REJECTED
+(dashed outline = rejected); hover shows z, cap-hit, n and the threshold used. Pre-gate epochs: full env-probe pass rate vs
+the parent checkpoint (optimizer step − 1), faded and labelled pre-gate. Expand button unchanged (chart-expand.js).
+Files: site/site-metrics.js, site/grid.js, site/site-metrics.css (+ *.net-change.diff).
