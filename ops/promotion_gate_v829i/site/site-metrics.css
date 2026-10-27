@@ -60,5 +60,5 @@
 @media(max-width:560px){#panel-rollouts .sp-farrow{display:none}#panel-rollouts .sp-fstep{flex-basis:calc(50% - 8px)}}
 
 /* Net change per epoch hero (t693u): full-width first tile. */
-#main>section#panel-probe.net-hero:not(.cx-open),#main>section#panel-probetrend.probe-trend-hero:not(.cx-open){grid-column:1/-1;aspect-ratio:auto!important;height:400px!important}
-@media(max-width:699px){#main>section#panel-probe.net-hero:not(.cx-open),#main>section#panel-probetrend.probe-trend-hero:not(.cx-open){height:280px!important}}
+#main>section#panel-probe.net-hero:not(.cx-open),#main>section#panel-perf.probe-trend-hero:not(.cx-open){grid-column:1/-1;aspect-ratio:auto!important;height:400px!important}
+@media(max-width:699px){#main>section#panel-probe.net-hero:not(.cx-open),#main>section#panel-perf.probe-trend-hero:not(.cx-open){height:280px!important}}

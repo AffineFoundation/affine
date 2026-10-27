@@ -71,3 +71,11 @@ Retries inside one queue row use distinct attempt-N dirs and are unaffected; onl
 The pre-t693 Env probe pass-rate-over-time line chart (probe/series.json) is back as its own full-width tile
 (#panel-probetrend), directly below the Net change per epoch chart at the top. Same drawing code as before
 (drawProbeTrends), expand button and title explanation kept. Diffs: site/*.probe-trend-restore.diff.
+
+## Net-change restyle + Performance chart (Jacob pt695u 7:33 PM, pt697u 7:35 PM CR)
+- Net change per epoch: shared chart style (same margins, guides, tick fonts, 0.78-slot bars, site green/red tokens),
+  linear axis clipped at ±3 pp with capped bars + small chevron for off-scale moves, faint pre-gate bars, a thin "gate"
+  divider, verdict as a small dot above gated bars (filled = promoted, ring + hollow bar = rejected); details in hover;
+  one-line headline.
+- Performance (#panel-perf, directly below): held-out solve rate (32 fixed) and env probe pass rate on one 0–100% axis,
+  aligned on the training epoch that produced each checkpoint; replaces the separate Held-out score tile (no other tiles removed).

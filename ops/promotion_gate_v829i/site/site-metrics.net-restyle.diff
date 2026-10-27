@@ -1,0 +1,119 @@
+--- site-metrics.t694u.js	2026-10-26 19:34:58.671465490 -0600
++++ site-metrics.t695.js	2026-10-26 19:36:55.160389585 -0600
+@@ -12,7 +12,7 @@
+  const el=(tag,attrs={},text)=>{const n=document.createElementNS(ns,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n;};
+  const h=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
+  /* Chart box in viewBox units: 480x230 in a tile; sized to the plot area when the tile is expanded (chart-expand.js). */
+- const box=(svg,W=480,H=230)=>{const host=svg.closest('.cx-open,.probe-trend-hero')&&svg.parentElement;const r=host&&host.getBoundingClientRect();if(!r||r.width<50||r.height<50)return{W,H};const k=Math.max(1,Math.min(1.6,r.width/640));return{W:Math.round(r.width/k),H:Math.round(r.height/k)};};
++ const box=(svg,W=480,H=230)=>{const host=svg.closest('.cx-open,.probe-trend-hero,.net-hero')&&svg.parentElement;const r=host&&host.getBoundingClientRect();if(!r||r.width<50||r.height<50)return{W,H};const k=Math.max(1,Math.min(1.6,r.width/640));return{W:Math.round(r.width/k),H:Math.round(r.height/k)};};
+ 
+  function panel(id,title,color,views,legend){
+   const s=document.createElement('section');s.className='site-panel';s.id='panel-'+id;s.setAttribute('aria-labelledby','sp-'+id);
+@@ -29,7 +29,7 @@
+  const P={
+   weights:panel('weights','Weights · v9','accepted',['Bars','Table'],[]),
+   heldout:panel('heldout','Held-out score','performance',['All','Last 20'],[['Held-out solve rate','--performance']]),
+-  probe:panel('probe','Net change per epoch','performance',[],[['Net ≥ 0','--performance'],['Net < 0','--rejected'],['✓ promoted · ✗ rejected (gate)','--axis'],['faded = pre-gate full probe','--unchecked']]),
++  probe:panel('probe','Net change per epoch','performance',[],[['Net ≥ 0','--performance'],['Net < 0','--rejected'],['Gate verdict dot','--axis']]),
+   probetrend:panel('probetrend','Env probe','performance',[],[]),
+   mining:panel('mining','Mining status','incentive',[],[]),
+   groups:panel('groups','Groups per epoch','accepted',['All','Last 20'],[['Groups','--accepted']]),
+@@ -54,7 +54,7 @@
+  P.probe.section.after(P.probetrend.section);
+  P.probetrend.section.classList.add('probe-trend-hero');
+  (()=>{const note=h('p','sp-note');note.append(
+-   document.createTextNode('Net change = post-probe pass rate − pre-probe pass rate. Green ≥ 0, red < 0. ✓/✗ marks the gate verdict (pass unless clearly worse). '),
++   document.createTextNode('Net change = post-probe pass rate − pre-probe pass rate. Green ≥ 0, red < 0. Dot marks the gate verdict (pass unless clearly worse). '),
+    Object.assign(document.createElement('a'),{href:'/gate.json',textContent:'gate.json'}),
+    document.createTextNode(' · '),
+    Object.assign(document.createElement('a'),{href:'/probe/series.json',textContent:'series.json'})
+@@ -437,54 +437,43 @@
+  }
+  const pp=(v,d=2)=>fin(v)?(v>0?'+':v<0?'−':'')+Math.abs(100*v).toFixed(d)+' pp':'—';
+  const ruleText=t=>t?'z '+(t.z_inclusive?'≥ ':'> ')+fmt(t.z_min,1)+' · cap-hit < '+pct(t.cap_max,0)+' · n ≥ '+fmt(t.min_tasks,0):'—';
++ /* Net change bars in the shared chart style (t695u): linear axis clipped to ±3 pp, capped off-scale bars with a small
++    chevron, verdict as a small dot above gated bars (filled = promoted, ring = rejected) and a hollow bar for rejected. */
+  function drawNet(p,rows){
+-  const svg=p.svg;svg.replaceChildren();p.tip.hidden=true;
+-  const r0=svg.getBoundingClientRect(),big=p.section.classList.contains('cx-open');
+-  const k=Math.max(1,Math.min(1.3,(r0.width||960)/960));
+-  const W=r0.width>50?Math.round(r0.width/k):960,H=r0.height>50?Math.round(r0.height/k):260;
+-  svg.setAttribute('viewBox','0 0 '+W+' '+H);
++  const svg=p.svg,{W,H}=box(svg);svg.replaceChildren();svg.setAttribute('viewBox','0 0 '+W+' '+H);p.tip.hidden=true;
+   empty(p,rows.length?null:'No net-change measurements yet.');if(!rows.length)return;
+-  const L=56,R=W-12,T=24,B=H-30,w=R-L,n=rows.length,mid=(T+B)/2,half=(B-T)/2;
+-  const maxAbs=Math.max(0.02,...rows.map(r=>Math.abs(r.net)));
+-  /* Signed log scale (linear below 0.2 pp) so a ±1 pp gate result stays visible next to a −60 pp collapse. */
+-  const C0=0.002,sl=v=>Math.log1p(Math.abs(v)/C0),y=v=>mid-Math.sign(v)*Math.min(1,sl(v)/sl(maxAbs))*half;
+-  for(const t of [0.005,0.02,0.1,0.5].filter(t=>t<=maxAbs*1.001)){
+-   for(const v of [t,-t]){svg.append(el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'sp-guide'}),el('text',{x:L-8,y:y(v)+4,'text-anchor':'end'},pp(v,1).replace(' pp','')));}
+-  }
+-  svg.append(el('line',{x1:L,x2:R,y1:mid,y2:mid,class:'sp-zero'}),el('text',{x:L-8,y:mid+4,'text-anchor':'end'},'0'));
+-  svg.append(el('text',{x:12,y:mid,'text-anchor':'middle',transform:'rotate(-90 12 '+mid+')'},'pp (log scale)'));
+-  /* Gated epochs get wider slots so their verdict labels stay readable. */
+-  const ng=rows.filter(r=>r.kind==='gate').length,gw=ng>12?1.5:ng>6?2.5:4,wt=rows.map(r=>r.kind==='gate'?gw:1),tot=wt.reduce((a,b)=>a+b,0);
+-  const x0=[];{let acc=0;for(const v of wt){x0.push(L+w*acc/tot);acc+=v;}}
+-  const sw=i=>w*wt[i]/tot,x=i=>x0[i]+sw(i)/2,bwi=i=>Math.max(2,Math.min(i>=0&&wt[i]>1?56:34,sw(i)*.72));
++  const LIM=0.03,L=46,R=W-10,T=12,B=H-40,w=R-L,n=rows.length,y=v=>B-(B-T)*(Math.max(-LIM,Math.min(LIM,v))+LIM)/(2*LIM),x=i=>L+w*(i+.5)/n;
++  for(const t of [-LIM,0,LIM])svg.append(el('line',{x1:L,x2:R,y1:y(t),y2:y(t),class:t===0?'sp-zero':'sp-guide'}),el('text',{x:L-8,y:y(t)+4,'text-anchor':'end'},t===0?'0':pp(t,0)));
+   const g0=rows.findIndex(r=>r.kind==='gate');
+-  if(g0>0){const gx=x0[g0];svg.append(el('line',{x1:gx,x2:gx,y1:T-14,y2:B,class:'sp-zero','stroke-dasharray':'3 3'}),el('text',{x:gx-4,y:T-6,'text-anchor':'end'},'← pre-gate (full probe vs parent)'),el('text',{x:gx+4,y:T-6,'text-anchor':'start'},'gate live →'));}
+-  const sel=rows.findIndex(r=>r.index===selectedIndex),focus=sel>=0?sel:n-1;
++  if(g0>0){const gx=L+w*g0/n;svg.append(el('line',{x1:gx,x2:gx,y1:T,y2:B,class:'sp-guide'}),el('text',{x:gx+4,y:T+8,'text-anchor':'start'},'gate'));}
++  const sel=rows.findIndex(r=>r.index===selectedIndex),focus=sel>=0?sel:n-1,bw=Math.max(1,w/n*.78);
+   rows.forEach((r,i)=>{
+-   const pos=r.net>=0,top=Math.min(y(r.net),mid),hgt=Math.max(1.5,Math.abs(y(r.net)-mid));
+-   const color='var(--'+(pos?'performance':'rejected')+')';
+-   const bw=bwi(i),bar=el('rect',{x:x(i)-bw/2,y:pos?top:mid,width:bw,height:hgt,class:'sp-rise'});
+-   bar.style.fill=color;bar.style.opacity=r.kind==='pre'?(i===focus?.6:.42):1;
+-   if(r.kind==='gate'){const ok=r.g.verdict==='promoted';bar.style.stroke='var(--'+(ok?'performance':'rejected')+')';bar.style.strokeWidth='2';if(!ok)bar.style.strokeDasharray='4 2';}  /* fill = net sign, outline = verdict */
++   const pos=r.net>=0,c='var(--'+(pos?'performance':'rejected')+')',y0=y(0),y1=y(r.net),top=Math.min(y0,y1),hgt=Math.max(1,Math.abs(y1-y0));
++   const rej=r.kind==='gate'&&r.g.verdict!=='promoted',op=r.kind==='pre'?(i===focus?.6:.35):(i===focus?1:.72);
++   const bar=el('rect',{x:x(i)-bw/2,y:top,width:bw,height:hgt,class:'sp-rise'});
++   bar.style.fill=rej?'transparent':c;bar.style.opacity=op;if(rej){bar.style.stroke=c;bar.style.strokeWidth='1.2';}
+    svg.append(bar);
+-   if(r.kind==='gate'){const ok=r.g.verdict==='promoted',ly=pos?Math.max(T+10,top-6):Math.min(B-4,mid+hgt+14);
+-    const t=el('text',{x:x(i),y:ly,'text-anchor':'middle','font-weight':'700'},(ok?'✓':'✗')+(sw(i)>=64||big?' '+(ok?'PROMOTED':'REJECTED'):''));t.style.fill='var(--'+(ok?'performance':'rejected')+')';svg.append(t);}
++   if(Math.abs(r.net)>LIM&&bw>=5){const ey=pos?T:B,d=pos?-1:1,hx=Math.min(4,bw/2);  /* off-scale: capped bar + chevron */
++    const m=el('path',{d:'M'+(x(i)-hx)+' '+(ey-d*0)+' L'+x(i)+' '+(ey+d*4)+' L'+(x(i)+hx)+' '+(ey-d*0),fill:'none'});m.style.stroke=c;m.style.strokeWidth='1.2';m.style.opacity=op;svg.append(m);}
++   if(r.kind==='gate'){const ok=!rej,dy=Math.max(T+3,top-5),dot=el('circle',{cx:x(i),cy:pos?dy:Math.max(T+3,y0-5),r:2.5});
++    const vc='var(--'+(ok?'performance':'rejected')+')';dot.style.fill=ok?vc:'transparent';dot.style.stroke=vc;dot.style.strokeWidth='1.2';svg.append(dot);}
+   });
+-  const every=Math.max(1,Math.ceil(n/Math.max(6,Math.round(16*W/960))));
++  const every=Math.max(1,Math.ceil(n/Math.max(4,Math.round(8*W/480))));
+   rows.forEach((r,i)=>{
+-   if(i===0||i===n-1||i===focus||r.kind==='gate'||(i%every===0&&Math.abs(i-focus)>every/2&&n-1-i>every/2&&(g0<0||Math.abs(i-g0)>every/2)))svg.append(el('text',{x:x(i),y:B+16,'text-anchor':'middle'},'E'+r.index));
+-   const hit=el('rect',{x:x0[i],y:T,width:sw(i),height:B-T+22,fill:'transparent',tabindex:0,role:'img','aria-label':'E'+r.index+' net '+pp(r.net)+(r.kind==='gate'?' '+r.g.verdict:' pre-gate')});
++   if(i===0||i===n-1||i===focus||(i%every===0&&Math.abs(i-focus)>every/2&&n-1-i>every/2))svg.append(el('text',{x:x(i),y:B+18,'text-anchor':'middle'},'E'+r.index));
++   const hit=el('rect',{x:x(i)-w/n/2,y:T,width:w/n,height:B-T+22,fill:'transparent',tabindex:0,role:'img','aria-label':'E'+r.index+' net '+pp(r.net)+(r.kind==='gate'?' '+r.g.verdict:' pre-gate')});
+    const show=()=>{
+     if(r.kind==='gate'){const g=r.g,ok=g.verdict==='promoted';
+-     tip(p,'Epoch '+r.index+' · '+(ok?'PROMOTED':'REJECTED'),pp(r.net),['C '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' vs H '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+' · same '+fmt(g.n,0)+' gate-sample tasks, batch removed',
+-      'z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),'Threshold used: '+ruleText(g.thresholds),
+-      (!ok&&r.net>=0)||(ok&&r.net<0)?(ok?'Red but promoted':'Green but rejected')+': the gate passes unless C is clearly worse (paired z), not on the sign of the net':null,g.reason?'Reason: '+g.reason:null].filter(Boolean));}
+-    else tip(p,'Epoch '+r.index+' · pre-gate',pp(r.net),['Full env probe: '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+(fin(r.n)?' (n '+fmt(r.n,0)+')':'')+' vs parent '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+(fin(r.hn)?' (n '+fmt(r.hn,0)+')':''),
+-      'Step '+fmt(r.step,0)+' · probed as E'+r.probeEpoch+' head · parent E'+r.parentEpoch,'Independent random tasks per checkpoint, not a paired gate sample; no gate verdict']);
++     tip(p,'Epoch '+r.index+' · '+(ok?'promoted':'rejected'),pp(r.net),['C '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' vs H '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+' · '+fmt(g.n,0)+' gate-sample tasks, batch removed',
++      'z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),'Threshold: '+ruleText(g.thresholds),
++      (!ok&&r.net>=0)||(ok&&r.net<0)?'The gate tests paired z (pass unless clearly worse), not the sign of the net':null].filter(Boolean));}
++    else tip(p,'Epoch '+r.index+' · pre-gate',pp(r.net),['Full probe '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' vs parent '+String(r.hid).slice(0,8)+' '+pct(r.hp,2),
++      'Independent task draws; no gate verdict'+(Math.abs(r.net)>LIM?' · off scale (axis clipped at ±3 pp)':'')]);
+    };
+    hit.addEventListener('pointerenter',show);hit.addEventListener('pointermove',show);hit.addEventListener('focus',show);
+    hit.addEventListener('pointerleave',()=>p.tip.hidden=true);hit.addEventListener('blur',()=>p.tip.hidden=true);svg.append(hit);
+   });
++  svg.append(el('text',{x:(L+R)/2,y:H-5,'text-anchor':'middle'},'Epoch'));
+  }
+  function drawProbe(){
+   const p=P.probe;p.svg.style.display='';
+@@ -492,9 +481,7 @@
+   const rows=netRows();
+   if(!rows.length){setReading(p,'—','',probeData?'No net-change data yet':'Probe series unavailable');empty(p,probeData?'No net-change data yet.':'Probe series unavailable.');p.svg.replaceChildren();return;}
+   const r=rows.find(x=>x.index===selectedIndex)||rows[rows.length-1];
+-  const rd=p.section.querySelector('.reading');
+-  setReading(p,pp(r.net)+' · E'+r.index+' '+(r.kind==='gate'?(r.g.verdict==='promoted'?'✓ PROMOTED':'✗ REJECTED'):'pre-gate'),'','');
+-  rd.style.color='var(--'+(r.net>=0?'performance':'rejected')+')';
++  setReading(p,pp(r.net),'','');
+   drawNet(p,rows);
+  }
+ 
