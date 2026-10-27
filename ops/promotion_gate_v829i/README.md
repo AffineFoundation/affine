@@ -63,3 +63,6 @@ of hardlinking, adds `unlink` to convert an existing keep, and never prunes the 
 Recovery: `recovery/recover_e154.sh` (recover_e140.sh pattern + drain): stop lifecycle/watcher, drain worker, unlink the
 317edbd5 keep, move the failed job's workspace attempt dirs aside (same job id is re-issued and attempt-N dirs are created
 exclusively, otherwise FileExistsError), delete only the failed train row, restart watcher and lifecycle.
+Idempotent retry: `recovery/recover_failed_job.sh` (EPOCH=N) is the generic version for the live v8.3.2 worker; it always
+moves the failed job's `workspace/<job>` aside before the re-issue and converts any hardlinked keep of the head to copies.
+Retries inside one queue row use distinct attempt-N dirs and are unaffected; only a cross-row re-issue of the same job id collided.
