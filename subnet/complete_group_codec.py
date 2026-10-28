@@ -15,7 +15,7 @@ from .storage import canonical
 
 POLICY = 'complete-group-bounded-selected-v1'
 MAX_OBJECT_BYTES = 512 * 1024**2
-MAX_CUMULATIVE_BYTES = 4 * 1024**3
+MAX_CUMULATIVE_BYTES = 8 * 1024**3  # v8.2.3: worst-case bound covers max_batches 125
 
 
 def need(value, message):

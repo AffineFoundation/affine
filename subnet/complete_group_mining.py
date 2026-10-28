@@ -79,7 +79,10 @@ def initialize(actor, identity, manifest, checkpoint, capability, state_path,
             actor.batches.append((batch, None))
             actor._group_journal.reconcile_accepted(key, batch)
         actor._group_journal.require_accepted(tasks)
-        actor.cap = capability if capability is not None else identity.decrypt(manifest['capabilities'][identity.id])
+        if capability is None:
+            from .complete_group_transport import resolve_capability
+            capability = resolve_capability(identity, manifest)
+        actor.cap = capability
         transport.validate_capability(actor.cap, actor.manifest, identity.id)
     except BaseException:
         actor._group_journal.close()

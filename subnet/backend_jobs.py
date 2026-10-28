@@ -1300,6 +1300,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None, *,
     write_private_report(out/'report.json',report);return report
 
 JOB_ENVELOPE_MAX_BYTES=4_000_000
+# v8.2.3: per-miner caps admitted to the signed 32 MB prospective envelope (grant delivery keeps it independent of the cap).
+SIGNED_ENVELOPE_GROUP_CAPS=frozenset((9,125))
 RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
 LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-cache-ACK-pre-update-recovery-v1','terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1'))
 
@@ -1308,7 +1310,7 @@ def prospective_transport_scope(manifest):
     cap=manifest.get('training_task_capacity')
     return (type(cap)is dict and set(cap)=={'version','max_tasks'}
         and cap['version']=='signed-training-task-capacity-v1' and type(cap['max_tasks'])is int and cap['max_tasks']==512
-        and type(manifest.get('max_batches'))is int and manifest['max_batches']==9
+        and type(manifest.get('max_batches'))is int and manifest['max_batches'] in SIGNED_ENVELOPE_GROUP_CAPS
         and type(manifest.get('K'))is int and manifest['K']==4 and type(manifest.get('L'))is int and manifest['L']==4
         and manifest.get('training_policy')=='bf16-cpu-fp32-master-task-normalized-persistent-v4'
         and manifest.get('training_input_policy')=='committed-unaudited-training-v1'

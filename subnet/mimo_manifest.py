@@ -16,7 +16,8 @@ from .storage import canonical, sha
 
 def build(*, run_id, epoch, checkpoint, source_bundle, environments, runtime_spec, vocab_size,
           backend_profile, calibration, start, duration=1200, group_size=8,
-          max_batches=9, max_output_tokens=8192, randomness=None, evaluation_sets=None):
+          max_batches=9, max_output_tokens=8192, randomness=None, evaluation_sets=None,
+          capability_delivery=None):
     from .mimo_runtime import validate_runtime_spec
     from .fast_prefill_audit import bind
     from .harness import source_hash as harness_hash
@@ -56,6 +57,10 @@ def build(*, run_id, epoch, checkpoint, source_bundle, environments, runtime_spe
     result[POLICY_KEY] = copy.deepcopy(answer_policy)
     if evaluation_sets is not None:
         result['evaluation_sets'] = copy.deepcopy(evaluation_sets)
+    if capability_delivery is not None:
+        result['capability_delivery'] = dict(version=capability_delivery)
+        from .complete_group_transport import delivery
+        delivery(result)
     for_manifest(result, supported_features=REQUIRED_CLIENT_FEATURES)
     bind(result, harness)
     from .complete_group_sampling import binding

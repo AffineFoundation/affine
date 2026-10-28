@@ -284,7 +284,7 @@ def prospective_envelope_limit(manifest,historical_limit):
     """Caller authenticates the manifest; only exact9/512 changes transport."""
     if CAPACITY_FIELD not in manifest:return historical_limit
     if (training_document_cap(manifest)==512 and type(manifest.get('max_batches'))is int
-            and manifest['max_batches']==9 and 'training_startup_recovery'not in manifest):
+            and manifest['max_batches'] in (9,125) and 'training_startup_recovery'not in manifest):
         return PROSPECTIVE_ENVELOPE_MAX_BYTES
     return historical_limit
 

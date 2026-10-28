@@ -20,6 +20,13 @@ from .complete_group_state import _write
 
 PREPARED='complete-group-prepared-state-v1'
 JOURNAL='complete-group-upload-journal-v1'
+# v8.2.3: per-identity upload URLs leave the signed manifest. The manifest keeps
+# one small sealed pointer per identity (constant size, independent of
+# max_batches) that binds a presigned GET for the identity's sealed grant object
+# and its exact SHA-256/size. The grant is the unchanged v1 capability.
+GRANT_POLICY='r2-upload-grant-v1'
+GRANT_FIELDS=frozenset({'transport','scope_sha256','deadline','grant_url','grant_sha256','grant_bytes'})
+MAX_GRANT_BYTES=8*1024**2
 
 
 def paths(manifest,miner,slot=None):
@@ -30,7 +37,86 @@ def paths(manifest,miner,slot=None):
     return (f'private/{epoch}/staging/{miner}/{slot}.zip',f'private/{epoch}/training/{miner}/{slot}.json')
 
 
+def delivery(manifest):
+    value=manifest.get('capability_delivery')
+    need(value is None or value=={'version':GRANT_POLICY},'known signed capability delivery policy')
+    return None if value is None else GRANT_POLICY
+
+
+def grant_key(manifest,miner,grant_sha256):
+    epoch=paths(manifest,miner).split('/')[1]
+    need(type(grant_sha256) is str and len(grant_sha256)==64 and all(c in '0123456789abcdef' for c in grant_sha256),'grant digest')
+    need(type(miner) is str and len(miner)==64 and all(c in '0123456789abcdef' for c in miner),'grant identity')
+    return f'private/{epoch}/grants/{miner}/{grant_sha256}.json'
+
+
+def _put_immutable(bucket,key,data):
+    from botocore.exceptions import ClientError
+    try:
+        bucket.client.put_object(Bucket=bucket.name,Key=key,Body=data,ContentType='application/octet-stream',IfNoneMatch='*')
+    except ClientError as error:
+        if error.response.get('ResponseMetadata',{}).get('HTTPStatusCode')!=412:raise
+        # Content-addressed key: an existing object must already be these exact bytes.
+        body=bucket.client.get_object(Bucket=bucket.name,Key=key)['Body'].read(len(data)+1)
+        need(body==data,'immutable grant collision')
+
+
 def capability(bucket,manifest,miner,*,registered_miners):
+    sealed=_capability(bucket,manifest,miner,registered_miners=registered_miners)
+    if delivery(manifest) is None:return sealed
+    blob=sealed.encode()
+    need(len(blob)<=MAX_GRANT_BYTES,'bounded sealed upload grant')
+    grant_sha256=sha(blob);key=grant_key(manifest,miner,grant_sha256)
+    _put_immutable(bucket,key,blob)
+    remaining=int(manifest['deadline']-time.time());need(remaining>0,'epoch already closed')
+    pointer=dict(transport=GRANT_POLICY,scope_sha256=scope(manifest,miner),deadline=manifest['deadline'],
+        grant_url=bucket.presign(key,'get_object',remaining),grant_sha256=grant_sha256,grant_bytes=len(blob))
+    validate_pointer(pointer,manifest,miner)
+    return encrypt(miner,pointer)
+
+
+def validate_pointer(pointer,manifest,miner):
+    from .client import direct_r2_url
+    need(delivery(manifest)==GRANT_POLICY,'grant pointer requires signed grant delivery')
+    need(type(pointer) is dict and set(pointer)==GRANT_FIELDS and pointer['transport']==GRANT_POLICY
+         and pointer['scope_sha256']==scope(manifest,miner) and type(pointer['deadline']) is int
+         and pointer['deadline']==manifest['deadline'] and type(pointer['grant_bytes']) is int
+         and 0<pointer['grant_bytes']<=MAX_GRANT_BYTES,'exact epoch-scoped grant pointer')
+    key=grant_key(manifest,miner,pointer['grant_sha256'])
+    url=direct_r2_url(pointer['grant_url']);parsed=urlparse(url)
+    need(unquote(parsed.path).endswith('/'+key) and not parsed.fragment,'grant object path binding')
+    return pointer
+
+
+def resolve_capability(identity,manifest,*,http=None,attempts=4,sleep=time.sleep):
+    """Miner side: the decrypted v1 capability for this identity and epoch.
+
+    Inline (legacy) delivery decrypts the manifest entry. Grant delivery
+    decrypts the signed pointer, fetches exactly grant_bytes, checks the
+    pointer-bound SHA-256, then decrypts and validates the v1 capability."""
+    sealed=manifest['capabilities'][identity.id]
+    if delivery(manifest) is None:return identity.decrypt(sealed)
+    pointer=validate_pointer(identity.decrypt(sealed),manifest,identity.id)
+    http=http if http is not None else requests;error=None
+    for attempt in range(attempts):
+        try:
+            response=http.get(pointer['grant_url'],timeout=60,stream=True)
+            response.raise_for_status()
+            blob=b''
+            for chunk in response.iter_content(65536):
+                blob+=chunk;need(len(blob)<=pointer['grant_bytes'],'grant larger than signed size')
+            need(len(blob)==pointer['grant_bytes'] and sha(blob)==pointer['grant_sha256'],'grant bytes differ from signed digest')
+            break
+        except ValueError:raise
+        except Exception as exc:  # transient transport errors only
+            error=exc;sleep(min(8,2**attempt))
+    else:raise RuntimeError('upload grant unavailable: '+type(error).__name__)
+    cap=identity.decrypt(blob.decode())
+    validate_capability(cap,manifest,identity.id)
+    return cap
+
+
+def _capability(bucket,manifest,miner,*,registered_miners):
     need(miner in registered_miners,'registered epoch miner')
     contract,_=context(manifest,miner);remaining=int(manifest['deadline']-time.time())
     need(remaining>0,'epoch already closed')

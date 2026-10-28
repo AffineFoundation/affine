@@ -20,6 +20,9 @@ POLICY_KEY = 'mimo_release_policy'
 CHECKPOINT_KEY = 'mimo_checkpoint_authorization'
 QUALIFICATIONS = frozenset({'runtime', 'cross-device-sampling', 'mutation-controls',
     'native-grading', 'trainer-update', 'model-publication', 'heldout-evaluation'})
+# v8.2.3: the per-miner group cap is a signed scope parameter (it was fixed at 9).
+# The exact value is pinned by the signed immutable manifest; this is only a bound.
+MAX_SIGNED_GROUP_CAP = 256
 _DYNAMIC = frozenset({'epoch', 'start', 'deadline', 'checkpoint', 'capabilities',
     POLICY_KEY, CHECKPOINT_KEY})
 
@@ -147,7 +150,10 @@ class ReleasePolicy:
         need(type(m.get('group_contract')) is dict and m['group_contract'].get('outcome_policy') in OUTCOME_POLICIES
              and m['group_contract'] == dict(version=GROUP_VERSION, group_size=8,
              min_success=1, min_completed_failure=1, outcome_policy=m['group_contract']['outcome_policy'])
-             and m.get('max_batches') == 9, 'qualified N8 mixed complete groups and nine-group cap')
+             and type(m.get('max_batches')) is int and 1 <= m['max_batches'] <= MAX_SIGNED_GROUP_CAP,
+             'qualified N8 mixed complete groups and a bounded signed per-miner group cap')
+        from .complete_group_transport import delivery
+        delivery(m)
         need(m['sampling_contract'].get('version') == MIMO_VERSION and m.get(ANSWER_KEY) == POLICY,
              'qualified sampler and final-channel grading projection')
         need(_hash(m.get('source_bundle', {}).get('sha256')), 'exact qualified source archive')
