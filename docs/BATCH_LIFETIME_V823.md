@@ -86,3 +86,6 @@ you nothing about how a group would grade.
   miner's batch fails.
 - **A head change resets everything.** A new checkpoint gets a new seed, so old
   draws, and outputs from the old model, no longer verify.
+- **The randomness that picks and audits stays epoch-fresh.** The seal's training-selection seed is drawn
+  after the deadline. The post-commit audit randomness is unchanged too. Only the token-draw seed, the one the
+  sampling proofs check, is fixed per head.
