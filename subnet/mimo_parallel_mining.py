@@ -115,7 +115,7 @@ class _Replicas:
                 raise
     def _retire(self):
         for key in tuple(self.tasks):
-            if self.actor._group_journal.status(key) in ('accepted','filtered','native_error'):
+            if self.actor._group_journal.status(key) in ('accepted','filtered','native_error','replaced'):
                 path = self.root/key
                 if path.exists():
                     if path.is_symlink() or path.resolve() != path:

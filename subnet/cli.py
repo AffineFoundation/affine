@@ -63,6 +63,10 @@ def main():
     p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=None)
     p.add_argument('--mimo-replicas',type=int,choices=(1,2,4),default=1,help='local opt-in independent B1 MiMo replicas; canonical nonce count is unchanged')
     p.add_argument('--compression-level',type=int,choices=range(10),help='assert the signed manifest DEFLATE level; omitted follows manifest (historical default 6)')
+    # v8.2.3 batch lifetime (signed replace-until-seal / head-bound epochs only)
+    p.add_argument('--replace-drop',nargs='+',metavar='ENV_ID:INDEX',help='drop these groups from your committed set before the deadline (replace until seal); their slots are not reused')
+    p.add_argument('--withdraw',action='store_true',help='replace your commitment with an empty set before the deadline')
+    p.add_argument('--no-carry',action='store_true',help='do not carry last epoch\'s groups forward on an unchanged head')
     a=p.parse_args()
     if a.manifest_url and a.current_url:p.error('--manifest-url and --current-url are mutually exclusive')
     while True:
@@ -71,6 +75,37 @@ def main():
             if a.once:raise
             logging.warning('temporary transport failure (%s); retrying in 10 seconds',type(exc).__name__)
             time.sleep(10)
+
+def _lifetime(a,miner,manifest,key):
+    """Head-bound carry-over and replace-until-seal (v8.2.3).
+
+    Carry: on an unchanged head (same checkpoint and draw seed) last epoch's
+    groups are re-stamped for this epoch, never resampled. A head change (GREEN)
+    makes them invalid and they are not carried. Replace: drop groups or withdraw;
+    the newest commitment written before the deadline is the one sealed."""
+    from .complete_group_mining import carry,replace
+    from .batch_lifetime import carries
+    state=Path(a.state);own=state/(manifest['epoch']+'.manifest.json')
+    if not own.exists():
+        own.write_text(json.dumps(manifest,sort_keys=True));own.chmod(0o600)
+    if not miner.batches and not getattr(a,'no_carry',False):
+        for path in sorted(state.glob('*.manifest.json'),key=lambda p:p.stat().st_mtime,reverse=True):
+            if path==own:continue
+            try:old=json.loads(path.read_text())
+            except (OSError,ValueError):continue
+            if not carries(old,manifest):continue
+            previous=state/f"{old['epoch']}-{key.id}.zip"
+            if not previous.exists():continue
+            moved=carry(miner,old,previous)
+            if moved:
+                logging.info('carried %d head-bound groups from %s (same head, no resample)',moved,old['epoch']);break
+    drop={tuple(x.rsplit(':',1)) for x in (getattr(a,'replace_drop',None) or [])}
+    if getattr(a,'withdraw',False) or drop:
+        before=len(miner.batches)
+        keep=(lambda b:False) if a.withdraw else (lambda b:(b['env_id'],str(b['index'])) not in drop)
+        replace(miner,keep)
+        logging.info('replaced committed set: %d -> %d groups (newest commitment before the deadline is sealed)',before,len(miner.batches))
+
 
 def run(a):
     resources = {}
@@ -137,6 +172,9 @@ def _run(a, resources):
             if miner is not None:miner.close()
             miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json", search_state_path=Path(a.state)/f"{key.id}.search.sqlite3", retire_previous_search=True, mimo_replicas=replicas)
             resources['miner']=miner
+            from .batch_lifetime import policy as lifetime_policy
+            if lifetime_policy(manifest) is not None and hasattr(miner,'_group_transport'):
+                _lifetime(a,miner,manifest,key)
             if miner.batches and time.time()<manifest['deadline']:
                 try:miner.upload()
                 except EpochClosed:logging.info('signed epoch closed before local batches could be uploaded')

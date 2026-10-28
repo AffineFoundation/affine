@@ -188,7 +188,19 @@ class Lifecycle:
         from .backend_jobs import r2_url
         for url in urls.values(): r2_url(url, 'GET')
         m['checkpoint']['read_urls'] = urls
-        m['sampling_contract']['randomness'] = secrets.token_hex(32)
+        from .batch_lifetime import policy as lifetime_policy, carry as carry_head
+        if lifetime_policy(m) is not None:
+            # v8.2.3 head-bound draws: one secret seed per head, fresh after a
+            # head change, published only in the openings it is used for.
+            seed_path = self.root / 'HEAD-SEED.private.json'
+            previous = json.loads(seed_path.read_bytes()) if seed_path.exists() else None
+            head = carry_head(previous, current['checkpoint']['id'], epoch, secrets.token_hex(32))
+            if head != previous:
+                save_manifest(seed_path, head)
+                seed_path.chmod(0o600)
+            m['sampling_contract']['randomness'] = head['randomness']
+        else:
+            m['sampling_contract']['randomness'] = secrets.token_hex(32)
         m['sampling_contract']['calibration']['checkpoint'] = current['checkpoint']['id']
         m[POLICY_KEY] = self.policy.envelope
         if current['checkpoint_authorization'] is not None:

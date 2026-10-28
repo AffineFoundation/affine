@@ -107,7 +107,7 @@ class FixtureRuntime:
                    reward=reward, classification=category, turns=[turn],
                    sampling=forced.receipt(self.sampling_context, nonce))
         self.complete_group_sample_evidence = dict(version='sampler-selected-behavior-logprobs-v1',
-            attempt=nonce, turn=0, binding_sha256=digest(self.sampling_context),
+            attempt=nonce, turn=0, binding_sha256=digest(__import__("subnet.batch_lifetime", fromlist=["draw_context"]).draw_context(self.sampling_context)),
             prompt_sha256=digest(prompt), output_sha256=digest(output),
             behavior_selected_logprobs=[-1.0]*len(output), stop_reason='budget' if budget else 'eos')
         if self.mutate:

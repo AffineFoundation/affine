@@ -142,7 +142,8 @@ def structural_batch(batch,manifest,miner,task,arrays=None):
 
 def document(batch,manifest,miner,slot):
     contract,_=context(manifest,miner)
-    need(type(slot) is int and 0<=slot<contract.max_batches,'signed group slot')
+    from .batch_lifetime import upload_slots
+    need(type(slot) is int and 0<=slot<upload_slots(manifest),'signed group slot')
     value=dict(version=DOCUMENT,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],miner=miner,
                manifest_sha256=digest(manifest),scope_sha256=scope(manifest,miner),slot=slot,
                group_id=group_id(manifest,miner,batch['env_id'],batch['index']),batch=batch)
@@ -165,9 +166,12 @@ def validate_document(data,manifest,miner,claim,task):
     return value,result
 
 
-def signed_commitment(identity,manifest,prepared):
+def signed_commitment(identity,manifest,prepared,slots=None):
+    """`slots` (replace-until-seal only) maps each prepared group to its write-once upload slot."""
     claims=[]
-    for slot,(batch,data) in enumerate(prepared):
+    slots=list(range(len(prepared))) if slots is None else list(slots)
+    need(len(slots)==len(prepared),'one upload slot per committed group')
+    for slot,(batch,data) in zip(slots,prepared):
         body=document(batch,manifest,identity.id,slot)
         claims.append(dict(slot=slot,env_id=batch['env_id'],index=batch['index'],
                            group_id=group_id(manifest,identity.id,batch['env_id'],batch['index']),
@@ -196,11 +200,17 @@ def validate_commitment(data,manifest,miner,*,registered_miners):
          and payload['miner']==miner and payload['manifest_sha256']==digest(manifest)
          and payload['scope_sha256']==scope(manifest,miner),'complete-group commitment scope')
     claims=payload['groups'];need(type(claims) is list and len(claims)<=contract.max_batches,'signed cumulative group cap')
+    from .batch_lifetime import policy as lifetime_policy,upload_slots
+    replaceable=upload_slots(manifest) if lifetime_policy(manifest) is not None else None;last_slot=-1
     seen=set();total=0
     for slot,row in enumerate(claims):
         need(type(row) is dict and set(row)=={'slot','env_id','index','group_id','batch_sha256',
              'artifact_sha256','artifact_size','document_sha256','document_size'},'exact committed group fields')
-        need(type(row['slot']) is int and row['slot']==slot and type(row['index']) is int,'canonical ordered slots/index')
+        if replaceable is None:
+            need(type(row['slot']) is int and row['slot']==slot and type(row['index']) is int,'canonical ordered slots/index')
+        else:
+            need(type(row['slot']) is int and 0<=row['slot']<replaceable and row['slot']>last_slot
+                 and type(row['index']) is int,'distinct ascending write-once upload slots');last_slot=row['slot']
         expected=group_id(manifest,miner,row['env_id'],row['index'])
         need(row['group_id']==expected and expected not in seen,'one canonical group per task');seen.add(expected)
         for name in ('batch_sha256','artifact_sha256','document_sha256'):

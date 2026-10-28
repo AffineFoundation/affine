@@ -52,6 +52,8 @@ def _write(path, body):
 
 class AttemptJournal:
     def __init__(self, path, manifest, miner):
+        from .batch_lifetime import policy as lifetime_policy
+        self.replaceable = lifetime_policy(manifest) is not None
         self.path = Path(str(path)+'.groups.json') if path is not None else None
         self.directory = Path(str(path)+'.group-attempts') if path is not None else None
         self.manifest = manifest
@@ -216,6 +218,27 @@ class AttemptJournal:
         need([r for r, _ in original] == batch['rollouts'], 'restored group differs from original attempts')
         self.finish(key, 'accepted', batch_sha256=expected)
 
+    def adopt(self, key, batch):
+        """Head-bound carry-over: an accepted group re-stamped from an earlier epoch."""
+        row = self.value['tasks'].get(key)
+        if row is None:
+            self.value['tasks'][key] = dict(status='accepted', attempts=[], batch_sha256=sha(canonical(batch)), carried=True)
+            self._persist()
+            return
+        need(row['status'] == 'accepted' and row.get('batch_sha256') == sha(canonical(batch)), 'carried group journal binding')
+
+    def release(self, key):
+        """Replace until seal: an accepted group left out of the committed set."""
+        row = self.value['tasks'].get(key)
+        need(row is not None and row['status'] in ('accepted', 'replaced'), 'only an accepted group can be replaced')
+        if row['status'] == 'accepted':
+            row['status'] = 'replaced'
+            self._persist()
+
     def require_accepted(self, keys):
-        need({k for k, r in self.value['tasks'].items() if r['status'] == 'accepted'} == set(keys),
-             'accepted group missing transport state')
+        accepted = {k for k, r in self.value['tasks'].items() if r['status'] == 'accepted'}
+        if getattr(self, 'replaceable', False):
+            # Replace until seal: the committed set may be any subset of accepted groups.
+            need(set(keys) <= accepted, 'accepted group missing transport state')
+            return
+        need(accepted == set(keys), 'accepted group missing transport state')

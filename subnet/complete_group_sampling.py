@@ -172,6 +172,9 @@ def binding(manifest, miner, *, expected_source_hash):
     long_context = bind_manifest(manifest, environments)
     if long_context is not None:
         context['long_context_contract'] = long_context
+    from .batch_lifetime import policy as lifetime_policy, CONTEXT_KEY, HEAD_VERSION
+    if lifetime_policy(manifest) is not None:
+        context[CONTEXT_KEY] = HEAD_VERSION
     if miner is not None:
         sha(miner, 'authenticated miner public identity')
         context['miner'] = miner
@@ -184,8 +187,9 @@ def validate_attempt(context, attempt):
         from .mimo_answer_projection import policy as answer_policy, POLICY_KEY
         answer_policy({POLICY_KEY: context[POLICY_KEY], 'sampling_contract': context['contract']})
         mimo_fields.add(POLICY_KEY)
-    need(type(context) is dict and set(context) == CONTEXT_FIELDS | {'miner'} | mimo_fields | ({'long_context_contract'} if 'long_context_contract' in context else set()),
+    need(type(context) is dict and set(context) == CONTEXT_FIELDS | {'miner'} | mimo_fields | ({'long_context_contract'} if 'long_context_contract' in context else set()) | ({'batch_lifetime'} if 'batch_lifetime' in context else set()),
          'exact miner-bound group sampling context; no alternate salt')
+    need(context.get('batch_lifetime') in (None, 'head-bound-draws-v1'), 'known draw lifetime marker')
     sha(context['miner'], 'authenticated miner public identity')
     validate_sampling(context['contract'])
     geometry=context['token_geometry']
@@ -227,6 +231,11 @@ def validate_runtime(runtime, context, *, index=None):
     return rows[0]
 
 
+def _draw_context(context):
+    from .batch_lifetime import draw_context
+    return draw_context(context)
+
+
 def prepare_draws(context, env_id, task_hash, index, attempt, turn, prompt):
     from .protocol import harness_for
     from .harness import normalize
@@ -242,7 +251,8 @@ def prepare_draws(context, env_id, task_hash, index, attempt, turn, prompt):
     geometry=context['token_geometry']
     need(all(t<geometry['vocab_size'] for t in prompt),'canonical prompt token outside signed support')
     need(len(prompt)+h['max_output_tokens']<=geometry['max_context_tokens'],'full signed generation horizon exceeds context')
-    prefix = bytes.fromhex(digest(dict(domain=DOMAIN, binding_sha256=digest(context),
+    from .batch_lifetime import draw_context
+    prefix = bytes.fromhex(digest(dict(domain=DOMAIN, binding_sha256=digest(draw_context(context)),
                                        environment=env_id, environment_version=row['spec']['version'],
                                        task_hash=task_hash, index=index, attempt=attempt, turn=turn,
                                        prompt_sha256=digest(prompt), harness_sha256=digest(h))))
@@ -299,7 +309,7 @@ def cached_sample(runtime, prompt, attempt, turn, index, task_hash):
             if token in eos_ids(context['token_geometry']):
                 break
     runtime.complete_group_sample_evidence = dict(version=EVIDENCE_VERSION, attempt=attempt, turn=turn,
-        binding_sha256=digest(context), prompt_sha256=digest(prompt), output_sha256=digest(output),
+        binding_sha256=digest(_draw_context(context)), prompt_sha256=digest(prompt), output_sha256=digest(output),
         behavior_selected_logprobs=behavior, stop_reason='eos' if output[-1] in eos_ids(context['token_geometry']) else 'budget')
     return output
 

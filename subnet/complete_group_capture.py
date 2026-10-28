@@ -70,6 +70,10 @@ class AdmissionLedger:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE IF NOT EXISTS groups (scope TEXT NOT NULL, miner TEXT NOT NULL, slot INTEGER NOT NULL, group_id TEXT NOT NULL, claim BLOB NOT NULL, PRIMARY KEY(scope,miner,slot), UNIQUE(scope,miner,group_id))')
             db.execute('CREATE TABLE IF NOT EXISTS commits (scope TEXT NOT NULL, miner TEXT NOT NULL, sha256 TEXT NOT NULL, snapshot TEXT NOT NULL, PRIMARY KEY(scope,miner,sha256))')
+            # v8.2.3 replace-until-seal: append-only, hash-chained audit of every
+            # admitted commitment; the newest row is the one the seal may use.
+            db.execute('CREATE TABLE IF NOT EXISTS supersessions (scope TEXT NOT NULL, miner TEXT NOT NULL, sequence INTEGER NOT NULL, sha256 TEXT NOT NULL, received REAL NOT NULL, previous_sha256 TEXT, groups INTEGER NOT NULL, PRIMARY KEY(scope,miner,sequence))')
+            db.execute('CREATE TABLE IF NOT EXISTS slots (scope TEXT NOT NULL, miner TEXT NOT NULL, slot INTEGER NOT NULL, artifact_sha256 TEXT NOT NULL, document_sha256 TEXT NOT NULL, PRIMARY KEY(scope,miner,slot))')
         self.path.chmod(0o600)
 
     def _connect(self):
@@ -77,7 +81,7 @@ class AdmissionLedger:
         db.execute('PRAGMA synchronous=FULL')
         return db
 
-    def admit(self,manifest,miner,envelope,snapshot,assessments):
+    def admit(self,manifest,miner,envelope,snapshot,assessments,received=None):
         # Inputs are the result of capture below; repeat pure checks rather than
         # assuming any arbitrary caller-owned dict came from that entry point.
         signed=canonical(envelope)
@@ -93,10 +97,32 @@ class AdmissionLedger:
         try:
             db.execute('BEGIN IMMEDIATE')
             old=db.execute('SELECT slot,claim FROM groups WHERE scope=? AND miner=? ORDER BY slot',(s,miner)).fetchall()
-            need(len(claims)>=len(old),'cumulative commitment regression')
-            for slot,body in old:
-                need(slot<len(claims) and bytes(body)==canonical(claims[slot]),'previous committed task group cannot change or move slots')
-            new=claims[len(old):]
+            from .batch_lifetime import policy as lifetime_policy
+            if lifetime_policy(manifest) is None:
+                need(len(claims)>=len(old),'cumulative commitment regression')
+                for slot,body in old:
+                    need(slot<len(claims) and bytes(body)==canonical(claims[slot]),'previous committed task group cannot change or move slots')
+                new=claims[len(old):]
+            else:
+                need(type(received) in (int,float),'superseding commitment needs its upload time')
+                last=db.execute('SELECT sequence,sha256,received FROM supersessions WHERE scope=? AND miner=? ORDER BY sequence DESC LIMIT 1',(s,miner)).fetchone()
+                if last is not None and last[1]==sha(signed):
+                    new=[]
+                else:
+                    need(last is None or received>=last[2],'a commitment cannot supersede a newer one')
+                    # Write-once slots (R2 enforces the signed If-None-Match too):
+                    # a slot named by any earlier commitment keeps its exact bytes.
+                    for row in claims:
+                        prior=db.execute('SELECT artifact_sha256,document_sha256 FROM slots WHERE scope=? AND miner=? AND slot=?',(s,miner,row['slot'])).fetchone()
+                        if prior is None:
+                            db.execute('INSERT INTO slots(scope,miner,slot,artifact_sha256,document_sha256) VALUES(?,?,?,?,?)',
+                                       (s,miner,row['slot'],row['artifact_sha256'],row['document_sha256']))
+                        else:
+                            need(tuple(prior)==(row['artifact_sha256'],row['document_sha256']),'write-once upload slot reused with other bytes')
+                    db.execute('DELETE FROM groups WHERE scope=? AND miner=?',(s,miner))
+                    new=claims
+                    db.execute('INSERT INTO supersessions(scope,miner,sequence,sha256,received,previous_sha256,groups) VALUES(?,?,?,?,?,?,?)',
+                               (s,miner,0 if last is None else last[0]+1,sha(signed),received,None if last is None else last[1],len(claims)))
             for row in new:
                 db.execute('INSERT INTO groups(scope,miner,slot,group_id,claim) VALUES(?,?,?,?,?)',
                            (s,miner,row['slot'],row['group_id'],canonical(row)))
@@ -163,7 +189,7 @@ def capture(bucket,ledger,manifest,miner,*,registered_miners,resolve_task,now=No
     # written to a private, immutable snapshot. Repeating publication is safe.
     for slot,body in documents:_immutable(bucket,prefix+f'/training/{slot}.json',body)
     _immutable(bucket,prefix+'/commitment.json',data)
-    result=_submitted_validation(ledger.admit,manifest,miner,envelope,prefix,assessments)
+    result=_submitted_validation(ledger.admit,manifest,miner,envelope,prefix,assessments,received)
     result['proof_status']='declared-not-fully-downloaded-or-verified'
     result['documents']=[dict(slot=i,sha256=sha(body),key=prefix+f'/training/{i}.json') for i,body in documents]
     from .claim_order import enabled

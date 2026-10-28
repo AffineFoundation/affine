@@ -132,6 +132,8 @@ zero; extra rollouts on one index earn no extra points.
 
 ## Current design and historical notes
 
+v8.2.3: change your batch until the seal, and carry it across epochs on an unchanged head: [BATCH_LIFETIME_V823.md](BATCH_LIFETIME_V823.md).
+
 See [COMMITTED_UNAUDITED_LEARNER.md](COMMITTED_UNAUDITED_LEARNER.md),
 [CONTINUOUS_AUDIT_PREFILL.md](CONTINUOUS_AUDIT_PREFILL.md) and
 [CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md](CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md).

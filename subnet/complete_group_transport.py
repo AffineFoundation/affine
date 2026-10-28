@@ -189,7 +189,8 @@ def _capability(bucket,manifest,miner,*,registered_miners):
         put_url=bucket.presign(paths(manifest,miner),'put_object',remaining),
         upload_headers={'Content-Type':'application/octet-stream','If-None-Match':'*'},
         batch_put_urls=[],training_put_urls=[],batch_get_urls=[],training_get_urls=[])
-    for slot in range(contract.max_batches):
+    from .batch_lifetime import upload_slots
+    for slot in range(upload_slots(manifest)):
         proof,training=paths(manifest,miner,slot)
         for kind,key in (('batch',proof),('training',training)):
             cap[kind+'_put_urls'].append(bucket.client.generate_presigned_url('put_object',
@@ -202,15 +203,17 @@ def _capability(bucket,manifest,miner,*,registered_miners):
 def validate_capability(cap,manifest,miner):
     from .client import direct_r2_url
     contract,_=context(manifest,miner)
+    from .batch_lifetime import upload_slots
+    slots=upload_slots(manifest)
     need(type(cap) is dict and set(cap)=={'transport','scope_sha256','deadline','headers','upload_headers','put_url','batch_put_urls','training_put_urls','batch_get_urls','training_get_urls'}
          and cap['transport']==TRANSPORT and cap['scope_sha256']==scope(manifest,miner)
          and type(cap['deadline']) is int and cap['deadline']==manifest['deadline']
          and cap['headers']=={'Content-Type':'application/octet-stream'}
          and cap['upload_headers']=={'Content-Type':'application/octet-stream','If-None-Match':'*'},'exact epoch-scoped group capability')
     for name in ('batch_put_urls','training_put_urls','batch_get_urls','training_get_urls'):
-        need(type(cap[name]) is list and len(cap[name])==contract.max_batches,'exact signed capability slot count')
+        need(type(cap[name]) is list and len(cap[name])==slots,'exact signed capability slot count')
     urls=[(cap['put_url'],paths(manifest,miner),'commit')]
-    for slot in range(contract.max_batches):
+    for slot in range(slots):
         proof,training=paths(manifest,miner,slot)
         for kind,key in (('batch',proof),('training',training)):
             urls += [(cap[kind+'_put_urls'][slot],key,'put'),(cap[kind+'_get_urls'][slot],key,'get')]
@@ -313,7 +316,9 @@ class CompleteGroupTransport:
 
     def persist(self,manifest,miner,state_path,prepared):
         rows=self._all(prepared,manifest,miner)
-        need(len(rows)>=len(self.previous) and rows[:len(self.previous)]==self.previous,'prepared slots are append-only')
+        from .batch_lifetime import policy as lifetime_policy
+        if lifetime_policy(manifest) is None:
+            need(len(rows)>=len(self.previous) and rows[:len(self.previous)]==self.previous,'prepared slots are append-only')
         need((Path(state_path) if state_path is not None else None)==self.path,'bound prepared state path')
         if self.path is not None:
             directory=Path(str(self.path)+'.complete-groups');need(not directory.is_symlink(),'private prepared directory')
@@ -360,7 +365,9 @@ class CompleteGroupTransport:
         validate_capability(capability,manifest,identity.id)
         rows=self._all(prepared,manifest,identity.id)
         need(rows==self.previous,'upload only original persisted prepared groups')
-        commitment=signed_commitment(identity,manifest,prepared)
+        from .batch_lifetime import policy as lifetime_policy
+        # Replace-until-seal signs the commitment after write-once slots are assigned.
+        commitment=None if lifetime_policy(manifest) is not None else signed_commitment(identity,manifest,prepared)
         if self.path is None:
             return self._upload(identity,manifest,capability,prepared,commitment,None)
         with _lock(Path(str(self.path)+'.upload.lock')):
@@ -373,6 +380,8 @@ class CompleteGroupTransport:
             need(type(journal) is dict and set(journal)=={'version','binding','slots'} and journal['version']==JOURNAL
                  and journal['binding']==self.binding and type(journal['slots']) is dict,'upload journal binding')
         else:journal=dict(version=JOURNAL,binding=self.binding,slots=dict(self.memory_journal))
+        if commitment is None:
+            return self._replaceable(identity,manifest,capability,prepared,journal,journal_path)
         allowed={kind+str(i) for i in range(len(prepared)) for kind in ('artifact-','document-')}
         need(set(journal['slots'])<=allowed,'upload journal references unknown slot')
         for slot,(batch,data) in enumerate(prepared):
@@ -384,6 +393,49 @@ class CompleteGroupTransport:
                 self._put(url,body,manifest,read_url=read_url);journal['slots'][key]=fingerprint
                 if journal_path is not None:_write(journal_path,canonical(journal))
                 self.memory_journal=dict(journal['slots'])
+        self._put(capability['put_url'],commitment,manifest)
+        return 200
+
+    def _replaceable(self,identity,manifest,capability,prepared,journal,journal_path):
+        """v8.2.3 replace-until-seal: groups live in write-once slots; the commitment names the set.
+
+        A group already uploaded this epoch keeps its slot. A new group takes the
+        lowest never-used slot. The replaceable commitment is written last, so a
+        crash leaves the previous commitment in force."""
+        from .batch_lifetime import upload_slots
+        total=upload_slots(manifest)
+        allowed={kind+str(i) for i in range(total) for kind in ('artifact-','document-')}
+        need(set(journal['slots'])<=allowed,'upload journal references unknown slot')
+        def save():
+            if journal_path is not None:_write(journal_path,canonical(journal))
+            self.memory_journal=dict(journal['slots'])
+        def used():
+            return {int(k.split('-',1)[1]) for k in journal['slots']}
+        by_artifact={v:int(k.split('-',1)[1]) for k,v in journal['slots'].items() if k.startswith('artifact-') and v!='occupied'}
+        placed=[]
+        for batch,data in prepared:
+            slot=by_artifact.get(sha(data))
+            while True:
+                if slot is None:
+                    free=[i for i in range(total) if i not in used() and i not in {s for s,_ in placed}]
+                    need(bool(free),'all write-once upload slots for this epoch are used; the current commitment stays in force')
+                    slot=free[0]
+                try:
+                    for kind,body,url,read_url in [('artifact-',data,capability['batch_put_urls'][slot],capability['batch_get_urls'][slot]),
+                        ('document-',document(batch,manifest,identity.id,slot),capability['training_put_urls'][slot],capability['training_get_urls'][slot])]:
+                        key=kind+str(slot);fingerprint=sha(body);old=journal['slots'].get(key)
+                        if old is not None:
+                            need(old==fingerprint,'acknowledged group bytes cannot change');continue
+                        self._put(url,body,manifest,read_url=read_url);journal['slots'][key]=fingerprint;save()
+                    break
+                except ValueError as error:
+                    if 'immutable retry' not in str(error) and 'acknowledged group bytes' not in str(error):raise
+                    # Slot holds other bytes (e.g. an unjournaled earlier upload): burn it.
+                    for kind in ('artifact-','document-'):journal['slots'].setdefault(kind+str(slot),'occupied')
+                    save();slot=None
+            placed.append((slot,(batch,data)))
+        placed.sort(key=lambda x:x[0])
+        commitment=signed_commitment(identity,manifest,[p for _,p in placed],[s for s,_ in placed])
         self._put(capability['put_url'],commitment,manifest)
         return 200
 

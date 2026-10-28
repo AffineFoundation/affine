@@ -120,7 +120,8 @@ def _validate_witness(evidence, prompt, output, nonce, context, stop):
     need(type(evidence['attempt']) is int and evidence['attempt'] == nonce
          and type(evidence['turn']) is int and evidence['turn'] == 0,
          'behavior witness prescribed attempt/turn binding')
-    need(evidence['binding_sha256'] == digest(context), 'behavior witness checkpoint/runtime/miner binding')
+    from .batch_lifetime import draw_context
+    need(evidence['binding_sha256'] == digest(draw_context(context)), 'behavior witness checkpoint/runtime/miner binding')
     need(evidence['prompt_sha256'] == digest(prompt) and evidence['output_sha256'] == digest(output)
          and evidence['stop_reason'] == stop, 'behavior witness token/terminal binding')
     values = evidence['behavior_selected_logprobs']
@@ -236,6 +237,8 @@ def search(actor, index, *, seed=0, max_attempts=None, env_id=None):
     old = actor._group_journal.status(key)
     if old == 'filtered':
         raise GroupFiltered('canonical group already completed without mixed outcomes')
+    if old == 'replaced':
+        raise GroupFiltered('group was replaced out of the committed set; its draws are fixed, pick another task')
     if old == 'native_error':
         raise GroupIndeterminate('original native task error; no replacement rollout permitted')
     need(len(actor.batches) < contract.max_batches, 'signed complete-group batch cap reached')
@@ -311,6 +314,51 @@ def search(actor, index, *, seed=0, max_attempts=None, env_id=None):
     actor.batches.append((batch, None))
     actor._progress('batch_complete', env_id=env_id, index=index)
     return batch
+
+
+def replace(actor, keep):
+    """Replace until seal: commit the kept subset (new groups can be added after).
+
+    Requires the signed batch lifetime policy. The previous commitment stays in
+    force until the new one is written, and nothing changes after the deadline."""
+    from .batch_lifetime import policy
+    need(policy(actor.manifest) is not None, 'this epoch does not allow replacing a committed batch')
+    _deadline(actor)
+    kept = [(b, p) for b, p in actor._group_prepared if keep(b)]
+    dropped = [b for b, _ in actor._group_prepared if not keep(b)]
+    actor._group_transport.persist(actor.manifest, actor.identity.id, actor.state_path, kept)
+    for b in dropped:  # after persist: a crash leaves extra 'accepted' rows, tolerated under replace
+        actor._group_journal.release(task_key(actor, b['env_id'], b['index']))
+    actor._group_prepared = kept
+    actor.batches = [(b, None) for b, _ in kept]
+    return actor._group_transport.upload(actor.identity, actor.manifest, actor.cap, actor._group_prepared)
+
+
+def carry(actor, old_manifest, old_state_path):
+    """Head-bound carry-over: re-stamp the previous epoch's groups on an unchanged head.
+
+    No resampling. Returns the number of groups carried (0 when the head changed)."""
+    from .batch_lifetime import carries, restamp
+    from .complete_group_codec import decode, limits
+    if actor._group_prepared or not carries(old_manifest, actor.manifest):
+        return 0
+    from .forced_sampling import binding
+    old_context = binding(old_manifest, actor.identity.id)
+    old = type(actor._group_transport)().restore(old_manifest, actor.identity.id, old_state_path)
+    out = []
+    for batch, data in old[:actor.batch_contract.max_batches]:
+        _, arrays = decode(data, limits(old_manifest))[0]
+        moved = restamp(batch, old_context, actor._group_context)
+        validate_group(moved, actor.manifest, actor.batch_contract, actor._group_context, actor.identity.id)
+        out.append((moved, actor._group_transport.prepare(moved, arrays, actor.manifest)))
+    if not out:
+        return 0
+    for b, _ in out:  # journal first: a crash before persist leaves tolerated extra rows
+        actor._group_journal.adopt(task_key(actor, b['env_id'], b['index']), b)
+    actor._group_transport.persist(actor.manifest, actor.identity.id, actor.state_path, out)
+    actor._group_prepared = out
+    actor.batches = [(b, None) for b, _ in out]
+    return len(out)
 
 
 def upload(actor):
