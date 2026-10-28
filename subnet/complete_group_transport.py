@@ -61,9 +61,12 @@ def _put_immutable(bucket,key,data):
         need(body==data,'immutable grant collision')
 
 
-def capability(bucket,manifest,miner,*,registered_miners):
-    sealed=_capability(bucket,manifest,miner,registered_miners=registered_miners)
-    if delivery(manifest) is None:return sealed
+_GRANT_CACHE={}
+MINT_WORKERS=32
+MINT_PARALLEL_MIN=64
+
+
+def _pointer(bucket,manifest,miner,sealed):
     blob=sealed.encode()
     need(len(blob)<=MAX_GRANT_BYTES,'bounded sealed upload grant')
     grant_sha256=sha(blob);key=grant_key(manifest,miner,grant_sha256)
@@ -73,6 +76,67 @@ def capability(bucket,manifest,miner,*,registered_miners):
         grant_url=bucket.presign(key,'get_object',remaining),grant_sha256=grant_sha256,grant_bytes=len(blob))
     validate_pointer(pointer,manifest,miner)
     return encrypt(miner,pointer)
+
+
+def _mint_parallel(bucket,manifest,miners,workers):
+    """Sealed v1 grants for many identities: presign+seal in isolated subprocesses
+    (CPU bound, no fork of the multithreaded host), immutable PUTs in threads.
+    Credentials travel only over the child's stdin pipe."""
+    import json,subprocess,sys
+    from concurrent.futures import ThreadPoolExecutor
+    root=str(Path(__file__).resolve().parents[1]);miners=sorted(miners)
+    chunks=[miners[i::workers] for i in range(workers) if miners[i::workers]]
+    request=lambda chunk:json.dumps(dict(options=bucket._client_options,bucket=bucket.name,manifest=manifest,miners=chunk,
+        registered=miners)).encode()
+    code='import sys;sys.path.insert(0,sys.argv[1]);from subnet.complete_group_transport import _mint_worker;_mint_worker()'
+    procs=[subprocess.Popen([sys.executable,'-B','-c',code,root],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,cwd=root) for _ in chunks]
+    sealed={}
+    try:
+        def run(pair):
+            proc,chunk=pair;out,err=proc.communicate(request(chunk),timeout=600)
+            need(proc.returncode==0,'grant mint worker failed: '+err.decode(errors='replace')[-300:])
+            value=json.loads(out);need(sorted(value)==sorted(chunk),'grant mint worker identity set');return value
+        with ThreadPoolExecutor(len(procs)) as pool:
+            for value in pool.map(run,zip(procs,chunks)):sealed.update(value)
+    finally:
+        for proc in procs:
+            if proc.poll() is None:proc.kill()
+    with ThreadPoolExecutor(32) as pool:
+        pointers=dict(zip(miners,pool.map(lambda m:_pointer(bucket,manifest,m,sealed[m]),miners)))
+    return pointers
+
+
+def _mint_worker():
+    import json,sys,boto3
+    value=json.loads(sys.stdin.buffer.read())
+    class _Bucket:
+        def __init__(self):
+            self.name=value['bucket'];self.client=boto3.client('s3',**value['options'])
+        def presign(self,key,operation='get_object',expires=604800):
+            need(1<=expires<=604800,'R2 URL expiration');params=dict(Bucket=self.name,Key=key)
+            if operation=='put_object':params['ContentType']='application/octet-stream'
+            return self.client.generate_presigned_url(operation,Params=params,ExpiresIn=expires)
+    b=_Bucket();registered=set(value['registered'])
+    out={m:_capability(b,value['manifest'],m,registered_miners=registered) for m in value['miners']}
+    sys.stdout.write(json.dumps(out));sys.stdout.flush()
+
+
+def capability(bucket,manifest,miner,*,registered_miners):
+    if delivery(manifest) is None:
+        return _capability(bucket,manifest,miner,registered_miners=registered_miners)
+    need(miner in registered_miners,'registered epoch miner')
+    if (len(registered_miners)>=MINT_PARALLEL_MIN and MINT_WORKERS>1
+            and isinstance(getattr(bucket,'_client_options',None),dict)):
+        key=(manifest['epoch'],manifest['deadline'],frozenset(registered_miners))
+        hit=_GRANT_CACHE.get(key)
+        if hit is None or not (manifest is hit['manifest'] or digest(manifest)==hit['digest']):
+            _GRANT_CACHE.clear()  # one opening at a time; never reuse another epoch's pointers
+            hit=dict(manifest=manifest,digest=digest(manifest),
+                     pointers=_mint_parallel(bucket,manifest,registered_miners,MINT_WORKERS))
+            _GRANT_CACHE[key]=hit
+        return hit['pointers'][miner]
+    return _pointer(bucket,manifest,miner,_capability(bucket,manifest,miner,registered_miners=registered_miners))
 
 
 def validate_pointer(pointer,manifest,miner):

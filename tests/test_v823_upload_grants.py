@@ -7,6 +7,7 @@ import hashlib
 import requests
 from urllib.parse import urlparse, unquote
 import test_complete_group_transport as base
+from subnet.storage import Identity
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -162,3 +163,24 @@ class ReleasePolicyCapTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ParallelMintTests(unittest.TestCase):
+    """Real subprocess workers + real botocore presigning (fake credentials, no network)."""
+    def test_parallel_mint_matches_serial_contract_for_many_identities(self):
+        import subnet.complete_group_transport as t
+        ids = [Identity(bytes([i]) * 32) for i in range(70)]
+        bucket = base.FakeBucket()
+        bucket._client_options = dict(endpoint_url='https://test.r2.cloudflarestorage.com', region_name='auto',
+                                      aws_access_key_id='FAKE', aws_secret_access_key='FAKE')
+        bucket.name = 'candidate'
+        m = grant_manifest(cap=125); reg = {i.id for i in ids}
+        with patch.object(t, 'MINT_WORKERS', 4):
+            caps = {i.id: capability(bucket, m, i.id, registered_miners=reg) for i in ids}
+        self.assertEqual(len([k for k in bucket.objects if '/grants/' in k]), 70)
+        m['capabilities'] = caps
+        for i in (ids[0], ids[33], ids[69]):
+            got = resolve_capability(i, m, http=GrantHTTP(bucket))
+            self.assertEqual(len(got['batch_put_urls']), 125)
+            self.assertIn('/staging/' + i.id + '/124.zip', unquote(got['batch_put_urls'][124]))
+        self.assertEqual(len(t._GRANT_CACHE), 1)
