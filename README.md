@@ -4,6 +4,7 @@ Synchronous inference-verification training loop for Bittensor subnet120: publis
 checkpoint → private miner batches → freeze/public audit → verify/score → train →
 next checkpoint. Blockchain-free mock and live chain adapters share the same core.
 
+- [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
 - [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
