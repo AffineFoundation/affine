@@ -19,3 +19,18 @@ Activation: `MODE=switch [WAIT_DECISION=E] bash activate_ts.sh`. Revert (one lin
 - a gate integrity reason.
 
 `v833f-to-v833g.diff` is the diff against the live v8.3.3f host files. The private ROOT-ADMITTED config and the signing seed are not in this repo.
+
+## 2026-10-30 14:16 CR follow-ups
+- `activate_f.sh`: re-activates v8.3.3f (fp32 master) after a false-positive fp32v auto-revert. It uses the sanctioned fp32v drop-in and switches only at a safe boundary:
+  - no open TRAINING-JOB without a TRAINING-RESULT in epochs C..C+2 (CURRENT lags pre-opened epochs);
+  - no RECOVERY-REQUIRED;
+  - lifecycle lock + `LIFECYCLE-ACTIVATION.lock` held;
+  - pod free >= 192 GB (135.1 GB job disk check + 36 GB fp32 entry + 20 GB margin).
+
+  Revert: `MODE=revert bash activate_f.sh`.
+- `watchdog_ts.py` counts only trainer-caused faults. It does not count a fault when any of these hold:
+  - the pod is short of disk;
+  - the job text mentions disk/space/capacity;
+  - our worker never started the job.
+- `fp32_prune.py` (service `ts-fp32-prune`) keeps only the king's fp32 entry plus the in-flight candidate's. After each gate decision it deletes the other entries: on RED the candidate's entry, on GREEN the old head's. Entries newer than the decision and PINned entries (upload in progress) are kept. Revert: `systemctl --user stop ts-fp32-prune`.
+- `activate_ts.sh` (v8.3.3g) is now based on live v8.3.3f. It waits for one clean v8.3.3f epoch (`AFTER_OK`), runs the same disk precheck, and stops `ts-watchdog-f` before switching.

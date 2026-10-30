@@ -13,7 +13,7 @@ PY=/home/const/subnet120-rewrite/.venv/bin/python
 UNITS=/home/const/.config/systemd/user; SUP=affine-mimo-trainer-supervised.service; TD=$UNITS/$SUP.d
 F_TC='zzzz~~~~~~~~~~~~~~~v833f-owned-worker.conf'; G_TC='zzzz~~~~~~~~~~~~~~~~v833g-owned-worker.conf'
 F_J=owned-worker-v833f.json; F_S=e8d6c843e05d0b0df7d59d07411fa789d04e411307524dd787acc3b14de16818; G_J=owned-worker-v833g.json
-POD=/workspace/affine-mimo-trainer-prod; OW="$POD/runtime-exact/venv/bin/python -I -B $POD/owned-worker-v7.py"
+NEED_GB=192; POD=/workspace/affine-mimo-trainer-prod; OW="$POD/runtime-exact/venv/bin/python -I -B $POD/owned-worker-v7.py"
 TKH=/home/const/.lium/known_hosts/ef2b6085-adae-43e2-8a13-39182a3b3f7a
 SSHO=(-T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=20 -o ServerAliveCountMax=6)
 N(){ local i rc; for i in 1 2 3 4 5 6; do ssh "${SSHO[@]}" -o UserKnownHostsFile=$TKH -p 40022 root@8.28.35.244 "$@" && return 0; rc=$?; [[ $rc == 255 ]] || return $rc; sleep 5; done; return 255; }
@@ -73,10 +73,13 @@ stage(){
   N "cd $POD && diff <(sed 's#/host-v833g/#/host-v833f/#g' $G_J) $F_J >/dev/null && ! grep -q host-v833f $G_J" || die "worker config diff"
   N "cd $POD/source-final-v823u && env CUBLAS_WORKSPACE_CONFIG=:4096:8 CUDA_VISIBLE_DEVICES=0 MKL_NUM_THREADS=2 OMP_NUM_THREADS=2 PYTHONPATH=$POD/source-final-v823u TOKENIZERS_PARALLELISM=false timeout 240 $POD/runtime-exact/venv/bin/python -B $POD/host-v833g/mimo_host_trainer_v83.py --operator-config $POD/host-v833g/TRAINER-HOST.v8.3.3.ROOT-ADMITTED.private.json --check -- >/dev/null 2>&1" || die "v833g --check failed (admission/pins/install)"
   G_S=$(N "sha256sum < $POD/$G_J" | cut -d' ' -f1); [[ $G_S =~ ^[0-9a-f]{64}$ ]] || die "G_S"; echo "$G_S" > $AV/G_S; log "staged host-v833g + $G_J ($G_S)"; }
+diskok(){ local f; f=$(N "df -B1G --output=avail $POD | tail -1" | tr -d ' '); [[ $f =~ ^[0-9]+$ ]] && (( f >= NEED_GB )) && { log "pod free ${f} GB >= $NEED_GB"; return 0; }; log "pod free ${f:-?} GB < $NEED_GB"; return 1; }
 case $MODE in
 switch)
   [[ -f $TD/$G_TC ]] && die "v833g drop-in already installed"
-  grep -q "$F_J --sha256 $F_S" <(systemctl --user show $SUP -p ExecStart --value) || die "live trainer is not v833f"
+  [[ -n ${AFTER_OK:-} ]] && { log "waiting for $AFTER_OK"; while ! ls $AFTER_OK >/dev/null 2>&1; do sleep 10; done; log "found $(ls $AFTER_OK | head -1)"; }
+  grep -q "$F_J --sha256 $F_S" <(systemctl --user show $SUP -p ExecStart --value) || die "live trainer is not v833f (rebase needed)"
+  diskok || die "pod disk precheck failed"
   stage
   B=$AV/backup-$(date -u +%Y%m%dT%H%M%SZ); mkdir -m 700 $B; cp -a $TD $B/dropins; systemctl --user show $SUP -p ExecStart --value > $B/ExecStart.txt
   if [[ -n ${WAIT_DECISION:-} ]]; then GE=$RA/20261026-promotion-gate/state/epochs
@@ -88,11 +91,12 @@ switch)
   ok=0; for i in $(seq 1 ${IWAIT:-720}); do
     if idle; then exec 8<>$STATE/lifecycle.lock; exec 9>$RA/LIFECYCLE-ACTIVATION.lock
       if flock -w 30 9 && flock -w 30 8; then systemctl --user stop affine-mimo-lifecycle.service; c=$(cur)
-        if ! openjob $c && [[ $(trainbusy) == 0 ]]; then ok=1; break; fi
+        if ! openjob $c && [[ $(trainbusy) == 0 ]] && diskok; then ok=1; break; fi
         systemctl --user start affine-mimo-lifecycle.service; fi; exec 8>&- 9>&-; fi
     sleep 5; done
   [[ $ok == 1 ]] || die "trainer never idle"
   log "trainer idle (epoch $(cur)), lifecycle stopped + lock held - switching v833f -> v833g"
+  systemctl --user stop ts-watchdog-f.service 2>/dev/null || true; log "ts-watchdog-f stopped (v833f watch ends at the v833g switch)"
   rc=0; switch $F_J $F_S $G_J $G_S install || rc=$?
   if [[ $rc != 0 ]]; then log "v833g switch failed rc=$rc - restoring v833f"; rm -f $TD/$G_TC; systemctl --user daemon-reload; switch $G_J $G_S $F_J $F_S remove || log "WARNING restore rc=$?"; systemctl --user start affine-mimo-lifecycle.service; die "switch failed rc=$rc (v833f restored)"; fi
   systemctl --user start affine-mimo-lifecycle.service; exec 8>&- 9>&-; log "lifecycle started, locks released"
