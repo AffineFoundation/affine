@@ -103,7 +103,7 @@ switch)
   echo "{\"trainer\": \"v833g\", \"sha256\": \"$G_S\", \"from_epoch\": $(cur), \"at\": \"$(cr)\"}" > $AV/TRAINER-g.json
   W=$(cur); while [[ -e $E/$W/TRAINING-JOB.json ]]; do W=$((W+1)); done   # first epoch trained by v833g
   systemctl --user reset-failed ts-watchdog.service 2>/dev/null || true
-  systemd-run --user --unit=ts-watchdog --collect -p Restart=on-failure --setenv=FROM=$W $PY -u -B $D/release/watchdog_ts.py
+  systemd-run --user --unit=ts-watchdog --collect -p Restart=on-failure --setenv=FROM=$W --setenv=LIMIT=${LIMIT:-960} $PY -u -B $D/release/watchdog_ts.py
   prog "LIVE v8.3.3g (worker cfg $G_S) at epoch $(cur); ts-watchdog started"; log done ;;
 revert)
   G_S=$(cat $AV/G_S); [[ -f $TD/$G_TC ]] || die "v833g drop-in not installed"

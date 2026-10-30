@@ -13,7 +13,7 @@ v8.3.3g is the live v8.3.3f trainer host with execution-only speedups. Only `mim
 
 Activation: `MODE=switch [WAIT_DECISION=E] bash activate_ts.sh`. Revert (one line): `MODE=revert bash activate_ts.sh`.
 `watchdog_ts.py` auto-reverts on any of these, during the first 3 v833g trainings:
-- training > 13 min;
+- training > 16 min;
 - TRAINING-RESULT not successful;
 - worker dead with no restore running;
 - a gate integrity reason.

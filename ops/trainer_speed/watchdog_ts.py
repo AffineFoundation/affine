@@ -11,7 +11,7 @@ import json, os, subprocess, time
 from pathlib import Path
 RA = Path('/home/const/subnet120-rewrite/state/root-audits'); D = RA / '20261030-trainer-speed'; AV = D / 'activation'
 E = Path('/home/const/subnet120-rewrite/state/mimo-mainnet-v1/epochs'); GE = RA / '20261026-promotion-gate/state/epochs'
-FROM = int(os.environ['FROM']); WATCH = int(os.environ.get('WATCH', 3)); LIMIT = int(os.environ.get('LIMIT', 780))
+FROM = int(os.environ['FROM']); WATCH = int(os.environ.get('WATCH', 3)); LIMIT = int(os.environ.get('LIMIT', 960))
 POD = '/workspace/affine-mimo-trainer-prod'
 CFG = os.environ.get('CFG', 'owned-worker-v833g.json'); G_S = os.environ.get('CFG_S') or (AV / 'G_S').read_text().strip()
 REVERT = os.environ.get('REVERT', str(AV / 'activate_ts.sh')); NEED_GB = int(os.environ.get('NEED_GB', 192)); TAG = CFG.split('-')[-1][:-5]
