@@ -1,0 +1,273 @@
+--- a/mimo_host_trainer_v83.py	2026-10-30 11:49:17.000000000 -0600
++++ b/mimo_host_trainer_v83.py	2026-10-30 13:12:34.897770535 -0600
+@@ -1,6 +1,10 @@
+ """ROOT-admitted v8.3 trainer host launcher over the unchanged worker closure.
+ 
+ v8.3.3f = v8.3.3 + optional engine.sgd_fp32_master (persistent fp32 head master, see FP32_KEYS). Jacob t831u 2026-10-30.
++v8.3.3g = v8.3.3f + execution-only speedups (Jacob pt841u/t847u 2026-10-30, RA/20261030-trainer-speed): same update math and bytes;
++  parallel+memoized checkpoint sha256 (v83_dp.install_fast_hash), helper ranks preload KL ref + actor at start, fp32 digests
++  48 threads and bf16/fp32 digests concurrent, verified digests reused, fp32 step: finite check on the GPU copy and one direct
++  D2H copy into the master, torch CPU threads 32 inside the step, fp32-master disk save deferred until the model is published.
+ 
+ v8.3 = v8.2.11 + a data-parallel packed execution of the SAME update (v83_dp.py), on W GPUs of one node:
+ the worker process is rank 0 (it owns the actor, the CPUAdamW optimizer, staging and publication exactly as in
+@@ -272,6 +276,9 @@
+ FP32_KEEP = 2            # newest complete entries kept besides the current head's entry (36 GB each)
+ FP32_SHARD_BYTES = 4 * 1024 ** 3
+ FP32_VERSION = 'v833f-fp32-head-master-v1'
++FP32_SAVE_DEFER_MAX = 600   # v8.3.3g: seconds the background master save waits for the model publication to finish
++import threading as _threading
++_PUBLISHED = _threading.Event(); _PUBLISHED.set()
+ 
+ 
+ def fp32_settings(engine):
+@@ -292,12 +299,12 @@
+     return hashlib.sha256(memoryview(raw.numpy()).cast('B')).hexdigest()
+ 
+ 
+-def _digest_map(named, threads=16):
++def _digest_map(named, threads=48):
+     from concurrent.futures import ThreadPoolExecutor
+-    names = [n for n, _ in named]
++    order = sorted(named, key=lambda nt: -nt[1].numel())      # largest first (load balance); digest is order-free
+     with ThreadPoolExecutor(threads) as ex:
+-        shas = list(ex.map(lambda nt: _sha_tensor(nt[1]), named))
+-    per = dict(zip(names, shas))
++        shas = list(ex.map(lambda nt: _sha_tensor(nt[1]), order))
++    per = dict(zip([n for n, _ in order], shas))
+     return hashlib.sha256(json.dumps(per, sort_keys=True, separators=(',', ':')).encode()).hexdigest(), per
+ 
+ 
+@@ -435,11 +442,20 @@
+         if meta is not None:
+             source = 'disk'
+     if source is None:
+-        with torch.no_grad():
+-            for n, p in opt.parameters:
+-                opt.masters[n].copy_(p.detach().to(device=opt.masters[n].device, dtype=torch.float32))
++        threads = torch.get_num_threads(); torch.set_num_threads(max(threads, 32))
++        try:
++            with torch.no_grad():
++                for n, p in opt.parameters:
++                    opt.masters[n].copy_(p.detach())      # bf16 -> fp32 is exact; same values as .to(cpu, float32)
++        finally:
++            torch.set_num_threads(threads)
+         source = 'bootstrap-upcast'
+-    dig_in, _ = _digest_map([(n, opt.masters[n]) for n, _ in opt.parameters])
++    if source == 'memory' and getattr(opt, '_v833g_dig', None):
++        dig_in = opt._v833g_dig                           # digest of these exact masters from the previous finish
++    elif source == 'disk' and meta is not None:
++        dig_in = meta['master_digest']                    # just recomputed and verified by _fp32_load
++    else:
++        dig_in, _ = _digest_map([(n, opt.masters[n]) for n, _ in opt.parameters])
+     return dict(version=FP32_VERSION, source=source, input_bf16_sha256=bf_in, input_master_digest=dig_in,
+                 input_store_entry=bf_in if source == 'disk' else None, fingerprint_seconds=t_fp, prepare_seconds=_t.monotonic() - t0)
+ 
+@@ -447,10 +463,14 @@
+ def _fp32_finish(opt, info, emit):
+     """After the step: hash the candidate (bf16 + master), remember it in memory, save to the store in the background."""
+     import threading, time as _t
++    from concurrent.futures import ThreadPoolExecutor
+     t0 = _t.monotonic()
+-    bf_out, _ = _digest_map(list(opt.parameters))
+-    dig_out, per = _digest_map([(n, opt.masters[n]) for n, _ in opt.parameters])
+-    opt._v833f_bf16 = bf_out
++    opt._v833g_dig = None
++    with ThreadPoolExecutor(2) as ex:
++        f_bf = ex.submit(_digest_map, list(opt.parameters))
++        f_m = ex.submit(_digest_map, [(n, opt.masters[n]) for n, _ in opt.parameters])
++        bf_out, _ = f_bf.result(); dig_out, per = f_m.result()
++    opt._v833f_bf16 = bf_out; opt._v833g_dig = dig_out
+     info.update(output_bf16_sha256=bf_out, output_master_digest=dig_out, output_store_entry=bf_out,
+                 master_tensors=len(per), master_bytes=sum(opt.masters[n].numel() * 4 for n, _ in opt.parameters),
+                 finish_seconds=_t.monotonic() - t0, store=FP32_STORE)
+@@ -459,10 +479,12 @@
+                 source=info['source'], optimizer_step=opt.global_step)
+     lock = opt._v833f_lock
+     lock_ready = threading.Event()
++    _PUBLISHED.clear()
+     def runner():
+         lock.acquire()
+         lock_ready.set()
+         try:
++            _PUBLISHED.wait(FP32_SAVE_DEFER_MAX)        # v8.3.3g: keep the 36 GB write off model staging/publication IO
+             _fp32_save(opt, bf_out, meta, (info['input_bf16_sha256'], bf_out), emit)
+         finally:
+             lock.release()
+@@ -476,6 +498,15 @@
+     v8.3.3f (fp32_master=True): fp32(W) is replaced by the head's verified fp32 master M_H and M_C = M_H - fp32(s) * d is kept."""
+     import math, time, torch
+     emit_ = emit or (lambda row: print(json.dumps(row, sort_keys=True), flush=True))
++    _threads = torch.get_num_threads(); torch.set_num_threads(max(_threads, 32))
++    try:
++        return _fresh_adam_step(opt, gradients, live, lr, cap, freeze, emit_, t0, tensor_rel_cap, fp32_master)
++    finally:
++        torch.set_num_threads(_threads)
++
++
++def _fresh_adam_step(opt, gradients, live, lr, cap, freeze, emit_, t0, tensor_rel_cap, fp32_master):
++    import math, time, torch
+     fpi = _fp32_prepare(opt, live, emit_) if fp32_master else None
+     if fp32_master:
+         W32 = lambda name, parameter: opt.masters[name].detach().to(device=parameter.device)
+@@ -515,14 +546,16 @@
+                     changed += int((new != parameter).sum())
+                     dsq.append(float((new.float() - parameter.detach().float()).double().pow(2).sum()))
+                     parameter.copy_(new)
+-                    opt.masters[name].copy_(w32.to(device=opt.masters[name].device))
+-                if not torch.isfinite(opt.masters[name]).all():
++                    if not torch.isfinite(w32).all():         # same values as the master after the exact copy below
++                        raise ValueError('non-finite fresh-adam update: ' + name)
++                    opt.masters[name].copy_(w32)               # one direct D2H copy (v8.3.3g)
++                if not fp32_master and not torch.isfinite(opt.masters[name]).all():
+                     raise ValueError('non-finite fresh-adam update: ' + name)
+                 del w32, new, g
+         opt.global_step += 1
+     except BaseException:
+         opt.failed = True
+-        opt._v833f_bf16 = None
++        opt._v833f_bf16 = None; opt._v833g_dig = None
+         raise
+     finally:
+         opt.zero_grad()
+@@ -806,6 +839,12 @@
+         def __init__(self, bucket, signer, **kwargs):
+             kwargs.setdefault('shard_concurrency', engine['shard_concurrency'])
+             super().__init__(bucket, signer, part_concurrency=engine['part_concurrency'], **kwargs)
++
++        def __call__(self, request):        # v8.3.3g: signal the deferred fp32-master save (result unchanged)
++            try:
++                return super().__call__(request)
++            finally:
++                _PUBLISHED.set()
+     worker.R2ModelPublisher = R2ModelPublisherV824
+ 
+     pipelined = fast_opt.PipelinedCPUAdamW.step
+@@ -846,6 +885,7 @@
+     fast_kernels = load('v83_fast_kernels', 'v83_fast_kernels.py')
+     dp = load('v83_dp', 'v83_dp.py')
+     dp.BUDGET, dp.MAX_ROWS = engine['dp_token_budget'], engine['dp_max_rows']
++    dp.install_fast_hash()     # v8.3.3g
+     helpers = []
+     if start_dp:
+         import subprocess
+--- a/v83_dp.py	2026-10-30 11:49:17.000000000 -0600
++++ b/v83_dp.py	2026-10-30 13:12:34.905770523 -0600
+@@ -11,10 +11,85 @@
+ Failure before the optimizer step on any rank -> every rank joins the ok-flag reduction and the update raises
+ (transaction fails exactly as a single-GPU failure would; the in-memory actor/optimizer are untouched).
+ """
+-import math, os, pickle, sys, time
++import math, os, pickle, sys, time, json
+ import torch, torch.distributed as dist
+ from datetime import timedelta
+ 
++# v8.3.3g (RA/20261030-trainer-speed, Jacob pt841u/t847u): execution-only speedups, same update.
++#  * install_fast_hash: subnet.mimo_runtime.file_hash = the ORIGINAL function run in a thread pool (siblings *.safetensors
++#    prefetched in parallel) and memoized by (path, dev, ino, size, mtime_ns, ctime_ns); a changed file re-hashes.
++#  * helper ranks preload the KL reference + an actor copy at process start from PRELOAD_HINT (written by rank 0 every job);
++#    the actor parameters are still overwritten by the rank-0 broadcast at every job (bit-exact copy as before).
++PRELOAD_HINT = '/workspace/affine-mimo-trainer-prod/v833g-helper-preload.json'
++
++
++def install_fast_hash(workers=16):
++    import stat as _st, threading
++    from concurrent.futures import ThreadPoolExecutor
++    import subnet.mimo_runtime as R
++    if getattr(R.file_hash, '_v833g', False):
++        return R.file_hash
++    original = R.file_hash
++    memo, lock = {}, threading.Lock()
++    pool = ThreadPoolExecutor(workers, thread_name_prefix='v833g-hash')
++
++    def key(path):
++        st = os.lstat(path)
++        if not _st.S_ISREG(st.st_mode):
++            return None
++        return (os.path.abspath(str(path)), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
++
++    def submit(path, k):
++        with lock:
++            f = memo.get(k)
++            if f is None:
++                f = memo[k] = pool.submit(original, path)
++        return f
++
++    def file_hash(path):
++        try:
++            k = key(path)
++        except OSError:
++            return original(path)
++        if k is None:
++            return original(path)
++        f = submit(path, k)
++        if str(path).endswith('.safetensors'):
++            try:
++                for sib in os.scandir(os.path.dirname(os.path.abspath(str(path)))):
++                    if sib.name.endswith('.safetensors') and not sib.name.startswith('.'):
++                        ks = key(sib.path)
++                        if ks is not None:
++                            submit(sib.path, ks)
++            except OSError:
++                pass
++        try:
++            value = f.result()
++        except BaseException:
++            with lock:
++                memo.pop(k, None)
++            raise
++        if key(path) != k:            # changed after hashing: never serve a stale digest
++            with lock:
++                memo.pop(k, None)
++            return original(path)
++        return value
++    file_hash._v833g = True
++    file_hash.__doc__ = original.__doc__
++    R.file_hash = file_hash
++    return file_hash
++
++
++def _write_hint(obj):
++    try:
++        tmp = PRELOAD_HINT + '.tmp-%d' % os.getpid()
++        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++        with os.fdopen(fd, 'w') as f:
++            json.dump(obj, f, sort_keys=True)
++        os.replace(tmp, PRELOAD_HINT)
++    except Exception:
++        pass
++
+ STATE = dict(world=1, ref=None, actor=None, actor_ckpt=None, initialized=False)
+ BUDGET = 32768; MAX_ROWS = 256; LOGIT_CHUNK = 4096; NO_CKPT_LAYERS_RANK0 = 0; NO_CKPT_LAYERS_HELPER = 2
+ 
+@@ -143,6 +218,9 @@
+         for _, p in runtime.model.named_parameters():
+             dist.broadcast(p.data, src=0)
+         timings['dp_sync_seconds'] = time.monotonic() - t
++        _write_hint(dict(spec=runtime.spec.to_dict(),
++                         actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
++                         ref_dir=str(reference_runtime._checkpoint_guard.directory), ref_desc=reference_runtime._checkpoint_guard.descriptor))
+         prep = time.monotonic()
+         acc, details, losses, err = _passes(B, FK, runtime, reference_runtime, rows, assign[0], config, agg_config, loss_scale,
+                                              len(active), versions, guard, record)
+@@ -263,6 +341,20 @@
+     def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048):
+         return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK)
+     B.batched_log_probs = fast_blp
++    install_fast_hash()
++    try:      # v8.3.3g preload (any failure -> lazy load at the first job, as before)
++        hint = json.loads(open(PRELOAD_HINT).read())
++        STATE['ref'] = MimoRuntime.load(hint['ref_dir'], hint['ref_desc'], hint['spec'], device='cuda', trainable=False)
++        _install_fast(B, FK, STATE['ref'], 0)
++        STATE['actor'] = MimoRuntime.load(hint['actor_dir'], hint['actor_desc'], hint['spec'], device='cuda', trainable=True)
++        _install_fast(B, FK, STATE['actor'], NO_CKPT_LAYERS_HELPER)
++        print(json.dumps(dict(component='trainer-host-v833g', event='helper-preloaded', rank=rank)), flush=True)
++    except Exception as x:
++        STATE['actor'] = None
++        if STATE['ref'] is not None and not isinstance(x, FileNotFoundError):
++            pass
++        print(json.dumps(dict(component='trainer-host-v833g', event='helper-preload-skipped', rank=rank, error=repr(x)[:200])), flush=True)
++        torch.cuda.empty_cache()
+     while True:
+         job = _bcast(None)
+         if job is None or job.get('op') == 'stop':
