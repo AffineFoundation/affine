@@ -24,71 +24,220 @@ Finalized learning evidence: https://affine.io/history.json
 Expected coordinator authority public key:
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
+Scoring notice (2026-10-26): LIVE on-chain mech-0 weights use **flip-incentive**
+scoring (https://affine.io/scores.json) with **symmetric net credit** since the
+12:00 PM CR (UTC-6) weight window on October 26, 2026 (epoch 148). A gain and a
+loss on the same task now count the same. See "Flip-incentive LIVE scoring" below.
+The MiMo complete-group mining contract is unchanged.
 
-Scoring notice (2026-10-23): LIVE weights remain v9/seq7 (https://affine.io/scores.json). Flip-incentive scores are published in SHADOW only at https://affine.io/scores-shadow.json — see “Flip-incentive SHADOW scoring — October 23, 2026” below. The MiMo mining contract is unchanged.
+Score notice (2026-10-27): **scores update on pass and fail.** From epoch 169, a
+RED (rejected) epoch is scored like a GREEN one: the discarded candidate is probed
+on that epoch's own batch tasks and your fail→pass / pass→fail flips count. The
+head still moves only on GREEN. See "Checkpoint promotion gate" below.
 
-## Flip-incentive SHADOW scoring — October 23, 2026
+Gate notice (2026-10-27): from epoch 168 (9:30 AM CR, October 27) a trained checkpoint is promoted
+only if its net is positive: it must pass more of a private random probe sample than its parent (paired z > 0).
+Epochs 154–167 used z ≥ −1.5, epochs 152–153 z > −1. On October 27 the head was
+rolled back to the last GREEN checkpoint 30a129a9 (epoch 154 output). Training parameters are published per epoch in the mining.json
+`training` block. See "Checkpoint promotion gate" below.
 
-**Status: SHADOW ONLY.** LIVE on-chain weights are still **v9 window-credit seq7**.
-This section describes a parallel flip+surprise scorer that publishes what weights
-*would* be. It does **not** mean LIVE weights have flipped. The MiMo complete-group
-mining contract (8-nonce groups, nonces 0–7, mixed correct/wrong) is **unchanged**;
-no new miner client is required for this shadow path.
+K=1 notice (2026-10-28, queue rule updated 2026-10-29 from epoch 215): each hotkey gets exactly ONE turn, permanently (from epoch 200), and from epoch 215 so does each registration (UID + registration block), so swapping a new hotkey onto a served registration does not give it a turn; register a new hotkey to try again, and don't deregister a paying hotkey. From epoch 196 each epoch trains ONE UID's batch with one AdamW step from zero state (lr 5e-7 fixed), gated by a seeded 4-sample probe; the last up to 10 distinct GREEN UIDs share the weight. Training restarted from checkpoint 30a129a9. See "K=1 per-UID training" below; it overrides the scoring notices above.
 
-### LIVE vs SHADOW
+Batch cap notice (updated 2026-10-30): the live cap is **125 tasks x 8 rollouts = 1,000 rollouts** per turn (fixed; in effect from epoch 241). **Bigger batches, up to 125 tasks, are encouraged. 9 tasks is the legacy v8.2.2 limit, not the expected batch size.** Most turns so far trained only 9 tasks because those miners either still run a legacy client or stop at 9 themselves; the validator trims or rejects nothing below the cap. **How to get 125-task batches:** (1) Run the v8.2.3u client. The miner supervisor (`subnet.miner_supervisor`) runs the approved v8.2.3u source automatically; if you run `subnet.cli` directly or your own client, use https://affine.io/releases/mimo-source-v8.2.3u/README.txt (source archive sha256 fb87025798f947aa78d97930ce9e52e690d9b4ba7d90d5c004c8c0f2bc7b0555). (2) Do not pass `--no-upgrade`, and omit `--max-batches` (or set it to at most 125; do not set it to 9). (3) Extended mode starts from the next opening after your first v8.2.3u commitment, so a new hotkey's first epoch is still legacy (9 tasks). Each hotkey gets only one turn, so a turn taken in that first epoch is a 9-task turn. (4) Once you are extended (your capability in the signed opening starts with `x823u:`), keep mining until the seal. Groups carry over while the head is unchanged, and you can replace your batch until the seal. **Custom clients:** the signed manifest's top-level `max_batches` (9) is the legacy contract. Your extended cap is the signed `dual_accept_policy.extended_max_batches` (125). The live trained cap is `https://affine.io/mining.json` -> `training.batch_cap.max_tasks_per_miner` (`rollouts_per_task`, `max_rollouts_per_miner`, `min_tasks`; `next_seal` is what the next seal will use), also published as top-level `max_tasks_per_miner`. In `mining.json`, top-level `max_batches` / `legacy_max_batches` is the legacy value only. v8.2.2 clients and `--no-upgrade` keep working at the legacy 9 tasks (72 rollouts). See "Batch caps" and "Submission window" below.
 
-| | LIVE (pays) | SHADOW (observe only) |
+## K=1 per-UID training (LIVE from epoch 196) — added October 28, 2026
+
+Every epoch now trains on **one UID's batch**. That replaces the pooled multi-miner batch. Everything in this section overrides older text below (pooled batch selection, flip-incentive credit and red-batch credit no longer apply from epoch 196).
+
+**Start head.** K=1 starts from checkpoint 30a129a9 (epoch 154 output, optimizer step 108). It had the best full probe of the recent heads: 86.2% on all 7,496 affine_math probe tasks. Epoch 195 rolled the head back to it and did not train.
+
+**Queue (one turn per hotkey, permanently, from epoch 200).** Each hotkey gets exactly one turn, permanently, whether it passes or fails (the same rule as teutonic.ai's one submission per hotkey). That holds on any UID and at any registration block: re-registering a hotkey that already had a turn does not give it another. **To try again, register a new hotkey.** The line is ordered by registration block (oldest first), then UID; UID 0 is excluded, and hotkeys that already had a turn leave the line. At the seal, the first unserved hotkey with a ready batch (at least 8 distinct admitted tasks) takes the turn. Unserved hotkeys without a ready batch are skipped and keep their place; there is no waiting. **Don't deregister a paying hotkey:** pay goes to the last 10 distinct GREEN UIDs only while the hotkey that earned it stays registered on that UID, so register your next attempt on a new hotkey and keep the paying one. **From epoch 215 (2026-10-29) a registration that has had a turn is also served:** a (UID, registration block) pair gets one turn whatever hotkey is on it later, so `swap_hotkey` onto a served registration does not bring it back into the line; a genuine re-registration (new registration block) with a never-served hotkey is eligible. `k1.json` → `queue.queue_rule` is `hotkey-registration-once` and `served_registrations` lists the served pairs. Already served: the hotkeys of UID 231 (epoch 196), UID 33 (197), UID 255 (198) and UID 80 (199). Epoch 199 used one turn per registration; from epoch 200 it is one turn per hotkey. `https://affine.io/mining.json` → `training.k1.queue_next` lists the next 20 unserved hotkeys that had a ready batch at the last seal, in turn order (a forecast; the seal decides), with `queue_length`, `hotkeys_unserved` and `served_hotkeys`. The same data is in `https://affine.io/k1.json`.
+
+**Submission window (have your batch ready before your turn).** There is no fixed wait. An epoch seals as soon as the previous epoch has finalized and an unserved registration in the line has a ready batch (at least 8 admitted tasks); the turn goes to the first unserved registration in line order that is ready at that moment. Registrations ahead of it without a ready batch are skipped and keep their place. If nobody is ready, the epoch waits up to the signed deadline (`collection_seconds`, still 900 s, is now only that upper bound). The next epoch is opened early (pre-opened) while the current turn is still training and being gated, so you can upload for N+1 during N's turn; if N's candidate is promoted (GREEN) the pre-opened epoch is abandoned (signed `ABANDONED-SPECULATIVE.json`) and a fresh one opens on the new head. Only groups admitted before the seal count. With the v8.2.3u client you can replace or withdraw your batch until the seal (write-once slots, a superseding signed commitment), and groups carry over while the head is unchanged. The real per-epoch start, deadline and seal times are in `gate.json` (`gather_start`, `upload_deadline`) and `site-metrics.json` (`sealed_at`, `early_seal`). (Early seal is live from epoch 219, pre-open from epoch 221.)
+
+**Batch caps.** At most 1000 rollouts, 2–64 rollouts per task, at least 8 tasks, and per-rollout tokens no longer than the submission `max_output_tokens`. Over-cap batches are trimmed deterministically in submission order. There are no TOPLOC, score or reward checks on your data and no bans. The trainer does not use your uploaded logprobs: it recomputes every log-prob from the head (and the KL reference from its own checkpoint). From epoch 234 the per-miner cap is tunable (signed ceiling 125 tasks x 8 rollouts = 1,000 rollouts); it is currently **125 tasks x 8 rollouts = 1,000** (fixed, since epoch 241). The live value is `mining.json` -> `training.batch_cap`; the validator can change it between 8 tasks and the signed ceiling of 125 without a new release, and a change applies from the next seal. The capture protocol still collects 8 rollouts per task. Up to 125 tasks needs the v8.2.3u client in extended mode: it is requested by default, takes effect from the next opening after your first v8.2.3u commitment, and stays on. v8.2.2 clients and `--no-upgrade` keep the legacy cap of 9 tasks (72 rollouts) and keep working. Bigger batches are encouraged: the turn trains every admitted task you upload, up to the cap.
+
+**The step.** It is one AdamW step from fresh, zero optimizer state. No moments are carried between turns. The learning rate is fixed by the validator; miners cannot choose it yet (planned later).
+
+    g    = fp32 gradient of the GRPO loss below on the turn batch (8 GPUs, packed micro-batches, NCCL sum), clipped to global L2 norm 1.0
+    d_t  = lr * ( g_t / (|g_t| + 1e-8) + 0.01 * W_t * [W_t is >= 2-D and not a bias] )
+    r_t  = min(1, 2e-5 * (1 - 1e-6) * ||W_t|| / ||d_t||)          per tensor
+    W'_t = bf16_round_nearest_even( fp32(W_t) - fp32(r_t) * d_t )
+    lr = 5e-7 (1e-6 x 0.5), betas 0.9/0.999 (they cancel from zero state), eps 1e-8, weight decay 0.01
+
+Given g, this is bit-exact with `torch.optim.AdamW(foreach=False)` taking one step from zero state on fp32 copies of the bf16 head, plus the per-tensor relative cap 2e-5. g itself is computed on 8 GPUs with FlashAttention-2 and fla Triton kernels and an NCCL sum, which are not bit-deterministic. So a replay from the published head and turn batch is very close but not guaranteed bit-exact: in our own replays the per-rollout losses match exactly and a small fraction of the changed bf16 elements differ by one step (measured per turn at `https://affine.io/k1/replay/results.json`). The numbers are in `mining.json` → `training.optimizer`; the full recipe is `https://affine.io/k1/spec/step-recipe.json`.
+
+**The loss (what the trainer actually runs).** `L = 0.5635 × (1/N) × Σ_i (1/K_i) × Σ_{t≤K_i} [ pg_{i,t} + 0.02 × k3_{i,t} ]` (verl `seq-mean-token-mean` times the constant `loss_scale` 0.5635; the signed trainer_config still names `seq-mean-token-sum-norm`, which the trainer host overrides). N = all rollouts of the turn (unresolved ones stay in with reward 0). K_i = rollout i's kept tokens. pg = vanilla dual-clip PPO with OLD = current.detach(), so the ratio is 1 and the gradient is −A_i·∇log π. k3 = exp(ref−cur) − (ref−cur) − 1 against the frozen base checkpoint 87de8304 (ref−cur clamped to ±20, k3 to ±10). A_i = r_i − mean of the 8 rewards of its task, with no std normalisation. r = 1[correct] − 0.5·clip((len−6000)/(8192−6000), 0, 1). The derail mask applies only to rollouts stopped at max_tokens with negative advantage (window 32, threshold −3, tail 64). Rows are task order (dispatch order) × nonce. Micro-batches: first-fit-decreasing by length into 32768-token bins (≤256 rows), assigned LPT to 8 ranks, fp32 accumulation per rank, then an NCCL sum. Code: `https://affine.io/k1/replay/host/`.
+
+**Gate.** The head is pre-probed and the candidate post-probed on the same private sample of about 1000 tasks, minus the turn batch's tasks. Each task is sampled 4 times, and the head and the candidate use the same per-request sampling seeds (common random numbers), which cuts run-to-run noise. GREEN means paired z > 0 (strict) and a cap-hit rate below 0.20. GREEN promotes the candidate; RED keeps the head. Verdicts are in `https://affine.io/gate.json`.
+
+**Credit.** Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight. RED, skipped and pending turns earn nothing; unearned weight burns to UID 0. Weights are never all-zero: until the first K=1 GREEN, the last pre-K=1 scores are kept as a floor. Weights are set hourly. Mech 1 is unchanged.
+
+**Published per turn (after the gate decides; nothing earlier).** Turns, verdicts, payees, the queue and each turn's `task_indices` are in `https://affine.io/k1.json`. After each decision:
+
+- `https://affine.io/k1/turns/<epoch>/turn.json` has the decision; the selected rows of the signed filtered dispatch (task index, native grades, document hash); the trainer report (per-rollout reward, advantage, loss and kept tokens, pre-clip norm, micro-batch plan, optimizer and per-tensor cap stats); the candidate checkpoint id and file sha256s (for GREEN and RED); and the trainer engine spec. The miner's batch documents are byte-exact under `/k1/turns/<epoch>/docs/`. The index is `https://affine.io/k1/turns/index.json`. Other miners' excluded rows are shown only as counts. The R2 dispatch object itself is not public.
+- `https://affine.io/gate/reveal/<epoch>.json` (from epoch 222: published when the standing sample is rotated out, not at each decision; see the gate section) has the gate's sample seed, the 1000 sampled task ids, the commitment check, the plan seed and the per-task head and candidate grades. Check it with `python3 verify_gate_reveal.py <epoch>` (`https://affine.io/gate/reveal/verify_gate_reveal.py`); it recomputes the commitment, the draw and the verdict.
+- `https://affine.io/k1/replay/README.md` has `replay_k1.py`, which replays a turn's step on one GPU, plus our own replay results.
+- `https://affine.io/k1/dev/README.md` has the task pool, a public 500-task dev split and `score_dev.py`, which scores a local checkpoint with the gate's own probe worker and decision rule. The gate still samples from the full pool.
+
+## Checkpoint promotion gate (LIVE from epoch 152) — added October 26, 2026
+
+**Status: LIVE.** A newly trained checkpoint becomes the next mining head only if
+it is **better** than its parent (positive net) on a private random sample of the env probe.
+
+How it works, per epoch N mining on head H:
+
+1. When N opens, the validator draws a fresh **private** uniform sample S of
+   1000 `affine_math` probe tasks (out of 7,496) from a secret seed and publishes
+   only a hash commitment on https://affine.io/gate/index.json. The sample task
+   ids stay private until the decision; then the seed, ids and per-task grades are
+   published at https://affine.io/gate/reveal/<epoch>.json (epochs 196 to 221).
+   **From epoch 222 S is a STANDING private sample** reused across turns (its
+   commitment, with `standing_id`, is in each epoch's entry on gate/index.json, the
+   same hash for every epoch that uses it). It is rotated to a fresh os.urandom seed
+   every 24 h, or whenever the head has to be re-probed anyway (for example after a
+   rollback). The seed, ids and per-task grades of every epoch that used it are
+   revealed at /gate/reveal/<epoch>.json only after it has been rotated out, so a
+   reveal never tells you the sample currently in use.
+2. H's probe on S: after a RED the head is unchanged, so its cached probe on the
+   standing sample is reused (no re-probe; the decision records `h_reused`). After
+   a GREEN, the promoted candidate's own probe on S (same CRN plan seed) becomes the
+   new head's probe. The head is probed again only when no valid cached probe exists.
+3. After training, candidate C is probed on S **minus every task in epoch N's
+   batch** (batch tasks are dropped from both sides, so training on a task
+   cannot help C pass the gate).
+4. **GREEN** only if C's net is positive: the paired z-score of C vs H is
+   **strictly above 0** (C's pass rate is higher than H's on the paired
+   sample) **and** C's max-token cap-hit rate is below 0.20 (at least 200
+   tasks evaluated). A candidate that only ties its parent is RED. C is
+   promoted and the next epoch mines from C. (Epochs 152–153 used z > −1 and
+   epochs 154–167 z ≥ −1.5; the z > 0 rule applies from epoch 168, updated
+   October 27, 2026 9:30 AM CR.)
+5. **RED** otherwise. C is discarded, the epoch finalizes as no-update, and the
+   next epoch mines from H again.
+
+Verdict ledger: https://affine.io/gate.json is an append-only record of every
+verdict (epoch, head H, candidate C, promoted or rejected, z, cap-hit, n,
+reason, submission-window (`gather_start`) / training / pre-probe / post-probe / decision timestamps). The
+site shows it in the "Promotion gate" panel, and the "Epoch timings" chart shows
+the post-probe (gate) segment plus pre/post probe times per epoch.
+
+Bans (updated October 27, 2026, 7:45 PM CR, UTC-6): **no UIDs are banned.** All
+SN120 UID/hotkey bans were lifted and the ban list is empty
+(https://affine.io/bans.json shows `count: 0`). Previously banned miners can submit,
+are trained on, and earn flip credit like everyone else. The per-batch
+TOPLOC/sampling verify gate is unchanged: a batch that itself fails verify earns
+nothing and is not trained on, and a new verify failure after this time can still
+trigger a ban.
+
+Rewards (updated October 27, 2026): **scores update on pass and fail.** From
+epoch 169 a RED epoch is scored the same way as a GREEN one: after the verdict
+the discarded candidate C is probed (k=1, same harness) on that epoch's own
+dispatched batch tasks, and each miner's tasks are compared with H's probe:
+fail→pass = +1, pass→fail = −1 (symmetric net credit, TOPLOC/verify gate
+unchanged; no UIDs are banned). So every epoch tells you which of your tasks moved the model,
+whether or not the candidate was promoted. Promotion is unchanged: the head
+moves only on GREEN, and a RED candidate never becomes a head probe, so its
+flips are counted once. RED epochs before 169 paid zero flip credit (no debit).
+The non-zero weight floor is unchanged. Per-epoch rows are in
+https://affine.io/scores.json (`miners[].by_epoch`, `window.pairs[]` with
+`gate: "red"`).
+
+Unchanged: the mining contract, nonces, TOPLOC/sampling verify and the
+weight floor. No UIDs are banned (all bans lifted October 27, 2026). Batch pre/post results are logged for analysis only and do not
+gate. Public metadata: `formula.promotion_gate` on https://affine.io/scores.json
+and https://affine.io/gate/index.json (commitments, verdicts, z, cap rate).
+
+Code: https://github.com/AffineFoundation/affine/tree/validator/v829i-promotion-gate-20261026/ops/promotion_gate_v829i
+
+## Published training parameters (mining.json `training` block) — added October 26, 2026
+
+Every epoch, https://affine.io/mining.json carries an additive `training` object
+(also at https://affine.io/training.json) generated from the live signed
+lifecycle config and the live trainer host config, not hand-copied. Existing
+fields are unchanged; clients that ignore unknown keys keep working. The block
+is only present when it describes the same epoch and head checkpoint as the
+rest of mining.json.
+
+| Field | Meaning (values at epoch 152) |
+| --- | --- |
+| `head.checkpoint`, `head.optimizer_step` | Head being mined (189de412…, step 106) |
+| `optimizer` | AdamW (CPU fp32 masters), lr 1e-6, betas [0.9, 0.999], eps 1e-8, weight decay 0.01 (bias and 1-D params excluded), grad-norm clip 1.0, 1 optimizer step per epoch, optimizer moments not persisted |
+| `schedule` | Constant lr; after a cold optimizer restart (rollback or discarded candidate) lr × 0.5 for 3 steps; per-step relative update capped at `drift_cap_rel` = 2e-5 |
+| `loss` | GRPO, vanilla dual-clip PPO (clip 0.2, dual clip 3.0), `seq-mean-token-sum-norm`, low-variance KL 0.02 to the base checkpoint, entropy 0, no advantage std-normalisation, overlong soft penalty 0.5 from 6000 to 8192 tokens, derail masking. From epoch 196 the trainer runs `seq-mean-token-mean` × 0.5635 (see "The loss" in the K=1 section) |
+| `batch` | Up to 256 groups × 8 rollouts. One claim per task (earliest R2 `received_at`); admitted unique tasks are ordered by `sha256([seed, miner, env_id, index])` with a seed drawn after the deadline; the first 256 train |
+| `sampling` | temperature 1.0, top-k 20, top-p 0.95; `affine_math` max output 8192 tokens, context 12288 |
+| `collection_seconds` | Signed upload window length (900 s from epoch 177; 1200 s e152–e176). From e219 the epoch seals early once a registration is ready; see `sealed_at` |
+| `promotion_gate` | sample 1000 of 7,496, z > 0 (`z_min` 0, `z_inclusive` false; from epoch 168), cap-hit < 0.20, min 200 tasks; RED epochs scored like GREEN from epoch 169 (`scores_update_on` pass_and_fail) |
+| `sources` | sha256 of the signed lifecycle config and trainer host operator config used |
+
+No seeds, private task ids or the private gate sample are published.
+
+
+## Flip-incentive LIVE scoring (symmetric net credit) — updated October 26, 2026
+
+**Status: LIVE.** On-chain mech-0 weights are set hourly from the flip scores.
+The MiMo complete-group mining contract (8-nonce groups, nonces 0–7, mixed
+correct/wrong) is **unchanged**; no new miner client is required.
+
+### What changed on October 26, 2026
+
+| | Before (Oct 23 – Oct 26 11:38 AM CR) | Now (`credit_mode = "symmetric"`) |
 | --- | --- | --- |
-| URL | https://affine.io/scores.json | https://affine.io/scores-shadow.json |
-| Rule | v9 window credit seq7 (`groups × (1 − p)`) | fail→pass flip + surprise |
-| On-chain / hourly writer | yes | **never** (`live_weights: false`) |
-| Refresh | after each hourly weight run | ~every 5 minutes |
+| fail→pass on a task | `+ −ln(p̂)` (large on hard tasks) | **+1** |
+| pass→fail on a task | `− −ln(1 − p̂)` (small on hard tasks) | **−1** |
+| Pure noise (true pass rate unchanged) | earned a positive amount in expectation on hard tasks | **earns 0 in expectation** |
+| Negative net | absorbed | **kept and carried forward** |
 
-Eyeball: sort both files by `share_now` and compare top UIDs. Shadow miners also
-carry `flip_score`, `n_fail_to_pass`, and `n_pass_to_fail`.
+The whole scoring window (credit epochs from 93) is recomputed under the new
+rule on every scorer run, so the change applies to your full history, not only
+to new epochs.
 
-### Formula (shadow v1)
+### Formula (live)
 
-For each published probe epoch pair `(E → E_next)` with private `per_task`:
+For each pair of consecutive published probe epochs `(E → E_next)`:
 
-1. **Join** miner `DISPATCH.payload.selected[]` at epoch `E` (`miner`, `index`)
-   with probe `envs.affine_math.per_task[<index>]` at `E` and `E_next`.
-2. **Eligibility (hard_fail):** baseline status at `E` ∈
-   `{unresolved, wrong, error, mixed}` — credit only while the task was failing.
-3. **Credit:** fail→pass ⇒ `+ surprise(p̂)` where `w = −log(max(p̂, ε))`, `ε=1e-4`.
-4. **Debit (on in shadow):** pass→fail ⇒ `− surprise(1 − p̂)`.
-5. **p̂:** running EMA of prior probe pass rates (`α=0.3`), else bandit `ema_p`,
-   else raw pass at `E`, else `0.5`.
-6. **Shares:** `relu(flip_score) / sum` over miners. No authenticity guard in v1.
+1. **Join** the DISPATCH-selected batches (`miner`, task `index`) of the epoch
+   that trained from probe `E`'s checkpoint with the validator's probe result for
+   that task at `E` and at `E_next`.
+2. **Per-task credit = change in estimated pass probability.** With one probe
+   sample per side that is: fail→pass = **+1**, pass→fail = **−1**,
+   fail→fail = pass→pass = 0. Gains and losses have exactly the same size, so
+   random flips cancel out and only real, repeatable improvement adds up.
+3. **Net score:** your `flip_score` is the **net sum** over every pair in the
+   window. A negative net is not reset to zero: it stays in your score and later
+   gains must pay it off first.
+4. **Shares:** `max(0, flip_score) / sum` over miners. Clipping at zero happens
+   only at this final step. No UIDs are currently banned. Unearned or unregistered mass
+   burns to UID 0. A hard non-zero floor guarantees the weight vector is never
+   all-zero.
 
-Window: published probe epochs with `epoch ≥ 93` (full 7,496-task pool). Formula
-version field: `sn120-flip-incentive-shadow-v1`.
+### TOPLOC / sampling verify gate (unchanged)
 
-### Env probe (inputs to the shadow scorer)
+| Rule | Effect |
+| --- | --- |
+| TOPLOC or sampling verify **fail** / structural reject | No flip credit on that batch, and it is not packed into GRPO |
+| Not yet audited | Earns normally (pending pass-through) until an audit result is joined; a later fail strips it |
+| Tolerances | Unchanged |
+| Nonces / mixed-outcome admission | Unchanged |
+
+Public metadata: `formula.credit_mode`, `formula.symmetric_weight` and
+`formula.sampling_verify_gate` on https://affine.io/scores.json.
+
+### Env probe (inputs)
 
 - Continuous partial coverage + bounded bandit top-k sampling on `affine_math`.
 - Index / series: https://affine.io/probe/index.json · https://affine.io/probe/series.json
-- Real-time aggregates: https://affine.io/probe/c/
-- Lagged full per-task dumps (after 2 sealed probe epochs): https://affine.io/probe/tasks/
-- Flip scoring itself uses the private per-task stream immediately; the public
-  `/probe/tasks/` lag is for audit, not for the shadow join.
+- Lagged per-task dumps (after 2 sealed probe epochs): https://affine.io/probe/tasks/
 
-### What miners should do now
+### What miners should do
 
-Keep submitting under the **October 13 MiMo complete-group contract** below.
-Shadow weights reward recovering **failing** tasks (fail→pass) with higher
-surprise on rare successes. Prefer frontier / currently-failing tasks; the
-submission format, nonces, runtime, and proof transport do not change for shadow.
+Keep submitting under the October 13 MiMo complete-group contract below. Submit
+batches that make the model genuinely better on the tasks you are dispatched:
+a task you break costs exactly as much as a task you fix. Submission format,
+nonces, runtime and proof transport do not change.
 
-When LIVE eventually flips (not today), the only intended change is which score
-file the hourly writer consumes. Until then, treat `scores-shadow.json` as
-preview only.
-
-### Rollback (docs)
-
-Restore the previous `website/llms.txt` backup
-(`llms.txt.before-flip-shadow-20261023`) on ArbosLife; LIVE `scores.json` and
-the MiMo mining body of this file are untouched by the shadow docs patch.
+Code: https://github.com/AffineFoundation/affine/tree/prod/validator-20261026-symmetric-credit/subnet/flip
 
 ## What changes at this cutover
 
@@ -125,8 +274,9 @@ One task batch now contains the entire canonical group of eight attempts:
 - Different prescribed attempts may legitimately produce identical output
   tokens. Preserve them with their distinct bound nonce identities. Repeating
   a nonce or claiming the same committed group twice is not allowed.
-- The initial cap remains nine eligible task batches per registered UID per
-  epoch. One group is one task contribution, not eight separate contributions.
+- The per-miner cap is up to 125 task batches per epoch (tunable, `training.batch_cap`)
+  for v8.2.3u extended clients. v8.2.2 clients and `--no-upgrade` are limited to the
+  legacy nine. One group is one task contribution, not eight separate contributions.
 
 Parallel execution of attempts is allowed. Ordered nonces describe the required
 sampling challenges and submitted group, not provable wall-clock execution order.
@@ -335,6 +485,13 @@ alone is not evidence of an accepted rollout or earned reward.
 
 ### Approved mining runtime
 
+v8.2.3u client (from epoch 234): the signed release approves source archive fb87025798f947aa78d97930ce9e52e690d9b4ba7d90d5c004c8c0f2bc7b0555 (git a658eb807). Download
+https://affine.io/releases/mimo-source-v8.2.3u/fb87025798f947aa78d97930ce9e52e690d9b4ba7d90d5c004c8c0f2bc7b0555/source.tar.gz and check it with
+`echo "fb87025798f947aa78d97930ce9e52e690d9b4ba7d90d5c004c8c0f2bc7b0555  source.tar.gz" | sha256sum -c`, or apply
+https://affine.io/releases/mimo-source-v8.2.3u/0005-v8.2.3u-dual-accept.patch (`git am`) on GitHub branch
+release/mimo-v8.2.3-replace-headbound (93e242fac). Checksums: https://affine.io/releases/mimo-source-v8.2.3u/SHA256SUMS.
+The supervisor runs the approved source automatically.
+
 Use the reviewed release commit above from https://github.com/AffineFoundation/affine.
 Preserve local work and private state when updating. The source approved by the
 signed opening controls the actual child miner; arbitrary GitHub main contents
@@ -397,8 +554,8 @@ compute setting and does not change group size, seeds, nonce order, deadlines
 or reward limits. Runtime admission includes the memory required by the parent
 and independent replicas. Do not point another active launcher at this state.
 
-Omit `--max-batches` to follow the signed cap. An explicit smaller value is a
-local limit. `--search-budget` is a local ceiling, not a nonce range: the legacy
+Omit `--max-batches` to follow the signed cap (125 tasks in extended mode). An explicit
+smaller value is a local limit; `--max-batches 9` throws away the 125-task cap. `--search-budget` is a local ceiling, not a nonce range: the legacy
 value 32 permits a canonical N8 group but still generates exactly eight attempts.
 A ceiling below N fails before generation; it does not produce partial groups.
 
@@ -551,12 +708,12 @@ Its optimizer state stays durable locally; publication uploads the new model
 and reports, not the optimizer. A retry after publication recovers the original
 transaction instead of applying the same gradient update again.
 
-Collection initially targets 30 minutes; the target is a complete epoch in under
-one hour. Actual signed start/deadline and measured stage times are authoritative,
+The signed collection window is 15 minutes from epoch e177 (20 minutes e152–e176, 30 minutes through e151); from e219 the epoch seals early as soon as the previous epoch finalized and a registration has a ready batch, and from e221 the next epoch is pre-opened during the previous turn; the
+target is a complete epoch in under one hour. Actual signed start/deadline and measured stage times are authoritative,
 not a service-level guarantee in this guide. Audits have independent deadlines
 and must not hold back training or checkpoint publication. A fresh model download
-can consume part of the first collection window; the nine-group cap does not
-promise that a new miner can finish nine groups in that window.
+can consume part of the first collection window; the per-miner task cap (up to 125 for v8.2.3u
+extended clients; legacy v8.2.2 clients: 9) does not promise that a miner can finish that many groups in that window.
 
 ## Evaluation, evidence and troubleshooting
 
