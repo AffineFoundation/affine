@@ -1,0 +1,117 @@
+{
+ "version": "sn120-k1-step-recipe-v1",
+ "applies_from_epoch": 196,
+ "example_turn": "https://affine.io/k1/turns/202/turn.json",
+ "summary": "Each K=1 turn is ONE optimizer step from the current head on the turn miner's admitted groups. Everything a turn used is in /k1/turns/<epoch>/turn.json after the gate decision; this file is the fixed recipe.",
+ "model": {
+  "head": "the current head checkpoint (turn.json decision.head / training.input.checkpoint), bf16 weights",
+  "trainable": "model.language_model.* and lm_head.* (vision tower and MTP heads frozen)",
+  "class_": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
+  "kl_reference_checkpoint": "87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae"
+ },
+ "data": {
+  "groups": "the selected rows of the signed filtered dispatch, in dispatch order (turn.json dispatch.selected); each row = one task, 8 rollouts (nonces 0-7) from the miner document (turn.json documents), outcomes from the validator's native grades in the row",
+  "projection": "subnet/mimo_grpo/projection.py project_document (prompt = native grade prompt tokens; output tokens = the uploaded tokens)",
+  "row_order": "group order x nonce order; this order defines rows i = 0..N-1",
+  "miner_logprobs": "ignored by the trainer (recomputed from the head)"
+ },
+ "loss": {
+  "mode": "seq-mean-token-mean",
+  "loss_scale": 0.5635,
+  "formula": "L = loss_scale * (1/N) * sum_i (1/(K_i + 1e-8)) * sum_{t<=K_i} [ pg_{i,t} + kl_coefficient * k3_{i,t} ]",
+  "N": "active rollouts (all rollouts of the turn; unresolved ones stay in with reward 0)",
+  "K_i": "kept response tokens of rollout i (all tokens unless derail-masked)",
+  "pg": "vanilla dual-clip PPO (clip_ratio 0.2, dual_clip 3.0) with OLD = current.detach(): ratio 1, gradient -A_i * grad log pi",
+  "k3": "exp(ref - cur) - (ref - cur) - 1, ref - cur clamped to [-20, 20], k3 clamped to [-10, 10]; kl_coefficient 0.02",
+  "reward": "r = 1[correct] - 0.5 * clip((len - 6000) / (8192 - 6000), 0, 1)",
+  "advantage": "A_i = r_i - mean(r of the 8 rollouts of its task), no std normalisation",
+  "derail_mask": "only rollouts stopped at max_tokens with A_i < 0: K_i cut at the first derail index (window 32, threshold -3.0, tail 64; subnet/mimo_grpo/training.py derail_keep)",
+  "code": "pinned verl core_algos (subnet/mimo_grpo/upstream.py) via /k1/replay/host/v8211_batched.py _gradient_pass",
+  "signed_config_settings": {
+   "adam_epsilon": 1e-08,
+   "beta1": 0.9,
+   "beta2": 0.999,
+   "cap_policy": "affine-unresolved-zero-reward-active-v1",
+   "clip_ratio": 0.2,
+   "derail_mask": true,
+   "derail_tail": 64,
+   "derail_threshold": -3.0,
+   "derail_window": 32,
+   "dual_clip": 3.0,
+   "entropy_coefficient": 0.0,
+   "group_size": 8,
+   "kl_coefficient": 0.02,
+   "kl_reference_checkpoint": "87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae",
+   "kl_type": "low_var_kl",
+   "learning_rate": 1e-06,
+   "loss_agg_mode": "seq-mean-token-sum-norm",
+   "loss_scale_factor": 8192,
+   "max_gradient_norm": 1.0,
+   "max_tasks": 256,
+   "normalize_advantage_std": false,
+   "old_actor_logprob_tolerance": 1e-05,
+   "overlong_max_tokens": 8192,
+   "overlong_penalty": 0.5,
+   "overlong_soft_start": 6000,
+   "ppo_epochs": 1,
+   "sampler_correction": "none",
+   "sampler_ratio_lower": 0.2,
+   "sampler_ratio_upper": 5.0,
+   "temperature": 1.0,
+   "top_k": 20,
+   "top_p": 0.95,
+   "weight_decay": 0.01,
+   "weight_decay_policy": "mcore-bias-and-1d-excluded-v1"
+  }
+ },
+ "execution": {
+  "engine": "packed varlen data parallel over 8 GPUs (v83_dp)",
+  "microbatches": "first-fit-decreasing over rows sorted by (-length, index), token budget 32768 per bin, max 256 rows; bins assigned to the least-loaded of 8 ranks in order of decreasing size (LPT); turn.json training.microbatch.rank_tokens",
+  "forward": "bf16; full-attention layers: torch varlen_attn (FlashAttention-2, causal, GQA); linear-attention layers: fla 0.6.0 causal_conv1d + chunk_gated_delta_rule (varlen, Triton); lm_head in bf16, logits/log-softmax in fp32 in chunks of 4096 tokens; layer activation checkpointing (numerically identical recompute)",
+  "accumulation": "per rank: fp32 buffer += bf16 param.grad after each micro-batch; ranks: fp32 dist.reduce SUM over NCCL to rank 0",
+  "clip": "global L2 norm over the fp32 sums, scale = min(1, 1.0 / (norm + 1e-6))",
+  "code": [
+   "/k1/replay/host/v83_dp.py",
+   "/k1/replay/host/v83_fast_kernels.py",
+   "/k1/replay/host/v8211_batched.py"
+  ]
+ },
+ "optimizer": {
+  "name": "fresh AdamW (one step from zero moments)",
+  "lr": 5e-07,
+  "eps": 1e-08,
+  "weight_decay": 0.01,
+  "delta": "d_t = lr * (g_t / (|g_t| + 1e-8) + 0.01 * W_t * [W_t >= 2-D and not a bias])",
+  "tensor_rel_cap": "r_t = min(1, 2e-05 * (1 - 1e-6) * ||W_t|| / ||d_t||) (fp64 norms)",
+  "global_cap": "s = min(1, 1.0 / ||r * d||) (not binding in practice)",
+  "update": "W_t_new = bf16_round_nearest_even(fp32(W_t) - fp32(s * r_t) * d_t)",
+  "code": "/k1/replay/host/fresh_adam_v833.py",
+  "per_turn_stats": "turn.json training.optimizer.sgd",
+  "fp32_master": {
+   "applies_from_epoch": 274,
+   "trainer": "v8.3.3f (engine sgd_fp32_master: true)",
+   "rule": "M_H = the head fp32 master; d_t and r_t are computed from M_H (not fp32(bf16 W)); M_C = M_H - fp32(s * r_t) * d_t; candidate bf16 = bf16_round_nearest_even(M_C); GREEN -> M_C becomes the head master; RED -> discarded",
+   "bootstrap": "the first v8.3.3f turn (epoch 274) uses M_H = fp32(bf16 head) exactly",
+   "moments": "not persisted (fresh zero state every turn, as before)",
+   "digest": "sha256 of canonical JSON {tensor name: sha256(little-endian fp32 bytes)} (sorted keys, separators , :); bf16 digest: same over bf16 bytes",
+   "committed_in": "turn.json training.optimizer.sgd.fp32_master (input/output master digest, input/output bf16 sha256, source bootstrap-upcast|memory|disk)",
+   "published": "on every GREEN: R2 checkpoints/<C>/fp32-master/fp32-master-XXXXX-of-XXXXX.safetensors + meta.json; manifest https://affine.io/k1/fp32-master/<C>.json; index https://affine.io/k1/fp32-master/index.json",
+   "check": "bf16_round_nearest_even(published master) == published bf16 head of <C>; master digest == turn.json output_master_digest"
+  },
+  "update_v833f": "W_new = bf16_round_nearest_even(M_C), M_C = M_H - fp32(s * r_t) * d_t (from epoch 274)"
+ },
+ "determinism": {
+  "bit_deterministic": false,
+  "why": "FlashAttention-2 / fla Triton backward kernels and the NCCL reduction order are not run-to-run deterministic; the forward (per-rollout losses) replays exactly, the gradient closely (pre-clip norm within about 0.5%), and the bf16 weights differ in a small fraction of elements by one step size. Measured: /k1/replay/results.json"
+ },
+ "runtime": {
+  "torch": "2.14.0",
+  "transformers": "5.14.1",
+  "fla": "flash-linear-attention 0.6.0 / fla-core 0.6.0"
+ },
+ "grading_note": {
+  "applies_from_epoch": 274,
+  "gate": "gate probe grades use the live native grade plus Allan lenient rules (catoneone/sn120-k1-fixes 786cdb9) for non-positive EOS replies",
+  "training": "training rewards use the native grades in the signed dispatch rows (unchanged; miner and validator grader must match)"
+ }
+}
