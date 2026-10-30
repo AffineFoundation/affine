@@ -1,12 +1,13 @@
 # sha256 identity of a gocryptfs original vs its plain-disk copy, over files present in both (skips in-progress *.partial dirs / tmp files).
-import os,sys,hashlib,json
+import os,sys,hashlib,json,re
 from concurrent.futures import ThreadPoolExecutor
 o,n=sys.argv[1],sys.argv[2]; L=[]
+SKIP=re.compile(os.environ['PD_SKIP']) if os.environ.get('PD_SKIP') else None   # e.g. logs still appended by live processes
 for r,ds,fs in os.walk(o):
     ds[:]=[d for d in ds if not d.endswith('.partial')]
     for f in fs:
         p=os.path.relpath(os.path.join(r,f),o)
-        if not os.path.islink(os.path.join(o,p)) and not f.endswith(('.tmp','.partial','.lock')) and '.tmp' not in f: L.append(p)
+        if not os.path.islink(os.path.join(o,p)) and not f.endswith(('.tmp','.partial','.lock')) and '.tmp' not in f and not (SKIP and SKIP.search(p)): L.append(p)
 def h(base,p):
     s=hashlib.sha256()
     try:
