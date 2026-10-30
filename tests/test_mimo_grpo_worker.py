@@ -87,17 +87,19 @@ class Harness:
             grades = compact_native_grades(grades)
             selected.append(dict(miner='f' * 64, env_id='math', index=0, batch_sha256=digest(batch),
                 document=dict(sha256=cap['sha256'], key='fixture'), native_grades=grades,
-                assurance='natively-graded-sampling-unaudited'))
+                assurance='natively-graded-sampling-audit-verified',
+                sampling_audit_outcome='verified_valid'))
         dispatch = dict(version='mimo-complete-group-coordinator-v1', epoch=m['epoch'], run_id=m['run_id'],
             checkpoint=checkpoint['id'], manifest_sha256=digest(m), selected=selected, excluded=[],
-            training_requires_sampling_audit=False, selected_task_count=len(selected),
+            training_requires_sampling_audit=True, selected_task_count=len(selected),
             selected_rollout_count=len(selected) * 8)
         job = dict(job_id='trainer-' + epoch, role='train', expires_at=time.time() + 3600,
             source_files={'subnet/test-only-fixture.py':'a' * 64},
             manifest=sign(self.authority, m), training=dict(run_id=m['run_id'], optimizer_step=step,
                 config=TrainerConfig().document(), dispatch=self.capability(sign(self.authority, dispatch)),
                 documents=docs, publication_namespace='private/mimo/fixture-run' if release else 'private/fixture-run', publisher_id=self.signer.id,
-                role_config_file='/unused-by-explicit-fixture-injection.json'))
+                role_config_file='/unused-by-explicit-fixture-injection.json',
+                training_requires_sampling_audit=True, sealed_dispatch_sha256='0' * 64))
         return job, m
     def execute(self, job, manifest, context=None, assert_lease=lambda: None,
                 workspace=None, trainer_state_root=None):
@@ -154,7 +156,7 @@ def test_worker_two_epochs_empty_epoch_and_warm_model_reuse(tmp_path, monkeypatc
         second = h.execute(two, m2, context)
         validate_result(second, two, m2)
         assert second['training']['optimizer_step'] == 2 and h.loads == 1
-        assert second['training']['training_requires_sampling_audit'] is False
+        assert second['training']['training_requires_sampling_audit'] is True
         assert not any('/optimizer/' in key for key in h.client.objects)
         assert h.execute(two, m2, context)['output_checkpoint'] == second['output_checkpoint']
         assert context.optimizer.global_step == 2

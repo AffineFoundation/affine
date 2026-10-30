@@ -2,7 +2,9 @@
 
 The host supplies read-only registration/discovery adapters, its existing role
 queue, and full model readback. All external mutations receive stable signed
-records or job IDs for retry. Sampling audits are deliberately independent.
+records or job IDs for retry. Structural seal stays independent of audits, but
+GRPO packing requires sampling authenticity: unaudited and verify-fail groups
+are stripped from the train pack (verified-or-nothing).
 """
 from __future__ import annotations
 
@@ -42,7 +44,8 @@ class Services:
     discovery: object
     # checkpoint_urls(descriptor) returns GET-only capabilities for the exact file inventory.
     checkpoint_urls: object
-    # make_training_job(opening, dispatch, optimizer_step, namespace) -> authority-signed job.
+    # make_training_job(opening, dispatch, optimizer_step, namespace, *,
+    #   sampling_verify_outcomes=None, train_denylist_keys=None) -> authority-signed job.
     make_training_job: object
     enqueue_training: object
     # training_result(job_id) -> original worker-signed queue report request, or None.
@@ -52,6 +55,11 @@ class Services:
     # Optional only for original private diagnostic callbacks. The concrete
     # host always renews this exact source archive's GET capability per epoch.
     source_bundle: object = None
+    # Optional authenticity inputs for GRPO packing (verified-or-nothing).
+    # sampling_verify_ledger(epoch) -> outcome map or ledger document.
+    sampling_verify_ledger: object = None
+    # train_denylist(epoch) -> denylist keys iterable or denylist document.
+    train_denylist: object = None
 
 
 class Lifecycle:
@@ -67,8 +75,9 @@ class Lifecycle:
              and type(first_round) is int and first_round >= 0, 'bounded explicit lifecycle limits')
         need(self.policy.mode != 'public' or first_round > 0,
              'public lifecycle requires the explicit next global network round')
-        need(all(callable(getattr(services, k)) for k in Services.__dataclass_fields__ if k != 'source_bundle')
-             and (services.source_bundle is None or callable(services.source_bundle)),
+        optional = {'source_bundle', 'sampling_verify_ledger', 'train_denylist'}
+        need(all(callable(getattr(services, k)) for k in Services.__dataclass_fields__ if k not in optional)
+             and all(getattr(services, k) is None or callable(getattr(services, k)) for k in optional),
              'explicit lifecycle service adapters')
         need(self.policy.mode != 'public' or callable(services.source_bundle),
              'public lifecycle needs renewable exact source capabilities')
@@ -193,6 +202,19 @@ class Lifecycle:
                    canonical(document))
         return document
 
+    def _authenticity_inputs(self, epoch):
+        outcomes, denylist = None, None
+        if callable(self.services.sampling_verify_ledger):
+            outcomes = self.services.sampling_verify_ledger(epoch)
+        if callable(self.services.train_denylist):
+            from .mimo_training_authenticity import denylist_keys_from_document
+            raw = self.services.train_denylist(epoch)
+            if type(raw) in (set, list, tuple):
+                denylist = set(raw)
+            elif raw is not None:
+                denylist = denylist_keys_from_document(raw)
+        return outcomes, denylist
+
     def _training(self, directory, opening, dispatch, current, now):
         m = signed(opening, self.identity.id); d = signed(dispatch, self.identity.id)
         if d['selected_task_count'] == 0:
@@ -201,14 +223,27 @@ class Lifecycle:
         path = directory / 'TRAINING-JOB.json'
         if path.exists(): envelope=self._load(path)
         else:
-            envelope=self.services.make_training_job(opening,dispatch,current['optimizer_step'],self.policy.namespace())
+            outcomes, denylist = self._authenticity_inputs(m['epoch'])
+            envelope=self.services.make_training_job(
+                opening, dispatch, current['optimizer_step'], self.policy.namespace(),
+                sampling_verify_outcomes=outcomes, train_denylist_keys=denylist)
             # Save only after validation below; a caller cannot substitute another opening or dispatch.
         job=signed(envelope,self.identity.id)
+        training=job.get('training', {})
         need(job.get('role')=='train' and job.get('manifest')==opening
-             and job.get('training',{}).get('optimizer_step')==current['optimizer_step']
-             and job['training'].get('publication_namespace')==self.policy.namespace()
-             and job['training'].get('dispatch',{}).get('sha256')==digest(dispatch),
-             'trainer job must consume this original opening and frozen dispatch')
+             and training.get('optimizer_step')==current['optimizer_step']
+             and training.get('publication_namespace')==self.policy.namespace()
+             and training.get('training_requires_sampling_audit') is True
+             and training.get('sealed_dispatch_sha256')==digest(dispatch)
+             and type(training.get('dispatch')) is dict and training['dispatch'].get('sha256'),
+             'trainer job must consume authenticity-filtered train pack of this sealed dispatch')
+        # Sealed groups may all be stripped (unverified / verify-fail): no GRPO update.
+        if not training.get('documents'):
+            if not path.exists(): save_manifest(path, envelope)
+            return dict(status='no-update', checkpoint=current['checkpoint'],
+                        optimizer_step=current['optimizer_step'],
+                        checkpoint_authorization=current['checkpoint_authorization'],
+                        reason='no-sampling-verified-train-pack')
         from .mimo_training_worker import validate_job
         validate_job(job,m,self.identity.id,allow_public=self.allow_public)
         if not path.exists(): save_manifest(path,envelope)
@@ -228,7 +263,7 @@ class Lifecycle:
         # starting timestamp. Judge its completion time when we receive it;
         # the original signed job deadline still bounds allowed completion.
         validate_report(report,job,m,self.identity.id,digest(job),time.time())
-        need(report['training']['status']=='updated', 'nonempty dispatch requires a real trainer update')
+        need(report['training']['status']=='updated', 'nonempty verified train pack requires a real trainer update')
         receipt=report['publication_receipt']; published=signed(receipt,job['training']['publisher_id'])
         actual=descriptor(self.services.readback_publication(published))
         need(actual==published['descriptor'], 'full stored model readback must match signed publication')

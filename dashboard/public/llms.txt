@@ -25,29 +25,47 @@ Expected coordinator authority public key:
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
 
-Scoring notice (2026-10-23): LIVE weights remain v9/seq7 (https://affine.io/scores.json). Flip-incentive scores are published in SHADOW only at https://affine.io/scores-shadow.json — see “Flip-incentive SHADOW scoring — October 23, 2026” below. The MiMo mining contract is unchanged.
+Scoring notice (2026-10-23): LIVE on-chain weights use **flip-incentive** scoring
+(https://affine.io/scores.json) with a TOPLOC/sampling verify gate: verify **fail**
+strips flip credit and excludes the batch from GRPO packing. Unverified earns
+nothing. No authenticity *bonus*. Never all-zero weights (last-good share floor).
+See “Flip-incentive LIVE scoring — October 23, 2026” below. The MiMo
+complete-group mining contract (nonces 0–7, mixed correct/wrong) is unchanged.
 
-## Flip-incentive SHADOW scoring — October 23, 2026
+## Flip-incentive LIVE scoring — October 23, 2026
 
-**Status: SHADOW ONLY.** LIVE on-chain weights are still **v9 window-credit seq7**.
-This section describes a parallel flip+surprise scorer that publishes what weights
-*would* be. It does **not** mean LIVE weights have flipped. The MiMo complete-group
-mining contract (8-nonce groups, nonces 0–7, mixed correct/wrong) is **unchanged**;
-no new miner client is required for this shadow path.
+**Status: LIVE.** On-chain mech-0 weights are set from the flip+surprise formula.
+The MiMo complete-group mining contract (8-nonce groups, nonces 0–7, mixed
+correct/wrong) is **unchanged**; no new miner client is required. This gate does
+**not** strip nonce or mixed-outcome admission.
 
-### LIVE vs SHADOW
+### TOPLOC / sampling verify gate (2026-10-23)
 
-| | LIVE (pays) | SHADOW (observe only) |
+| Rule | Effect |
+| --- | --- |
+| TOPLOC or sampling verify **fail** | No flip credit on that batch/traj **and** do not pack into GRPO |
+| Unverified / unaudited / pending | Earns **nothing** and is **not** packed into GRPO |
+| Verify scope | **All** batches that can earn flip credit or enter GRPO (not spot-check-only) |
+| No authenticity *bonus* | `no_authenticity_guard=true` — formula has no separate authenticity term |
+| Tolerances | Unchanged — do not loosen TOPLOC / logprob tolerances |
+| Never all-zero weights | If authenticity / unknown_policy would zero all shares, retain last-good shares (or refuse submit and keep on-chain). Never burn. Never owner-only. |
+
+Public scores metadata: `formula.sampling_verify_gate` on https://affine.io/scores.json
+(`fail_strips_credit`, `credit_requires_verify_pass`). Formula version:
+`sn120-flip-incentive-live-v1`.
+
+### What changed from v9 / seq7
+
+| | Previous LIVE (v9 seq7) | LIVE now (flip) |
 | --- | --- | --- |
-| URL | https://affine.io/scores.json | https://affine.io/scores-shadow.json |
-| Rule | v9 window credit seq7 (`groups × (1 − p)`) | fail→pass flip + surprise |
-| On-chain / hourly writer | yes | **never** (`live_weights: false`) |
-| Refresh | after each hourly weight run | ~every 5 minutes |
+| URL | https://affine.io/scores.json | https://affine.io/scores.json (same path) |
+| Rule | window credit `groups × (1 − p)` over 4 epochs | fail→pass flip + surprise |
+| On-chain / hourly writer | yes | yes (reads flip shares; never submits all-zero) |
+| Refresh | after each hourly weight run | scores ~every 5 min; weights hourly |
 
-Eyeball: sort both files by `share_now` and compare top UIDs. Shadow miners also
-carry `flip_score`, `n_fail_to_pass`, and `n_pass_to_fail`.
+`scores-shadow.json` may mirror the same flip document during transition.
 
-### Formula (shadow v1)
+### Formula (live v1)
 
 For each published probe epoch pair `(E → E_next)` with private `per_task`:
 
@@ -56,39 +74,35 @@ For each published probe epoch pair `(E → E_next)` with private `per_task`:
 2. **Eligibility (hard_fail):** baseline status at `E` ∈
    `{unresolved, wrong, error, mixed}` — credit only while the task was failing.
 3. **Credit:** fail→pass ⇒ `+ surprise(p̂)` where `w = −log(max(p̂, ε))`, `ε=1e-4`.
-4. **Debit (on in shadow):** pass→fail ⇒ `− surprise(1 − p̂)`.
+4. **Debit:** pass→fail ⇒ `− surprise(1 − p̂)`.
 5. **p̂:** running EMA of prior probe pass rates (`α=0.3`), else bandit `ema_p`,
    else raw pass at `E`, else `0.5`.
-6. **Shares:** `relu(flip_score) / sum` over miners. No authenticity guard in v1.
+6. **Shares:** `relu(flip_score) / sum` over miners. No authenticity bonus.
+   Verify-fail strips credit; unverified earns nothing when the verify ledger
+   marks the batch. Share floor: never publish/submit an all-zero vector — retain
+   last-good shares or keep on-chain weights. Unearned / unregistered mass that
+   would otherwise burn is not used as a reason to submit zeros.
 
 Window: published probe epochs with `epoch ≥ 93` (full 7,496-task pool). Formula
-version field: `sn120-flip-incentive-shadow-v1`.
+version field: `sn120-flip-incentive-live-v1`.
 
-### Env probe (inputs to the shadow scorer)
+### Env probe (inputs)
 
 - Continuous partial coverage + bounded bandit top-k sampling on `affine_math`.
 - Index / series: https://affine.io/probe/index.json · https://affine.io/probe/series.json
 - Real-time aggregates: https://affine.io/probe/c/
 - Lagged full per-task dumps (after 2 sealed probe epochs): https://affine.io/probe/tasks/
-- Flip scoring itself uses the private per-task stream immediately; the public
-  `/probe/tasks/` lag is for audit, not for the shadow join.
+- Flip scoring uses the private per-task stream immediately; the public
+  `/probe/tasks/` lag is for audit.
 
-### What miners should do now
+### What miners should do
 
 Keep submitting under the **October 13 MiMo complete-group contract** below.
-Shadow weights reward recovering **failing** tasks (fail→pass) with higher
-surprise on rare successes. Prefer frontier / currently-failing tasks; the
-submission format, nonces, runtime, and proof transport do not change for shadow.
-
-When LIVE eventually flips (not today), the only intended change is which score
-file the hourly writer consumes. Until then, treat `scores-shadow.json` as
-preview only.
-
-### Rollback (docs)
-
-Restore the previous `website/llms.txt` backup
-(`llms.txt.before-flip-shadow-20261023`) on ArbosLife; LIVE `scores.json` and
-the MiMo mining body of this file are untouched by the shadow docs patch.
+Live weights reward recovering **failing** tasks (fail→pass) with higher surprise
+on rare successes. Prefer frontier / currently-failing tasks; submission format,
+nonces, runtime, and proof transport do not change. Batches that fail TOPLOC or
+sampling verification earn no flip credit and are excluded from GRPO packing.
+Unverified batches likewise earn no credit and are not trained on.
 
 ## What changes at this cutover
 
@@ -504,10 +518,13 @@ visibility; uncertain transactions are reconciled rather than blindly replayed.
 ## Learning rule and initial capacity
 
 The trainer admits authenticated, structurally complete groups after regenerating
-their native prompts and grading their outcomes. It can train on unaudited
-eligible groups; full sampling audits do not gate the epoch. Inputs stay labelled
-unaudited until the corresponding audit completes. Grader/infrastructure errors
-defer sealing rather than manufacturing failures.
+their native prompts and grading their outcomes. **GRPO packing requires sampling
+authenticity:** a group that is unaudited/pending or that fails TOPLOC/sampling
+verification is excluded from the train pack (verified-or-nothing). Structural
+seal and native grading may still complete without waiting for audits; only the
+verified subset is packed for training. Grader/infrastructure errors defer sealing
+rather than manufacturing failures. Flip credit uses the same fail/unverified
+strip rule and never submits all-zero weights.
 
 The GRPO objective reuses pinned XiaomiMiMo/verl reference functions from commit
 `a2ad9f6160b03ff2d47e59832bfb6b289f37c917`, with explicit Affine adaptations:
