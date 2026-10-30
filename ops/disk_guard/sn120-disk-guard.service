@@ -1,0 +1,7 @@
+[Unit]
+Description=SN120 disk guard (keep king + next model; free-space alerts)
+[Service]
+Type=oneshot
+Nice=19
+ExecStart=/usr/bin/python3 /home/const/subnet120-rewrite/ops/disk_guard/disk_guard.py --apply
+TimeoutStartSec=1800
