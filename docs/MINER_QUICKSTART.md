@@ -1,5 +1,7 @@
 # Start an Affine MATH miner
 
+Batch cap notice (2026-10-30): the live per-miner cap is **125 tasks x 8 rollouts = 1,000 rollouts** per K=1 turn, and bigger batches (up to 125 tasks) are encouraged. To get it, run the v8.2.3u client in extended mode: the miner supervisor runs the approved v8.2.3u source automatically (https://affine.io/releases/mimo-source-v8.2.3u/README.txt); do not pass `--no-upgrade`, and omit `--max-batches` (never set it to 9). Extended mode starts from the next opening after your first v8.2.3u commitment. v8.2.2 clients and `--no-upgrade` are legacy and limited to 9 tasks. The signed manifest's top-level `max_batches` (9) is that legacy contract; the extended cap is `dual_accept_policy.extended_max_batches` (125) and the live value is https://affine.io/mining.json -> `training.batch_cap.max_tasks_per_miner`. https://affine.io/llms.txt is authoritative.
+
 Read https://affine.io/llms.txt first. The latest signed OPEN manifest and its
 approved source are authoritative; GitHub main includes default-off research.
 Hourly weights use the best current authenticated miner assessment, retaining
@@ -62,7 +64,8 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --env-id affine_math --search-budget 32
 ```
 
-Batch-cap update activated by signed epoch `nonpayable-live-reward-math-v1--1791602071-110`:
+Historical batch-cap update (superseded; the live cap is 125 tasks for v8.2.3u extended clients, see the notice above)
+activated by signed epoch `nonpayable-live-reward-math-v1--1791602071-110`:
 up to nine task batches per UID and up to 512 distinct training tasks per epoch,
 with the same four-correct/four-wrong contents. The actual signed opening controls
 capacity. Update and restart the transport supervisor once, omitting

@@ -39,7 +39,10 @@ An enabled signed policy pins the run, immutable checkpoint inventory, runtime
 and template fingerprint, original task assets, source archive, sampler,
 calibration, outcome projection and complete-group contract. The initial public
 contract is eight trajectories with nonces 0–7, at least one completed correct
-and one completed incorrect answer, and at most nine task groups per UID.
+and one completed incorrect answer, and at most nine task groups per UID. That nine is now the
+legacy v8.2.2 cap only: from v8.2.3u (dual accept) extended identities may upload up to
+`dual_accept_policy.extended_max_batches` (125) task groups; the live trained cap is
+`mining.json` -> `training.batch_cap.max_tasks_per_miner` (125 x 8 rollouts = 1,000).
 
 Public execution needs both an enabled qualified signed policy and an explicit
 local `--allow-public-mimo` flag on the host and operator workers. Miner clients
