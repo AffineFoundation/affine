@@ -22,3 +22,9 @@ Continues [spec.md](spec.md) and [spec-2.md](spec-2.md).
 ## 10. Expressiveness
 
 - The submission structure must be expressive enough that an intelligent miner can always submit a batch that truly improves the model, while our estimation stays accurate.
+
+## 11. Disk space
+
+- The system runs continuously for days at a time, so anything left behind by an epoch builds up and eventually overloads the machines.
+- Every stage must clean up after itself between epochs. Each machine keeps only the current king and the next model queued to be checked, and nothing else grows without bound: no old checkpoints, candidate copies, experiment outputs, backups, temp files or unrotated logs.
+- Design every component with its steady-state disk footprint in mind, and check free space before a job starts rather than failing mid-run.
