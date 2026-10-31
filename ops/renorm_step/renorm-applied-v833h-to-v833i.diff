@@ -1,0 +1,206 @@
+--- ../../../20261030-free-file/release-v833h-signed/trainer-host-v833h/v8211_batched.py	2026-10-31 00:58:08.404119573 +0000
++++ v8211_batched.py	2026-10-31 13:07:28.019342191 +0000
+@@ -87,6 +87,8 @@
+ 
+ DROP_UNRESOLVED = False   # v8.2.5: set only by mimo_host_trainer_v825.install from engine['drop_unresolved']
+ LOSS_AGG_MODE = 'config'   # v8.2.11: set only by mimo_host_trainer_v8211.install from engine['loss_agg_mode']
++SUPPORT_RENORM = None      # support-renorm: None (off, byte-for-byte current loss) or dict(top_k=20, top_p=0.95, temperature=1.0),
++                           # set by the host launcher from engine['support_renorm']; must equal the manifest mimo_runtime sampling
+ LOSS_SCALE = 1.0           # v8.2.11: engine['loss_scale'] (constant multiplier, seq-mean-token-mean only)
+ LOSS_AGG_MODES = ('config', 'seq-mean-token-mean')
+ SEQ_MEAN = 'seq-mean-token-mean'
+@@ -241,8 +243,31 @@
+     return batches
+ 
+ 
+-def batched_log_probs(runtime, items, *, gradients, engine, logit_chunk=2048):
+-    """Selected raw log-probs for each (prompt, output) pair, one forward per call."""
++def support_logq(logits, t, top_k, top_p):
++    """log q_theta(t) renormalized over the sampler support, replayed from the trainer's own logits.
++
++    Support = top_k candidates (descending), then top-p on the softmax of those candidates with the
++    sampler rule `cumsum(p) - p < top_p` (sampler_correction.replay_support / complete_group_distribution).
++    The support mask is computed without gradient; log q is differentiable through the candidate logits.
++    Returns (log_q [n], inside [n] bool); log_q is 0 where the sampled token is outside the support.
++    """
++    values, ids = logits.topk(top_k, dim=-1)                      # sorted descending
++    with torch.no_grad():
++        p = torch.softmax(values, dim=-1)
++        keep = (p.cumsum(-1) - p) < top_p                         # always keeps the first candidate
++        hit = (ids == t[:, None]) & keep
++        inside = hit.any(-1)
++    log_q_all = torch.log_softmax(values.masked_fill(~keep, float('-inf')), dim=-1)
++    log_q = log_q_all.masked_fill(~keep, 0.).gather(-1, hit.float().argmax(-1, keepdim=True)).squeeze(-1)
++    return torch.where(inside, log_q, torch.zeros_like(log_q)), inside
++
++
++def batched_log_probs(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
++    """Selected raw log-probs for each (prompt, output) pair, one forward per call.
++
++    With support=dict(top_k, top_p, temperature) also returns, per item, the support-renormalized log q of the
++    sampled token and an inside-support mask: a list of (log_p, log_q, inside) triples instead of log_p tensors.
++    """
+     runtime.guard()
+     if gradients and not runtime.trainable:
+         raise ValueError('inference runtime cannot train')
+@@ -287,12 +312,22 @@
+         def selected(h, t):
+             logits = model.lm_head(h).float()
+             return logits.gather(-1, t[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
++
++        def selected_with_support(h, t):
++            logits = model.lm_head(h).float()
++            log_p = logits.gather(-1, t[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
++            log_q, inside = support_logq(logits / support['temperature'], t, support['top_k'], support['top_p'])
++            return log_p, log_q, inside
++        fn = selected if support is None else selected_with_support
+         chunks = []
+         for start in range(0, len(targets), logit_chunk):
+             h, t = states[start:start + logit_chunk], targets[start:start + logit_chunk]
+-            chunks.append(checkpoint(selected, h, t, use_reentrant=False) if gradients else selected(h, t))
+-        flat = torch.cat(chunks)
+-    return list(torch.split(flat, [len(o) for _, o in items]))
++            chunks.append(checkpoint(fn, h, t, use_reentrant=False) if gradients else fn(h, t))
++        sizes = [len(o) for _, o in items]
++        if support is None:
++            return list(torch.split(torch.cat(chunks), sizes))
++        parts = [torch.split(torch.cat([c[j] for c in chunks]), sizes) for j in range(3)]
++    return list(zip(*parts))
+ 
+ 
+ def _reference_pass(rows, plan, config, reference_runtime, *, engine, logit_chunk, guard=lambda: None):
+@@ -327,11 +362,15 @@
+         with torch.enable_grad():
+             currents = batched_log_probs(runtime, [(rows[i]['group'].prompt, rows[i]['rollout'].tokens)
+                                                    for i in batch], gradients=True, engine=engine,
+-                                         logit_chunk=logit_chunk)
++                                         logit_chunk=logit_chunk, support=SUPPORT_RENORM)
+         pending = []
+         for i, current in zip(batch, currents):
+             row = rows[i]
+             rollout, group = row['rollout'], row['group']
++            if SUPPORT_RENORM is None:
++                pg_current, inside = current, None
++            else:
++                current, pg_current, inside = current                 # full-vocab log p (KL, derail), support log q (PG)
+             if current.shape != (len(rollout.tokens),) or not torch.isfinite(current).all():
+                 raise ValueError('finite differentiable current token probabilities required')
+             old = current.detach()
+@@ -340,10 +379,11 @@
+                     threshold=config.derail_threshold, tail=config.derail_tail)
+             mask = torch.zeros_like(current).unsqueeze(0)
+             mask[0, :row['keep']] = 1
++            pg_mask = mask if inside is None else mask * inside.to(mask.dtype).unsqueeze(0)   # drop tokens outside the replayed support
+             advantage = torch.full_like(mask, row['advantage'])
+             weight = torch.tensor([row['prompt_weight']], dtype=torch.float64, device=current.device)
+             info = dict(global_batch_size=active_rollouts)
+-            loss, metrics = policy_loss(old.unsqueeze(0), current.unsqueeze(0), advantage, mask, weight,
++            loss, metrics = policy_loss(pg_current.detach().unsqueeze(0), pg_current.unsqueeze(0), advantage, pg_mask, weight,
+                                         agg_config, **info)
+             kl_mean = None
+             if config.kl_coefficient > 0:
+@@ -360,7 +400,10 @@
+                 loss=float(loss.detach()), old_logprob_mean=float(old[:row['keep']].mean()) if row['keep'] else 0.,
+                 actor_logprob_mean=float(old[:row['keep']].mean()) if row['keep'] else 0.,
+                 old_actor_max_abs_drift=0.0,
+-                loss_tokens=int(mask.sum()), derail_index=row['derail_index'], k3_kl_mean=kl_mean, **metrics)
++                loss_tokens=int(mask.sum()), derail_index=row['derail_index'], k3_kl_mean=kl_mean,
++                support_outside_tokens=None if inside is None else int(((~inside).float() * mask[0]).sum()),
++                support_logq_mean=None if inside is None else float((pg_current.detach() * pg_mask[0]).sum() / pg_mask.sum().clamp_min(1)),
++                **metrics)
+             details[i] = detail
+             losses[i] = detail['loss']
+             pending.append(loss)
+--- ../../../20261030-free-file/release-v833h-signed/trainer-host-v833h/v83_dp.py	2026-10-31 00:58:08.396119384 +0000
++++ v83_dp.py	2026-10-31 13:07:34.884502901 +0000
+@@ -173,13 +173,13 @@
+     """-> train_update_batched-compatible function (installed by the v8.3 host as v824_batched.train_update_batched)."""
+     original = B.train_update_batched
+ 
+-    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048):
++    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
+         runtime.guard()
+         if gradients and not runtime.trainable:
+             raise ValueError('inference runtime cannot train')
+         if engine != 'packed':
+             raise ValueError('v8.3 DP engine is packed-only')
+-        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK)
++        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+ 
+     def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
+                         reference_runtime=None, engine='packed', token_budget=16384, max_rows=64, logit_chunk=2048,
+@@ -211,7 +211,7 @@
+         _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0); _install_fast(B, FK, reference_runtime, 0)
+         # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor)
+         t = time.monotonic()
+-        _bcast(dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE,
++        _bcast(dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM,
+                     actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
+                     ref_dir=str(reference_runtime._checkpoint_guard.directory), ref_desc=reference_runtime._checkpoint_guard.descriptor,
+                     spec=runtime.spec.to_dict(), assign=assign))
+@@ -338,8 +338,8 @@
+     KP.allow()
+     from subnet.mimo_runtime import MimoRuntime
+     STATE['world'] = world
+-    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048):
+-        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK)
++    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
++        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+     B.batched_log_probs = fast_blp
+     install_fast_hash()
+     try:      # v8.3.3g preload (any failure -> lazy load at the first job, as before)
+@@ -360,6 +360,7 @@
+         if job is None or job.get('op') == 'stop':
+             break
+         B.DROP_UNRESOLVED, B.LOSS_AGG_MODE, B.LOSS_SCALE = job['drop'], job['mode'], job['scale']
++        B.SUPPORT_RENORM = job.get('support')
+         if STATE['ref'] is None or STATE['ref'].checkpoint_id != job['ref_desc']['id']:
+             STATE['ref'] = MimoRuntime.load(job['ref_dir'], job['ref_desc'], job['spec'], device='cuda', trainable=False)
+             _install_fast(B, FK, STATE['ref'], 0)
+--- ../../../20261030-free-file/release-v833h-signed/trainer-host-v833h/v83_fast_kernels.py	2026-10-31 00:58:08.397119408 +0000
++++ v83_fast_kernels.py	2026-10-31 13:07:28.019342191 +0000
+@@ -130,7 +130,20 @@
+     return dict(linear=n_lin, full=n_full)
+ 
+ 
+-def packed_log_probs(runtime, items, *, gradients, logit_chunk=4096, checkpoint_head=True):
++def support_logq(logits, t, top_k, top_p):
++    """Same as v8211_batched.support_logq (kept local so this module stays self-contained)."""
++    values, ids = logits.topk(top_k, dim=-1)
++    with torch.no_grad():
++        p = torch.softmax(values, dim=-1)
++        keep = (p.cumsum(-1) - p) < top_p
++        hit = (ids == t[:, None]) & keep
++        inside = hit.any(-1)
++    log_q_all = torch.log_softmax(values.masked_fill(~keep, float('-inf')), dim=-1)
++    log_q = log_q_all.masked_fill(~keep, 0.).gather(-1, hit.float().argmax(-1, keepdim=True)).squeeze(-1)
++    return torch.where(inside, log_q, torch.zeros_like(log_q)), inside
++
++
++def packed_log_probs(runtime, items, *, gradients, logit_chunk=4096, checkpoint_head=True, support=None):
+     """Selected raw log-probs for each (prompt, output) pair, one packed varlen forward.
+     Same selected-token math as v8211_batched.batched_log_probs (bf16 lm_head -> fp32 logits -> gather - logsumexp)."""
+     from torch.utils.checkpoint import checkpoint
+@@ -160,9 +173,19 @@
+         def selected(h, t):
+             logits = model.lm_head(h).float()
+             return logits.gather(-1, t[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
++
++        def selected_with_support(h, t):
++            logits = model.lm_head(h).float()
++            log_p = logits.gather(-1, t[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
++            log_q, inside = support_logq(logits / support['temperature'], t, support['top_k'], support['top_p'])
++            return log_p, log_q, inside
++        fn = selected if support is None else selected_with_support
+         chunks = []
+         for start in range(0, len(targets), logit_chunk):
+             h, t = states[start:start + logit_chunk], targets[start:start + logit_chunk]
+-            chunks.append(checkpoint(selected, h, t, use_reentrant=False) if (gradients and checkpoint_head) else selected(h, t))
+-        flat = torch.cat(chunks)
+-    return list(torch.split(flat, [len(o) for _, o in items]))
++            chunks.append(checkpoint(fn, h, t, use_reentrant=False) if (gradients and checkpoint_head) else fn(h, t))
++        sizes = [len(o) for _, o in items]
++        if support is None:
++            return list(torch.split(torch.cat(chunks), sizes))
++        parts = [torch.split(torch.cat([c[j] for c in chunks]), sizes) for j in range(3)]
++    return list(zip(*parts))
