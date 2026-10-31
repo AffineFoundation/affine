@@ -25,6 +25,7 @@ import ff_format
 
 FF_FLAG = Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/FF.json')
 BATCH_CAP = FF_FLAG.parent / 'BATCH-CAP.json'
+GRANTS = FF_FLAG.parent / 'K1-GRANTS.json'      # Jacob 2026-10-30 19:30 CR: one fresh turn for near-miss REDs (0 < weighted_z <= 1)
 FF_STATE = Path('/home/const/subnet120-rewrite/state/root-audits/20261030-free-file/state')
 FF_READY = FF_STATE / 'FF-READY.json'
 L_K1_CHAIN = Path('/home/const/subnet120-rewrite/state/root-audits/20261027-k1-per-uid/state/K1-CHAIN.json')
@@ -86,8 +87,36 @@ def tokenizer(f, head_files):
     return _TOK[key]
 
 
+def open_grants(turns):
+    """K1-GRANTS.json (enabled): granted hotkeys whose fresh turn is still unused, oldest RED epoch first. A grant is used only
+    by a real turn (a K1-TURNS row for that hotkey after its RED epoch); a skip (missing / invalid file) does not use it."""
+    g = rj(GRANTS)
+    if not (isinstance(g, dict) and g.get('enabled') is True):
+        return []
+    out = []
+    for r in g.get('grants') or []:
+        try:
+            hk, e0 = r['hotkey'], int(r['red_epoch'])
+        except Exception:
+            continue
+        if any(t.get('hotkey') == hk and int(t.get('epoch_index', -1)) > e0 for t in turns):
+            continue
+        out.append(r)
+    return sorted(out, key=lambda r: int(r['red_epoch']))
+
+
+def grant_rows(chain, turns):
+    """[(position, uid, row + grant)] for open grants whose hotkey is registered now (UID != 0); positions -k..-1, i.e. ahead
+    of position 0 (the K1 order itself is unchanged)."""
+    by_hk = {row['hotkey']: (int(u), row) for u, row in (chain.get('uids') or {}).items()
+             if int(u) != 0 and isinstance(row, dict) and type(row.get('miner_hex')) is str}
+    rows = [(by_hk[r['hotkey']][0], dict(by_hk[r['hotkey']][1], grant=dict(red_epoch=int(r['red_epoch']), weighted_z=r.get('weighted_z'))))
+            for r in open_grants(turns) if r['hotkey'] in by_hk]
+    return [(i - len(rows), u, row) for i, (u, row) in enumerate(rows)]
+
+
 def queue(chain, turns):
-    """The unchanged K1 order for hotkey-registration-once: [(position, uid, row)]."""
+    """Open K1-GRANTS first (free-file only), then the unchanged K1 order for hotkey-registration-once: [(position, uid, row)]."""
     hks, regs = L.k1_served_hotkeys(turns), L.k1_served_registrations(turns)
     out = []
     for u, row in (chain.get('uids') or {}).items():
@@ -99,7 +128,7 @@ def queue(chain, turns):
             continue
         out.append((reg, u, row))
     out.sort(key=lambda x: (x[0], x[1]))
-    return [(i, u, row) for i, (reg, u, row) in enumerate(out)]
+    return grant_rows(chain, turns) + [(i, u, row) for i, (reg, u, row) in enumerate(out)]
 
 
 def legacy_ready(sealed, f):
@@ -165,7 +194,8 @@ def select(self, d, e, m, sealed, current, adapter, f, k1f):
                 legacy_open=legacy_open(f), caps=dict(max_tasks=max_tasks, max_rollouts=max_rollouts))
     for pos, u, row in q:
         hk = row['hotkey']; who = dict(uid=u, hotkey=hk, reg_block=int(row.get('reg_block') or 0), miner=row['miner_hex'],
-                                        queue_position=pos, turns_before=0)
+                                        queue_position=pos, turns_before=1 if row.get('grant') else 0,
+                                        **({'grant': row['grant']} if row.get('grant') else {}))
         reason = None
         if hk in objects:
             etag, size = objects[hk]
@@ -187,7 +217,7 @@ def select(self, d, e, m, sealed, current, adapter, f, k1f):
                                     dropped_groups=info['dropped_groups'], capped_rollouts=info['capped_rollouts'],
                                     skipped_not_ready=skipped[:50], skipped_not_ready_count=len(skipped), groups=groups)
                     reason = 'invalid-file: ' + info[:200]
-        if row['miner_hex'] in ready:
+        if row['miner_hex'] in ready and not row.get('grant'):
             return dict(base, status='turn', route='legacy', **who, tasks=ready[row['miner_hex']],
                         skipped_not_ready=skipped[:50], skipped_not_ready_count=len(skipped))
         skipped.append(dict(uid=u, hotkey=hk, reason=reason or 'no-file'))
@@ -218,7 +248,7 @@ def record_turn(d, e, turn, current, m):
     if public['status'] == 'turn' and not any(t.get('epoch_index') == e for t in L.k1_turns()):
         L.K1_STATE.mkdir(parents=True, exist_ok=True)
         rec = {k: public.get(k) for k in ('epoch_index', 'epoch', 'uid', 'hotkey', 'miner', 'tasks', 'rollouts', 'queue_position',
-                                          'turns_before', 'head', 'at', 'reg_block', 'queue_rule')}
+                                          'turns_before', 'head', 'at', 'reg_block', 'queue_rule', 'grant')}
         rec.update(format=ff_format.FORMAT, file_sha256=public.get('file_sha256'))
         with open(L.K1_TURNS, 'a') as fh:
             fh.write(json.dumps(rec, sort_keys=True) + '\n')

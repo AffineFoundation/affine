@@ -71,6 +71,7 @@
   "cap": "Live cap: mining.json training.batch_cap (max_tasks_per_miner prompts, max_rollouts_per_miner rollouts; now 125 x 8 = 1,000 rollouts). The validator can change it at any time; the value read at your turn applies.",
   "queue": "Unchanged: one turn per hotkey and per registration (UID + registration block), permanently, pass or fail. Order: registration block, then UID; UID 0 excluded; served hotkeys and registrations leave the line. Preview of the next 8: training.k1.queue_next (also https://affine.io/k1.json).",
   "skip": "At each turn the queue is walked in order. A member whose file is missing or invalid at that moment is skipped: not charged, keeps its place, and the next member is tried in the same epoch.",
-  "publish": "Only GREEN turns are published: the head (bf16 + fp32 master), turn.json and the exact batch file. RED: decision, counts and the file sha256 only."
+  "publish": "Only GREEN turns are published: the head (bf16 + fp32 master), turn.json and the exact batch file. RED: decision, counts and the file sha256 only.",
+  "fresh_turns": "Jacob 2026-10-30: the 10 hotkeys whose turn since the held-out gate went live (E271+) was RED with 0 < weighted_z <= 1.00 each get ONE fresh turn ahead of the line, oldest first, under these batch-file rules. It is used only by a real turn: a missing or invalid file is a skip and the grant stays open. List: training.k1.queue_grants."
  }
 }

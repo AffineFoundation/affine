@@ -9,7 +9,7 @@
 #                MODE=revert bash /home/const/subnet120-rewrite/state/root-audits/20261030-free-file/activation/activate_ff.sh
 set -euo pipefail; umask 077
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-MODE=${MODE:?MODE=stage|switch|revert}
+MODE=${MODE:?MODE=stage|switch|restart|revert}
 RA=/home/const/subnet120-rewrite/state/root-audits; D=$RA/20261030-free-file; AV=$D/activation; R=$D/release; mkdir -p -m 700 $AV $D/state
 REL=$D/release-v833h-signed; STATE=/home/const/subnet120-rewrite/state/mimo-mainnet-v1; E=$STATE/epochs
 STAGED=$RA/20261023-toploc-credit-train-gate/staged; FF=$STAGED/FF.json; PG=$STAGED/PROMOTION-GATE.json
@@ -195,6 +195,17 @@ switch)
   systemctl --user reset-failed ff-watchdog.service 2>/dev/null || true
   systemd-run --user --unit=ff-watchdog --collect -p Restart=on-failure --setenv=FROM=$W --setenv=WATCH_UNTIL=$((CUTOFF+6*3600)) $PY -u -B $AV/watchdog_ff.py
   prog "LIVE free-file from epoch $W (trainer v833h $H_S); ff-watchdog started"; log done ;;
+restart)   # reload release/*.py into the lifecycle (same ExecStart): waits for an idle trainer, stops/starts with both locks held
+  systemctl --user show affine-mimo-lifecycle.service -p ExecStart --value | grep -q "$R/ff_launcher.py" || die "lifecycle is not on ff_launcher"
+  ok=0; for i in $(seq 1 ${IWAIT:-720}); do
+    if idle; then exec 8<>$STATE/lifecycle.lock; exec 9>$RA/LIFECYCLE-ACTIVATION.lock
+      if flock -w 30 9 && flock -w 30 8; then systemctl --user stop affine-mimo-lifecycle.service; c=$(cur)
+        if ! openjob $c && [[ $(trainbusy) == 0 ]]; then ok=1; break; fi
+        systemctl --user start affine-mimo-lifecycle.service; fi; exec 8>&- 9>&-; fi
+    sleep 5; done
+  [[ $ok == 1 ]] || die "trainer never idle"
+  systemctl --user start affine-mimo-lifecycle.service; exec 8>&- 9>&-
+  log "lifecycle restarted at epoch $(cur) (${REASON:-reload})"; prog "lifecycle restarted at epoch $(cur) (${REASON:-reload})"; log done ;;
 revert)
   B=$(cat $AV/LAST-BACKUP); [[ -d $B ]] || die "no backup dir"
   [[ ${FROM_WATCHDOG:-0} == 1 ]] || systemctl --user stop ff-watchdog.service 2>/dev/null || true

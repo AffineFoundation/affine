@@ -65,6 +65,10 @@ Rules (full list: mining.json → `batch_file.rules`):
 
 ## 3. Upload
 
+Short version: write `batch.json` → `python3 affine_batch.py check …` → `python3 affine_batch.py upload …`
+→ within about a minute `python3 affine_batch.py status …` (or https://affine.io/ff/status.json) shows
+`valid: true`. Re-upload whenever you like.
+
 Each hotkey has one private, overwritable object. Your upload link is published sealed to your
 hotkey at `https://affine.io/ff/links/<hotkey>.json` (libsodium SealedBox to your Ed25519 key
 converted to X25519, re-issued every 30 minutes, each valid 24 hours). The reference helper
@@ -93,8 +97,16 @@ Overwrite the file as often as you like. Whatever is stored when your turn comes
   block, then UID; UID 0 excluded. The first member with a valid file takes the next turn
   (until the cutoff also a member with a ready old-format batch). Public preview: the next 8
   (https://affine.io/training.json → `k1.queue_next`).
-- Gate: the candidate must beat the head on the validator's private held-out set (z > bar_z).
-  The turn batch is not excluded from the probe. The baseline is revealed only after a GREEN.
+- Gate: head and candidate are scored on the same tasks of the validator's private held-out set
+  (4 seeded samples per task, same seeds on both sides). GREEN needs a positive weighted per-task gain
+  (inverse-variance-weighted mean of candidate − head pass-rate differences) with weighted_z > 1.00 (strict),
+  an estimated cap-hit rate under 0.20 and at least 100 kept tasks. The turn batch is not excluded from the
+  probe (from E296). The baseline is revealed only after a GREEN or when the round closes. Exact text:
+  https://affine.io/gate.json → `rule`.
+- Fresh turns (Jacob, 2026-10-30): the 10 hotkeys whose turn since the held-out gate went live was RED with
+  0 < weighted_z ≤ 1.00 each get one fresh turn ahead of the line, oldest first, under the batch-file rules.
+  It stays open until it is actually used (a missing or invalid file is a skip). List:
+  https://affine.io/training.json → `k1.queue_grants`.
 - Privacy: your file stays private until a GREEN. GREEN publishes it at
   `https://affine.io/k1/turns/<epoch>/batch.json`; RED keeps it private (only counts and its sha256).
 - On GREEN the new head (bf16 + fp32 master) is published as before. Weights, flip logic and

@@ -1,0 +1,83 @@
+{
+ "version": "sn120-k1-grants-v1",
+ "enabled": true,
+ "authorized": "Jacob 2026-10-30 19:30 CR (via parent agent): one fresh turn for each hotkey whose turn since the held-out gate went live was RED with 0 < weighted_z <= 1.00",
+ "rule": "One fresh free-file turn per granted hotkey, ahead of the K1 queue (oldest RED epoch first). Used only by a real turn (a K1-TURNS row for the hotkey after red_epoch); a missing or invalid file is a skip and the grant stays open (no expiry). Hotkey must still be registered (any UID != 0). Old-format batches never use a grant.",
+ "excluded": [
+  {
+   "red_epoch": 286,
+   "uid": 116,
+   "hotkey": "5C4hrfk1ZkFxJVxHx3hxfJ34t2GozpkfP3afFr7eFegMZbJ1",
+   "weighted_z": 1.1191929975420192e-16,
+   "why": "z is floating-point zero (no gain), not > 0"
+  },
+  {
+   "red_epoch": 274,
+   "uid": 215,
+   "why": "fail-closed RED (round invalidated), no z"
+  }
+ ],
+ "set_at": "2026-10-31T01:34:37Z",
+ "grants": [
+  {
+   "red_epoch": 275,
+   "uid": 195,
+   "hotkey": "5FAJzdgt8p5AxcsqjMR5oCdC2TVxAzQ6NrbkPh9CBQdAw2BW",
+   "weighted_z": 0.2891
+  },
+  {
+   "red_epoch": 276,
+   "uid": 154,
+   "hotkey": "5C5s62F3eEMNuexBEShCSCa2anBUrzkAiTNHSEgfRg4c75VW",
+   "weighted_z": 0.7942
+  },
+  {
+   "red_epoch": 278,
+   "uid": 32,
+   "hotkey": "5GjY38MZCeH6kvmPibdxnBJ37yAmQKSR4RjxTJRznWrU26ce",
+   "weighted_z": 0.1332
+  },
+  {
+   "red_epoch": 280,
+   "uid": 93,
+   "hotkey": "5C4iWWaHdMpbYDduRd2DAdy7YqBAZGqkpjJMr18MUGsozNHU",
+   "weighted_z": 0.4929
+  },
+  {
+   "red_epoch": 281,
+   "uid": 129,
+   "hotkey": "5C4pkW5d5Nn4swiKfwnR7r8i3hcvnBczzFgw5FQmW4nPho3Q",
+   "weighted_z": 0.1737
+  },
+  {
+   "red_epoch": 282,
+   "uid": 148,
+   "hotkey": "5FaeWFkGo1rJrWGW4647LfdmSiMNrGXobmJLRdTjY2t2EyMS",
+   "weighted_z": 0.8414
+  },
+  {
+   "red_epoch": 284,
+   "uid": 213,
+   "hotkey": "5C4rgLw7yRF4888iY2HSUdooNcjVGukSrWL5Cm5LGiXh8fuP",
+   "weighted_z": 0.4594
+  },
+  {
+   "red_epoch": 287,
+   "uid": 18,
+   "hotkey": "5CfiSUsMeRktCeYpjCXfrXc9Qdj8PpaTa4Fy72stgcLQcmJC",
+   "weighted_z": 0.2263
+  },
+  {
+   "red_epoch": 289,
+   "uid": 259,
+   "hotkey": "5C4kbdxxrFQFRUtvTJTjGxYVZGhtg32vFc5LVJzhEzYz2wBe",
+   "weighted_z": 0.3222
+  },
+  {
+   "red_epoch": 291,
+   "uid": 260,
+   "hotkey": "5C4jMYe9YuupMqKdecwJ4mhwSSL9WpoL46y88EBZwppD235z",
+   "weighted_z": 0.8508
+  }
+ ]
+}
