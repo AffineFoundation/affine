@@ -6,15 +6,22 @@ state; nothing in the gate, promotions, weights or the trainer reads its output.
 Scheduling: the newest king first (as soon as it is crowned); when idle, backfill older kings newest->oldest. A newer GREEN never
 preempts a running newest-king eval; it preempts a backfill eval. Stale kings in between are only scored later as backfill.
 Pod disk: only the king being evaluated + the next one are kept."""
-import json, os, subprocess, sys, time, glob, hashlib, traceback, re, collections
+import json, os, subprocess, sys, time, glob, hashlib, traceback, re, collections, math
 HERE = os.path.dirname(os.path.abspath(__file__)); RA = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+import fetch_king
 from fetch_king import fetch, descriptor
 ST = RA + '/state'; RES = ST + '/results'; os.makedirs(RES, exist_ok=True)
 SITE = '/home/const/subnet120/affine/website'; OUTJ = SITE + '/performance.json'
 LEDGER = '/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/LEDGER.public.jsonl'
 FFL = '/home/const/subnet120-rewrite/state/mimo-mainnet-v1/epochs'
-PP = RA + '/pp.sh'; POD = 'calm-orbit-ef'; GPU = '2xH200'; COST_H = 9.52
+# Two eval pods (Jacob 11:10 CR): pod 1 = newest king first + history; pod 2 = history only, removed automatically when history is done.
+PODS = {'calm-orbit-ef': dict(pp=RA + '/pp.sh', gpu='2xH200', cost=9.52, lium_id='3222a673-c449-4ef5-a2c0-5c3bdf950e64', role='primary'),
+        'eager-wolf-98': dict(pp=RA + '/pp2.sh', gpu='1xB200', cost=6.10, lium_id='2ad91129-cb87-4070-aa9e-942ee07ac329', role='history',
+                              teardown=True, xcheck='c03ad1395b0625490b6b213549ba6763b4d3b9a6ff46c07529e9e32c4474569f')}
+POD = os.environ.get('PERF_POD', 'calm-orbit-ef'); CFG = PODS[POD]
+PP = CFG['pp']; GPU = CFG['gpu']; COST_H = CFG['cost']; ROLE = CFG['role']; fetch_king.PP = PP
+CL = ST + '/claims'; XC = ST + '/xcheck'; os.makedirs(CL, exist_ok=True); os.makedirs(XC, exist_ok=True)
 SEED = 'sn120-perf-v1'; K = dict(full=1, holdout=1)
 STALL_S = 1200; MAX_FAIL = 3
 HOLD = json.load(open(RA + '/holdout.public.json'))
@@ -65,18 +72,38 @@ def tiers(ks):
     for t in (A, B, C):
         for kk in sorted(set(t) - seen, key=lambda x: pos[x]): order.append(kk); seen.add(kk)
     return order
-S = rj(ST + '/service.json', {}) or {}
+SF = ST + '/service-%s.json' % POD
+if not os.path.exists(SF) and ROLE == 'primary' and os.path.exists(ST + '/service.json'): os.replace(ST + '/service.json', SF)
+S = rj(SF, {}) or {}
 S.setdefault('fail', {}); S.setdefault('unavailable', [])
-def save(): wj(ST + '/service.json', S)
+def save(): wj(SF, S)
+# ---- shared claims: a king is scored by exactly one pod. state/claims/<king> is created with O_EXCL (atomic on the host fs).
+def claim_owner(k):
+    try: return json.load(open(f'{CL}/{k}')).get('pod')
+    except Exception: return None
+def claim(k):
+    try:
+        fd = os.open(f'{CL}/{k}', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(fd, 'w') as f: json.dump(dict(pod=POD, at=now(), at_cr=cr(now())), f)
+        return True
+    except FileExistsError:
+        return claim_owner(k) == POD
+def release(k):
+    if claim_owner(k) == POD:
+        try: os.unlink(f'{CL}/{k}')
+        except FileNotFoundError: pass
+def claimed_by_other(k):
+    o = claim_owner(k); return o is not None and o != POD
 def scored(k): return os.path.exists(f'{RES}/{k}.json')
 def wdir(k): return f'/data/perf/runs/{k}'
 def pick(ks):
     """(king, priority): the newest king first; then the backfill tiers."""
     if not ks: return None, None
-    ok = lambda kk: not scored(kk) and S['fail'].get(kk, 0) < MAX_FAIL and kk not in S['unavailable']
+    ok = lambda kk: not scored(kk) and S['fail'].get(kk, 0) < MAX_FAIL and kk not in S['unavailable'] and not claimed_by_other(kk)
     newest = ks[-1]['king']
-    if ok(newest): return newest, 'newest'
+    if ROLE == 'primary' and ok(newest): return newest, 'newest'
     for kk in tiers(ks):
+        if ROLE != 'primary' and kk == newest: continue   # the newest king is pod 1's
         if ok(kk) and next(k for k in ks if k['king'] == kk)['in_r2']: return kk, 'backfill'
     return None, None
 def ensure_ckpt(k):
@@ -114,12 +141,21 @@ def abort(k):
     log(event='aborted', king=k[:12])
 def collect(k, meta):
     rc, o, _ = pod(f'cat {wdir(k)}/result.json', timeout=60)
-    r = json.loads(o); r['king_meta'] = meta; r['machine'] = dict(pod=POD, gpu=GPU, cost_per_hour_usd=COST_H)
+    r = json.loads(o); r['king_meta'] = meta; r['machine'] = dict(pod=POD, lium_id=CFG['lium_id'], gpu=GPU, cost_per_hour_usd=COST_H)
     r['evaluated_at'] = now(); r['evaluated_at_cr'] = cr(now())
     rc, o2, _ = pod(f'cat {wdir(k)}/serving_at', timeout=30)
     try: r['serve_s'] = int(o2.strip()) - int(S['running']['started'])
     except Exception: pass
-    wj(f'{RES}/{k}.json', r); log(event='scored', king=k[:12], full=r['sets']['full']['pass_rate'], holdout=r['sets']['holdout']['pass_rate'], wall=r['wall_seconds'])
+    if (S.get('running') or {}).get('xcheck'):
+        ref = rj(f'{RES}/{k}.json'); cmp = {}
+        for s_ in ('full', 'holdout'):
+            a, b = ref['sets'][s_], r['sets'][s_]; se = math.sqrt(a['se'] ** 2 + b['se'] ** 2)
+            cmp[s_] = dict(pod1=a['pass_rate'], pod2=b['pass_rate'], diff=b['pass_rate'] - a['pass_rate'], se_diff=se,
+                           z=(b['pass_rate'] - a['pass_rate']) / se, within_1se=abs(b['pass_rate'] - a['pass_rate']) <= se)
+        r['cross_check'] = dict(king=k, ref_pod=ref['machine']['pod'], pod=POD, sets=cmp)
+        wj(f'{XC}/{k}.{POD}.json', r); wj(XC + '/LATEST.json', r['cross_check']); S['xcheck_done'] = True; save()
+        log(event='xcheck', king=k[:12], cmp=cmp); return
+    wj(f'{RES}/{k}.json', r); release(k); log(event='scored', king=k[:12], full=r['sets']['full']['pass_rate'], holdout=r['sets']['holdout']['pass_rate'], wall=r['wall_seconds'])
 # ---- holdout guard: are any holdout problems used as miner training prompts (FF files)? (read-only)
 _HG = {}
 def holdout_guard():
@@ -177,13 +213,15 @@ def publish(ks, cur=None):
         r = rj(f"{RES}/{k['king']}.json")
         row = dict(king=k['king'], epoch=k['epoch'], head_from_epoch=k.get('head_from_epoch'), era=k.get('era'), parent=k.get('parent'), crowned_at=k['crowned_at'], crowned_at_cr=k['crowned_at_cr'])
         if r:
-            row.update(status='scored', evaluated_at_cr=r.get('evaluated_at_cr'), eval_wall_s=round(r['wall_seconds'], 1), seed=r['seed'], k=r['k'])
+            row.update(status='scored', evaluated_at_cr=r.get('evaluated_at_cr'), eval_wall_s=round(r['wall_seconds'], 1), seed=r['seed'], k=r['k'],
+                       pod=(r.get('machine') or {}).get('pod', 'calm-orbit-ef'), pod_lium_id=(r.get('machine') or {}).get('lium_id', PODS['calm-orbit-ef']['lium_id']),
+                       gpu=(r.get('machine') or {}).get('gpu', '2xH200'))
             for s in ('full', 'holdout'):
                 x = r['sets'][s]
                 row[s] = dict(pass_rate=x['pass_rate'], se=x['se'], tasks=x['tasks'], samples=x['samples'], graded_samples=x['graded_samples'],
                               correct=x['correct'], cap_rate=x['cap_rate'], indeterminate=x['indeterminate'], mean_out_tokens=round(x['mean_out_tokens'], 1))
         else:
-            row['status'] = ('evaluating' if cur and cur == k['king'] else 'unavailable' if (k['king'] in S['unavailable'] or not k.get('in_r2'))
+            row['status'] = ('evaluating' if (cur and cur == k['king']) or claim_owner(k['king']) else 'unavailable' if (k['king'] in S['unavailable'] or not k.get('in_r2'))
                              else 'failed' if S['fail'].get(k['king'], 0) >= MAX_FAIL else 'queued')
         rows.append(row)
     out = dict(version='sn120-performance-v1', updated_at=now(), updated_at_cr=cr(now()),
@@ -202,15 +240,34 @@ def publish(ks, cur=None):
                            pass_rate='correct / graded samples (mean over tasks)', se='task-clustered standard error, sd(per-task pass) / sqrt(tasks)',
                            serving='vLLM 0.32.0 bf16, prefix caching, max-num-seqs 512 (probe serve.sh flags), 1 replica per GPU',
                            determinism='seeds and settings are fixed; vLLM batching is not bit-reproducible, so a re-run moves a number by about its SE'),
-               machine=dict(pod=POD, gpu=GPU, cost_per_hour_usd=COST_H), holdout_guard=holdout_guard(), backfill=backfill_summary(ks),
+               machine=dict(pod=POD, gpu=GPU, cost_per_hour_usd=COST_H),
+               machines=[dict(pod=p, lium_id=c['lium_id'], gpu=c['gpu'], cost_per_hour_usd=c['cost'], role=c['role'],
+                              removed=(rj(f'{ST}/service-{p}.json', {}) or {}).get('torn_down')) for p, c in PODS.items()],
+               cross_check=rj(XC + '/LATEST.json'), holdout_guard=holdout_guard(), backfill=backfill_summary(ks),
                evaluating=(dict(king=cur, **({k: v for k, v in (S.get('running') or {}).items() if k in ('started',)})) if cur else None),
                kings=rows)
     wj(OUTJ, out)
+def teardown():
+    """History pod only: remove THIS pod (exact lium id) once no history king is left to claim. Logged; never touches other pods."""
+    lid = CFG['lium_id']
+    p = subprocess.run(['/home/const/.lium/bin/lium', 'rm', lid, '-y'], capture_output=True, text=True, timeout=300)
+    S['torn_down'] = dict(at=now(), at_cr=cr(now()), lium_id=lid, rc=p.returncode, out=(p.stdout + p.stderr)[-300:]); save()
+    log(event='teardown', pod=POD, lium_id=lid, rc=p.returncode, out=(p.stdout + p.stderr)[-300:])
+    with open(RA + '/PROGRESS.md', 'a') as f:
+        f.write('- %s AUTO-TEARDOWN pod %s (lium %s) rc=%s: history queue empty\n' % (cr(now()), POD, lid, p.returncode))
 def main():
-    log(event='start', pid=os.getpid())
+    log(event='start', pid=os.getpid(), pod=POD, role=ROLE)
+    run0 = (S.get('running') or {}).get('king')
+    for f in glob.glob(CL + '/*'):   # stale own claims from a crash (idempotent restart)
+        k = os.path.basename(f)
+        if claim_owner(k) == POD and k != run0: release(k); log(event='released-stale-claim', king=k[:12])
+    if run0 and not (S['running'].get('xcheck')): claim(run0)
     while True:
         try:
-            open(ST + '/heartbeat', 'w').write(str(now()))
+            open(ST + '/heartbeat-' + POD, 'w').write(str(now()))
+            if ROLE == 'primary': open(ST + '/heartbeat', 'w').write(str(now()))
+            if S.get('torn_down'):
+                time.sleep(300); continue
             ks = kings(); km = {k['king']: k for k in ks}
             run = S.get('running')
             if run:
@@ -219,31 +276,40 @@ def main():
                 if st.get('res') == '1':
                     collect(k, km.get(k)); S['running'] = None; save()
                 elif st.get('alive') == '0' or (now() - run['started'] > 600 and not st.get('prog') and st.get('rc')):
-                    S['fail'][k] = S['fail'].get(k, 0) + 1; log(event='run-failed', king=k[:12], st=st); abort(k); S['running'] = None; save()
+                    S['fail'][k] = S['fail'].get(k, 0) + 1; log(event='run-failed', king=k[:12], st=st); abort(k); release(k); S['running'] = None; save()
                 else:
                     prog = json.loads(st['prog']) if st.get('prog') else None
                     stalled = (prog and now() - prog['at'] > STALL_S) or (not prog and now() - run['started'] > 2400)
                     if stalled:
-                        S['fail'][k] = S['fail'].get(k, 0) + 1; log(event='stalled', king=k[:12]); abort(k); S['running'] = None; save()
-                    elif run.get('priority') == 'backfill' and newest and not scored(newest) and newest != k:
-                        log(event='preempt-backfill', king=k[:12], newest=newest[:12]); abort(k); S['running'] = None; save()
+                        S['fail'][k] = S['fail'].get(k, 0) + 1; log(event='stalled', king=k[:12]); abort(k); release(k); S['running'] = None; save()
+                    elif ROLE == 'primary' and run.get('priority') == 'backfill' and newest and not scored(newest) and newest != k \
+                            and not claimed_by_other(newest):
+                        log(event='preempt-backfill', king=k[:12], newest=newest[:12]); abort(k); release(k); S['running'] = None; save()
                     else:
                         S['progress'] = prog
             if not S.get('running'):
-                k, pri = pick(ks)
-                if k:
-                    ok = ensure_ckpt(k)
-                    if ok is None: S['unavailable'].append(k); save(); log(event='unavailable', king=k[:12])
-                    elif not ok: S['fail'][k] = S['fail'].get(k, 0) + 1; save()
-                    else:
-                        launch(k); S['running']['priority'] = pri; save()
-                        prune({k})
-                        # prefetch the next one (disk: current + next only)
-                        nxt = None
-                        for kk in tiers(ks):
-                            if kk != k and not scored(kk) and kk not in S['unavailable'] and S['fail'].get(kk, 0) < MAX_FAIL: nxt = kk; break
-                        if nxt: ensure_ckpt(nxt); S['next'] = nxt; save()
-            publish(ks, (S.get('running') or {}).get('king'))
+                xk = CFG.get('xcheck')
+                if xk and not S.get('xcheck_done') and scored(xk) and S['fail'].get('xcheck', 0) < MAX_FAIL:
+                    if ensure_ckpt(xk):
+                        prune({xk}); launch(xk); S['running'].update(priority='xcheck', xcheck=True); save()
+                    else: S['fail']['xcheck'] = S['fail'].get('xcheck', 0) + 1; save()
+                else:
+                    k, pri = pick(ks)
+                    if k and claim(k):
+                        ok = ensure_ckpt(k)
+                        if ok is None: S['unavailable'].append(k); release(k); save(); log(event='unavailable', king=k[:12])
+                        elif not ok: S['fail'][k] = S['fail'].get(k, 0) + 1; release(k); save()
+                        else:
+                            prune({k}); launch(k); S['running']['priority'] = pri; save()
+                            nxt = None   # prefetch (disk: current + next only); not claimed, so the other pod may still take it
+                            for kk in tiers(ks):
+                                if ROLE != 'primary' and kk == ks[-1]['king']: continue
+                                if kk != k and not scored(kk) and not claim_owner(kk) and kk not in S['unavailable'] and S['fail'].get(kk, 0) < MAX_FAIL:
+                                    nxt = kk; break
+                            if nxt: ensure_ckpt(nxt); S['next'] = nxt; save()
+                    elif not k and ROLE != 'primary' and CFG.get('teardown') and S.get('xcheck_done'):
+                        teardown()
+            if ROLE == 'primary': publish(ks, (S.get('running') or {}).get('king'))
         except Exception:
             log(event='error', tb=traceback.format_exc()[-800:])
         time.sleep(60)

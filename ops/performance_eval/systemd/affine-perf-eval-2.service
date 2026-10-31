@@ -1,0 +1,18 @@
+[Unit]
+Description=Affine SN120 performance eval pod 2 eager-wolf-98 (history backfill only; removes its pod when the history queue is empty). Jacob 2026-10-31 11:10 CR
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PERF_POD=eager-wolf-98
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/perf_service.py
+Restart=always
+RestartSec=30
+Nice=10
+MemoryMax=2G
+UMask=0022
+StandardOutput=append:/home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/state/service-2.log
+StandardError=append:/home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/state/service-2.log
+
+[Install]
+WantedBy=default.target

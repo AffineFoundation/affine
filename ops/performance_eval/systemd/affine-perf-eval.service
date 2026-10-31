@@ -4,6 +4,7 @@ After=network-online.target
 
 [Service]
 Type=simple
+Environment=PERF_POD=calm-orbit-ef
 ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/perf_service.py
 Restart=always
 RestartSec=30

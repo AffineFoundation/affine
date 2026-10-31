@@ -32,3 +32,12 @@ history in tiers (A: one king per 25 epochs, B: one per 10 epochs + every gate G
 The chart's x axis is the crowned epoch.
 Pod disk keeps only the king being evaluated and the next one; everything is on plain disk (/data), never /root (gocryptfs).
 Revert (validator host): `bash ~/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/revert_perf.sh` (`POD=rm` also removes the pod).
+
+## Second pod (history backfill, 2026-10-31 11:10 CR, Jacob)
+- Pod 1 `calm-orbit-ef` (2xH200, primary): newest king first, then history; the only pod that publishes performance.json.
+- Pod 2 `eager-wolf-98` (1xB200, lium id 2ad91129-cb87-4070-aa9e-942ee07ac329, unit `affine-perf-eval-2`, `PERF_POD=eager-wolf-98`): history only, never the newest king.
+- No double scoring: each king is claimed with an O_EXCL file in `state/claims/<king>` holding the pod name; released on success/failure/preempt; a pod releases only its own stale claims on restart.
+- Same seed, prompts, sampling and grader on both; pod 2 first re-scores c03ad139 as a cross-check (`state/xcheck/LATEST.json`, |diff| vs SE).
+- Every performance.json row records `pod`, `pod_lium_id`, `gpu`.
+- Auto-teardown: when pod 2 finds nothing left to claim, it runs `lium rm 2ad91129-cb87-4070-aa9e-942ee07ac329 -y` (exact id), logs `teardown` and appends to PROGRESS.md; pod 1 stays.
+- `revert_perf.sh` stops both units and removes pod 2 by exact id if it still exists (pod 1 only with POD=rm).
