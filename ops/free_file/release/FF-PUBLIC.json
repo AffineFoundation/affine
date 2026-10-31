@@ -1,7 +1,7 @@
 {
- "protocol": "free-file affine-batch-v1 (from 2026-10-30; old-format submissions close at the cutoff)",
+ "protocol": "free-file affine-batch-v1",
  "notice_before_cutoff": "New: upload ONE batch file (prompts, your rollouts, your rewards) to your private per-hotkey object; no client, no epochs, no commitments. See batch_file. Old-format (client) batches are still trained until the cutoff 2026-10-31 03:00 CR (UTC-6) = 09:00 UTC (old_format_cutoff).",
- "notice_after_cutoff": "Upload ONE batch file (prompts, your rollouts, your rewards) to your private per-hotkey object; at your turn it is copied, format-checked and trained. See batch_file. Old-format submissions closed 2026-10-31 09:00 UTC.",
+ "notice_after_cutoff": "Upload ONE batch file (prompts, your rollouts, your rewards) to your private per-hotkey object; at your turn it is copied, format-checked and trained. See batch_file.",
  "old_format_cutoff": {
   "at_unix": 1793437200,
   "at_utc": "2026-10-31T09:00:00Z",
@@ -44,10 +44,10 @@
    "Cap: at most training.batch_cap.max_tasks_per_miner prompts and training.batch_cap.max_rollouts_per_miner rollouts (live value, tunable). Prompts beyond either cap are dropped whole, in file order; everything kept must be valid.",
    "Any rule broken in the kept part makes the whole file invalid: you are skipped for that turn (not charged, you keep your place)."
   ],
-  "object": "One private object per hotkey: private/ff/v1/miners/<hotkey>/batch.json. Overwrite it any time; there are no epochs, windows or commitments. What is there when your turn comes is what is trained.",
+  "object": "One private object per hotkey: private/ff/v1/miners/<hotkey>/batch.json. Overwrite it any time. What is there when your turn comes is what is trained.",
   "link": {
    "url": "https://affine.io/ff/links/<hotkey>.json",
-   "opens_with": "libsodium crypto_box_seal_open with your hotkey's Ed25519 seed converted to X25519 (PyNaCl: SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64 sealed)); the same sealing as the old epoch capability",
+   "opens_with": "libsodium crypto_box_seal_open with your hotkey's Ed25519 seed converted to X25519 (PyNaCl: SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64 sealed))",
    "contains": "object_key, put_url, put_headers, get_url, issued_at, expires_at",
    "reissued": "every 30 minutes with fresh presigned URLs for the same object, each valid 24 hours",
    "who": "every registered SN120 hotkey (UID != 0) with the Ed25519 activation commitment that has not had its turn yet"
