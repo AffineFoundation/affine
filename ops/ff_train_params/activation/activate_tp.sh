@@ -181,7 +181,7 @@ switch)
   cp -p $TPC $B/training_params.py; cp -p $K1T $B/k1_transparency.py
   setflag true $W
   systemctl --user stop affine-mining-discovery.service                       # pins and files change together
-  put $AV/next/FF-PINS.json $FFD/FF-PINS.json 644                             # re-pin BEFORE the pinned files change
+  put $AV/next/FF-PINS.json $FFD/FF-PINS.json 600                             # re-pin BEFORE the pinned files change
   for f in ff_format.py ff_lifecycle.py ff_service.py affine_batch.py; do put $AV/next/$f $FFD/$f 644; done
   put $AV/next/affine_batch.py $WEBFF/affine_batch.py 644
   put $AV/next/FF-PUBLIC.json $FFD/FF-PUBLIC.json 644
@@ -206,7 +206,7 @@ revert)
   rc=0; if [[ -f $TD/$J_TC ]]; then switch_trainer $J_J $J_S $I_J $I_S remove || rc=$?; fi
   if [[ -n $B && -d $B ]]; then
     systemctl --user stop affine-mining-discovery.service
-    put $B/FF-PINS.json $FFD/FF-PINS.json 644
+    put $B/FF-PINS.json $FFD/FF-PINS.json 600   # discovery requires 0600
     for f in $FF_FILES FF-PUBLIC.json; do put $B/$f $FFD/$f 644; done
     put $B/website-affine_batch.py $WEBFF/affine_batch.py 644
     [[ $(sh256 $TPC) == $(sh256 $AV/next/training_params.py 2>/dev/null || echo x) ]] && put $B/training_params.py $TPC 644 || log "training_params.py changed since the switch - left as is (FF-TRAIN off hides the block)"
