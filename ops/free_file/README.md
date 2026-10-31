@@ -27,6 +27,7 @@ The only gate is model improvement. The probe no longer excludes the turn batch.
   not charged. A selection error before the cutoff falls back to the old path.
 - `trainer-v833h/`: trainer host v8.3.3h = v8.3.3g + `ff_trainer.py` (rewarded trajectories → the same
   GRPO rows; reward used as given, overlong penalty applied). Native rows are byte-identical to v8.3.3g.
+- `site/`: the new https://affine.io/llms.txt (old one kept at /llms-legacy.txt) and the dashboard JS diff (k1 tiles: mining line, queue readiness, held-out z text).
 - `services/sidecars.diff`: gate (probe counts the turn batch from `turn_batch_counted_from_epoch`),
   k1 transparency (GREEN publishes the file, RED does not), k1 queue (preview 8, file readiness),
   training params (rule texts), mining.json publisher (`batch_file`, `old_format_cutoff`, FF-PINS).

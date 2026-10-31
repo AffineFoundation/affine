@@ -1,0 +1,53 @@
+--- k1.orig.js	2026-10-30 19:12:29.116923086 -0600
++++ k1.js	2026-10-30 19:20:48.839964306 -0600
+@@ -51,7 +51,7 @@
+   const head=(mining.training&&mining.training.head)||{};const last=turns[turns.length-1]||{};
+   const ep=(mining.training&&mining.training.epoch_index)||'';
+   const HK=q.queue_rule==='hotkey-once'||q.queue_rule==='hotkey-registration-once';
+-  const RULE={'hotkey-registration-once':'Each hotkey gets exactly one turn, permanently, and so does each registration (UID + registration block): a hotkey swapped onto a served registration gets no new turn. Pass or fail, the oldest-registered unserved entry with a ready batch (≥8 tasks) at the seal trains; others are skipped and keep their place. To try again, register a new hotkey (a genuine new registration); don\'t deregister a paying hotkey. ','hotkey-once':'Each hotkey gets exactly one turn, permanently, pass or fail. The oldest-registered unserved hotkey with a ready batch (≥8 tasks) at the seal trains; others are skipped and keep their place. Register a new hotkey to try again; don\'t deregister a paying hotkey. '}[q.queue_rule]||'One turn per registration (UID + hotkey + registration block), pass or fail. Oldest unserved registration with a ready batch (≥8 tasks) at the seal trains; others are skipped and keep their place. Register again to submit again. ';
++  const RULE={'hotkey-registration-once':'Each hotkey gets exactly one turn, permanently, and so does each registration (UID + registration block). Pass or fail, the oldest-registered unserved entry with a valid batch file (until the old-format cutoff, 09:00 UTC Oct 31, also a ready old-format batch) takes the turn; entries without one are skipped, not charged, and keep their place. To try again, register a new hotkey; don\'t deregister a paying hotkey. ','hotkey-once':'Each hotkey gets exactly one turn, permanently, pass or fail. The oldest-registered unserved hotkey with a ready batch (≥8 tasks) at the seal trains; others are skipped and keep their place. Register a new hotkey to try again; don\'t deregister a paying hotkey. '}[q.queue_rule]||'One turn per registration (UID + hotkey + registration block), pass or fail. Oldest unserved registration with a ready batch (≥8 tasks) at the seal trains; others are skipped and keep their place. Register again to submit again. ';
+   const greens=done.filter(t=>t.verdict==='green').length,reds=done.filter(t=>t.verdict==='red').length;
+   st.querySelector('.reading').innerHTML=pill(last.verdict||last.status);
+   st.querySelector('dl')?.remove();st.querySelector('.k1-rule')?.remove();
+@@ -63,14 +63,14 @@
+    `<div><dt>In line</dt><dd>${esc(q.queue_length??'—')}<small>ready at E${esc(q.readiness_epoch??'—')}</small></dd></div>`+
+    (HK?`<div><dt>Hotkeys</dt><dd>${esc(q.hotkeys_unserved??'—')}<small>unserved · ${esc(q.hotkeys_served??'—')} served</small></dd></div>`:`<div><dt>Registrations</dt><dd>${esc(q.registrations_unserved??'—')}<small>unserved · ${esc(q.registrations_served??'—')} served</small></dd></div>`)+
+    `<div><dt>Payees</dt><dd>${payees.length}<small>of 10 · 1/N each</small></dd></div>`+
+-   '</dl><p class="k1-rule">'+RULE+'GREEN = paired z &gt; 0 and cap-hit &lt; 20%; the last 10 distinct GREEN UIDs share the weight. <a href="/llms.txt">Rules</a> · <a href="/k1.json">k1.json</a></p>');
++   '</dl><p class="k1-rule">'+RULE+'GREEN = held-out z &gt; 1 and cap-hit &lt; 20%; the last 10 distinct GREEN UIDs share the weight. <a href="/llms.txt">Rules</a> · <a href="/k1.json">k1.json</a></p>'+(mining.batch_file?'<p class="k1-rule"><strong>Mine:</strong> upload one batch file ('+esc(mining.batch_file.format)+': prompts, your rollouts, your rewards) to your private per-hotkey object, any time. Format, rules and upload: <a href="/mining.json">mining.json</a> → batch_file · helper <a href="/ff/affine_batch.py">affine_batch.py</a> · <a href="/ff/status.json">file checks</a>'+(mining.old_format_cutoff&&Date.now()/1000<mining.old_format_cutoff.at_unix?' · old-format batches trained until '+esc(mining.old_format_cutoff.at_cr):'')+'</p>':''));
+   // 2. next in line
+   const qu=tile('panel-k1-queue','Next in line');qu.querySelector('.reading').textContent=q.queue_length??'—';
+   qu.querySelector('.flip-table-wrap')?.remove();
+-  qu.insertAdjacentHTML('beforeend','<div class="flip-table-wrap"><table class="flip-table"><thead><tr><th class="num">#</th><th class="num">UID</th><th>Hotkey</th><th class="num">Reg block</th><th class="num">Tasks</th><th class="num">Order</th></tr></thead><tbody>'+
+-   ((q.next||[]).map((r,i)=>`<tr><td class="num">${r.line??i}</td><td class="num">${esc(r.uid)}</td><td class="k1-hash" title="${esc(r.hotkey)}">${hk(r.hotkey)}</td><td class="num">${esc(r.registration_block)}</td><td class="num">${esc(r.last_seal_tasks??'—')}</td><td class="num">${esc(r.position)}</td></tr>`).join('')||'<tr><td colspan="6" class="flip-loading">No unserved registration had a ready batch at the last seal.</td></tr>')+
++  qu.insertAdjacentHTML('beforeend','<div class="flip-table-wrap"><table class="flip-table"><thead><tr><th class="num">#</th><th class="num">UID</th><th>Hotkey</th><th class="num">Reg block</th><th class="num">Ready</th><th class="num">Order</th></tr></thead><tbody>'+
++   ((q.next||[]).map((r,i)=>`<tr><td class="num">${r.line??i}</td><td class="num">${esc(r.uid)}</td><td class="k1-hash" title="${esc(r.hotkey)}">${hk(r.hotkey)}</td><td class="num">${esc(r.registration_block)}</td><td class="num">${r.file_valid?'file':r.old_format_tasks_last_seal?esc(r.old_format_tasks_last_seal)+' old':esc(r.last_seal_tasks??'—')}</td><td class="num">${esc(r.position)}</td></tr>`).join('')||'<tr><td colspan="6" class="flip-loading">No unserved registration has a valid batch file (or a ready old-format batch) now.</td></tr>')+
+    '</tbody></table></div>');
+-  qu.querySelector("h2").title=(q.queue_rule==='hotkey-registration-once'?'Unserved entries (one turn per hotkey and per UID + registration block, permanently)':'Unserved hotkeys (one turn per hotkey, permanently)')+' that had a ready batch (≥8 distinct admitted tasks) at the last seal, in turn order (oldest registration block first). Order = position among all unserved hotkeys/registrations. A forecast: the seal decides.';
++  qu.querySelector("h2").title=(q.queue_rule==='hotkey-registration-once'?'Unserved entries (one turn per hotkey and per UID + registration block, permanently)':'Unserved hotkeys (one turn per hotkey, permanently)')+' with a valid batch file now (Ready = file; until the old-format cutoff also an old-format batch at the last seal, Ready = its task count), in turn order (oldest registration block first). Order = position among all unserved hotkeys/registrations. A forecast: the turn decides.';
+   // 3. payees
+   const pa=tile('panel-k1-payees','Payees (last 10 GREEN)');
+   const share={};for(const m of (scores.miners||[]))share[m.uid]=m.share_now;
+@@ -83,7 +83,7 @@
+   const gz=tile('panel-k1-z','Gate z per turn');const gw=gz.querySelector('.k1-chart')||gz.appendChild($('div',{class:'chart-wrap k1-chart'}));
+   gz.querySelector('.reading').textContent=done.length?fz(done[done.length-1].z):'—';
+   if(!gz.querySelector('.legend'))gz.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span></div>');
+-  gz.querySelector("h2").title='Paired z of candidate vs head on ~1000 private tasks (4 seeded samples each, turn tasks removed). GREEN needs z > 0 and cap-hit < 20%.';
++  gz.querySelector("h2").title='z = gain/SE of candidate vs head on the private held-out round (kept tasks; from the free-file cutover the turn batch is not removed). GREEN needs z > bar_z (1.0) and cap-hit < 20%.';
+   // 5. pass rates
+   const pr=tile('panel-k1-pass','Pass rate & cap-hit per turn');const pw=pr.querySelector('.k1-chart')||pr.appendChild($('div',{class:'chart-wrap k1-chart'}));
+   if(!pr.querySelector('.legend'))pr.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--guide)"></i>Head</span><span><i class="swatch" style="background:var(--performance)"></i>Candidate</span><span><i class="swatch" style="background:var(--rejected)"></i>Cap-hit (right axis)</span></div>');
+--- site-metrics.js	2026-10-30 19:12:29.120923078 -0600
++++ site-metrics.js	2026-10-30 19:12:29.132923055 -0600
+@@ -168,7 +168,10 @@
+   add('Epoch',epoch+(cur&&cur.phase?' · '+cur.phase:''));
+   add('Window',utc(m.start)+' → '+(fin(m.deadline)?new Date(m.deadline*1000).toISOString().slice(11,16)+' UTC':'—'));
+   add('Payable',m.payable===true?'Yes':m.payable===false?'No':'—');
+-  add('Group',fmt(m.group_size||m.samples_per_batch,0)+' rollouts · max '+(fin(m.max_tasks_per_miner)?fmt(m.max_tasks_per_miner,0)+' groups / miner (v8.2.3u extended; legacy v8.2.2: '+fmt(m.legacy_max_batches||m.max_batches,0)+')':fmt(m.max_batches,0)+' groups / miner'));
++  if(m.batch_file){const bc=(m.training&&m.training.batch_cap)||{},cut=m.old_format_cutoff||{};
++   add('Batch file',m.batch_file.format+' · up to '+fmt(bc.max_tasks_per_miner??m.max_tasks_per_miner,0)+' prompts / '+fmt(bc.max_rollouts_per_miner,0)+' rollouts per turn, any rollouts per prompt · upload any time (mining.json → batch_file)');
++   if(cut.at_unix&&Date.now()/1000<cut.at_unix)add('Old format','trained until '+cut.at_utc.replace('T',' ').replace(':00Z',' UTC')+' ('+cut.at_cr+')');}
++  else add('Group',fmt(m.group_size||m.samples_per_batch,0)+' rollouts · max '+(fin(m.max_tasks_per_miner)?fmt(m.max_tasks_per_miner,0)+' groups / miner (v8.2.3u extended; legacy v8.2.2: '+fmt(m.legacy_max_batches||m.max_batches,0)+')':fmt(m.max_batches,0)+' groups / miner'));
+   add('Last finalized',fin2?'E'+fin2.index+' · '+utc(fin2.finalized_at):'—');
+   if(fin2&&fin2.timing&&fin(fin2.timing.cycle_seconds||fin2.timing.total_seconds))add('Epoch length',mins(fin2.timing.cycle_seconds||fin2.timing.total_seconds)+' min');
+   if(m.notice)add('Notice',m.notice);

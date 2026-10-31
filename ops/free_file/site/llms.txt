@@ -1,0 +1,135 @@
+# Affine (Bittensor SN120): mining guide — free-file protocol
+
+Updated 2026-10-30 (free-file protocol, Jacob). This replaces the old client guide; the previous
+version is archived at https://affine.io/llms-legacy.txt (history only, not the contract).
+
+Live contract: https://affine.io/mining.json (`batch_file`, `old_format_cutoff`, `training`).
+If this text and mining.json disagree, mining.json wins.
+Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
+Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
+
+## In one paragraph
+
+You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards.
+There is no mining client, no epochs or commitments, no TOPLOC, no log-probs, no proofs and no
+regrading. When your turn comes the validator copies your file, checks its format only, trains
+one GRPO step from the published head on it, and the promotion gate keeps the candidate only if
+it improves the model on a private held-out set (GREEN). Model improvement is the only gate.
+GREEN turns earn weight.
+
+## Old-format cutoff
+
+Old-format (client) batches are still trained until 2026-10-31 03:00 CR (UTC-6) = 2026-10-31
+09:00 UTC (unix 1793437200; mining.json `old_format_cutoff`). Until then, a queue member without
+a valid batch file but with a ready old-format batch is trained the old way. After it only batch
+files are trained; old-format batches are ignored. The old client was removed from GitHub.
+
+## 1. Identity (unchanged)
+
+- A registered SN120 UID (burn or PoW: `btcli subnets register --netuid 120 --pow`) with an
+  Ed25519 hotkey, plus the signed Affine activation (zero fee):
+  `python -m subnet.register --wallet W --hotkey H` (preview), add `--execute` to publish.
+- Key file: the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600 (the same file the
+  old client used). Never share it, a coldkey or a mnemonic.
+- Zero-TAO PoW walkthrough: https://affine.io/llms-legacy.txt, section "Starting with zero TAO".
+
+## 2. The batch file: affine-batch-v1
+
+```json
+{
+  "version": "affine-batch-v1",
+  "hotkey": "5YourHotkeySs58Address",
+  "groups": [
+    {
+      "prompt": "What is 17 * 23? Put the final answer in \\boxed{}.",
+      "rollouts": [
+        {"output": "<think>\n17*23 = 391\n</think>\n\n\\boxed{391}", "reward": 1.0},
+        {"output": "<think>\n17*23 = 381\n</think>\n\n\\boxed{381}", "reward": 0.0}
+      ]
+    }
+  ]
+}
+```
+
+Rules (authoritative list: mining.json -> batch_file.rules):
+- UTF-8 JSON, at most 64 MiB, exactly these keys. `hotkey` = your hotkey.
+- prompt: plain text, non-empty, distinct within the file. Rendered as one user message with the
+  head's chat template (MiMo) and the generation prompt:
+  apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True).
+- output: the assistant text after that prompt (include <think>...</think> if you want it trained);
+  tokenized with encode(output, add_special_tokens=False).
+- <|im_start|>, <|im_end|> and <|endoftext|> must not appear in a prompt or an output.
+- EOS rule: an output of up to 8191 tokens gets <|im_end|> appended (it ended). Exactly 8192 tokens =
+  cut at the length cap (no EOS, treated as capped/unresolved). More than 8192 is invalid.
+  Prompt + output at most 12288 tokens.
+- reward: any finite number, used exactly as given (no regrading). Advantage = reward - mean reward
+  of that prompt's rollouts (one rollout: the reward itself). The overlong penalty applies
+  (0.5 x clip((len - 6000) / (8192 - 6000), 0, 1)).
+- Any number of rollouts per prompt (>= 1). Caps: training.batch_cap.max_tasks_per_miner prompts and
+  max_rollouts_per_miner rollouts (now 125 and 1000; tunable, applies at the next turn). Prompts
+  beyond a cap are dropped whole, in file order.
+- Any broken rule in the kept part makes the whole file invalid: you are skipped for that turn,
+  not charged, and keep your queue place.
+- Tokenizer: the head checkpoint's tokenizer (mining.json -> checkpoint).
+
+## 3. Upload
+
+- One private, overwritable object per hotkey. Your link is at https://affine.io/ff/links/<hotkey>.json,
+  sealed to your hotkey (libsodium SealedBox to the Ed25519 key converted to X25519), re-issued every
+  30 minutes with fresh presigned URLs, each valid 24 hours. It contains object_key, put_url,
+  put_headers, get_url, issued_at, expires_at.
+- Open it: PyNaCl SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64.b64decode(sealed)).
+- Upload: HTTP PUT the file bytes to put_url with Content-Type: application/octet-stream. Read back with get_url.
+- Reference helper (Python standard library only): https://affine.io/ff/affine_batch.py
+    python3 affine_batch.py check    --hotkey 5Your... batch.json
+    python3 affine_batch.py upload   --hotkey 5Your... --key /private/miner.seed batch.json
+    python3 affine_batch.py download --hotkey 5Your... --key /private/miner.seed stored.json
+    python3 affine_batch.py status   --hotkey 5Your...
+- Overwrite as often as you like. What is stored when your turn comes is what is trained.
+- https://affine.io/ff/status.json: the validator's format check of each stored file (valid, reason,
+  prompts, rollouts; never content), refreshed within about a minute of an upload.
+
+## 4. Queue and turns (unchanged rule)
+
+- One turn per hotkey and per registration (UID + registration block), permanently, pass or fail.
+  Order: registration block, then UID; UID 0 excluded; served hotkeys and registrations leave the line.
+  To try again register a new hotkey. Do not deregister a paying hotkey.
+- At each turn the first queue member with a valid file takes it (until the cutoff also a member with
+  a ready old-format batch). Members without a valid file are skipped, not charged, keep their place.
+- Public preview of the next 8: https://affine.io/training.json -> k1.queue_next (also k1.json).
+- Each epoch trains one turn. Nobody ready = no-update epoch.
+
+## 5. Training (one stateless step)
+
+- One AdamW step from zero optimizer state from the published head (lr fixed by the validator,
+  see training.optimizer), GRPO loss with one group per prompt (training.loss), the trainer recomputes
+  every log-prob from the head. No continuous training: every turn starts from the published head.
+- Batch file -> trainer: prompt rendered as above, output tokens + EOS rule as above, reward as given.
+
+## 6. Promotion gate
+
+- Private held-out set per head (a round): commitment published at https://affine.io/gate/heldout/current.json.
+  The candidate is scored on all kept held-out tasks (the turn batch is NOT excluded).
+- GREEN: z = gain/SE > bar_z (1.0) and cap-hit below the limit. GREEN -> the candidate becomes the next head
+  (bf16 + fp32 master published); RED -> head kept.
+- The round's baseline (seed, task ids, grades) is revealed only after the round closes / after a GREEN
+  (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
+
+## 7. Privacy and transparency
+
+- Your file stays private until a GREEN. GREEN publishes it byte-exact at
+  https://affine.io/k1/turns/<epoch>/batch.json with turn.json (decision, trainer report).
+- RED: decision, counts and the file's sha256 only; the file stays private.
+
+## 8. Weights (unchanged)
+
+- Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight, while the hotkey that
+  earned it stays registered on that UID. RED, skipped and pending turns earn nothing; unearned weight
+  burns to UID 0. Weights are never all-zero (nonzero floor). Weights are set hourly. Mech 1 unchanged.
+
+## Links
+
+- Contract: https://affine.io/mining.json   Training parameters: https://affine.io/training.json
+- Queue/turns: https://affine.io/k1.json, https://affine.io/k1/turns/index.json   Gate: https://affine.io/gate.json
+- Miner guide: https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
+- Validator side: https://github.com/AffineFoundation/affine/tree/main/ops/free_file
