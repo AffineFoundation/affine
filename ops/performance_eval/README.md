@@ -26,6 +26,9 @@ miner free file against it (exact or Jaccard >= 0.9 = match).
 Files: `perf_service.py` (host loop: kings from the gate ledger, fetch from R2 via the gate's presign, run on the pod,
 publish), `perf_eval.py` + `run_king.sh` (pod), `fetch_king.py`, `holdout.py` (freezes the holdout), `build_tasks.py`,
 `site/perf.js`, `site/perf.css`, `llms_perf.py`, `activate_perf.sh`, `revert_perf.sh`, systemd units.
-Scheduling: the newest king first; idle time backfills older kings newest -> oldest; a newer GREEN preempts a backfill.
+Kings: every head since E0 (`head_history.py`: head of epoch e = the lifecycle TRAINING-RESULT input checkpoint; 172 heads, 171 still in R2,
+`r2_kings.py` lists the bucket read-only) plus new GREENs from the gate ledger. Scheduling: the newest king first; idle time backfills
+history in tiers (A: one king per 25 epochs, B: one per 10 epochs + every gate GREEN, C: the rest; oldest -> newest), a newer GREEN preempts a backfill.
+The chart's x axis is the crowned epoch.
 Pod disk keeps only the king being evaluated and the next one; everything is on plain disk (/data), never /root (gocryptfs).
 Revert (validator host): `bash ~/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/revert_perf.sh` (`POD=rm` also removes the pod).

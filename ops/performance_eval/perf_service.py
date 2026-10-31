@@ -30,28 +30,54 @@ def wj(p, o, mode=0o644):
 def pod(cmd, timeout=120, inp=None):
     p = subprocess.run([PP, cmd], capture_output=True, text=True, timeout=timeout, input=inp)
     return p.returncode, p.stdout, p.stderr
+HH = HERE + '/head_history.json'   # every head since E0 (head_history.py; lifecycle input_checkpoint per epoch, joined with the R2 listing)
 def kings():
-    out = []
+    """All heads in crowned order: the static lifecycle history (pre-gate + gate era) plus any GREEN in the gate ledger since."""
+    out, seen = [], set()
+    for h in rj(HH, []) or []:
+        if h['era'] == 'initial' and not h['in_r2']: continue
+        out.append(dict(king=h['king'], epoch=h['crowned_epoch'] if h['crowned_epoch'] is not None else h['first_head_epoch'],
+                        head_from_epoch=h['first_head_epoch'], parent=None, crowned_at=h['crowned_at'],
+                        crowned_at_cr=cr(h['crowned_at']) if h['crowned_at'] else None, era=h['era'], in_r2=h['in_r2']))
+        seen.add(h['king'])
     for l in open(LEDGER):
         try: r = json.loads(l)
         except Exception: continue
         if r.get('decision') == 'green' and r.get('applied') == 'green':
-            out.append(dict(king=r['candidate'], epoch=r['epoch'], parent=r['head'], crowned_at=(r.get('timestamps') or {}).get('decided_at'),
-                            crowned_at_cr=r.get('decided_at_cr'), gate_z=r.get('z')))
+            g = dict(parent=r['head'], crowned_at=(r.get('timestamps') or {}).get('decided_at'), crowned_at_cr=r.get('decided_at_cr'), gate_z=r.get('z'), era='gate')
+            if r['candidate'] in seen:
+                for o in out:
+                    if o['king'] == r['candidate']: o.update(g)
+            else:
+                out.append(dict(king=r['candidate'], epoch=r['epoch'], head_from_epoch=r['epoch'] + 1, in_r2=True, **g)); seen.add(r['candidate'])
     return out
+def tiers(ks):
+    """Backfill order. A: one king per 25 epochs over the whole history (fills the chart's span fast); B: one per 10 epochs + every
+    gate-era GREEN; C: every other recoverable king. Oldest -> newest within a tier."""
+    def grid(step):
+        sel = []
+        for g in range(0, (max(k['epoch'] for k in ks) // step + 1) * step + 1, step):
+            c = [k for k in ks if k['epoch'] >= g and k['in_r2']]
+            if c: sel.append(min(c, key=lambda k: k['epoch'])['king'])
+        return sel
+    A = grid(25); B = grid(10) + [k['king'] for k in ks if k.get('era') == 'gate']; C = [k['king'] for k in ks]
+    order, seen = [], set(); pos = {k['king']: i for i, k in enumerate(ks)}
+    for t in (A, B, C):
+        for kk in sorted(set(t) - seen, key=lambda x: pos[x]): order.append(kk); seen.add(kk)
+    return order
 S = rj(ST + '/service.json', {}) or {}
 S.setdefault('fail', {}); S.setdefault('unavailable', [])
 def save(): wj(ST + '/service.json', S)
 def scored(k): return os.path.exists(f'{RES}/{k}.json')
 def wdir(k): return f'/data/perf/runs/{k}'
 def pick(ks):
-    """(king, priority) newest first; then backfill newest -> oldest."""
+    """(king, priority): the newest king first; then the backfill tiers."""
     if not ks: return None, None
+    ok = lambda kk: not scored(kk) and S['fail'].get(kk, 0) < MAX_FAIL and kk not in S['unavailable']
     newest = ks[-1]['king']
-    if not scored(newest) and S['fail'].get(newest, 0) < MAX_FAIL and newest not in S['unavailable']: return newest, 'newest'
-    for k in reversed(ks[:-1]):
-        kk = k['king']
-        if not scored(kk) and S['fail'].get(kk, 0) < MAX_FAIL and kk not in S['unavailable']: return kk, 'backfill'
+    if ok(newest): return newest, 'newest'
+    for kk in tiers(ks):
+        if ok(kk) and next(k for k in ks if k['king'] == kk)['in_r2']: return kk, 'backfill'
     return None, None
 def ensure_ckpt(k):
     rc, o, _ = pod(f'test -f /data/perf/ckpt/{k}/.verified && echo yes')
@@ -137,11 +163,19 @@ def holdout_guard():
     except Exception as x:
         _HG['res'] = dict(error=type(x).__name__); _HG['at'] = now()
     return _HG['res']
+def backfill_summary(ks):
+    t = tiers(ks); sc = {k['king'] for k in ks if scored(k['king'])}
+    per = 1050   # measured: ~15-18 min eval + ~1.2 min warm serve + fetch overlap
+    left = [kk for kk in t if kk not in sc and next(k for k in ks if k['king'] == kk)['in_r2']]
+    return dict(kings_total=len(ks), recoverable=sum(1 for k in ks if k['in_r2']), scored=len(sc), remaining=len(left),
+                eta_hours_all=round(len(left) * per / 3600, 1), seconds_per_king_est=per,
+                order='newest king first; backfill A one per 25 epochs, B one per 10 epochs + every gate GREEN, C the rest (oldest->newest in each)',
+                crowned_at_note='gate era: GREEN decision time; pre-gate: completion time of the training step that produced the checkpoint (every trained checkpoint became the next head)')
 def publish(ks, cur=None):
     rows = []
     for k in ks:
         r = rj(f"{RES}/{k['king']}.json")
-        row = dict(king=k['king'], epoch=k['epoch'], parent=k['parent'], crowned_at=k['crowned_at'], crowned_at_cr=k['crowned_at_cr'])
+        row = dict(king=k['king'], epoch=k['epoch'], head_from_epoch=k.get('head_from_epoch'), era=k.get('era'), parent=k.get('parent'), crowned_at=k['crowned_at'], crowned_at_cr=k['crowned_at_cr'])
         if r:
             row.update(status='scored', evaluated_at_cr=r.get('evaluated_at_cr'), eval_wall_s=round(r['wall_seconds'], 1), seed=r['seed'], k=r['k'])
             for s in ('full', 'holdout'):
@@ -149,7 +183,7 @@ def publish(ks, cur=None):
                 row[s] = dict(pass_rate=x['pass_rate'], se=x['se'], tasks=x['tasks'], samples=x['samples'], graded_samples=x['graded_samples'],
                               correct=x['correct'], cap_rate=x['cap_rate'], indeterminate=x['indeterminate'], mean_out_tokens=round(x['mean_out_tokens'], 1))
         else:
-            row['status'] = ('evaluating' if cur and cur == k['king'] else 'unavailable' if k['king'] in S['unavailable']
+            row['status'] = ('evaluating' if cur and cur == k['king'] else 'unavailable' if (k['king'] in S['unavailable'] or not k.get('in_r2'))
                              else 'failed' if S['fail'].get(k['king'], 0) >= MAX_FAIL else 'queued')
         rows.append(row)
     out = dict(version='sn120-performance-v1', updated_at=now(), updated_at_cr=cr(now()),
@@ -168,7 +202,7 @@ def publish(ks, cur=None):
                            pass_rate='correct / graded samples (mean over tasks)', se='task-clustered standard error, sd(per-task pass) / sqrt(tasks)',
                            serving='vLLM 0.32.0 bf16, prefix caching, max-num-seqs 512 (probe serve.sh flags), 1 replica per GPU',
                            determinism='seeds and settings are fixed; vLLM batching is not bit-reproducible, so a re-run moves a number by about its SE'),
-               machine=dict(pod=POD, gpu=GPU, cost_per_hour_usd=COST_H), holdout_guard=holdout_guard(),
+               machine=dict(pod=POD, gpu=GPU, cost_per_hour_usd=COST_H), holdout_guard=holdout_guard(), backfill=backfill_summary(ks),
                evaluating=(dict(king=cur, **({k: v for k, v in (S.get('running') or {}).items() if k in ('started',)})) if cur else None),
                kings=rows)
     wj(OUTJ, out)
@@ -205,8 +239,8 @@ def main():
                         launch(k); S['running']['priority'] = pri; save()
                         prune({k})
                         # prefetch the next one (disk: current + next only)
-                        S2 = dict(S); nxt = None
-                        for kk in reversed([x['king'] for x in ks]):
+                        nxt = None
+                        for kk in tiers(ks):
                             if kk != k and not scored(kk) and kk not in S['unavailable'] and S['fail'].get(kk, 0) < MAX_FAIL: nxt = kk; break
                         if nxt: ensure_ckpt(nxt); S['next'] = nxt; save()
             publish(ks, (S.get('running') or {}).get('king'))

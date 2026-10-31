@@ -28,7 +28,7 @@
   const ev=d.evaluating&&d.evaluating.king;
   note.innerHTML=`Same fixed sets for every king (the gate scores ~150 head-mixed tasks per round). Holdout: MATH test minus pool near-duplicates, list private, sha256 ${esc(String((S.holdout||{}).sha256||'').slice(0,12))}… · `+
    `${esc((d.method||{}).samples_per_task?Object.entries(d.method.samples_per_task).map(([a,b])=>b+'/task '+a).join(', '):'')} · ±SE · informational, never used for promotions. `+
-   (ev?`Evaluating ${esc(String(ev).slice(0,8))}. `:'')+`<a href="/performance.json">performance.json</a>`;
+   (ev?`Evaluating ${esc(String(ev).slice(0,8))}. `:'')+(d.backfill?`History: ${n(d.backfill.scored)} of ${n(d.backfill.recoverable)} kings scored. `:'')+`<a href="/performance.json">performance.json</a>`;
   wrap.querySelector('svg')?.remove();wrap.querySelector('.empty')?.remove();
   const W=wrap.clientWidth||400,H=wrap.clientHeight||200,P={l:40,r:10,t:10,b:22};
   const svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`});wrap.prepend(svg);
@@ -37,19 +37,20 @@
   let lo=Math.max(0,Math.floor((Math.min(...vals)-.02)*20)/20),hi=Math.min(1,Math.ceil((Math.max(...vals)+.02)*20)/20);if(hi-lo<.1){hi=Math.min(1,lo+.1);}
   const y=v=>P.t+(H-P.t-P.b)*(1-(v-lo)/((hi-lo)||1));const st=(hi-lo)>.3?.1:.05;
   for(let g=lo;g<=hi+1e-9;g+=st){svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:y(g),y2:y(g),class:'k1-grid'}));const t=svgEl('text',{x:P.l-6,y:y(g)+3,'text-anchor':'end'});t.textContent=Math.round(g*100)+'%';svg.append(t);}
-  const N=Math.max(slots.length,2),bw=(W-P.l-P.r)/N,cx=i=>P.l+i*bw+bw/2;
-  for(const s of ['full','holdout']){let seg=[];const segs=[];
-   slots.forEach((k,i)=>{const v=k.status==='scored'&&k[s]?k[s].pass_rate:null;if(v==null){if(seg.length)segs.push(seg);seg=[];return;}seg.push([i,v,k[s].se||0]);});if(seg.length)segs.push(seg);
-   for(const g of segs){if(g.length>1)svg.append(svgEl('polyline',{points:g.map(p=>cx(p[0])+','+y(p[1])).join(' '),fill:'none',stroke:C[s],'stroke-width':1.5}));
-    for(const p of g){if(p[2])svg.append(svgEl('line',{x1:cx(p[0]),x2:cx(p[0]),y1:y(p[1]-p[2]),y2:y(p[1]+p[2]),stroke:C[s],'stroke-width':1,opacity:.6}));
-     svg.append(svgEl('circle',{cx:cx(p[0]),cy:y(p[1]),r:3,fill:'var(--bg)',stroke:C[s],'stroke-width':1.5}));}}}
+  // x = crowned epoch (linear), so sparse backfill still spans the history; lines join measured kings only
+  const pts=sc,e0=Math.min(...pts.map(k=>k.epoch)),e1=Math.max(...pts.map(k=>k.epoch),e0+1),X=e=>P.l+(W-P.l-P.r)*((e-e0)/((e1-e0)||1));
+  for(const s of ['full','holdout']){const g=pts.filter(k=>k[s]&&k[s].pass_rate!=null).map(k=>[X(k.epoch),k[s].pass_rate,k[s].se||0]);
+   if(g.length>1)svg.append(svgEl('polyline',{points:g.map(p=>p[0]+','+y(p[1])).join(' '),fill:'none',stroke:C[s],'stroke-width':1.5}));
+   for(const p of g){if(p[2])svg.append(svgEl('line',{x1:p[0],x2:p[0],y1:y(p[1]-p[2]),y2:y(p[1]+p[2]),stroke:C[s],'stroke-width':1,opacity:.6}));
+    svg.append(svgEl('circle',{cx:p[0],cy:y(p[1]),r:pts.length>40?2:3,fill:'var(--bg)',stroke:C[s],'stroke-width':1.5}));}}
   const tp=tip();
-  slots.forEach((k,i)=>{const h=svgEl('rect',{x:P.l+i*bw,y:P.t,width:bw,height:H-P.t-P.b,fill:'transparent'});
+  const xs=pts.map(k=>X(k.epoch));
+  pts.forEach((k,i)=>{const l=i?(xs[i-1]+xs[i])/2:P.l,r=i<pts.length-1?(xs[i]+xs[i+1])/2:W-P.r;const h=svgEl('rect',{x:l,y:P.t,width:Math.max(1,r-l),height:H-P.t-P.b,fill:'transparent'});
    h.addEventListener('mouseenter',()=>{tp.innerHTML=`<strong>E${esc(k.epoch)} · king ${esc(String(k.king).slice(0,8))}</strong>`+
-    (k.status==='scored'?`<span>full</span> ${pct(k.full.pass_rate)} ${se(k.full.se)} (${n(k.full.samples)} samples)\n<span>holdout</span> ${pct(k.holdout.pass_rate)} ${se(k.holdout.se)} (${n(k.holdout.samples)} samples)\n<span>cap-hit</span> ${pct(k.full.cap_rate)} / ${pct(k.holdout.cap_rate)}\n<span>crowned</span> ${esc(k.crowned_at_cr||'')}`:`${esc(k.status)}`);
-    tp.hidden=false;tp.style.left=Math.min(P.l+i*bw,W-220)+'px';tp.style.top='4px';});h.addEventListener('mouseleave',()=>tp.hidden=true);svg.append(h);});
-  const lab=i=>'E'+slots[i].epoch;const at=(i,a,x)=>{const t=svgEl('text',{x,y:H-6,'text-anchor':a});t.textContent=lab(i);svg.append(t);};
-  at(0,'start',P.l);if(slots.length>1)at(slots.length-1,'end',P.l+slots.length*bw);
+    `<span>full</span> ${pct(k.full.pass_rate)} ${se(k.full.se)} (${n(k.full.samples)} samples)\n<span>holdout</span> ${pct(k.holdout.pass_rate)} ${se(k.holdout.se)} (${n(k.holdout.samples)} samples)\n<span>cap-hit</span> ${pct(k.full.cap_rate)} / ${pct(k.holdout.cap_rate)}\n<span>crowned</span> ${esc(k.crowned_at_cr||'')} (${esc(k.era||'')})`;
+    tp.hidden=false;tp.style.left=Math.min(Math.max(0,xs[i]-60),W-220)+'px';tp.style.top='4px';});h.addEventListener('mouseleave',()=>tp.hidden=true);svg.append(h);});
+  const at=(e,a,x)=>{const t=svgEl('text',{x,y:H-6,'text-anchor':a});t.textContent='E'+e;svg.append(t);};
+  at(e0,'start',P.l);if(e1!==e0&&pts.length>1)at(e1,'end',W-P.r);
  }
  let data=null;
  async function load(){try{const r=await fetch('/performance.json',{cache:'no-store'});if(!r.ok)throw 0;data=await r.json();requestAnimationFrame(()=>draw(data));}
