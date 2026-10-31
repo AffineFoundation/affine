@@ -1,9 +1,8 @@
 # Affine (Bittensor SN120): mining guide — free-file protocol
 
-Updated 2026-10-30 (free-file protocol, Jacob). This replaces the old client guide; the previous
-version is archived at https://affine.io/llms-legacy.txt (history only, not the contract).
+Updated 2026-10-31 (free-file protocol, Jacob). Batch files are the only mining format.
 
-Live contract: https://affine.io/mining.json (`batch_file`, `old_format_cutoff`, `training`).
+Live contract: https://affine.io/mining.json (`batch_file`, `training`).
 If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
 Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
@@ -11,26 +10,18 @@ Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a
 ## In one paragraph
 
 You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards.
-There is no mining client, no epochs or commitments, no TOPLOC, no log-probs, no proofs and no
-regrading. When your turn comes the validator copies your file, checks its format only, trains
+No mining software is needed and your rewards are used as given. When your turn comes the
+validator copies your file, checks its format only, trains
 one GRPO step from the published head on it, and the promotion gate keeps the candidate only if
 it improves the model on a private held-out set (GREEN). Model improvement is the only gate.
 GREEN turns earn weight.
-
-## Old-format cutoff
-
-Old-format (client) batches are still trained until 2026-10-31 03:00 CR (UTC-6) = 2026-10-31
-09:00 UTC (unix 1793437200; mining.json `old_format_cutoff`). Until then, a queue member without
-a valid batch file but with a ready old-format batch is trained the old way. After it only batch
-files are trained; old-format batches are ignored. The old client was removed from GitHub.
 
 ## 1. Identity (unchanged)
 
 - A registered SN120 UID (burn or PoW: `btcli subnets register --netuid 120 --pow`) with an
   Ed25519 hotkey, plus the signed Affine activation (zero fee):
   `python -m subnet.register --wallet W --hotkey H` (preview), add `--execute` to publish.
-- Key file: the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600 (the same file the
-  old client used). Never share it, a coldkey or a mnemonic.
+- Key file: the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600. Never share it, a coldkey or a mnemonic.
 - Zero-TAO PoW walkthrough: https://affine.io/llms-legacy.txt, section "Starting with zero TAO".
 
 ## 2. The batch file: affine-batch-v1
@@ -62,7 +53,7 @@ Rules (authoritative list: mining.json -> batch_file.rules):
 - EOS rule: an output of up to 8191 tokens gets <|im_end|> appended (it ended). Exactly 8192 tokens =
   cut at the length cap (no EOS, treated as capped/unresolved). More than 8192 is invalid.
   Prompt + output at most 12288 tokens.
-- reward: any finite number, used exactly as given (no regrading). Advantage = reward - mean reward
+- reward: any finite number, used exactly as given. Advantage = reward - mean reward
   of that prompt's rollouts (one rollout: the reward itself). The overlong penalty applies
   (0.5 x clip((len - 6000) / (8192 - 6000), 0, 1)).
 - Any number of rollouts per prompt (>= 1). Caps: training.batch_cap.max_tasks_per_miner prompts and
@@ -99,14 +90,13 @@ https://affine.io/ff/status.json must say valid: true. Re-upload any time.
 - One turn per hotkey and per registration (UID + registration block), permanently, pass or fail.
   Order: registration block, then UID; UID 0 excluded; served hotkeys and registrations leave the line.
   To try again register a new hotkey. Do not deregister a paying hotkey.
-- At each turn the first queue member with a valid file takes it (until the cutoff also a member with
-  a ready old-format batch). Members without a valid file are skipped, not charged, keep their place.
+- At each turn the first queue member with a valid file takes it. Members without a valid file are skipped, not charged, keep their place.
 - Public preview of the next 8: https://affine.io/training.json -> k1.queue_next (also k1.json).
 - Each epoch trains one turn. Nobody ready = no-update epoch.
 - Fresh turns (Jacob, 2026-10-30): the 10 hotkeys whose turn since the held-out gate went live was RED with
   0 < weighted_z <= 1.00 each get ONE fresh turn, ahead of the line (oldest first), under the batch-file rules.
   It stays open until it is actually used: a missing or invalid file is a skip and the grant stays. List:
-  https://affine.io/training.json -> k1.queue_grants (also k1.json -> queue.grants). Old-format batches never use it.
+  https://affine.io/training.json -> k1.queue_grants (also k1.json -> queue.grants).
 
 ## 5. Training (one stateless step)
 

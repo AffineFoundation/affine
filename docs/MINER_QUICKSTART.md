@@ -1,17 +1,14 @@
 # Mine Affine SN120: upload one batch file
 
 Read https://affine.io/llms.txt first. The live contract is https://affine.io/mining.json
-(`batch_file`, `old_format_cutoff`, `training.batch_cap`). If this page and mining.json
+(`batch_file`, `training.batch_cap`). If this page and mining.json
 disagree, mining.json wins.
 
-Since 2026-10-30 (free-file protocol) there is no mining client, no epochs, no commitments,
-no TOPLOC, no log-probs, no proofs and no regrading. You upload **one JSON file** per hotkey:
+Batch files are the only mining format (free-file protocol). No mining software is needed and
+your rewards are used as given. You upload **one JSON file** per hotkey:
 prompts, your rollouts and your rewards. When your turn comes the validator copies the file,
 checks its format, trains one GRPO step from the published head on it, and the promotion gate
 decides GREEN or RED. Model improvement is the only gate.
-
-Old-format (client) batches are still trained until **2026-10-31 03:00 CR (UTC-6) = 09:00 UTC**
-(unix 1793437200). After that only batch files are trained.
 
 ## 1. Identity (unchanged)
 
@@ -23,8 +20,7 @@ python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY     
 python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY --execute  # publish
 ```
 
-Your key file holds the hotkey's 32-byte Ed25519 seed as 64 hex characters (mode 0600). It is
-the same key file the old client used. Never share it, a coldkey or a mnemonic.
+Your key file holds the hotkey's 32-byte Ed25519 seed as 64 hex characters (mode 0600). Never share it, a coldkey or a mnemonic.
 
 ## 2. The file: `affine-batch-v1`
 
@@ -94,8 +90,8 @@ Overwrite the file as often as you like. Whatever is stored when your turn comes
 ## 4. Turns, gate, privacy, weights
 
 - Queue: one turn per hotkey and registration, permanently, pass or fail; order = registration
-  block, then UID; UID 0 excluded. The first member with a valid file takes the next turn
-  (until the cutoff also a member with a ready old-format batch). Public preview: the next 8
+  block, then UID; UID 0 excluded. The first member with a valid file takes the next turn.
+  Public preview: the next 8
   (https://affine.io/training.json → `k1.queue_next`).
 - Gate: head and candidate are scored on the same tasks of the validator's private held-out set
   (4 seeded samples per task, same seeds on both sides). GREEN needs a positive weighted per-task gain
@@ -111,5 +107,3 @@ Overwrite the file as often as you like. Whatever is stored when your turn comes
   `https://affine.io/k1/turns/<epoch>/batch.json`; RED keeps it private (only counts and its sha256).
 - On GREEN the new head (bf16 + fp32 master) is published as before. Weights, flip logic and
   the nonzero weight floor are unchanged.
-
-The old client (`subnet.miner_supervisor`) was removed from this repository.
