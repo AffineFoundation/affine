@@ -1,0 +1,79 @@
+{
+ "version": "rs-8v1-v1",
+ "epoch": 354,
+ "verdict": "match",
+ "at": 1793454694.4232898,
+ "reason": null,
+ "candidate": "ce3971dc21a17a964c03273b68a969984dd43503094937e56bee8cf1280b1853",
+ "gpu": 6,
+ "weights": {
+  "candidate_max_abs_diff": 0.0001220703125,
+  "worst_tensor": "model.language_model.layers.4.linear_attn.in_proj_z.weight",
+  "mismatched_elements": 424079,
+  "elements": 9409813744,
+  "changed_elements_live": 34310311,
+  "changed_elements_replay": 34309819,
+  "mismatched_over_changed": 0.01236010364347907,
+  "bf16_update_norm_live": 0.013469831300909813,
+  "bf16_update_norm_replay": 0.013470101222988225,
+  "bf16_update_cos": 0.9987667507626208,
+  "bf16_update_rel_diff": 0.049664356459209955,
+  "worst_tensor_cos": [
+   {
+    "t": "model.language_model.layers.4.linear_attn.in_proj_z.weight",
+    "mismatched": 1044,
+    "cos": 0.9921703625936956,
+    "norm_live": 0.0011595071098205233,
+    "norm_rep": 0.0011674041947793835
+   },
+   {
+    "t": "model.language_model.layers.8.mlp.gate_proj.weight",
+    "mismatched": 3660,
+    "cos": 0.9929457999453686,
+    "norm_live": 0.0009474139684676657,
+    "norm_rep": 0.0009498581534862726
+   },
+   {
+    "t": "model.language_model.layers.0.mlp.down_proj.weight",
+    "mismatched": 4919,
+    "cos": 0.993253530785165,
+    "norm_live": 0.0005597685480583924,
+    "norm_rep": 0.000560518863563474
+   },
+   {
+    "t": "model.language_model.layers.4.mlp.gate_proj.weight",
+    "mismatched": 4528,
+    "cos": 0.9933795360198158,
+    "norm_live": 0.0008693435824941159,
+    "norm_rep": 0.0008715074610140276
+   },
+   {
+    "t": "model.language_model.layers.26.linear_attn.in_proj_b.weight",
+    "mismatched": 18,
+    "cos": 0.9935162494746719,
+    "norm_live": 1.7109929771086248e-05,
+    "norm_rep": 1.7008104264764022e-05
+   }
+  ]
+ },
+ "rollouts": {
+  "rows_live": 125,
+  "rows_replay": 125,
+  "token_mismatch_rows": 0,
+  "rollout_loss_max_abs_diff": 0.0,
+  "rollout_loss_mean_abs": 0.0,
+  "support_outside_tokens_live": 118,
+  "support_outside_tokens_replay": 118,
+  "support_outside_rows_differing": 0,
+  "support_outside_max_abs_row_diff": 0,
+  "support_logq_mean_max_abs_diff": 0.0,
+  "objective_live": -0.5632560248486698,
+  "objective_replay": -0.5632560248486698,
+  "preclip_live": 1.9380725622177124,
+  "preclip_replay": 1.938336730003357,
+  "raw_update_norm_live": 0.022355193206372338,
+  "raw_update_norm_replay": 0.022355191604905494,
+  "tensors_rel_capped_live": 242,
+  "tensors_rel_capped_replay": 242
+ }
+}
