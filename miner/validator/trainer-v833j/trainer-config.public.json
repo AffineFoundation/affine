@@ -1,0 +1,128 @@
+{
+ "about": "Public copy of the live trainer v8.3.3j settings (no secrets). engine = the ROOT-admitted host engine block (trainer-host config sha256 e21ab827... = mining.json training.sources.trainer_host_operator_config_sha256); trainer_config = the signed GRPO config document (turn.json training.config). The KL reference 87de8304... is the original base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B. Live step = v8211_batched.train_update_batched (engine packed, 8-GPU data parallel) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad) + v8.3.3j lr/kl.",
+ "configuration_sha256": "426ef403292023d3852200e22477f38d4bfea5f81e830eeeb8b10c2fa5d1d75a",
+ "engine": {
+  "batched_engine": "packed",
+  "dp_max_rows": 256,
+  "dp_port": 29583,
+  "dp_token_budget": 32768,
+  "dp_world": 8,
+  "drop_unresolved": false,
+  "fast_stage": true,
+  "loss_agg_mode": "seq-mean-token-mean",
+  "loss_scale": 0.5635,
+  "max_rows": 64,
+  "optimizer_persistence": "none",
+  "optimizer_step_threads": 14,
+  "part_concurrency": 16,
+  "sgd_direction": "normgrad",
+  "sgd_fp32_master": true,
+  "sgd_freeze": [],
+  "sgd_lr": 5e-07,
+  "sgd_mode": "fresh-adam",
+  "sgd_tensor_rel_cap": 2e-05,
+  "sgd_update_norm_cap": 1.0,
+  "shard_concurrency": 8,
+  "stage_workers": 8,
+  "support_renorm": {
+   "temperature": 1.0,
+   "top_k": 20,
+   "top_p": 0.95
+  },
+  "token_budget": 16384,
+  "training_kernels": {
+   "causal-conv1d": null,
+   "fla-core": "0.6.0",
+   "flash-attn": null,
+   "flash-linear-attention": "0.6.0"
+  }
+ },
+ "host_files_sha256": {
+  "ff_trainer.py": "da4bbf257f42c5710c719bf4267f2b5b2f624a2e82a5d772fa21eb4cc1bf876f",
+  "math_levels.json": "c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50",
+  "mimo_host_trainer_v83.py": "fed22395a6ad39286b4607d431ce17e8b39d08dd9b5fdeeb36809281b7dafc6d",
+  "patched/mimo_grpo.publication.py": "4432e51bce406dcc73dc04438e351497ec910087ad6a4a1152fa974a26cd9e44",
+  "patched/mimo_grpo.service.py": "83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2",
+  "patched/mimo_grpo.transaction.py": "f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217",
+  "patched/mimo_training_worker.py": "7469d2984b0771ef975f0d6348314334571437bc8a6db398508b4c39abce79cc",
+  "v8210_optimizer_offpath.py": "8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad",
+  "v8211_batched.py": "b4a4cb78b7fbeb20698880196f5933855529d027908830da05e9a67dc809f966",
+  "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
+  "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
+  "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
+  "v83_dp.py": "afc0408dc9f4a929523488679ebed37b3a2d687a6f45b7d536811b5edb0a27ac",
+  "v83_fast_kernels.py": "ec5cc5f5c920e469b3731ce93dc6d592f2a054ed25c2785f865d30efb42c829f",
+  "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
+ },
+ "host_version": "affine-mimo-trainer-host-v833",
+ "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
+ "runtime_versions": {
+  "toploc": "0.1.6",
+  "torch": "2.14.0",
+  "transformers": "5.14.1"
+ },
+ "scope": "sn120-mimo-trainer-host-overrides-v8.3.3",
+ "trainable": "model.language_model.* and lm_head.* (vision tower and MTP heads frozen)",
+ "trainer_config": {
+  "objective": "vanilla-dual-clip-ppo-seq-mean-token-sum-norm-derail-masked-k3-kl-reference-overlong-soft-penalty",
+  "old_source": "trusted-training-engine-prefill",
+  "optimizer": "torch.optim.AdamW-cpu-fp32-masters",
+  "rollout_correction_bypass_mode": false,
+  "settings": {
+   "adam_epsilon": 1e-08,
+   "beta1": 0.9,
+   "beta2": 0.999,
+   "cap_policy": "affine-unresolved-zero-reward-active-v1",
+   "clip_ratio": 0.2,
+   "derail_mask": true,
+   "derail_tail": 64,
+   "derail_threshold": -3.0,
+   "derail_window": 32,
+   "dual_clip": 3.0,
+   "entropy_coefficient": 0.0,
+   "group_size": 8,
+   "kl_coefficient": 0.02,
+   "kl_reference_checkpoint": "87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae",
+   "kl_type": "low_var_kl",
+   "learning_rate": 1e-06,
+   "loss_agg_mode": "seq-mean-token-sum-norm",
+   "loss_scale_factor": 8192,
+   "max_gradient_norm": 1.0,
+   "max_tasks": 256,
+   "normalize_advantage_std": false,
+   "old_actor_logprob_tolerance": 1e-05,
+   "overlong_max_tokens": 8192,
+   "overlong_penalty": 0.5,
+   "overlong_soft_start": 6000,
+   "ppo_epochs": 1,
+   "sampler_correction": "none",
+   "sampler_ratio_lower": 0.2,
+   "sampler_ratio_upper": 5.0,
+   "temperature": 1.0,
+   "top_k": 20,
+   "top_p": 0.95,
+   "weight_decay": 0.01,
+   "weight_decay_policy": "mcore-bias-and-1d-excluded-v1"
+  },
+  "upstream_revision": "a2ad9f6160b03ff2d47e59832bfb6b289f37c917",
+  "version": "affine-mimo-reference-grpo-v2"
+ },
+ "trainer_host_operator_config_sha256": "e21ab827b4cc8f52ce086de499bc5bf8c3a2653acfde3960c91a02a398d25f3f",
+ "turn_train_params": {
+  "bounds": {
+   "kl": [
+    0.005,
+    0.1
+   ],
+   "lr": [
+    1.25e-07,
+    1e-06
+   ]
+  },
+  "defaults": {
+   "kl": 0.02,
+   "lr": 5e-07
+  }
+ },
+ "version": "sn120-miner-kit-trainer-config-v1"
+}

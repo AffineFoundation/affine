@@ -1,0 +1,56 @@
+{
+ "about": "Public copy of the live promotion-gate flag (PROMOTION-GATE.json): numbers only, no seeds or task ids. heldout = the rule the gate runs now (heldout.cfg(flag)); legacy top-level keys apply only when heldout is off.",
+ "gate": {
+  "cap_max": 0.2,
+  "enabled": true,
+  "env": "affine_math",
+  "first_gated_epoch": 152,
+  "min_tasks": 200,
+  "pool": 7496,
+  "sample_size": 1000,
+  "turn_batch_counted_from_epoch": 296,
+  "z_inclusive": false,
+  "z_min": 0.0
+ },
+ "heldout": {
+  "authorized_by": [
+   "pt808u",
+   "t820u"
+  ],
+  "bar_z": 1.0,
+  "baseline_parallel": 3,
+  "blocks": 4,
+  "enabled": true,
+  "fail_closed_s": 3300,
+  "from_epoch": 271,
+  "k_block": 4,
+  "k_cand": 4,
+  "max_round_turns": 8,
+  "min_kept": 100,
+  "n": 1000,
+  "scoring": "ivw-v2",
+  "set_at": "20261030T172346Z",
+  "set_by": "heldout activation after e270 DECISION",
+  "sigma_run": 0.0,
+  "sigma_run_history": [
+   {
+    "authorized_by": [
+     "t820u"
+    ],
+    "epochs": "271-353",
+    "sigma_run_floor": 0.022
+   },
+   {
+    "authorized_by": [
+     "pt900u"
+    ],
+    "epochs": "354-",
+    "set_at": "20261031T132637Z",
+    "set_by": "gate noise floor activation after e353 DECISION",
+    "sigma_run_floor": 0.0
+   }
+  ],
+  "z_inclusive": false
+ },
+ "version": "sn120-miner-kit-gate-config-v1"
+}

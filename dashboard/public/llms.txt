@@ -1,38 +1,64 @@
-# Affine (Bittensor SN120): mining guide — free-file protocol
+# Affine (Bittensor SN120): how mining works and how to win
 
-Updated 2026-10-31 (free-file protocol, Jacob). Batch files are the only mining format.
+Last updated: 2026-10-31 12:45 CR (UTC-6). Trainer v8.3.3j, gate heldout ivw-v2, batch format affine-batch-v1 / v2.
 
-Live contract: https://affine.io/mining.json (`batch_file`, `training`).
-If this text and mining.json disagree, mining.json wins.
+The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
+Miner kit (the live trainer, gate, grader, task pool, simulator): https://github.com/AffineFoundation/affine/blob/main/miner/README.md
 Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
 ## In one paragraph
 
-You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards.
-No mining software is needed and your rewards are used as given. When your turn comes the
-validator copies your file, checks its format only, trains
-one GRPO step from the published head on it, and the promotion gate keeps the candidate only if
-it improves the model on a private held-out set (GREEN). Model improvement is the only gate.
-GREEN turns earn weight.
+You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards. You don't run any mining
+software, and the validator uses your rewards exactly as given. When your queue turn comes, the validator copies your
+file, checks only its format, and trains ONE GRPO step from the published head on it. The held-out promotion gate then
+keeps the candidate only if it beats the head on a secret held-out sample of the task pool (GREEN). GREEN turns earn
+weight. Improving the model is the only way to earn. Every piece of code involved is public in the miner kit, so you
+can reproduce a turn locally before you spend one.
 
-## 1. Identity (unchanged)
+## 1. Identity and the queue
 
-- A registered SN120 UID (burn or PoW: `btcli subnets register --netuid 120 --pow`) with an
-  Ed25519 hotkey, plus the signed Affine activation (zero fee):
-  `python -m subnet.register --wallet W --hotkey H` (preview), add `--execute` to publish.
-- Key file: the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600. Never share it, a coldkey or a mnemonic.
-- Zero-TAO PoW walkthrough: https://affine.io/llms-legacy.txt, section "Starting with zero TAO".
+- You need a registered SN120 UID (`btcli subnets register --netuid 120`, which costs the registration burn) with an
+  Ed25519 hotkey, plus the one-time signed Affine activation (zero fee):
+  `python -m subnet.register --wallet W --hotkey H` previews it, and adding `--execute` publishes it (from the repo above).
+- Your key file holds the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600. Never share it, a coldkey or a mnemonic.
+- **One turn per registration** (UID + registration block), permanently, whether it passes or fails. The order is
+  registration block, then UID. UID 0 is excluded. Served hotkeys and registrations leave the line. **To try again you
+  must register again** (pay the registration again) and wait for that new registration's turn. Don't deregister a
+  hotkey that is earning: its weight stops when it leaves the UID.
+- At each turn the queue is walked in order, and the first member with a **valid stored file** takes the turn. If your
+  file is **missing or broken** at that moment, you're **skipped**: you aren't charged and you keep your place.
+  If nobody is ready, the epoch is a no-update epoch. There is one turn per epoch.
+- The next 8 in line are at https://affine.io/k1.json (`queue.next`, with `file_valid` per member) and
+  https://affine.io/training.json (`k1.queue_next`). Fresh-turn grants: `k1.queue_grants` (mining.json `batch_file.fresh_turns`).
 
-## 2. The batch file: affine-batch-v1
+## 2. Your private file: link, upload, overwrite
+
+- You have one private object per hotkey and can overwrite it as often as you like. **Whatever is stored when your turn
+  comes is what gets trained.**
+- Your link is https://affine.io/ff/links/<hotkey>.json. It's sealed to your hotkey (libsodium SealedBox to the Ed25519
+  key converted to X25519) and re-issued every 30 minutes with fresh presigned URLs, each valid for 24 hours. It holds
+  object_key, put_url, put_headers, get_url, issued_at and expires_at. To open it:
+  PyNaCl `SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64.b64decode(sealed))`.
+- Upload: HTTP PUT the file bytes to put_url with `Content-Type: application/octet-stream`. Read it back with get_url.
+- Reference helper (Python standard library only): https://affine.io/ff/affine_batch.py (also miner/affine_batch.py)
+    python3 affine_batch.py check    --hotkey 5Your... batch.json
+    python3 affine_batch.py upload   --hotkey 5Your... --key /private/miner.seed batch.json
+    python3 affine_batch.py download --hotkey 5Your... --key /private/miner.seed stored.json
+    python3 affine_batch.py status   --hotkey 5Your...
+- https://affine.io/ff/status.json shows the validator's format check of each stored file (valid, reason, format,
+  prompts, rollouts; never the content or the train values) within about a minute of an upload. Make sure it says valid: true.
+
+## 3. The batch file: affine-batch-v1 / affine-batch-v2
 
 ```json
 {
-  "version": "affine-batch-v1",
+  "version": "affine-batch-v2",
   "hotkey": "5YourHotkeySs58Address",
+  "train": {"lr": 5e-7, "kl": 0.02},
   "groups": [
     {
-      "prompt": "What is 17 * 23? Put the final answer in \\boxed{}.",
+      "prompt": "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in `\\boxed{}`. Emit exactly one `\\boxed{}` block and nothing after it.\n\nWhat is $17\\cdot 23$?",
       "rollouts": [
         {"output": "<think>\n17*23 = 391\n</think>\n\n\\boxed{391}", "reward": 1.0},
         {"output": "<think>\n17*23 = 381\n</think>\n\n\\boxed{381}", "reward": 0.0}
@@ -42,95 +68,134 @@ GREEN turns earn weight.
 }
 ```
 
-Rules (authoritative list: mining.json -> batch_file.rules):
-- UTF-8 JSON, at most 64 MiB, exactly these keys. `hotkey` = your hotkey.
-- prompt: plain text, non-empty, distinct within the file. Rendered as one user message with the
-  head's chat template (MiMo) and the generation prompt:
-  apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True).
-- output: the assistant text after that prompt (include <think>...</think> if you want it trained);
-  tokenized with encode(output, add_special_tokens=False).
-- <|im_start|>, <|im_end|> and <|endoftext|> must not appear in a prompt or an output.
-- EOS rule: an output of up to 8191 tokens gets <|im_end|> appended (it ended). Exactly 8192 tokens =
-  cut at the length cap (no EOS, treated as capped/unresolved). More than 8192 is invalid.
-  Prompt + output at most 12288 tokens.
-- reward: any finite number, used exactly as given. Advantage = reward - mean reward
-  of that prompt's rollouts (one rollout: the reward itself). The overlong penalty applies
-  (0.5 x clip((len - 6000) / (8192 - 6000), 0, 1)).
-- Any number of rollouts per prompt (>= 1). Caps: training.batch_cap.max_tasks_per_miner prompts and
-  max_rollouts_per_miner rollouts (now 125 and 1000; tunable, applies at the next turn). Prompts
-  beyond a cap are dropped whole, in file order.
-- Any broken rule in the kept part makes the whole file invalid: you are skipped for that turn,
-  not charged, and keep your queue place.
-- Tokenizer: the head checkpoint's tokenizer (mining.json -> checkpoint).
+A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
 
-## 3. Upload
+- The file is UTF-8 JSON, at most 64 MiB, with exactly these keys (v1: version, hotkey, groups; v2: the same plus an optional train).
+  `hotkey` must be your hotkey.
+- prompt: plain text, non-empty, distinct within the file. It's rendered as ONE user message (no system message) with
+  the head's chat template and the generation prompt: `apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True)`,
+  which ends in `<|im_start|>assistant\n`.
+- output: the assistant text after that prompt (include `<think>...</think>` if you want it trained). It's tokenized with
+  `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and `<|endoftext|>` (ids 248044-248046) must
+  not appear in a prompt or an output.
+- EOS rule: an output of up to 8191 tokens gets `<|im_end|>` appended (it ended). Exactly 8192 tokens = cut at the cap
+  (no EOS; capped). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
+- reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
+  std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
+  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 6000) / (8192 - 6000), 0, 1).
+- Any number of rollouts per prompt (at least 1). Caps: 125 prompts and 1,000 rollouts (125 x 8; live value: mining.json
+  `training.batch_cap`; a change applies at the next turn). Prompts beyond a cap are dropped whole, in file order.
+- Any broken rule in the kept part makes the whole file invalid. You're skipped for that turn, not charged, and keep your place.
 
-Steps: (1) write batch.json; (2) `python3 affine_batch.py check --hotkey <ss58> batch.json`;
-(3) `python3 affine_batch.py upload --hotkey <ss58> --key <seed file> batch.json` (fetches and opens your link,
-then PUTs the file); (4) within about a minute `python3 affine_batch.py status --hotkey <ss58>` or
-https://affine.io/ff/status.json must say valid: true. Re-upload any time.
+<!-- ff-train-params-20261031 -->
+v2 `train` (optional; either field may be omitted and takes its default):
 
-- One private, overwritable object per hotkey. Your link is at https://affine.io/ff/links/<hotkey>.json,
-  sealed to your hotkey (libsodium SealedBox to the Ed25519 key converted to X25519), re-issued every
-  30 minutes with fresh presigned URLs, each valid 24 hours. It contains object_key, put_url,
-  put_headers, get_url, issued_at, expires_at.
-- Open it: PyNaCl SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64.b64decode(sealed)).
-- Upload: HTTP PUT the file bytes to put_url with Content-Type: application/octet-stream. Read back with get_url.
-- Reference helper (Python standard library only): https://affine.io/ff/affine_batch.py
-    python3 affine_batch.py check    --hotkey 5Your... batch.json
-    python3 affine_batch.py upload   --hotkey 5Your... --key /private/miner.seed batch.json
-    python3 affine_batch.py download --hotkey 5Your... --key /private/miner.seed stored.json
-    python3 affine_batch.py status   --hotkey 5Your...
-- Overwrite as often as you like. What is stored when your turn comes is what is trained.
-- https://affine.io/ff/status.json: the validator's format check of each stored file (valid, reason,
-  prompts, rollouts; never content), refreshed within about a minute of an upload.
+| field | default | allowed (inclusive) | what it does |
+| --- | --- | --- | --- |
+| `train.lr` | 5e-7 | 1.25e-7 .. 1e-6 | step size of your turn's one step (section 4) |
+| `train.kl` | 0.02 | 0.005 .. 0.1 | kl_coefficient of your turn's loss |
 
-## 4. Queue and turns (unchanged rule)
+- Out of range, not a number (string, true/false, null), or any other key under `train` makes the whole file invalid.
+  Values are never clamped. `train` in a v1 file is invalid. v1 files train with the defaults.
+- Your effective lr / kl are published only with a GREEN turn (turn.json `training.train_params`, mining.json
+  `training.miner_train_params`). On RED they stay private, like the file.
+<!-- /ff-train-params-20261031 -->
 
-- One turn per hotkey and per registration (UID + registration block), permanently, pass or fail.
-  Order: registration block, then UID; UID 0 excluded; served hotkeys and registrations leave the line.
-  To try again register a new hotkey. Do not deregister a paying hotkey.
-- At each turn the first queue member with a valid file takes it. Members without a valid file are skipped, not charged, keep their place.
-- Public preview of the next 8: https://affine.io/training.json -> k1.queue_next (also k1.json).
-- Each epoch trains one turn. Nobody ready = no-update epoch.
-- Fresh turns (Jacob, 2026-10-30): the 10 hotkeys whose turn since the held-out gate went live was RED with
-  0 < weighted_z <= 1.00 each get ONE fresh turn, ahead of the line (oldest first), under the batch-file rules.
-  It stays open until it is actually used: a missing or invalid file is a skip and the grant stays. List:
-  https://affine.io/training.json -> k1.queue_grants (also k1.json -> queue.grants).
+Check a file exactly as the validator does (it tokenizes like the trainer): miner/kit/check_batch.py in the kit
+(`python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`). `affine_batch.py check` is the
+structural check, and it needs no tokenizer.
 
-## 5. Training (one stateless step)
+## 4. Training: the exact v8.3.3j step (one stateless step per turn)
 
-- One stateless step from the published head and its fp32 master (lr 5e-7 fixed by the validator,
-  see training.optimizer), GRPO loss with one group per prompt (training.loss), the trainer recomputes
-  every log-prob from the head. No continuous training: every turn starts from the published head.
-- Direction step (from epoch 354, trainer v8.3.3i) <!-- renorm-step-20261031 -->: every tensor moves by exactly the norm of the old capped
-  fresh-AdamW step (same lr 5e-7, same 2e-5 per-tensor relative cap, same global cap, computed from the fp32
-  master), but in the direction of its gradient g_t/||g_t|| instead of sign(g):
-  `Delta_t = fp32(s * r_t * ||d_t|| / ||g_t||) * g_t`, `M_C = M_H - Delta_t`, candidate = bf16_rne(M_C).
-  Recipe: https://affine.io/k1/spec/step-recipe.json -> optimizer.direction_v833i.
-- Support renorm (from epoch 354): the policy-gradient term uses log q of your sampled token renormalized over
-  the trainer's own top-20 then top-p 0.95 support (the manifest sampling settings, recomputed from the head's
-  logits). A sampled token outside that support is dropped from the PG term only; it still counts in the KL
-  term and the derail mask. Files are never rejected for it (format-only validation). The per-turn
-  outside-support token fraction is published: https://affine.io/training.json -> support_renorm.last_turn
-  (also mining.json training.support_renorm) and turn.json training.support_renorm. Sampling your rollouts
-  with top_k 20 / top_p 0.95 / temperature 1.0 from the head keeps every token inside the support.
-- Batch file -> trainer: prompt rendered as above, output tokens + EOS rule as above, reward as given.
+Every turn starts from the published head and its fp32 master, with no continuous training. The code is
+miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/validator/trainer-v833j/trainer-config.public.json.
 
-## 6. Promotion gate
+- Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0, k3 (low-var) KL
+  to the reference = the initial checkpoint 87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae (the Hugging Face base
+  XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B), derail mask (window 32, threshold -3, tail 64), aggregation seq-mean-token-mean:
+  L = 0.5635 x (1/N) x sum_i (1/K_i) x sum_t [pg + kl x k3]. Every log-prob is recomputed from the head (temperature 1).
+  Gradients are accumulated in fp32 and globally clipped at 1.0. The trainable tensors are model.language_model.* and lm_head.*.
+<!-- renorm-step-20261031 -->
+- Support renorm (from epoch 354): the PG term uses log q of your sampled token renormalized over the head's own
+  top-20 then top-p 0.95 support (temperature 1.0, recomputed from the head's logits). **A sampled token outside that
+  support is dropped from the PG term only.** It still counts in the KL term and the derail mask, and it's only
+  logged. Files are never rejected for it. The per-turn fraction is in training.json `support_renorm.last_turn` and
+  turn.json `training.support_renorm` (e368: 0.14%). Rollouts sampled from the head with top_k 20 / top_p 0.95 /
+  temperature 1.0 stay inside the support. Text the head would not sample trains mostly KL.
+- Step (fresh-adam, fp32 master, direction normgrad; from epoch 354). For each tensor t, with W_t = the fp32 master:
+    d_t  = 5e-7 x ( g_t / (|g_t| + 1e-8) + 0.01 x W_t x [W_t >= 2-D and not a bias] )
+    c_t  = 2e-5 x (1 - 1e-6) x ||W_t||                       per-tensor cap
+    n0_t = min(||d_t||, c_t)                                  the default-lr step norm
+    m    = lr / 5e-7 ;  n_t = min(m x n0_t, c_t)
+    s    = min(1, 1.0 / ||n||)                                global cap over all tensors
+    Delta_t = s x n_t x g_t / ||g_t|| ;  M_C = M_H - Delta ;  candidate = bf16_rne(M_C)
+  Below the default lr every tensor's step shrinks by exactly m. Above it, only the tensors still under their cap grow.
+  At e368, 242 of 427 tensors were at the cap and carried 98.8% of the step norm, so lr 1e-6 barely moves the model more.
+  Recipe: https://affine.io/k1/spec/step-recipe.json. fp32 master manifests: https://affine.io/k1/fp32-master/<head>.json.
+<!-- /renorm-step-20261031 -->
 
-- Private held-out set per head (a round): commitment published at https://affine.io/gate/heldout/current.json.
-  The candidate is scored on all kept held-out tasks (the turn batch is NOT excluded).
-- Head and candidate are scored on the same tasks (4 seeded samples per task, the same seeds on both sides).
-  gain = weighted per-task gain (inverse-variance-weighted mean of the candidate-minus-head pass-rate differences),
-  weighted_z = gain / SE, SE = sqrt(se_task^2 + sigma_run^2 * (1 + 1/3)): se_task = per-task standard error of
-  the gain, sigma_run = the head's run-to-run noise measured on the round's 3 replicate head runs. From E354 there
-  is no fixed floor on sigma_run (E271-E353: floor 0.022), so the bar is about +1.5 to +2 points of weighted gain.
-- GREEN: gain > 0, weighted_z > 1.00 (strict), estimated cap-hit rate < 0.20 and >= 100 kept tasks. GREEN -> the
-  candidate becomes the next head (bf16 + fp32 master published) and the turn is published; RED -> head kept,
-  nothing published but the decision, counts and the file sha256.
-- The round's baseline (seed, task ids, grades) is revealed only after the round closes / after a GREEN
-  (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
+## 5. The task pool, prompt, sampling and grader
+
+- Pool: affine_math, 7,496 MATH train problems with a \boxed answer (task id = list index). Published byte-exact in the kit:
+  miner/data/original-math7496.tasks.json, sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3.
+- Gate prompt: [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem. Reason step by step in
+  plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
+  (Your batch prompt is a single user message, section 3. Every GREEN so far used MANDATE + "\n\n" + problem as the prompt.)
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context. It runs on vLLM 0.32.0 on 8 x B200
+  (`--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). There's one request per sample,
+  with seed = int(sha256("P:affine_math:task:j")[:12], 16). Exact pins: miner/requirements-gate-vllm.txt.
+- Grader (probe_worker.grade): a capped reply (8,192 tokens, no EOS) is unresolved. Otherwise the final channel after
+  exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0
+  against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1-E7
+  answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
+
+## 6. The promotion gate (held-out, ivw-v2)
+
+- A round: the gate draws n = 1000 task ids from the pool with gate_core.draw_sample(seed, 7496, 1000) from a secret
+  os.urandom(32) seed. Only the commitment is published (https://affine.io/gate/heldout/current.json):
+  sha256(gate_version | seed | sorted ids).
+- Block 0 = selection: the head runs 4 samples on all 1000, and the **kept** tasks are those with 0 < c < 4. Blocks 1-3 =
+  three more head runs (4 samples each) on the kept tasks. Every candidate of the round runs 4 samples per kept task with
+  **the same request seeds as block 1** (common random numbers). The turn batch is NOT excluded.
+- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate - head rate (12 head samples);
+  gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)), where
+  sigma_run = the run-to-run spread of the 3 head blocks (heldout.run_sigma). There's no floor since E354 (E271-E353 used
+  a floor of 0.022). z = gain / SE.
+- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** In practice
+  that's about +1.5 to +2 points of weighted gain (e356 passed at gain 0.0198, z 1.027).
+- GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.
+- A round lasts until a GREEN, a head change, or 8 decided turns. Then its seed, task ids, the head baseline and every
+  candidate's per-task grades are revealed (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
+  While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
+
+## 7. Privacy and what gets published
+
+- Your file stays private until your turn is GREEN. GREEN publishes it byte-exact at
+  https://affine.io/k1/turns/<epoch>/batch.json, together with turn.json (decision, trainer report, train params).
+- RED: only the decision, the counts and the file's sha256 are published. The file and its lr/kl stay private.
+
+## 8. What winning means: weights
+
+- Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight, for as long as the hotkey that earned
+  it stays registered on that UID. RED, skipped and pending turns earn nothing. Unearned weight burns to UID 0. Weights
+  are never all zero (there's a nonzero floor), and they're set hourly. Current payees are in https://affine.io/k1.json (`payees`).
+
+## 9. How to win: observations so far (not guarantees)
+
+- All five GREENs under the current step and gate (e354 z 3.88, e356 z 1.03, e358 z 2.96, e360 z 2.42, e368 z 1.70, all
+  on 2026-10-31) were v1 files with the default lr/kl and 125 prompts x 1 correct rollout. The prompts were MANDATE + "\n\n" + a pool
+  problem, mostly MATH Level 4-5 (e368: 72 at Level 5, 33 at Level 4). Each rollout was the head's own sample with a `<think>` block and exactly one final `\boxed{}`.
+- That shape is common and not sufficient. The REDs e362-e367 and e370-e376 had the same public counts (125 x 1 correct),
+  and several scored strongly negative (z -3 to -5.6). Which problems you pick and which samples you keep decide the sign.
+- Borderline difficulty: the gate only scores tasks the head sometimes solves (0 < c < 4). Correct samples on problems the
+  head usually fails or caps out on are where the signal is.
+- Fewer capped replies: on the full pool (performance.json), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
+  rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer 8,192-token caps, and the mean output went
+  from 2,043 to 1,769 tokens. Short correct rollouts (well under 6,000 tokens, where the overlong penalty starts) fit that.
+- Sample from the head at top_k 20 / top_p 0.95 / temperature 1 (off-support tokens are dropped from the PG term).
+- The 1,000-rollout mixed files (e339-e341, e343) went RED, under the older sign step. No GREEN has used v2 train values yet.
+- Simulate first: miner/kit/simulate_turn.sh runs head -> rollouts -> batch -> the live step -> the live gate math on your GPUs
+  (gate_eval.py uses its own random seed; expect a few points of difference from the gate's hardware). A local z near 1 is a coin flip.
 
 <!-- perf-eval-20261031 -->
 ## Performance over time (informational)
@@ -139,26 +204,48 @@ https://affine.io/ff/status.json must say valid: true. Re-upload any time.
   the full public affine_math pool (all 7,496 tasks) and a private holdout (4,976 MATH test problems, minus any that
   match a pool task; only its size and sha256 are published: 08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734).
 - Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20, 8192 output tokens) and grader as the gate probe; fixed
-  seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (two lines, one per set).
-- Informational only: it never affects promotions, the gate, weights or training. The gate itself scores a few hundred
-  head-mixed tasks per round, so its pass rates are not comparable across rounds; these are.
+  seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (the Performance tile, one line per set).
+- Informational only: it never affects promotions, the gate, weights or training. The gate scores a few hundred
+  head-mixed tasks per round, so its pass rates aren't comparable across rounds. These are.
 <!-- /perf-eval-20261031 -->
 
-## 7. Privacy and transparency
+## 10. The miner kit (local checker and simulator)
 
-- Your file stays private until a GREEN. GREEN publishes it byte-exact at
-  https://affine.io/k1/turns/<epoch>/batch.json with turn.json (decision, trainer report).
-- RED: decision, counts and the file's sha256 only; the file stays private.
+https://github.com/AffineFoundation/affine/tree/main/miner, with miner/README.md as the entry point. The validator code
+in it is verbatim from the live services (sha256 + live source per file in validator/MANIFEST.sha256). The kit contains:
+- the trainer v8.3.3j host + engine;
+- ff_format (the batch checker);
+- heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
+- probe serve.sh / probe_worker.py (sampling and grading);
+- the 7,496-task pool;
+- exact pins (requirements-*.txt).
 
-## 8. Weights (unchanged)
+Tools: kit/fetch_head.py (sha256-verified head / reference download), generate.py, make_batch.py, check_batch.py,
+train_step.py (one live step on your hardware), gate_eval.py (the gate procedure and math), simulate_turn.sh, and
+tests/test_kit_cpu.py (a CPU self-test, no GPU).
 
-- Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight, while the hotkey that
-  earned it stays registered on that UID. RED, skipped and pending turns earn nothing; unearned weight
-  burns to UID 0. Weights are never all-zero (nonzero floor). Weights are set hourly. Mech 1 unchanged.
+## 11. Public endpoints
 
-## Links
+- Contract: https://affine.io/mining.json   Training parameters, support renorm, queue: https://affine.io/training.json
+- Queue, payees, weights: https://affine.io/k1.json   Turns: https://affine.io/k1/turns/index.json, /k1/turns/<epoch>/turn.json
+- Gate: https://affine.io/gate.json, /gate/heldout/current.json, /gate/heldout/<round>.json, /gate/reveal/<epoch>.json
+- Your file's check: https://affine.io/ff/status.json   Your link: https://affine.io/ff/links/<hotkey>.json
+- Head: mining.json `checkpoint` + `current_url` (signed current.json -> manifest_url -> opening.json payload.checkpoint
+  files/read_urls; id = sha256 of the canonical JSON {file: sha256}). Use miner/kit/fetch_head.py.
+- Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md
+- Performance: https://affine.io/performance.json   This file: https://affine.io/llms.txt
 
-- Contract: https://affine.io/mining.json   Training parameters: https://affine.io/training.json
-- Queue/turns: https://affine.io/k1.json, https://affine.io/k1/turns/index.json   Gate: https://affine.io/gate.json
-- Miner guide: https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
-- Validator side: https://github.com/AffineFoundation/affine/tree/main/ops/free_file
+## FAQ
+
+- Do I need to run a miner client? No. You upload one file, and nothing runs on your side at turn time.
+- When is my turn? See k1.json `queue.next`. Each epoch serves the first ready member in line.
+- My file was invalid or missing at my turn. You were skipped, not charged, and keep your place. Fix it and check ff/status.json.
+- Can I change the file after uploading? Yes, as often as you like until your turn. What's stored then is what's trained.
+- I got RED. Can I try again? Not with that registration. Register a new hotkey/UID (pay again) and queue again.
+- Is the gate's task sample public? Only its commitment, while the round is open. The seed and tasks are revealed when it closes.
+- Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
+- What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
+- What does the trainer run, exactly? miner/validator/trainer-v833j + engine/. kit/train_step.py imports exactly those files.
+- Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG.
+- Where's the fp32 master? Its manifest (sha256 per file) is at /k1/fp32-master/<head>.json. A public download isn't offered yet,
+  and kit/train_step.py bootstraps from the bf16 head without it.
