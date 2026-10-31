@@ -32,7 +32,7 @@ BUSY = ST / 'GATE-BUSY.json'
 PY = '/home/const/subnet120-rewrite/.venv/bin/python'
 PODD = '/root/affine-env-probe'
 PROBE_SSH = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15',
-             '-o', 'UserKnownHostsFile=/home/const/.lium/known_hosts/b4f3da9d-df66-436a-af38-829d1606966d', '-p', '40198', 'root@38.88.142.89']
+             '-o', 'UserKnownHostsFile=<PROBE_POD_KNOWN_HOSTS>', '-p', '<PROBE_POD_SSH_PORT>', 'root@<PROBE_POD_HOST>']   # [published copy: pod address redacted]
 if os.environ.get('HG_PROBE_SSH'): PROBE_SSH = json.loads(os.environ['HG_PROBE_SSH'])   # test pod only (e2e); live = the probe pod above
 NO_TRAINER = os.environ.get('HG_NO_TRAINER') == '1'   # e2e: never call the trainer pod (keep / early staging / delta / restore)
 ROUNDS = None   # heldout.Rounds, created lazily (needs wj/rj/log/cr below)

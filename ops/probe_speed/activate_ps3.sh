@@ -4,7 +4,7 @@
 # (restores fbb15543, switch off, closes the open round so the next one re-baselines on the old worker).
 set -euo pipefail; umask 077
 D=/home/const/subnet120-rewrite/state/root-audits/20261030-probe-speed
-PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile=/home/const/.lium/known_hosts/b4f3da9d-df66-436a-af38-829d1606966d -p 40198 root@38.88.142.89 "$@"; }
+PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile='<PROBE_POD_KNOWN_HOSTS>' -p '<PROBE_POD_SSH_PORT>' 'root@<PROBE_POD_HOST>' "$@"; }
 prog(){ echo "- $(TZ=America/Costa_Rica date "+%H:%M CR"): activate_ps3 ${MODE:-switch}: $*" >> $D/PROGRESS.md; }
 A=/root/affine-env-probe
 if [[ ${MODE:-switch} == revert ]]; then

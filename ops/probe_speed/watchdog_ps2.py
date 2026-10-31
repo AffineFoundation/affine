@@ -6,7 +6,7 @@ D = '/home/const/subnet120-rewrite/state/root-audits/20261030-probe-speed'
 G = '/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/gate.log'
 FROM, TO = int(os.environ.get('FROM', 275)), int(os.environ.get('TO', 277))
 PP = ['ssh', '-T', '-n', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', '-o',
-      'UserKnownHostsFile=/home/const/.lium/known_hosts/b4f3da9d-df66-436a-af38-829d1606966d', '-p', '40198', 'root@38.88.142.89']
+      'UserKnownHostsFile=<PROBE_POD_KNOWN_HOSTS>', '-p', '<PROBE_POD_SSH_PORT>', 'root@<PROBE_POD_HOST>']   # [published copy: pod address redacted]
 def prog(m): open(D + '/PROGRESS.md', 'a').write('- %s: watchdog_ps2: %s\n' % (time.strftime('%H:%M CR', time.gmtime(time.time() - 6 * 3600)), m))
 rev = set()
 def revert(which, why):

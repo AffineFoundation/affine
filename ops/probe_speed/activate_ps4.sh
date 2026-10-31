@@ -4,7 +4,7 @@
 # -> sampling/fingerprint unchanged. Installs only after e$WAIT_EPOCH DECISION with no run on the pod. Revert: MODE=revert bash activate_ps4.sh
 set -euo pipefail; umask 077
 D=/home/const/subnet120-rewrite/state/root-audits/20261030-probe-speed; GV=/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate
-PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile=/home/const/.lium/known_hosts/b4f3da9d-df66-436a-af38-829d1606966d -p 40198 root@38.88.142.89 "$@"; }
+PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile='<PROBE_POD_KNOWN_HOSTS>' -p '<PROBE_POD_SSH_PORT>' 'root@<PROBE_POD_HOST>' "$@"; }
 cr(){ TZ=America/Costa_Rica date "+%H:%M:%S CR"; }
 prog(){ echo "- $(TZ=America/Costa_Rica date "+%H:%M CR"): activate_ps4 ${MODE:-switch}: $*" >> $D/PROGRESS.md; }
 SP=/root/affine-env-probe/venv/lib/python3.12/site-packages; NEW=/opt/affine-vllm-venv/site-packages

@@ -28,7 +28,8 @@ GB = 10 ** 9
 PODS = {
     'trainer': ('8.28.35.244', 40022, 'ef2b6085-adae-43e2-8a13-39182a3b3f7a', 150 * GB,
                 '/workspace/affine-mimo-trainer-prod/workspace/*.log'),
-    'probe': ('38.88.142.89', 40198, 'b4f3da9d-df66-436a-af38-829d1606966d', 100 * GB,
+    'probe': ('<PROBE_POD_HOST>', 0, '<PROBE_POD_ID>',   # [published copy: pod address redacted]
+               100 * GB,
               '/root/affine-env-probe/serve*.log /root/affine-env-probe/*/serve*.log'),
     'eval': ('38.255.28.20', 20092, '6e469697-f3a7-4a6a-a1ae-40dde7120581', 40 * GB,
              '/root/affine-mimo-public-evaluator-20261013/*.log'),

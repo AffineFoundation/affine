@@ -5,7 +5,7 @@
 # Revert: MODE=revert bash activate_ps2.sh
 set -euo pipefail; umask 077
 D=/home/const/subnet120-rewrite/state/root-audits/20261030-probe-speed; GV=/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate
-PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile=/home/const/.lium/known_hosts/b4f3da9d-df66-436a-af38-829d1606966d -p 40198 root@38.88.142.89 "$@"; }
+PP(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o UserKnownHostsFile='<PROBE_POD_KNOWN_HOSTS>' -p '<PROBE_POD_SSH_PORT>' 'root@<PROBE_POD_HOST>' "$@"; }
 cr(){ TZ=America/Costa_Rica date "+%H:%M:%S CR"; }
 prog(){ echo "- $(TZ=America/Costa_Rica date "+%H:%M CR"): activate_ps2 ${MODE:-switch}: $*" >> $D/PROGRESS.md; }
 N=97322a8c223cfacd3691a794fa0c412cc1c6d012ab316bad91ae56ff84e7d34e-ac6818d574e35a95
