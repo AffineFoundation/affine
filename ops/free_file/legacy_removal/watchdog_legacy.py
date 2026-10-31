@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """legacy-watchdog (RA/20261031-legacy-removal): auto-revert Step 1 (legacy_off.sh MODE=revert) if the first epochs after
-legacy_off fail. Every 20 s, for epochs FROM .. FROM+N-1 (N default 3):
+legacy_off fail. Every 20 s, for the first N (default 3) non-abandoned epochs from FROM
+(an ABANDONED-SPECULATIVE epoch after a GREEN is skipped; the limit runs from the last FINALIZED epoch):
   (a) affine-mimo-lifecycle not active 3 checks in a row
   (b) RECOVERY-REQUIRED.json in a watched epoch, or FF-SELECT reason ff-selection-error
   (c) a watched epoch not FINALIZED within EPOCH_LIMIT s (default 1800) of the previous epoch's FINALIZED
@@ -69,23 +70,32 @@ while True:
         fails += 1
         if fails >= 30:
             revert("mining.json unreadable for 10 min")
-    for e in range(FROM, FROM + N):
+    e, k = FROM, 0
+    while k < N:   # N watched epochs; an ABANDONED-SPECULATIVE epoch (head changed on GREEN) is skipped, not counted
         d = E / str(e)
+        if (d / "ABANDONED-SPECULATIVE.json").exists():
+            e += 1; continue
         if (d / "RECOVERY-REQUIRED.json").exists():
             revert(f"e{e} RECOVERY-REQUIRED")
         if rj(d / "FF-SELECT.json").get("reason") == "ff-selection-error":
             revert(f"e{e} ff-selection-error")
-        prev = mt(E / str(e - 1) / "FINALIZED.json")
+        pe = e - 1
+        while pe > 0 and not (E / str(pe) / "FINALIZED.json").exists():
+            pe -= 1
+        prev = mt(E / str(pe) / "FINALIZED.json")
         fin = mt(d / "FINALIZED.json")
         if prev and not fin and time.time() - prev > LIMIT:
-            revert(f"e{e} not FINALIZED {LIMIT} s after e{e - 1}")
+            revert(f"e{e} not FINALIZED {LIMIT} s after e{pe}")
         if fin and prev and e not in ok:
             ok.add(e)
             s, g = rj(d / "FF-SELECT.json"), rj(d / "PROMOTION-GATE.json")
             pop = d / "AUDIT-POPULATION.json"
-            log(f"e{e} FINALIZED OK: cycle {fin - prev:.0f} s; select route={s.get('route')} reason={s.get('reason')} "
+            log(f"e{e} FINALIZED OK: cycle {fin - prev:.0f} s (from e{pe}); select route={s.get('route')} reason={s.get('reason')} "
                 f"uid={s.get('uid')}; gate {g.get('decision')} z={g.get('paired_z')}; "
                 f"AUDIT-POPULATION {pop.stat().st_size if pop.exists() else None} B")
+        if not fin:
+            break   # only the oldest unfinalized watched epoch is timed
+        e += 1; k += 1
     if len(ok) >= N:
-        log(f"{N} epochs from e{FROM} finalized clean; watchdog done (legacy_off kept)")
+        log(f"{N} epochs from e{FROM} finalized clean ({sorted(ok)}); watchdog done (legacy_off kept)")
         break

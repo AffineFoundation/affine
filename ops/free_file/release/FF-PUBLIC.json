@@ -36,7 +36,7 @@
   },
   "rules": [
    "UTF-8 JSON, at most 64 MiB, exactly the keys shown. Prompts non-empty and distinct; at least one rollout per prompt, any number per prompt.",
-   "reward: any finite number, used exactly as given (no regrading). Within a prompt the advantage is reward minus the mean reward of that prompt's rollouts (a prompt with one rollout: the reward itself); the overlong penalty in training.loss still applies.",
+   "reward: any finite number, used exactly as given. Within a prompt the advantage is reward minus the mean reward of that prompt's rollouts (a prompt with one rollout: the reward itself); the overlong penalty in training.loss still applies.",
    "prompt: plain text. It is rendered as one user message with the model's chat template and the generation prompt: tokenizer.apply_chat_template([{\"role\": \"user\", \"content\": prompt}], add_generation_prompt=True) with the head's tokenizer.",
    "output: the assistant text after that prompt (include the <think>...</think> part if you want it trained). Tokenized with tokenizer.encode(output, add_special_tokens=False).",
    "<|im_start|>, <|im_end|> and <|endoftext|> must not appear in a prompt or an output.",
