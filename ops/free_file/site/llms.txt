@@ -74,6 +74,11 @@ Rules (authoritative list: mining.json -> batch_file.rules):
 
 ## 3. Upload
 
+Steps: (1) write batch.json; (2) `python3 affine_batch.py check --hotkey <ss58> batch.json`;
+(3) `python3 affine_batch.py upload --hotkey <ss58> --key <seed file> batch.json` (fetches and opens your link,
+then PUTs the file); (4) within about a minute `python3 affine_batch.py status --hotkey <ss58>` or
+https://affine.io/ff/status.json must say valid: true. Re-upload any time.
+
 - One private, overwritable object per hotkey. Your link is at https://affine.io/ff/links/<hotkey>.json,
   sealed to your hotkey (libsodium SealedBox to the Ed25519 key converted to X25519), re-issued every
   30 minutes with fresh presigned URLs, each valid 24 hours. It contains object_key, put_url,
@@ -98,6 +103,10 @@ Rules (authoritative list: mining.json -> batch_file.rules):
   a ready old-format batch). Members without a valid file are skipped, not charged, keep their place.
 - Public preview of the next 8: https://affine.io/training.json -> k1.queue_next (also k1.json).
 - Each epoch trains one turn. Nobody ready = no-update epoch.
+- Fresh turns (Jacob, 2026-10-30): the 10 hotkeys whose turn since the held-out gate went live was RED with
+  0 < weighted_z <= 1.00 each get ONE fresh turn, ahead of the line (oldest first), under the batch-file rules.
+  It stays open until it is actually used: a missing or invalid file is a skip and the grant stays. List:
+  https://affine.io/training.json -> k1.queue_grants (also k1.json -> queue.grants). Old-format batches never use it.
 
 ## 5. Training (one stateless step)
 
@@ -110,8 +119,12 @@ Rules (authoritative list: mining.json -> batch_file.rules):
 
 - Private held-out set per head (a round): commitment published at https://affine.io/gate/heldout/current.json.
   The candidate is scored on all kept held-out tasks (the turn batch is NOT excluded).
-- GREEN: z = gain/SE > bar_z (1.0) and cap-hit below the limit. GREEN -> the candidate becomes the next head
-  (bf16 + fp32 master published); RED -> head kept.
+- Head and candidate are scored on the same tasks (4 seeded samples per task, the same seeds on both sides).
+  gain = weighted per-task gain (inverse-variance-weighted mean of the candidate-minus-head pass-rate differences),
+  weighted_z = gain / its standard error.
+- GREEN: gain > 0, weighted_z > 1.00 (strict), estimated cap-hit rate < 0.20 and >= 100 kept tasks. GREEN -> the
+  candidate becomes the next head (bf16 + fp32 master published) and the turn is published; RED -> head kept,
+  nothing published but the decision, counts and the file sha256.
 - The round's baseline (seed, task ids, grades) is revealed only after the round closes / after a GREEN
   (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
 

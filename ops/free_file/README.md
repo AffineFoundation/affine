@@ -50,3 +50,26 @@ errors, job build > 300 s, seal → training result > 30 min, or no finalized ep
 synthetic file → trainer rows), `test_r2_roundtrip.py` (sealed link → PUT/GET, wrong content type 403,
 wrong key refused), `test_lifecycle_sim.py` (queue skip of invalid/missing files, legacy before the cutoff,
 FF after it, job validates with the worker's `validate_job` + `prepare`).
+
+## Fresh turns (K1-GRANTS, Jacob 2026-10-30 19:30 CR)
+
+`staged/K1-GRANTS.json` (copy: `release/K1-GRANTS.json`): one fresh free-file turn for each hotkey whose turn since
+the held-out gate went live (E271+) was RED with 0 < weighted_z ≤ 1.00 (10 hotkeys; e286 with z = 1e-16 and the
+fail-closed e274 are excluded). `ff_lifecycle.open_grants/grant_rows` put them ahead of the unchanged K1 order
+(positions −k…−1, oldest RED first). A grant is used only by a real turn (a K1-TURNS row for the hotkey after its
+RED epoch); a missing or invalid file is a skip and keeps it open. Granted hotkeys get links (`ff_service.eligible`)
+and show in `training.k1.queue_grants`; `queue_next` lists them while their file is valid. Off switch:
+`enabled: false` (read on every call). Tests: `tests/test_grants.py`. Text diffs for the sidecars and the
+held-out gate wording: `services/grants-and-gate-text.diff`. `activate_ff.sh MODE=restart` reloads
+`release/*.py` into the lifecycle at an idle trainer (re-pin `FF-PINS.json` first, or mining.json reports
+`discovery_binding_error`).
+
+## Legacy removal (after the cutoff)
+
+Branch `legacy-client-removal-20261031` removes the old client (`subnet/cli.py`, the `affine-miner` entry point,
+client-only tests); merge after 2026-10-31 09:00 UTC. The validator-side legacy paths are switched off by
+their existing no-restart flags with `activation/legacy_off.sh` (MODE=check|apply|revert: `FF.json legacy_capture=false`;
+`EPOCH-TIME-LIFECYCLE.json` seal_pregrade / seal_prefetch / capture_put_fanout / dual_extended = false), only after
+the cutoff + 30 min and two clean post-cutoff epochs. Code removal from the live closure needs a new signed source
+release, because workers hash `subnet/*.py` (`source_files`); it is not done by editing files in place.
+Plan: `RA/20261030-free-file/PROGRESS.md`.

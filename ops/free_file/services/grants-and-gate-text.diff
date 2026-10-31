@@ -1,0 +1,197 @@
+--- 20261027-k1-per-uid/code/k1_service.py.bak-pre-grants	2026-10-31 01:16:38.222339434 +0000
++++ 20261027-k1-per-uid/code/k1_service.py	2026-10-31 01:38:18.785959382 +0000
+@@ -31,6 +31,21 @@
+ TICK, CHAIN_EVERY, QUEUE_N, PAYEES = 60, 300, 8, 10   # free-file (pt898u): public preview of the next 8
+ FF_FLAG = FLAG.parent / 'FF.json'
+ FF_READY = Path('/home/const/subnet120-rewrite/state/root-audits/20261030-free-file/state/FF-READY.json')
++GRANTS = Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/K1-GRANTS.json')
++
++
++def open_grants(chain, ts):
++    """K1-GRANTS (Jacob 2026-10-30 19:30 CR), same rule as ff_lifecycle.open_grants/grant_rows: one fresh free-file turn per granted
++    hotkey, ahead of the queue, oldest RED epoch first; used only by a real turn (not by a skip); hotkey must be registered now."""
++    g = rj(GRANTS) or {}
++    if g.get('enabled') is not True: return []
++    by_hk = {r['hotkey']: (int(u), r) for u, r in chain['uids'].items() if int(u) != 0 and isinstance(r, dict) and type(r.get('miner_hex')) is str}
++    out = []
++    for r in sorted(g.get('grants') or [], key=lambda r: int(r.get('red_epoch', 0))):
++        hk = r.get('hotkey')
++        if hk not in by_hk or any(t.get('hotkey') == hk and int(t.get('epoch_index', -1)) > int(r['red_epoch']) for t in ts): continue
++        out.append((by_hk[hk][0], by_hk[hk][1], dict(red_epoch=int(r['red_epoch']), weighted_z=r.get('weighted_z'))))
++    return out
+ 
+ 
+ def ff_state():
+@@ -154,7 +169,10 @@
+             rows.append((r['reg_block'], u, r['hotkey'], ready.get(r.get('miner_hex'), 0) if legacy_ok else 0))
+         rows.sort()
+         if ff_on:   # ready = a valid batch file now, or (until the cutoff) a ready old-format batch at the last seal
+-            return [dict(position=i, uid=u, hotkey=hk, registration_block=b, turns=0, file_valid=hk in ff_valid,
++            gr = open_grants(chain, ts) if rule == 'hotkey-registration-once' else []
++            return [dict(position=i - len(gr), uid=u, hotkey=r['hotkey'], registration_block=int(r.get('reg_block') or 0), turns=1,
++                         file_valid=r['hotkey'] in ff_valid, old_format_tasks_last_seal=0, ready_last_seal=r['hotkey'] in ff_valid, grant=g)
++                    for i, (u, r, g) in enumerate(gr)] + [dict(position=i, uid=u, hotkey=hk, registration_block=b, turns=0, file_valid=hk in ff_valid,
+                          old_format_tasks_last_seal=n, ready_last_seal=hk in ff_valid or n >= min_tasks)
+                     for i, (b, u, hk, n) in enumerate(rows)]
+         return [dict(position=i, uid=u, hotkey=hk, registration_block=b, turns=0, last_seal_tasks=n, ready_last_seal=n >= min_tasks)
+@@ -243,7 +261,7 @@
+                 generated_at=now, generated_at_cr=cr(now), netuid=NETUID,
+                 formula=dict(version='k1-last10-green-equal-v1',
+                              text=('K=1 per-UID turns (Jacob t712u 2026-10-27). Each epoch trains one UID\'s batch. A turn whose candidate '
+-                                   'passes the promotion gate (GREEN: paired z > 0 strict and cap-hit < 0.20) earns. Weight = 1/N to each of '
++                                   'passes the promotion gate (GREEN: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; baseline revealed only after a GREEN or when the round closes (https://affine.io/gate.json rule)) earns. Weight = 1/N to each of '
+                                    'the last up to 10 distinct GREEN UIDs (an 11th pushes out the oldest). RED, skipped and pending turns earn '
+                                    'nothing; unearned mass burns to UID 0. No bans. Nonzero floor: until the first GREEN K=1 turn, the last good '
+                                    'pre-K=1 scores are kept.'),
+@@ -292,8 +310,13 @@
+                     enabled=f.get('enabled') is True, from_epoch=f.get('from_epoch'), queue_rule=rule,
+                     queue_rule_from_epoch=f.get('queue_rule_from_epoch'),
+                     next=line[:QUEUE_N], queue_length=len(line), readiness_epoch=se,
+-                    registrations_unserved=len(q), registrations_served=len(fs) + len(lg),
+-                    hotkeys_unserved=len({r['hotkey'] for r in q}), hotkeys_served=len(shk), served_hotkeys=shk,
++                    registrations_unserved=len([r for r in q if not r.get('grant')]), registrations_served=len(fs) + len(lg),
++                    grants=[r for r in q if r.get('grant')],
++                    grants_rule='Jacob 2026-10-30 19:30 CR: each hotkey whose turn since the held-out gate went live (e275) was RED with 0 < weighted_z <= 1.00 '
++                                'gets ONE fresh free-file turn, ahead of the queue (oldest RED epoch first). It is used only by a real turn: a missing or '
++                                'invalid file is a skip and the grant stays open. The hotkey must still be registered. next lists granted hotkeys only '
++                                'while their file is valid.',
++                    hotkeys_unserved=len({r['hotkey'] for r in q if not r.get('grant')}), hotkeys_served=len(shk), served_hotkeys=shk,
+                     served=[dict(uid=t.get('uid'), hotkey=t.get('hotkey'), reg_block=t.get('reg_block'), epoch_index=t.get('epoch_index')) for t in ts],
+                     **({'served_registrations': sorted([u, rb] for (u, _h, rb) in fs)} if rule == 'hotkey-registration-once' else {}),
+                     order_rule=((('hotkey-once (Jacob t761u 2026-10-28, teutonic.ai "each hotkey gets exactly ONE submission, permanently"): each '
+--- 20261026-promotion-gate/code/training_params.py.bak-pre-grants	2026-10-31 01:16:38.186338591 +0000
++++ 20261026-promotion-gate/code/training_params.py	2026-10-31 01:38:18.676956809 +0000
+@@ -287,6 +287,7 @@
+                                                   ('this protocol still collects group_size rollouts per task and at most max_batches '
+                                                    'tasks per miner per epoch (see the signed manifest), so a turn is <= max_batches x group_size rollouts')),
+                   queue_next=(k1q.get('next') or [])[:8], queue_length=k1q.get('queue_length'),
++                  queue_grants=k1q.get('grants') or [], queue_grants_rule=k1q.get('grants_rule'),
+                   queue_rule=k1q.get('queue_rule', 'fewest-turns'), queue_rule_from_epoch=k1q.get('queue_rule_from_epoch'),
+                   registrations_unserved=k1q.get('registrations_unserved'), registrations_served=k1q.get('served'),
+                   hotkeys_unserved=k1q.get('hotkeys_unserved'), served_hotkeys=k1q.get('served_hotkeys'),
+@@ -294,7 +295,7 @@
+                   queue_chain_block=k1q.get('chain_block'), probe_sample_size=flag.get('sample_size'),
+                   probe=dict(samples_per_task=(flag.get('k1_probe') or {}).get('k', 1), seeded_common_random_numbers=(flag.get('k1_probe') or {}).get('seeded') is True,
+                              from_epoch=(flag.get('k1_probe') or {}).get('from_epoch'),
+-                             rule='head pre-probe on the private sample and candidate post-probe on the sample minus the turn batch, each task sampled '
++                             rule='head and candidate scored on the same private held-out tasks (from E296 the turn batch is not excluded), each task sampled '
+                                   'samples_per_task times; both sides use the same per-request sampling seeds (seed = sha256(plan_seed:env:index:j), one '
+                                   'private plan seed per turn shared by head and candidate)'),
+                   start_head=k1f.get('start_head'), learning_rate_choice='fixed by the validator (miner-chosen LR: later)',
+@@ -366,14 +367,13 @@
+                             scores_update_on=('pass_and_fail' if score_all else 'pass_only'),
+                             red_scored_from_epoch=(score_all_from if score_all else None),
+                             first_gated_epoch=flag.get('first_gated_epoch'),
+-                            rule='candidate promoted only if paired z (candidate vs head, k=1) > z_min (>= z_min if z_inclusive) and cap-hit rate < cap_hit_max on a '
++                            rule='(E168-E270 rule; from E271 see the K=1 text) candidate promoted only if paired z (candidate vs head, k=1) > z_min (>= z_min if z_inclusive) and cap-hit rate < cap_hit_max on a '
+                                  'private sample minus the epoch batch (from epoch 168: z_min 0, strict = net must be positive, candidate '
+                                  'pass rate > head pass rate); RED = discarded, next epoch mines from the same head, ' +
+                                  ((('scores update on pass and fail: from epoch %s a RED epoch is scored like a GREEN one (head probe vs the '
+                                     'discarded candidate probed on that epoch\'s own batch tasks); promotion unchanged' % score_all_from)
+                                    if score_all else 'RED epoch miners get zero flip credit') if not k1_on else
+-                                  'K=1: the head is pre-probed and the candidate post-probed on the same private sample (sample_size tasks) minus '
+-                                  'the turn batch tasks, 4 samples per task with shared per-request seeds (head and candidate); GREEN = paired z > 0 (strict) and cap-hit < 0.20 -> promoted and the turn UID earns; '
++                                  'K=1, held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; baseline revealed only after a GREEN or when the round closes (https://affine.io/gate.json rule); GREEN -> promoted and the turn UID earns; '
+                                   'RED = head kept, the turn earns nothing; no fixed-reference guard'),
+                             decisions='https://affine.io/gate/index.json', heldout=heldout_public(),
+                             reveal=('from e222 one STANDING private sample is reused across turns (the head probe is reused after RED; a promoted '
+--- 20261026-promotion-gate/code/gate_ledger.py.bak-pre-heldout-text-20261031	2026-10-29 01:07:13.776550093 +0000
++++ 20261026-promotion-gate/code/gate_ledger.py	2026-10-31 01:37:22.861638746 +0000
+@@ -153,12 +153,23 @@
+     return out
+ 
+ 
++HELDOUT_RULE = ('Promotion gate (held-out, live from E271; text updated 2026-10-30): the candidate is promoted (GREEN) only if its '
++                'weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), the estimated cap-hit rate stays under 0.20 '
++                'and at least 100 tasks are kept. Head and candidate are scored on the same tasks of a private held-out probe set (one round '
++                'per head, 4 seeded samples per task with shared seeds on both sides); gain = inverse-variance-weighted mean of the per-task '
++                'pass-rate differences (weights from the round baseline), weighted_z = gain / its standard error. From E296 (free-file '
++                'cutover) the turn batch is not excluded: every kept task counts. The round commitment is public '
++                '(https://affine.io/gate/heldout/current.json); the baseline (seed, task ids, grades) is revealed only after a GREEN or when '
++                'the round closes (https://affine.io/gate/heldout/<round>.json, https://affine.io/gate/reveal/<epoch>.json). RED = candidate '
++                'discarded, head kept. In each entry, paired_z holds the weighted_z.')
++
++
+ def K1_RULE_SUFFIX():
+     # t712u (2026-10-27) K=1 per-UID: from K1.json from_epoch the epoch batch is ONE UID's turn batch and credit is per UID
+     f = rj(Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/K1.json')) or {}
+     if f.get('enabled') is not True: return ''
+-    return (' K=1 from E%s: the epoch batch is one UID turn (see https://affine.io/k1.json); the head is pre-probed and the candidate '
+-            'post-probed on the same 1000-task private sample minus the turn batch tasks, 4 samples per task with the same per-request sampling seeds on both sides (Jacob t751u); GREEN (z > 0 strict, cap-hit < 0.20) = promoted '
++    return (' K=1 from E%s: the epoch batch is one UID turn (see https://affine.io/k1.json); head and candidate are '
++            'scored on the same private held-out tasks (see the rule above); GREEN = promoted '
+             'and the turn UID joins the last-10 distinct GREEN payees (1/N each); RED = head kept, the turn earns nothing; '
+             'no fixed-reference guard.' % f.get('from_epoch'))
+ 
+@@ -176,9 +187,8 @@
+         if ent['decision'] == 'red' and (e, ent['candidate']) not in rseen:
+             append(REJECTED, private_reject(e, ent), 0o600); rseen.add((e, ent['candidate']))
+     doc = dict(version=VERSION, updated_at=time.time(), updated_at_cr=cr(time.time()),
+-               rule='Candidate promoted only if its net is positive: paired z (candidate vs head, k=1) > 0, i.e. candidate pass rate > head pass rate (from E168; >= -1.5 for E154-E167, > -1 for E152-E153), and candidate cap-hit rate < 0.20 on a private '
+-                    'sample of 1000 affine_math probe tasks minus the epoch batch (>= 200 tasks). RED = rejected: discarded, next '
+-                    'epoch mines from the head again. ' + SCORE_RULE() + ' Append-only; the sample seed and task ids are revealed after each decision at https://affine.io/gate/reveal/.'
++               rule=HELDOUT_RULE + ' History: E152-E153 paired z > -1, E154-E167 paired z >= -1.5, E168-E270 paired z > 0 on a 1000-task '
++                    'private probe sample minus the epoch batch (cap-hit < 0.20); held-out gate from E271. ' + SCORE_RULE() + ' Append-only.'
+                     + K1_RULE_SUFFIX(),
+                counts=dict(total=len(ledger), promoted=sum(r['verdict'] == 'promoted' for r in ledger),
+                            rejected=sum(r['verdict'] == 'rejected' for r in ledger)),
+--- 20261026-promotion-gate/code/gate_service.py.bak-pre-heldout-text	2026-10-31 01:16:38.181338474 +0000
++++ 20261026-promotion-gate/code/gate_service.py	2026-10-31 01:38:18.725957966 +0000
+@@ -1010,7 +1010,7 @@
+                          'becomes the new head probe. The standing sample is rotated every 24 h or whenever the head must be re-probed anyway '
+                          '(e.g. after a rollback); its commitment is published at first use and its seed, ids and per-task grades are revealed '
+                          'only after rotation, at /gate/reveal/<epoch>.json for every epoch that used it.'), reveal_index='https://affine.io/gate/reveal/index.json',
+-        rule=('Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
++        rule=('From E271: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; baseline revealed only after a GREEN or when the round closes (https://affine.io/gate.json rule). Before E271: Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
+               'dropped. The candidate is promoted only if its net is positive: paired z (candidate vs head, k=1) > 0, i.e. candidate pass rate > head pass rate on the paired sample (from e168; >= -1.5 for e154-e167, > -1 for e152-e153), and candidate cap-hit rate < 0.20 (>= 200 paired tasks). '
+               'RED = candidate discarded, next epoch mines from the head again. From epoch 169 scores update on pass and fail: a RED epoch is scored like a GREEN one (head probe vs the discarded candidate on its own batch tasks; Jacob t737u). Before the decision only a hash commitment '
+               'of the sample is published; after DECISION.json the seed, sampled task ids and per-task head/candidate grades are revealed at https://affine.io/gate/reveal/<epoch>.json (index: /gate/reveal/index.json; verify with /gate/reveal/verify_gate_reveal.py). Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)
+--- grid.js.bak-pre-heldout-text-20261031T0138Z	2026-10-29 15:29:32.718522338 +0000
++++ grid.js	2026-10-31 01:38:44.440565244 +0000
+@@ -31,7 +31,7 @@
+   'flip-share-title':['Live flip-scoring leaderboard (scores.json), sorted by share. Share: current share of miner weight. Score: all-time flip credit since E93 (no decay), which drives Share. Last 10: credit from the 10 most recent credit epochs only. F\u2192P / P\u2192F / Null: all-time tasks moved fail\u2192pass, pass\u2192fail, or unchanged. Flip %: F\u2192P \u00f7 all scored tasks. Net %: (F\u2192P \u2212 P\u2192F) \u00f7 all scored tasks.'],
+   'evaluation-title':['Mean reward of the evaluator on a fixed set of 32 affine_math tasks (same seed every run, 8,192-token output budget), one point per completed checkpoint evaluation. Higher means more of the fixed tasks solved.',1],
+   'sp-heldout':['Share of a fixed 32-problem affine_math set solved by each checkpoint, labelled by the training epoch that produced it. These problems come from the held-out split, which never becomes miner tasks or training data, so this measures generalization rather than training fit.'],
+-  'sp-probe':['Net change per epoch: the candidate checkpoint’s pass rate minus the head’s on affine_math, in percentage points. Green = net ≥ 0, red = net < 0. Gated epochs (from E152): candidate vs head on the same private random sample with that epoch’s batch removed; from E196 (K=1) one UID turn per epoch and 4 seeded samples per task on both sides. The dot above the bar is the gate verdict (filled = GREEN promoted, ring and hollow bar = RED discarded). From E168 GREEN needs paired z > 0 and cap-hit < 20% (E152–E167 used looser z thresholds, so a slightly red bar there could still be promoted). Faint bars before the gate line: env-probe pass rate vs the parent checkpoint (hover for n; some were partial sweeps). The axis is clipped at ±3 pp; larger moves are capped and marked with a chevron.'],
++  'sp-probe':['Net change per epoch: the candidate checkpoint’s pass rate minus the head’s on affine_math, in percentage points. Green = net ≥ 0, red = net < 0. Gated epochs (from E152): candidate vs head on the same private random sample with that epoch’s batch removed; from E196 (K=1) one UID turn per epoch and 4 seeded samples per task on both sides. The dot above the bar is the gate verdict (filled = GREEN promoted, ring and hollow bar = RED discarded). From E271 (held-out gate) GREEN needs a positive weighted per-task gain with weighted_z > 1.00 and cap-hit < 20%, head and candidate scored on the same private held-out tasks; E168–E270 needed paired z > 0 (E152–E167 looser thresholds). Faint bars before the gate line: env-probe pass rate vs the parent checkpoint (hover for n; some were partial sweeps). The axis is clipped at ±3 pp; larger moves are capped and marked with a chevron.'],
+   'sp-perf':['Model quality per epoch, measured the same way every time: the promotion gate\'s private sample of about 1,000 affine_math tasks (the turn\'s batch tasks removed), graded on the final answer; wrong, unresolved and 8,192-token cap hits all count as fail. Green line: the current head\'s pass rate on that epoch\'s sample. Dots: the candidate trained that epoch on the same tasks; filled green = GREEN (promoted, it becomes the next head), hollow red = RED (discarded, the head is kept). From E196 (K=1) each task is sampled 4 times with the same seeds for head and candidate; before that 1 sample. A dashed ring marks the epoch still in progress. The head line moves by about ±1 pp between epochs because every epoch draws a new sample. Updates on every gate decision (gate.json). The env probe (probe/series.json) is not used here: since E197 it publishes partial sweeps of the hardest tasks first, which read about 25 pp lower.'],
+   'sp-miners':['Number of distinct miners whose submission was sealed into each epoch’s frozen population. Under K=1 (from E196) every miner can still submit each epoch, but only one turn UID’s batch is trained; the others keep their place in line. Hover a bar for registered miners and rejected submissions.'],
+   'batch-title':['Total batches (rollout groups) miners submitted each epoch, counted from the signed frozen population of sealed submissions. Hover a bar for that epoch\u2019s count and how many tasks were selected for training.',1],
+@@ -41,7 +41,7 @@
+   'sp-grad':['Size of the gradient for each epoch’s optimizer step, measured before clipping (clipped to 1.0). Under K=1 (from E196) each epoch is one AdamW step from zero optimizer state on the turn UID’s batch; RED candidates are discarded but their step is still shown. Spikes mean an unusually large update.'],
+   'sp-loss':['The GRPO training objective for each epoch’s optimizer step. With group-relative rewards it sits near zero and can be negative, so jumps and trends matter more than the level. Under K=1 (from E196) it is the loss on the turn UID’s batch, for GREEN and RED turns alike.'],
+   'sp-timing':['Wall-clock minutes per epoch for the last 20 epochs, start to finalized, stacked from each epoch\u2019s recorded phase timestamps (site-metrics.json and gate.json), not a fixed schedule. Submission window: epoch start to the submission deadline (miners upload batches; can be zero, e.g. right after a RED). Seal & prepare: deadline to training start (sealing the turn batch; an operator stall shows up here). Train: the training run. Gate probe: the candidate\u2019s gate probe. Finalize: decision and publication. Hover a bar for whether the head probe was a re-probe or reused from cache. The headline is the latest finalized epoch\u2019s total.'],
+-  'sp-gate':['Every promotion-gate verdict since E152 (gate.json), one bar per epoch: the candidate’s 8,192-token cap-hit rate, green if promoted (GREEN) and red if discarded (RED). GREEN needs paired z > 0 against the head and cap-hit < 20% on a private ~1,000-task sample with the turn’s batch removed; from E196 (K=1) each epoch is one UID turn, 4 seeded samples per task. Hover for z, pass rates and timings.'],
++  'sp-gate':['Every promotion-gate verdict since E152 (gate.json), one bar per epoch: the candidate’s 8,192-token cap-hit rate, green if promoted (GREEN) and red if discarded (RED). From E271 GREEN needs a positive weighted per-task gain with weighted_z > 1.00 and cap-hit < 20%, head and candidate scored on the same private held-out tasks (from E296 the turn batch is not removed; baseline revealed after GREEN); E168–E270: paired z > 0 on a private ~1,000-task sample; from E196 (K=1) each epoch is one UID turn, 4 seeded samples per task. Hover for z, pass rates and timings.'],
+  };
+  const pop=document.createElement('div');pop.className='tile-explain';pop.id='tile-explain';pop.setAttribute('role','tooltip');pop.hidden=true;document.body.append(pop);
+  let current=null,hideTimer=null;
+--- site-metrics.js.bak-pre-heldout-text-20261031T0138Z	2026-10-31 01:21:01.301512239 +0000
++++ site-metrics.js	2026-10-31 01:38:44.441565267 +0000
+@@ -52,7 +52,7 @@
+  P.probe.section.after(P.probetrend.section);
+  P.probetrend.section.classList.add('probe-trend-hero');
+  (()=>{const note=h('p','sp-note');note.append(
+-   document.createTextNode('Net change = candidate pass rate − head pass rate on the gate sample. Green ≥ 0, red < 0. Dot marks the gate verdict (from E168 GREEN only if z > 0 and cap-hit < 20%; K=1 from E196: one UID turn per epoch, 4 seeded samples per task). '),
++   document.createTextNode('Net change = candidate pass rate − head pass rate on the gate sample. Green ≥ 0, red < 0. Dot marks the gate verdict (from E271 GREEN only if weighted_z > 1.00 on the private held-out set, same tasks for head and candidate, and cap-hit < 20%; E168–E270 z > 0; K=1 from E196: one UID turn per epoch, 4 seeded samples per task). '),
+    Object.assign(document.createElement('a'),{href:'/gate.json',textContent:'gate.json'}),
+    document.createTextNode(' · '),
+    Object.assign(document.createElement('a'),{href:'/probe/series.json',textContent:'series.json'})
+@@ -478,7 +478,7 @@
+     if(r.kind==='gate'){const g=r.g,ok=g.verdict==='promoted';
+      tip(p,'Epoch '+r.index+' · '+(ok?'promoted':'rejected'),pp(r.net),['C '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' vs H '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+' · '+fmt(g.n,0)+' gate-sample tasks, batch removed',
+       'z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),'Threshold: '+ruleText(g.thresholds),
+-      (!ok&&r.net>=0)||(ok&&r.net<0)?'The gate tests paired z on its private sample (from E168 pass only if z > 0), not this probe net':null].filter(Boolean));}
++      (!ok&&r.net>=0)||(ok&&r.net<0)?'The gate tests weighted_z on its private held-out set (from E271 pass only if weighted_z > 1.00), not this probe net':null].filter(Boolean));}
+     else tip(p,'Epoch '+r.index+' · pre-gate',pp(r.net),['Env probe '+String(r.cid).slice(0,8)+' '+pct(r.c,2)+' (n '+fmt(r.n,0)+') vs parent '+String(r.hid).slice(0,8)+' '+pct(r.hp,2)+' (n '+fmt(r.hn,0)+')',
+       'Independent task draws; no gate verdict'+(Math.abs(r.net)>LIM?' · off scale (axis clipped at ±3 pp)':'')]);
+    };
+@@ -503,7 +503,7 @@
+   const curTxt=cur&&fin(cur.epoch)?'E'+cur.epoch+' '+(cur.stage||'')+(cur.candidate?' · C '+String(cur.candidate).slice(0,8):''):'';
+   const r=ents.find(g=>g.index===selectedIndex)||ents[ents.length-1];
+   setReading(p,r?(r.verdict==='promoted'?'GREEN':'RED'):'—',r?'E'+r.index+' · z '+fmt(r.z,2)+' · cap '+pct(r.candidate_cap_rate,1):'',(fin(c.total)?fmt(c.promoted,0)+' promoted · '+fmt(c.rejected,0)+' rejected':'')+(curTxt?' · now '+curTxt:''));
+-  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Pass only if the net is positive (z > 0, cap-hit < 20%, from E168). Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
++  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Pass only if weighted_z > 1.00 on the private held-out set and cap-hit < 20% (from E271). Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
+   /* Grid tiles hide view buttons: the expanded tile (chart-expand.js) shows the full verdict table. */
+   if(p.view===1||p.section.classList.contains('cx-open')){p.svg.style.display='none';empty(p,null);
+    const t=h('table','sp-table');t.innerHTML='<thead><tr><th>Epoch</th><th>Verdict</th><th>H → C</th><th>z</th><th>Cap-hit</th><th>n</th><th>Decided</th><th>Reason</th></tr></thead>';const tb=h('tbody');

@@ -19,11 +19,19 @@
    "version": "affine-batch-v1",
    "hotkey": "5YourHotkeySs58Address",
    "groups": [
-    {"prompt": "What is 17 * 23? Put the final answer in \\boxed{}.",
+    {
+     "prompt": "What is 17 * 23? Put the final answer in \\boxed{}.",
      "rollouts": [
-      {"output": "<think>\n17*23 = 391\n</think>\n\n\\boxed{391}", "reward": 1.0},
-      {"output": "<think>\n17*23 = 381\n</think>\n\n\\boxed{381}", "reward": 0.0}
-     ]}
+      {
+       "output": "<think>\n17*23 = 391\n</think>\n\n\\boxed{391}",
+       "reward": 1.0
+      },
+      {
+       "output": "<think>\n17*23 = 381\n</think>\n\n\\boxed{381}",
+       "reward": 0.0
+      }
+     ]
+    }
    ]
   },
   "rules": [
@@ -50,6 +58,20 @@
   "turn": "Queue unchanged (training.k1): one turn per hotkey and per registration. At your turn the validator copies your object (kept as evidence), checks the format, takes one GRPO step from the published head with your rewards and runs the promotion gate. GREEN: promoted, you earn. RED: discarded.",
   "privacy": "Your file is private until your turn is decided GREEN; then the exact file is published at https://affine.io/k1/turns/<epoch>/batch.json. RED files stay private.",
   "model": "Generate against the published head (mining.json checkpoint). Head files: as before via current_url (signed current.json -> opening manifest checkpoint URLs) and the fp32 master on GREEN (llms.txt).",
-  "activation": "One-time Ed25519 activation commitment on chain (affine2|activate|<hotkey>|<sig>), unchanged: python -m subnet.register --wallet W --hotkey H --execute from https://github.com/AffineFoundation/affine. It proves the hotkey can open the sealed link."
+  "activation": "One-time Ed25519 activation commitment on chain (affine2|activate|<hotkey>|<sig>), unchanged: python -m subnet.register --wallet W --hotkey H --execute from https://github.com/AffineFoundation/affine. It proves the hotkey can open the sealed link.",
+  "steps": [
+   "1. Have a registered SN120 hotkey (UID != 0) with the one-time Ed25519 activation (batch_file.activation).",
+   "2. Write your file in the affine-batch-v1 format (batch_file.schema, batch_file.example, batch_file.rules): plain-text prompts, each with your rollouts (output text + reward).",
+   "3. Check it locally: python3 affine_batch.py check --hotkey <ss58> batch.json (https://affine.io/ff/affine_batch.py, Python standard library only).",
+   "4. Get your link: GET https://affine.io/ff/links/<hotkey>.json and open the sealed field with your hotkey seed (batch_file.link.opens_with), or run python3 affine_batch.py link --hotkey <ss58> --key <seed file>.",
+   "5. Upload: HTTP PUT the file bytes to put_url with Content-Type: application/octet-stream, or python3 affine_batch.py upload --hotkey <ss58> --key <seed file> batch.json. Overwrite it any time.",
+   "6. Within about a minute check https://affine.io/ff/status.json (or python3 affine_batch.py status --hotkey <ss58>): valid true, or the reason it is invalid.",
+   "7. Watch the queue preview (training.k1.queue_next, the next 8). At your turn the stored file is copied and trained; the gate decides GREEN or RED."
+  ],
+  "cap": "Live cap: mining.json training.batch_cap (max_tasks_per_miner prompts, max_rollouts_per_miner rollouts; now 125 x 8 = 1,000 rollouts). The validator can change it at any time; the value read at your turn applies.",
+  "queue": "Unchanged: one turn per hotkey and per registration (UID + registration block), permanently, pass or fail. Order: registration block, then UID; UID 0 excluded; served hotkeys and registrations leave the line. Preview of the next 8: training.k1.queue_next (also https://affine.io/k1.json).",
+  "skip": "At each turn the queue is walked in order. A member whose file is missing or invalid at that moment is skipped: not charged, keeps its place, and the next member is tried in the same epoch.",
+  "publish": "Only GREEN turns are published: the head (bf16 + fp32 master), turn.json and the exact batch file. RED: decision, counts and the file sha256 only.",
+  "fresh_turns": "Jacob 2026-10-30: the 10 hotkeys whose turn since the held-out gate went live (E271+) was RED with 0 < weighted_z <= 1.00 each get ONE fresh turn ahead of the line, oldest first, under these batch-file rules. It is used only by a real turn: a missing or invalid file is a skip and the grant stays open. List: training.k1.queue_grants."
  }
 }

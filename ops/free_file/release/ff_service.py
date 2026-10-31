@@ -23,6 +23,7 @@ LIFE_CFG = Path('/home/const/subnet120-rewrite/state/root-audits/20261017-v824/r
 WEB = Path('/home/const/subnet120/affine/website')
 LINKS = WEB / 'ff' / 'links'
 STATUS = WEB / 'ff' / 'status.json'
+K1_TURNS = Path('/home/const/subnet120-rewrite/state/root-audits/20261027-k1-per-uid/state/K1-TURNS.jsonl')
 TICK, LINK_EVERY, LINK_TTL = 20, 1800, 86400
 LINK_VERSION = 'affine-ff-link-v1'
 
@@ -61,7 +62,12 @@ def eligible():
     chain = json.loads(FL.L_K1_CHAIN.read_bytes())
     m = json.loads((LIFE / 'epochs' / str(eps[-1]) / 'coordinator' / 'OPENING.json').read_bytes())['payload']
     caps = set(m['capabilities'])
-    return {row['hotkey']: row['miner_hex'] for u, row in chain['uids'].items() if int(u) != 0 and row.get('miner_hex') in caps}
+    out = {row['hotkey']: row['miner_hex'] for u, row in chain['uids'].items() if int(u) != 0 and row.get('miner_hex') in caps}
+    # K1-GRANTS (Jacob 2026-10-30 19:30 CR): a served hotkey with an open fresh turn also gets its link (served hotkeys are
+    # not in the opening capabilities); miner_hex = its activated Ed25519 identity from the chain snapshot.
+    turns = [json.loads(x) for x in K1_TURNS.read_text().splitlines() if x.strip()] if K1_TURNS.is_file() else []
+    out.update({row['hotkey']: row['miner_hex'] for _p, _u, row in FL.grant_rows(chain, turns)})
+    return out
 
 
 def issue_links(b, state):
