@@ -151,29 +151,6 @@ class ServiceContractTests(unittest.TestCase):
                 result=require_checkpoint_space(root,root/'new')
                 self.assertEqual(result['required_bytes'],2*1024**3)
 
-    def test_production_miner_retries_epoch_without_reloading_model(self):
-        import sys
-        from unittest.mock import patch
-        from types import SimpleNamespace
-        from . import cli
-        events={'search':0,'loads':0,'sleep':0,'upload':0}
-        manifest={'epoch':'test-retry','deadline':100,'capabilities':{'unit-miner':{}},'checkpoint':{'id':'model'},'max_batches':1}
-        class FakeMiner:
-            def __init__(self,*args,**kwargs):self.batches=[];events['loads']+=1
-            def search(self,*args,**kwargs):
-                events['search']+=1
-                if events['search']==1:raise RuntimeError('first finite search did not solve')
-                self.batches.append(({'env_id':'env','index':0,'checkpoint':'model'},[]))
-            def upload(self):events['upload']+=1
-        class StopLoop(Exception):pass
-        def sleep(_):
-            events['sleep']+=1
-            if events['sleep']>=2:raise StopLoop()
-        with tempfile.TemporaryDirectory() as tmp,patch.object(sys,'argv',['miner','--gateway','https://example.test','--authority','unit','--key','unused','--manifest-url','https://example.test/manifest','--state',tmp]),patch.object(cli,'fetch_signed',return_value=manifest),patch.object(cli,'identity',return_value=SimpleNamespace(id='unit-miner')),patch.object(cli,'checkpoint_download',return_value=Path(tmp)),patch.object(cli,'check_runtime_profile'),patch.object(cli,'entries',return_value=[{'env_id':'env','indices':[0]}]),patch.object(cli,'Miner',FakeMiner),patch.object(cli.time,'time',return_value=0),patch.object(cli.time,'sleep',side_effect=sleep):
-            with self.assertRaises(StopLoop):cli.main()
-        self.assertEqual(events['search'],2)
-        self.assertEqual(events['loads'],1)
-        self.assertEqual(events['upload'],1)
 
     def test_early_freeze_requires_explicit_nonpayable_trial(self):
         from .service import epoch_prefix

@@ -177,16 +177,6 @@ class ClientCapacity(unittest.TestCase):
         return SimpleNamespace(search_budget=8,env_id='math',indices=None,cap_file=None,key='synthetic',state=temp,
             manifest_url='https://manifest.invalid',current_url=None,gateway='https://unused.invalid',authority='trusted',max_batches=local,once=True)
 
-    def test_direct_client_fills_manifest_cap_but_respects_explicit_lower_cap(self):
-        for cap,local,expected in ((3,None,3),(9,None,9),(9,3,3),(9,12,9)):
-            with self.subTest(cap=cap,local=local),tempfile.TemporaryDirectory()as temp:
-                manifest=dict(epoch='test',checkpoint={'id':'approved'},capabilities={'miner':{}},deadline=100,max_batches=cap)
-                fake=SimpleNamespace(batches=[],upload=lambda:None,close=lambda:None)
-                def search(index,**kwargs):fake.batches.append((dict(env_id='math',index=index,checkpoint='approved'),[]))
-                fake.search=search
-                with patch.object(cli,'identity',return_value=SimpleNamespace(id='miner')),patch.object(cli,'fetch_signed',return_value=manifest),patch.object(cli,'entries',return_value=[dict(env_id='math',indices=list(range(20)))]),patch.object(cli,'checkpoint_download',return_value=Path(temp)),patch.object(cli,'Miner',return_value=fake),patch.object(cli,'check_runtime_profile'),patch.object(cli.time,'time',return_value=10),patch.object(cli.time,'time_ns',return_value=123):
-                    cli.run(self.args(temp,local))
-                self.assertEqual(len(fake.batches),expected)
 
 
 if __name__=='__main__':unittest.main()

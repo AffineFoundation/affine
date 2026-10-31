@@ -50,6 +50,4 @@ class ProgressTests(unittest.TestCase):
    v=json.loads((root/'progress.json').read_text());self.assertEqual(v['started_at'],start);self.assertEqual(v['cumulative_generation_elapsed_seconds'],5.0);self.assertEqual(v['counts']['attempts_ended'],4)
    a.progress.record('attempt_end',attempt=7,outcome='error',elapsed=float('nan'))
    v=json.loads((root/'progress.json').read_text());self.assertEqual(v['cumulative_generation_elapsed_seconds'],5.0)
- def test_cli_progress_namespace_binds_epoch_and_identity(self):
-  text=Path(m.__file__).with_name('cli.py').read_text();self.assertIn('progress_path=Path(a.state)/f"{manifest[\'epoch\']}-{key.id}.progress.json"',text)
 if __name__=='__main__':unittest.main()

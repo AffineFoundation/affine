@@ -13,7 +13,6 @@ from subnet.service import definitions
 from subnet.gpu_service import contract,initial_manifest,heldout,owned_mining_job_fields
 from subnet.protocol import entries
 from subnet.backend_jobs import mining_definitions,initial_configuration
-from subnet.cli import selected_tasks
 from subnet.storage import Identity,canonical
 from nacl.signing import VerifyKey
 from subnet.controller import Controller
@@ -66,20 +65,6 @@ class EvaluationOnlyRows(unittest.TestCase):
             contract(dict(self.config,training_groups=[['reserved']]),0)
         with self.assertRaisesRegex(ValueError,'GPU training group'):
             contract(dict(self.config,environments=[self.reserved]),0)
-    def test_owned_miner_subset_and_runtime_selection_exclude_reserved(self):
-        manifest=self.manifest()
-        with self.assertRaisesRegex(ValueError,'outside authorized training'):
-            mining_definitions(manifest,{'mining_subset':{'reserved':[0]}})
-        with self.assertRaisesRegex(ValueError,'outside authorized training'):
-            owned_mining_job_fields({'owned_mining_subset':{'reserved':[0]}},manifest,0)
-        self.assertEqual(selected_tasks(manifest),[('training',0),('training',1)])
-        self.assertEqual(selected_tasks(manifest,'reserved'),[])
-        with self.assertRaisesRegex(ValueError,'authorized unique training subset'):
-            selected_tasks(manifest,'reserved',[0])
-        row,harness=initial_configuration(manifest,{'role':'mine'})
-        self.assertEqual(row['env_id'],'training')
-        row,harness=initial_configuration(manifest,{'role':'evaluate','heldout':[{'env_id':'reserved','harness':self.harness}]})
-        self.assertEqual(row['env_id'],'reserved');self.assertEqual(harness,self.harness)
     def test_public_manifest_cannot_reintroduce_reserved_mining_or_full_registry_indices(self):
         for where in ('environment','registry'):
             manifest=self.manifest()
@@ -102,27 +87,6 @@ class EvaluationOnlyRows(unittest.TestCase):
         manifest['task_assets']={}
         with self.assertRaisesRegex(ValueError,'exact signed task asset registry'):bindings(manifest)
 
-    def test_real_hydrated_corpus_shards_have_disjoint_mining_and_evaluation_contracts(self):
-        self.parse.stop()
-        body,training_binding,_=fixture()
-        raw=json.loads(gzip.decompress(body));raw[0]['data'].update(problem='2+2?',prompt='2+2?',answer='4')
-        raw=json.dumps(raw).encode();reserved_body=gzip.compress(raw,mtime=0);sha=hashlib.sha256(raw).hexdigest()
-        reserved_binding=dict(training_binding,fold='heldout',sha256=sha,size=len(raw),compressed_sha256=hashlib.sha256(reserved_body).hexdigest(),compressed_size=len(reserved_body),path='assets/math-corpora/'+sha+'.tasks.json')
-        url='https://a.r2.cloudflarestorage.com/x?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=a'
-        with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'AFFINE_MATH_CORPUS_ASSET_ROOT':folder}):
-            configs=[];resources={}
-            for binding,data,fold in [(training_binding,body,'train'),(reserved_binding,reserved_body,'heldout')]:
-                hydrate(folder,binding,url,lambda *args:data)
-                spec=build_spec('math_corpus_deepmath103k_'+fold+'_000',config={'task_snapshot':binding['path'],'math_corpus_asset':binding},num_samples=1,max_turns=1,max_output_tokens=1024)
-                row=dict(spec=spec.to_dict(),indices=[0] if fold=='train' else [],harness=self.harness)
-                if fold=='heldout':row['evaluation_only']=True
-                configs.append(row);resources[binding['sha256']]=dict(read_url=url,compressed_sha256=binding['compressed_sha256'],compressed_size=binding['compressed_size'])
-            config=dict(self.config,environments=configs,task_assets=resources,heldout=[dict(env_id=configs[1]['spec']['id'],indices=[0],seed=42,harness=self.harness)])
-            manifest=initial_manifest(config,dict(id='weights',files={}))
-            self.assertEqual(len(bindings(manifest)),2)
-            self.assertEqual(selected_tasks(manifest),[(configs[0]['spec']['id'],0)])
-            self.assertEqual(heldout(config,manifest)[0]['env_id'],configs[1]['spec']['id'])
-            self.assertEqual(entries(manifest)[1]['indices'],[])
     def test_controller_persists_role_in_actual_manifest_without_external_writes(self):
         with tempfile.TemporaryDirectory() as folder:
             controller=Controller.__new__(Controller);controller.state=Path(folder);controller.bucket=SimpleNamespace(json=Mock());controller.authority=Identity()

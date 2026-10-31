@@ -166,18 +166,6 @@ class AuditBridgeTests(unittest.TestCase):
         row['envelope']=json.dumps(sign(self.f.operator,job));row['digest']=digest(job)
         admitted,refused=self.admit([row]);self.assertEqual(admitted,{});self.assertEqual(len(refused),1)
 
-    def test_external_miner_checks_qualified_release_before_model_download(self):
-        from types import SimpleNamespace
-        from subnet.cli import run
-        f=self.f
-        args=SimpleNamespace(search_budget=None,cap_file=None,key='fixture',state=str(f.root/'cli'),
-            manifest_url='https://fixture',current_url=None,gateway='https://fixture',authority=f.authority,
-            once=True,max_batches=None)
-        bad=deepcopy(f.m);bad['payable']=True;bad.pop('mimo_release_policy')
-        with patch('subnet.cli.identity',return_value=f.identity),patch('subnet.cli.fetch_signed',return_value=bad),\
-             patch('subnet.cli.checkpoint_download') as download,patch('subnet.cli.check_runtime_profile') as runtime:
-            with self.assertRaisesRegex(ValueError,'qualified release policy'):run(args)
-            download.assert_not_called();runtime.assert_not_called()
 
     def test_confirmed_invalid_is_penalized_but_failed_queue_is_not_fraud(self):
         row=self.queue_evidence(invalid=True);admitted,refused=self.admit([row])

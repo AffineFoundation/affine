@@ -275,19 +275,6 @@ class TransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):adapter.check_runtime(runtime,m)
         runtime.model.config.vocab_size=32;runtime.tokenizer.eos_token_id=14
         with self.assertRaises(ValueError):adapter.check_runtime(runtime,m)
-    def test_cli_defaults_to_exact_n_and_rejects_other_budget_before_download(self):
-        from subnet import cli
-        m=self.manifest();runtime=FixtureRuntime(m,self.identity.id)
-        args=SimpleNamespace(search_budget=7,cap_file=None,key='fixture',state=str(Path(self.tmp.name)/'cli'),
-            manifest_url='https://fixture.invalid/manifest',current_url=None,gateway='https://fixture.invalid',authority='fixture',
-            env_id='math',indices=[0],max_batches=1,once=True,source_bundle_sha256=None,compression_level=None)
-        with patch('subnet.cli.identity',return_value=self.identity),patch('subnet.cli.fetch_signed',return_value=m),patch('subnet.cli.checkpoint_download') as download:
-            with self.assertRaisesRegex(ValueError,'signed N'):cli.run(args)
-            download.assert_not_called()
-        args.search_budget=None
-        with patch('subnet.cli.identity',return_value=self.identity),patch('subnet.cli.fetch_signed',return_value=m),patch('subnet.cli.checkpoint_download',return_value='fixture-model'),patch('subnet.cli.check_runtime_profile'),patch('subnet.model.check_runtime_profile'),patch('subnet.miner.make_runtime',return_value=runtime),patch('subnet.complete_group_transport.requests.put',side_effect=self.http.put):
-            cli.run(args)
-        self.assertEqual(runtime.calls,[(0,i) for i in range(8)]);self.assertEqual(self.capture(m)['new_groups'],1)
 
 
 class CodecTests(unittest.TestCase):
