@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from subnet import forced_sampling as forced, cli
+from subnet import forced_sampling as forced
 from subnet import commitment_transport as commitments
 from subnet import committed_training_inputs as learner
 from subnet.batches import pack
