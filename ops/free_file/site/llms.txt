@@ -121,7 +121,9 @@ https://affine.io/ff/status.json must say valid: true. Re-upload any time.
   The candidate is scored on all kept held-out tasks (the turn batch is NOT excluded).
 - Head and candidate are scored on the same tasks (4 seeded samples per task, the same seeds on both sides).
   gain = weighted per-task gain (inverse-variance-weighted mean of the candidate-minus-head pass-rate differences),
-  weighted_z = gain / its standard error.
+  weighted_z = gain / SE, SE = sqrt(se_task^2 + sigma_run^2 * (1 + 1/3)): se_task = per-task standard error of
+  the gain, sigma_run = the head's run-to-run noise measured on the round's 3 replicate head runs. From E354 there
+  is no fixed floor on sigma_run (E271-E353: floor 0.022), so the bar is about +1.5 to +2 points of weighted gain.
 - GREEN: gain > 0, weighted_z > 1.00 (strict), estimated cap-hit rate < 0.20 and >= 100 kept tasks. GREEN -> the
   candidate becomes the next head (bf16 + fp32 master published) and the turn is published; RED -> head kept,
   nothing published but the decision, counts and the file sha256.
