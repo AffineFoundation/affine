@@ -1,0 +1,94 @@
+--- T/mimo_host_trainer_v83.py	2026-10-30 13:13:51.000000000 -0600
++++ build/trainer/host-v833h/mimo_host_trainer_v83.py	2026-10-30 18:43:08.224696706 -0600
+@@ -1,5 +1,9 @@
+ """ROOT-admitted v8.3 trainer host launcher over the unchanged worker closure.
+ 
++v8.3.3h = v8.3.3g + free-file turns (Jacob pt898u 2026-10-30, RA/20261030-free-file): a signed 'sn120-ff-dispatch-v1'
++  selection is prepared by ff_trainer.prepare (miner rewards used as given, any number of rollouts per group);
++  v8211_batched._layout uses each rollout's reward and its group's own size (identical numbers for native groups).
++
+ v8.3.3f = v8.3.3 + optional engine.sgd_fp32_master (persistent fp32 head master, see FP32_KEYS). Jacob t831u 2026-10-30.
+ v8.3.3g = v8.3.3f + execution-only speedups (Jacob pt841u/t847u 2026-10-30, RA/20261030-trainer-speed): same update math and bytes;
+   parallel+memoized checkpoint sha256 (v83_dp.install_fast_hash), helper ranks preload KL ref + actor at start, fp32 digests
+@@ -54,7 +58,7 @@
+ TRITON_CACHE = '/workspace/affine-mimo-trainer-prod/triton-cache-v831'
+ SCOPE = 'sn120-mimo-trainer-host-overrides-v8.3.3'
+ P = Path(__file__).resolve().parent
+-HOST_FILES = ('mimo_host_trainer_v83.py', 'v83_dp.py', 'v83_fast_kernels.py', 'v83_kernels_policy.py', 'math_levels.json', 'v8210_optimizer_offpath.py', 'v8211_batched.py', 'v824_optimizer_fast.py', 'v824_staging_fast.py',
++HOST_FILES = ('mimo_host_trainer_v83.py', 'ff_trainer.py', 'v83_dp.py', 'v83_fast_kernels.py', 'v83_kernels_policy.py', 'math_levels.json', 'v8210_optimizer_offpath.py', 'v8211_batched.py', 'v824_optimizer_fast.py', 'v824_staging_fast.py',
+               'v824_publication_fast.py', 'patched/mimo_grpo.transaction.py', 'patched/mimo_grpo.publication.py',
+               'patched/mimo_grpo.service.py', 'patched/mimo_training_worker.py')
+ SITES = ('mimo_grpo.transaction._receipt', 'mimo_grpo.transaction.Transaction.run',
+@@ -822,7 +826,13 @@
+ 
+     original_prepare = worker.prepare_signed_dispatch
+ 
++    ff = load('ff_trainer', 'ff_trainer.py')   # v8.3.3h free-file turns
++
+     def prepare_signed_dispatch(*args, **kwargs):
++        dispatch = args[1] if len(args) > 1 else kwargs['dispatch']
++        if ff.is_ff(dispatch):        # v8.3.3h: signed sn120-ff-dispatch-v1 -> miner rewards as given
++            batched.TASK_INDEX.clear()
++            return ff.prepare(*args, **kwargs)
+         prepared_ = original_prepare(*args, **kwargs)
+         try:   # diagnostics only: never alters or blocks the authenticated preparation
+             index = {g.task_id: (r['task']['env_id'], r['task']['index'])
+--- T/v8211_batched.py	2026-10-30 13:13:51.000000000 -0600
++++ build/trainer/host-v833h/v8211_batched.py	2026-10-30 18:42:55.088720034 -0600
+@@ -54,10 +54,37 @@
+ from subnet.mimo_grpo.data import TaskGroup, digest
+ from subnet.mimo_grpo.optimizer import FP32Accumulator
+ from subnet.mimo_grpo.upstream import policy_loss, aggregate, k3_kl
+-from subnet.mimo_grpo.training import _layout, _prompt_weights, derail_keep, _versions
++from subnet.mimo_grpo.training import _prompt_weights, derail_keep, _versions
+ from subnet.mimo_grpo.upstream import reference
+ import numpy as np
+ 
++
++def rollout_reward(config, rollout):
++    """v8.3.3h: native rollouts -> config.reward (unchanged). Free-file rollouts carry the miner's reward; the same
++    soft overlong penalty applies (config.reward of a non-correct outcome is exactly minus that penalty)."""
++    reward = getattr(rollout, 'reward', None)
++    if reward is None:
++        return config.reward(rollout.outcome, len(rollout.tokens))
++    return reward + config.reward('wrong', len(rollout.tokens))
++
++
++def _layout(groups, config):
++    """= subnet.mimo_grpo.training._layout with rollout_reward and the group's own rollout count (identical rows for
++    native groups: config.reward and len(trajectories) == group_size)."""
++    rows = []
++    for group in groups:
++        rewards = torch.tensor([[rollout_reward(config, r)] for r in group.trajectories], dtype=torch.float32)
++        advantages, _ = reference().compute_grpo_outcome_advantage(rewards,
++            torch.ones_like(rewards), np.array([group.task_id] * len(group.trajectories)),
++            norm_adv_by_std_in_grpo=False)
++        for rollout, advantage in zip(group.trajectories, advantages[:, 0], strict=True):
++            active = not (rollout.outcome == 'unresolved' and config.cap_policy == MASK_UNRESOLVED)
++            rows.append(dict(group=group, rollout=rollout, advantage=float(advantage), active=active,
++                             keep=len(rollout.tokens), derail_index=None,
++                             reward=rollout_reward(config, rollout)))
++    _prompt_weights(rows)
++    return rows
++
+ DROP_UNRESOLVED = False   # v8.2.5: set only by mimo_host_trainer_v825.install from engine['drop_unresolved']
+ LOSS_AGG_MODE = 'config'   # v8.2.11: set only by mimo_host_trainer_v8211.install from engine['loss_agg_mode']
+ LOSS_SCALE = 1.0           # v8.2.11: engine['loss_scale'] (constant multiplier, seq-mean-token-mean only)
+@@ -165,7 +192,7 @@
+         keep_group = len(resolved) >= 2
+         advantage = {}
+         if keep_group:
+-            rewards = torch.tensor([[config.reward(r.outcome, len(r.tokens))] for r in resolved], dtype=torch.float32)
++            rewards = torch.tensor([[rollout_reward(config, r)] for r in resolved], dtype=torch.float32)
+             values, _ = reference().compute_grpo_outcome_advantage(rewards,
+                 torch.ones_like(rewards), np.array([group.task_id] * len(resolved)),
+                 norm_adv_by_std_in_grpo=False)
+@@ -185,7 +212,7 @@
+             stats['kept_rollouts'] += int(active)
+             rows.append(dict(group=group, rollout=rollout, advantage=advantage.get(id(rollout), 0.0), active=active,
+                              keep=len(rollout.tokens), derail_index=None,
+-                             reward=config.reward(rollout.outcome, len(rollout.tokens))))
++                             reward=rollout_reward(config, rollout)))
+     if not stats['kept_rollouts']:
+         raise ValueError('drop_unresolved left no trainable rollouts in the batch')
+     _prompt_weights(rows)

@@ -1,0 +1,55 @@
+{
+ "protocol": "free-file affine-batch-v1 (from 2026-10-30; old-format submissions close at the cutoff)",
+ "notice_before_cutoff": "New: upload ONE batch file (prompts, your rollouts, your rewards) to your private per-hotkey object; no client, no epochs, no commitments. See batch_file. Old-format (client) batches are still trained until the cutoff 2026-10-31 03:00 CR (UTC-6) = 09:00 UTC (old_format_cutoff).",
+ "notice_after_cutoff": "Upload ONE batch file (prompts, your rollouts, your rewards) to your private per-hotkey object; at your turn it is copied, format-checked and trained. See batch_file. Old-format submissions closed 2026-10-31 09:00 UTC.",
+ "old_format_cutoff": {
+  "at_unix": 1793437200,
+  "at_utc": "2026-10-31T09:00:00Z",
+  "at_cr": "2026-10-31 03:00 CR (UTC-6)",
+  "rule": "Until this time a queue member without a valid batch file but with a ready old-format batch (old client, signed opening) is trained the old way. From this time only batch files are trained; old-format batches are ignored."
+ },
+ "batch_file": {
+  "format": "affine-batch-v1",
+  "schema": {
+   "version": "\"affine-batch-v1\"",
+   "hotkey": "your ss58 hotkey (must match the object owner)",
+   "groups": "list of {\"prompt\": string, \"rollouts\": list of {\"output\": string, \"reward\": number}}"
+  },
+  "example": {
+   "version": "affine-batch-v1",
+   "hotkey": "5YourHotkeySs58Address",
+   "groups": [
+    {"prompt": "What is 17 * 23? Put the final answer in \\boxed{}.",
+     "rollouts": [
+      {"output": "<think>\n17*23 = 391\n</think>\n\n\\boxed{391}", "reward": 1.0},
+      {"output": "<think>\n17*23 = 381\n</think>\n\n\\boxed{381}", "reward": 0.0}
+     ]}
+   ]
+  },
+  "rules": [
+   "UTF-8 JSON, at most 64 MiB, exactly the keys shown. Prompts non-empty and distinct; at least one rollout per prompt, any number per prompt.",
+   "reward: any finite number, used exactly as given (no regrading). Within a prompt the advantage is reward minus the mean reward of that prompt's rollouts (a prompt with one rollout: the reward itself); the overlong penalty in training.loss still applies.",
+   "prompt: plain text. It is rendered as one user message with the model's chat template and the generation prompt: tokenizer.apply_chat_template([{\"role\": \"user\", \"content\": prompt}], add_generation_prompt=True) with the head's tokenizer.",
+   "output: the assistant text after that prompt (include the <think>...</think> part if you want it trained). Tokenized with tokenizer.encode(output, add_special_tokens=False).",
+   "<|im_start|>, <|im_end|> and <|endoftext|> must not appear in a prompt or an output.",
+   "EOS: an output of up to 8191 tokens gets <|im_end|> appended (it ended). Exactly 8192 tokens = cut at the length cap (no EOS, treated as unresolved/capped). More than 8192 tokens is invalid. Prompt + output must be at most 12288 tokens.",
+   "Cap: at most training.batch_cap.max_tasks_per_miner prompts and training.batch_cap.max_rollouts_per_miner rollouts (live value, tunable). Prompts beyond either cap are dropped whole, in file order; everything kept must be valid.",
+   "Any rule broken in the kept part makes the whole file invalid: you are skipped for that turn (not charged, you keep your place)."
+  ],
+  "object": "One private object per hotkey: private/ff/v1/miners/<hotkey>/batch.json. Overwrite it any time; there are no epochs, windows or commitments. What is there when your turn comes is what is trained.",
+  "link": {
+   "url": "https://affine.io/ff/links/<hotkey>.json",
+   "opens_with": "libsodium crypto_box_seal_open with your hotkey's Ed25519 seed converted to X25519 (PyNaCl: SealedBox(SigningKey(seed).to_curve25519_private_key()).decrypt(base64 sealed)); the same sealing as the old epoch capability",
+   "contains": "object_key, put_url, put_headers, get_url, issued_at, expires_at",
+   "reissued": "every 30 minutes with fresh presigned URLs for the same object, each valid 24 hours",
+   "who": "every registered SN120 hotkey (UID != 0) with the Ed25519 activation commitment that has not had its turn yet"
+  },
+  "upload": "HTTP PUT the file bytes to put_url with the header Content-Type: application/octet-stream. Read back with get_url.",
+  "status": "https://affine.io/ff/status.json: the validator's format check of each stored file within about a minute of upload (valid, reason, prompts, rollouts; never content)",
+  "reference_script": "https://affine.io/ff/affine_batch.py (Python standard library only; link, check, upload, download, status). It is a helper, not a mining client.",
+  "turn": "Queue unchanged (training.k1): one turn per hotkey and per registration. At your turn the validator copies your object (kept as evidence), checks the format, takes one GRPO step from the published head with your rewards and runs the promotion gate. GREEN: promoted, you earn. RED: discarded.",
+  "privacy": "Your file is private until your turn is decided GREEN; then the exact file is published at https://affine.io/k1/turns/<epoch>/batch.json. RED files stay private.",
+  "model": "Generate against the published head (mining.json checkpoint). Head files: as before via current_url (signed current.json -> opening manifest checkpoint URLs) and the fp32 master on GREEN (llms.txt).",
+  "activation": "One-time Ed25519 activation commitment on chain (affine2|activate|<hotkey>|<sig>), unchanged: python -m subnet.register --wallet W --hotkey H --execute from https://github.com/AffineFoundation/affine. It proves the hotkey can open the sealed link."
+ }
+}

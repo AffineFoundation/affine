@@ -1,4 +1,8 @@
-# Prepared MiMo miner migration
+# Prepared MiMo miner migration (historical)
+
+> Superseded 2026-10-30 by the free-file protocol: miners upload one batch file, there is
+> no client. See [MINER_QUICKSTART.md](MINER_QUICKSTART.md). `subnet.miner_supervisor`
+> referenced below has been removed.
 
 This describes the prospective release being privately qualified. It is **not
 the currently active mining contract**. Keep following the authenticated public

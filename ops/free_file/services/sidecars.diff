@@ -1,0 +1,315 @@
+--- gate_service.py	2026-10-30 18:51:01.543830366 -0600
++++ gate_service.py	2026-10-30 18:51:01.555830330 -0600
+@@ -129,6 +129,10 @@
+ 
+ 
+ def dispatch_tasks(e):
++    # free-file (Jacob pt898u 2026-10-30): from PROMOTION-GATE.json "turn_batch_counted_from_epoch" on, the turn batch is NOT
++    # excluded from the candidate probe (every kept/sampled task counts; free-file prompts have no task index anyway)
++    fe = (rj(FLAG) or {}).get('turn_batch_counted_from_epoch')
++    if type(fe) is int and e >= fe: return []
+     # t712u K=1: the trained batch is the turn UID filtered dispatch when present (else the sealed pooled DISPATCH)
+     d = rj(LIFE / 'epochs' / str(e) / 'TRAIN-DISPATCH-K1.json') or rj(LIFE / 'epochs' / str(e) / 'coordinator' / 'DISPATCH.json') or {}
+     return sorted({int(s['index']) for s in ((d.get('payload') or d).get('selected') or []) if 'index' in s})
+--- training_params.py	2026-10-30 18:59:48.474492957 -0600
++++ training_params.py	2026-10-30 18:53:55.515346737 -0600
+@@ -178,6 +178,10 @@
+ 
+ 
+ def build():
++    return free_file(_build())
++
++
++def _build():
+     cfg, cfg_sha = lifecycle_config()
+     tc = cfg['trainer_config']
+     try:
+@@ -282,7 +286,7 @@
+                                                    'for v8.2.3u extended clients, 9 for v8.2.2 clients)') if batch_cap_public(e) else
+                                                   ('this protocol still collects group_size rollouts per task and at most max_batches '
+                                                    'tasks per miner per epoch (see the signed manifest), so a turn is <= max_batches x group_size rollouts')),
+-                  queue_next=(k1q.get('next') or [])[:20], queue_length=k1q.get('queue_length'),
++                  queue_next=(k1q.get('next') or [])[:8], queue_length=k1q.get('queue_length'),
+                   queue_rule=k1q.get('queue_rule', 'fewest-turns'), queue_rule_from_epoch=k1q.get('queue_rule_from_epoch'),
+                   registrations_unserved=k1q.get('registrations_unserved'), registrations_served=k1q.get('served'),
+                   hotkeys_unserved=k1q.get('hotkeys_unserved'), served_hotkeys=k1q.get('served_hotkeys'),
+@@ -385,6 +389,65 @@
+     )
+ 
+ 
++FF_FLAG = RA / '20261023-toploc-credit-train-gate/staged/FF.json'
++
++
++def free_file(d):
++    """free-file protocol (Jacob pt898u 2026-10-30, RA/20261030-free-file): the miner uploads one batch file; the turn trains it
++    with the miner's rewards as given. Rewrites the protocol-dependent texts; numbers stay generated from the live configs."""
++    f = rj(FF_FLAG) if FF_FLAG.exists() else {}
++    if f.get('enabled') is not True or d.get('epoch_index', 0) < f.get('from_epoch', 1 << 30):
++        return d
++    cut = f.get('legacy_cutoff_unix')
++    d['batch_file'] = 'https://affine.io/mining.json -> batch_file (format, example, upload link, rules)'
++    k1 = d.get('k1')
++    if k1:
++        k1['rule'] = ('One turn per hotkey and per registration (UID + registration block), permanently, pass or fail. Queue order = '
++                      'registration block, then UID (UID 0 excluded); served hotkeys and registrations leave the queue. At each turn the '
++                      'validator takes the first queue member whose batch file (batch_file.object) is present: it copies the file, checks the '
++                      'format only (batch_file.rules) and trains it. A missing or invalid file = skipped, not charged, keeps its place; the next '
++                      'member is tried. Until the old-format cutoff a member without a valid file but with a ready old-format batch (old client) '
++                      'is trained the old way. One stateless step from the published head (optimizer below) -> candidate -> promotion gate. '
++                      'GREEN credit: 1/N to each of the last up to 10 distinct GREEN UIDs; RED/skipped earn nothing; unearned weight burns to UID 0.')
++        k1['caps'] = dict(max_prompts=(d.get('batch_cap') or {}).get('max_tasks_per_miner'),
++                          max_rollouts=(d.get('batch_cap') or {}).get('max_rollouts_per_miner'),
++                          rollouts_per_prompt='any number >= 1', max_output_tokens=8192, max_context_tokens=12288,
++                          live_value='training.batch_cap')
++        k1['turn_batch_published'] = ('after the gate decision: https://affine.io/k1/turns/<epoch>/turn.json. GREEN: the exact miner file '
++                                      '(/k1/turns/<epoch>/batch.json) and the signed dispatch. RED: decision, counts and file sha256 only; '
++                                      'the file stays private.')
++        k1['probe']['rule'] = ('head and candidate on the round\'s private held-out set (the turn batch is NOT excluded: every kept task counts), '
++                               'each task sampled samples_per_task times with shared per-request sampling seeds')
++        k1['old_format_cutoff_unix'] = cut
++    d['batch'] = ('free-file: the turn trains the turn miner\'s file only: one GRPO group per prompt, its rollouts as uploaded (any number), '
++                  'up to training.batch_cap (whole prompts beyond the cap are dropped in file order)')
++    bc = d.get('batch_cap')
++    if bc:
++        bc['rule'] = ('Tunable by the validator without a release (staged BATCH-CAP.json); applies at the next turn. A turn trains at most '
++                      'max_tasks_per_miner prompts and max_rollouts_per_miner rollouts of the miner file; prompts beyond either cap are dropped '
++                      'whole, in file order. No minimum for batch files (min_tasks applies to old-format batches until the cutoff only).')
++        bc.pop('client', None)
++        bc['rollouts_per_task'] = 'any (>= 1 per prompt); %s is the old-format group size' % bc.get('rollouts_per_task')
++    lo = d.get('loss') or {}
++    if lo.get('formula'):
++        lo['formula'] = lo['formula'].replace(
++            "A_i = r_i - mean(r over the task's group), no std normalisation. r = 1[correct] - overlong_penalty * "
++            "clip((len - overlong_soft_start) / (overlong_max_tokens - overlong_soft_start), 0, 1).",
++            "A_i = r_i - mean(r over the prompt's rollouts), no std normalisation (a prompt with one rollout: A_i = r_i). r = the miner's "
++            "reward for the rollout - overlong_penalty * clip((len - overlong_soft_start) / (overlong_max_tokens - overlong_soft_start), 0, 1) "
++            "(old-format batches until the cutoff: 1[correct] instead of the miner reward). Rollouts at exactly 8192 output tokens are "
++            "length-capped (no EOS) and treated as unresolved for the derail mask.")
++    lo['miner_logprobs'] = 'none: batch files carry text and rewards only; the trainer recomputes every log-prob from the head'
++    pg = d.get('promotion_gate') or {}
++    pg['rule'] = ('candidate promoted only if it beats the head on the private held-out set (heldout): z = gain/SE > bar_z and cap-hit < '
++                  'cap_hit_max; the turn batch is NOT excluded from the probe (since the free-file cutover). GREEN -> next head, the turn earns; '
++                  'RED -> head kept, candidate discarded, the turn earns nothing.')
++    ho = pg.get('heldout')
++    if isinstance(ho, dict) and isinstance(ho.get('rule'), str):
++        ho['rule'] = ho['rule'].replace('on the kept tasks minus its own batch tasks', 'on all kept tasks (its batch is not excluded)')
++    return d
++
++
+ def write():
+     d = build()
+     s = json.dumps(d, sort_keys=True)
+--- k1_service.py	2026-10-30 18:53:19.511442544 -0600
++++ k1_service.py	2026-10-30 18:53:28.275419042 -0600
+@@ -28,7 +28,19 @@
+ K1PUB = WEB / 'k1.json'
+ FLOOR = ST / 'K1-FLOOR-SCORES.json'
+ TURNS = ST / 'K1-TURNS.jsonl'
+-TICK, CHAIN_EVERY, QUEUE_N, PAYEES = 60, 300, 20, 10
++TICK, CHAIN_EVERY, QUEUE_N, PAYEES = 60, 300, 8, 10   # free-file (pt898u): public preview of the next 8
++FF_FLAG = FLAG.parent / 'FF.json'
++FF_READY = Path('/home/const/subnet120-rewrite/state/root-audits/20261030-free-file/state/FF-READY.json')
++
++
++def ff_state():
++    """free-file (Jacob pt898u): (enabled, old format still open, hotkeys whose current file passed the format check)."""
++    f = rj(FF_FLAG) or {}
++    if f.get('enabled') is not True:
++        return False, True, set()
++    r = rj(FF_READY) or {}
++    valid = {hk for hk, v in (r.get('miners') or {}).items() if v.get('valid') is True} if time.time() - float(r.get('checked_at', 0)) < 600 else set()
++    return True, time.time() < int(f.get('legacy_cutoff_unix', 0)), valid
+ B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+ 
+ 
+@@ -131,6 +143,7 @@
+         hks = {t.get('hotkey') for t in ts}
+         regs = {(u, rb) for (u, _h, rb) in full}   # v8.2.9s served registrations
+         _, ready = last_seal_tasks()
++        ff_on, legacy_ok, ff_valid = ff_state()
+         rows = []
+         for u, r in chain['uids'].items():
+             u = int(u)
+@@ -138,8 +151,12 @@
+             if rule in ('hotkey-once', 'hotkey-registration-once') and r['hotkey'] in hks: continue
+             if rule == 'hotkey-registration-once' and int(r.get('reg_block') or 0) > 0 and (u, int(r['reg_block'])) in regs: continue
+             if rule == 'registration-once' and ((u, r['hotkey'], r['reg_block']) in full or (u, r['hotkey']) in legacy): continue
+-            rows.append((r['reg_block'], u, r['hotkey'], ready.get(r.get('miner_hex'), 0)))
++            rows.append((r['reg_block'], u, r['hotkey'], ready.get(r.get('miner_hex'), 0) if legacy_ok else 0))
+         rows.sort()
++        if ff_on:   # ready = a valid batch file now, or (until the cutoff) a ready old-format batch at the last seal
++            return [dict(position=i, uid=u, hotkey=hk, registration_block=b, turns=0, file_valid=hk in ff_valid,
++                         old_format_tasks_last_seal=n, ready_last_seal=hk in ff_valid or n >= min_tasks)
++                    for i, (b, u, hk, n) in enumerate(rows)]
+         return [dict(position=i, uid=u, hotkey=hk, registration_block=b, turns=0, last_seal_tasks=n, ready_last_seal=n >= min_tasks)
+                 for i, (b, u, hk, n) in enumerate(rows)]
+     counts = {}
+@@ -279,7 +296,7 @@
+                     hotkeys_unserved=len({r['hotkey'] for r in q}), hotkeys_served=len(shk), served_hotkeys=shk,
+                     served=[dict(uid=t.get('uid'), hotkey=t.get('hotkey'), reg_block=t.get('reg_block'), epoch_index=t.get('epoch_index')) for t in ts],
+                     **({'served_registrations': sorted([u, rb] for (u, _h, rb) in fs)} if rule == 'hotkey-registration-once' else {}),
+-                    order_rule=(('hotkey-once (Jacob t761u 2026-10-28, teutonic.ai "each hotkey gets exactly ONE submission, permanently"): each '
++                    order_rule=((('hotkey-once (Jacob t761u 2026-10-28, teutonic.ai "each hotkey gets exactly ONE submission, permanently"): each '
+                                  'HOTKEY gets exactly one K=1 turn, permanently (pass or fail), whatever UID or registration block it is on later. '
+                                  'Order = registration block, then uid (UID 0 excluded); hotkeys that already had a turn (served_hotkeys) are out of the queue. '
+                                  'At the seal the first unserved hotkey with a ready batch (>= min_tasks distinct admitted tasks) takes the turn; others are '
+@@ -289,7 +306,13 @@
+                                  'registration gets ONE turn, ever (pass or fail). Order = registration block, then uid (UID 0 excluded); registrations that '
+                                  'already had a turn are out of the queue. At the seal the first unserved registration with a ready batch (>= min_tasks distinct '
+                                  'admitted tasks) takes the turn; others are skipped and keep their place. To get another turn, register again. ')) +
+-                               'next/queue_length = unserved entries that had a ready batch at the last seal (readiness_epoch), in turn order: a forecast; the seal decides.',
++                               'next/queue_length = unserved entries that had a ready batch at the last seal (readiness_epoch), in turn order: a forecast; the seal decides.')
++                    if not ff_state()[0] else
++                    ('One turn per hotkey and per registration (UID + registration block), permanently, pass or fail. Order = registration block, '
++                     'then UID (UID 0 excluded); served hotkeys and registrations leave the queue. At each turn the first queue member whose batch '
++                     'file is present and valid takes the turn; members without a valid file are skipped, not charged, and keep their place. '
++                     'next = the next %d unserved members with a valid file now (file_valid; until the old-format cutoff also a ready old-format '
++                     'batch at the last seal), in turn order: a forecast; the turn decides.' % QUEUE_N),
+                     caps=caps)
+     wj(ST / 'K1-QUEUE.public.json', qpub, 0o644)
+     if f.get('enabled') is True:
+--- k1_transparency.py	2026-10-30 18:51:46.355700467 -0600
++++ k1_transparency.py	2026-10-30 18:51:46.371700421 -0600
+@@ -99,6 +99,7 @@
+     ed = LIFE / 'epochs' / str(e)
+     turn = rj(ed / 'K1-TURN.json')
+     if not turn or turn.get('status') != 'turn': return False
++    if turn.get('format') == 'affine-batch-v1': return publish_ff_turn(e, dec, turn, ed, out)
+     env = rj(ed / 'TRAIN-DISPATCH-K1.json')
+     res = rj(ed / 'TRAINING-RESULT.json')
+     if not env or not res: return False
+@@ -160,6 +161,50 @@
+     return True
+ 
+ 
++def publish_ff_turn(e, dec, turn, ed, out):
++    """free-file turn (Jacob pt898u): the miner's file is published only on GREEN; on RED it stays private (no file, no
++    per-rollout trajectories, no per-group hashes)."""
++    env, res = rj(ed / 'TRAIN-DISPATCH-FF.json'), rj(ed / 'TRAINING-RESULT.json')
++    if not env or not res: return False
++    pay = env.get('payload') or env
++    rep = (res.get('payload') or res).get('report') or {}
++    tr = rep.get('training') or {}
++    desc = ((rep.get('publication_receipt') or {}).get('payload') or {}).get('descriptor') or {}
++    if desc.get('id') and dec.get('candidate') and desc['id'] != dec['candidate']:
++        log(event='candidate_mismatch', epoch=e); return False
++    green = dec.get('decision') == 'green'
++    batch = dict(published=False, note='RED: the miner file stays private.')
++    if green:
++        raw = (ed / 'ff' / (turn['hotkey'] + '.json')).read_bytes()
++        if hashlib.sha256(raw).hexdigest() != turn['file_sha256']: raise RuntimeError('ff snapshot sha mismatch e%d' % e)
++        write_bytes(TURNS / str(e) / 'batch.json', raw)
++        batch = dict(published=True, url='/k1/turns/%d/batch.json' % e, sha256=turn['file_sha256'], bytes=len(raw),
++                     note='The exact file copied from the miner object at the turn (before the batch-cap trim).')
++    private = ('trajectories', 'admitted_groups', 'input_documents_sha256', 'data_sha256')
++    doc = dict(
++        schema=SCHEMA, epoch=e, published_at=round(time.time(), 1), format=turn['format'],
++        decision={k: dec.get(k) for k in ('decision', 'reasons', 'head', 'candidate', 'evaluated', 'batch_tasks', 'sample_size',
++                                           'z_min', 'z_inclusive', 'cap_max', 'min_tasks', 'commitment', 'decided_at', 'decided_at_cr', 'mode')},
++        promoted=green,
++        turn={k: turn.get(k) for k in ('uid', 'hotkey', 'reg_block', 'queue_rule', 'queue_position', 'tasks', 'rollouts', 'dropped_groups',
++                                       'capped_rollouts', 'file_sha256', 'file_bytes', 'head', 'at', 'skipped_not_ready_count')},
++        batch=batch,
++        dispatch=dict(source='lifecycle TRAIN-DISPATCH-FF (signed): one document per prompt group, rewards as given',
++                      envelope_file_sha256=hashlib.sha256((ed / 'TRAIN-DISPATCH-FF.json').read_bytes()).hexdigest(),
++                      signer=env.get('signer'),
++                      header={k: pay.get(k) for k in ('version', 'epoch', 'run_id', 'checkpoint', 'manifest_sha256', 'format',
++                                                      'selected_task_count', 'selected_rollout_count')},
++                      **({'selected': pay.get('selected'), 'signature': env.get('signature')} if green else {})),
++        candidate=dict(id=desc.get('id'), files_sha256=desc.get('files'),
++                       r2_prefix='mimo/affine-mimo9b-grpo-20261013/checkpoints/%s/model/' % desc.get('id'), promoted=green,
++                       note='GREEN candidates become the next head; RED candidates are discarded but their hashes are listed here.'),
++        training={k: tr.get(k) for k in TRAIN_KEYS if k in tr and (green or k not in private)},
++        runtime_versions=rep.get('runtime_versions'), backend_profile=rep.get('backend_profile'), engine=engine_spec(),
++        recipe='/k1/spec/step-recipe.json', gate_reveal='/gate/reveal/%d.json' % e)
++    wj_public(out, doc)
++    return True
++
++
+ def publish_reveal(e, dec):
+     out = REVEAL / ('%d.json' % e)
+     if out.exists(): return False
+@@ -181,6 +226,8 @@
+     if s.get('heldout'): P = dict(head_blocks=h.get('plan_seeds'), candidate=cp.get('plan_seed'))
+     d = rj(LIFE / 'epochs' / str(e) / 'TRAIN-DISPATCH-K1.json') or {}
+     batch = sorted({int(r['index']) for r in ((d.get('payload') or d).get('selected') or []) if 'index' in r})
++    fe = flags.get('turn_batch_counted_from_epoch')
++    if type(fe) is int and e >= fe: batch = []      # free-file (pt898u): the turn batch is no longer excluded from the probe
+     hpt = {int(k): v for k, v in (h.get('per_task') or {}).items()}
+     cpt = {int(k): v for k, v in (cp.get('per_task') or {}).items()}
+     if s.get('heldout'):   # v2 held-out scoring (weighted gain on the round's kept tasks), recomputed from the round baseline
+--- publish_mimo_public_discovery.py	2026-10-30 18:52:54.959509042 -0600
++++ publish_mimo_public_discovery.py	2026-10-30 19:03:50.425967785 -0600
+@@ -262,8 +262,28 @@
+     if not host_v828_execution(observer, parent_argv, entry, config_path):
+         raise ValueError('v8.2.9 parent v8.2.8 lifecycle binding differs')
+     launcher = v829_dir/'mimo_v829_train_gate_launcher.py'
+-    return argv[1:] == ['-B', str(launcher), '--operator-config', str(path),
+-                        '--v828-operator-config', str(v828_operator)]
++    if argv[1:] == ['-B', str(launcher), '--operator-config', str(path), '--v828-operator-config', str(v828_operator)]:
++        return True
++    return _ff_execution(argv, launcher, path, v828_operator)
++
++
++# free-file (Jacob pt898u 2026-10-30, RA/20261030-free-file): the lifecycle may run release/ff_launcher.py, which loads the
++# admitted v8.2.9 launcher above (exact path, its sha checked above) and adds ff_lifecycle.py. Every file it executes is pinned
++# by sha256 in release/FF-PINS.json (0600, written by activate_ff.sh).
++FF_DIR = Path('/home/const/subnet120-rewrite/state/root-audits/20261030-free-file/release')
++
++
++def _ff_execution(argv, launcher, path, v828_operator):
++    try:
++        pins = private_json(FF_DIR/'FF-PINS.json')
++    except Exception:
++        return False
++    if pins.get('version') != 'sn120-ff-pins-v1' or pins.get('v829_launcher') != str(launcher):
++        return False
++    for name, checksum in pins['files'].items():
++        _pinned_reference(dict(path=str(FF_DIR/name), sha256=checksum))
++    return 'ff_launcher.py' in pins['files'] and argv[1:] == ['-B', str(FF_DIR/'ff_launcher.py'), '--operator-config', str(path),
++                                                            '--v828-operator-config', str(v828_operator)]
+ 
+ 
+ 
+@@ -392,6 +412,32 @@
+         result['training'] = params
+ 
+ 
++# free-file protocol (Jacob pt898u): the public batch-file contract (release/FF-PUBLIC.json) is published as `batch_file`;
++# until the old-format cutoff the old signed-opening fields stay (old clients still read them), after it they are removed.
++FF_PUBLIC = FF_DIR/'FF-PUBLIC.json'
++LEGACY_KEYS = ('extended_max_batches', 'legacy_max_batches', 'max_attempts', 'max_batches', 'max_batches_note', 'max_output_tokens_by_environment',
++               'min_completed_failure', 'min_success', 'prospective_reward_eligible', 'required_client_features',
++               'samples_per_batch', 'sampling_contract', 'sampling_version', 'source_bundle_sha256', 'submission_transport_policy',
++               'group_contract')
++
++
++def _free_file(result, now):
++    ff = json.loads(FF_PUBLIC.read_bytes())
++    cut = ff['old_format_cutoff']
++    result['protocol'] = ff['protocol']
++    result['batch_file'] = ff['batch_file']
++    result['old_format_cutoff'] = cut
++    if now >= cut['at_unix']:
++        for k in LEGACY_KEYS:
++            result.pop(k, None)
++        cap = ((result.get('training') or {}).get('batch_cap') or {}).get('max_tasks_per_miner')
++        if type(cap) is int: result['max_tasks_per_miner'] = cap
++        result['notice'] = ff['notice_after_cutoff']
++    else:   # the epoch status/notice below only concern old-format batches; batch files can be uploaded at any time
++        if result.get('notice'): result['old_format_notice'] = result['notice']
++        result['notice'] = ff['notice_before_cutoff']
++
++
+ def publish(observer, *, now=None):
+     now = time.time() if now is None else now
+     error = None
+@@ -417,6 +463,8 @@
+         if type(live_cap) is int and type(result.get('extended_max_batches')) is int:
+             result['max_tasks_per_miner'] = min(live_cap, result['extended_max_batches'])
+     except Exception: pass
++    try: _free_file(result, now)
++    except Exception: pass
+     target = Path(observer['target']); atomic(target, result); target.chmod(0o644)
+     return dict(status=result['status'], accepting_submissions=result['accepting_submissions'],
+         epoch=result.get('epoch'), error=error)

@@ -1,11 +1,18 @@
 # Affine epoch subnet
 
-Synchronous inference-verification training loop for Bittensor subnet120: publish
-checkpoint → private miner batches → freeze/public audit → verify/score → train →
-next checkpoint. Blockchain-free mock and live chain adapters share the same core.
+Bittensor subnet120 (MiMo GRPO). **Miners upload one batch file** (prompts, rollouts,
+rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
+checks the format, trains one GRPO step from the published head and the promotion gate
+keeps the candidate only if it improves the model on a private held-out set.
+No mining client, no epochs or commitments, no TOPLOC, no proofs, no regrading.
 
+- **[Mining: the batch file, upload and rules](docs/MINER_QUICKSTART.md)** ·
+  reference helper [`miner/affine_batch.py`](miner/affine_batch.py) ·
+  live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
+- Old-format (client) batches are trained until 2026-10-31 09:00 UTC (03:00 CR); the old
+  client (`subnet.miner_supervisor`) has been removed.
+- [Validator side of the free-file protocol (lifecycle, trainer v8.3.3h, activation/revert)](ops/free_file/README.md)
 - [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
-- [Miner pilot instructions](docs/MINER_QUICKSTART.md)
 - [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
 - [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)

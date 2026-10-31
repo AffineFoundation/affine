@@ -137,7 +137,7 @@ or scores. A late completion visible before snapshot is excluded; a still-runnin
 PUT can leave the last completed in-window object as the accepted snapshot.
 Frozen receipts include expiring read capabilities for external audit.
 
-The trial `ops/direct_r2_miner.py` fails on any HTTP request outside the R2 S3
+The trial `ops/direct_r2_miner.py` (removed 2026-10-30 with the mining client) failed on any HTTP request outside the R2 S3
 endpoint and writes allowlisted host/method/status evidence. Its bootstrap file
 and dedicated miner seed stay private; request evidence excludes query strings.
 The conformance trial runs with its quick tunnel stopped. Small metadata and

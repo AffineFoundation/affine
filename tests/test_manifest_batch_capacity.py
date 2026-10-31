@@ -188,20 +188,5 @@ class ClientCapacity(unittest.TestCase):
                     cli.run(self.args(temp,local))
                 self.assertEqual(len(fake.batches),expected)
 
-    def test_supervisor_default_is_manifest_driven_and_explicit_three_survives(self):
-        from subnet import miner_supervisor as supervisor
-        class Observed(Exception):pass
-        for explicit,expected in (([],None),(['--max-batches','3'],3),(['--max-batches','9'],9)):
-            with self.subTest(explicit=explicit),tempfile.TemporaryDirectory()as temp:
-                root=Path(temp);key=root/'fixture-key';key.write_text('fixture-not-a-real-key');key.chmod(0o600)
-                seen=[]
-                def cycle(args,*rest):seen.append(args);raise Observed
-                argv=['--authority','a'*64,'--key',str(key),'--state',str(root/'state'),'--source-cache',str(root/'sources'),*explicit]
-                with patch.object(supervisor,'cycle',side_effect=cycle),self.assertRaises(Observed):supervisor.main(argv)
-                self.assertEqual(seen[0].max_batches,expected)
-                args=supervisor.launch_arguments(seen[0],{'source_bundle':{'sha256':'b'*64}},'https://manifest.invalid')
-                if expected is None:self.assertNotIn('--max-batches',args)
-                else:self.assertEqual(args[args.index('--max-batches')+1],str(expected))
-
 
 if __name__=='__main__':unittest.main()
