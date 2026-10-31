@@ -1,0 +1,52 @@
+--- a/k1.js	2026-10-31 01:21:01.297512146 +0000
++++ b/k1.js	2026-10-31 13:57:06.086616624 +0000
+@@ -88,6 +88,7 @@
+   const pr=tile('panel-k1-pass','Pass rate & cap-hit per turn');const pw=pr.querySelector('.k1-chart')||pr.appendChild($('div',{class:'chart-wrap k1-chart'}));
+   if(!pr.querySelector('.legend'))pr.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--guide)"></i>Head</span><span><i class="swatch" style="background:var(--performance)"></i>Candidate</span><span><i class="swatch" style="background:var(--rejected)"></i>Cap-hit (right axis)</span></div>');
+   pr.querySelector('.reading').textContent=done.length?pct(done[done.length-1].c_pass):'—';
++  pr.querySelector('h2').title='One slot per epoch; head and candidate pass rate of each decided turn, as the gate scored them (wrong, unresolved and cap hits fail). To E270: the turn’s ~1,000-task private gate sample. From E272 (held-out gate): the round’s kept held-out tasks (~160–210), a harder set, so the level drops; published when the round closes. Gaps: no turn that epoch, E274 fail-closed (no evaluation), the open round, or a pending decision. Hover for details.';
+   // 6. batch size per turn
+   const bs=tile('panel-k1-batch','Batch per turn');const bwrap=bs.querySelector('.k1-chart')||bs.appendChild($('div',{class:'chart-wrap k1-chart'}));
+   if(!bs.querySelector('.legend'))bs.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Rollouts</span><span><i class="swatch" style="border:1px solid var(--accepted);border-radius:50%"></i>Skipped ahead (unserved, not ready)</span></div>');
+@@ -114,21 +115,34 @@
+    barChart(gw,done.map(t=>({x:lab(t),v:t.z??0,c:t.verdict==='green'?'var(--performance)':t.verdict==='red'?'var(--rejected)':'var(--accepted)',hollow:!(t.verdict==='green'||t.verdict==='red'),
+     tip:`<strong>E${t.epoch_index} · UID ${esc(t.uid)}</strong><span>z</span> ${fz(t.z)}  ${esc((t.verdict||'pending').toUpperCase())}\n<span>head</span> ${pct(t.h_pass)} <span>cand</span> ${pct(t.c_pass)}\n<span>cap-hit</span> ${pct(t.cap)} <span>n</span> ${esc(t.n??'—')}`})),
+     {label:'Gate z per turn',empty:'No K=1 turn decided yet.',min:-3,max:3,slots:10,fmt:v=>(v>0?'+':'')+v,ticks:(lo,hi)=>{const s=Math.ceil(Math.max(-lo,hi)/3)||1;const o=[];for(let v=Math.ceil(lo/s)*s;v<=hi;v+=s)o.push(v);return o;}});
+-   // pass chart: draw paired bars head/candidate as lines-of-dots
++   // pass chart (pt904u 2026-10-31): one slot per epoch from the first to the last turn, head + candidate pass rate per decided turn.
++   // Lines break at gaps (no turn, fail-closed, pending, held-out round still open) and where the measurement set changes (E272: held-out gate).
+    pw.querySelector('svg')?.remove();
+    {const W=pw.clientWidth||400,H=pw.clientHeight||220,P={l:40,r:36,t:10,b:22};const svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`});pw.prepend(svg);
++    const byE=new Map(done.map(t=>[t.epoch_index,t]));const e0=done.length?done[0].epoch_index:0,e1=done.length?done[done.length-1].epoch_index:-1;
++    const slots=[];for(let e=e0;e<=e1;e++)slots.push({e,t:byE.get(e)||null});
++    const basisLab=b=>b==='heldout'?'held-out round, kept tasks':b==='gate-sample'?'gate sample (~1,000 tasks, turn batch removed)':'—';
+     const pv=done.flatMap(t=>[t.h_pass,t.c_pass]).filter(v=>v!=null);const lo=pv.length?Math.max(0,Math.floor((Math.min(...pv)-.03)*20)/20):0,hi=pv.length?Math.min(1,Math.ceil((Math.max(...pv)+.02)*20)/20):1;
+     const ys=v=>P.t+(H-P.t-P.b)*(1-(v-lo)/((hi-lo)||1)),yc=v=>P.t+(H-P.t-P.b)*(1-v/0.4);
+     const st=(hi-lo)>.3?.1:.05;for(let g=lo;g<=hi+1e-9;g+=st){svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:ys(g),y2:ys(g),class:'k1-grid'}));const t=svgEl('text',{x:P.l-6,y:ys(g)+3,'text-anchor':'end'});t.textContent=Math.round(g*100)+'%';svg.append(t);}
+     for(const g of [0,.2,.4]){const t=svgEl('text',{x:W-P.r+4,y:yc(g)+3,fill:'var(--rejected)'});t.textContent=Math.round(g*100)+'%';svg.append(t);}
+     svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:yc(.2),y2:yc(.2),stroke:'var(--rejected)','stroke-dasharray':'3 3',opacity:.5}));
+-    const n=Math.max(done.length,10),bw=(W-P.l-P.r)/n,tp=tip(pw);
+-    done.forEach((t,i)=>{if(t.cap!=null)svg.append(svgEl('rect',{x:P.l+i*bw+bw*.3,y:yc(t.cap),width:bw*.4,height:yc(0)-yc(t.cap),fill:'var(--rejected)',opacity:.45}));});
+-    const ser=(k,c)=>{const pts=done.map((t,i)=>t[k]==null?null:[P.l+i*bw+bw/2,ys(t[k])]).filter(Boolean);if(pts.length>1)svg.append(svgEl('polyline',{points:pts.map(p=>p.join(',')).join(' '),fill:'none',stroke:c,'stroke-width':1.5}));for(const p of pts)svg.append(svgEl('circle',{cx:p[0],cy:p[1],r:3,fill:'var(--bg)',stroke:c,'stroke-width':1.5}));};
++    const n=Math.max(slots.length,10),bw=(W-P.l-P.r)/n,tp=tip(pw);
++    // measurement-set change marker
++    const fh=slots.findIndex(s=>s.t&&s.t.pass_basis==='heldout');
++    if(fh>0){const x=P.l+fh*bw;svg.append(svgEl('line',{x1:x,x2:x,y1:P.t,y2:H-P.b,stroke:'var(--muted)','stroke-dasharray':'2 3',opacity:.6}));const t=svgEl('text',{x:x+3,y:P.t+9,fill:'var(--muted)','font-size':9});t.textContent='held-out set →';svg.append(t);}
++    slots.forEach((s,i)=>{const t=s.t;if(t&&t.cap!=null)svg.append(svgEl('rect',{x:P.l+i*bw+bw*.3,y:yc(t.cap),width:bw*.4,height:yc(0)-yc(t.cap),fill:'var(--rejected)',opacity:.45}));});
++    const ser=(k,c)=>{const segs=[];let cur=[],pb=null;slots.forEach((s,i)=>{const t=s.t,v=t?t[k]:null;
++      if(v==null||(pb!==null&&t.pass_basis!==pb)){if(cur.length)segs.push(cur);cur=[];}
++      if(v!=null){cur.push([P.l+i*bw+bw/2,ys(v)]);pb=t.pass_basis;}});if(cur.length)segs.push(cur);
++     for(const pts of segs){if(pts.length>1)svg.append(svgEl('polyline',{points:pts.map(p=>p.join(',')).join(' '),fill:'none',stroke:c,'stroke-width':1.5}));for(const p of pts)svg.append(svgEl('circle',{cx:p[0],cy:p[1],r:3,fill:'var(--bg)',stroke:c,'stroke-width':1.5}));}};
+     ser('h_pass','var(--guide)');ser('c_pass','var(--performance)');
+-    done.forEach((t,i)=>{
+-     const hit=svgEl('rect',{x:P.l+i*bw,y:P.t,width:bw,height:H-P.t-P.b,fill:'transparent'});hit.addEventListener('mouseenter',()=>{tp.innerHTML=`<strong>E${t.epoch_index} · UID ${esc(t.uid)}</strong><span>head</span> ${pct(t.h_pass)}\n<span>candidate</span> ${pct(t.c_pass)}\n<span>cap-hit</span> ${pct(t.cap)} (GREEN needs &lt; 20%)`;tp.hidden=false;tp.style.left=Math.min(P.l+i*bw,W-220)+'px';tp.style.top='4px';});hit.addEventListener('mouseleave',()=>tp.hidden=true);svg.append(hit);});
+-    edgeLabels(svg,done.length,i=>P.l+i*bw,bw,H-6,i=>'E'+done[i].epoch_index);
++    slots.forEach((s,i)=>{const t=s.t;
++     const hit=svgEl('rect',{x:P.l+i*bw,y:P.t,width:bw,height:H-P.t-P.b,fill:'transparent'});hit.addEventListener('mouseenter',()=>{
++      tp.innerHTML=!t?`<strong>E${s.e}</strong>no K=1 turn this epoch (no candidate, no gate run)`:
++       `<strong>E${t.epoch_index} · UID ${esc(t.uid)} · ${esc((t.verdict||'pending').toUpperCase())}</strong><span>head</span> ${pct(t.h_pass)}\n<span>candidate</span> ${pct(t.c_pass)}\n<span>cap-hit</span> ${pct(t.cap)} (GREEN needs &lt; 20%)\n<span>set</span> ${esc(basisLab(t.pass_basis))}${t.n!=null?' · n '+esc(t.n):''}`+(t.pass_note&&t.h_pass==null?`\n<span>no pass rate</span> ${esc(t.pass_note)}`:'');
++      tp.hidden=false;tp.style.left=Math.min(P.l+i*bw,W-220)+'px';tp.style.top='4px';});hit.addEventListener('mouseleave',()=>tp.hidden=true);svg.append(hit);});
++    edgeLabels(svg,slots.length,i=>P.l+i*bw,bw,H-6,i=>'E'+slots[i].e);
+     if(!done.length){const e=pw.querySelector('.empty')||pw.appendChild($('p',{class:'empty'}));e.textContent='No K=1 turn decided yet.';}}
+    const smax=Math.max(1,...done.map(t=>t.skipped_not_ready||0));
+    barChart(bwrap,done.map(t=>({x:lab(t),v:t.rollouts||0,c:'var(--incentive)',dot:t.skipped_not_ready||0,

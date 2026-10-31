@@ -1,0 +1,11 @@
+--- a/index.html	2026-10-31 01:21:01.303512286 +0000
++++ b/index.html	2026-10-31 13:57:06.594628657 +0000
+@@ -19,7 +19,7 @@
+ <link rel="stylesheet" href="/regcost.css?v=20261030-regcost2">
+ <script defer src="/network-desktop.js?v=20261021-charts"></script>
+ <script defer src="/chart-expand.js?v=20261026-expand1"></script>
+-<script defer src="/k1.js?v=20261030-freefile"></script>
++<script defer src="/k1.js?v=20261031-passrates"></script>
+ <script defer src="/top.js?v=20261029-trim1"></script>
+ <script defer src="/timing.js?v=20261029-grid3"></script>
+ <script defer src="/regcost.js?v=20261030-regcost2"></script>

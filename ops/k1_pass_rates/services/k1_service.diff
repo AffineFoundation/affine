@@ -1,0 +1,48 @@
+--- a/k1_service.py	2026-10-31 01:38:18.785959382 +0000
++++ b/k1_service.py	2026-10-31 13:55:53.101888092 +0000
+@@ -188,6 +188,37 @@
+     return [dict(position=i, uid=u, hotkey=hk, turns=n, registration_block=b) for i, (n, b, u, hk) in enumerate(rows)]
+ 
+ 
++HELDOUT_PUB = WEB / 'gate' / 'heldout'
++
++
++def pass_rates(e, dec, ev):
++    """Per-turn aggregate pass rates for the 'Pass rate & cap-hit per turn' chart (Jacob pt904u 2026-10-31).
++    Old gate (to E270): DECISION.json evaluated.{h_pass,c_pass,n} on the ~1,000-task private gate sample (turn batch removed).
++    Held-out gate (from E272): DECISION.json redacts n and the pass rates while the held-out round is open ('published with the
++    round reveal'). Once the round's public reveal /gate/heldout/<round>.json says status=closed, publish the gate's own
++    aggregates for that turn (EVALUATED.private.json evaluated.{h_pass,c_pass,n}: the numbers the decision used, on the round's
++    kept tasks). Only these three aggregates; no task ids or per-task cells. Open round: hidden, labelled. Fail-closed: labelled."""
++    if ev.get('h_pass') is not None or ev.get('c_pass') is not None:
++        return dict(pass_basis='gate-sample')
++    if not dec.get('decision'):
++        return dict(pass_basis=None, pass_note='gate decision pending')
++    ho = dec.get('heldout') or {}
++    rid = ho.get('round_id')
++    if not rid:
++        return dict(pass_basis=None, pass_note='no pass rates in the gate record')
++    rr = rj(HELDOUT_PUB / (str(rid) + '.json')) or next((r for r in (rj(HELDOUT_PUB / 'index.json') or {}).get('rounds') or []
++                                                       if r.get('round_id') == rid), {})
++    if rr.get('status') != 'closed':
++        return dict(pass_basis='heldout', heldout_round=rid, pass_note='held-out round open: pass rates are published when the round closes')
++    pv = (rj(GATE / str(e) / 'EVALUATED.private.json') or {}).get('evaluated') or {}
++    if pv.get('h_pass') is None and pv.get('c_pass') is None:
++        why = (dec.get('reasons') or ['no evaluation'])[0] if ho.get('fail_closed') else 'no evaluation recorded'
++        return dict(pass_basis='heldout', heldout_round=rid, pass_note=str(why)[:200])
++    f = lambda x: float(x) if isinstance(x, (int, float)) else None
++    return dict(pass_basis='heldout', heldout_round=rid, h_pass=f(pv.get('h_pass')), c_pass=f(pv.get('c_pass')),
++                n=pv.get('n') if type(pv.get('n')) is int else None)
++
++
+ def verdicts(chain):
+     """-> list of per-turn records (epoch order) with verdict."""
+     out = []
+@@ -213,6 +244,7 @@
+             rec.update(verdict=v or ('timeout-promote' if pg.get('decision') == 'timeout-promote' else 'pending'),
+                        candidate=dec.get('candidate'), z=ev.get('z'), n=ev.get('n'), cap=ev.get('c_cap_rate'),
+                        h_pass=ev.get('h_pass'), c_pass=ev.get('c_pass'), decided_at_cr=dec.get('decided_at_cr'))
++            rec.update(pass_rates(e, dec, ev))   # 20261031 pt904u: pass rates for the held-out gate format too
+             # t764u transparency: the trained task indices (filtered signed dispatch) + post-decision public artifacts
+             kd = rj(d / 'TRAIN-DISPATCH-K1.json') or {}
+             rec['task_indices'] = sorted({int(x['index']) for x in ((kd.get('payload') or kd).get('selected') or []) if 'index' in x}) or None
