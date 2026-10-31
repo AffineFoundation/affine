@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-10-31 12:45 CR (UTC-6). Trainer v8.3.3j, gate heldout ivw-v2, batch format affine-batch-v1 / v2.
+Last updated: 2026-10-31 13:10 CR (UTC-6). Trainer v8.3.3j, gate heldout ivw-v2, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -168,11 +168,25 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   candidate's per-task grades are revealed (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
   While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
 
-## 7. Privacy and what gets published
+## 7. What is published, and when <!-- green-publish-20261031 -->
 
-- Your file stays private until your turn is GREEN. GREEN publishes it byte-exact at
-  https://affine.io/k1/turns/<epoch>/batch.json, together with turn.json (decision, trainer report, train params).
-- RED: only the decision, the counts and the file's sha256 are published. The file and its lr/kl stay private.
+- **While a round is open:** only the round commitment (/gate/heldout/current.json) and each turn's decision with z, gain and
+  cap rate (turn.json, gate.json). No seed, no task ids, no baseline and no per-task probe results.
+- **After each GREEN:** published automatically (the sidecar picks it up within a minute of the decision). It starts at
+  https://affine.io/k1/turns/<epoch>/green.json, which links and summarises:
+  - the decision math: z, gain, SE, se_task, sigma_run, kept, head and candidate pass, cap rates, and the recomputed decision;
+  - the baseline: the round seed, the commitment, selection block 0 and head blocks 1-3 per task, the kept tasks and the
+    frozen sampling settings (/gate/heldout/<round>.json);
+  - the probe results: head and candidate cells per task {n, c, w, u, b, x, tok, L} (/gate/reveal/<epoch>.json);
+  - the tasks: all 1000 sampled tasks with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
+  - the winning file, byte-exact (/k1/turns/<epoch>/batch.json), and its lr / kl and trainer report (/k1/turns/<epoch>/turn.json).
+  /k1/turns/index.json marks each GREEN with a `green` link.
+- **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl and the per-rollout
+  trajectories stay private. There's no green.json or tasks.json for a RED turn.
+- **When a round closes:** it closes on a GREEN, a head change, or 8 decided turns. Its seed, task ids, head baseline and
+  per-task candidate grades are then revealed. This also happens for rounds that closed after 8 RED turns, and for the
+  RED turns of a round that a GREEN closed. Those reveals carry grades only, never RED files or lr / kl. A new round
+  always draws a fresh os.urandom(32) seed, so a closed round says nothing about the next sample.
 
 ## 8. What winning means: weights
 
@@ -243,6 +257,7 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - Can I change the file after uploading? Yes, as often as you like until your turn. What's stored then is what's trained.
 - I got RED. Can I try again? Not with that registration. Register a new hotkey/UID (pay again) and queue again.
 - Is the gate's task sample public? Only its commitment, while the round is open. The seed and tasks are revealed when it closes.
+  After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
 - What does the trainer run, exactly? miner/validator/trainer-v833j + engine/. kit/train_step.py imports exactly those files.

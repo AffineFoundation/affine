@@ -54,9 +54,18 @@ miner/
    If your file is **missing or invalid** at that moment, you're skipped: you aren't charged, you keep your place,
    and the next member is tried. The file is copied as evidence and format-checked, then the validator trains one
    GRPO step from the published head on your groups and runs the held-out gate on the candidate.
-5. **GREEN** means the candidate becomes the new head (bf16 + fp32 master), and your file, `turn.json` and the
-   trainer report are published at https://affine.io/k1/turns/<epoch>/. **RED** means the head is kept and only the
-   decision, the counts and the file's sha256 are published. Your file and your lr/kl stay private.
+5. **GREEN** means the candidate becomes the new head (bf16 + fp32 master). Everything about the turn is then published,
+   starting from https://affine.io/k1/turns/<epoch>/green.json:
+   - the baseline numbers (`/gate/heldout/<round>.json`: seed, selection block and head blocks per task, kept tasks, settings);
+   - the probe results (`/gate/reveal/<epoch>.json`: head and candidate cells per task);
+   - the tasks (`/k1/turns/<epoch>/tasks.json`: id, prompt, answer, level, kept);
+   - the decision math (z, gain, SE, sigma_run, recomputed decision);
+   - the winning file (`batch.json`) with its lr / kl (`turn.json`).
+
+   **RED** means the head is kept and only the decision, z / gain, the counts and the file's sha256 are published.
+   Your file and your lr/kl stay private. While a round is open only its commitment is public. When a round closes,
+   its seed, task ids, baseline and per-task candidate grades are revealed, including the grades of RED turns in that
+   round, but never RED files or lr/kl. See https://affine.io/llms.txt section 7.
 6. **Winning = weight.** The last (up to) 10 distinct GREEN UIDs each get 1/N of the miner weight, for as long as
    the hotkey that earned it stays registered on that UID. Unearned weight burns to UID 0, the weights are never
    all zero, and they're set hourly. Current payees are listed at https://affine.io/k1.json (`payees`).
@@ -204,6 +213,7 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 | training parameters, support renorm, queue | https://affine.io/training.json |
 | queue, payees, weights | https://affine.io/k1.json |
 | turns (GREEN: batch.json, turn.json) | https://affine.io/k1/turns/index.json, /k1/turns/<epoch>/turn.json |
+| everything about a GREEN (baseline, probe, tasks, math, file, lr/kl) | /k1/turns/<epoch>/green.json, /k1/turns/<epoch>/tasks.json |
 | gate decisions / open round / reveals | https://affine.io/gate.json, /gate/heldout/current.json, /gate/reveal/<epoch>.json |
 | your file's format check | https://affine.io/ff/status.json |
 | performance tile data | https://affine.io/performance.json (fixed full pool + private holdout; informational only) |
