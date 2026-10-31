@@ -96,11 +96,7 @@ Run the complete genuine mock (no blockchain):
 .venv/bin/python -m subnet.tests
 ```
 
-Start a registered miner:
-
-```
-.venv/bin/python -m subnet.cli --gateway https://YOUR_GATEWAY --authority AUTHORITY_HEX --key /private/miner.seed
-```
+Mining: upload one batch file (docs/MINER_QUICKSTART.md); there is no miner CLI.
 
 Separate verifier/trainer/controller CLIs are exposed by `pyproject.toml`.
 See LIVE_SUBNET.md for chain single-writer cutover. Source checkout is required by

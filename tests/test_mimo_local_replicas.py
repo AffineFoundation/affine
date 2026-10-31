@@ -51,12 +51,6 @@ def test_local_option_wraps_once_exact_n_and_closes_before_journal(tmp_path,repl
     assert actor._group_journal is None and actor._closed
 
 
-@pytest.mark.parametrize('value',[True,0,3,'4'])
-def test_cli_rejects_invalid_local_setting_before_network(value):
-    from subnet.cli import run
-    with patch('subnet.cli.fetch_signed') as fetch,pytest.raises(ValueError,match='replicas'):
-        run(SimpleNamespace(mimo_replicas=value))
-    fetch.assert_not_called()
 
 
 def test_backend_dispatch_preserves_local_replica_option_without_mutating_job():

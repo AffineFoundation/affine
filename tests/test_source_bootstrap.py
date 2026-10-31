@@ -159,20 +159,6 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(output['args'],['--key','/explicit/key','--state','/explicit/state'])
             self.assertFalse(list(source.rglob('__pycache__')))
 
-    def test_changed_source_refuses_before_model_or_checkpoint(self):
-        import importlib.util
-        from types import SimpleNamespace, ModuleType
-        client=ModuleType('subnet.client');client.identity=MagicMock(return_value=SimpleNamespace(id='miner'));client.fetch_signed=MagicMock(return_value={'epoch':'new','source_bundle':{'sha256':'b'*64}});client.checkpoint_download=MagicMock();client.direct_r2_url=MagicMock()
-        miner=ModuleType('subnet.miner');miner.Miner=MagicMock();miner.EpochClosed=type('EpochClosed',(RuntimeError,),{})
-        batches=ModuleType('subnet.batches');batches.UploadBudgetExceeded=type('UploadBudgetExceeded',(Exception,),{})
-        model=ModuleType('subnet.model');model.check_runtime_profile=MagicMock()
-        protocol=ModuleType('subnet.protocol');protocol.entries=MagicMock();protocol.sample_key=MagicMock()
-        with patch.dict(sys.modules,{'subnet.client':client,'subnet.miner':miner,'subnet.batches':batches,'subnet.model':model,'subnet.protocol':protocol}):
-            spec=importlib.util.spec_from_file_location('subnet.bootstrap_test_cli',Path(b.__file__).with_name('cli.py'));module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-            with tempfile.TemporaryDirectory() as tmp:
-                args=SimpleNamespace(cap_file=None,key='explicit',state=tmp,manifest_url=URL,current_url=None,authority='a'*64,source_bundle_sha256='a'*64)
-                with self.assertRaisesRegex(ValueError,'source changed'):module.run(args)
-            client.checkpoint_download.assert_not_called();miner.Miner.assert_not_called();model.check_runtime_profile.assert_not_called()
 
     def test_main_preserves_explicit_key_and_source_pinning(self):
         body,desc=archive()

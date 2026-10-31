@@ -66,8 +66,12 @@ held-out gate wording: `services/grants-and-gate-text.diff`. `activate_ff.sh MOD
 
 ## Legacy removal (after the cutoff)
 
-Branch `legacy-client-removal-20261031` removes the old client (`subnet/cli.py`, the `affine-miner` entry point,
-client-only tests); merge after 2026-10-31 09:00 UTC. The validator-side legacy paths are switched off by
+Done 2026-10-31 (Jacob 07:03 CR): branch `legacy-client-removal-20261031` (old client `subnet/cli.py`, the `affine-miner`
+entry point, client-only tests) merged into main; `legacy_off.sh MODE=apply` ran after the e352 decision (07:14 CR),
+record in `RA/20261031-legacy-removal`. mining.json no longer publishes `old_format_cutoff` / `old_format_notice`
+(publisher patch + FF-PUBLIC.json texts, `legacy_removal/public-text.diff`, installed in the e354 gap). Tools and the
+staged plan for removing the legacy code from the live closure (not done; needs a signed source release):
+`legacy_removal/` (`STEP3-PLAN.md`). The validator-side legacy paths are switched off by
 their existing no-restart flags with `activation/legacy_off.sh` (MODE=check|apply|revert: `FF.json legacy_capture=false`;
 `EPOCH-TIME-LIFECYCLE.json` seal_pregrade / seal_prefetch / capture_put_fanout / dual_extended = false), only after
 the cutoff + 30 min and two clean post-cutoff epochs. Code removal from the live closure needs a new signed source

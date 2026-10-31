@@ -48,16 +48,5 @@ class MinerDeadline(unittest.TestCase):
             with self.assertRaises(EpochClosed):a.search(1)
             runtime.assert_not_called()
 
-    def test_cli_stops_this_epoch_cleanly_without_trying_more_tasks(self):
-        from subnet import cli
-        manifest=dict(epoch='test',deadline=20,capabilities={'owned':{}},checkpoint={'id':'model'})
-        miner=Mock(batches=[]);miner.search.side_effect=EpochClosed('rollout finished late')
-        with tempfile.TemporaryDirectory() as root:
-            args=SimpleNamespace(search_budget=1,manifest_url='https://unused.invalid',current_url=None,
-                cap_file=None,key='owned.seed',state=root,gateway='https://unused.invalid',authority='trusted',
-                max_batches=3,once=True,env_id=None,indices=None)
-            with patch.object(cli,'fetch_signed',return_value=manifest),patch.object(cli,'identity',return_value=SimpleNamespace(id='owned')),patch.object(cli,'selected_tasks',return_value=[('math',1),('math',2)]),patch.object(cli,'checkpoint_download',return_value=Path(root)),patch.object(cli,'check_runtime_profile'),patch.object(cli,'Miner',return_value=miner),patch.object(cli.time,'time',return_value=19):
-                cli.run(args)
-        miner.search.assert_called_once();miner.upload.assert_not_called()
 
 if __name__=='__main__':unittest.main()

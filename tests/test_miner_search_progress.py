@@ -10,7 +10,6 @@ from unittest.mock import patch
 import numpy as np
 
 from subnet import forced_sampling as forced
-from subnet.cli import validate_search_budget
 from subnet.miner import Miner, EpochClosed
 from subnet.miner_search_state import SearchState, NoncesExhausted, digest
 from subnet.storage import canonical
@@ -301,56 +300,9 @@ class ProgressTests(unittest.TestCase):
             state=str(self.root/'cli'),manifest_url='https://manifest.invalid',current_url=None,
             gateway='https://unused.invalid',authority='trusted',max_batches=None,once=True,source_bundle_sha256='9'*64)
 
-    def test_actual_CLI_restart_completes_partial_group_and_only_uploads_complete(self):
-        from subnet import cli
-        args=self.cli_args()
-        response=SimpleNamespace(status_code=200,raise_for_status=lambda:None)
-        with patch.object(cli,'fetch_signed',return_value=self.manifest),patch.object(cli,'identity',return_value=self.identity),patch.object(cli,'check_runtime_profile'),patch.object(cli,'checkpoint_download',return_value='unused'),patch('subnet.miner.requests.put',return_value=response)as upload:
-            cli.run(args)
-            upload.assert_not_called()
-            cli.run(args)
-            self.assertEqual(upload.call_count,1)
-        self.assertEqual(self.calls,list(range(36)))
-        from subnet.batches import unpack
-        rows=unpack(upload.call_args.kwargs['data'])
-        self.assertEqual(len(rows),1);self.assertEqual(len(rows[0][0]['rollouts']),8)
 
-    def test_actual_CLI_accepts_budget129_and_rejects1001_before_download(self):
-        from subnet import cli
-        args=self.cli_args(129);self.kind=lambda n:'neutral'
-        with patch.object(cli,'fetch_signed',return_value=self.manifest),patch.object(cli,'identity',return_value=self.identity),patch.object(cli,'check_runtime_profile'),patch.object(cli,'checkpoint_download',return_value='unused')as download,patch('subnet.miner.requests.put')as upload:
-            cli.run(args);self.assertEqual(self.calls,list(range(129)));upload.assert_not_called()
-            args.search_budget=1001;download.reset_mock()
-            with self.assertRaisesRegex(ValueError,'authorized limit'):cli.run(args)
-            download.assert_not_called()
 
-    def test_CLI_closes_journal_on_exit_and_error(self):
-        from subnet import cli
-        args=self.cli_args(1)
-        made=[]
-        def construct(*a,**k):
-            instance=Miner(*a,**k);made.append((instance,instance.search_state));return instance
-        with patch.object(cli,'fetch_signed',return_value=self.manifest),patch.object(cli,'identity',return_value=self.identity),patch.object(cli,'check_runtime_profile'),patch.object(cli,'checkpoint_download',return_value='unused'),patch.object(cli,'Miner',side_effect=construct):
-            cli.run(args)
-            self.assertIsNone(made[-1][1].db);self.assertIsNone(made[-1][1].lock_fd)
-            with patch.object(self.runtime,'rollout',side_effect=ValueError('bad runtime')):
-                with self.assertRaisesRegex(ValueError,'bad runtime'):cli.run(args)
-            self.assertIsNone(made[-1][1].db);self.assertIsNone(made[-1][1].lock_fd)
 
-    def test_CLI_handover_closes_old_journal_and_retires_only_local_partials(self):
-        from subnet import cli
-        args=self.cli_args(1);args.once=False
-        next_manifest=copy.deepcopy(self.manifest);next_manifest['epoch']='next-epoch';next_manifest['deadline']+=3600
-        made=[]
-        def construct(*a,**k):
-            instance=Miner(*a,**k);made.append((instance,instance.search_state));return instance
-        def runtime(checkpoint,manifest,*a,**k):
-            self.context=forced.binding(manifest,self.identity.id);return self.runtime
-        with patch.object(cli,'fetch_signed',side_effect=[self.manifest,next_manifest]),patch.object(cli,'identity',return_value=self.identity),patch.object(cli,'check_runtime_profile'),patch.object(cli,'checkpoint_download',return_value='unused'),patch.object(cli,'Miner',side_effect=construct),patch('subnet.miner.make_runtime',side_effect=runtime),patch.object(cli.time,'sleep',side_effect=[None,RuntimeError('test stop')]),patch('subnet.miner.requests.put')as upload:
-            with self.assertRaisesRegex(RuntimeError,'test stop'):cli.run(args)
-            upload.assert_not_called()
-        self.assertEqual(self.calls,[0,0]);self.assertEqual(len(made),2)
-        for miner,journal in made:self.assertIsNone(journal.db);self.assertIsNone(journal.lock_fd)
 
     def test_epoch_retirement_reclaims_partial_disk_pages_automatically(self):
         miner=self.miner()
@@ -383,12 +335,5 @@ class ProgressTests(unittest.TestCase):
             with self.subTest(start=start),self.assertRaises(ValueError):miner.search_state.reserve('math',0,start)
         self.assertEqual(miner.search_state.load('math',0)[0],0)
 
-    def test_CLI_budget_follows_v5_manifest_but_keeps_legacy_behavior(self):
-        for value in (1,32,50,128,129,1000):self.assertEqual(validate_search_budget(value,self.manifest),value)
-        for value in (True,0,-1,1.5,'32',1001):
-            with self.subTest(value=value),self.assertRaises(ValueError):validate_search_budget(value,self.manifest)
-        for old in ({},{'sampling_contract':{'version':forced.VERSION,'max_attempts':16}}):
-            self.assertEqual(validate_search_budget(128,old),128)
-            with self.assertRaises(ValueError):validate_search_budget(129,old)
 
 if __name__=='__main__':unittest.main()

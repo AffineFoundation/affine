@@ -4,19 +4,16 @@ Bittensor subnet120 (MiMo GRPO). **Miners upload one batch file** (prompts, roll
 rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
 checks the format, trains one GRPO step from the published head and the promotion gate
 keeps the candidate only if it improves the model on a private held-out set.
-No mining client, no epochs or commitments, no TOPLOC, no proofs, no regrading.
+Rewards are used as given; no mining software is needed.
 
 - **[Mining: the batch file, upload and rules](docs/MINER_QUICKSTART.md)** ·
   reference helper [`miner/affine_batch.py`](miner/affine_batch.py) ·
   live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
-- Old-format (client) batches are trained until 2026-10-31 09:00 UTC (03:00 CR); the old
-  client (`subnet.miner_supervisor`) has been removed.
 - [Validator side of the free-file protocol (lifecycle, trainer v8.3.3h, activation/revert)](ops/free_file/README.md)
 - [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
 - [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
 - [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
-- [MiMo miner migration and runtime requirements](docs/MIMO_MINER_MIGRATION.md)
 - [MiMo operator lifecycle and independent audit loop](docs/MIMO_LIFECYCLE.md)
 - [Experimental retained-Adam NLL objective (inactive)](docs/EXPERIMENTAL_RETAINED_NLL.md)
 - [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
