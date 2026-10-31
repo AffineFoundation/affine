@@ -1,0 +1,9 @@
+{
+ "version": "sn120-ff-pins-v1",
+ "v829_launcher": "/home/const/subnet120-rewrite/state/root-audits/20261029-v829u-125task/release-v829x-v823u-signed/mimo_v829_train_gate_launcher.py",
+ "files": {
+  "ff_launcher.py": "937ad94c2924aeb821f53d54fa1122ad5edcefca395fc913b160c26c1f9e5814",
+  "ff_lifecycle.py": "7b699a59fd59e7d03a44df7643e5d0d2a0767066edb0a35728c3a420b4d176c0",
+  "ff_format.py": "a088d5ffb14897175cafd0ee76e0c9b74dae922932673a4e35c4b43f0b18528a"
+ }
+}

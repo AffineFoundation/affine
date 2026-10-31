@@ -1,0 +1,22 @@
+{
+ "authority": "3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd",
+ "authorized": "Jacob 2026-10-31 07:08 CR pt902u via parent agent (optional lr and kl in free-file submissions)",
+ "base": "release-v833i-signed",
+ "changed_host_files": [
+  "mimo_host_trainer_v83.py",
+  "ff_trainer.py"
+ ],
+ "dry_run": false,
+ "engine_changed": false,
+ "host_file_sha256": {
+  "ff_trainer.py": "da4bbf257f42c5710c719bf4267f2b5b2f624a2e82a5d772fa21eb4cc1bf876f",
+  "mimo_host_trainer_v83.py": "fed22395a6ad39286b4607d431ce17e8b39d08dd9b5fdeeb36809281b7dafc6d"
+ },
+ "patch": "RA/20261031-ff-train-params/release/patch_v833j.py sha256 d55bdf0f7d4c3164908a97367f969fe8030188f2c168882573becc1f8fc69e7b",
+ "services_changed": false,
+ "trainer_host": {
+  "configuration_sha256": "426ef403292023d3852200e22477f38d4bfea5f81e830eeeb8b10c2fa5d1d75a",
+  "sha256": "e21ab827b4cc8f52ce086de499bc5bf8c3a2653acfde3960c91a02a398d25f3f"
+ },
+ "version": "mimo-v833j-root-signing-result-v1"
+}

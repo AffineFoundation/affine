@@ -10,6 +10,7 @@ Rewards are used as given; no mining software is needed.
   reference helper [`miner/affine_batch.py`](miner/affine_batch.py) ·
   live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
 - [Validator side of the free-file protocol (lifecycle, trainer v8.3.3h, activation/revert)](ops/free_file/README.md)
+- Optional per-turn `lr` (1.25e-7 to 1e-6, default 5e-7) and `kl` (0.005 to 0.1, default 0.02) in an `affine-batch-v2` file, live from e362: [format and math](docs/MINER_QUICKSTART.md#optional-affine-batch-v2-optional-lr-and-kl-from-2026-10-31) · [validator side (trainer v8.3.3j, activation/revert)](ops/ff_train_params/README.md)
 - [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
 - [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)

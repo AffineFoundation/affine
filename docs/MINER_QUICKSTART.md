@@ -22,7 +22,7 @@ python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY --ex
 
 Your key file holds the hotkey's 32-byte Ed25519 seed as 64 hex characters (mode 0600). Never share it, a coldkey or a mnemonic.
 
-## 2. The file: `affine-batch-v1`
+## 2. The file: `affine-batch-v1` (or `affine-batch-v2` with optional lr / kl)
 
 ```json
 {
@@ -58,6 +58,42 @@ Rules (full list: mining.json → `batch_file.rules`):
   whole, in file order.
 - Any broken rule in the kept part makes the file invalid: you are skipped for that turn, not
   charged, and keep your queue place.
+
+### Optional: `affine-batch-v2`: optional lr and kl (from 2026-10-31)
+
+A v2 file is a v1 file with `"version": "affine-batch-v2"` and an optional top-level `train`:
+
+```json
+{
+  "version": "affine-batch-v2",
+  "hotkey": "5YourHotkeySs58Address",
+  "train": {"lr": 8e-7, "kl": 0.01},
+  "groups": [ ...same as v1... ]
+}
+```
+
+| field | default | allowed (inclusive) | what it does |
+| --- | --- | --- | --- |
+| `train.lr` | 5e-7 | 1.25e-7 .. 1e-6 | step size of your turn's one step |
+| `train.kl` | 0.02 | 0.005 .. 0.1 | kl_coefficient of your turn's loss |
+
+- Both fields are optional; an omitted field takes its default. `train` itself is optional in v2.
+  v1 files keep working unchanged (they train with the defaults). `train` in a v1 file is invalid.
+- Out of range, not a number (string, true/false, null) or any other key under `train` = the whole
+  file is invalid (skipped, not charged, you keep your place). Values are never clamped.
+- How lr enters (trainer v8.3.3j): m = lr / 5e-7. For each tensor, n0_t = the default step norm
+  (min(||d_t||, c_t), c_t = 2e-5 x ||W_t|| the per-tensor cap); your step norm is n_t = min(m x n0_t, c_t),
+  then the global cap 1.0 and the direction g_t/||g_t|| as before: Delta_t = s x n_t x g_t / ||g_t||.
+  Below the default every tensor's step shrinks by exactly m. Above it only tensors still under the
+  per-tensor cap grow, up to the cap (the cap stays a ceiling; with the default many tensors already
+  sit at it, so lr 1e-6 moves the model less than 2x).
+- How kl enters: it replaces kl_coefficient in
+  L = loss_scale x (1/N) x sum_i (1/K_i) x sum_t [pg + kl x k3] for your turn only.
+- Everything else is fixed: per-tensor cap, global cap and gradient clip, overlong penalty, starting
+  head, one step per turn, batch cap (125 x 8), queue and gate.
+- Your effective lr / kl are published with your turn only if it is GREEN (turn.json
+  training.train_params, mining.json training.miner_train_params). RED: private like the file.
+- Check locally: python3 affine_batch.py check --hotkey <ss58> batch.json (reports format, lr, kl).
 
 ## 3. Upload
 

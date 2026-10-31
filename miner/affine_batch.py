@@ -10,11 +10,17 @@
 --key: a file holding your activated hotkey's 32-byte Ed25519 seed as 64 hex characters (the same key file the old miner used).
 Your link is https://affine.io/ff/links/<hotkey>.json: a SealedBox (libsodium crypto_box_seal) sealed to your hotkey's Ed25519
 public key (converted to X25519). Only your seed opens it. Format and rules: https://affine.io/mining.json -> batch_file.
+
+Formats: affine-batch-v1, and affine-batch-v2 = v1 + an optional top-level "train": {"lr": <number>, "kl": <number>}
+(either may be omitted; defaults lr 5e-7, kl 0.02; bounds lr [1.25e-7, 1e-6], kl [0.005, 0.1]; out of range = invalid file).
 """
 import argparse, base64, hashlib, json, math, sys, time, urllib.request
 
 SITE = 'https://affine.io'
 FORMAT = 'affine-batch-v1'
+FORMAT_V2 = 'affine-batch-v2'
+TRAIN_DEFAULTS = {'lr': 5e-07, 'kl': 0.02}
+TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}
 
 # ---- libsodium crypto_box_seal_open in pure Python (X25519 + XSalsa20-Poly1305, nonce = blake2b(epk || pk, 24)) ----
 P = 2 ** 255 - 19
@@ -126,9 +132,25 @@ def check(raw, hotkey, caps):
         v = json.loads(raw.decode('utf-8'), parse_constant=lambda c: (_ for _ in ()).throw(ValueError('non-finite number')))
     except Exception as e:
         return False, 'not UTF-8 JSON: %s' % e
-    if not isinstance(v, dict) or set(v) != {'version', 'hotkey', 'groups'}:
+    if not isinstance(v, dict):
         return False, 'top level keys must be exactly version, hotkey, groups'
-    if v['version'] != FORMAT: return False, 'version must be ' + FORMAT
+    train = dict(TRAIN_DEFAULTS)
+    if v.get('version') == FORMAT_V2:
+        if not ({'version', 'hotkey', 'groups'} <= set(v) <= {'version', 'hotkey', 'groups', 'train'}):
+            return False, 'top level keys must be version, hotkey, groups and optionally train (%s)' % FORMAT_V2
+        t = v.get('train', {})
+        if not isinstance(t, dict): return False, 'train must be an object {"lr": number, "kl": number} (either may be omitted)'
+        if set(t) - set(TRAIN_BOUNDS): return False, 'train keys must be among lr, kl'
+        for k, (lo, hi) in TRAIN_BOUNDS.items():
+            if k in t:
+                x = t[k]
+                if type(x) not in (int, float) or not math.isfinite(x) or not lo <= x <= hi:
+                    return False, 'train.%s must be a number in [%r, %r] (got %s)' % (k, lo, hi, json.dumps(x)[:40])
+                train[k] = float(x)
+    else:
+        if set(v) != {'version', 'hotkey', 'groups'}:
+            return False, 'top level keys must be exactly version, hotkey, groups' + (' ("train" needs %s)' % FORMAT_V2 if 'train' in v else '')
+        if v['version'] != FORMAT: return False, 'version must be %s or %s' % (FORMAT, FORMAT_V2)
     if v['hotkey'] != hotkey: return False, 'hotkey does not match'
     gs = v['groups']
     if not isinstance(gs, list) or not gs: return False, 'groups must be a non-empty list'
@@ -151,8 +173,9 @@ def check(raw, hotkey, caps):
             kept += 1; n += len(rs)
         elif kept == 0:
             return False, 'the first group alone exceeds the rollout cap'
-    return True, 'ok: %d prompts, %d rollouts will be trained (cap %d prompts / %d rollouts)%s' % (
-        kept, n, caps['max_tasks_per_miner'], caps['max_rollouts_per_miner'], '' if kept == len(gs) else '; %d prompts beyond the cap are dropped' % (len(gs) - kept))
+    return True, 'ok (%s): %d prompts, %d rollouts will be trained (cap %d prompts / %d rollouts), lr %g, kl %g%s' % (
+        v['version'], kept, n, caps['max_tasks_per_miner'], caps['max_rollouts_per_miner'], train['lr'], train['kl'],
+        '' if kept == len(gs) else '; %d prompts beyond the cap are dropped' % (len(gs) - kept))
 
 
 def caps_now():

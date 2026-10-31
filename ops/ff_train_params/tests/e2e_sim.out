@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "epoch": 353,
+ "queue": [
+  0,
+  1,
+  2
+ ],
+ "out_of_range_v2": {
+  "uid": 6,
+  "skipped": true,
+  "reason": "invalid-file: train.lr must be a number in [1.25e-07, 1e-06] (got 2e-06)"
+ },
+ "v1_file": {
+  "uid": 7,
+  "format": "affine-batch-v1",
+  "dispatch_train": {
+   "defaults": {
+    "kl": 0.02,
+    "lr": 5e-07
+   },
+   "given": [],
+   "kl": 0.02,
+   "lr": 5e-07
+  },
+  "applied": {
+   "lr_multiplier": 1.0,
+   "kl": 0.02
+  },
+  "same_config_object": true,
+  "path": "v833i-exact"
+ },
+ "v2_valid_params": {
+  "uid": 191,
+  "format": "affine-batch-v2",
+  "dispatch_train": {
+   "defaults": {
+    "kl": 0.02,
+    "lr": 5e-07
+   },
+   "given": [
+    "kl",
+    "lr"
+   ],
+   "kl": 0.05,
+   "lr": 1e-06
+  },
+  "applied": {
+   "lr_multiplier": 2.0,
+   "kl": 0.05
+  },
+  "signed_config_reported_unchanged": true
+ },
+ "flag_off": {
+  "v2_files": "invalid (skipped)",
+  "v1_file_dispatch_has_train": false
+ }
+}

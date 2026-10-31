@@ -1,0 +1,17 @@
+95fb3542d10d9fb64bedefe56118e88de671eafafcb8379d865044bebad0e4a4  ./SIGNING-RESULT.json
+e21ab827b4cc8f52ce086de499bc5bf8c3a2653acfde3960c91a02a398d25f3f  ./trainer-host-v833j/TRAINER-HOST.v8.3.3.ROOT-ADMITTED.private.json
+da4bbf257f42c5710c719bf4267f2b5b2f624a2e82a5d772fa21eb4cc1bf876f  ./trainer-host-v833j/ff_trainer.py
+c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50  ./trainer-host-v833j/math_levels.json
+fed22395a6ad39286b4607d431ce17e8b39d08dd9b5fdeeb36809281b7dafc6d  ./trainer-host-v833j/mimo_host_trainer_v83.py
+4432e51bce406dcc73dc04438e351497ec910087ad6a4a1152fa974a26cd9e44  ./trainer-host-v833j/patched/mimo_grpo.publication.py
+83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2  ./trainer-host-v833j/patched/mimo_grpo.service.py
+f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217  ./trainer-host-v833j/patched/mimo_grpo.transaction.py
+7469d2984b0771ef975f0d6348314334571437bc8a6db398508b4c39abce79cc  ./trainer-host-v833j/patched/mimo_training_worker.py
+8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad  ./trainer-host-v833j/v8210_optimizer_offpath.py
+b4a4cb78b7fbeb20698880196f5933855529d027908830da05e9a67dc809f966  ./trainer-host-v833j/v8211_batched.py
+be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2  ./trainer-host-v833j/v824_optimizer_fast.py
+1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e  ./trainer-host-v833j/v824_publication_fast.py
+1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426  ./trainer-host-v833j/v824_staging_fast.py
+afc0408dc9f4a929523488679ebed37b3a2d687a6f45b7d536811b5edb0a27ac  ./trainer-host-v833j/v83_dp.py
+ec5cc5f5c920e469b3731ce93dc6d592f2a054ed25c2785f865d30efb42c829f  ./trainer-host-v833j/v83_fast_kernels.py
+ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2  ./trainer-host-v833j/v83_kernels_policy.py
