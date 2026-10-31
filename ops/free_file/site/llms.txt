@@ -100,9 +100,21 @@ https://affine.io/ff/status.json must say valid: true. Re-upload any time.
 
 ## 5. Training (one stateless step)
 
-- One AdamW step from zero optimizer state from the published head (lr fixed by the validator,
+- One stateless step from the published head and its fp32 master (lr 5e-7 fixed by the validator,
   see training.optimizer), GRPO loss with one group per prompt (training.loss), the trainer recomputes
   every log-prob from the head. No continuous training: every turn starts from the published head.
+- Direction step (from epoch 354, trainer v8.3.3i) <!-- renorm-step-20261031 -->: every tensor moves by exactly the norm of the old capped
+  fresh-AdamW step (same lr 5e-7, same 2e-5 per-tensor relative cap, same global cap, computed from the fp32
+  master), but in the direction of its gradient g_t/||g_t|| instead of sign(g):
+  `Delta_t = fp32(s * r_t * ||d_t|| / ||g_t||) * g_t`, `M_C = M_H - Delta_t`, candidate = bf16_rne(M_C).
+  Recipe: https://affine.io/k1/spec/step-recipe.json -> optimizer.direction_v833i.
+- Support renorm (from epoch 354): the policy-gradient term uses log q of your sampled token renormalized over
+  the trainer's own top-20 then top-p 0.95 support (the manifest sampling settings, recomputed from the head's
+  logits). A sampled token outside that support is dropped from the PG term only; it still counts in the KL
+  term and the derail mask. Files are never rejected for it (format-only validation). The per-turn
+  outside-support token fraction is published: https://affine.io/training.json -> support_renorm.last_turn
+  (also mining.json training.support_renorm) and turn.json training.support_renorm. Sampling your rollouts
+  with top_k 20 / top_p 0.95 / temperature 1.0 from the head keeps every token inside the support.
 - Batch file -> trainer: prompt rendered as above, output tokens + EOS rule as above, reward as given.
 
 ## 6. Promotion gate
