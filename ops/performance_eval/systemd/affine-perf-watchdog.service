@@ -1,0 +1,5 @@
+[Unit]
+Description=Watchdog for affine-perf-eval (restart if inactive or heartbeat > 10 min)
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/perf_watchdog.sh

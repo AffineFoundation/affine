@@ -132,6 +132,18 @@ https://affine.io/ff/status.json must say valid: true. Re-upload any time.
 - The round's baseline (seed, task ids, grades) is revealed only after the round closes / after a GREEN
   (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
 
+<!-- perf-eval-20261031 -->
+## Performance over time (informational)
+
+- https://affine.io/performance.json: pass rate of every king (head) on two FIXED sets, scored on a separate machine:
+  the full public affine_math pool (all 7,496 tasks) and a private holdout (4,976 MATH test problems, minus any that
+  match a pool task; only its size and sha256 are published: 08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734).
+- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20, 8192 output tokens) and grader as the gate probe; fixed
+  seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (two lines, one per set).
+- Informational only: it never affects promotions, the gate, weights or training. The gate itself scores a few hundred
+  head-mixed tasks per round, so its pass rates are not comparable across rounds; these are.
+<!-- /perf-eval-20261031 -->
+
 ## 7. Privacy and transparency
 
 - Your file stays private until a GREEN. GREEN publishes it byte-exact at

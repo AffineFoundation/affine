@@ -1,0 +1,14 @@
+/* Performance tile (pt911u 2026-10-31). Square tile like the rest of the grid; chart + latest values side by side. */
+#panel-performance .perf-body{flex:1 1 0;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:stretch}
+#panel-performance .perf-chart{min-height:0;height:100%}
+#panel-performance .perf-latest{margin:0;display:flex;flex-direction:column;justify-content:center;gap:12px;font:11px/1.4 var(--mono);min-width:104px}
+#panel-performance .perf-latest div{border-left:1px solid var(--line);padding-left:8px}
+#panel-performance .perf-latest dt{color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+#panel-performance .perf-latest dt small{display:block;text-transform:none;letter-spacing:0}
+#panel-performance .perf-latest dd{margin:2px 0 0;color:var(--ink);font-size:16px;font-variant-numeric:tabular-nums;white-space:nowrap}
+#panel-performance .perf-latest dd small{color:var(--muted);font-size:10px;margin-left:4px}
+#panel-performance .perf-latest dd.perf-king{font-size:10px;color:var(--muted)}
+#panel-performance .perf-latest .swatch{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:1px;vertical-align:0}
+#panel-performance .perf-note{margin:8px 0 0;font:10px/1.5 var(--mono);color:var(--muted);max-width:none}
+#panel-performance .perf-note a{color:inherit}
+@media(max-width:699px){#panel-performance .perf-body{grid-template-columns:minmax(0,1fr)}#panel-performance .perf-latest{flex-direction:row}}

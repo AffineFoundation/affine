@@ -1,0 +1,17 @@
+[Unit]
+Description=Affine SN120 performance eval (full 7,496 pool + private holdout pass rate per king on its own pod calm-orbit-ef; publishes affine.io/performance.json; read-only w.r.t. gate/weights/trainer). Jacob pt911u 2026-10-31
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/code/perf_service.py
+Restart=always
+RestartSec=30
+Nice=10
+MemoryMax=2G
+UMask=0022
+StandardOutput=append:/home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/state/service.log
+StandardError=append:/home/const/subnet120-rewrite/state/root-audits/20261031-performance-eval/state/service.log
+
+[Install]
+WantedBy=default.target

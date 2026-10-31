@@ -1,0 +1,7 @@
+[Unit]
+Description=Every 5 min: affine-perf-eval watchdog
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target

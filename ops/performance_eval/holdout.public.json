@@ -1,0 +1,12 @@
+{
+ "version": "sn120-perf-holdout-v1",
+ "n": 4976,
+ "sha256": "08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734",
+ "source": "MATH test split (5,000 problems; DigitalLearningGmbH/MATH-lighteval test)",
+ "removed": {
+  "near_J>=0.9": 21,
+  "exact": 3
+ },
+ "rule": "drop problems without a reference \\boxed answer and any problem matching a pool (MATH train) task: exact after normalisation, token-3-gram Jaccard >= 0.9, or Jaccard >= 0.8 with the same normalised answer",
+ "hash_rule": "sha256 of newline-joined '<id>:<sha256(problem)>:<sha256(answer)>' over the frozen list in id order; the list itself is private"
+}
