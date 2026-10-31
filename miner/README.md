@@ -9,7 +9,7 @@ free-file `affine-batch-v1/v2`). Every file's sha256 and its live source are in
 [`validator/MANIFEST.sha256`](validator/MANIFEST.sha256). Only one file is changed from the live copy:
 `gate_service.py`, which has the probe-pod SSH host and absolute paths replaced by placeholders. The task
 selection of any open round, its seed, and any private files are **not** published. A round's seed and task
-ids are only revealed when it closes.
+ids are only revealed if a GREEN closes it, and RED turns are never revealed.
 
 ```
 miner/
@@ -63,9 +63,10 @@ miner/
    - the winning file (`batch.json`) with its lr / kl (`turn.json`).
 
    **RED** means the head is kept and only the decision, z / gain, the counts and the file's sha256 are published.
-   Your file and your lr/kl stay private. While a round is open only its commitment is public. When a round closes,
-   its seed, task ids, baseline and per-task candidate grades are revealed, including the grades of RED turns in that
-   round, but never RED files or lr/kl. See https://affine.io/llms.txt section 7.
+   Your file, your lr/kl and your probe results stay private. While a round is open only its commitment is public.
+   Only GREEN turns are revealed: a round that a GREEN closed publishes its seed, task ids, baseline and the GREEN
+   candidate's per-task grades. RED turns and their probe results are never published, and a round that closes
+   without a GREEN is never revealed. See https://affine.io/llms.txt section 7.
 6. **Winning = weight.** The last (up to) 10 distinct GREEN UIDs each get 1/N of the miner weight, for as long as
    the hotkey that earned it stays registered on that UID. Unearned weight burns to UID 0, the weights are never
    all zero, and they're set hourly. Current payees are listed at https://affine.io/k1.json (`payees`).
@@ -155,7 +156,8 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   (the selection) runs the head k=4 on all 1000, and the **kept** tasks are those with 0 < c < 4. Blocks 1–3 are
   three more head runs on the kept tasks. Every candidate of the round runs k=4 on the kept tasks with **the same
   seeds as block 1**. The turn batch is not excluded. A round lasts until a GREEN, a head change or 8 decided turns.
-  When it closes, its seed, task ids and grades are revealed (`/gate/heldout/<round>.json`, `/gate/reveal/<epoch>.json`).
+  If a GREEN closes it, its seed, task ids, baseline and the GREEN turn's grades are revealed (`/gate/heldout/<round>.json`,
+  `/gate/reveal/<epoch>.json`); RED turns are never revealed.
 - **Score** (`heldout.score_ivw`): w_t = 1/(q(1−q)) with q = (c_sel+1)/(4+2); d_t = candidate rate − head rate over the 12
   head samples; gain = Σw·d/Σw; se_task = √(Σw²d²)/Σw; SE = √(se_task² + σ_run²·(1+1/3)), where σ_run = the run-to-run
   spread of the 3 head blocks (`heldout.run_sigma`; there's no floor since E354, and it was 0.022 for E271–E353); z = gain/SE.

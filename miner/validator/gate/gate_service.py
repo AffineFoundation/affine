@@ -756,6 +756,22 @@ def _ho_write_public(path, doc, open_round):
     wj(path, doc, 0o644)
 
 
+HO_PUBLIC_RULE = ('commitment = sha256(gate_version + "|" + seed_hex + "|" + comma-joined sorted task ids) (gate_core.sample_commitment); '
+                  'the seed is os.urandom(32). A round is revealed only if a GREEN closed it, and then only the GREEN turn: seed, task ids, '
+                  'the head baseline and the per-task grades of the GREEN candidate. RED turns and their probe results are never published; '
+                  'a round closed by a head change or by max_round_turns decided turns without a GREEN is never revealed. Score: '
+                  'inverse-variance-weighted per-task gain vs the head p_i on the kept tasks; GREEN iff gain > 0 and z > bar_z and '
+                  'estimated cap-hit < 0.20.')
+
+
+def _green_turn(closed, turns):
+    """Green-only reveal (Jacob 2026-10-31 13:07 CR): the GREEN turn that closed the round, else None (a round closed by a
+    head change, its age or max_round_turns REDs is never revealed; RED turns are never revealed)."""
+    if not closed: return None
+    g = [t for t in turns if t.get('epoch') == closed.get('closing_epoch') and t.get('decision') == 'green']
+    return g[0] if len(g) == 1 else None
+
+
 def heldout_publish():
     R = rounds(); out = SITE / 'heldout'
     ids = R.all_ids()
@@ -770,26 +786,26 @@ def heldout_publish():
     rows = []
     for rid in ids:
         r = R.get(rid); closed = rj(R.d(rid) / 'CLOSED.json'); b = R.baseline(rid); turns = R.turns(rid)
-        pubc = R.public_commit(r)
+        pubc = dict(R.public_commit(r), rule=HO_PUBLIC_RULE); gt = _green_turn(closed, turns); bb = b if gt else None   # baseline numbers: GREEN rounds only
         row = dict(pubc, status=('closed' if closed else 'open'), closed=closed,
-                   baseline=dict(pubc['baseline'], done=bool(b), done_at_cr=(b or {}).get('done_at_cr'), head_pass_on_kept=(b or {}).get('head_pass'),
-                                 kept_tasks=len((b or {}).get('kept') or []) or None, scoring=(b or {}).get('scoring'),
+                   baseline=dict(pubc['baseline'], done=bool(b), done_at_cr=(b or {}).get('done_at_cr'), head_pass_on_kept=(bb or {}).get('head_pass'),
+                                 kept_tasks=len((bb or {}).get('kept') or []) or None, scoring=(b or {}).get('scoring'),
                                  frozen_settings=(b or {}).get('settings'), settings_hash=(b or {}).get('settings_hash')),
                    turns=[dict(epoch=t.get('epoch'), candidate=t.get('candidate'), decision=t.get('decision'), z=t.get('z')) for t in turns],
-                   reveal=('https://affine.io/gate/heldout/%s.json' % rid) if closed else None)
+                   reveal=('https://affine.io/gate/heldout/%s.json' % rid) if gt else None)
         rows.append(row)
         if not closed:
             _ho_write_public(out / 'current.json', row, True)
             continue
         rp = out / ('%s.json' % rid)
-        if rp.exists() or not b: continue
+        if not gt or rp.exists() or not b: continue   # green-only reveal
         bd = R.d(rid); blocks = {}
         for bi in range(int(r['blocks'])):
             blk = rj(bd / ('BLOCK-%d.private.json' % bi)) or {}
             blocks[str(bi)] = dict(plan_seed=blk.get('plan_seed'), k=blk.get('k'), per_task=blk.get('per_task'))
         bl = {int(k): v for k, v in b['per_task'].items()}
         tdocs = []
-        for t in turns:
+        for t in [gt]:   # only the GREEN turn's probe results; RED turns of the round are never revealed
             e = t.get('epoch'); cp = rj(EP / str(e) / 'C-PROBE.private.json') or {}; dd = rj(EP / str(e) / 'DECISION.json') or {}
             cpt = {int(k): v for k, v in (cp.get('per_task') or {}).items()}
             re_ = HO.score_ivw(b.get('selection') or {}, bl, cpt, b.get('kept') or [], t.get('batch') or [], env=r.get('env') or 'affine_math',
@@ -1010,10 +1026,10 @@ def publish(cur_epoch, lag=2):
                          'becomes the new head probe. The standing sample is rotated every 24 h or whenever the head must be re-probed anyway '
                          '(e.g. after a rollback); its commitment is published at first use and its seed, ids and per-task grades are revealed '
                          'only after rotation, at /gate/reveal/<epoch>.json for every epoch that used it.'), reveal_index='https://affine.io/gate/reveal/index.json',
-        rule=('From E271: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; baseline revealed only after a GREEN or when the round closes (https://affine.io/gate.json rule). Before E271: Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
+        rule=('From E271: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; a round is revealed only if a GREEN closed it, and then only the GREEN turn (seed, tasks, head baseline, the per-task grades of the GREEN candidate); RED turns and rounds closed without a GREEN are never revealed (https://affine.io/gate.json rule). Before E271: Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
               'dropped. The candidate is promoted only if its net is positive: paired z (candidate vs head, k=1) > 0, i.e. candidate pass rate > head pass rate on the paired sample (from e168; >= -1.5 for e154-e167, > -1 for e152-e153), and candidate cap-hit rate < 0.20 (>= 200 paired tasks). '
               'RED = candidate discarded, next epoch mines from the head again. From epoch 169 scores update on pass and fail: a RED epoch is scored like a GREEN one (head probe vs the discarded candidate on its own batch tasks; Jacob t737u). Before the decision only a hash commitment '
-              'of the sample is published; after DECISION.json the seed, sampled task ids and per-task head/candidate grades are revealed at https://affine.io/gate/reveal/<epoch>.json (index: /gate/reveal/index.json; verify with /gate/reveal/verify_gate_reveal.py). Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)
+              'of the sample is published; (before E271) after a GREEN DECISION.json the seed, sampled task ids and per-task head/candidate grades are revealed at https://affine.io/gate/reveal/<epoch>.json; RED epochs are never revealed (index: /gate/reveal/index.json; verify with /gate/reveal/verify_gate_reveal.py). Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)
 
 
 def tick():

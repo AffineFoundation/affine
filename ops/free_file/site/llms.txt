@@ -164,11 +164,12 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 - **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** In practice
   that's about +1.5 to +2 points of weighted gain (e356 passed at gain 0.0198, z 1.027).
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.
-- A round lasts until a GREEN, a head change, or 8 decided turns. Then its seed, task ids, the head baseline and every
-  candidate's per-task grades are revealed (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json).
-  While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
+- A round lasts until a GREEN, a head change, or 8 decided turns. Only a round that a GREEN closed is revealed, and only
+  the GREEN turn: its seed, task ids, the head baseline and the GREEN candidate's per-task grades
+  (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json). RED turns and their probe results are never
+  published. While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
 
-## 7. What is published, and when <!-- green-publish-20261031 -->
+## 7. What is published, and when <!-- green-publish-20261031 --> <!-- green-only-reveal-20261031 -->
 
 - **While a round is open:** only the round commitment (/gate/heldout/current.json) and each turn's decision with z, gain and
   cap rate (turn.json, gate.json). No seed, no task ids, no baseline and no per-task probe results.
@@ -181,12 +182,13 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   - the tasks: all 1000 sampled tasks with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
   - the winning file, byte-exact (/k1/turns/<epoch>/batch.json), and its lr / kl and trainer report (/k1/turns/<epoch>/turn.json).
   /k1/turns/index.json marks each GREEN with a `green` link.
-- **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl and the per-rollout
-  trajectories stay private. There's no green.json or tasks.json for a RED turn.
-- **When a round closes:** it closes on a GREEN, a head change, or 8 decided turns. Its seed, task ids, head baseline and
-  per-task candidate grades are then revealed. This also happens for rounds that closed after 8 RED turns, and for the
-  RED turns of a round that a GREEN closed. Those reveals carry grades only, never RED files or lr / kl. A new round
-  always draws a fresh os.urandom(32) seed, so a closed round says nothing about the next sample.
+- **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl, the per-rollout
+  trajectories and the RED candidate's probe results stay private. There's no green.json, tasks.json or /gate/reveal file
+  for a RED turn, ever, including RED turns inside a round that a GREEN later closed.
+- **When a round closes:** it closes on a GREEN, a head change, or 8 decided turns. Only a GREEN-closed round is revealed,
+  and only its GREEN turn (seed, task ids, head baseline, the GREEN candidate's per-task grades). A round that closes on a
+  head change or after 8 RED turns is never revealed. A new round always draws a fresh os.urandom(32) seed, so a revealed
+  round says nothing about the next sample.
 
 ## 8. What winning means: weights
 
@@ -256,7 +258,8 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - My file was invalid or missing at my turn. You were skipped, not charged, and keep your place. Fix it and check ff/status.json.
 - Can I change the file after uploading? Yes, as often as you like until your turn. What's stored then is what's trained.
 - I got RED. Can I try again? Not with that registration. Register a new hotkey/UID (pay again) and queue again.
-- Is the gate's task sample public? Only its commitment, while the round is open. The seed and tasks are revealed when it closes.
+- Is the gate's task sample public? Only its commitment, while the round is open. The seed and tasks are revealed only if a
+  GREEN closes the round, and then only with the GREEN turn's grades. RED turns are never revealed.
   After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
