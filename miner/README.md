@@ -151,20 +151,25 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   after one `<think>…</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0 against
   `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1–E7
   equivalence; `probe/allan_src.py`) are tried.
-- **A round.** The validator draws n = 1000 task ids with `gate_core.draw_sample(seed, 7496, 1000)` from a secret
-  `os.urandom(32)` seed and publishes only a commitment (https://affine.io/gate/heldout/current.json). Block 0
-  (the selection) runs the head k=4 on all 1000, and the **kept** tasks are those with 0 < c < 4. Blocks 1–3 are
-  three more head runs on the kept tasks. Every candidate of the round runs k=4 on the kept tasks with **the same
-  seeds as block 1**. The turn batch is not excluded. A round lasts until a GREEN, a head change or 8 decided turns.
+- **A round.** The validator draws n task ids with `gate_core.draw_sample(seed, 7496, n)` from a secret
+  `os.urandom(32)` seed and publishes only a commitment (https://affine.io/gate/heldout/current.json). n = 2000 in rounds
+  opened after 2026-10-31 14:27 CR (1000 before); n, k_cand and sigma_run are frozen when a round opens and published in current.json.
+  Block 0 (the selection) runs the head k=4 on all n tasks, and the **kept** tasks are those with 0 < c < 4 (about 270 at
+  n = 2000). Blocks 1–3 are three more head runs (k=4) on the kept tasks. Every candidate of the round runs k_cand = 8
+  (4 before the switch) on the kept tasks; samples j < 4 use **the same seeds as block 1**. The turn batch is not excluded. A round lasts until a GREEN, a head change or 8 decided turns.
   If a GREEN closes it, its seed, task ids, baseline and the GREEN turn's grades are revealed (`/gate/heldout/<round>.json`,
   `/gate/reveal/<epoch>.json`); RED turns are never revealed.
 - **Score** (`heldout.score_ivw`): w_t = 1/(q(1−q)) with q = (c_sel+1)/(4+2); d_t = candidate rate − head rate over the 12
-  head samples; gain = Σw·d/Σw; se_task = √(Σw²d²)/Σw; SE = √(se_task² + σ_run²·(1+1/3)), where σ_run = the run-to-run
-  spread of the 3 head blocks (`heldout.run_sigma`; there's no floor since E354, and it was 0.022 for E271–E353); z = gain/SE.
+  head samples (candidate rate over its k_cand samples); gain = Σw·d/Σw; se_task = √(Σw²d²)/Σw; SE = √(se_task² + σ_run²·(1+1/3)).
+  σ_run in rounds opened after 2026-10-31 14:27 CR = the head's run-to-run spread POOLED over the last 20 finished rounds
+  (`heldout.pooled_sigma_run`, frozen at round open; 0.000 at the switch, 95% upper bound 0.011); before, each round's own
+  3-block spread (`heldout.run_sigma`; no floor since E354, 0.022 for E271–E353); z = gain/SE.
 - **GREEN iff** gain > 0 **and** z > 1.0 (strict) **and** the estimated whole-set cap-hit < 0.20 **and** there are ≥ 100 kept tasks.
-  In practice that bar is about +1.5 to +2 points of weighted gain (GREEN e356 passed at gain 0.0198, z 1.027).
+  At n = 2000, k_cand = 8 and pooled σ_run the bar (= SE) is expected near +1.3 points of weighted gain (it was about
+  +1.9 to +3.4, median 2.3, before; GREEN e356 passed at gain 0.0198, z 1.027).
 
-`gate_eval.py` draws its own local seed, so it can't know a live round's tasks. Your GPUs and vLLM build aren't the
+`gate_eval.py` draws its own local seed, so it can't know a live round's tasks. Its defaults (n, k_cand, σ_run policy and the
+pooled σ_run value) come from `validator/gate/gate-config.public.json`, a copy of the live flag. Your GPUs and vLLM build aren't the
 gate's, so expect differences of a few points from run to run. Use `--baseline` to reuse a head baseline across candidates.
 
 ## 5. End to end

@@ -151,18 +151,24 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 
 ## 6. The promotion gate (held-out, ivw-v2)
 
-- A round: the gate draws n = 1000 task ids from the pool with gate_core.draw_sample(seed, 7496, 1000) from a secret
-  os.urandom(32) seed. Only the commitment is published (https://affine.io/gate/heldout/current.json):
-  sha256(gate_version | seed | sorted ids).
-- Block 0 = selection: the head runs 4 samples on all 1000, and the **kept** tasks are those with 0 < c < 4. Blocks 1-3 =
-  three more head runs (4 samples each) on the kept tasks. Every candidate of the round runs 4 samples per kept task with
-  **the same request seeds as block 1** (common random numbers). The turn batch is NOT excluded.
-- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate - head rate (12 head samples);
-  gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)), where
-  sigma_run = the run-to-run spread of the 3 head blocks (heldout.run_sigma). There's no floor since E354 (E271-E353 used
-  a floor of 0.022). z = gain / SE.
-- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** In practice
-  that's about +1.5 to +2 points of weighted gain (e356 passed at gain 0.0198, z 1.027).
+- A round: the gate draws n task ids from the pool with gate_core.draw_sample(seed, 7496, n) from a secret os.urandom(32)
+  seed: n = 2000 in rounds opened after 2026-10-31 14:27 CR (1000 before). Only the commitment is published
+  (https://affine.io/gate/heldout/current.json): sha256(gate_version | seed | sorted ids). n, k_cand and sigma_run are fixed
+  when a round opens and published there (set_size, k_cand, sigma_run).
+- Block 0 = selection: the head runs 4 samples on all n tasks, and the **kept** tasks are those with 0 < c < 4 (about 13 %,
+  so about 270 at n = 2000). Blocks 1-3 = three more head runs (4 samples each) on the kept tasks (12 head samples per kept
+  task). Every candidate of the round runs k_cand = 8 samples per kept task (4 before 2026-10-31 14:27 CR); samples j = 0-3 use **the same
+  request seeds as block 1** (common random numbers), j = 4-7 follow the same seed rule. Head and candidate are graded by the
+  same grader on exactly the same kept tasks. The turn batch is NOT excluded.
+- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate (k_cand samples) - head rate
+  (12 head samples); gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)).
+  sigma_run (rounds opened after 2026-10-31 14:27 CR) = the head's run-to-run spread POOLED over the last 20 finished rounds
+  (heldout.pooled_sigma_run: per round, the between-run variance of the 3 head blocks' weighted means minus their within-run
+  sampling variance; df-weighted mean over rounds, floored at 0), frozen when the round opens. At the switch it was 0.000
+  (20 rounds, 40 df, 95% upper bound 0.011). Before: each round's own 3-block estimate (heldout.run_sigma), floor 0 since E354
+  (E271-E353: floor 0.022). z = gain / SE.
+- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** At n = 2000 and
+  k_cand = 8 the bar (= SE) is expected near +1.3 points of weighted gain (it was about +1.9 to +3.4, median 2.3, before).
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.
 - A round lasts until a GREEN, a head change, or 8 decided turns. Only a round that a GREEN closed is revealed, and only
   the GREEN turn: its seed, task ids, the head baseline and the GREEN candidate's per-task grades
@@ -179,7 +185,7 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   - the baseline: the round seed, the commitment, selection block 0 and head blocks 1-3 per task, the kept tasks and the
     frozen sampling settings (/gate/heldout/<round>.json);
   - the probe results: head and candidate cells per task {n, c, w, u, b, x, tok, L} (/gate/reveal/<epoch>.json);
-  - the tasks: all 1000 sampled tasks with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
+  - the tasks: all sampled tasks of the round (1000; 2000 in rounds opened after 2026-10-31 14:27 CR) with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
   - the winning file, byte-exact (/k1/turns/<epoch>/batch.json), and its lr / kl and trainer report (/k1/turns/<epoch>/turn.json).
   /k1/turns/index.json marks each GREEN with a `green` link.
 - **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl, the per-rollout
@@ -211,7 +217,8 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 - Sample from the head at top_k 20 / top_p 0.95 / temperature 1 (off-support tokens are dropped from the PG term).
 - The 1,000-rollout mixed files (e339-e341, e343) went RED, under the older sign step. No GREEN has used v2 train values yet.
 - Simulate first: miner/kit/simulate_turn.sh runs head -> rollouts -> batch -> the live step -> the live gate math on your GPUs
-  (gate_eval.py uses its own random seed; expect a few points of difference from the gate's hardware). A local z near 1 is a coin flip.
+  (gate_eval.py uses its own random seed and the live n / k_cand / sigma_run from gate-config.public.json; expect a few points
+  of difference from the gate's hardware). A local z near 1 is a coin flip.
 
 <!-- perf-eval-20261031 -->
 ## Performance over time (informational)

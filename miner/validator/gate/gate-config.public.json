@@ -24,13 +24,15 @@
   "fail_closed_s": 3300,
   "from_epoch": 271,
   "k_block": 4,
-  "k_cand": 4,
+  "k_cand": 8,
   "max_round_turns": 8,
   "min_kept": 100,
-  "n": 1000,
+  "n": 2000,
   "scoring": "ivw-v2",
   "set_at": "20261030T172346Z",
   "set_by": "heldout activation after e270 DECISION",
+  "sigma_pool_min_rounds": 5,
+  "sigma_pool_rounds": 20,
   "sigma_run": 0.0,
   "sigma_run_history": [
    {
@@ -50,7 +52,35 @@
     "sigma_run_floor": 0.0
    }
   ],
-  "z_inclusive": false
+  "sigma_run_policy": "pooled",
+  "variance_levers_history": [
+   {
+    "applies_to": "rounds opened after set_at",
+    "authorized_by": [
+     "Jacob 2026-10-31 14:07 CR: \"Go live with pooled sigma_run\", \"Go live with 8 candidate rollouts per task\", \"Go live with 2,000 tasks per round\""
+    ],
+    "by": "variance levers activation after e386 DECISION",
+    "mode": "on",
+    "set_at": "20261031T202753Z",
+    "set_at_cr": "2026-10-31 14:27 CR",
+    "values": {
+     "k_cand": 8,
+     "n": 2000,
+     "sigma_pool_min_rounds": 5,
+     "sigma_pool_rounds": 20,
+     "sigma_run_policy": "pooled"
+    }
+   }
+  ],
+  "z_inclusive": false,
+  "sigma_run_pooled": {
+   "value": 0.0,
+   "sigma_run_est": 0.0,
+   "ub95": 0.011360263218313113,
+   "rounds": 20,
+   "df": 40,
+   "note": "pooled over the last 20 finished rounds at the switch (2026-10-31 14:27 CR); the gate freezes its own value per round at open (current.json sigma_run.value)"
+  }
  },
  "version": "sn120-miner-kit-gate-config-v1"
 }

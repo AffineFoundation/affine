@@ -1,0 +1,13 @@
+- A round: the gate draws n = 1000 task ids from the pool with gate_core.draw_sample(seed, 7496, 1000) from a secret
+  os.urandom(32) seed. Only the commitment is published (https://affine.io/gate/heldout/current.json):
+  sha256(gate_version | seed | sorted ids).
+- Block 0 = selection: the head runs 4 samples on all 1000, and the **kept** tasks are those with 0 < c < 4. Blocks 1-3 =
+  three more head runs (4 samples each) on the kept tasks. Every candidate of the round runs 4 samples per kept task with
+  **the same request seeds as block 1** (common random numbers). The turn batch is NOT excluded.
+- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate - head rate (12 head samples);
+  gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)), where
+  sigma_run = the run-to-run spread of the 3 head blocks (heldout.run_sigma). There's no floor since E354 (E271-E353 used
+  a floor of 0.022). z = gain / SE.
+- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** In practice
+  that's about +1.5 to +2 points of weighted gain (e356 passed at gain 0.0198, z 1.027).
+- GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.

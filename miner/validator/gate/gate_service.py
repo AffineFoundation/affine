@@ -13,6 +13,7 @@ Per epoch N (head H = CURRENT checkpoint when N plans):
 HELD-OUT ROUNDS (heldout.py, Jacob pt808u 2026-10-30; PROMOTION-GATE.json "heldout" {"enabled": true, "from_epoch": E}):
   one committed secret set S per head (round), head baseline = 4 x k4 = 16 rollouts per task computed ONCE per round, every
   candidate of the round probed on S minus its batch (k=4, fresh plan seed) and decided vs that baseline with z >= bar_z.
+  Variance levers (2026-10-31): n, k_cand and the sigma_run policy are frozen per round in ROUND.private.json (heldout.py).
   GREEN closes the round and reveals it (public/gate/heldout/<round>.json). Nothing per-task is public while a round is open.
   Test hooks (all default to the live values): HG_GATE_STATE, HG_SITE, HG_FLAG, HG_PROBE_SSH (json argv), HG_NO_TRAINER=1.
 """
@@ -687,7 +688,7 @@ def process_heldout_epoch(e, s, f):
     cover = sum(1 for t in T if t in bl)
     tl.setdefault('h_ready', time.time())
     busy(True, epoch=e, candidate=C)
-    kp = dict(k=int(c['k_cand']), seeded=True); pseed = HO.cand_plan_seed(s['seed'])
+    kp = dict(k=int(r.get('k_cand') or c['k_cand']), seeded=True); pseed = HO.cand_plan_seed(s['seed'])   # k_cand locked per round
     if not tl.get('run_done'):
         stage = fetch_and_serve(C, f, tl, e); wj(tlp, tl)
         if stage != 'ready': return stage + ('(early)' if early else '')
@@ -716,7 +717,8 @@ def process_heldout_epoch(e, s, f):
                                         baseline_done_at_cr=b['done_at_cr']))
     dec = HO.score_ivw(sel, bl, cpt, kept, batch, env=f['env'], bar_z=float(c['bar_z']), z_inclusive=bool(c['z_inclusive']),
                        cap_max=float(f['cap_max']), min_kept=int(c['min_kept']), set_size=len(s['indices']),
-                       sigma_run=max(float(c['sigma_run']), float(bfull.get('sigma_run_est') or 0.0)), n_p_blocks=int(r['blocks']) - 1)
+                       sigma_run=HO.turn_sigma_run(r, c, bfull), n_p_blocks=int(r['blocks']) - 1)
+    dec['evaluated']['sigma_run_policy'] = HO.sigma_policy_name(r)
     dec['version'] = G.VERSION
     dec.update(epoch=e, head=H, candidate=C, mode=mode(f), decided_at=time.time(), decided_at_cr=cr(),
                batch_tasks=len(batch), h_cover=cover, early_staged=bool(tl.get('early')), delta_rc=tl.get('delta_rc'),
@@ -731,7 +733,7 @@ def process_heldout_epoch(e, s, f):
                           h_run_s=0.0, h_serve_s=0.0, h_fetch_s=0.0),
                heldout=dict(round_id=rid, set_size=len(s['indices']), bar_z=float(c['bar_z']), z_inclusive=bool(c['z_inclusive']),
                             baseline_rollouts_per_task=b['rollouts_per_task'], k_cand=kp['k'], baseline_done_at_cr=b['done_at_cr'],
-                            scoring='ivw-v2', settings_hash=b.get('settings_hash')))
+                            scoring='ivw-v2', settings_hash=b.get('settings_hash'), sigma_run_policy=HO.sigma_policy_name(r)))
     pub, priv = HO.redact_decision(dec)
     wj(tlp, tl); wj(d / 'EVALUATED.private.json', priv, 0o600); wj(dp, pub, 0o600)
     R.turn_add(rid, dict(epoch=e, candidate=C, decision=dec['decision'], z=dec['evaluated']['z'], plan_seed=pseed, batch=batch,
@@ -1026,7 +1028,7 @@ def publish(cur_epoch, lag=2):
                          'becomes the new head probe. The standing sample is rotated every 24 h or whenever the head must be re-probed anyway '
                          '(e.g. after a rollback); its commitment is published at first use and its seed, ids and per-task grades are revealed '
                          'only after rotation, at /gate/reveal/<epoch>.json for every epoch that used it.'), reveal_index='https://affine.io/gate/reveal/index.json',
-        rule=('From E271: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; a round is revealed only if a GREEN closed it, and then only the GREEN turn (seed, tasks, head baseline, the per-task grades of the GREEN candidate); RED turns and rounds closed without a GREEN are never revealed (https://affine.io/gate.json rule). Before E271: Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
+        rule=('From E271: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (seeded samples per task, shared seeds; set size n, candidate k_cand and the sigma_run policy are fixed per round and published in /gate/heldout/current.json: 1000 tasks, k_cand 4, per-round sigma_run until the variance-levers switch of 2026-10-31, then 2000 tasks, k_cand 8, pooled sigma_run); from E296 the turn batch is not excluded; a round is revealed only if a GREEN closed it, and then only the GREEN turn (seed, tasks, head baseline, the per-task grades of the GREEN candidate); RED turns and rounds closed without a GREEN are never revealed (https://affine.io/gate.json rule). Before E271: Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
               'dropped. The candidate is promoted only if its net is positive: paired z (candidate vs head, k=1) > 0, i.e. candidate pass rate > head pass rate on the paired sample (from e168; >= -1.5 for e154-e167, > -1 for e152-e153), and candidate cap-hit rate < 0.20 (>= 200 paired tasks). '
               'RED = candidate discarded, next epoch mines from the head again. From epoch 169 scores update on pass and fail: a RED epoch is scored like a GREEN one (head probe vs the discarded candidate on its own batch tasks; Jacob t737u). Before the decision only a hash commitment '
               'of the sample is published; (before E271) after a GREEN DECISION.json the seed, sampled task ids and per-task head/candidate grades are revealed at https://affine.io/gate/reveal/<epoch>.json; RED epochs are never revealed (index: /gate/reveal/index.json; verify with /gate/reveal/verify_gate_reveal.py). Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)

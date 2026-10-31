@@ -3,11 +3,11 @@
 # Needs a GPU box with vLLM 0.32.0 (requirements-gate-vllm.txt) for sampling and requirements-trainer.txt for the step
 # (the 9B step needs ~80 GB+ in one process; the live trainer uses 8 GPUs). Nothing here uploads anything.
 #   HOTKEY=5F... bash miner/kit/simulate_turn.sh [WORK_DIR]
-# Env knobs: TASKS (default 0-7495), K (8), N_GATE (1000), PORT_H (8000), PORT_C (8001), SELECT (correct1), LR / KL (unset = v1).
+# Env knobs: TASKS (default 0-7495), K (8), N_GATE (live heldout.n, 2000), PORT_H (8000), PORT_C (8001), SELECT (correct1), LR / KL (unset = v1).
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")" && pwd)"; W="${1:-./turn}"; mkdir -p "$W"
 : "${HOTKEY:?set HOTKEY to your registered ss58 hotkey}"
-TASKS="${TASKS:-0-7495}"; K="${K:-8}"; N_GATE="${N_GATE:-1000}"; PORT_H="${PORT_H:-8000}"; PORT_C="${PORT_C:-8001}"; SELECT="${SELECT:-correct1}"
+TASKS="${TASKS:-0-7495}"; K="${K:-8}"; N_GATE="${N_GATE:-2000}"; PORT_H="${PORT_H:-8000}"; PORT_C="${PORT_C:-8001}"; SELECT="${SELECT:-correct1}"
 SERVE=(--served-model-name m --dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512)   # = validator/probe/serve.sh
 wait_up() { for _ in $(seq 600); do curl -sf "http://127.0.0.1:$1/v1/models" >/dev/null && return 0; sleep 2; done; echo "vLLM on :$1 did not start" >&2; exit 1; }
 
