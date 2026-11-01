@@ -25,7 +25,7 @@ ip = p["ip"]; port = p["ports"]["22"]; pid = p["id"]
 w = os.path.expanduser("~/bench-work/bp.sh"); os.makedirs(os.path.dirname(w), exist_ok=True)
 open(w, "w").write(f"""#!/bin/bash
 # bench pod {name} ({p['huid']}, lium {pid}, {p['config']})
-exec ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=30 -o UserKnownHostsFile=$HOME/.lium/known_hosts/{pid} -p {port} root@{ip} "$@"
+exec ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=60 -o ServerAliveInterval=30 -o UserKnownHostsFile=$HOME/.lium/known_hosts/{pid} -p {port} root@{ip} "$@"
 """)
 os.chmod(w, 0o755)
 print(json.dumps({k: p[k] for k in ("huid", "id", "name", "config", "price_per_hour", "ip")}))
