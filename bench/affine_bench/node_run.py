@@ -20,13 +20,13 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
 
 
-def ensure_server(model_dir, rp, max_model_len):
+def ensure_server(model_dir, rp, max_model_len, chat_template=""):
     cur = open(ROOT + "/serve/model").read().strip() if os.path.exists(ROOT + "/serve/model") else None
     up = sh("curl -sf -m 5 http://127.0.0.1:8000/v1/models").returncode == 0
     if up and cur == model_dir:
         return "reused"
     sh(f"bash {REPO}/bench/deploy/stop.sh", timeout=200)
-    p = sh(f"bash {REPO}/bench/deploy/serve.sh {model_dir} {rp} {max_model_len}", timeout=3700)
+    p = sh(f"bash {REPO}/bench/deploy/serve.sh {model_dir} {rp} {max_model_len} {chat_template}", timeout=3700)
     if p.returncode != 0:
         raise SystemExit("serve failed: " + (p.stdout + p.stderr)[-2000:])
     return "started"
@@ -73,6 +73,7 @@ def main(argv=None):
     ap.add_argument("--model-id", required=True); ap.add_argument("--model-dir", required=True)
     ap.add_argument("--reasoning-parser", default="qwen3"); ap.add_argument("--benchmarks", required=True)
     ap.add_argument("--max-model-len", type=int, default=None); ap.add_argument("--out", default=None)
+    ap.add_argument("--chat-template", default="", help="jinja file (bench/config/templates/) when the model card needs a non-default prompt")
     ap.add_argument("--rollouts", default="", help="override, e.g. math500=16 (calibration runs)")
     a = ap.parse_args(argv)
     # one runner per node, ever: a second runner would share the server and the run dirs (and overload the box)
@@ -95,7 +96,7 @@ def main(argv=None):
         bs.append(b)
     json.dump(dict(model_id=a.model_id, model_dir=a.model_dir, pid=os.getpid(), started=time.time(),
                    benchmarks=[b["id"] for b in bs]), open(out + "/node_run.json", "w"))
-    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml); t_serve = time.time() - t0
+    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template); t_serve = time.time() - t0
     sp = S["sampling"]; total_c = S["client"]["max_concurrent_total"]
     todo = [b for b in bs if not os.path.exists(f"{out}/{b['id']}/summary.json")]
     weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319}.get(b["id"], 40) for b in todo}

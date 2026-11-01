@@ -33,7 +33,7 @@ def pooled(mid, b, results):
                 env_version="+".join(r.get("bench_version", "") for r in rs))
 
 
-def publish(rows, S):
+def publish(rows, S, max_fail=3):
     bs = R.benchmarks(); sv = R.serving()
     results = {}
     for f in glob.glob(f"{C.STATE}/results/*/*.json"):
@@ -63,6 +63,8 @@ def publish(rows, S):
             status = "queued"
         else:
             status = "evaluating" if run and run["model"]["model_id"] == m["model_id"] else ("scored" if m["model_id"] in have else "queued")
+            if status == "queued" and (m["model_id"] in (S or {}).get("unavailable", []) or (S or {}).get("fail", {}).get(m["model_id"], 0) >= max_fail):
+                status = "failed"  # gave up after max_fail attempts (daemon.MAX_FAIL); hidden on the site
         models.append({k: m.get(k) for k in ("model_id", "label", "kind", "king", "hf", "epoch", "crowned_at", "era", "green")} | dict(status=status))
     hist = [h for h in (S or {}).get("history", []) if not h["model"].count(".")]
     per = sorted(h["wall_s"] for h in hist[-20:]) if hist else []

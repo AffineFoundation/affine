@@ -5,8 +5,9 @@ node, collect finished benchmarks into state/bench-results/, publish affine.io/b
 a result file per (model, benchmark, version) is the only "done" marker; a crashed run is resumed in place
 (vf-eval --resume keeps finished rollouts); nothing is published per task.
 
-Queue order: a new (unscored) newest king first -> Genesis + priority refs (<10) -> every GREEN (gate-era) king, newest first
--> remaining refs -> every other king, newest first. Manual requests (`affine-bench run`) go before all of that."""
+Queue order: the newest king -> new GREEN kings (crowned less than NEW_KING_H hours ago), newest first -> Genesis + every
+reference (registry priority order) -> the rest of the GREEN (gate-era) kings, newest first -> every other king, newest first.
+Manual requests (`affine-bench run`) go before all of that."""
 import glob, json, math, os, re, shlex, subprocess, sys, time, traceback, urllib.request
 from . import config as C, registry as R
 from .node import Node
@@ -18,6 +19,7 @@ for d in (ST, RES, PRIV, REQ):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400
+NEW_KING_H = float(os.environ.get("BENCH_NEW_KING_H", "6"))  # a GREEN king crowned this recently runs before the references
 NODE = Node()
 
 
@@ -54,7 +56,7 @@ def model_rows():
     rows = []
     for m in reg:
         r = dict(model_id=m["id"], label=m["label"], kind=m["kind"], reasoning_parser=m.get("reasoning_parser", "qwen3"),
-                 priority=m.get("priority", 999), max_model_len=m.get("max_model_len"))
+                 priority=m.get("priority", 999), max_model_len=m.get("max_model_len"), chat_template=m.get("chat_template"))
         if m.get("king"):
             r["king"] = m["king"]; k = next((k for k in ks if k["king"] == m["king"]), None)
             if k: r.update(epoch=k.get("epoch"), crowned_at=k.get("crowned_at"), era=k.get("era"))
@@ -91,11 +93,13 @@ def queue(rows=None):
     for f in sorted(glob.glob(REQ + "/*.json")):
         r = rj(f)
         if r: q.append(dict(r, request=f))
+    by_epoch = sorted(kings_, key=lambda m: -(m.get("epoch") or 0))
+    new = lambda m: m.get("green") and now() - float(m.get("crowned_at") or 0) < NEW_KING_H * 3600
     if newest and ok(newest): q.append(dict(newest, why="newest-king"))
-    q += [dict(m, why="genesis/ref") for m in rows if m["kind"] in ("genesis", "reference") and m["priority"] < 10 and ok(m)]
-    q += [dict(m, why="green-king") for m in sorted(kings_, key=lambda m: -(m.get("epoch") or 0)) if m.get("green") and ok(m)]
-    q += [dict(m, why="ref") for m in rows if m["kind"] == "reference" and m["priority"] >= 10 and ok(m)]
-    q += [dict(m, why="king") for m in sorted(kings_, key=lambda m: -(m.get("epoch") or 0)) if not m.get("green") and ok(m)]
+    q += [dict(m, why="new-green-king") for m in by_epoch if new(m) and ok(m)]
+    q += [dict(m, why="genesis/ref") for m in sorted((m for m in rows if m["kind"] in ("genesis", "reference")), key=lambda m: m["priority"]) if ok(m)]
+    q += [dict(m, why="green-king") for m in by_epoch if m.get("green") and ok(m)]
+    q += [dict(m, why="king") for m in by_epoch if not m.get("green") and ok(m)]
     seen, out = set(), []
     for m in q:
         k = m["model_id"] + (m.get("tag") or "")
@@ -160,6 +164,7 @@ def launch(m, bids):
     args = ["affine-bench", "node-run", "--model-id", rk, "--model-dir", model_dir(m), "--reasoning-parser", m.get("reasoning_parser", "qwen3"),
             "--benchmarks", ",".join(bids)]
     if m.get("max_model_len"): args += ["--max-model-len", str(m["max_model_len"])]
+    if m.get("chat_template"): args += ["--chat-template", f"{C.NODE_REPO}/bench/config/{m['chat_template']}"]
     if m.get("rollouts"): args += ["--rollouts", m["rollouts"]]
     # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
     cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "

@@ -8,8 +8,8 @@ the same vLLM endpoint, prompts, graders and sampling. Results: <https://affine.
 host (affinevalidator)                              node (Lium GPU pod, e.g. affine-bench-1 8xB200)
   affine-bench daemon  (systemd user unit)            /data/bench/repo        this repo (git clone)
    - king list: affine.io/performance.json            /data/bench/venv-vllm   vLLM 0.32.0 (deploy/requirements-vllm.txt)
-   - queue: newest king > Genesis+refs > GREEN        /data/bench/venv-vf     verifiers 0.4.0 + prime 0.19.0 + envs
-     kings > other refs > all other kings             deploy/serve.sh         ONE OpenAI endpoint :8000/v1 (model "bench"),
+   - queue: newest king > new GREEN kings (<6 h)      /data/bench/venv-vf     verifiers 0.4.0 + prime 0.19.0 + envs
+     > Genesis + all refs > GREEN backlog > rest      deploy/serve.sh         ONE OpenAI endpoint :8000/v1 (model "bench"),
    - weights: king = R2 presigned GET piped in          data-parallel = one replica per GPU
      (deploy/gate_fetch.py, sha256-checked);          affine-bench node-run   vf-eval per benchmark, all at once
      refs = public HF at a pinned commit                -> runs/<model>/<bench>/{vf/<run>/traces.jsonl, summary.json}

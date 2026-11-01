@@ -2,7 +2,10 @@
 #   kind      genesis | reference   (king rows are added automatically)
 #   hf        <repo>@<revision>     (pinned commit; downloaded from public HF on the node, no token)
 #   reasoning_parser   vLLM --reasoning-parser so the graded reply is the final answer, not the thinking
-#   priority  lower runs first (Genesis + 2-3 refs before the kings, then the rest)
+#   priority  order among Genesis + references (lower first). Queue: newest king, new GREEN kings (crowned < 6 h ago),
+#             then Genesis + ALL references, then the GREEN backlog, then every other king (daemon.queue)
+#   max_model_len   only when a model cannot take the common 34816 window
+#   chat_template   bench/config/templates/<file>, only when the model card asks for a non-default prompt to enable thinking
 [[model]]
 id = "genesis"
 label = "Genesis"
@@ -41,7 +44,7 @@ label = "R1-Distill-Qwen-7B"
 kind = "reference"
 hf = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B@916b56a44061fd5cd7d6a8fb632557ed4f724f60"
 reasoning_parser = "deepseek_r1"
-priority = 50
+priority = 10
 
 [[model]]
 id = "r1-distill-llama-8b"
@@ -49,7 +52,7 @@ label = "R1-Distill-Llama-8B"
 kind = "reference"
 hf = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B@6a6f4aa4197940add57724a7707d069478df56b1"
 reasoning_parser = "deepseek_r1"
-priority = 51
+priority = 11
 
 [[model]]
 id = "nemotron-nano-9b-v2"
@@ -57,7 +60,7 @@ label = "Nemotron-Nano-9B-v2"
 kind = "reference"
 hf = "nvidia/NVIDIA-Nemotron-Nano-9B-v2@6533e8de2c68e4536bf7c411d7a3ce5734111476"
 reasoning_parser = "deepseek_r1"
-priority = 52
+priority = 12
 
 [[model]]
 id = "glm-z1-9b"
@@ -66,4 +69,139 @@ kind = "reference"
 hf = "zai-org/GLM-Z1-9B-0414@b221b06fefb23ca320922cf6e68ab5f2fb82de81"
 # native context is 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (only answers longer than ~30.7K tokens go past the trained range)
 reasoning_parser = "deepseek_r1"
-priority = 53
+priority = 13
+
+[[model]]
+id = "qwen3.5-4b"
+label = "Qwen3.5-4B"
+kind = "reference"
+hf = "Qwen/Qwen3.5-4B@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+# same family as Genesis (Qwen3.5); same chat template as Qwen3.5-9B, thinking on by default
+reasoning_parser = "qwen3"
+priority = 14
+
+[[model]]
+id = "qwen3-14b"
+label = "Qwen3-14B"
+kind = "reference"
+hf = "Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
+# native context 40960
+reasoning_parser = "qwen3"
+priority = 15
+
+[[model]]
+id = "qwen3-4b"
+label = "Qwen3-4B"
+kind = "reference"
+hf = "Qwen/Qwen3-4B@1cfa9a7208912126459214e8b04321603b3df60c"
+# original hybrid release (thinking on by default, like Qwen3-8B); native context 40960
+reasoning_parser = "qwen3"
+priority = 16
+
+[[model]]
+id = "r1-distill-qwen-14b"
+label = "R1-Distill-Qwen-14B"
+kind = "reference"
+hf = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B@1df8507178afcc1bef68cd8c393f61a886323761"
+reasoning_parser = "deepseek_r1"
+priority = 17
+
+[[model]]
+id = "openreasoning-nemotron-7b"
+label = "OpenReasoning-Nemotron-7B"
+kind = "reference"
+hf = "nvidia/OpenReasoning-Nemotron-7B@3afbc681aa2679fa65304f7d498e7eb28163962b"
+reasoning_parser = "deepseek_r1"
+priority = 18
+
+[[model]]
+id = "acereason-nemotron-1.1-7b"
+label = "AceReason-Nemotron-1.1-7B"
+kind = "reference"
+hf = "nvidia/AceReason-Nemotron-1.1-7B@2be9ed2fe532f39332ee47fd21899cab5fd6ec15"
+# chat template adds its default system prompt ("You are a helpful assistant. You should think step-by-step.")
+reasoning_parser = "deepseek_r1"
+priority = 19
+
+[[model]]
+id = "skywork-or1-7b"
+label = "Skywork-OR1-7B"
+kind = "reference"
+hf = "Skywork/Skywork-OR1-7B@5bd323a9cdea40b9412cb2a200ee284201e930ae"
+reasoning_parser = "deepseek_r1"
+priority = 20
+
+[[model]]
+id = "mimo-7b-rl"
+label = "MiMo-7B-RL"
+kind = "reference"
+hf = "XiaomiMiMo/MiMo-7B-RL@7c7707596b0ef1032ef82970d7a4a484ca457c4d"
+# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B). MiMoForCausalLM (native in vLLM; MTP layers unused)
+reasoning_parser = "mimo"
+priority = 21
+
+[[model]]
+id = "llama-nemotron-nano-8b-v1"
+label = "Llama-3.1-Nemotron-Nano-8B-v1"
+kind = "reference"
+hf = "nvidia/Llama-3.1-Nemotron-Nano-8B-v1@54641c1611fcff44fa4865626462445e0a153fc7"
+# reasoning is OFF unless the system prompt is "detailed thinking on" (model card); the template below is the repo template with
+# that as the default system message (only change)
+reasoning_parser = "deepseek_r1"
+chat_template = "templates/llama-nemotron-nano-8b-v1-thinking.jinja"
+priority = 22
+
+[[model]]
+id = "openthinker3-7b"
+label = "OpenThinker3-7B"
+kind = "reference"
+hf = "open-thoughts/OpenThinker3-7B@864fb9aefbb91f257c4911e4b9f85a6986f8eab2"
+# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B)
+reasoning_parser = "deepseek_r1"
+priority = 23
+
+[[model]]
+id = "phi-4-reasoning"
+label = "Phi-4-reasoning"
+kind = "reference"
+hf = "microsoft/Phi-4-reasoning@1de18ec97600877ce63dbf60c73b998da99f0195"
+# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B). The repo template always adds its own reasoning system prompt
+reasoning_parser = "deepseek_r1"
+priority = 24
+
+[[model]]
+id = "phi-4-mini-reasoning"
+label = "Phi-4-mini-reasoning"
+kind = "reference"
+hf = "microsoft/Phi-4-mini-reasoning@0e3b1e2d02ee478a3743abe3f629e9c0cb722e0a"
+# the repo template always adds its system prompt ("Your name is Phi, an AI math expert developed by Microsoft.")
+reasoning_parser = "deepseek_r1"
+priority = 25
+
+[[model]]
+id = "deepscaler-1.5b"
+label = "DeepScaleR-1.5B-Preview"
+kind = "reference"
+hf = "agentica-org/DeepScaleR-1.5B-Preview@e3f524ce413a296b4d388e7560dd5c82c1c56725"
+# small anchor (R1-Distill-Qwen-1.5B + RL)
+reasoning_parser = "deepseek_r1"
+priority = 26
+
+[[model]]
+id = "r1-distill-qwen-1.5b"
+label = "R1-Distill-Qwen-1.5B"
+kind = "reference"
+hf = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B@ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
+# small anchor
+reasoning_parser = "deepseek_r1"
+priority = 27
+
+[[model]]
+id = "gpt-oss-20b"
+label = "gpt-oss-20b"
+kind = "reference"
+hf = "openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
+# 21B MoE (3.6B active), MXFP4 weights; harmony format, default reasoning effort (medium). Served with the common sampling
+# (temp 0.6 / top_p 0.95), not the model card temp 1.0 / top_p 1.0. Last in the ref order: if it fails to serve 3 times it is skipped
+reasoning_parser = "openai_gptoss"
+priority = 28
