@@ -96,7 +96,7 @@ def main(argv=None):
     W = sum(weights.values()) or 1
     procs = {}
     env = dict(os.environ, BENCH_API_KEY="local")
-    MAX_C, MAX_ATTEMPTS = 1024, 3
+    MAX_C, MAX_ATTEMPTS = 3072, 3  # fd limit is raised above, so one env may use the whole budget
 
     def launch(b, attempt):
         d = f"{out}/{b['id']}"; vf = d + "/vf"; os.makedirs(vf, exist_ok=True)
