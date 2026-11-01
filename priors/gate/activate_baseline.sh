@@ -3,8 +3,8 @@
 # gate_service / training_params / gate_ledger / k1_transparency) + baseline_v1.py / prior_gate.py in the gate code dir + probe gate pool
 # (probe-kit/install_gatepool.sh: envs.json 'affine_gatepool', probe_worker per-env gold) + PROMOTION-GATE.json heldout.baseline=prior-v1
 # + llms.txt sections 5-7. The open ivw-v2 round is closed by the hook at the next tick (never revealed: it has no GREEN).
-#   (default)    WAIT_EPOCH=<e> VL_WATCHDOG=stop|keep : wait for gate DECISION e (gap), take RA/LIFECYCLE-ACTIVATION.lock, stop the gate,
-#                wait (<= 10 min) for an idle probe, install the probe kit, back up, patch code, flag on, texts, restart gate + 3
+#   (default)    WAIT_EPOCH=<e> VL_WATCHDOG=stop|keep : wait for gate DECISION e (gap), take RA/LIFECYCLE-ACTIVATION.lock,
+#                wait (<= 10 min, gate running) for an idle probe, install the probe kit, back up, patch code, flag on, texts, restart gate + 3
 #                publishers, health check (else full revert), start the watchdog (unit affine-prior-watchdog).
 #   MODE=revert  : stop the gate, close an open prior-v1 round (secret kept private in ROUND.private.json), reverse code, flag off,
 #                texts back, restart. PROBE_REVERT=1 also restores the probe's envs.json/probe_worker.py (changes the probe fingerprint
@@ -82,6 +82,17 @@ MODE=check bash $B/probe-kit/install_gatepool.sh >/dev/null 2>&1; true
 systemctl --user is-active affine-prior-table >/dev/null || say "WARN: affine-prior-table not active (the round uses the table as of its last write)"
 $PY -c "import sqlite3; c=sqlite3.connect('file:$RA/20261101-prior-table/private/table/prior_table.private.sqlite?mode=ro', uri=True); print('table rows', c.execute('select count(*) from tasks').fetchone()[0])" || { say "ABORT: prior table unreadable"; exit 1; }
 sha256sum -c <(echo "9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e  $B/public/gate-pool-v1.jsonl") >/dev/null || { say "ABORT: gate pool sha256"; exit 1; }
+SF=$RA/20261101-grade-stall-fix
+python3 - $SF <<'PY' || { say "ABORT: grade-stall fix not verified (needs state/VERIFIED, or its first round's baseline done + >= 1 decided turn, no REVERTED)"; exit 1; }
+import json, sys
+from pathlib import Path
+sf = Path(sys.argv[1]); st = sf / 'state'
+if (st / 'REVERTED').exists() or not (st / 'INSTALLED.json').exists(): sys.exit(1)
+if (st / 'VERIFIED').exists(): print('stall fix VERIFIED'); sys.exit(0)
+g = json.load(open(st / 'GUARD-STATUS.json')); r = (g.get('new_rounds') or [{}])[0]
+ok = bool(r.get('baseline_s')) and any(t[1] in ('red', 'green') and not t[3] for t in r.get('turns') or []) and not g.get('errors')
+print('stall fix first round %s baseline %ss turns %s errors %s' % (r.get('id'), r.get('baseline_s'), r.get('turns'), g.get('errors'))); sys.exit(0 if ok else 1)
+PY
 say "staged ok; waiting for gate DECISION e$W"; prog "armed: waiting for gate DECISION e$W"
 while :; do
   until [[ -f $GS/epochs/$W/DECISION.json ]]; do sleep 2; done; sleep 1
@@ -93,10 +104,11 @@ TS=$(date -u +%Y%m%dT%H%M%SZ); BK=$B/backups/pv-$TS; mkdir -m 700 -p $BK; T="$(d
 cp -a $FLAG $CODE/heldout.py $CODE/gate_service.py $CODE/gate_core.py $CODE/training_params.py $CODE/gate_ledger.py $K1 $WEB/llms.txt $WEB/mining.json $WEB/gate.json $BK/ \
   && echo $BK > $B/state/LAST-BACKUP || { say "ABORT backup"; exit 1; }
 echo "$T" > $B/state/SWITCH_CR; echo $((W + 1)) > $B/state/SWITCH_EPOCH
-systemctl --user stop affine-promotion-gate
-for i in $(seq 1 20); do MODE=check bash $B/probe-kit/install_gatepool.sh 2>&1 | grep -q '^active runs=\[\] fetching=False' && break; [[ $i == 20 ]] && { say "ABORT: probe not idle after 10 min"; systemctl --user start affine-promotion-gate; exit 1; }; sleep 30; done
-MODE=install bash $B/probe-kit/install_gatepool.sh || { say "ABORT: probe kit install failed (pod restored)"; systemctl --user start affine-promotion-gate; exit 1; }
-cp -p $C/baseline_v1.py $C/prior_gate.py $CODE/ && $PY $C/patch_gate.py apply $CODE $K1 || { say "ABORT: code patch failed"; cp -p $BK/gate_service.py $BK/training_params.py $BK/gate_ledger.py $CODE/; cp -p $BK/k1_transparency.py $K1; systemctl --user start affine-promotion-gate; exit 1; }
+# the gate keeps running (the grade-stall-fix guard reverts if the gate is inactive >= 60 s): install in the post-DECISION gap
+# when the probe is idle, then patch + restart right away (seconds), so no run starts on mixed files.
+for i in $(seq 1 20); do MODE=check bash $B/probe-kit/install_gatepool.sh 2>&1 | grep -q '^active runs=\[\] fetching=False' && break; [[ $i == 20 ]] && { say "ABORT: probe not idle after 10 min"; exit 1; }; sleep 30; done
+MODE=install bash $B/probe-kit/install_gatepool.sh || { say "ABORT: probe kit install failed (pod restored)"; exit 1; }
+cp -p $C/baseline_v1.py $C/prior_gate.py $CODE/ && $PY $C/patch_gate.py apply $CODE $K1 || { say "ABORT: code patch failed"; cp -p $BK/gate_service.py $BK/training_params.py $BK/gate_ledger.py $CODE/; cp -p $BK/k1_transparency.py $K1; MODE=revert bash $B/probe-kit/install_gatepool.sh; exit 1; }
 flock -w 60 $FLAG.lock python3 $C/setflag_prior.py $FLAG on "prior-v1 activation after e$W DECISION"
 python3 $C/patch_texts_prior.py apply "$T" $WEB/llms.txt $B/state || say "WARN: text patch rc!=0"
 mkdir -p $WEB/gate/heldout && cp -p $C/baseline_v1.py $C/prior_gate.py $WEB/gate/heldout/

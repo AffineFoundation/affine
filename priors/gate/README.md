@@ -1,9 +1,9 @@
-# SN120 gate baseline prior-v1 (staged, NOT live)
+# SN120 gate baseline prior-v1 (LIVE from 2026-11-01 (first round after the e494 decision))
 
 Jacob 2026-11-01 14:23-14:26 CR (pt1019u): switch the held-out gate's baseline to the prior-table design. This directory is the
-code for that switch. **Until the switch the live gate is unchanged** (ivw-v2: uniform draw from the 7,496 MATH tasks, selection
-block, inverse-variance weights). The switch happens in one step at an epoch boundary (`activate_baseline.sh`); it is announced
-on the SN120 channel and in https://affine.io/llms.txt when it happens.
+code of the live gate baseline since 2026-11-01 (first round after the e494 decision) (before: ivw-v2, uniform draw from the 7,496 MATH tasks, selection block,
+inverse-variance weights). It was switched in one step at an epoch boundary (`activate_baseline.sh`); see https://affine.io/llms.txt
+sections 5-7.
 
 ## The rule (`../baseline_v1.py`)
 
@@ -15,10 +15,12 @@ on the SN120 channel and in https://affine.io/llms.txt when it happens.
 - Seed (commit-reveal): a fresh 32-byte secret, its commitment published when the round opens; after the upload deadline the
   gate fixes block B = finalized + 3; once B is finalized, seed = sha256(version|seed|secret|B|hash(B)). The secret, B, its hash,
   the seed and the drawn ids are revealed when the round closes (`verify_round.py` checks a reveal against the chain).
-- The head is scored fresh on the draw (12 samples), every candidate with k_cand = 8 (common random numbers with head run 0).
+- The head is scored fresh on the draw once per round (12 samples), every candidate with k_cand = 8 independent samples per task.
 - Delta = sum_env share_env x Hajek mean (candidate - head), shares = env size / pool size; SE = sqrt(sampling + rollout +
-  tau^2 x 2 x A^2), tau = 0.0457. **GREEN iff Delta > 0, z > 1.00, affine_math cap-hit < 0.20, >= 100 tasks scored.**
+  sigma_run^2), sigma_run = 0.003 (run-noise floor; the 2026-11-01 head-vs-itself test found no measurable run noise). **GREEN iff Delta > 0, z > 1.00, affine_math cap-hit < 0.20, >= 100 tasks scored.**
 - No batch exclusion. Head and candidates are graded identically (same probe, grader, settings, tasks).
+- Private: the prior table values and the per-task inclusion probabilities pi_i. So a reveal lets you verify the commitments, the
+  block hash, the seed, the drawn ids and the GREEN turn's grades (`verify_round.py`), but not recompute Delta / z exactly.
 
 ## Files
 

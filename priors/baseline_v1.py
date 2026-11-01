@@ -20,9 +20,12 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
     Delta = sum_e share_e * m_e      (estimates the pool-wide mean of p_cand - p_head)
     Var_e = sum_{i in e} ((1 - pi_i) r_i^2 + pi_i v_i) / pi_i^2 / (sum_{i in e} 1/pi_i)^2,  r_i = d_i - m_e,
             v_i = x(1-x)/(k-1) + h(1-h)/(m-1)   (rollout noise)
-    run term (each fresh run shifts all its pass rates by a common logit offset of sd tau):
-            Var_run = tau^2 * 2 * A^2, A = sum_e share_e * Hajek_e(h(1-h) m/(m-1))
+    run term (head and candidate are separate fresh runs; a run can shift all its pass rates a little):
+            Var_run = max(tau^2 * 2 * A^2, sigma_run_floor^2), A = sum_e share_e * Hajek_e(h(1-h) m/(m-1));
+            live: tau = 0 and sigma_run_floor = 0.003 (whole-pool scale; the 2026-11-01 head-vs-itself test found no measurable run
+            noise), so Var_run = 0.003^2
     SE = sqrt(sum_e share_e^2 Var_e + Var_run);  z = Delta / SE
+  Request seeds: head block b uses plan_seed(seed, b); the candidate of epoch e uses cand_seed(seed, e) (independent seeds).
   GREEN iff Delta > 0 AND z > bar_z (1.00) AND estimated candidate cap-hit < cap_max (0.20) AND >= min_scored tasks scored.
   cap-hit = Hajek estimate of the candidate's capped share over the `cap_envs` (default affine_math, as before)."""
 from __future__ import annotations
@@ -31,7 +34,7 @@ import hashlib, json, math, os, sqlite3
 VERSION = 'sn120-prior-baseline-v1'
 ROUND_SCHEMA = 'sn120-heldout-gate-prior-v1'
 DEFAULTS = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', floor=0.10, cap=0.10, shares='size',
-                n_init=2.0, tau_run_separate=0.0457, tau_run_same=0.0457, bar_z=1.0, z_inclusive=False, cap_max=0.20,
+                n_init=2.0, tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False, cap_max=0.20,
                 cap_envs=['affine_math'], min_scored=100, min_cover=0.95, block_delay=3, baseline_parallel=3,
                 stall_s=2100, probe_env='affine_gatepool', math_offset=0, dapo_offset=7496)
 
@@ -133,8 +136,13 @@ def draw_commitment(seed: str, ids) -> str:
     return hashlib.sha256(('%s|%s|%s' % (VERSION, seed, ','.join(sorted(ids)))).encode()).hexdigest()
 
 
+def cand_seed(seed: str, epoch: int) -> str:
+    """Candidate plan seed for the turn of epoch e: independent of the head's block seeds (no common random numbers)."""
+    return hashlib.sha256(('%s:prior-baseline:cand:%d' % (seed, int(epoch))).encode()).hexdigest()
+
+
 def plan_seed(seed: str, b: int) -> str:
-    """Head block b plan seed; candidates use block 0's plan seed (common random numbers for j < k_block)."""
+    """Head block b plan seed (candidates use cand_seed: independent request seeds)."""
     return hashlib.sha256(('%s:prior-baseline:%d' % (seed, b)).encode()).hexdigest()
 
 
@@ -154,7 +162,7 @@ def _rate(cl):
     return cl['c'] / cl['n']
 
 
-def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='size', tau=0.0457, bar_z=1.0, z_inclusive=False,
+def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='size', tau=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False,
              cap_max=0.20, cap_envs=('affine_math',), min_scored=100, min_cover=0.95) -> dict:
     """drawn = {task_id: dict(env, pi)}; head/cand = {task_id: probe cell {n, c, b, ...}}; env_size = {env: tasks in the pool}.
     -> dict(decision, reasons, evaluated, evaluated_private). evaluated holds no per-task data and no prior values."""
@@ -184,7 +192,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
     shx = {e: sh[e] / shn for e in have}          # renormalised if an env has no scored task (fails min_cover anyway)
     delta = sum(shx[e] * envs[e]['gain'] for e in have) if have else None
     var_s = sum(shx[e] ** 2 * envs[e]['var'] for e in have)
-    A = sum(shx[e] * envs[e]['pq'] for e in have); var_r = float(tau) ** 2 * 2 * A * A
+    A = sum(shx[e] * envs[e]['pq'] for e in have); var_r = max(float(tau) ** 2 * 2 * A * A, float(sigma_run_floor) ** 2)
     se = math.sqrt(var_s + var_r) if have else None
     z = (delta / se) if (se and se > 0) else 0.0
     ce = [e for e in cap_envs if e in envs]; cw = sum(sh[e] for e in ce) or 1.0
@@ -196,7 +204,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
     if delta is None or not delta > 0: reasons.append('gain %s <= 0' % (None if delta is None else round(delta, 5)))
     if not ((z >= bar_z) if z_inclusive else (z > bar_z)): reasons.append('z %.3f %s %.2f' % (z, '<' if z_inclusive else '<=', bar_z))
     if cap is None or not cap < cap_max: reasons.append('cap_rate %s >= %.2f' % (None if cap is None else round(cap, 4), cap_max))
-    ev = dict(z=z, gain=delta, delta=delta, se=se, se_task=math.sqrt(var_s), se_run=math.sqrt(var_r), tau_run=float(tau), n=scored,
+    ev = dict(z=z, gain=delta, delta=delta, se=se, se_task=math.sqrt(var_s), se_run=math.sqrt(var_r), tau_run=float(tau), sigma_run_floor=float(sigma_run_floor), n=scored,
               drawn=len(drawn), cover=cover, h_pass=sum(shx[e] * envs[e]['h_pass'] for e in have) if have else None,
               c_pass=sum(shx[e] * envs[e]['c_pass'] for e in have) if have else None, c_cap_rate=cap, h_cap_rate=hcap, cap_envs=list(ce),
               c_cap_rate_pool=sum(shx[e] * envs[e]['c_cap'] for e in have) if have else None,
@@ -205,7 +213,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
                                h_pass=envs[e]['h_pass'], c_pass=envs[e]['c_pass'], c_cap=envs[e]['c_cap'], h_cap=envs[e]['h_cap'])
                        for e in have},
               estimator='per-env Hajek (inverse-probability ratio) estimate of Delta = sum_e share_e * mean_e(p_cand - p_head); '
-                        'SE = sqrt(sampling + rollout variance + run term tau^2 * 2 * A^2)', scoring=VERSION)
+                        'SE = sqrt(sampling + rollout variance + run term max(tau^2 * 2 * A^2, sigma_run_floor^2))', scoring=VERSION)
     return dict(decision='red' if reasons else 'green', reasons=reasons, evaluated=ev, z_min=bar_z, z_inclusive=bool(z_inclusive),
                 cap_max=cap_max, min_tasks=min_scored, scoring=VERSION, sample_size=len(drawn), batch_overlap=None, batch_pre_post=None)
 

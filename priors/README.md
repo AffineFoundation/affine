@@ -1,13 +1,14 @@
-# SN120 prior table + prior-weighted baseline (not live)
+# SN120 prior table + prior-weighted baseline (live as the gate baseline prior-v1 from 2026-11-01 (first round after the e494 decision))
 
 Jacob pt988u / pt989u, 2026-11-01. A dedicated pod keeps sampling the **current head** on an *active set* of math environments and
 keeps a per-task prior table. From that table the held-out baseline can be drawn by weighted random sampling (no hard filters),
 refined with 12-16 head rollouts per drawn task, and used as the gate bar for miners. **The live gate/probe is unchanged**:
 nothing here is imported by `gate_service.py`, the probe, the trainer, `llms.txt` or `mining.json`. Switching waits for Jacob.
 
-Privacy: the pool contents of the private envs, the prior table, the draws and the dry-run reports are **private** (they reveal which
-tasks are in play / informative). They live under `state/root-audits/20261101-prior-table/private/` (0700/0600) and on the
-prior pod only. Never commit or publish them. This directory holds code only.
+Privacy (Jacob pt1019u, 2026-11-01): the gate pool (affine_math + dapo) is **public** (`miner/data/gate-pool-v1.jsonl`), and so is
+all code, including how the prior is formed. The prior table VALUES (the sqlite, per-task counts, the private status) and the
+private perf-eval holdout stay private: they live under `state/root-audits/20261101-prior-table/private/` (0700/0600) and on the
+prior pod only. Never commit or publish them.
 
 ## Pieces
 

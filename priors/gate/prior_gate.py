@@ -8,7 +8,7 @@ probabilities pi (private) -> after the opening epoch's upload deadline a future
 finalized: seed = sha256(VERSION|seed|secret|B|hash(B)), draw (Poisson, expected N), public draw_commitment and draw size ->
 head baseline: head_blocks runs x (head_rollouts / head_blocks) rollouts on every drawn task on the probe pod (once per round
 when scoring_mode = "separate"; fresh for every turn when scoring_mode = "same-run") -> every candidate runs k_cand rollouts on every
-drawn task (plan seed = head block 0, common random numbers) -> baseline_v1.estimate (per-env Hajek Delta, z, cap) -> DECISION.
+drawn task (plan seed = cand_seed(seed, epoch): independent of the head blocks) -> baseline_v1.estimate (per-env Hajek Delta, z, cap) -> DECISION.
 Closed rounds reveal secret, block, seed and drawn ids (/gate/heldout/<round>.json); per-task grades only for the GREEN turn.
 The prior table values (s, n, pi) are never published."""
 from __future__ import annotations
@@ -87,15 +87,15 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         'average), mixed with a 10% uniform floor and capped at pi 0.10 (Poisson sampling). Seed = sha256(secret, block B, hash of B): '
         'the secret commitment is published when the round opens and B (a block after the upload deadline) before B exists; the secret '
         'is revealed when the round closes. The head is scored fresh on every drawn task (head_rollouts rollouts), every candidate with '
-        'k_cand rollouts per task (same request seeds as head block 0 for j < k_block); Delta = sum over envs of env share x Hajek '
-        '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + tau^2 * 2 * A^2); '
+        'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
+        '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > bar_z AND estimated cap-hit (cap_envs) < cap_max AND >= min_scored tasks scored. '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
 
 
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
-                                   'bar_z', 'z_inclusive', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay')} | dict(
+                                   'bar_z', 'z_inclusive', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor')} | dict(
         tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']))
 
 
@@ -262,8 +262,10 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
             S.log(event='prior_baseline_block_done', round=rid, block=bi, tasks=len(pt), wall=res.get('wall_seconds'))
         elif ru.get('running'):
             running += 1
-            ph = hashlib.sha256(json.dumps(ru.get('progress'), sort_keys=True, default=str).encode()).hexdigest()
+            pg_ = ru.get('progress') or {}; ph = '%s/%s' % (pg_.get('generated'), pg_.get('samples'))   # real progress only (progress.at ticks while stuck)
             if ph != bs.get('progress_hash'): bs['progress_hash'] = ph; btl['last_progress'] = time.time()
+            if hasattr(S, 'stall_salvage'):   # grade-stall fix 20261101: no-progress finalize-run salvage (same rule as the ivw-v2 path)
+                S.stall_salvage(bs, name, ru, len(r['indices']) * kb, 'prior_baseline_stall_salvage', round=rid, block=bi)
         elif 'start' not in bs:
             if running < int(pv['baseline_parallel']):
                 plan = dict(run_name=name, checkpoint_id=H, seed=BV.plan_seed(r['seed'], bi), concurrency=4096, grade_workers=160, resume=False,
@@ -329,7 +331,7 @@ def process_epoch(S, e, s, f):
     tl.setdefault('h_ready', time.time())
     S.busy(True, epoch=e, candidate=C)
     f2 = dict(f, env=pv['probe_env'])
-    kp = dict(k=int(pv['k_cand']), seeded=True); pseed = BV.plan_seed(r['seed'], 0)
+    kp = dict(k=int(pv['k_cand']), seeded=True); pseed = BV.cand_seed(r['seed'], e)
     if not tl.get('run_done'):
         stage = S.fetch_and_serve(C, f2, tl, e); S.wj(tlp, tl)
         if stage != 'ready': return stage + ('(early)' if early else '')
@@ -350,7 +352,7 @@ def process_epoch(S, e, s, f):
     PI = S.rj(R.d(rid) / 'PI.private.json')
     drawn = {t: dict(env=PI['env'][t], pi=PI['pi'][t]) for t in r['ids']}
     tau = float(pv['tau_run_same'] if per_turn else pv['tau_run_separate'])
-    dec = BV.estimate(drawn, bl, cpt, r['pool']['per_env'], shares=pv['shares'], tau=tau, bar_z=float(pv['bar_z']),
+    dec = BV.estimate(drawn, bl, cpt, r['pool']['per_env'], shares=pv['shares'], tau=tau, sigma_run_floor=float(pv['sigma_run_floor']), bar_z=float(pv['bar_z']),
                       z_inclusive=bool(pv['z_inclusive']), cap_max=float(pv['cap_max']), cap_envs=tuple(pv['cap_envs']),
                       min_scored=int(pv['min_scored']), min_cover=float(pv['min_cover']))
     S.wj(d / 'C-PROBE.private.json', dict(candidate=C, per_task=cpt_i, wall=res.get('wall_seconds'), partial=res.get('partial'),
@@ -365,11 +367,11 @@ def process_epoch(S, e, s, f):
                            serve_s=round(tl.get('served', 0) - tl.get('serve_start', tl.get('served', 0)), 1),
                            run_s=round(tl['run_done'] - tl.get('run_start', tl['run_done']), 1)),
                red_credit=f.get('red_credit', 'zero'), commitment=r['draw_commitment'],
-               probe=dict(k=kp['k'], seeded=True, common_random_numbers=True, crn='candidate plan seed = head block 0 plan seed',
+               probe=dict(k=kp['k'], seeded=True, common_random_numbers=False, crn='none: candidate plan seed = sha256(seed:prior-baseline:cand:<epoch>), independent of the head blocks',
                           h_side='prior-v1 head baseline (%s rollouts/task on every drawn task, %s)' % (b.get('rollouts_per_task'),
                                  'fresh this turn' if per_turn else 'once per round')),
                heldout=dict(round_id=rid, baseline='prior-v1', set_size=r['n'], bar_z=float(pv['bar_z']), z_inclusive=bool(pv['z_inclusive']),
-                            k_cand=kp['k'], head_rollouts=b.get('rollouts_per_task'), scoring_mode=pv['scoring_mode'], tau_run=tau,
+                            k_cand=kp['k'], head_rollouts=b.get('rollouts_per_task'), scoring_mode=pv['scoring_mode'], tau_run=tau, sigma_run_floor=float(pv['sigma_run_floor']),
                             baseline_done_at_cr=b.get('done_at_cr'), scoring=BV.VERSION, settings_hash=b.get('settings_hash')))
     BV.assert_public(dict(evaluated=dec['evaluated'], reasons=dec['reasons'], heldout=dec['heldout']), True)
     S.wj(tlp, tl); S.wj(d / 'EVALUATED.private.json', dict(evaluated=dec['evaluated'], drawn=len(drawn)), 0o600); S.wj(dp, dec, 0o600)

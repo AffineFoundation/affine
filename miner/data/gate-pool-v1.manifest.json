@@ -1,0 +1,45 @@
+{
+ "files": {
+  "gate-pool-v1.jsonl": "9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e"
+ },
+ "grader": "the live affine_math grader (probe_worker.grade) for both envs",
+ "holdout_exclusion": {
+  "dropped": 4,
+  "dropped_ids": [
+   "math:3322",
+   "math:6297",
+   "math:6512",
+   "math:6801"
+  ],
+  "dropped_per_env": {
+   "affine_math": 4
+  },
+  "dropped_per_rule": {
+   "jaccard3>=0.9": 4
+  },
+  "rule": "a pool task is dropped if its problem matches a task of the private perf-eval holdout: sha256 of the raw problem text, sha256 of the normalised text (NFKC, lowercase, whitespace collapsed), or token-3-gram Jaccard >= 0.9. The holdout itself stays private (size + sha256 in https://affine.io/performance.json)."
+ },
+ "ids_sha256": "04dabf18d61e09f853011376e1185eb3f6d97510207282d6be5de8ca32a0c623",
+ "line_format": "one JSON object per line, sorted keys: id, env, problem, answer (+ src_index, uid for dapo); file order = math then dapo by id",
+ "prompt": "[system: MANDATE, user: problem] for both envs (same as affine_math)",
+ "sources": {
+  "affine_math": {
+   "file": "miner/data/original-math7496.tasks.json",
+   "id_rule": "math:<list index>",
+   "sha256": "77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3",
+   "tasks": 7496
+  },
+  "dapo": {
+   "file": "(built by priors/dapo/build_dapo.py from BytedTsinghua-SIA/DAPO-Math-17k rev 65877096c24ffa7abc4e4fa5edb95cf3413a5674)",
+   "id_rule": "dapo:<position in the built pool>",
+   "sha256_of_built_pool": "18d6951e47b85e824fe6f57b986c912d4f939b4c167374e98f4451d18b238a95",
+   "tasks": 11813
+  }
+ },
+ "tasks": 19305,
+ "tasks_per_env": {
+  "affine_math": 7492,
+  "dapo": 11813
+ },
+ "version": "sn120-gate-pool-v1"
+}

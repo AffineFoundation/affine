@@ -40,14 +40,16 @@
   - once B is finalized: seed = sha256(version|seed|secret|B|hash of B), the draw is made and its size and
     draw_commitment = sha256(version|seed|sorted ids) are published. The secret is revealed when the round closes.
   So nobody (including the validator) can pick the sample after seeing the files, and miners can't predict it.
-- Scoring: the head is scored FRESH on every drawn task (12 samples: 3 runs x 4); every candidate of the round runs k_cand = 8
-  samples per drawn task (j = 0-3 use the same request seeds as head run 0: common random numbers). Same grader, same tasks,
-  same settings for head and candidates. The turn batch is NOT excluded.
+- Scoring: the head is scored FRESH on every drawn task once per round (12 samples: 3 runs x 4); every candidate of the round
+  runs k_cand = 8 samples per drawn task with its own independent request seeds (plan seed = sha256(seed:prior-baseline:cand:
+  <epoch>)). Same grader, same tasks, same settings for head and candidates. The turn batch is NOT excluded.
 - Estimate: Delta = sum over envs of share_e x Hajek mean_e(candidate rate - head rate), where the Hajek mean weights each
   drawn task by 1/pi_i (share_e = env size / pool size: affine_math 0.388, dapo 0.612). SE = sqrt(sampling variance of the
-  Hajek estimate + rollout variance + tau^2 x 2 x A^2), tau = 0.0457 (head run-to-run spread). z = Delta / SE.
+  Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
+  scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
+  Formulas: priors/baseline_v1.py (module docstring + estimate()).
 - **GREEN iff Delta > 0 AND z > 1.00 (strict) AND estimated cap-hit on affine_math < 0.20 AND >= 100 drawn tasks scored
-  (and >= 95 % of the draw).** With N = 500 and k_cand = 8 the bar (= SE) is expected near +1.2 points.
+  (and >= 95 % of the draw).** With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
 - Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
   priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).
@@ -69,5 +71,13 @@
   (/k1/turns/<epoch>/turn.json). gate.json lists every decision; the round file has the GREEN turn's grades.
 - **RED turns:** only the decision, z / Delta, the counts and the file's sha256. The file, its lr / kl and the per-rollout
   trajectories stay private.
+- **What you can verify from a closed round, and what you can't:**
+  - CAN: that the secret matches the commitment published at open; that B was fixed before it existed and its hash is on chain;
+    that seed = sha256(version|seed|secret|B|hash(B)); that the drawn ids hash to the draw commitment; that every drawn task is in
+    the public pool (priors/gate/verify_round.py does all of this); the GREEN turn's per-task head and candidate grades;
+    the unweighted per-env head/candidate pass rates on the drawn tasks.
+  - CAN'T: recompute the exact Delta / SE / z, or check that each task's draw u_i < pi_i, because the inclusion probabilities pi_i
+    come from the private prior table and are not published (the table snapshot's sha256 is, so it can't be changed after the
+    round opens). The draw can't be steered by anyone: pi is fixed from a snapshot taken at open, before the block hash exists.
 - A new round always uses a fresh secret and a fresh block hash, so a revealed round says nothing about the next sample.
 

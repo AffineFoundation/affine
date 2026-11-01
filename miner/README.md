@@ -31,7 +31,9 @@ miner/
     batch/ff_format.py          the batch-file parser / checker / tokenizer the lifecycle uses
     gate/                       heldout.py (ivw-v2 scoring), gate_core.py (draw_sample, commitment), gate_service.py, gate-config.public.json
     probe/                      serve.sh (vLLM flags), probe_worker.py (sampling + grading), podctl.py, allan_src.py (lenient grader)
-  data/original-math7496.tasks.json   the 7,496-task pool (sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3)
+  data/original-math7496.tasks.json   the 7,496-task affine_math file (sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3)
+  data/gate-pool-v1.jsonl             the prior-v1 gate pool: 19,305 tasks, affine_math 7,492 + dapo 11,813 (sha256 9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e)
+  data/gate-pool-v1.manifest.json     its sources, sha256s and the 4 ids dropped for overlap with the private perf holdout
   requirements-trainer.txt      torch 2.14.0, transformers 5.14.1, fla 0.6.0 ... (trainer)
   requirements-gate-vllm.txt    the gate probe's pip freeze (vLLM 0.32.0, torch 2.13.0 ...)
   requirements-grader.txt       the validator-recorded eval venv freeze (math_verify 0.9.0 closure)
