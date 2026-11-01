@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gate_core as G
 import heldout as HO
+import prior_gate as PG   # prior-v1 baseline (RA/20261101-baseline-switch): inert unless heldout.baseline == 'prior-v1'
 
 V = Path('<VALIDATOR_STATE>/root-audits/20261026-promotion-gate')
 ST = Path(os.environ.get('HG_GATE_STATE') or (V / 'state')); EP = ST / 'epochs'
@@ -37,6 +38,7 @@ PROBE_SSH = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=ye
 if os.environ.get('HG_PROBE_SSH'): PROBE_SSH = json.loads(os.environ['HG_PROBE_SSH'])   # test pod only (e2e); live = the probe pod above
 NO_TRAINER = os.environ.get('HG_NO_TRAINER') == '1'   # e2e: never call the trainer pod (keep / early staging / delta / restore)
 ROUNDS = None   # heldout.Rounds, created lazily (needs wj/rj/log/cr below)
+def SVC(): return sys.modules[__name__]   # prior_gate calls back into this module
 REPLAY_T0 = {}   # e2e replay of historical epochs only: {epoch: t} replaces the TRAINING-RESULT mtime (empty on the live path)
 RSSH = '<VALIDATOR_STATE>/root-audits/20261026-rollback-189de412/scripts/rssh.sh'
 # Epoch-time pass (Jacob t696u 2026-10-26 19:35 CR): operator toggles, read every tick; absent/false = original behaviour.
@@ -519,6 +521,8 @@ def rounds():
 
 
 def ensure_heldout_sample(e, H, f, d, sp):
+    _pg = PG.hook_sample(SVC(), e, H, f, d, sp)   # prior-v1 (PASS = old path)
+    if _pg is not PG.PASS: return _pg
     c = HO.cfg(f); R = rounds(); cur = R.current(); r = R.get(cur['id']) if cur else None
     if r and r['head'] != H:
         R.close(r['id'], 'head changed %s -> %s at epoch %d (no GREEN of this round)' % (r['head'][:12], H[:12], e), e); r = None
@@ -678,6 +682,7 @@ def skip_red(e, head, C, f, why, rid=None):
 
 def process_heldout_epoch(e, s, f):
     d = EP / str(e); dp = d / 'DECISION.json'; c = HO.cfg(f); R = rounds(); rid = s['round_id']; r = R.get(rid)
+    if PG.is_prior(r): return PG.process_epoch(SVC(), e, s, f)   # prior-v1 round
     cand = candidate_of(e); early = False
     if R.closed(rid):
         if cand:   # same semantics as the live head-mismatch skip
@@ -813,7 +818,9 @@ def heldout_publish():
                 R.close(cur['id'], 'green e%s (reconciled)' % t['epoch'], t['epoch']); cur = None; break
     rows = []
     for rid in ids:
-        r = R.get(rid); closed = rj(R.d(rid) / 'CLOSED.json'); b = R.baseline(rid); turns = R.turns(rid)
+        r = R.get(rid)
+        if PG.is_prior(r): rows.append(PG.publish_round(SVC(), R, rid, r, out)); continue   # prior-v1 round
+        closed = rj(R.d(rid) / 'CLOSED.json'); b = R.baseline(rid); turns = R.turns(rid)
         pubc = dict(R.public_commit(r), rule=HO_PUBLIC_RULE); gt = _green_turn(closed, turns); bb = b if gt else None   # baseline numbers: GREEN rounds only
         row = dict(pubc, status=('closed' if closed else 'open'), closed=closed,
                    baseline=dict(pubc['baseline'], done=bool(b), done_at_cr=(b or {}).get('done_at_cr'), head_pass_on_kept=(bb or {}).get('head_pass'),

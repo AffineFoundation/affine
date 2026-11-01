@@ -107,7 +107,7 @@ def _grade(env_id, index, out, stop):
             _, kind, reward = g(s, _G['plan']['manifest_projection'], _G['plan']['harness'], tok, out, stop)
             if kind != 'positive':
                 try:
-                    if _lenient_positive(index, tok, out, stop): kind = 'positive'
+                    if _lenient_positive(index, tok, out, stop, env_id): kind = 'positive'
                 except Exception:
                     pass
             return env_id, index, kind, None
@@ -147,16 +147,21 @@ def grade_job(jobdir, job_id, env_id, index, out, stop):
 # use this same file (it is part of the gate's probe fingerprint). Revert = restore probe_worker.py.bak-pre-verifierfix-*.
 VERIFIER_FIX = 'allan-lenient-v1-786cdb9'
 _AV = {}
-def _allan():
+def _allan(env_id=None):
     if 'ns' not in _AV:
         ns = {'__name__': 'allan_lenient_v1'}
         exec(compile('import re\nfrom math_verify import parse, verify\n' + _ALLAN_SRC, 'allan_lenient_v1', 'exec'), ns)
-        _AV['ns'] = ns
-        _AV['tasks'] = json.load(open(os.path.join(PLAN['source_root'], 'assets', 'original-math7496.tasks.json')))
-    return _AV['ns'], _AV['tasks']
-def _lenient_positive(index, tok, out, stop):
+        _AV['ns'] = ns; _AV['by_env'] = {}
+    # gatepool-v1: gold answers come from the env's own task snapshot (affine_math -> the same original-math7496 file as before)
+    snap = 'assets/original-math7496.tasks.json'
+    try: snap = (_G['envs'][env_id]['spec'].get('config') or {}).get('task_snapshot') or snap
+    except Exception: pass
+    path = snap if os.path.isabs(snap) else os.path.join(PLAN['source_root'], snap)
+    if path not in _AV['by_env']: _AV['by_env'][path] = json.load(open(path))
+    return _AV['ns'], _AV['by_env'][path]
+def _lenient_positive(index, tok, out, stop, env_id=None):
     if stop != 'eos' or not out or out[-1] not in EOS: return None
-    ns, tasks = _allan()
+    ns, tasks = _allan(env_id)
     text = tok.decode(out[:-1], skip_special_tokens=False)
     data = tasks[index]['data']
     gbox, viol, pfix = ns['lenient_project'](text)

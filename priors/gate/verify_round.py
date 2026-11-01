@@ -11,10 +11,11 @@ from baseline_v1 import VERSION, secret_commitment, seed_from, draw_commitment
 args = [a for a in sys.argv[1:] if not a.startswith('--')]; rpc = 'https://entrypoint-finney.opentensor.ai:443'
 if '--rpc' in sys.argv: rpc = sys.argv[sys.argv.index('--rpc') + 1]; args = [a for a in args if a != rpc]
 src = args[0]
-r = json.load(urllib.request.urlopen(src)) if src.startswith('http') else json.load(open(src))
+UA = {'User-Agent': 'sn120-verify-round/1'}   # affine.io rejects the default Python-urllib agent
+r = json.load(urllib.request.urlopen(urllib.request.Request(src, headers=UA), timeout=30)) if src.startswith('http') else json.load(open(src))
 def block_hash(n):
     q = json.dumps(dict(jsonrpc='2.0', id=1, method='chain_getBlockHash', params=[int(n)])).encode()
-    return json.load(urllib.request.urlopen(urllib.request.Request(rpc, q, {'Content-Type': 'application/json'}), timeout=30))['result']
+    return json.load(urllib.request.urlopen(urllib.request.Request(rpc, q, dict(UA, **{'Content-Type': 'application/json'})), timeout=30))['result']
 ok = {}
 ok['secret_commitment'] = secret_commitment(r['secret']) == r['secret_commitment']
 ok['block_hash_on_chain'] = block_hash(r['block_number']).lower() == r['block_hash'].lower()

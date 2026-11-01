@@ -25,8 +25,8 @@ elif mode == 'smoke':
     assert E._source_hash(sp) == sp.source_hash, 'source hash mismatch'
     s = E.create_session(sp); bad = []
     for i in (0, 1, 7495, 7496, 7497, 12000, len(tasks) - 1):
-        r = s.reset(i, 0); txt = json.dumps(r.get('messages'), ensure_ascii=False)
-        if tasks[i]['data']['problem'][:60] not in json.loads(json.dumps(txt)): bad.append(i)
+        r = s.reset(i, 0); txt = ' '.join(str(m.get('content')) for m in (r.get('messages') or []))
+        if tasks[i]['data']['problem'][:60] not in txt: bad.append(i)
     try: s.close_runtime()
     except Exception: pass
     from math_verify import parse, verify

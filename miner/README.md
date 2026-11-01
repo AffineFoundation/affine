@@ -4,12 +4,12 @@ Everything a miner needs to build a batch file, train the exact step the validat
 the exact held-out gate math, before you spend a turn. Start here. The plain-text version of this guide is
 https://affine.io/llms.txt. The live contract is https://affine.io/mining.json, and it wins if the two disagree.
 
-**What's published here.** The code below is the code the validator runs today (trainer v8.3.3j, gate `ivw-v2`,
+**What's published here.** The code below is the code the validator runs today (trainer v8.3.3j, gate `prior-v1`,
 free-file `affine-batch-v1/v2`). Every file's sha256 and its live source are in
 [`validator/MANIFEST.sha256`](validator/MANIFEST.sha256). Only one file is changed from the live copy:
 `gate_service.py`, which has the probe-pod SSH host and absolute paths replaced by placeholders. The task
-selection of any open round, its seed, and any private files are **not** published. A round's seed and task
-ids are only revealed if a GREEN closes it, and RED turns are never revealed.
+selection of any open round, its seed, the prior table values, the inclusion probabilities and any private files are **not**
+published. Every closed prior-v1 round reveals its secret, seed and drawn tasks; only GREEN turns reveal per-task grades.
 
 ```
 miner/
@@ -20,7 +20,8 @@ miner/
     make_batch.py               rollouts -> affine-batch-v1/v2 file, checked with the validator's checker
     check_batch.py              the validator's FULL format check (tokenizes like the trainer)
     train_step.py               ONE v8.3.3j step with the live trainer code -> candidate checkpoint
-    gate_eval.py                the held-out gate (selection block, 3 head blocks, CRN candidate, score_ivw) on your GPUs
+    gate_eval.py                the prior-v1 gate (weighted draw, fresh head, candidate, per-env Hajek estimate) on your GPUs
+    gate_eval_ivw_v2.py         the old ivw-v2 gate (before 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
     simulate_turn.sh            all of the above, end to end
     prompts.py / grade.py / sampler.py / kitpath.py   shared helpers (pool, prompt renderings, grader, vLLM client, imports)
     tests/test_kit_cpu.py       CPU self-test of the whole chain (tiny model + fake vLLM; no GPU)
@@ -29,7 +30,7 @@ miner/
                                 trainer-config.public.json = the live engine block + TrainerConfig + runtime versions
     engine/                     subnet/mimo_grpo (the engine the host trainer drives) + vendor/mimo_verl_pinned (GRPO advantage)
     batch/ff_format.py          the batch-file parser / checker / tokenizer the lifecycle uses
-    gate/                       heldout.py (ivw-v2 scoring), gate_core.py (draw_sample, commitment), gate_service.py, gate-config.public.json
+    gate/                       baseline_v1.py (prior-v1 draw + estimate), prior_gate.py (round logic), gate_service.py, heldout.py, gate_core.py, gate-config.public.json
     probe/                      serve.sh (vLLM flags), probe_worker.py (sampling + grading), podctl.py, allan_src.py (lenient grader)
   data/original-math7496.tasks.json   the 7,496-task affine_math file (sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3)
   data/gate-pool-v1.jsonl             the prior-v1 gate pool: 19,305 tasks, affine_math 7,492 + dapo 11,813 (sha256 9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e)
@@ -56,19 +57,16 @@ miner/
    If your file is **missing or invalid** at that moment, you're skipped: you aren't charged, you keep your place,
    and the next member is tried. The file is copied as evidence and format-checked, then the validator trains one
    GRPO step from the published head on your groups and runs the held-out gate on the candidate.
-5. **GREEN** means the candidate becomes the new head (bf16 + fp32 master). Everything about the turn is then published,
-   starting from https://affine.io/k1/turns/<epoch>/green.json:
-   - the baseline numbers (`/gate/heldout/<round>.json`: seed, selection block and head blocks per task, kept tasks, settings);
-   - the probe results (`/gate/reveal/<epoch>.json`: head and candidate cells per task);
-   - the tasks (`/k1/turns/<epoch>/tasks.json`: id, prompt, answer, level, kept);
-   - the decision math (z, gain, SE, sigma_run, recomputed decision);
+5. **GREEN** means the candidate becomes the new head (bf16 + fp32 master) and the round closes. Then published:
+   - the round (`/gate/heldout/<round>.json`): secret, block B and its hash, seed, drawn tasks (id, env, problem, answer), every
+     turn's decision numbers, and the GREEN turn's per-task head and candidate grades (no inclusion probabilities);
+   - the decision math (Δ, SE, z, per-env numbers) in `gate.json`;
    - the winning file (`batch.json`) with its lr / kl (`turn.json`).
 
    **RED** means the head is kept and only the decision, z / gain, the counts and the file's sha256 are published.
-   Your file, your lr/kl and your probe results stay private. While a round is open only its commitment is public.
-   Only GREEN turns are revealed: a round that a GREEN closed publishes its seed, task ids, baseline and the GREEN
-   candidate's per-task grades. RED turns and their probe results are never published, and a round that closes
-   without a GREEN is never revealed. See https://affine.io/llms.txt section 7.
+   Your file, your lr/kl and your probe results stay private. While a round is open only its commitments (secret, then
+   block B, then the draw) are public. When a round closes, for any reason, its secret, seed and drawn tasks are revealed;
+   per-task grades only for a GREEN turn. RED candidates' probe results are never published. See https://affine.io/llms.txt section 7.
 6. **Winning = weight.** The last (up to) 10 distinct GREEN UIDs each get 1/N of the miner weight, for as long as
    the hotkey that earned it stays registered on that UID. Unearned weight burns to UID 0, the weights are never
    all zero, and they're set hourly. Current payees are listed at https://affine.io/k1.json (`payees`).
@@ -140,41 +138,49 @@ python3 kit/fetch_head.py --out head && python3 kit/fetch_head.py --out ref --re
 python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss58> --out cand --report step.json
 ```
 
-## 4. The gate (held-out, ivw-v2): what `kit/gate_eval.py` runs
+## 4. The gate (held-out, prior-v1 since 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812)): what `kit/gate_eval.py` runs
 
-- **Pool:** the 7,496 tasks in `data/` (the list index is the task id). The gate prompt is
-  `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
+- **Pool:** `data/gate-pool-v1.jsonl`, 19,305 public tasks: affine_math 7,492 (MATH; `math:<index>` into
+  `data/original-math7496.tasks.json`, minus 4 near-duplicates of the private perf holdout) + dapo 11,813 (DAPO-Math-17k,
+  integer answers, built by `priors/dapo/build_dapo.py`). Manifest with sha256s: `data/gate-pool-v1.manifest.json`. The gate
+  prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
 - **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context, vLLM 0.32.0 on 8×B200
-  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). There's one
-  request per sample, with seed = int(sha256(`P:affine_math:task:j`)[:12], 16).
-- **Grader** (`kit/grade.py` = `probe_worker.grade`): a capped reply is neutral (unresolved). Otherwise the final channel
-  after one `<think>…</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0 against
-  `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1–E7
-  equivalence; `probe/allan_src.py`) are tried.
-- **A round.** The validator draws n task ids with `gate_core.draw_sample(seed, 7496, n)` from a secret
-  `os.urandom(32)` seed and publishes only a commitment (https://affine.io/gate/heldout/current.json). n = 2000 in rounds
-  opened after 2026-10-31 14:27 CR (1000 before), except the round opened 2026-11-01 14:06 CR (a fallback to n 1000 / k_cand 4 /
-  per-round σ_run after a probe stall; re-armed for rounds opened after 2026-11-01 14:19 CR); n, k_cand and sigma_run are frozen when a
-  round opens and published in current.json.
-  Block 0 (the selection) runs the head k=4 on all n tasks, and the **kept** tasks are those with 0 < c < 4 (about 270 at
-  n = 2000). Blocks 1–3 are three more head runs (k=4) on the kept tasks. Every candidate of the round runs k_cand = 8
-  (4 before the switch) on the kept tasks; samples j < 4 use **the same seeds as block 1**. The turn batch is not excluded. A round lasts until a GREEN, a head change or 8 decided turns.
-  If a GREEN closes it, its seed, task ids, baseline and the GREEN turn's grades are revealed (`/gate/heldout/<round>.json`,
-  `/gate/reveal/<epoch>.json`); RED turns are never revealed.
-- **Score** (`heldout.score_ivw`): w_t = 1/(q(1−q)) with q = (c_sel+1)/(4+2); d_t = candidate rate − head rate over the 12
-  head samples (candidate rate over its k_cand samples); gain = Σw·d/Σw; se_task = √(Σw²d²)/Σw; SE = √(se_task² + σ_run²·(1+1/3)).
-  σ_run in rounds opened after 2026-10-31 14:27 CR = the head's run-to-run spread POOLED over the last 20 finished rounds
-  (`heldout.pooled_sigma_run`, frozen at round open; 0.000 at the switch, 95% upper bound 0.011); before, each round's own
-  3-block spread (`heldout.run_sigma`; no floor since E354, 0.022 for E271–E353); z = gain/SE.
-- **GREEN iff** gain > 0 **and** z > 1.0 (strict) **and** the estimated whole-set cap-hit < 0.20 **and** there are ≥ 100 kept tasks.
-  At n = 2000, k_cand = 8 and pooled σ_run the bar (= SE) is expected near +1.3 points of weighted gain (it was about
-  +1.9 to +3.4, median 2.3, before; GREEN e356 passed at gain 0.0198, z 1.027).
+  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). One request per
+  sample, seed = int(sha256(`<plan seed>:affine_gatepool:<probe index>:j`)[:12], 16); probe index = the math index, or
+  7496 + j for `dapo:j`.
+- **Grader** (`kit/grade.py` = `probe_worker.grade`, the same for both envs, head and candidates): a capped reply is neutral
+  (unresolved). Otherwise the final channel after one `<think>…</think>` must hold exactly one balanced `\boxed{}`, checked
+  with math-verify 0.9.0 against `\boxed{gold}`; if that fails, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1–E7
+  equivalence; `probe/allan_src.py`) are tried. A grader crash or a grade over 300 s counts as not passed.
+- **The prior (method public, values private).** A separate sampler pod keeps sampling the current head on the whole pool
+  (k = 4 per task per pass) and keeps per-task s/n = solved/sampled (`priors/`). On every head change all counts are multiplied
+  by 0.5. A task without samples starts at its env's average. Posterior p ~ Beta(s+1, n−s+1).
+- **A round (one per head).** At open the gate snapshots the prior table (its sha256 is published) and computes
+  π_i ∝ √E[p_i(1−p_i)], mixed with a 10 % uniform floor, capped at 0.10, scaled to an expected N = 500
+  (`baseline_v1.inclusion`). Seed = commit-reveal: the commitment sha256(version|secret|secret) is published at open; after the
+  upload deadline the gate publishes B = finalized block + 3; once B is final, seed = sha256(version|seed|secret|B|hash(B)).
+  Task i is drawn iff u_i < π_i, u_i = sha256(version|draw|seed|id)/2^64 (Poisson sampling, `baseline_v1.draw`). The head runs
+  3 blocks × 4 = 12 samples on every drawn task; each candidate runs k_cand = 8 samples per drawn task with independent seeds
+  (`baseline_v1.cand_seed`). The turn batch is not excluded. A round ends on a GREEN, a head change or 8 decided turns; then
+  everything except π is revealed (`/gate/heldout/<round>.json`: secret, B, hash, seed, drawn tasks, every turn's numbers, the
+  GREEN turn's per-task grades).
+- **Score** (`baseline_v1.estimate`): per env, the Hájek mean m_e = Σ(d_i/π_i)/Σ(1/π_i), d_i = candidate rate − head rate;
+  Δ = Σ_e share_e·m_e with share = env size / pool size (affine_math 0.388, dapo 0.612). SE = √(Σ_e share_e²·Var_e + σ_run²),
+  Var_e = the Hájek sampling + rollout variance, σ_run = 0.003 (a floor; the 2026-11-01 head-vs-itself test found no measurable
+  run-to-run noise). z = Δ/SE.
+- **GREEN iff** Δ > 0 **and** z > 1.0 (strict) **and** the estimated affine_math cap-hit < 0.20 **and** ≥ 100 drawn tasks scored
+  (≥ 95 % of the draw). The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
+- **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v1.jsonl`: the secret commitment, the block
+  hash on chain, the seed, the draw commitment and that every drawn task is in the pool; plus the GREEN turn's grades. **What you
+  can't:** recompute Δ/SE/z exactly or check u_i < π_i, because π comes from the private prior table (only its snapshot sha256 is
+  published).
 
-`gate_eval.py` draws its own local seed, so it can't know a live round's tasks. Its defaults (n, k_cand, σ_run policy and the
-pooled σ_run value) come from `validator/gate/gate-config.public.json`, a copy of the live flag. Your GPUs and vLLM build aren't the
-gate's, so expect differences of a few points from run to run. Use `--baseline` to reuse a head baseline across candidates.
+`gate_eval.py` runs this procedure with its own local seed. With no `--prior` every task gets its env average, so the draw is close
+to uniform; pass `--prior my.jsonl` (`{"id","s","n"}` per task from your own head samples) to mimic the live weighting. Settings come
+from `validator/gate/gate-config.public.json` (`heldout.prior_v1`). Your GPUs and vLLM build aren't the gate's, so expect small
+differences. `--baseline` reuses a head baseline across candidates. The old ivw-v2 procedure is `kit/gate_eval_ivw_v2.py`.
 
 ## 5. End to end
 

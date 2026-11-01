@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-10-31 13:10 CR (UTC-6). Trainer v8.3.3j, gate heldout ivw-v2, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-01 16:55 CR (UTC-6). Trainer v8.3.3j, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -12,7 +12,8 @@ Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a
 You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards. You don't run any mining
 software, and the validator uses your rewards exactly as given. When your queue turn comes, the validator copies your
 file, checks only its format, and trains ONE GRPO step from the published head on it. The held-out promotion gate then
-keeps the candidate only if it beats the head on a secret held-out sample of the task pool (GREEN). GREEN turns earn
+keeps the candidate only if it beats the head on a sample of the public gate pool that is drawn after the upload
+deadline from a committed secret and a future block hash (GREEN). GREEN turns earn
 weight. Improving the model is the only way to earn. Every piece of code involved is public in the miner kit, so you
 can reproduce a turn locally before you spend one.
 
@@ -136,68 +137,86 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 
 ## 5. The task pool, prompt, sampling and grader
 
-- Pool: affine_math, 7,496 MATH train problems with a \boxed answer (task id = list index). Published byte-exact in the kit:
-  miner/data/original-math7496.tasks.json, sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3.
-- Gate prompt: [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem. Reason step by step in
-  plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-  (Your batch prompt is a single user message, section 3. Every GREEN so far used MANDATE + "\n\n" + problem as the prompt.)
+- Gate pool (prior-v1, from epoch 497: first round opened 2026-11-01 17:14 CR): **gate-pool-v1, 19,305 public tasks** in two envs:
+  - affine_math: 7,492 MATH train problems (the 7,496-task pool minus 4 that are near-duplicates of the private
+    performance holdout, see below), id math:<index in original-math7496.tasks.json>;
+  - dapo: 11,813 DAPO-Math-17k problems with integer answers (BytedTsinghua-SIA/DAPO-Math-17k rev 65877096, de-duplicated and
+    decontaminated against public math benchmarks by priors/dapo/build_dapo.py), id dapo:<position>.
+  Both files are in the kit, byte-exact: miner/data/gate-pool-v1.jsonl (one JSON object per line: id, env, problem, answer),
+  sha256 9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e, with miner/data/gate-pool-v1.manifest.json
+  (sources, sha256s, dropped ids). The old affine_math file (miner/data/original-math7496.tasks.json, sha256 77a4524a...)
+  is unchanged.
+- Holdout exclusion: a pool task is dropped if its problem matches a problem of the private performance holdout by
+  sha256 of the raw text, sha256 of the normalised text, or token-3-gram Jaccard >= 0.9. 0 matched by hash; 4 affine_math
+  tasks were dropped by the Jaccard rule (math:3322, math:6297, math:6512, math:6801: same template, different numbers).
+- Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
+  Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
+  block and nothing after it." (Your batch prompt is a single user message, section 3.)
 - Sampling: temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context. It runs on vLLM 0.32.0 on 8 x B200
-  (`--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). There's one request per sample,
-  with seed = int(sha256("P:affine_math:task:j")[:12], 16). Exact pins: miner/requirements-gate-vllm.txt.
-- Grader (probe_worker.grade): a capped reply (8,192 tokens, no EOS) is unresolved. Otherwise the final channel after
-  exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0
-  against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1-E7
-  answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
+  (`--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
+  On the probe the pool is one task list: probe index = math index (0-7495), or 7496 + j for dapo:j.
+- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (8,192 tokens, no EOS) is unresolved.
+  Otherwise the final channel after exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is
+  checked with math-verify 0.9.0 against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1
+  (P1/P2 projection, E1-E7 answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
 
-## 6. The promotion gate (held-out, ivw-v2)
+## 6. The promotion gate (held-out, prior-v1)
 
-- A round: the gate draws n task ids from the pool with gate_core.draw_sample(seed, 7496, n) from a secret os.urandom(32)
-  seed: n = 2000 in rounds opened after 2026-11-01 14:19 CR (1000 before). Only the commitment is published
-  (https://affine.io/gate/heldout/current.json): sha256(gate_version | seed | sorted ids). n, k_cand and sigma_run are fixed
-  when a round opens and published there (set_size, k_cand, sigma_run).
-- Block 0 = selection: the head runs 4 samples on all n tasks, and the **kept** tasks are those with 0 < c < 4 (about 13 %,
-  so about 270 at n = 2000). Blocks 1-3 = three more head runs (4 samples each) on the kept tasks (12 head samples per kept
-  task). Every candidate of the round runs k_cand = 8 samples per kept task (4 before 2026-11-01 14:19 CR); samples j = 0-3 use **the same
-  request seeds as block 1** (common random numbers), j = 4-7 follow the same seed rule. Head and candidate are graded by the
-  same grader on exactly the same kept tasks. The turn batch is NOT excluded.
-- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate (k_cand samples) - head rate
-  (12 head samples); gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)).
-  sigma_run (rounds opened after 2026-11-01 14:19 CR) = the head's run-to-run spread POOLED over the last 20 finished rounds
-  (heldout.pooled_sigma_run: per round, the between-run variance of the 3 head blocks' weighted means minus their within-run
-  sampling variance; df-weighted mean over rounds, floored at 0), frozen when the round opens. At the switch it was 0.000
-  (20 rounds, 40 df, 95% upper bound 0.011). Before: each round's own 3-block estimate (heldout.run_sigma), floor 0 since E354
-  (E271-E353: floor 0.022). z = gain / SE.
-- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** At n = 2000 and
-  k_cand = 8 the bar (= SE) is expected near +1.3 points of weighted gain (it was about +1.9 to +3.4, median 2.3, before).
-- GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.
-- Settings history: n 2000 / k_cand 8 / pooled sigma_run also ran in rounds opened 2026-10-31 14:27 CR to 2026-11-01 13:31 CR.
-  After a probe stall on 2026-11-01 the gate fell back to n 1000 / k_cand 4 / per-round sigma_run for the round opened
-  2026-11-01 14:06 CR (r20261101T200634Z-deb95f24); the stalled round (e483) was closed unjudged and that hotkey got a fresh turn.
-- A round lasts until a GREEN, a head change, or 8 decided turns. Only a round that a GREEN closed is revealed, and only
-  the GREEN turn: its seed, task ids, the head baseline and the GREEN candidate's per-task grades
-  (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json). RED turns and their probe results are never
-  published. While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
+- Rounds: one round per head. A round opens when a new head is promoted (or the previous round reached 8 decided turns) and
+  closes on a GREEN, a head change or 8 decided turns.
+- The prior: a separate sampler pod continuously samples the CURRENT head on the whole gate pool (k = 4 per task per pass) and
+  keeps, per task, s/n = solved/sampled counts (every count is multiplied by 0.5 when the head changes; a task without samples
+  starts at its env's average). The prior's code is public (priors/ in the repo); its table values (s, n per task) are private.
+  The gate reads a read-only snapshot of the table taken when the round opens; its sha256 is published with the round.
+- The draw: inclusion probability pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) (tasks the head
+  sometimes solves get the most weight), mixed with a 10 % uniform floor (every task can be drawn), capped at 0.10, scaled
+  so the expected size is N = 500; each task is drawn independently (Poisson sampling) with u_i < pi_i,
+  u_i = sha256(version|draw|seed|task id). The seed is commit-reveal:
+  - at open the gate publishes sha256(version|secret|<secret>) of a fresh 32-byte secret (/gate/heldout/current.json);
+  - after the round's first upload deadline it fixes and publishes a block number B = finalized head + 3 (a future block);
+  - once B is finalized: seed = sha256(version|seed|secret|B|hash of B), the draw is made and its size and
+    draw_commitment = sha256(version|seed|sorted ids) are published. The secret is revealed when the round closes.
+  So nobody (including the validator) can pick the sample after seeing the files, and miners can't predict it.
+- Scoring: the head is scored FRESH on every drawn task once per round (12 samples: 3 runs x 4); every candidate of the round
+  runs k_cand = 8 samples per drawn task with its own independent request seeds (plan seed = sha256(seed:prior-baseline:cand:
+  <epoch>)). Same grader, same tasks, same settings for head and candidates. The turn batch is NOT excluded.
+- Estimate: Delta = sum over envs of share_e x Hajek mean_e(candidate rate - head rate), where the Hajek mean weights each
+  drawn task by 1/pi_i (share_e = env size / pool size: affine_math 0.388, dapo 0.612). SE = sqrt(sampling variance of the
+  Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
+  scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
+  Formulas: priors/baseline_v1.py (module docstring + estimate()).
+- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND estimated cap-hit on affine_math < 0.20 AND >= 100 drawn tasks scored
+  (and >= 95 % of the draw).** With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
+- GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
+- Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
+  priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).
+- Up to epoch 496 (decided 2026-11-01 17:14 CR) the gate used the ivw-v2 rule (uniform draw of 1000/2000 MATH tasks, selection block 0 with 0 < c < 4,
+  inverse-variance weights); its rounds and reveals stay published unchanged.
 
-## 7. What is published, and when <!-- green-publish-20261031 --> <!-- green-only-reveal-20261031 -->
+## 7. What is published, and when <!-- green-publish-20261031 --> <!-- prior-v1-publish -->
 
-- **While a round is open:** only the round commitment (/gate/heldout/current.json) and each turn's decision with z, gain and
-  cap rate (turn.json, gate.json). No seed, no task ids, no baseline and no per-task probe results.
-- **After each GREEN:** published automatically (the sidecar picks it up within a minute of the decision). It starts at
-  https://affine.io/k1/turns/<epoch>/green.json, which links and summarises:
-  - the decision math: z, gain, SE, se_task, sigma_run, kept, head and candidate pass, cap rates, and the recomputed decision;
-  - the baseline: the round seed, the commitment, selection block 0 and head blocks 1-3 per task, the kept tasks and the
-    frozen sampling settings (/gate/heldout/<round>.json);
-  - the probe results: head and candidate cells per task {n, c, w, u, b, x, tok, L} (/gate/reveal/<epoch>.json);
-  - the tasks: all sampled tasks of the round (1000; 2000 in rounds opened after 2026-11-01 14:19 CR) with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
-  - the winning file, byte-exact (/k1/turns/<epoch>/batch.json), and its lr / kl and trainer report (/k1/turns/<epoch>/turn.json).
-  /k1/turns/index.json marks each GREEN with a `green` link.
-- **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl, the per-rollout
-  trajectories and the RED candidate's probe results stay private. There's no green.json, tasks.json or /gate/reveal file
-  for a RED turn, ever, including RED turns inside a round that a GREEN later closed.
-- **When a round closes:** it closes on a GREEN, a head change, or 8 decided turns. Only a GREEN-closed round is revealed,
-  and only its GREEN turn (seed, task ids, head baseline, the GREEN candidate's per-task grades). A round that closes on a
-  head change or after 8 RED turns is never revealed. A new round always draws a fresh os.urandom(32) seed, so a revealed
-  round says nothing about the next sample.
+- **When a round opens:** the round's secret commitment, settings, pool sha256 and prior-table snapshot sha256
+  (/gate/heldout/current.json). After the upload deadline: the block number B. After B is finalized: the draw size and
+  draw_commitment. Never while the round is open: the seed, the secret, the task ids, any per-task number.
+- **Each turn:** the decision with z, Delta, SE and cap rate (gate.json, turn.json).
+- **When a round closes (every round, GREEN or not):** /gate/heldout/<round>.json reveals the secret, B and its hash, the seed,
+  the drawn task ids and tasks (id, env, problem, answer), every turn's decision numbers, and checks that the secret, seed and
+  draw match the commitments. For a GREEN-closed round it also has the GREEN turn's per-task head and candidate grades.
+  RED candidates' per-task grades are never published. The inclusion probabilities pi_i (computed from the private prior table)
+  are not published.
+- **After each GREEN:** the winning file, byte-exact (/k1/turns/<epoch>/batch.json), its lr / kl and trainer report
+  (/k1/turns/<epoch>/turn.json). gate.json lists every decision; the round file has the GREEN turn's grades.
+- **RED turns:** only the decision, z / Delta, the counts and the file's sha256. The file, its lr / kl and the per-rollout
+  trajectories stay private.
+- **What you can verify from a closed round, and what you can't:**
+  - CAN: that the secret matches the commitment published at open; that B was fixed before it existed and its hash is on chain;
+    that seed = sha256(version|seed|secret|B|hash(B)); that the drawn ids hash to the draw commitment; that every drawn task is in
+    the public pool (priors/gate/verify_round.py does all of this); the GREEN turn's per-task head and candidate grades;
+    the unweighted per-env head/candidate pass rates on the drawn tasks.
+  - CAN'T: recompute the exact Delta / SE / z, or check that each task's draw u_i < pi_i, because the inclusion probabilities pi_i
+    come from the private prior table and are not published (the table snapshot's sha256 is, so it can't be changed after the
+    round opens). The draw can't be steered by anyone: pi is fixed from a snapshot taken at open, before the block hash exists.
+- A new round always uses a fresh secret and a fresh block hash, so a revealed round says nothing about the next sample.
 
 ## 8. What winning means: weights
 
@@ -212,8 +231,9 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   problem, mostly MATH Level 4-5 (e368: 72 at Level 5, 33 at Level 4). Each rollout was the head's own sample with a `<think>` block and exactly one final `\boxed{}`.
 - That shape is common and not sufficient. The REDs e362-e367 and e370-e376 had the same public counts (125 x 1 correct),
   and several scored strongly negative (z -3 to -5.6). Which problems you pick and which samples you keep decide the sign.
-- Borderline difficulty: the gate only scores tasks the head sometimes solves (0 < c < 4). Correct samples on problems the
-  head usually fails or caps out on are where the signal is.
+- Borderline difficulty: the draw favours tasks the head sometimes solves (pi ~ sqrt(p(1-p)) from the prior), and every
+  drawn task counts with weight 1/pi, so the estimate covers the whole pool (affine_math + dapo). Correct samples on
+  problems the head usually fails or caps out on are where the signal is.
 - Fewer capped replies: on the full pool (performance.json), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
   rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer 8,192-token caps, and the mean output went
   from 2,043 to 1,769 tokens. Short correct rollouts (well under 6,000 tokens, where the overlong penalty starts) fit that.
@@ -243,7 +263,7 @@ in it is verbatim from the live services (sha256 + live source per file in valid
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
-- the 7,496-task pool;
+- the 7,496-task affine_math file and the 19,305-task gate pool (miner/data/gate-pool-v1.jsonl + manifest);
 - exact pins (requirements-*.txt).
 
 Tools: kit/fetch_head.py (sha256-verified head / reference download), generate.py, make_batch.py, check_batch.py,

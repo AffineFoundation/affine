@@ -1,5 +1,5 @@
 {
- "about": "Public copy of the live promotion-gate flag (PROMOTION-GATE.json): numbers only, no seeds or task ids. heldout = the rule the gate runs now (heldout.cfg(flag)); legacy top-level keys apply only when heldout is off.",
+ "about": "Public copy of the live promotion-gate flag (PROMOTION-GATE.json): numbers only, no seeds or task ids. heldout = the rule the gate runs now (heldout.cfg(flag)); legacy top-level keys apply only when heldout is off. heldout.baseline = prior-v1: the round rule is heldout.prior_v1 (priors/baseline_v1.py); the ivw-v2 keys (n, k_cand, sigma_run*, min_kept) apply only when baseline is not prior-v1.",
  "gate": {
   "cap_max": 0.2,
   "enabled": true,
@@ -18,6 +18,7 @@
    "t820u"
   ],
   "bar_z": 1.0,
+  "baseline": "prior-v1",
   "baseline_parallel": 3,
   "blocks": 4,
   "enabled": true,
@@ -28,6 +29,61 @@
   "max_round_turns": 8,
   "min_kept": 100,
   "n": 2000,
+  "prior_v1": {
+   "N": 500,
+   "bar_z": 1.0,
+   "block_delay": 3,
+   "cap": 0.1,
+   "cap_envs": [
+    "affine_math"
+   ],
+   "cap_max": 0.2,
+   "dapo_offset": 7496,
+   "floor": 0.1,
+   "head_blocks": 3,
+   "head_rollouts": 12,
+   "k_cand": 8,
+   "math_offset": 0,
+   "min_cover": 0.95,
+   "min_scored": 100,
+   "n_init": 2.0,
+   "probe_env": "affine_gatepool",
+   "scoring_mode": "separate",
+   "shares": "size",
+   "sigma_run_floor": 0.003,
+   "tau_run_same": 0.0,
+   "tau_run_separate": 0.0,
+   "z_inclusive": false
+  },
+  "prior_v1_history": [
+   {
+    "applies_to": "the next gate tick (an open round of the other kind is closed)",
+    "authorized_by": [
+     "Jacob 2026-11-01 14:23-14:26 CR: switch the live gate Baseline to the prior-table design (pt1019u)"
+    ],
+    "by": "prior-v1 activation after e495 DECISION",
+    "mode": "on",
+    "set_at": "20261101T225622Z",
+    "set_at_cr": "2026-11-01 16:56 CR",
+    "values": {
+     "baseline": "prior-v1",
+     "prior_v1": {
+      "N": 500,
+      "block_delay": 3,
+      "cap_envs": [
+       "affine_math"
+      ],
+      "head_blocks": 3,
+      "head_rollouts": 12,
+      "k_cand": 8,
+      "scoring_mode": "separate",
+      "sigma_run_floor": 0.003,
+      "tau_run_same": 0.0,
+      "tau_run_separate": 0.0
+     }
+    }
+   }
+  ],
   "scoring": "ivw-v2",
   "set_at": "20261030T172346Z",
   "set_by": "heldout activation after e270 DECISION",
@@ -53,6 +109,14 @@
    }
   ],
   "sigma_run_policy": "pooled",
+  "sigma_run_pooled": {
+   "df": 40,
+   "note": "pooled over the last 20 finished rounds at the first switch (2026-10-31 14:27 CR); the gate freezes its own value per round at open (current.json sigma_run.value)",
+   "rounds": 20,
+   "sigma_run_est": 0.0,
+   "ub95": 0.011360263218313113,
+   "value": 0.0
+  },
   "variance_levers_history": [
    {
     "applies_to": "rounds opened after set_at",
@@ -107,15 +171,7 @@
     }
    }
   ],
-  "z_inclusive": false,
-  "sigma_run_pooled": {
-   "value": 0.0,
-   "sigma_run_est": 0.0,
-   "ub95": 0.011360263218313113,
-   "rounds": 20,
-   "df": 40,
-   "note": "pooled over the last 20 finished rounds at the first switch (2026-10-31 14:27 CR); the gate freezes its own value per round at open (current.json sigma_run.value)"
-  }
+  "z_inclusive": false
  },
  "version": "sn120-miner-kit-gate-config-v1"
 }

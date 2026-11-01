@@ -142,7 +142,7 @@ def main():
         check('gate_eval.py: better fake candidate -> GREEN', gj.get('decision') == 'green', '%s %.1fs' % ({k: (round(v, 4) if isinstance(v, float) else v) for k, v in gj.items()}, time.time() - t))
         r = sh(py, KIT / 'gate_eval.py', '--head', a.tokenizer, '--head-url', 'http://127.0.0.1:%d' % ph, '--cand-url', 'http://127.0.0.1:%d' % ph, '--baseline', str(W / 'gate.json') + '.baseline.json', '--out', W / 'gate_same.json')
         gs = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
-        check('gate_eval.py: head vs itself (CRN, reused baseline) -> not GREEN', r.returncode == 0 and gs.get('decision') == 'red', {k: (round(v, 4) if isinstance(v, float) else v) for k, v in gs.items() if k in ('decision', 'gain', 'z')})
+        check('gate_eval.py: head vs itself (independent seeds, reused baseline) -> not GREEN', r.returncode == 0 and gs.get('decision') == 'red', {k: (round(v, 4) if isinstance(v, float) else v) for k, v in gs.items() if k in ('decision', 'gain', 'z')})
     finally:
         for p in procs: p.terminate()
     n_ok = sum(ok for _, ok, _ in RESULTS)

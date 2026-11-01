@@ -19,7 +19,7 @@ tmpl = math[0]; snap = list(math)
 for j, r in enumerate(dapo):
     t = copy.deepcopy(tmpl); d = t['data']
     d.update(problem=r['problem'], prompt=r['problem'], answer=str(r['answer']), idx=MATH_N + j,
-             name='dapo-' + hashlib.sha256(r['problem'].encode()).hexdigest()[:12], level=None, subject='DAPO')
+             name='dapo-' + hashlib.sha256(r['problem'].encode()).hexdigest()[:12], level='DAPO', subject='DAPO')
     snap.append(t)
 tmp = out + '.tmp'; open(tmp, 'w').write(json.dumps(snap, ensure_ascii=False)); os.replace(tmp, out)
 h = hashlib.sha256(open(out, 'rb').read()).hexdigest()

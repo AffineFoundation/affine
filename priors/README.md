@@ -1,4 +1,4 @@
-# SN120 prior table + prior-weighted baseline (live as the gate baseline prior-v1 from 2026-11-01 (first round after the e494 decision))
+# SN120 prior table + prior-weighted baseline (live as the gate baseline prior-v1 from 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
 
 Jacob pt988u / pt989u, 2026-11-01. A dedicated pod keeps sampling the **current head** on an *active set* of math environments and
 keeps a per-task prior table. From that table the held-out baseline can be drawn by weighted random sampling (no hard filters),

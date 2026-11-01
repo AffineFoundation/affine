@@ -1,7 +1,7 @@
-# SN120 gate baseline prior-v1 (LIVE from 2026-11-01 (first round after the e494 decision))
+# SN120 gate baseline prior-v1 (LIVE from 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
 
 Jacob 2026-11-01 14:23-14:26 CR (pt1019u): switch the held-out gate's baseline to the prior-table design. This directory is the
-code of the live gate baseline since 2026-11-01 (first round after the e494 decision) (before: ivw-v2, uniform draw from the 7,496 MATH tasks, selection block,
+code of the live gate baseline since 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812) (before: ivw-v2, uniform draw from the 7,496 MATH tasks, selection block,
 inverse-variance weights). It was switched in one step at an epoch boundary (`activate_baseline.sh`); see https://affine.io/llms.txt
 sections 5-7.
 
