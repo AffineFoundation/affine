@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Benchmarks table + tiles on affine.io (host affinevalidator; site root served by affine-dash). Idempotent.
+# Install the Benchmarks table on affine.io (host affinevalidator; site root served by affine-dash). Idempotent.
 # Backs up index.html first; revert: revert_site.sh. Touches only index.html (2 tags), bench.js, bench.css.
 set -euo pipefail
 H=$(cd "$(dirname "$0")/.." && pwd); W=${BENCH_SITE:-$HOME/subnet120/affine/website}; V=${V:-$(date -u +%Y%m%d%H%M)}
