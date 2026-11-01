@@ -134,12 +134,16 @@ def ensure_weights(m):
 
 def prune(keep_dirs):
     """Disk policy: keep only the weights of the running model and the prefetched next one (kings and refs)."""
+    pruned = set()
     for root in (C.NODE_KINGS, C.NODE_REFS):
         for n in NODE.out(f"ls {root} 2>/dev/null").split():
             base = n.split(".")[0] if root == C.NODE_KINGS else n
             path = f"{root}/{base}"
             if path in keep_dirs or not (re.fullmatch(r"[0-9a-f]{64}", base) or root == C.NODE_REFS):
                 continue
+            if path in pruned:
+                continue
+            pruned.add(path)
             NODE.run(f"rm -rf {root}/{base} {root}/{base}.partial {root}/{base}.descriptor.json {root}/{base}.fetch.log", timeout=300)
             log(event="pruned", path=path)
 
@@ -154,7 +158,8 @@ def launch(m, bids):
             "--benchmarks", ",".join(bids)]
     if m.get("max_model_len"): args += ["--max-model-len", str(m["max_model_len"])]
     if m.get("rollouts"): args += ["--rollouts", m["rollouts"]]
-    cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} && "
+    # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
+    cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
            f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")
     p = NODE.run(cmd, timeout=60)
     S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=p.stdout.strip().split()[-1] if p.stdout.strip() else None, last_progress=now(), progress=0)
@@ -174,7 +179,7 @@ def abort(run):
     """Exact PIDs only: the node-run process group (setsid) -> its vf-eval children. The model server is left up."""
     pid = run.get("pid")
     if pid and pid.isdigit():
-        NODE.run(f"kill -TERM -- -{pid} 2>/dev/null; sleep 10; kill -KILL -- -{pid} 2>/dev/null; true", timeout=60)
+        NODE.run(f"C=$(pgrep -P {pid}); kill -TERM {pid} $C 2>/dev/null; sleep 15; kill -KILL {pid} $C 2>/dev/null; true", timeout=60)
     log(event="aborted", model=run["run_key"], pid=pid)
 
 
