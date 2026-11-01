@@ -1,0 +1,8 @@
+pyproject.toml
+olympiadbench/__init__.py
+olympiadbench/taskset.py
+olympiadbench.egg-info/PKG-INFO
+olympiadbench.egg-info/SOURCES.txt
+olympiadbench.egg-info/dependency_links.txt
+olympiadbench.egg-info/requires.txt
+olympiadbench.egg-info/top_level.txt

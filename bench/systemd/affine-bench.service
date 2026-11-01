@@ -1,0 +1,19 @@
+[Unit]
+Description=Affine SN120 benchmarks daemon (queue: kings + reference models on the bench node; publishes affine.io/benchmarks.json). Read-only w.r.t. gate/weights/trainer/probe.
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bench-work/affine/bench
+Environment=PYTHONPATH=%h/bench-work/affine/bench
+ExecStart=%h/subnet120-rewrite/.venv/bin/python -u -B -m affine_bench.cli daemon
+Restart=always
+RestartSec=30
+Nice=10
+MemoryMax=2G
+UMask=0022
+StandardOutput=append:%h/subnet120-rewrite/state/bench-results/daemon.log
+StandardError=append:%h/subnet120-rewrite/state/bench-results/daemon.log
+
+[Install]
+WantedBy=default.target

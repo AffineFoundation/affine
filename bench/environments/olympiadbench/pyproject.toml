@@ -1,0 +1,13 @@
+[project]
+name = "olympiadbench"
+version = "0.1.0"
+description = "olympiadbench -- Affine bench env (verifiers v1, affine-math-grader)"
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0", "affine-math-grader", "datasets"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["olympiadbench"]

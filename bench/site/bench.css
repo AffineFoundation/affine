@@ -1,0 +1,19 @@
+/* Benchmarks table (top of page) + per-benchmark chart tiles (Jacob 2026-11-01). */
+#bench-table{margin:0 auto 16px;max-width:var(--page-max,1400px);padding:0 var(--page-pad,16px);box-sizing:border-box}
+#bench-table .bench-scroll{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--line);border-radius:4px}
+#bench-table table{border-collapse:separate;border-spacing:0;font:12px/1.3 var(--mono);font-variant-numeric:tabular-nums;width:max-content;min-width:100%}
+#bench-table th,#bench-table td{padding:6px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+#bench-table thead th{position:sticky;top:0;z-index:2;background:var(--bg);color:var(--muted);font-weight:400;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+#bench-table thead tr:nth-child(2) th{top:23px}
+#bench-table thead th.suite{text-align:center;border-bottom:1px solid var(--line)}
+#bench-table tbody th{position:sticky;left:0;z-index:1;background:var(--bg);text-align:left;font-weight:400;color:var(--ink)}
+#bench-table thead th:first-child{left:0;z-index:3;text-align:left}
+#bench-table tbody th span{color:var(--muted)}
+#bench-table td{color:var(--ink)}
+#bench-table td.na{color:var(--muted)}
+#bench-table td.up{background:color-mix(in srgb,#2fa84f 16%,transparent)}
+#bench-table td.dn{background:color-mix(in srgb,#d64545 16%,transparent)}
+#bench-table td.eq{background:color-mix(in srgb,var(--muted) 8%,transparent)}
+#bench-table tr.last-king th,#bench-table tr.last-king td{border-bottom:2px solid var(--muted)}
+#bench-table tr.genesis th,#bench-table tr.genesis td{border-top:1px solid var(--muted);font-weight:600}
+#main>section.bench-tile .bench-chart{flex:1 1 0;min-height:0;height:100%}

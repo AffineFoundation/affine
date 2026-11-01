@@ -1,0 +1,18 @@
+{
+ "name": "affine-bench-1",
+ "huid": "noble-comet-40",
+ "lium_id": "443ad421-c493-4177-bf74-06d2930829e5",
+ "node_huid": "noble-wolf-d5",
+ "gpu": "8xB200",
+ "gpu_count": 8,
+ "vram_gb_per_gpu": 179,
+ "ram_gb": 2854,
+ "disk_tb": 21,
+ "cpus": 208,
+ "location": "Sydney, AU",
+ "tier": "secure",
+ "template": "Pytorch (Cuda + DinD)",
+ "price_per_hour": 40.0,
+ "rented_at": "2026-11-01T12:16:22Z",
+ "why": "No 4xB300 offer existed on Lium at 2026-11-01 06:15 CR (B300 came only as 1x or 8x); 8xB200 secure at $40/h was the closest 4x-8x B300/B200 node under the ~$44/h target (more aggregate throughput than 4xB300 for one-replica-per-GPU 9B serving)."
+}

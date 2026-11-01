@@ -169,6 +169,8 @@ def scalar_equal(a: str, b: str, tol: float | None = None) -> tuple[bool, bool, 
             return True, False, "math-verify"
     except Exception:
         pass
+    if _textual(a) or _textual(b):
+        return False, True, "undecidable-text"
     try:
         import sympy
         ea, eb = _sympy(a), _sympy(b)
@@ -182,8 +184,17 @@ def scalar_equal(a: str, b: str, tol: float | None = None) -> tuple[bool, bool, 
         return False, False, "sympy"
     except Exception:
         pass
-    textual = bool(re.search(r"[A-Za-z]{4,}", re.sub(r"\\[A-Za-z]+", "", a + " " + b)))
-    return False, True, "undecidable-text" if textual else "undecidable-parse"
+    return False, True, "undecidable-parse"
+
+
+def _textual(s: str) -> bool:
+    """Free text (a word of 3+ letters that is not a LaTeX command or a known function name)."""
+    words = re.findall(r"[A-Za-z]{3,}", re.sub(r"\\[A-Za-z]+", " ", s))
+    return any(w.lower() not in _FUNCS for w in words)
+
+
+_FUNCS = {"sin", "cos", "tan", "cot", "sec", "csc", "log", "exp", "max", "min", "gcd", "lcm", "mod", "arcsin", "arccos", "arctan",
+          "sinh", "cosh", "tanh", "det", "deg", "inf", "sqrt"}
 
 
 # ------------------------------------------------------------------------------------------------ main entry
@@ -197,7 +208,7 @@ def grade(pred: str | None, gold: str | list, *, unit: str | None = None, tolera
     if golds is not None and len(golds) == 1:
         golds, gold = None, golds[0]
     if golds is None:
-        b = normalize(gold, unit)
+        b = normalize(_strip_and(gold) if multiple else gold, unit)
         r = _grade_one(a, b, tolerance)
         if r.score or not multiple:
             return r

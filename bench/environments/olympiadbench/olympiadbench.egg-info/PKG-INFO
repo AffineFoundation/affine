@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: olympiadbench
+Version: 0.1.0
+Summary: olympiadbench -- Affine bench env (verifiers v1, affine-math-grader)
+Requires-Python: >=3.11
+Requires-Dist: verifiers>=0.4.0
+Requires-Dist: affine-math-grader
+Requires-Dist: datasets
