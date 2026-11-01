@@ -1,0 +1,19 @@
+# Inference + sampling settings shared by every model and benchmark (part of the benchmark definition: bump `version`
+# when anything here changes; results carry it and the site only compares like with like).
+version = "bench-v1"
+[server]
+engine = "vllm==0.32.0"
+data_parallel = "all GPUs (one replica per GPU)"
+dtype = "bfloat16"
+max_model_len = 34816
+max_num_seqs = 512
+gpu_memory_utilization = 0.90
+generation_config = "vllm"   # ignore each model's generation_config.json defaults (e.g. top_k=20) so sampling is identical
+[sampling]
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+max_tokens = 32768
+enable_thinking = true       # chat-template default for every thinking model here; reasoning is split off by --reasoning-parser
+[client]
+max_concurrent_total = 3072  # rollouts in flight across all benchmarks of one model (vLLM: 8 x 512 seqs)
