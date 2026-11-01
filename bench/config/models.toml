@@ -64,5 +64,6 @@ id = "glm-z1-9b"
 label = "GLM-Z1-9B-0414"
 kind = "reference"
 hf = "zai-org/GLM-Z1-9B-0414@b221b06fefb23ca320922cf6e68ab5f2fb82de81"
+# native context is 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (only answers longer than ~30.7K tokens go past the trained range)
 reasoning_parser = "deepseek_r1"
 priority = 53

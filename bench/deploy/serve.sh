@@ -7,6 +7,9 @@
 set -u
 . /data/bench/env.sh
 M=$1; RP=${2:-qwen3}; ML=${3:-34816}
+# Same context for every model. GLM-Z1-9B-0414 is natively 32K (32768 positions); its 34816 window (2K prompt + 32K output)
+# goes slightly past that. Disclosed in config/models.toml.
+export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 W=/data/bench/serve; mkdir -p $W
 NG=$(nvidia-smi -L | wc -l)
 if [ -f $W/serve.pid ] && kill -0 "$(cat $W/serve.pid)" 2>/dev/null; then echo "already serving pid $(cat $W/serve.pid): stop first"; exit 2; fi
