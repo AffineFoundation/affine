@@ -8,7 +8,8 @@
    resumable: an unfinished run is continued with `vf-eval @ <run>/configs/resolved/eval.json --resume`
 3. reduces each traces.jsonl to OUT/<bench>/summary.json (aggregate) and OUT/<bench>/per_task.jsonl (kept on the node/host,
    never published), then writes OUT/DONE."""
-import argparse, glob, json, math, os, subprocess, sys, time
+import argparse
+import resource, glob, json, math, os, subprocess, sys, time
 from . import registry as R
 
 ROOT = os.environ.get("BENCH_ROOT", "/data/bench")
@@ -55,6 +56,7 @@ def summarize(b, run_dir):
         rec["n"] += 1; rec["correct"] += float(score); rec["capped"] += cap; capped += cap
         rec["tokens"].append(tc.get("num_output_tokens") or 0); ntok.append(tc.get("num_output_tokens") or 0)
     tasks = [p for p in per.values() if p["n"] > 0]
+    errors = sum(1 for p in per.values() if p["n"] == 0)  # tasks with no valid rollout (retried rollouts excluded)
     means = [p["correct"] / p["n"] for p in tasks]
     m = len(means); score = sum(means) / m if m else None
     se = math.sqrt(sum((x - score) ** 2 for x in means) / (m - 1) / m) if m > 1 else None
@@ -73,6 +75,9 @@ def main(argv=None):
     ap.add_argument("--max-model-len", type=int, default=None); ap.add_argument("--out", default=None)
     ap.add_argument("--rollouts", default="", help="override, e.g. math500=16 (calibration runs)")
     a = ap.parse_args(argv)
+    # each in-flight rollout holds sockets + subprocess pipes; the default soft limit (1024) kills big runs with EMFILE
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard, 1 << 20) if hard != resource.RLIM_INFINITY else 1 << 20, hard))
     S = R.serving(); ml = a.max_model_len or S["server"]["max_model_len"]
     out = a.out or f"{ROOT}/runs/{a.model_id}"; os.makedirs(out, exist_ok=True)
     over = dict(x.split("=") for x in a.rollouts.split(",") if x)
@@ -91,9 +96,14 @@ def main(argv=None):
     W = sum(weights.values()) or 1
     procs = {}
     env = dict(os.environ, BENCH_API_KEY="local")
-    for b in todo:
+    MAX_C, MAX_ATTEMPTS = 1024, 3
+
+    def launch(b, attempt):
         d = f"{out}/{b['id']}"; vf = d + "/vf"; os.makedirs(vf, exist_ok=True)
-        c = max(64, int(total_c * weights[b["id"]] / W))
+        if os.path.exists(d + "/FAILED"):
+            os.replace(d + "/FAILED", d + f"/FAILED.{attempt - 1}")
+        c = min(MAX_C, max(64, int(total_c * weights[b["id"]] / W)))
+        # --resume keeps valid finished rollouts and re-runs failed ones
         prev = glob.glob(vf + "/*/configs/resolved/eval.json")
         if prev:
             cmd = ["vf-eval", "@", prev[0], "--resume", "--no-rich", "--no-push"]
@@ -102,17 +112,23 @@ def main(argv=None):
                    "-r", str(b["rollouts"]), "-c", str(c), "--no-push", "--no-rich", "--env.agent.harness.id", b.get("harness", "null"),
                    "--env.agent.runtime.type", b.get("runtime", "subprocess"), "--sampling.temperature", str(sp["temperature"]),
                    "--sampling.top-p", str(sp["top_p"]), "--sampling.max-tokens", str(sp["max_tokens"]), "-o", vf]
-        json.dump(dict(cmd=cmd, started=time.time(), concurrency=c), open(d + "/run.json", "w"))
-        procs[b["id"]] = (subprocess.Popen(cmd, stdout=open(d + "/vf-eval.log", "a"), stderr=subprocess.STDOUT, env=env, cwd=d), b, time.time())
+        json.dump(dict(cmd=cmd, started=time.time(), concurrency=c, attempt=attempt), open(d + "/run.json", "w"))
+        return subprocess.Popen(cmd, stdout=open(d + "/vf-eval.log", "a"), stderr=subprocess.STDOUT, env=env, cwd=d)
+
+    for b in todo:
+        procs[b["id"]] = (launch(b, 1), b, time.time(), 1)
     status = {}
     while procs:
-        for bid, (p, b, ts) in list(procs.items()):
+        for bid, (p, b, ts, att) in list(procs.items()):
             rc = p.poll()
             if rc is None:
                 continue
             del procs[bid]
             d = f"{out}/{bid}"
             res = summarize(b, d + "/vf")
+            if (rc != 0 or res is None) and att < MAX_ATTEMPTS:
+                json.dump(dict(rc=rc, at=time.time(), attempt=att), open(d + "/FAILED", "w"))
+                time.sleep(5); procs[bid] = (launch(b, att + 1), b, ts, att + 1); continue
             if rc != 0 or res is None:
                 status[bid] = dict(rc=rc); json.dump(dict(rc=rc, at=time.time()), open(d + "/FAILED", "w")); continue
             summ, per = res
