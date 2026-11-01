@@ -120,6 +120,27 @@ def _grade(env_id, index, out, stop):
         return env_id, index, 'indeterminate', f'{type(x).__name__}: {str(x)[:120]}'
 
 
+# ---- grade-job supervisor (SN120 stall fix 2026-11-01, RA/20261101-grade-stall-fix). A grading job that crashes its pool worker
+# (e.g. math_verify.errors.TimeoutException, a BaseException, escaping sympy) or runs past the hard limit is graded
+# 'indeterminate' (counted in n, not in c: not passed, exactly like any grader exception today); identical code path for head
+# and candidate runs. The parent kills a hung worker by its exact PID and rebuilds the pool (logged to worker.err).
+GRADE_SUPERVISOR = 'grade-supervisor-v1'
+def grade_job(jobdir, job_id, env_id, index, out, stop):
+    mark = os.path.join(jobdir, str(os.getpid()))
+    try:
+        with open(mark + '.tmp', 'w') as f: f.write('%d %.3f' % (job_id, time.time()))
+        os.replace(mark + '.tmp', mark)
+    except Exception:
+        pass
+    try:
+        return grade(env_id, index, out, stop)
+    except BaseException as x:   # would otherwise kill the pool worker and lose the task (multiprocessing.Pool never reports it)
+        return env_id, index, 'indeterminate', f'grade-crash {type(x).__name__}: {str(x)[:100]}'
+    finally:
+        try: signal.setitimer(signal.ITIMER_REAL, 0)   # never leave a grader's SIGALRM armed for the worker loop
+        except Exception: pass
+
+
 # ---- affine_math verifier fix (Allan catoneone/sn120-k1-fixes 786cdb9 code/lenient_grader.py, verbatim P1/P2/E1-E7; Jacob t831u 2026-10-30)
 # Only runs when the live native grade is NOT positive and the reply finished with EOS (capped replies stay unresolved). If the lenient
 # projection + equivalence rules find the last complete box equal to the gold, the sample is graded 'positive'. Head and candidate runs
@@ -202,6 +223,92 @@ async def main():
     SANDBOX = set(P.get('sandbox_envs', ['affine_i3code', 'affine_scicomp'])) & {e['env_id'] for e in P['envs']}
     sb_pool = ctx.Pool(P.get('sandbox_grade_workers', 32), initializer=_init, initargs=(sys.argv[1], verified)) if SANDBOX else None
     loop = asyncio.get_running_loop()
+    # ---- grade-job supervisor (see grade_job): hard per-job limit + dead-worker detection + pool rebuild
+    GRADE_TO = float(P.get('grade_timeout_s', 300)); SB_GRADE_TO = float(P.get('sandbox_grade_timeout_s', 1800))
+    JOBDIR = '/dev/shm/sn120-grade-%d' % os.getpid(); os.makedirs(JOBDIR, exist_ok=True)
+    gpool = {'main': pool, 'sb': sb_pool}; gsize = {'main': gw, 'sb': P.get('sandbox_grade_workers', 32)}
+    gjobs = {}; gseq = [0]; gstat = dict(version=GRADE_SUPERVISOR, timeouts=0, worker_deaths=0, pool_rebuilds=0, resubmitted=0, events=[])
+    def _glog(msg):
+        line = '%s grade-supervisor: %s' % (time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), msg)
+        print(line, file=sys.stderr, flush=True)
+        if len(gstat['events']) < 50: gstat['events'].append(line)
+    def _gsubmit(job):
+        gseq[0] += 1; job['id'] = gseq[0]; job['t_sub'] = time.time(); job.pop('dead_seen', None); gjobs[job['id']] = job
+        jid = job['id']
+        gpool[job['pk']].apply_async(grade_job, (JOBDIR, jid) + job['args'],
+                                     callback=lambda r, jid=jid: loop.call_soon_threadsafe(_gresolve, jid, r, None),
+                                     error_callback=lambda x, jid=jid: loop.call_soon_threadsafe(_gresolve, jid, None, x))
+    def _gresolve(jid, r, x):
+        job = gjobs.pop(jid, None)
+        if job is None or job['fut'].done(): return     # stale (job resubmitted or already resolved)
+        if x is not None: r = (job['args'][0], job['args'][1], 'indeterminate', 'grade-error %s: %s' % (type(x).__name__, str(x)[:100]))
+        job['fut'].set_result(r)
+    def agrade(*a):
+        pk = 'sb' if (sb_pool is not None and a[0] in SANDBOX) else 'main'
+        job = dict(fut=loop.create_future(), args=a, pk=pk, attempts=1); _gsubmit(job)
+        return job['fut']
+    def _alive(pid):
+        try:
+            with open('/proc/%d/stat' % pid) as f: return f.read().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
+        except Exception: return False
+    def _retire(old, pk):
+        def _term():
+            try: old.terminate()
+            except Exception: pass
+        import threading
+        threading.Thread(target=_term, daemon=True).start()
+        def _sweep():
+            for pr in list(getattr(old, '_pool', []) or []):
+                if pr.exitcode is None and pr.pid:
+                    try: os.kill(pr.pid, signal.SIGKILL); _glog('old %s pool worker pid %d killed (exact pid) after retire' % (pk, pr.pid))
+                    except Exception: pass
+        loop.call_later(15, _sweep)
+    def _rebuild(pk, why):
+        old = gpool[pk]
+        gpool[pk] = ctx.Pool(gsize[pk], initializer=_init, initargs=(sys.argv[1], verified)); gstat['pool_rebuilds'] += 1
+        moved = [j for j in list(gjobs.values()) if j['pk'] == pk and not j['fut'].done()]
+        for j in moved:
+            gjobs.pop(j['id'], None); j['attempts'] += 1; gstat['resubmitted'] += 1
+            if j['attempts'] > 3:
+                j['fut'].set_result((j['args'][0], j['args'][1], 'indeterminate', 'grade-worker-died')); continue
+            _gsubmit(j)
+        _glog('rebuilt %s grade pool (%s); %d in-flight jobs resubmitted' % (pk, why, len(moved)))
+        _retire(old, pk)
+    def _gsupervise():
+        now = time.time(); marks = {}
+        try: names = os.listdir(JOBDIR)
+        except Exception: names = []
+        for n in names:
+            if not n.isdigit(): continue
+            try: a, b = open(os.path.join(JOBDIR, n)).read().split(); marks[int(a)] = (int(n), float(b))
+            except Exception: continue
+        broken = {}
+        for jid, (pid, t0) in marks.items():
+            job = gjobs.get(jid)
+            if job is None or job['fut'].done(): continue
+            lim = SB_GRADE_TO if job['pk'] == 'sb' else GRADE_TO
+            if not _alive(pid):
+                if not job.get('dead_seen'): job['dead_seen'] = now; continue    # one more pass: a late result may still arrive
+                if now - job['dead_seen'] < 2: continue
+                gstat['worker_deaths'] += 1; why = 'grade-worker-died'
+                _glog('job %d (%s task %s) lost: worker pid %d died' % (jid, job['args'][0], job['args'][1], pid))
+            elif now - t0 > lim:
+                try: os.kill(pid, signal.SIGKILL)
+                except Exception: pass
+                gstat['timeouts'] += 1; why = 'grade-timeout'
+                _glog('job %d (%s task %s) ran %.0fs > %.0fs: worker pid %d killed (exact pid)' % (jid, job['args'][0], job['args'][1], now - t0, lim, pid))
+            else:
+                continue
+            gjobs.pop(jid, None); job['fut'].set_result((job['args'][0], job['args'][1], 'indeterminate', why))
+            try: os.unlink(os.path.join(JOBDIR, str(pid)))
+            except Exception: pass
+            broken[job['pk']] = why
+        for pk, why in broken.items(): _rebuild(pk, why)
+    async def grade_supervisor():
+        while True:
+            await asyncio.sleep(2)
+            try: _gsupervise()
+            except Exception as x: _glog('supervisor pass failed: %r' % (x,))
     def apool(fn, *a):
         f = loop.create_future()
         (prep_pool if fn is prep else sb_pool if (sb_pool is not None and a[0] in SANDBOX) else pool).apply_async(fn, a, callback=lambda r: loop.call_soon_threadsafe(f.set_result, r),
@@ -283,7 +390,7 @@ async def main():
                 sr = ch.get('stop_reason'); out.append(sr if isinstance(sr, int) and sr in EOS else EOS[1])
             gen_tokens += len(out); pt['tok'] += len(out); pt['L'].append(len(out)); st['out_tokens'] += len(out)
             if stop == 'budget': st['budget_hits'] += 1; pt['b'] += 1
-            futs.append(apool(grade, env_id, index, out, stop))
+            futs.append(agrade(env_id, index, out, stop))
         for env_, idx_, kind, why in await asyncio.gather(*futs):
             st['samples'] += 1; pt['n'] += 1; done_samples += 1
             if kind == 'positive': st['correct'] += 1; pt['c'] += 1
@@ -333,9 +440,10 @@ async def main():
                 json.dump(dict(at=time.time(), elapsed=el, inflight=list(inflight), retries=retries[0], generated=gen_done[0],
                                preempted=preempted[0], paused=bool(PAUSE and os.path.exists(PAUSE)),
                                finalize=bool(stop_reason[0]), stop_reason=stop_reason[0],
-                               samples=done_samples, gen_tokens=gen_tokens, tok_s=gen_tokens / max(el, 1)), open(PROG + '.tmp', 'w')); os.replace(PROG + '.tmp', PROG)
+                               samples=done_samples, gen_tokens=gen_tokens, tok_s=gen_tokens / max(el, 1),
+                               grade_supervisor={k: v for k, v in gstat.items() if k != 'events'}), open(PROG + '.tmp', 'w')); os.replace(PROG + '.tmp', PROG)
 
-    pj = asyncio.create_task(progress())
+    pj = asyncio.create_task(progress()); gsup = asyncio.create_task(grade_supervisor())
     order = [(e, i) for e in P['envs'] for i in e['indices']]
     # interleave envs so partial runs still cover every env
     order.sort(key=lambda t: (t[0]['indices'].index(t[1]), t[0]['env_id']))
@@ -349,9 +457,13 @@ async def main():
             break
         done, pending_set = await asyncio.wait(pending, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
         pending = [t for t in pending_set]
-    pj.cancel()
+    pj.cancel(); gsup.cancel()
     if PC is not None: _prep_cache_save(PC)
     try: await client.aclose()
+    except Exception: pass
+    pool, sb_pool = gpool['main'], gpool['sb']
+    try:
+        import shutil; shutil.rmtree(JOBDIR, ignore_errors=True)
     except Exception: pass
     for pl in (pool, prep_pool, sb_pool):
         if pl is None: continue
@@ -390,6 +502,7 @@ async def main():
                request_latency_s=dict(p50=statistics.median(lat) if lat else None, max=max(lat) if lat else None),
                concurrency=P['concurrency'], replicas=len(URLS), requests_per_replica=served_by, transient_retries=retries[0], preempted_requests=preempted[0],
                partial=partial, stop_reason=stop_reason[0], planned_samples=planned, envs=envs,
+               grade_supervisor=gstat,
                prep_cache=(None if PC is None else {k: dict(key=v['key'][:16], rows=len(v['rows']), new=v['new']) for k, v in PC.items()}))
     json.dump(res, open(OUT + '.tmp', 'w')); os.replace(OUT + '.tmp', OUT)
     print(json.dumps({k: v for k, v in res.items() if k != 'envs'}))
