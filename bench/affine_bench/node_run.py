@@ -9,7 +9,7 @@
 3. reduces each traces.jsonl to OUT/<bench>/summary.json (aggregate) and OUT/<bench>/per_task.jsonl (kept on the node/host,
    never published), then writes OUT/DONE."""
 import argparse
-import resource, glob, json, math, os, subprocess, sys, time
+import fcntl, resource, glob, json, math, os, subprocess, sys, time
 from . import registry as R
 
 ROOT = os.environ.get("BENCH_ROOT", "/data/bench")
@@ -75,6 +75,12 @@ def main(argv=None):
     ap.add_argument("--max-model-len", type=int, default=None); ap.add_argument("--out", default=None)
     ap.add_argument("--rollouts", default="", help="override, e.g. math500=16 (calibration runs)")
     a = ap.parse_args(argv)
+    # one runner per node, ever: a second runner would share the server and the run dirs (and overload the box)
+    lk = open(f"{ROOT}/runs/.node-run.lock", "a")
+    try:
+        fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit("another node-run holds runs/.node-run.lock; refusing to start")
     # each in-flight rollout holds sockets + subprocess pipes; the default soft limit (1024) kills big runs with EMFILE
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard, 1 << 20) if hard != resource.RLIM_INFINITY else 1 << 20, hard))
@@ -96,7 +102,7 @@ def main(argv=None):
     W = sum(weights.values()) or 1
     procs = {}
     env = dict(os.environ, BENCH_API_KEY="local")
-    MAX_C, MAX_ATTEMPTS = 3072, 3  # fd limit is raised above, so one env may use the whole budget
+    MAX_C, MAX_ATTEMPTS = 1024, 3  # each in-flight rollout is a subprocess; >1024 per env overloads the node
 
     def launch(b, attempt):
         d = f"{out}/{b['id']}"; vf = d + "/vf"; os.makedirs(vf, exist_ok=True)

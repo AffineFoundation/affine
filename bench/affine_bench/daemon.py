@@ -164,18 +164,21 @@ def launch(m, bids):
     # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
     cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
            f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")
-    p = NODE.run(cmd, timeout=60)
-    S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=p.stdout.strip().split()[-1] if p.stdout.strip() else None, last_progress=now(), progress=0)
+    try:
+        out = NODE.run(cmd, timeout=90).stdout.strip()
+    except subprocess.TimeoutExpired:
+        out = ""  # the runner may still have started; liveness is read from the node's runner lock, not this pid
+    S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=out.split()[-1] if out else None, last_progress=now(), progress=0)
     save(); log(event="launched", model=rk, bids=bids, pid=S["running"]["pid"])
 
 
 def node_status(rk, pid):
-    o = NODE.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(kill -0 {pid or 0} 2>/dev/null && echo 1); "
-                 f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l)", timeout=60)
+    o = NODE.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
+                 f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo ok=1", timeout=90)
     d = {}
     for line in o.splitlines():
         if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()
-    return d
+    return d if d.get("ok") == "1" else None  # None = node unreachable or overloaded: decide nothing this round
 
 
 def abort(run):
@@ -231,6 +234,8 @@ def step():
     run = S.get("running")
     if run:
         st = node_status(run["run_key"], run.get("pid"))
+        if st is None:
+            log(event="node-unreachable", model=run["run_key"]); publish.publish(rows, S); return
         lines = int(st.get("lines") or 0)
         if lines > run.get("progress", 0):
             run["progress"] = lines; run["last_progress"] = now(); save()

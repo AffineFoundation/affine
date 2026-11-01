@@ -11,5 +11,8 @@ class Node:
         return subprocess.run([self.ssh, cmd], input=inp, capture_output=True, text=True, timeout=timeout)
 
     def out(self, cmd, timeout=120):
-        p = self.run(cmd, timeout=timeout)
+        try:
+            p = self.run(cmd, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return ""
         return p.stdout
