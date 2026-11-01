@@ -22,7 +22,8 @@ prior pod only. Never commit or publish them. This directory holds code only.
 | `selection.py` | host | Beta-posterior weights, per-env priors, stratified PPS draw with inclusion probabilities, seed + commitment |
 | `refine.py` | host | baseline plan (blocks x k), merge, write-back, scoring with the live `heldout.score_ivw` (+ Hajek gain) |
 | `dryrun.py` | host | draws a set from the table and simulates what the gate would look like vs today's |
-| `build_dapo.py` (in the audit dir `code/`) | box/host | builds the pinned, decontaminated DAPO pool |
+| `dapo/build_dapo.py` | box/host | builds the pinned, decontaminated DAPO pool |
+| `baseline_v1.py`, `gate/` | host | the prior-v1 gate baseline (staged, not live): see `gate/README.md` |
 
 Sampling settings = the live probe harness for affine_math: temperature 1.0, top_p 0.95, top_k 20, thinking on, checkpoint
 `chat_template.jinja`, max output 8192, context 12288, EOS ids 248046/248044, one request per sample with its own seed.
