@@ -16,3 +16,4 @@
 #bench-table td.eq{background:color-mix(in srgb,var(--muted) 8%,transparent)}
 #bench-table tr.last-king th,#bench-table tr.last-king td{border-bottom:2px solid var(--muted)}
 #bench-table tr.genesis th,#bench-table tr.genesis td{border-top:1px solid var(--muted);font-weight:600}
+#bench-table td.best{font-weight:600}
