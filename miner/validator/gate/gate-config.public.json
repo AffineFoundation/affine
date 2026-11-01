@@ -70,6 +70,41 @@
      "sigma_pool_rounds": 20,
      "sigma_run_policy": "pooled"
     }
+   },
+   {
+    "applies_to": "rounds opened after set_at",
+    "authorized_by": [
+     "Jacob 2026-10-31 14:07 CR: \"Go live with pooled sigma_run\", \"Go live with 8 candidate rollouts per task\", \"Go live with 2,000 tasks per round\""
+    ],
+    "by": "variance levers revert: watchdog: new round r20261101T193112Z-32fa9510 baseline not done 35 min after open",
+    "mode": "off",
+    "set_at": "20261101T200623Z",
+    "set_at_cr": "2026-11-01 14:06 CR",
+    "values": {
+     "k_cand": 4,
+     "n": 1000,
+     "sigma_run_policy": "per-round"
+    }
+   },
+   {
+    "applies_to": "rounds opened after set_at",
+    "authorized_by": [
+     "Jacob 2026-10-31 14:07 CR: \"Go live with pooled sigma_run\", \"Go live with 8 candidate rollouts per task\", \"Go live with 2,000 tasks per round\""
+    ],
+    "by": "variance levers activation after e484 DECISION",
+    "mode": "on",
+    "reauthorized_by": [
+     "Jacob 2026-11-01 14:13 CR (via parent agent): \"Yes, re-arm the 2,000-task gate settings with the watchdog on\""
+    ],
+    "set_at": "20261101T201956Z",
+    "set_at_cr": "2026-11-01 14:19 CR",
+    "values": {
+     "k_cand": 8,
+     "n": 2000,
+     "sigma_pool_min_rounds": 5,
+     "sigma_pool_rounds": 20,
+     "sigma_run_policy": "pooled"
+    }
    }
   ],
   "z_inclusive": false,
@@ -79,7 +114,7 @@
    "ub95": 0.011360263218313113,
    "rounds": 20,
    "df": 40,
-   "note": "pooled over the last 20 finished rounds at the switch (2026-10-31 14:27 CR); the gate freezes its own value per round at open (current.json sigma_run.value)"
+   "note": "pooled over the last 20 finished rounds at the first switch (2026-10-31 14:27 CR); the gate freezes its own value per round at open (current.json sigma_run.value)"
   }
  },
  "version": "sn120-miner-kit-gate-config-v1"

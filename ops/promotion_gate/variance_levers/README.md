@@ -34,3 +34,18 @@ turn not using the round's k_cand / sigma_run), setflag.py, patch_levers.py, pat
 heldout.se + rule, gate.json rule, k1 green.json notes, llms.txt s6/s7), kit_patch.py / readme_patch.py (miner kit).
 Revert: bash RA/20261031-variance-levers/revert.sh (closes a still-open new-rules round, never revealed; NOCLOSE=1 keeps it).
 Dry run of the revert path (copies only): MODE=dryrun bash revert.sh.
+
+## 2026-11-01: watchdog auto-revert and re-arm
+- 14:06 CR: the watchdog reverted (new round r20261101T193112Z-32fa9510, block 0 = 2,000 tasks, not done 35 min after open);
+  the round was closed unjudged (e483 -> RED not judged; that hotkey got a K1-GRANTS fresh turn).
+- Cause: not capacity. Block 0 generated all 8,000 samples in ~7 min and graded 1,999/2,000 tasks; one grade pool worker
+  process died (math_verify's SIGALRM TimeoutException escaped inside sympy and killed the spawn pool worker), so
+  multiprocessing.Pool lost that task's result and probe_worker waited forever with the worker pid alive. The gate only
+  salvages (podctl finalize-run) a run that is not "running", so it never did. More tasks per block = more exposure.
+  Possible fixes (not applied): gate-side finalize-run once a block has all samples generated and no grade progress for
+  N min (partial salvage already passes min_cover); or a per-grade wall timeout on the pool futures in probe_worker.
+- 14:19 CR (Jacob 14:13 CR "Yes, re-arm the 2,000-task gate settings with the watchdog on"): activate_levers.sh
+  WAIT_EPOCH=484 installed at the e484 DECISION gap; the open round r20261101T200634Z-deb95f24 keeps n 1000 / k_cand 4 /
+  per-round sigma_run; rounds opened after 2026-11-01 14:19 CR use n 2000 / k_cand 8 / pooled sigma_run. Watchdog restarted (24 h).
+- Re-arm gotcha: activate_levers.sh does not clear state/REVERTED, and watchdog.py exits at start while it exists; move it
+  aside before re-arming.
