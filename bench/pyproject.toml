@@ -1,0 +1,16 @@
+[project]
+name = "affine-bench"
+version = "0.1.0"
+description = "Affine SN120 public benchmark runner: serves each king on vLLM, runs verifiers envs, publishes aggregates to affine.io"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+affine-bench = "affine_bench.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["affine_bench*"]
