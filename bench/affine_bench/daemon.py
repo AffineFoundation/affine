@@ -133,7 +133,10 @@ def ensure_weights(m):
 
 
 def prune(keep_dirs):
-    """Disk policy: keep only the weights of the running model and the prefetched next one (kings and refs)."""
+    """Disk policy. Deleting weights needs the owner's explicit approval, so by default this only reports what
+    could be removed (the pod has ~21 TB; all kings + refs need ~3.5 TB). Set BENCH_PRUNE=1 to actually delete."""
+    if os.environ.get("BENCH_PRUNE") != "1":
+        return
     pruned = set()
     for root in (C.NODE_KINGS, C.NODE_REFS):
         for n in NODE.out(f"ls {root} 2>/dev/null").split():

@@ -42,3 +42,8 @@ PYTHONPATH=~/bench-work/affine/bench python -m affine_bench.cli status
 ```
 
 Rebuild from scratch: [REDEPLOY.md](REDEPLOY.md).
+
+## Disk policy
+
+Weights are never deleted automatically. The pod has about 21 TB, and every king plus reference needs
+about 3.5 TB in total. `daemon.prune` deletes only when `BENCH_PRUNE=1` is set, and that needs the owner's approval.
