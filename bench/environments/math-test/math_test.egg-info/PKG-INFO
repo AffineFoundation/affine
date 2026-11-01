@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: math-test
+Version: 0.1.0
+Summary: Full MATH test split (Hendrycks et al., 5,000 problems; answer = last \boxed{} of the reference solution) -- Affine bench env (verifiers v1, math-verify scoring)
+Requires-Python: >=3.11
+Requires-Dist: verifiers>=0.4.0
+Requires-Dist: math-verify>=0.8.0
+Requires-Dist: datasets

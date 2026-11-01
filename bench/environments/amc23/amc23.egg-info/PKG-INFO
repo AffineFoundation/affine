@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: amc23
+Version: 0.1.0
+Summary: AMC 2023 (the 40-problem AMC12 2023 A/B set used by Qwen/DeepSeek/SimpleRL evals) -- Affine bench env (verifiers v1, math-verify scoring)
+Requires-Python: >=3.11
+Requires-Dist: verifiers>=0.4.0
+Requires-Dist: math-verify>=0.8.0
+Requires-Dist: datasets
