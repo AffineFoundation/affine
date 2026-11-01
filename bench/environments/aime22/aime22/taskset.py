@@ -42,7 +42,6 @@ def _last_boxed(s: str) -> str:
 
 
 class AIME22Data(vf.TaskData):
-    network_allow: list[str] = []
     answer: str
     """Accepted integer answer(s), '|'-separated when the MAA accepted more than one."""
 

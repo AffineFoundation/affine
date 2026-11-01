@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: local-aime26
+Version: 0.1.0
+Summary: primeintellect/aime26 (pinned) with an open sandbox network policy for the local subprocess runtime
+Requires-Python: >=3.11
+Requires-Dist: aime26

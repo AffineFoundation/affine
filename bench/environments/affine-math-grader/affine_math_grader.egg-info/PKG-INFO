@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: affine-math-grader
+Version: 0.1.0
+Summary: Stronger math answer grader for OlympiadBench / Omni-MATH style answers (sympy equivalence, intervals, sets/tuples, multi-part, tolerance, units, needs-judge flag)
+Requires-Python: >=3.11
+Requires-Dist: math-verify>=0.8.0
+Requires-Dist: sympy

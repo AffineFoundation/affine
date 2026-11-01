@@ -1,0 +1,7 @@
+pyproject.toml
+local_aime24/__init__.py
+local_aime24.egg-info/PKG-INFO
+local_aime24.egg-info/SOURCES.txt
+local_aime24.egg-info/dependency_links.txt
+local_aime24.egg-info/requires.txt
+local_aime24.egg-info/top_level.txt

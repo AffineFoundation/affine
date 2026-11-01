@@ -1,0 +1,7 @@
+pyproject.toml
+local_math500/__init__.py
+local_math500.egg-info/PKG-INFO
+local_math500.egg-info/SOURCES.txt
+local_math500.egg-info/dependency_links.txt
+local_math500.egg-info/requires.txt
+local_math500.egg-info/top_level.txt

@@ -1,0 +1,13 @@
+[project]
+name = "affine-math-grader"
+version = "0.1.0"
+description = "Stronger math answer grader for OlympiadBench / Omni-MATH style answers (sympy equivalence, intervals, sets/tuples, multi-part, tolerance, units, needs-judge flag)"
+requires-python = ">=3.11"
+dependencies = ["math-verify>=0.8.0", "sympy"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["affine_math_grader"]

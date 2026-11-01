@@ -36,7 +36,6 @@ def _last_boxed(s: str) -> str:
 
 
 class AMC23Data(vf.TaskData):
-    network_allow: list[str] = []
     answer: str
 
 
