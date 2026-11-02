@@ -18,6 +18,8 @@ LIFE = Path(CFG.get("lifecycle", "/home/const/subnet120-rewrite/state/mimo-mainn
 PRESIGN = CFG.get("presign", "/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/presign.py")
 HOST_PY = CFG.get("host_python", "/home/const/subnet120-rewrite/.venv/bin/python")
 POLL_S = int(CFG.get("poll_s", 60))
+LIUM = os.path.expanduser(CFG.get("lium_cli", "~/.lium/bin/lium"))
+POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600   # unreachable > 10 min -> ask Lium whether the pod still exists, then every 10 min
 
 
 def cr(ts=None):
@@ -28,10 +30,64 @@ def log(**kw):
     kw["at"] = time.time(); kw["at_cr"] = cr(kw["at"]); print(json.dumps(kw, default=str), flush=True)
 
 
+class PodUnreachable(RuntimeError):
+    """ssh itself failed (rc 255: refused / timeout / no route), as opposed to a command failing on a reachable pod."""
+
+
 def pod(cmd, inp=None, timeout=300):
     p = subprocess.run([POD, cmd], input=inp, capture_output=True, text=True, timeout=timeout)
+    if p.returncode == 255: raise PodUnreachable("pod rc=255 %s" % (p.stderr or p.stdout)[-300:])
     if p.returncode != 0: raise RuntimeError("pod rc=%d %s" % (p.returncode, (p.stderr or p.stdout)[-300:]))
     return p.stdout
+
+
+def pod_lium_id():
+    """Lium pod id of the prior pod: controller.json 'pod_lium_id', else the 'lium <uuid>' in the ssh wrapper's header comment."""
+    if CFG.get("pod_lium_id"): return CFG["pod_lium_id"]
+    try:
+        import re
+        m = re.search(r"lium ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", Path(POD).read_text())
+        return m.group(1) if m else None
+    except Exception: return None
+
+
+def lium_pod_state(pod_id):
+    """'gone' if Lium says the pod no longer exists (reclaimed/deleted), 'listed' if it does, None if Lium could not be asked.
+    Read-only `lium describe` on this host (the Lium key stays in ~/.lium and is never printed or logged)."""
+    if not pod_id: return None
+    try: p = subprocess.run([LIUM, "describe", pod_id], capture_output=True, text=True, timeout=60)
+    except Exception: return None
+    o = p.stdout + p.stderr
+    if "no longer listed" in o or "DELETED" in o: return "gone"
+    return "listed" if p.returncode == 0 else None
+
+
+DOWN = {}   # unreachable-pod state: since, checked, state ('gone' | 'listed' | None), lium_id
+
+
+def node_down(err):
+    """Unreachable pod: after 10 min ask Lium whether it still exists. A reclaimed pod never comes back, so say so once, loudly
+    (node-gone + STATUS.private.json pod_state) instead of logging the same ssh error every minute (2026-11-02: affine-prior-1 was
+    reclaimed at 06:00 CR and the controller logged 'Connection refused' every minute for 4 h). The fix is a new pod (see
+    STATE.md recipe); that spends money, so it is left to a human."""
+    t = time.time()
+    if not DOWN: DOWN.update(since=t, checked=0, state=None, lium_id=pod_lium_id())
+    d = DOWN
+    if t - d["since"] >= POD_CHECK_AFTER_S and t - d["checked"] >= POD_CHECK_EVERY_S:
+        d["checked"] = t; st = lium_pod_state(d["lium_id"])
+        if st == "gone" and d["state"] != "gone":
+            log(event="node-gone", lium_id=d["lium_id"], down_since_cr=cr(d["since"]),
+                action="prior pod reclaimed/deleted on Lium: rent a replacement per STATE.md, update pp.sh, reset pull.json offset, restart affine-prior-table")
+        elif st != "gone":
+            log(event="node-unreachable", lium=st, down_min=round((t - d["since"]) / 60), error=str(err)[-200:])
+        d["state"] = st
+    elif d["state"] != "gone":
+        log(event="node-unreachable", down_min=round((t - d["since"]) / 60), error=str(err)[-200:])
+    try:
+        cur = json.loads((ST / "STATUS.private.json").read_text()) if (ST / "STATUS.private.json").exists() else {}
+        wj(ST / "STATUS.private.json", dict(cur, pod_state=d["state"] or "unreachable", pod_down_since_cr=cr(d["since"]),
+                                            pod_checked_cr=cr(d["checked"]) if d["checked"] else None, pod_lium_id=d["lium_id"]))
+    except Exception: pass
 
 
 def wj(path, obj, mode=0o600):
@@ -121,6 +177,9 @@ def main():
             s = serving(); g = gate_head()
             if s and s.get("ckpt") and table.head() is None:
                 table.set_head(s["ckpt"], note="initial"); log(event="table_head", head=s["ckpt"][:12])
+            elif s and s.get("ckpt") and s["ckpt"] == g and table.head() != g:
+                # pod rebuilt/re-served outside switch_head (e.g. a replacement pod already serving the gate head): track that head
+                table.set_head(g, note="pod serving gate head"); log(event="table_head", head=g[:12], discounted=True, why="reconcile")
             if g and s is not None and g != (s or {}).get("ckpt"):
                 log(event="head_change", gate_head=g[:12], served=((s or {}).get("ckpt") or "")[:12])
                 k = pull(table)    # ingest everything the old head produced first
@@ -130,7 +189,10 @@ def main():
             try: prog = json.loads(pod("cat /opt/prior/runs/sampler/progress.json", timeout=60))
             except Exception: prog = None
             wj(ST / "STATUS.private.json", dict(at=time.time(), at_cr=cr(), gate_head=g, table_head=table.head(), ingested_now=k,
-                                               progress=prog, table=stats(table)))
+                                               progress=prog, table=stats(table), pod_state="ok"))
+            if DOWN: log(event="node-back", down_min=round((time.time() - DOWN["since"]) / 60)); DOWN.clear()
+        except PodUnreachable as x:
+            node_down(x)
         except Exception as x:
             log(event="error", error="%s: %s" % (type(x).__name__, x), tb=traceback.format_exc()[-600:])
         if ONCE: break
