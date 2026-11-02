@@ -1,7 +1,7 @@
 """Minimal async vLLM /v1/completions client with the gate's request shape (same body and stop handling as
 validator/probe/probe_worker.py: one request per sample, n=1, its own seed, stop_token_ids = EOS, token ids returned).
 Start a server per GPU (or one with tensor parallel) using the gate's flags (validator/probe/serve.sh):
-  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512
+  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512   (16384 = the gate's 12,288 cap + prompt)
 """
 import asyncio, hashlib, random
 EOS = (248046, 248044)
@@ -13,13 +13,15 @@ def request_seed(plan_seed, env, task, j):
     return int(hashlib.sha256(f"{plan_seed}:{env}:{task}:{j}".encode()).hexdigest()[:12], 16)
 
 
-async def sample_all(urls, jobs, *, model='m', concurrency=512):
+async def sample_all(urls, jobs, *, model='m', concurrency=512, max_tokens=None):
+    """max_tokens: None = H (8192: the batch-file limit for training rollouts); gate_eval.py passes the gate's cap (12288 from 2026-11-02)."""
+    cap = int(max_tokens or H['max_output_tokens']); ctx = max(H['max_context_tokens'], cap + 4096) if cap > H['max_output_tokens'] else H['max_context_tokens']
     """jobs: [(key, prompt_ids, seed)] -> {key: (out_ids_with_eos, stop)}; stop is 'eos' or 'budget' (hit 8192 / context)."""
     import httpx
     sem = asyncio.Semaphore(concurrency); inflight = [0] * len(urls); res = {}
     async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0), limits=httpx.Limits(max_connections=concurrency + 8)) as client:
         async def one(key, ids, seed):
-            mt = min(H['max_output_tokens'], H['max_context_tokens'] - len(ids))
+            mt = min(cap, ctx - len(ids))
             body = dict(model=model, prompt=list(ids), n=1, max_tokens=mt, temperature=H['temperature'], top_p=H['top_p'],
                         top_k=H['top_k'], stop_token_ids=list(EOS), skip_special_tokens=False, return_token_ids=True, seed=seed)
             for attempt in range(200):

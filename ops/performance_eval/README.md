@@ -14,7 +14,7 @@ comparable across kings. These sets do not change.
 
 Method (comparable with the gate probe): same prompt (system mandate + problem, MiMo chat template with thinking; the
 full-set prompt token ids are the probe's own prep-cache ids, and our rendering reproduces all 7,496), same sampling
-(temperature 1.0, top_p 0.95, top_k 20, max 8,192 output tokens / 12,288 context), same vLLM 0.32.0 serve flags,
+(temperature 1.0, top_p 0.95, top_k 20, max 12,288 output tokens / 16,384 context for kings promoted after the 2026-11-02 12K switch, 8,192 / 12,288 before; run_king.sh 5th arg), same vLLM 0.32.0 serve flags,
 same grader (final channel after `</think>`, exactly one balanced `\boxed`, math-verify 0.9.0 vs the reference answer,
 then the probe's lenient fix allan-lenient-v1-786cdb9; capped replies are fails). 1 sample per task, fixed seed
 `sn120-perf-v1`, seed(set, task, j) = int(sha256(P:set:task:j)[:12], 16). SE = task-clustered.

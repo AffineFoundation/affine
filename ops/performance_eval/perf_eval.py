@@ -14,6 +14,7 @@ EOS = (248046, 248044); OPEN_T, CLOSE_T = 248068, 248069
 SYSTEM = ("Solve the math problem. Reason step by step in plain text, then end your response with the final answer in `\\boxed{}`. "
           "Emit exactly one `\\boxed{}` block and nothing after it.")
 H = dict(enable_thinking=True, max_context_tokens=12288, max_output_tokens=8192, temperature=1.0, top_k=20, top_p=0.95)
+H.update({k: int(v) for k, v in (PLAN.get('harness') or {}).items() if k in ('max_output_tokens', 'max_context_tokens')})   # 12K task cap (2026-11-02)
 _G = {}
 def _init(ckpt_dir):
     os.nice(5)

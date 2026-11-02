@@ -14,5 +14,5 @@ mkdir -p "$C/vllm" "$C/triton" "$C/inductor"
 export VLLM_CACHE_ROOT=$C/vllm TRITON_CACHE_DIR=$C/triton TORCHINDUCTOR_CACHE_DIR=$C/inductor
 export VLLM_LOGGING_LEVEL=WARNING HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1
 exec $D/venv/bin/vllm serve "$CK" --host 127.0.0.1 --port "$PORT" --served-model-name probe \
-  --dtype bfloat16 --max-model-len 12288 --gpu-memory-utilization "$GMU" --enable-prefix-caching \
+  --dtype bfloat16 --max-model-len 16384 --gpu-memory-utilization "$GMU" --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' --max-num-seqs ${MAX_SEQS:-512} "$@"

@@ -80,6 +80,7 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
   not appear in a prompt or an output.
 - EOS rule: an output of up to 8191 tokens gets `<|im_end|>` appended (it ended). Exactly 8192 tokens = cut at the cap
   (no EOS; capped). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
+  (This is the batch-file submission limit and is unchanged. The gate evaluation cap is 12,288 output tokens, section 5.)
 - reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
   std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
   The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 6000) / (8192 - 6000), 0, 1).
@@ -141,10 +142,13 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 - Gate prompt: [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem. Reason step by step in
   plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
   (Your batch prompt is a single user message, section 3. Every GREEN so far used MANDATE + "\n\n" + problem as the prompt.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context. It runs on vLLM 0.32.0 on 8 x B200
-  (`--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). There's one request per sample,
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context. The cap is 12,288
+  from the first gate round opened after 2026-11-02 10:41 CR (earlier rounds: 8,192 output / 12,288 context); each round's cap
+  is in mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens. Head and candidates in a round always
+  use the same cap. It runs on vLLM 0.32.0 on 8 x B200
+  (`--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). There's one request per sample,
   with seed = int(sha256("P:affine_math:task:j")[:12], 16). Exact pins: miner/requirements-gate-vllm.txt.
-- Grader (probe_worker.grade): a capped reply (8,192 tokens, no EOS) is unresolved. Otherwise the final channel after
+- Grader (probe_worker.grade): a capped reply (12,288 tokens, no EOS) is unresolved. Otherwise the final channel after
   exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0
   against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1-E7
   answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
@@ -229,7 +233,8 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 - https://affine.io/performance.json: pass rate of every king (head) on two FIXED sets, scored on a separate machine:
   the full public affine_math pool (all 7,496 tasks) and a private holdout (4,976 MATH test problems, minus any that
   match a pool task; only its size and sha256 are published: 08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734).
-- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20, 8192 output tokens) and grader as the gate probe; fixed
+- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20; 12,288 output tokens for kings promoted after the 12K
+  switch, 8,192 before; each row says its max_tokens) and grader as the gate probe; fixed
   seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (the Performance tile, one line per set).
 - Informational only: it never affects promotions, the gate, weights or training. The gate scores a few hundred
   head-mixed tasks per round, so its pass rates aren't comparable across rounds. These are.

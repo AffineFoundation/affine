@@ -15,10 +15,10 @@
 - Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
   Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
   block and nothing after it." (Your batch prompt is a single user message, section 3.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context. It runs on vLLM 0.32.0 on 8 x B200
-  (`--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap; 8,192 before 2026-11-02), 16,384 context. It runs on vLLM 0.32.0 on 8 x B200
+  (`--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
   On the probe the pool is one task list: probe index = math index (0-7495), or 7496 + j for dapo:j.
-- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (8,192 tokens, no EOS) is unresolved.
+- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (12,288 tokens, no EOS) is unresolved.
   Otherwise the final channel after exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is
   checked with math-verify 0.9.0 against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1
   (P1/P2 projection, E1-E7 answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
@@ -52,7 +52,7 @@
   The z bar is fixed at 1.00 (gate.json `z_bar`, mining.json heldout.z_bar); the bar each turn was judged against:
   gate.json entries[].thresholds.z_min.
   History: from E553 the bar is fixed at z > 1; E513-E552 used a time-relaxed bar.
-  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 8,192-token
+  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 12,288-token
   cap, every task counted alike: RED if >= 33% of the candidate's baseline answers hit the token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.

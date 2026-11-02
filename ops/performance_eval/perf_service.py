@@ -120,13 +120,22 @@ def prune(keep):
         if re.fullmatch(r'[0-9a-f]{64}', base) and base not in keep:
             pod(f'rm -rf /data/perf/ckpt/{base} /data/perf/ckpt/{base}.partial /data/perf/ckpt/{base}.descriptor.json /data/perf/ckpt/{base}.fetch.log')
             log(event='pruned', king=base[:12])
+CAP_SWITCH = '/home/const/subnet120-rewrite/state/root-audits/20261102-task-cap-12k/SWITCH.json'
+def perf_cap(k):
+    """12K task cap (2026-11-02): kings crowned at/after the first 12K gate round's opening epoch -> the gate's max_tokens; older -> 8192."""
+    sw = rj(CAP_SWITCH) or {}
+    if sw.get('active') is not True or sw.get('opened_epoch') is None: return 8192
+    try: ep = next(x['epoch'] for x in kings() if x['king'] == k)
+    except Exception: return 8192
+    return int(sw['max_tokens']) if ep is not None and int(ep) >= int(sw['opened_epoch']) else 8192
 def launch(k):
     pod(f'rm -rf {wdir(k)}; mkdir -p {wdir(k)}')
-    cmd = (f"nohup setsid bash /data/perf/run_king.sh {k} {SEED} {K['full']} {K['holdout']} > /data/perf/run-{k[:8]}.log 2>&1 < /dev/null & "
+    mt = perf_cap(k)
+    cmd = (f"nohup setsid bash /data/perf/run_king.sh {k} {SEED} {K['full']} {K['holdout']} {mt} > /data/perf/run-{k[:8]}.log 2>&1 < /dev/null & "
            f"sleep 2; cat {wdir(k)}/run.pid")
     try: rc, o, e = pod(cmd, timeout=40)
     except subprocess.TimeoutExpired: o = ''
-    S['running'] = dict(king=k, started=now(), run_pid=o.strip()); save(); log(event='launched', king=k[:12], run_pid=o.strip())
+    S['running'] = dict(king=k, started=now(), run_pid=o.strip(), max_tokens=mt); save(); log(event='launched', king=k[:12], run_pid=o.strip(), max_tokens=mt)
 def status(k):
     rc, o, _ = pod(f"cd {wdir(k)} 2>/dev/null && echo rc=$(cat eval.rc 2>/dev/null) && echo prog=$(cat result.json.progress 2>/dev/null) && "
                    f"echo alive=$(kill -0 $(cat run.pid) 2>/dev/null && echo 1 || echo 0) && echo res=$(test -f result.json && echo 1)", timeout=60)
@@ -215,7 +224,7 @@ def publish(ks, cur=None):
         if r:
             row.update(status='scored', evaluated_at_cr=r.get('evaluated_at_cr'), eval_wall_s=round(r['wall_seconds'], 1), seed=r['seed'], k=r['k'],
                        pod=(r.get('machine') or {}).get('pod', 'calm-orbit-ef'), pod_lium_id=(r.get('machine') or {}).get('lium_id', PODS['calm-orbit-ef']['lium_id']),
-                       gpu=(r.get('machine') or {}).get('gpu', '2xH200'))
+                       gpu=(r.get('machine') or {}).get('gpu', '2xH200'), max_tokens=int((r.get('harness') or {}).get('max_output_tokens', 8192)))
             for s in ('full', 'holdout'):
                 x = r['sets'][s]
                 row[s] = dict(pass_rate=x['pass_rate'], se=x['se'], tasks=x['tasks'], samples=x['samples'], graded_samples=x['graded_samples'],
@@ -234,9 +243,11 @@ def publish(ks, cur=None):
                                       removed=HOLD['removed'], hash_rule=HOLD['hash_rule'], list_published=False)),
                method=dict(samples_per_task=K, seed=SEED, request_seed_rule='seed(set, task, j) = int(sha256(P + ":" + set + ":" + task + ":" + j)[:12], 16), P = seed',
                            harness=dict(enable_thinking=True, temperature=1.0, top_p=0.95, top_k=20, max_output_tokens=8192, max_context_tokens=12288),
+                           task_cap=('max_output_tokens follows the gate: 8,192 (context 12,288) for kings crowned before the first 12K gate round; '
+                                     '12,288 (context 16,384) for kings crowned from it (Jacob 2026-11-02). Each king row carries its max_tokens.'),
                            prompt='system = the affine_math mandate, user = problem; MiMo chat template with thinking (full-set prompt ids identical to the gate probe)',
                            grader='gate probe grader: final channel after </think>, exactly one balanced \\boxed (mimo-final-channel-math-v1), math-verify 0.9.0 '
-                                  'equivalence vs the reference \\boxed answer; else the probe lenient fix allan-lenient-v1-786cdb9. Capped replies (8192 tokens) count as fails.',
+                                  'equivalence vs the reference \\boxed answer; else the probe lenient fix allan-lenient-v1-786cdb9. Capped replies (at the king\'s max_tokens) count as fails.',
                            pass_rate='correct / graded samples (mean over tasks)', se='task-clustered standard error, sd(per-task pass) / sqrt(tasks)',
                            serving='vLLM 0.32.0 bf16, prefix caching, max-num-seqs 512 (probe serve.sh flags), 1 replica per GPU',
                            determinism='seeds and settings are fixed; vLLM batching is not bit-reproducible, so a re-run moves a number by about its SE'),

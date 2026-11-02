@@ -97,6 +97,7 @@ miner/
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
   `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 8191 tokens, `<|im_end|>` is appended (it ended).
   Exactly 8192 tokens counts as capped (no EOS). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
+  (Batch-file limit, unchanged. The gate evaluates at a 12,288-token output cap, see Sampling below.)
 - **Caps.** At most 125 prompts and 1,000 rollouts (live value: mining.json `training.batch_cap`). Prompts past
   a cap are dropped whole, in file order.
 - **reward.** Any finite number, used as given. Advantage = reward − the mean reward of that prompt's
@@ -146,8 +147,10 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 8,192 output tokens, 12,288 context, vLLM 0.32.0 on 8×B200
-  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 12288 --enable-prefix-caching --max-num-seqs 512`). One request per
+- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context, vLLM 0.32.0 on
+  8×B200. The cap is 12,288 from the first gate round opened after 2026-11-02 10:41 CR (before: 8,192 / 12,288); a round's
+  cap is `mining.json` → `training.promotion_gate.heldout.current_round.settings.max_tokens`, the same for head and candidates
+  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). One request per
   sample, seed = int(sha256(`<plan seed>:affine_gatepool:<probe index>:j`)[:12], 16); probe index = the math index, or
   7496 + j for `dapo:j`.
 - **Grader** (`kit/grade.py` = `probe_worker.grade`, the same for both envs, head and candidates): a capped reply is neutral
@@ -172,7 +175,7 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   run-to-run noise). z = Δ/SE.
 - **GREEN iff** Δ > 0 **and** z > 1 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
-  8,192-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
+  12,288-token cap (8,192 before the 12K switch), every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
   E507: affine_math cap-hit < 0.20).
 - **z bar: fixed at 1.00** (https://affine.io/gate.json `z_bar`, mining.json `heldout.z_bar`). The bar each turn was judged
   against: `entries[].thresholds.z_min`. History: from E553 the bar is fixed at z > 1; E513–E552 used a time-relaxed bar.

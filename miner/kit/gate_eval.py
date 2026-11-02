@@ -17,7 +17,7 @@ What the live gate does each round (one round per head; settings in validator/ga
   5. baseline_v1.estimate: Delta = sum_env share_env x Hajek mean_env(cand - head) (weights 1/pi);
      SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003; GREEN iff Delta > 0, z > 1.00,
      affine_math cap-hit < 0.20, >= 100 tasks scored (>= 95 % of the draw).
-Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 8192 output tokens;
+Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the gate's task cap from 2026-11-02; 8,192 before), context 16,384;
 grading = the probe's grader (kit/grade.py), the same for both envs. Request seed = int(sha256('<plan seed>:affine_gatepool:<probe
 index>:j')[:12], 16), probe index = math index, or 7496 + j for dapo:j.
 Your local GPUs/vLLM build are not the gate's (vLLM 0.32.0 on 8 x B200), so expect differences of a few tenths of a point.
@@ -31,6 +31,9 @@ import baseline_v1 as BV  # noqa: E402  (verbatim live gate module, validator/ga
 ENV = 'affine_gatepool'
 GATE_POOL = kitpath.DATA / 'gate-pool-v1.jsonl'
 GATE_POOL_SHA256 = '9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e'
+
+
+GATE_MAX_TOKENS = 12288   # the gate's per-task generation cap (Jacob 2026-11-02; 8192 before): serve with --max-model-len 16384
 
 
 def gate_pool():
@@ -54,7 +57,7 @@ def cells(res, tasks, k, pool):
 
 def run(urls, model, P, tasks, k, ids, pool, conc, cfg):
     jobs = [((t, j), ids[t], sampler.request_seed(P, ENV, BV.probe_index(t, cfg), j)) for t in tasks for j in range(k)]
-    return cells(asyncio.run(sampler.sample_all(urls, jobs, model=model, concurrency=conc)), tasks, k, pool)
+    return cells(asyncio.run(sampler.sample_all(urls, jobs, model=model, concurrency=conc, max_tokens=GATE_MAX_TOKENS)), tasks, k, pool)
 
 
 def merge(blocks):

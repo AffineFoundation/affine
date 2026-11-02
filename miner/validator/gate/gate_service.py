@@ -476,7 +476,7 @@ def stall_salvage(slot, name, ru, planned, event, **info):
     return fin
 
 
-def run_candidate(e, C, tasks, seed, f, tl, kp=None, side='C', pseed=None):
+def run_candidate(e, C, tasks, seed, f, tl, kp=None, side='C', pseed=None, mt=None):
     att = int(tl.get('run_attempt', 0))
     name = 'gate-e%06d-%s' % (e, C[:12]) + ('' if kp is None else '-%s-k%d%s' % (side, kp['k'], 's' if kp['seeded'] else 'u')) + ('-ho' + hashlib.sha256(('%s:%s' % (pseed, ','.join(map(str, sorted(tasks))))).encode()).hexdigest()[:8] if pseed else '') + ('' if att == 0 else '-r%d' % att)
     st = podctl('status'); r = st['runs'].get(name, {})
@@ -501,7 +501,7 @@ def run_candidate(e, C, tasks, seed, f, tl, kp=None, side='C', pseed=None):
             pseed = plan_seed(seed, kp, C)   # seed = the sample dict here: H and C share P (common random numbers)
         plan = dict(run_name=name, checkpoint_id=C, seed=pseed,
                     concurrency=4096, grade_workers=160, resume=False, bandit_topk=False, concurrency_per_replica=512,
-                    envs=[dict(env_id=f['env'], indices=list(tasks), k=(1 if kp is None else kp['k']), max_tokens=8192)])
+                    envs=[dict(env_id=f['env'], indices=list(tasks), k=(1 if kp is None else kp['k']), max_tokens=int(mt or 8192))])   # task cap: the round's max_tokens (12K switch 2026-11-02)
         podctl('start-run', C, stdin=json.dumps(plan)); tl['run_start'] = time.time(); tl['plan_seed'] = pseed
         log(event='gate_run_started', epoch=e, candidate=C[:12], tasks=len(tasks), side=side, k=(1 if kp is None else kp['k']), seeded=(kp or {}).get('seeded'))
     elif not r.get('running') and time.time() - tl.get('run_start', 0) > 60:
@@ -545,6 +545,40 @@ def ensure_heldout_sample(e, H, f, d, sp):
                                     'and https://affine.io/gate/reveal/<epoch>.json' % r['id']), 0o644)
     log(event='sample_heldout', epoch=e, head=H[:12], round=r['id'], n=len(r['indices']))
     return s
+
+
+CAP_SWITCH = Path('/home/const/subnet120-rewrite/state/root-audits/20261102-task-cap-12k/SWITCH.json')
+CAP_PROMPT_HEADROOM = 4096   # gate-pool prompts (system mandate + problem) are < 2k tokens; context = max_tokens + 4096
+
+
+def ensure_pod_ctx(mt, rid=None):
+    """Task cap 12K (Jacob pt1084u, 2026-11-02): the probe pod must hold prompt + max_tokens. Called only by a round whose frozen
+    max_tokens > 8192, before its head baseline / candidate is served, so an in-flight 8K round is never touched. If the pod's
+    manifest harness context or serve.sh --max-model-len is below max_tokens + 4096: back both up (*.bak-pre-cap12k-<ts>), raise
+    them, stop the replicas (the next fetch_and_serve cold-serves with the new length) and write CAP_SWITCH (read by the env
+    probe and the perf eval). If the files are right but the running replicas were started with a shorter length: stop them.
+    -> 'ready' | 'pod-ctx-switch' | 'pod-ctx-restart'"""
+    need = int(mt) + CAP_PROMPT_HEADROOM
+    out = pod("cd %s && python3 -c \"import json;print(json.load(open('live_math_manifest_subset.json'))['harness']['max_context_tokens'])\"; "
+              "grep -o -- '--max-model-len [0-9]*' serve.sh | head -1; curl -s -m 5 http://127.0.0.1:18555/v1/models || true" % PODD, timeout=60)
+    lines = out.strip().splitlines(); ctx = int(lines[0]); mml = int(lines[1].split()[-1])
+    try: live = int(json.loads(lines[2])['data'][0]['max_model_len'])
+    except Exception: live = None
+    if ctx < need or mml < need:
+        ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+        pod(("cd {D} && cp -p live_math_manifest_subset.json live_math_manifest_subset.json.bak-pre-cap12k-{ts} && cp -p serve.sh serve.sh.bak-pre-cap12k-{ts} && "
+             "python3 -c \"import json;p='live_math_manifest_subset.json';d=json.load(open(p));d['harness']['max_context_tokens']=max({n},d['harness']['max_context_tokens']);"
+             "open(p+'.tmp','w').write(json.dumps(d));import os;os.replace(p+'.tmp',p)\" && "
+             "sed -i.tmpbak -E 's/--max-model-len [0-9]+/--max-model-len {n}/' serve.sh && rm -f serve.sh.tmpbak && python3 podctl.py stop-serve").format(D=PODD, ts=ts, n=need), timeout=120)
+        sw = dict(active=True, max_tokens=int(mt), max_context_tokens=need, round=rid, opened_epoch=((rounds().get(rid) or {}).get('opened_epoch') if rid else None), at=time.time(), at_cr=cr(), pod_backup_suffix='bak-pre-cap12k-' + ts,
+                  previous=dict(max_context_tokens=ctx, max_model_len=mml, live_max_model_len=live))
+        CAP_SWITCH.parent.mkdir(parents=True, exist_ok=True); wj(CAP_SWITCH, sw, 0o644)
+        log(event='cap_ctx_switch', max_tokens=int(mt), max_context_tokens=need, round=rid, previous=sw['previous'], backup=sw['pod_backup_suffix'])
+        return 'pod-ctx-switch'
+    if live is not None and live < need:
+        podctl('stop-serve'); log(event='cap_ctx_restart', max_tokens=int(mt), need=need, live_max_model_len=live, round=rid)
+        return 'pod-ctx-restart'
+    return 'ready'
 
 
 def pod_fingerprint():

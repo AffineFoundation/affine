@@ -33,6 +33,13 @@ def _crs(t, fmt='%Y-%m-%d %H:%M:%S CR'):
     return time.strftime(fmt, time.gmtime(float(t) - 6 * 3600))   # Costa Rica = UTC-6, no DST
 
 
+def _mt(pv):
+    """The round's task cap (generation max_tokens), frozen into cfg at round open: 8192 unless the flag's prior_v1.max_tokens says
+    otherwise (12288 from the first round opened after the 12K switch, Jacob pt1084u 2026-11-02). Head baseline and every candidate of
+    a round use the same value; process_epoch re-baselines if a cached baseline was made at another cap."""
+    return int(pv.get('max_tokens') or 8192)
+
+
 def z_bar_for(pv):
     """The z bar: fixed at bar_z (1.00) for every decision from E553 (Jacob 2026-11-02 08:20 CR)."""
     return dict(value=float(pv.get('bar_z', 1.0)), kind='fixed', from_epoch=553)
@@ -111,7 +118,7 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (8,192 tokens): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (the round\'s max_tokens: 12,288 tokens from the first round opened after the 12K switch of 2026-11-02, 8,192 before): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
@@ -120,6 +127,7 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
                                    'bar_z', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
+        max_tokens=_mt(pv), max_context_tokens=_mt(pv) + 4096 if _mt(pv) > 8192 else 12288,
         tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']))
 
 
@@ -262,6 +270,9 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
     btl = S.rj(btp) or dict(candidate=H, head=H, files=S.ckpt_files(H), start=now, start_cr=S.cr(now), blocks={}, last_progress=now)
     S.busy(True, epoch=e, candidate=H, stage='prior-baseline', round=rid)
     f2 = dict(f, env=pv['probe_env'])
+    if _mt(pv) > 8192:   # 12K round: make sure the probe pod context holds prompt + max_tokens before serving H
+        cx = S.ensure_pod_ctx(_mt(pv), rid)
+        if cx != 'ready': S.wj(btp, btl); return 'baseline-' + cx
     stage = S.fetch_and_serve(H, f2, btl, None)
     if stage != 'ready': S.wj(btp, btl); return 'baseline-' + stage
     st = S.podctl('status'); nb = int(pv['head_blocks']); kb = int(pv['head_rollouts']) // nb
@@ -295,7 +306,7 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
             if running < int(pv['baseline_parallel']):
                 plan = dict(run_name=name, checkpoint_id=H, seed=BV.plan_seed(r['seed'], bi), concurrency=4096, grade_workers=160, resume=False,
                             bandit_topk=False, concurrency_per_replica=512,
-                            envs=[dict(env_id=pv['probe_env'], indices=list(r['indices']), k=kb, max_tokens=8192)])
+                            envs=[dict(env_id=pv['probe_env'], indices=list(r['indices']), k=kb, max_tokens=_mt(pv))])
                 S.podctl('start-run', H, stdin=json.dumps(plan)); bs['start'] = time.time(); running += 1; btl['last_progress'] = time.time()
                 S.log(event='prior_baseline_block_started', round=rid, block=bi, tasks=len(r['indices']), k=kb)
         elif time.time() - bs['start'] > 60:
@@ -313,7 +324,7 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
     hp = sum(v['c'] for v in per_task.values()) / max(1, sum(v['n'] for v in per_task.values()))
     b = dict(schema=BV.ROUND_SCHEMA, round=rid, head=H, epoch=(e if per_turn else None), per_task=per_task, tasks=len(per_task),
              rollouts_per_task=kb * nb, head_pass_raw=hp, plan_seeds=[BV.plan_seed(r['seed'], bi) for bi in range(nb)],
-             settings=S.round_settings(), fingerprint=S.pod_fingerprint(), source='prior-v1-head-baseline',
+             settings=dict(S.round_settings(), generation_max_tokens=_mt(pv)), fingerprint=S.pod_fingerprint(), source='prior-v1-head-baseline', max_tokens=_mt(pv),
              timing=dict(total_s=round(btl['done'] - btl['start'], 1)), done_at=btl['done'], done_at_cr=S.cr(btl['done']))
     b['settings_hash'] = HO.settings_hash(b['settings'])
     S.wj(btp, btl); S.wj(bp, b, 0o600)
@@ -358,14 +369,20 @@ def process_epoch(S, e, s, f):
     f2 = dict(f, env=pv['probe_env'])
     kp = dict(k=int(pv['k_cand']), seeded=True); pseed = BV.cand_seed(r['seed'], e)
     if not tl.get('run_done'):
+        if _mt(pv) > 8192:
+            cx = S.ensure_pod_ctx(_mt(pv), rid)
+            if cx != 'ready': S.wj(tlp, tl); return cx + ('(early)' if early else '')
         stage = S.fetch_and_serve(C, f2, tl, e); S.wj(tlp, tl)
         if stage != 'ready': return stage + ('(early)' if early else '')
-    res = S.run_candidate(e, C, list(r['indices']), s, f2, tl, kp=kp, pseed=pseed); S.wj(tlp, tl)
+    res = S.run_candidate(e, C, list(r['indices']), s, f2, tl, kp=kp, pseed=pseed, mt=_mt(pv)); S.wj(tlp, tl)
     if res is None: return 'running-candidate' + ('(early)' if early else '')
     tl.setdefault('run_done', time.time())
     if early: S.wj(tlp, tl); S.busy(False); return 'staged-await-result'
     bfn = R.d(rid) / ('BASELINE%s.private.json' % (('-e%d' % e) if per_turn else ''))
     b = S.rj(bfn) or {}
+    if b and int(b.get('max_tokens') or 8192) != _mt(pv):   # never mix task caps within a round
+        os.replace(bfn, R.d(rid) / ('BASELINE.capmix-%d.private.json' % int(time.time())))
+        S.log(event='prior_baseline_cap_mismatch', round=rid, epoch=e, baseline=b.get('max_tokens'), round_cap=_mt(pv)); return 'prior-baseline-cap-mismatch'
     if not per_turn and S.pod_fingerprint() != b.get('fingerprint'):
         os.replace(bfn, R.d(rid) / ('BASELINE.stale-%d.private.json' % int(time.time())))
         tp = R.d(rid) / 'BASELINE-TIMELINE.json'
@@ -393,10 +410,10 @@ def process_epoch(S, e, s, f):
                            serve_s=round(tl.get('served', 0) - tl.get('serve_start', tl.get('served', 0)), 1),
                            run_s=round(tl['run_done'] - tl.get('run_start', tl['run_done']), 1)),
                red_credit=f.get('red_credit', 'zero'), commitment=r['draw_commitment'], z_bar=zb,
-               probe=dict(k=kp['k'], seeded=True, common_random_numbers=False, crn='none: candidate plan seed = sha256(seed:prior-baseline:cand:<epoch>), independent of the head blocks',
+               probe=dict(k=kp['k'], max_tokens=_mt(pv), seeded=True, common_random_numbers=False, crn='none: candidate plan seed = sha256(seed:prior-baseline:cand:<epoch>), independent of the head blocks',
                           h_side='prior-v1 head baseline (%s rollouts/task on every drawn task, %s)' % (b.get('rollouts_per_task'),
                                  'fresh this turn' if per_turn else 'once per round')),
-               heldout=dict(round_id=rid, baseline='prior-v1', set_size=r['n'], bar_z=zbar, z_inclusive=bool(pv['z_inclusive']),
+               heldout=dict(round_id=rid, baseline='prior-v1', max_tokens=_mt(pv), set_size=r['n'], bar_z=zbar, z_inclusive=bool(pv['z_inclusive']),
                             k_cand=kp['k'], head_rollouts=b.get('rollouts_per_task'), scoring_mode=pv['scoring_mode'], tau_run=tau, sigma_run_floor=float(pv['sigma_run_floor']),
                             baseline_done_at_cr=b.get('done_at_cr'), scoring=BV.VERSION, settings_hash=b.get('settings_hash')))
     BV.assert_public(dict(evaluated=dec['evaluated'], reasons=dec['reasons'], heldout=dec['heldout']), True)
