@@ -43,7 +43,8 @@
   const r1=x=>Math.round(1000*x);  // compare at display precision (0.1 pp) so visible ties are all starred
   const span={};for(const b of [...B,AVG]){const v=all.map(m=>val(m,b)).filter(x=>x!=null);if(v.length)span[b.id]=[Math.min(...v),Math.max(...v)];}
   const STAR='<svg class="max-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
-  const shade=f=>f<.3?`color-mix(in srgb,#d64545 ${Math.round(26*(1-f/.3))}%,transparent)`:`color-mix(in srgb,#2fa84f ${Math.round(6+60*Math.pow((f-.3)/.7,1.4))}%,transparent)`;
+  // d=(max-v)/(max-min): green to d~.2, amber d~.4-.5, strong red near d~.85+ (Jacob 19:50 CR)
+  const shade=f=>{const d=1-f,k=Math.min(1,Math.max(0,(d-.1)/.75)),h=Math.round(130*(1-Math.pow(k,.75)));return`hsl(${h} 65% 45% / ${(.30+.14*Math.abs(.5-k)*2).toFixed(2)})`;};
   const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG||m.status==='evaluating'||m.status==='queued'?'…':'—'}</td>`;
    const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
    return`<td class="${top?'best':''}${c}" style="background:${shade(f)}"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};

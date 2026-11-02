@@ -1,8 +1,9 @@
 /* Benchmarks table (top of page, Jacob 2026-11-01). */
-#bench-table{margin:0 auto 16px;max-width:var(--page-max,1400px);padding:0 var(--page-pad,16px);box-sizing:border-box}
+#bench-table{margin:0 0 16px;width:100%;max-width:none;padding:0 24px;box-sizing:border-box}
+@media (max-width:640px){#bench-table{padding:0 20px}}
 #bench-table .bench-scroll{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--line);border-radius:4px}
 #bench-table table{border-collapse:separate;border-spacing:0;font:12px/1.3 var(--mono);font-variant-numeric:tabular-nums;width:max-content;min-width:100%}
-#bench-table th,#bench-table td{padding:6px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+#bench-table th,#bench-table td{padding:6px 10px;color:var(--ink);text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
 #bench-table thead th{position:sticky;top:0;z-index:2;background:var(--bg);color:var(--muted);font-weight:400;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
 #bench-table thead tr:nth-child(2) th{top:23px}
 #bench-table thead th.suite{text-align:center;border-bottom:1px solid var(--line)}
