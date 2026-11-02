@@ -26,16 +26,20 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
             noise), so Var_run = 0.003^2
     SE = sqrt(sum_e share_e^2 Var_e + Var_run);  z = Delta / SE
   Request seeds: head block b uses plan_seed(seed, b); the candidate of epoch e uses cand_seed(seed, e) (independent seeds).
-  GREEN iff Delta > 0 AND z > bar_z (1.00) AND estimated candidate cap-hit < cap_max (0.20) AND >= min_scored tasks scored.
-  cap-hit = Hajek estimate of the candidate's capped share over the `cap_envs` (default affine_math, as before)."""
+  GREEN iff Delta > 0 AND z > bar_z (1.00) AND candidate cap-hit < cap_max (CAP_HIT_MAX = 0.33) AND >= min_scored tasks scored.
+  cap-hit (task-level, Jacob 2026-11-01 19:43 CR): the share of ALL the candidate's rollouts on the scored baseline tasks that hit
+  the token cap (8,192 tokens, no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike, no env distinction.
+  RED if >= 33% of the candidate's baseline answers hit the token cap. (Before E507: Hajek capped share on affine_math < 0.20.)
+  The head's rate is computed the same way and recorded (h_cap_rate); per-env rates are diagnostics only (per_env)."""
 from __future__ import annotations
 import hashlib, json, math, os, sqlite3
 
 VERSION = 'sn120-prior-baseline-v1'
+CAP_HIT_MAX = 0.33   # task-level cap rule: RED if >= 33% of the candidate's baseline answers hit the token cap
 ROUND_SCHEMA = 'sn120-heldout-gate-prior-v1'
 DEFAULTS = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', floor=0.10, cap=0.10, shares='size',
-                n_init=2.0, tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False, cap_max=0.20,
-                cap_envs=['affine_math'], min_scored=100, min_cover=0.95, block_delay=3, baseline_parallel=3,
+                n_init=2.0, tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False, cap_max=CAP_HIT_MAX,
+                cap_rule='task-level', min_scored=100, min_cover=0.95, block_delay=3, baseline_parallel=3,
                 stall_s=2100, probe_env='affine_gatepool', math_offset=0, dapo_offset=7496)
 
 
@@ -163,7 +167,7 @@ def _rate(cl):
 
 
 def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='size', tau=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False,
-             cap_max=0.20, cap_envs=('affine_math',), min_scored=100, min_cover=0.95) -> dict:
+             cap_max=CAP_HIT_MAX, min_scored=100, min_cover=0.95) -> dict:
     """drawn = {task_id: dict(env, pi)}; head/cand = {task_id: probe cell {n, c, b, ...}}; env_size = {env: tasks in the pool}.
     -> dict(decision, reasons, evaluated, evaluated_private). evaluated holds no per-task data and no prior values."""
     P = sum(env_size.values())
@@ -173,7 +177,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
         h, c = head.get(t), cand.get(t)
         if not (isinstance(h, dict) and isinstance(c, dict) and h.get('n') and c.get('n')): continue
         per.setdefault(dv['env'], []).append((t, float(dv['pi']), h, c))
-    envs = {}; scored = 0
+    envs = {}; scored = 0; cb = {'h': [0.0, 0], 'c': [0.0, 0]}   # task-level cap-hit: capped / rollouts over every scored task
     for e, L in per.items():
         Ne = sum(1 / p for _, p, _, _ in L)
         def hj(f): return sum(f(h, c) / p for _, p, h, c in L) / Ne
@@ -187,6 +191,8 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
                        h_cap=hj(lambda h, c: (h.get('b') or 0) / h['n']), c_cap=hj(lambda h, c: (c.get('b') or 0) / c['n']),
                        pq=hj(lambda h, c: _rate(h) * (1 - _rate(h)) * h['n'] / max(1, h['n'] - 1)))
         scored += len(L)
+        for _, _, h, c in L:
+            cb['h'][0] += h.get('b') or 0; cb['h'][1] += h['n']; cb['c'][0] += c.get('b') or 0; cb['c'][1] += c['n']
     cover = scored / max(1, len(drawn))
     have = [e for e in env_size if e in envs]; shn = sum(sh[e] for e in have) or 1.0
     shx = {e: sh[e] / shn for e in have}          # renormalised if an env has no scored task (fails min_cover anyway)
@@ -195,9 +201,8 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
     A = sum(shx[e] * envs[e]['pq'] for e in have); var_r = max(float(tau) ** 2 * 2 * A * A, float(sigma_run_floor) ** 2)
     se = math.sqrt(var_s + var_r) if have else None
     z = (delta / se) if (se and se > 0) else 0.0
-    ce = [e for e in cap_envs if e in envs]; cw = sum(sh[e] for e in ce) or 1.0
-    cap = sum(sh[e] * envs[e]['c_cap'] for e in ce) / cw if ce else None
-    hcap = sum(sh[e] * envs[e]['h_cap'] for e in ce) / cw if ce else None
+    cap = cb['c'][0] / cb['c'][1] if cb['c'][1] else None      # candidate: capped rollouts / all rollouts on scored tasks
+    hcap = cb['h'][0] / cb['h'][1] if cb['h'][1] else None     # head, same definition (recorded, not part of the rule)
     reasons = []
     if scored < min_scored: reasons.append('insufficient_scored_tasks(%d<%d)' % (scored, min_scored))
     if cover < min_cover: reasons.append('coverage %.3f < %.2f' % (cover, min_cover))
@@ -206,7 +211,8 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
     if cap is None or not cap < cap_max: reasons.append('cap_rate %s >= %.2f' % (None if cap is None else round(cap, 4), cap_max))
     ev = dict(z=z, gain=delta, delta=delta, se=se, se_task=math.sqrt(var_s), se_run=math.sqrt(var_r), tau_run=float(tau), sigma_run_floor=float(sigma_run_floor), n=scored,
               drawn=len(drawn), cover=cover, h_pass=sum(shx[e] * envs[e]['h_pass'] for e in have) if have else None,
-              c_pass=sum(shx[e] * envs[e]['c_pass'] for e in have) if have else None, c_cap_rate=cap, h_cap_rate=hcap, cap_envs=list(ce),
+              c_pass=sum(shx[e] * envs[e]['c_pass'] for e in have) if have else None, c_cap_rate=cap, h_cap_rate=hcap, cap_rule='task-level', cap_hit_max=cap_max,
+              c_cap_hits=cb['c'][0], c_rollouts=cb['c'][1], h_cap_hits=cb['h'][0], h_rollouts=cb['h'][1],
               c_cap_rate_pool=sum(shx[e] * envs[e]['c_cap'] for e in have) if have else None,
               h_cap_rate_pool=sum(shx[e] * envs[e]['h_cap'] for e in have) if have else None,
               per_env={e: dict(n=envs[e]['n'], share=sh[e], gain=envs[e]['gain'], se=math.sqrt(envs[e]['var']),

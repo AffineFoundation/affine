@@ -185,8 +185,10 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
   scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
   Formulas: priors/baseline_v1.py (module docstring + estimate()).
-- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND estimated cap-hit on affine_math < 0.20 AND >= 100 drawn tasks scored
-  (and >= 95 % of the draw).** With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
+- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
+  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 8,192-token
+  cap, every task counted alike: RED if >= 33% of the candidate's baseline answers hit the token cap (before E507: affine_math
+  cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
 - Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
   priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).

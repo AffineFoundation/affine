@@ -6,7 +6,7 @@ import json, os, sys, time
 os.environ['TZ'] = 'America/Costa_Rica'; time.tzset()
 p, mode, why = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(p)); h = d['heldout']
-PV = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', cap_envs=['affine_math'], block_delay=3,
+PV = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', cap_rule='task-level', cap_max=0.33, block_delay=3,
           tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.003)
 if mode == 'on':
     h['baseline'] = 'prior-v1'; h['prior_v1'] = dict(PV); new = dict(baseline='prior-v1', prior_v1=PV)

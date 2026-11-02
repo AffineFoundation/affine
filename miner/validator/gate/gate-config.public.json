@@ -34,10 +34,8 @@
    "bar_z": 1.0,
    "block_delay": 3,
    "cap": 0.1,
-   "cap_envs": [
-    "affine_math"
-   ],
-   "cap_max": 0.2,
+   "cap_max": 0.33,
+   "cap_rule": "task-level",
    "dapo_offset": 7496,
    "floor": 0.1,
    "head_blocks": 3,
@@ -81,6 +79,23 @@
       "tau_run_same": 0.0,
       "tau_run_separate": 0.0
      }
+    }
+   },
+   {
+    "applies_to": "gate decisions from this epoch (decision-time rule; the draw is unchanged)",
+    "authorized_by": [
+     "Jacob 2026-11-01 19:42-19:43 CR (pt1032u): \"Make it a flat 33%?\"; one task-level rule over the whole baseline, no env-specific rules"
+    ],
+    "by": "task-level cap activation after e506 DECISION",
+    "from_epoch": 507,
+    "mode": "on",
+    "rule": "RED if >= 33% of the candidate's baseline answers hit the token cap (task-level: capped / all candidate rollouts on the scored tasks)",
+    "set_at": "20261102T015615Z",
+    "set_at_cr": "2026-11-01 19:56 CR",
+    "values": {
+     "cap_envs": null,
+     "cap_max": 0.33,
+     "cap_rule": "task-level"
     }
    }
   ],

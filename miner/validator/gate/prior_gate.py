@@ -89,13 +89,15 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         'is revealed when the round closes. The head is scored fresh on every drawn task (head_rollouts rollouts), every candidate with '
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
-        'GREEN iff Delta > 0 AND z = Delta/SE > bar_z AND estimated cap-hit (cap_envs) < cap_max AND >= min_scored tasks scored. '
+        'GREEN iff Delta > 0 AND z = Delta/SE > bar_z AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (8,192 tokens): RED if >= 33% '
+        'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
 
 
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
-                                   'bar_z', 'z_inclusive', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor')} | dict(
+                                   'bar_z', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
         tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']))
 
 
@@ -353,7 +355,7 @@ def process_epoch(S, e, s, f):
     drawn = {t: dict(env=PI['env'][t], pi=PI['pi'][t]) for t in r['ids']}
     tau = float(pv['tau_run_same'] if per_turn else pv['tau_run_separate'])
     dec = BV.estimate(drawn, bl, cpt, r['pool']['per_env'], shares=pv['shares'], tau=tau, sigma_run_floor=float(pv['sigma_run_floor']), bar_z=float(pv['bar_z']),
-                      z_inclusive=bool(pv['z_inclusive']), cap_max=float(pv['cap_max']), cap_envs=tuple(pv['cap_envs']),
+                      z_inclusive=bool(pv['z_inclusive']), cap_max=float(pv_of(f).get('cap_max', BV.CAP_HIT_MAX)),   # task-level cap rule: live flag value
                       min_scored=int(pv['min_scored']), min_cover=float(pv['min_cover']))
     S.wj(d / 'C-PROBE.private.json', dict(candidate=C, per_task=cpt_i, wall=res.get('wall_seconds'), partial=res.get('partial'),
                                           plan_seed=tl.get('plan_seed') or pseed, k=kp['k'], heldout_round=rid, prior_v1=True))
@@ -380,7 +382,8 @@ def process_epoch(S, e, s, f):
     if dec['decision'] == 'green': R.close(rid, 'green e%d (candidate %s promoted)' % (e, C[:12]), e)
     S.busy(False)
     S.log(event='decision', epoch=e, decision=dec['decision'], mode=dec['mode'], z=round(dec['evaluated']['z'], 3), heldout_round=rid,
-          baseline='prior-v1', bar=float(pv['bar_z']), gain=dec['evaluated']['gain'], cap=dec['evaluated']['c_cap_rate'],
+          baseline='prior-v1', bar=float(pv['bar_z']), gain=dec['evaluated']['gain'], cap=dec['evaluated']['c_cap_rate'], cap_rule='task-level', cap_max=dec['cap_max'],
+          h_cap=dec['evaluated']['h_cap_rate'], per_env_cap={k: dict(h=v['h_cap'], c=v['c_cap']) for k, v in dec['evaluated']['per_env'].items()},
           n=dec['evaluated']['n'], reasons=dec['reasons'], timing=dec['timing'])
     return 'decided'
 

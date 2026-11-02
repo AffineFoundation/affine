@@ -170,8 +170,10 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   Δ = Σ_e share_e·m_e with share = env size / pool size (affine_math 0.388, dapo 0.612). SE = √(Σ_e share_e²·Var_e + σ_run²),
   Var_e = the Hájek sampling + rollout variance, σ_run = 0.003 (a floor; the 2026-11-01 head-vs-itself test found no measurable
   run-to-run noise). z = Δ/SE.
-- **GREEN iff** Δ > 0 **and** z > 1.0 (strict) **and** the estimated affine_math cap-hit < 0.20 **and** ≥ 100 drawn tasks scored
-  (≥ 95 % of the draw). The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
+- **GREEN iff** Δ > 0 **and** z > 1.0 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
+  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
+  8,192-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
+  E507: affine_math cap-hit < 0.20). The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
 - **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v1.jsonl`: the secret commitment, the block
   hash on chain, the seed, the draw commitment and that every drawn task is in the pool; plus the GREEN turn's grades. **What you
   can't:** recompute Δ/SE/z exactly or check u_i < π_i, because π comes from the private prior table (only its snapshot sha256 is
