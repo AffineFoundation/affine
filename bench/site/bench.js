@@ -3,7 +3,10 @@
    Table only: the per-benchmark chart tiles were removed (Jacob 2026-11-01 08:35 CR). Data: /benchmarks.json.
    References: only the Pareto front over (parameters, lower better) x (mean score over the table's columns, higher better) is shown;
    a ref is hidden if Genesis or another fully scored ref is no larger and scores higher. Kings and Genesis always shown; refs without a
-   full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF. */
+   full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF.
+   Avg column = mean over the shown benchmark columns (same mean as the Pareto filter; … when a row is incomplete). Shading: per column,
+   min..max of the visible rows, red tint at the bottom -> strong green at the top; a small star marks each column max (ties all marked)
+   (Jacob 2026-11-01 18:22 CR). */
 (()=>{
  const main=document.getElementById('main');if(!main)return;
  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -36,14 +39,18 @@
    .sort((a,b)=>PARAMS[b.model_id]-PARAMS[a.model_id]||avg(b)-avg(a));
   const G=gen?R[gen.model_id]||{}:{};
   const all=[...kings,...refs,...(gen?[gen]:[])];
-  const span={};for(const b of B){const v=all.map(m=>(R[m.model_id]||{})[b.id]).filter(Boolean).map(r=>r.score);if(v.length)span[b.id]=[Math.min(...v),Math.max(...v)];}
-  const cell=(m,b)=>{const r=(R[m.model_id]||{})[b.id];if(!r)return`<td class="na">${m.status==='evaluating'||m.status==='queued'?'…':'—'}</td>`;
-   const [lo,hi]=span[b.id];const f=hi>lo?(r.score-lo)/(hi-lo):1;const a=Math.round(4+28*f*f);
-   return`<td class="${r.score===hi?'best':''}" style="background:color-mix(in srgb,#2fa84f ${a}%,transparent)">${pct(r.score)}</td>`;};
-  const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${B.map(b=>cell(m,b)).join('')}</tr>`;
+  const AVG={id:'_avg'};const val=(m,b)=>b===AVG?(R[m.model_id]&&B.every(x=>R[m.model_id][x.id])?avg(m):null):((R[m.model_id]||{})[b.id]||{}).score??null;
+  const r1=x=>Math.round(1000*x);  // compare at display precision (0.1 pp) so visible ties are all starred
+  const span={};for(const b of [...B,AVG]){const v=all.map(m=>val(m,b)).filter(x=>x!=null);if(v.length)span[b.id]=[Math.min(...v),Math.max(...v)];}
+  const STAR='<svg class="max-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
+  const shade=f=>f<.3?`color-mix(in srgb,#d64545 ${Math.round(26*(1-f/.3))}%,transparent)`:`color-mix(in srgb,#2fa84f ${Math.round(6+60*Math.pow((f-.3)/.7,1.4))}%,transparent)`;
+  const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG||m.status==='evaluating'||m.status==='queued'?'…':'—'}</td>`;
+   const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
+   return`<td class="${top?'best':''}${c}" style="background:${shade(f)}"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
+  const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${B.map(b=>cell(m,b)).join('')}${cell(m,AVG)}</tr>`;
   const suites=[...new Set(B.map(b=>b.suite))];
-  const head=suites.length>1?`<tr><th></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}</tr>`:'';
-  box.innerHTML=`<div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
+  const head=suites.length>1?`<tr><th></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}<th class="avg"></th></tr>`:'';
+  box.innerHTML=`<div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}<th scope="col" class="avg" title="mean of the benchmark columns">Avg</th></tr></thead><tbody>`+
    kings.map((m,i)=>row(m,i===kings.length-1?'last-king':'')).join('')+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tbody></table></div>`;
  }
  let data=null;

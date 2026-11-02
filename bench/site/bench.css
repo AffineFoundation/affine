@@ -19,3 +19,7 @@
 #bench-table td.best{font-weight:600}
 #bench-table tbody th a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)}
 #bench-table tbody th a:hover{border-bottom-style:solid}
+#bench-table td.best{color:var(--ink)}
+#bench-table .max-ic{width:9px;height:9px;margin-right:4px;vertical-align:-0.5px;fill:#f5c542;filter:drop-shadow(0 0 1px #0008)}
+:root[data-theme="light"] #bench-table .max-ic{fill:#c98a00;filter:none}
+#bench-table th.avg,#bench-table td.avg{border-left:1px solid var(--muted);font-weight:600}
