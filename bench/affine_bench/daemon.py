@@ -173,7 +173,8 @@ def launch(m, bids):
         out = NODE.run(cmd, timeout=90).stdout.strip()
     except subprocess.TimeoutExpired:
         out = ""  # the runner may still have started; liveness is read from the node's runner lock, not this pid
-    S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=out.split()[-1] if out else None, last_progress=now(), progress=0)
+    S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=out.split()[-1] if out else None, last_progress=now(), progress=0,
+                        pod_id=C_POD.get("id"))
     save(); log(event="launched", model=rk, bids=bids, pid=S["running"]["pid"])
 
 
@@ -232,15 +233,59 @@ C_POD = rj(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 C_POD = dict(name=C_POD.get("name"), id=C_POD.get("lium_id"), gpu=C_POD.get("gpu"), cost=C_POD.get("price_per_hour"), **{k: v for k, v in C_POD.items() if k in ("huid",)})
 
 
+POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
+
+
+def lium_pod_state(pod_id):
+    """'gone' if Lium says the pod no longer exists (reclaimed/deleted), 'listed' if it does, None if Lium could not be asked.
+    Read-only: `lium describe` on this host (the Lium key stays in ~/.lium and is never printed or logged)."""
+    if not pod_id:
+        return None
+    try:
+        p = subprocess.run([os.path.expanduser("~/.lium/bin/lium"), "describe", pod_id], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return None
+    o = p.stdout + p.stderr
+    if "no longer listed" in o or "DELETED" in o:
+        return "gone"
+    return "listed" if p.returncode == 0 else None
+
+
+def node_down(run):
+    """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
+    whether the pod still exists. A reclaimed pod never comes back, so say so once, loudly, instead of polling it forever
+    (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and the daemon logged node-unreachable for 3.5 h). The fix is a
+    new pod (deploy/rent.sh + bootstrap + deploy/pod.json, see REDEPLOY.md); that spends money, so it is left to a human."""
+    d = S.setdefault("node_down", dict(since=now(), checked=0, state=None))
+    if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
+        if d.get("state") != "gone":
+            log(event="node-unreachable", model=run["run_key"])
+        return
+    d["checked"] = now(); st = lium_pod_state(C_POD.get("id"))
+    if st == "gone" and d.get("state") != "gone":
+        log(event="node-gone", model=run["run_key"], pod=C_POD.get("name"), lium_id=C_POD.get("id"), down_since_cr=cr(d["since"]),
+            action="pod reclaimed/deleted on Lium: rent a new bench pod (bench/deploy/rent.sh), bootstrap it, update deploy/pod.json, restart affine-bench")
+    elif st != "gone":
+        log(event="node-unreachable", model=run["run_key"], lium=st, down_min=round((now() - d["since"]) / 60))
+    d["state"] = st; save()
+
+
 # ------------------------------------------------------------------------------------------------ main loop
 def step():
     from . import publish
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     run = S.get("running")
+    if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
+        # The run belonged to a pod that has since been replaced (deploy/pod.json); its run dir went with that pod.
+        # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
+        log(event="pod-changed", model=run["run_key"], old_pod=run["pod_id"], new_pod=C_POD.get("id")); S["running"] = run = None
+        S.pop("node_down", None); save()
     if run:
         st = node_status(run["run_key"], run.get("pid"))
         if st is None:
-            log(event="node-unreachable", model=run["run_key"]); publish.publish(rows, S); return
+            node_down(run); publish.publish(rows, S); return
+        if S.pop("node_down", None):
+            log(event="node-back", model=run["run_key"]); save()
         lines = int(st.get("lines") or 0)
         if lines > run.get("progress", 0):
             run["progress"] = lines; run["last_progress"] = now(); save()

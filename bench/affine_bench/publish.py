@@ -33,6 +33,12 @@ def pooled(mid, b, results):
                 env_version="+".join(r.get("bench_version", "") for r in rs))
 
 
+def _node(S):
+    p = _rj(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "pod.json")) or {}
+    d = (S or {}).get("node_down") or {}
+    return dict(pod=p.get("name", "affine-bench-1"), gpu=p.get("gpu"), down_since=d.get("since"), pod_gone=d.get("state") == "gone")
+
+
 def publish(rows, S, max_fail=3):
     bs = R.benchmarks(); sv = R.serving()
     results = {}
@@ -78,7 +84,7 @@ def publish(rows, S, max_fail=3):
                            for b in bs if b.get("enabled")],
                suites=sorted({b["suite"] for b in bs if b.get("enabled")}),
                models=models, results=sorted(recs, key=lambda r: (r["model_id"], r["benchmark_id"])),
-               node=dict(pod="affine-bench-1", gpu="8xB200"),
+               node=_node(S),
                progress=dict(models_total=len(models), models_scored=len(models) - left, evaluating=run and run["model"]["model_id"],
                              median_model_wall_s=med, eta_hours=round(left * med / 3600, 1) if med else None))
     t = OUT + ".tmp"; json.dump(out, open(t, "w"), separators=(",", ":")); os.chmod(t, 0o644); os.replace(t, OUT)
