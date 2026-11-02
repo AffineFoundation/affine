@@ -1,0 +1,4 @@
+before [(178, 0.1), (306, 0.1), (344, 0.1), (355, 0.1), (396, 0.1), (431, 0.1), (443, 0.1), (447, 0.1), (448, 0.1), (479, 0.1)]
+after  [(178, 0.1), (306, 0.1), (344, 0.1), (355, 0.1), (396, 0.1), (431, 0.1), (443, 0.1), (447, 0.1), (448, 0.1), (479, 0.1)]
+IDENTICAL uids+weights: True
+score_sha before/after 8f706971b20a61f4348c4ff65e19b61f4337cde6d1d718bcf4382f2edb084554 8f706971b20a61f4348c4ff65e19b61f4337cde6d1d718bcf4382f2edb084554 formula k1-last10-green-equal-v1 -> k1-last10-green-gainmult-v1 floor {'applied': False} burn 0.0

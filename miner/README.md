@@ -70,6 +70,11 @@ miner/
 6. **Winning = weight.** The last (up to) 10 distinct GREEN UIDs each get 1/N of the miner weight, for as long as
    the hotkey that earned it stays registered on that UID. Unearned weight burns to UID 0, the weights are never
    all zero, and they're set hourly. Current payees are listed at https://affine.io/k1.json (`payees`).
+   From E581 (2026-11-02) a king's 1/N share is multiplied by a gain multiplier m (0.5 to 2), and the payees' shares are rescaled
+   so their total doesn't change. m = clamp(cons / median, 0.5, 2), where cons = max(0, gain - 1 SE) and gain is the king's pass
+   rate minus its parent's on the gate-pool tasks the prior sampler ran for both. m = 1 until 2,000 shared tasks. Kings
+   crowned at or before E580 keep m = 1. See https://affine.io/llms.txt section 8 and mining.json
+   `training.k1.king_gain_multiplier`.
 
 ## 2. The batch file
 

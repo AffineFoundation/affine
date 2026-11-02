@@ -1,0 +1,7 @@
+[Unit]
+Description=SN120 king gain multiplier (RA/20261102-gain-mult; private GAIN-MULT state + public per-king m; read-only towards chain/gate/sampler)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /home/const/subnet120-rewrite/state/root-audits/20261102-gain-mult/code/gain_mult.py
+TimeoutStartSec=600
+Nice=10

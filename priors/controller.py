@@ -166,6 +166,31 @@ def stats(table):
     return out
 
 
+HOLD = {}   # gain-mult parent hold 20261102
+
+
+def parent_hold(table, new, old):
+    """True = keep sampling the old head (the new king's parent) this poll. Bounded by max_s per head change; any error -> no hold."""
+    h = CFG.get("parent_hold") or {}
+    if h.get("enabled") is not True or not old or not new or new == old: return False
+    st = HOLD.setdefault(new, dict(since=time.time(), logged=0))
+    if st.get("done"): return False
+    pull(table)                       # PodUnreachable propagates to the normal handler
+    try:
+        n = table.db.execute("SELECT count(DISTINCT task_id) FROM cells WHERE head=? AND t>=?", (old, float(h["cap_from_t"]))).fetchone()[0]
+    except Exception as x:
+        log(event="parent_hold_error", error="%s: %s" % (type(x).__name__, x)); st["done"] = True; return False
+    waited = time.time() - st["since"]
+    if n >= int(h["min_tasks"]) or waited >= float(h["max_s"]):
+        if st["logged"]: log(event="parent_hold_done", parent=old[:12], new_head=new[:12], parent_tasks=n, held_s=round(waited),
+                             why="enough" if n >= int(h["min_tasks"]) else "max_s")
+        st["done"] = True; return False
+    if time.time() - st["logged"] >= 300:
+        log(event="parent_hold", parent=old[:12], new_head=new[:12], parent_tasks=n, need=int(h["min_tasks"]), held_s=round(waited),
+            max_s=float(h["max_s"])); st["logged"] = time.time()
+    return True
+
+
 def main():
     table = PriorTable(str(ST / "prior_table.private.sqlite"), discount=float(CFG.get("discount", 0.5)))
     os.chmod(ST / "prior_table.private.sqlite", 0o600)
@@ -180,7 +205,7 @@ def main():
             elif s and s.get("ckpt") and s["ckpt"] == g and table.head() != g:
                 # pod rebuilt/re-served outside switch_head (e.g. a replacement pod already serving the gate head): track that head
                 table.set_head(g, note="pod serving gate head"); log(event="table_head", head=g[:12], discounted=True, why="reconcile")
-            if g and s is not None and g != (s or {}).get("ckpt"):
+            if g and s is not None and g != (s or {}).get("ckpt") and not parent_hold(table, g, (s or {}).get("ckpt")):
                 log(event="head_change", gate_head=g[:12], served=((s or {}).get("ckpt") or "")[:12])
                 k = pull(table)    # ingest everything the old head produced first
                 if switch_head(g):

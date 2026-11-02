@@ -1,0 +1,8 @@
+[Unit]
+Description=SN120 king gain multiplier every 5 min (RA/20261102-gain-mult)
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=10s
+[Install]
+WantedBy=timers.target

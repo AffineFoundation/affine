@@ -1,0 +1,60 @@
+17c17
+< import hashlib, json, os, sys, time, traceback
+---
+> import hashlib, json, math, os, sys, time, traceback
+33a34
+> GAINM = Path('/home/const/subnet120-rewrite/state/root-audits/20261102-gain-mult')   # gain-mult 20261102 (Jacob pt1136u/pt1137u)
+271a273,297
+> GAIN_TEXT = ('King gain multiplier (Jacob 2026-11-02, gain-mult): each payee crowned after the activation epoch gets weight (1/N) x m, '
+>              'renormalized so the payees total is unchanged; m = clamp(1 + (cons / median - 1), 0.5, 2), cons = max(0, gain - 1 SE), gain = the '
+>              'king pass rate minus its parent pass rate on the gate-pool tasks the prior sampler ran for both (same token cap); m = 1 until >= 2000 '
+>              'shared tasks (gain_settled false); kings crowned at or before the activation epoch keep m = 1 (gain_settled null). '
+>              'Per-king m: miners[].gain_m, k1.payees[].gain_m, https://affine.io/mining.json training.k1.king_gain_multiplier.')
+> 
+> 
+> def gain_mults():
+>     """# gain-mult 20261102: -> {green_epoch: (m, settled)} for kings crowned after the activation epoch (RA/20261102-gain-mult). Missing,
+>     disabled, malformed or out-of-range -> {} / m = 1 (fail-safe: the equal 1/N split). Kings at or before activation are never listed."""
+>     try:
+>         cfg = rj(GAINM / 'code' / 'config.json') or {}
+>         if cfg.get('enabled') is not True or cfg.get('activation_epoch') is None: return {}
+>         a = int(cfg['activation_epoch']); lo, hi = float(cfg.get('m_min', 0.5)), float(cfg.get('m_max', 2.0))
+>         doc = rj(GAINM / 'state' / 'GAIN-MULT.private.json') or {}
+>         out = {}
+>         for k in doc.get('kings') or []:
+>             e, m = int(k['epoch']), float(k['m'])
+>             if e <= a or not math.isfinite(m) or not (lo <= m <= hi): continue
+>             out[e] = (m if k.get('settled') is True else 1.0, k.get('settled') is True)
+>         return out
+>     except Exception as x:
+>         log(event='gain_mult_error', error=repr(x)[:300]); return {}
+> 
+> 
+275a302
+>     gm = gain_mults()   # # gain-mult 20261102
+277,278c304,307
+<         s = 1.0 / len(valid)
+<         for r in valid:
+---
+>         ms = [gm.get(r['epoch_index'], (1.0, False))[0] for r in valid]
+>         if all(m == 1.0 for m in ms): shs = [1.0 / len(valid)] * len(valid)   # unchanged path (bit-identical 1/N)
+>         else: tot = math.fsum(ms); shs = [m / tot for m in ms]                # (1/N) x m_i renormalized: payee total unchanged
+>         for r, s, m in zip(valid, shs, ms):
+281c310,311
+<                                k1_green_epoch=r['epoch_index'], k1_z=r.get('z'), banned=False, floor_share=False))
+---
+>                                k1_green_epoch=r['epoch_index'], k1_z=r.get('z'), banned=False, floor_share=False,
+>                                gain_m=round(m, 3), gain_settled=gm.get(r['epoch_index'], (1.0, None))[1]))
+294c324
+<                 formula=dict(version='k1-last10-green-equal-v1',
+---
+>                 formula=dict(version='k1-last10-green-gainmult-v1',
+299c329
+<                                    'pre-K=1 scores are kept.'),
+---
+>                                    'pre-K=1 scores are kept. ' + GAIN_TEXT),
+303c333,334
+<                                      still_registered=r in valid) for r in allp],
+---
+>                                      still_registered=r in valid, gain_m=round(gm.get(r['epoch_index'], (1.0, None))[0], 3),
+>                                      gain_settled=gm.get(r['epoch_index'], (1.0, None))[1]) for r in allp],

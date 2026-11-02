@@ -1,0 +1,84 @@
+{
+ "enabled": true,
+ "activation_epoch": 580,
+ "activated_at_cr": "2026-11-02 16:44 CR (UTC-6)",
+ "authorized_by": "Jacob pt1136u/pt1137u 2026-11-02 (live now, lambda = 1, kings crowned from now on, no backfill)",
+ "lambda": 1.0,
+ "se_mult": 1.0,
+ "min_shared": 2000,
+ "m_min": 0.5,
+ "m_max": 2.0,
+ "ref_window": 10,
+ "cap_regimes": [
+  {
+   "from_t": 0,
+   "cap": 8192,
+   "note": "prior sampler at 8K until 2026-11-02 12:39:02 CR"
+  },
+  {
+   "from_t": 1793644742.0,
+   "cap": 12288,
+   "note": "first 12K record 2026-11-02 12:39:02 CR (RA/20261102-task-cap-12k); no record breaks this split"
+  }
+ ],
+ "reference_frozen": [
+  {
+   "epoch": 463,
+   "king": "ec3b33a0",
+   "cons": 0.0,
+   "n": 8043,
+   "cap": 8192
+  },
+  {
+   "epoch": 481,
+   "king": "1d271188",
+   "cons": 0.002951898552156694,
+   "n": 15275,
+   "cap": 8192
+  },
+  {
+   "epoch": 485,
+   "king": "cb92bdc5",
+   "cons": 0.0027207983167808376,
+   "n": 3544,
+   "cap": 8192
+  },
+  {
+   "epoch": 491,
+   "king": "3eceb890",
+   "cons": 0.005020893620894509,
+   "n": 4447,
+   "cap": 8192
+  },
+  {
+   "epoch": 526,
+   "king": "6bfabf5d",
+   "cons": 0.0,
+   "n": 19309,
+   "cap": 8192
+  },
+  {
+   "epoch": 537,
+   "king": "564f710f",
+   "cons": 0.0,
+   "n": 14151,
+   "cap": 8192
+  },
+  {
+   "epoch": 540,
+   "king": "34463dd3",
+   "cons": 0.00557848705995686,
+   "n": 8614,
+   "cap": 8192
+  },
+  {
+   "epoch": 567,
+   "king": "771eff20",
+   "cons": 0.0,
+   "n": 6918,
+   "cap": 12288
+  }
+ ],
+ "reference_note": "Frozen pre-activation reference = the full-pool paired analysis of 2026-11-02 16:15 CR (/workspace/king-gain-fullpool, same-cap pairs only; E544/E552/E555/E557 had no data). Median = median of the last ref_window POSITIVE cons values over these, then settled post-activation kings, in crowning order. Today: median(0.002952, 0.002721, 0.005021, 0.005578) = 0.003986.",
+ "public_rule": "King gain multiplier (from the activation epoch on, Jacob 2026-11-02): each king crowned after activation_epoch gets m = clamp(1 + lambda x (cons / median - 1), 0.5, 2), lambda = 1, where cons = max(0, gain - 1 SE) and gain = the king's mean pass rate minus its parent's on the gate-pool tasks the prior sampler ran for both (same token cap, k = 4 per pass). m = 1 until >= 2000 shared tasks (settled = false). median = median of the recent positive cons values (last 10, frozen 2026-11-02 analysis + settled kings). Payee weight = (1/N) x m, renormalized so the payees' total is unchanged. Kings crowned at or before activation_epoch keep m = 1. Per-task data stays private."
+}

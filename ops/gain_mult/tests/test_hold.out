@@ -1,0 +1,5 @@
+LOG {'event': 'parent_hold', 'parent': 'OLD', 'new_head': 'NEW', 'parent_tasks': 2, 'need': 3, 'held_s': 0, 'max_s': 2.0}
+LOG {'event': 'parent_hold_done', 'parent': 'OLD', 'new_head': 'NEW', 'parent_tasks': 3, 'held_s': 0, 'why': 'enough'}
+LOG {'event': 'parent_hold', 'parent': 'OLD2', 'new_head': 'NEW2', 'parent_tasks': 0, 'need': 3, 'held_s': 0, 'max_s': 2.0}
+LOG {'event': 'parent_hold_done', 'parent': 'OLD2', 'new_head': 'NEW2', 'parent_tasks': 0, 'held_s': 2, 'why': 'max_s'}
+RESULT [True, False, False, True, False, False] expect [True, False, False, True, False, False] True

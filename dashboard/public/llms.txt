@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-02 09:19 CR (UTC-6). Trainer v8.3.3j, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-02 16:50 CR (UTC-6). Trainer v8.3.3l, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -90,16 +90,33 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
 - Any broken rule in the kept part makes the whole file invalid. You're skipped for that turn, not charged, and keep your place.
 
 <!-- ff-train-params-20261031 -->
-v2 `train` (optional; either field may be omitted and takes its default):
+v2 `train` (optional; every field may be omitted and takes its default; the defaults are exactly today's trainer):
 
 | field | default | allowed (inclusive) | what it does |
 | --- | --- | --- | --- |
 | `train.lr` | 5e-7 | 1.25e-7 .. 1e-6 | step size of your turn's one step (section 4) |
 | `train.kl` | 0.02 | 0.005 .. 0.1 | kl_coefficient of your turn's loss |
+| `train.step_mult` | 1 | integer: 1, 2 | multiplies the whole one-step update: lr and the per-tensor cap scale together, one gradient, no extra trainer time |
+| `train.lr_scale_attn` | 1 | 0 .. 2 | multiplies the step of every attention tensor (self_attn.*, linear_attn.*); 0 freezes them |
+| `train.lr_scale_mlp` | 1 | 0 .. 2 | multiplies the step of every mlp.* tensor; 0 freezes them |
+| `train.lr_scale_embed` | 1 | 0 .. 2 | multiplies the step of embed_tokens; 0 freezes it |
+| `train.lr_scale_lm_head` | 1 | 0 .. 2 | multiplies the step of lm_head; 0 freezes it |
+| `train.lr_scale_early` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 0..15 (on top of the group scale); 0 freezes them |
+| `train.lr_scale_late` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 16..31 (on top of the group scale); 0 freezes them |
+| `train.adam_eps` | 1e-8 | 1e-10 .. 1e-3 | eps in the normalized-gradient term g / (abs(g) + eps); larger eps shrinks the per-tensor step of tensors with small gradients (the step direction stays g / norm(g)) |
+| `train.weight_decay` | 0.01 | 0 .. 0.05 | decoupled weight decay inside the per-tensor step norm (2-D non-bias tensors); it changes step sizes, not the direction |
+| `train.clamp_mode` | per_tensor | per_tensor, global_norm or both | per_tensor: each tensor's step is capped at c_t = 2e-5 x norm(W_t) (today). global_norm: no per-tensor cap; the whole step is scaled down to global_norm_cap if larger. both: per-tensor cap, then the global cap at global_norm_cap |
+| `train.global_norm_cap` | 1 | 0.005 .. 1 | the global step-norm cap used by clamp_mode global_norm / both (ignored with per_tensor, which keeps the fixed cap 1.0) |
+| `train.loss_agg` | seq_mean | seq_mean or token_mean | seq_mean: every rollout weighs the same (mean over its tokens, then over rollouts; today). token_mean: every token weighs the same (long rollouts weigh more) |
+| `train.adv_center` | mean | mean, none or group_norm | advantage of a rollout: mean = reward - mean reward of its prompt group (today); none = the raw reward; group_norm = (reward - mean) / (std + 1e-6) within the group |
+| `train.adv_clip` | none (no clip) | 0.1 .. 100 | if set, advantages are clipped to [-adv_clip, +adv_clip] after centering; omit it for no clip (today) |
 
-- Out of range, not a number (string, true/false, null), or any other key under `train` makes the whole file invalid.
+- New from epoch 575 (trainer v8.3.3l): step_mult and the knobs above. A file without them, or with every one at its default,
+  trains bit-identically to before. 0 in an lr_scale_* freezes that part of the model for your turn.
+- Out of range, not a number (string, true/false, null), a step_mult that is not an integer (2.0, "2"), a string that is
+  not one of the listed choices, or any other key under `train` makes the whole file invalid.
   Values are never clamped. `train` in a v1 file is invalid. v1 files train with the defaults.
-- Your effective lr / kl are published only with a GREEN turn (turn.json `training.train_params`, mining.json
+- Your effective lr / kl / step_mult / knobs are published only with a GREEN turn (turn.json `training.train_params`, mining.json
   `training.miner_train_params`). On RED they stay private, like the file.
 <!-- /ff-train-params-20261031 -->
 
@@ -107,10 +124,10 @@ Check a file exactly as the validator does (it tokenizes like the trainer): mine
 (`python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`). `affine_batch.py check` is the
 structural check, and it needs no tokenizer.
 
-## 4. Training: the exact v8.3.3j step (one stateless step per turn)
+## 4. Training: the exact v8.3.3l step (one stateless step per turn)
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
-miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/validator/trainer-v833j/trainer-config.public.json.
+miner/validator/trainer-v833l (+ engine/) and the live settings are in miner/validator/trainer-v833l/trainer-config.public.json.
 
 - Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0, k3 (low-var) KL
   to the reference = the initial checkpoint 87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae (the Hugging Face base
@@ -129,10 +146,20 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
     c_t  = 2e-5 x (1 - 1e-6) x ||W_t||                       per-tensor cap
     n0_t = min(||d_t||, c_t)                                  the default-lr step norm
     m    = lr / 5e-7 ;  n_t = min(m x n0_t, c_t)
+    k    = step_mult ;  n_t = k x n_t                     <!-- step-mult-20261102 --> (from epoch 575; the cap scales with k)
+    knobs (all at default = the two lines above): eps = adam_eps and 0.01 = weight_decay in d_t;
+         a_t = lr_scale of t's group (attn / mlp / embed / lm_head; norms 1) x lr_scale_early (layers 0..15) or lr_scale_late (16..31)
+         per_tensor, both: n_t = k x min(m x a_t x n0_t, c_t)    global_norm: n_t = k x m x a_t x ||d_t|| (no c_t)
+         s = min(1, G / ||n||), G = 1.0 (per_tensor) or min(1.0, global_norm_cap) (global_norm, both)
     s    = min(1, 1.0 / ||n||)                                global cap over all tensors
     Delta_t = s x n_t x g_t / ||g_t|| ;  M_C = M_H - Delta ;  candidate = bf16_rne(M_C)
   Below the default lr every tensor's step shrinks by exactly m. Above it, only the tensors still under their cap grow.
   At e368, 242 of 427 tensors were at the cap and carried 98.8% of the step norm, so lr 1e-6 barely moves the model more.
+  step_mult k (proposed in #120 by duongna) multiplies every tensor's step, the capped ones included: it is the same as
+  scaling lr and the per-tensor cap by k together. Still one gradient and one step from the head (no extra trainer time).
+  The default step norm is about 0.023, so the global cap (1.0) does not fire for any allowed k. k = 1 is exactly the old step.
+  The loss knobs change the advantages (adv_center, adv_clip) or the weighting (loss_agg token_mean: every token
+  counts the same instead of every rollout). The step direction is always g_t / ||g_t||.
   Recipe: https://affine.io/k1/spec/step-recipe.json. fp32 master manifests: https://affine.io/k1/fp32-master/<head>.json.
 <!-- /renorm-step-20261031 -->
 
@@ -198,10 +225,13 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
   scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
   Formulas: priors/baseline_v1.py (module docstring + estimate()).
-- **GREEN iff Delta > 0 AND z > 1 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
-  The z bar is fixed at 1.00 (gate.json `z_bar`, mining.json heldout.z_bar); the bar each turn was judged against:
-  gate.json entries[].thresholds.z_min.
-  History: from E553 the bar is fixed at z > 1; E513-E552 used a time-relaxed bar.
+- **GREEN iff Delta > 0 AND z > z_bar (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
+  z_bar linear drop (from E514): z_bar = max(0.25, 1.0 - 0.75 * h / 12), h = hours since the last GREEN: 1.00 right after a
+  GREEN, 0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN. Clock = the candidate's TRAINING-RESULT time
+  minus the last GREEN's decided_at (both public in https://affine.io/gate.json entries[].timestamps), so gate latency does not
+  move the bar. The exact bar each turn was judged against: entries[].thresholds.z_min. The current bar, the formula and when
+  it reaches the floor: gate.json `z_bar` (also /gate/zbar.json, mining.json heldout.z_bar, the Gate z chart's z bar line).
+  E513-E513: steps (1.00, 0.50 from 6 h, 0.25 from 12 h). Before E513: z > 1.00.
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 12,288-token
   cap (8,192 before the 12K switch), every task counted alike: RED if >= 33% of the candidate's baseline answers hit the
   token cap (before E507: affine_math
@@ -242,6 +272,14 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 - Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight, for as long as the hotkey that earned
   it stays registered on that UID. RED, skipped and pending turns earn nothing. Unearned weight burns to UID 0. Weights
   are never all zero (there's a nonzero floor), and they're set hourly. Current payees are in https://affine.io/k1.json (`payees`).
+- King gain multiplier <!-- gain-mult-20261102 --> (from E581, 2026-11-02): a king crowned after E580 has its 1/N share multiplied
+  by m, then the payees' shares are rescaled so their total stays the same. m measures how much the king actually improved
+  on its parent across the whole gate pool. The prior sampler runs both heads on the same tasks at the same token cap, and
+  gain = the king's mean pass rate minus the parent's on those shared tasks. cons = max(0, gain - 1 SE). Then
+  m = clamp(cons / median, 0.5, 2) (lambda = 1). The median is taken over recent positive cons values (the last 10; it is about
+  0.004 today). m stays 1 until the pair shares at least 2,000 tasks (`gain_settled` false). Kings crowned at or before E580
+  keep m = 1 for good. Per-king m and settled: https://affine.io/mining.json `training.k1.king_gain_multiplier`, and
+  k1.json `payees[].gain_m` / `gain_settled`. Per-task data stays private.
 
 ## 9. How to win: observations so far (not guarantees)
 
@@ -267,7 +305,7 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
 
 https://github.com/AffineFoundation/affine/tree/main/miner, with miner/README.md as the entry point. The validator code
 in it is verbatim from the live services (sha256 + live source per file in validator/MANIFEST.sha256). The kit contains:
-- the trainer v8.3.3j host + engine;
+- the trainer v8.3.3l host + engine;
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
@@ -301,7 +339,7 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
   After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
-- What does the trainer run, exactly? miner/validator/trainer-v833j + engine/. kit/train_step.py imports exactly those files.
+- What does the trainer run, exactly? miner/validator/trainer-v833l + engine/. kit/train_step.py imports exactly those files.
 - Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG.
 - Where's the fp32 master? Its manifest (sha256 per file) is at /k1/fp32-master/<head>.json. A public download isn't offered yet,
   and kit/train_step.py bootstraps from the bf16 head without it.
