@@ -1,0 +1,34 @@
+/* Load sequence (Jacob pt1070u 2026-11-02): every chart tile is in the HTML at its final size with its title and legend,
+   the plot area shows faint placeholder gridlines + a subtle shimmer, and the data fades/draws in once (~450 ms) when it arrives.
+   Later refreshes and resizes redraw without animation. Colours are the site tokens only. Built by load.js. */
+.afx{position:relative}
+.afx::before,.afx::after{content:'';position:absolute;pointer-events:none;opacity:0;transition:opacity .3s ease-out;z-index:0;border:0;animation:none}
+/* plot area of the k1 charts: P = {l:40, r:10, t:10, b:22}; gridlines at 0/25/50/75 %, axis at the bottom */
+.chart-wrap.afx::before{inset:10px 10px 22px 40px;background:linear-gradient(to bottom,var(--line) 1px,transparent 1px) 0 0/100% 25% repeat-y;border-bottom:1px solid var(--axis)}
+.chart-wrap.afx::after{inset:10px 10px 22px 40px;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
+#bench-table .bs-plot.afx::before,#bench-table .bs-plot.afx::after{inset:2px 0 16px 30px}
+.bl-chart.afx::before,.bl-chart.afx::after{inset:8px 10px 22px 44px}
+/* tables and lists: row rules */
+.afx-rows.afx::before{inset:0;background:linear-gradient(to bottom,transparent 25px,var(--line) 25px) 0 0/100% 26px repeat-y}
+.afx-rows.afx::after{inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
+.afx.afx-wait::before{opacity:1}
+.afx.afx-wait::after{opacity:1;animation:afx-shimmer 1.6s ease-in-out infinite}
+@keyframes afx-shimmer{from{background-position:100% 0}to{background-position:-50% 0}}
+/* skeleton benchmark table (replaced by bench.js) */
+#bench-table .bench-scroll.afx-rows{height:347px;max-height:none}
+/* data reveal */
+.afx-in{animation:afx-fade .42s cubic-bezier(.2,.7,.2,1) backwards}
+.afx-dot{animation:afx-fade .3s ease-out backwards}
+.afx-draw{stroke-dasharray:1;animation:afx-draw .5s cubic-bezier(.3,.6,.2,1) backwards}
+.afx-grow{transform-box:fill-box;transform-origin:50% 100%;animation:afx-grow .45s cubic-bezier(.2,.7,.2,1) backwards}
+.afx-grow.afx-down{transform-origin:50% 0}
+@keyframes afx-fade{from{opacity:0}}
+@keyframes afx-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes afx-grow{from{transform:scaleY(0);opacity:.2}}
+@media(prefers-reduced-motion:reduce){
+ .afx.afx-wait::after{animation:none!important;opacity:0}
+ .afx-in,.afx-dot,.afx-draw,.afx-grow{animation:none!important}
+ .afx-draw{stroke-dasharray:none}
+}
+/* these two legends live in the (hidden) tile details; keep them out of the plot's height from the first paint */
+#main>#panel-k1-batch>.legend,#main>#panel-regcost>.legend{display:none!important}

@@ -1,0 +1,261 @@
+diff -ru -x curves.json -x '*.css' orig/baseline/baseline.js new/baseline/baseline.js
+--- website/baseline/baseline.js	2026-11-02 09:13:02.000000000 -0600
++++ website/baseline/baseline.js	2026-11-02 09:39:09.729353196 -0600
+@@ -61,7 +61,7 @@
+   $('bl-stats').textContent=`${D.baseline} · live since E${D.since_epoch} · ${fmt(D.n_tasks)} tasks · mean pass rate ${D.mean_pass.toFixed(2)} · ~${fmt(D.per_round)} drawn per round (uniform would be ${D.uniform_pct.toFixed(1)}% each)`;
+   if(D.updated)$('bl-updated').textContent='Updated '+new Date(D.updated.replace('Z',':00Z')).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
+  }
+- fetch('/baseline/curves.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{D=d;fill();draw();$('bl-main').dataset.state='ready';})
++ (window.AFX&&AFX.take('/baseline/curves.json')||fetch('/baseline/curves.json',{cache:'no-store'})).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{D=d;fill();draw();$('bl-main').dataset.state='ready';})
+   .catch(()=>{$('bl-main').dataset.state='unavailable';for(const id of ['bl-pass-c','bl-select-c']){const p=document.createElement('p');p.className='empty';p.textContent='Baseline data unavailable.';$(id).append(p);}});
+  let t;window.addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(draw,120);});
+  window.addEventListener('affine:theme',draw);
+diff -ru -x curves.json -x '*.css' orig/baseline/index.html new/baseline/index.html
+--- website/baseline/index.html	2026-11-02 09:14:28.000000000 -0600
++++ website/baseline/index.html	2026-11-02 09:39:45.153306489 -0600
+@@ -6,6 +6,7 @@
+ <meta name="color-scheme" content="dark light">
+ <script>try{const theme=localStorage.getItem("affine:theme");if(theme==="light")document.documentElement.dataset.theme=theme;}catch{}if(document.documentElement.dataset.theme==="light")document.querySelector('meta[name="theme-color"]').content="#ffffff";</script>
+ <title>Affine · Baseline</title>
++<script>/* pt1070u: start every data fetch while the page is still parsing; each chart script's first load takes its copy (AFX.take), later refreshes fetch as before */(()=>{const t0=Date.now(),m={};for(const u of ['/baseline/curves.json'])m[u]=fetch(u+'?t='+t0,{cache:'no-store'}).catch(()=>null);window.AFX={take(u){const p=m[u];if(!p||Date.now()-t0>20000)return null;return p.then(r=>r?r.clone():fetch(u+'?t='+Date.now(),{cache:'no-store'}));}};})();</script>
+ <meta name="description" content="How the SN120 gate draws its baseline tasks: the shape of the prior-v1 pass-rate table and of the per-task selection probability.">
+ <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+ <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+@@ -13,7 +14,9 @@
+ <link rel="stylesheet" href="/network.css?v=20261020-video-nav">
+ <link rel="stylesheet" href="/k1.css?v=20261029-grid2">
+ <link rel="stylesheet" href="/baseline/baseline.css?v=bl2b-20261102">
+-<script defer src="/baseline/baseline.js?v=bl2b-20261102"></script>
++<link rel="stylesheet" href="/load.css?v=pt1070u-20261102">
++<script defer src="/load.js?v=pt1070u-20261102"></script>
++<script defer src="/baseline/baseline.js?v=pt1070u-20261102"></script>
+ </head>
+ <body>
+ <a class="skip-link" href="#bl-main">Skip to charts</a>
+@@ -29,12 +32,12 @@
+ </div>
+ <section id="bl-pass" class="bl-tile" aria-labelledby="bl-pass-t">
+ <div class="section-heading"><h2 id="bl-pass-t" title="The head&rsquo;s pass rate on each baseline task, tasks sorted from hardest to easiest. Averaged over equal-count bins; no task is shown individually.">Head pass rate by task</h2><span class="reading" id="bl-pass-r">&mdash;</span></div>
+-<div class="chart-wrap k1-chart bl-chart" id="bl-pass-c" role="img" aria-label="Sorted pass-rate curve of the baseline tasks"></div>
++<div class="chart-wrap k1-chart bl-chart afx afx-wait" id="bl-pass-c" role="img" aria-label="Sorted pass-rate curve of the baseline tasks"></div>
+ <div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>Pass rate</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
+ </section>
+ <section id="bl-select" class="bl-tile" aria-labelledby="bl-select-t">
+ <div class="section-heading"><h2 id="bl-select-t" title="Chance that a task is in a round&rsquo;s baseline draw (Neyman allocation, Hajek estimate), in the same task order as the chart above.">Selection probability per round</h2><span class="reading" id="bl-select-r">&mdash;</span></div>
+-<div class="chart-wrap k1-chart bl-chart" id="bl-select-c" role="img" aria-label="Per-task selection probability, same task order as the pass-rate chart"></div>
++<div class="chart-wrap k1-chart bl-chart afx afx-wait" id="bl-select-c" role="img" aria-label="Per-task selection probability, same task order as the pass-rate chart"></div>
+ <div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Selection probability</span><span><i class="swatch bl-swatch-dash"></i>Uniform draw</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
+ </section>
+ <section id="bl-how" class="bl-tile bl-how" aria-labelledby="bl-how-t">
+diff -ru -x curves.json -x '*.css' orig/bench.js new/bench.js
+--- website/bench.js	2026-11-02 06:49:05.000000000 -0600
++++ website/bench.js	2026-11-02 09:43:06.253037671 -0600
+@@ -98,12 +98,12 @@
+    h.addEventListener('mouseleave',()=>{tp.hidden=true;hl.setAttribute('visibility','hidden');});svg.append(h);});
+  }
+  // kings box: header + 5 king rows + the sticky reference/Genesis footer
+- function fit(){const sc=box.querySelector('.bench-scroll');if(!sc)return;const t=sc.querySelector('table'),rs=t.tBodies[0]?t.tBodies[0].rows:[];
++ function fit(){const sc=box.querySelector('.bench-scroll'),t=sc&&sc.querySelector('table');if(!t)return;/* pt1070u: the skeleton box has no table yet */const rs=t.tBodies[0]?t.tBodies[0].rows:[];
+   if(rs.length<=5){sc.style.maxHeight='none';return;}
+   let h=t.tHead.offsetHeight+(t.tFoot?t.tFoot.offsetHeight:0)+2;for(let i=0;i<5;i++)h+=rs[i].offsetHeight;sc.style.maxHeight=h+'px';}
+  function layout(){box.querySelectorAll('.bench-spark').forEach(c=>{const s=SP[+c.dataset.i];if(s)spark(c,s);});fit();}
+  let rt=0;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(layout,150);});
+  let data=null;
+- async function load(){try{const r=await fetch('/benchmarks.json',{cache:'no-store'});if(!r.ok)throw 0;data=await r.json();table(data);}catch(e){}}
++ async function load(){try{const r=await (window.AFX&&AFX.take('/benchmarks.json')||fetch('/benchmarks.json',{cache:'no-store'}));/* pt1070u */if(!r.ok)throw 0;data=await r.json();table(data);}catch(e){}}
+  load();setInterval(load,120000);
+ })();
+diff -ru -x curves.json -x '*.css' orig/index.html new/index.html
+--- website/index.html	2026-11-02 08:36:08.000000000 -0600
++++ website/index.html	2026-11-02 09:43:13.105028418 -0600
+@@ -7,6 +7,7 @@
+ <script>try{const theme=localStorage.getItem("affine:theme");if(theme==="light")document.documentElement.dataset.theme=theme;}catch{}if(document.documentElement.dataset.theme==="light")document.querySelector('meta[name="theme-color"]').content="#ffffff";</script>
+ <meta name="description" content="Affine subnet 120: K=1 per-UID turns, gate z and pass rates, batches, queue, payees, head lineage, turn ledger and registration cost.">
+ <title>Affine · Subnet 120</title>
++<script>/* pt1070u: start every data fetch while the page is still parsing; each chart script's first load takes its copy (AFX.take), later refreshes fetch as before */(()=>{const t0=Date.now(),m={};for(const u of ['/performance.json','/benchmarks.json','/k1.json','/scores.json','/mining.json','/k1/lr.json','/incentive-live.json','/site-metrics.json','/gate.json','/reg-cost.json'])m[u]=fetch(u+'?t='+t0,{cache:'no-store'}).catch(()=>null);window.AFX={take(u){const p=m[u];if(!p||Date.now()-t0>20000)return null;return p.then(r=>r?r.clone():fetch(u+'?t='+Date.now(),{cache:'no-store'}));}};})();</script>
+ <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+ <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+ <link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
+@@ -20,14 +21,16 @@
+ <link rel="stylesheet" href="/bench.css?v=pt1048u-20261102T124904Z">
+ <link rel="stylesheet" href="/regcost.css?v=20261030-regcost2">
+ <link rel="stylesheet" href="/tile-details.css?v=20261031-td3">
+-<script defer src="/network-desktop.js?v=20261021-charts"></script>
++<link rel="stylesheet" href="/load.css?v=pt1070u-20261102">
++<script defer src="/load.js?v=pt1070u-20261102"></script>
++<script defer src="/network-desktop.js?v=pt1070u-20261102"></script>
+ <script defer src="/chart-expand.js?v=20261026-expand1"></script>
+-<script defer src="/perf.js?v=t995u-20261101T152045Z"></script>
+-<script defer src="/bench.js?v=pt1048u-20261102T124904Z"></script>
+-<script defer src="/k1.js?v=zflat-20261102T143608Z"></script>
+-<script defer src="/top.js?v=20261029-trim1"></script>
+-<script defer src="/timing.js?v=20261029-grid3"></script>
+-<script defer src="/regcost.js?v=t994u-20261101T151259Z"></script>
++<script defer src="/perf.js?v=pt1070u-20261102"></script>
++<script defer src="/bench.js?v=pt1070u-20261102b"></script>
++<script defer src="/k1.js?v=pt1070u-20261102"></script>
++<script defer src="/top.js?v=pt1070u-20261102"></script>
++<script defer src="/timing.js?v=pt1070u-20261102"></script>
++<script defer src="/regcost.js?v=pt1070u-20261102"></script>
+ <script defer src="/tile-details.js?v=pt1039u-20261102T0205Z"></script>
+ </head>
+ <body>
+@@ -39,7 +42,21 @@
+ <aside class="market-prices" aria-label="Market prices and submitted groups">
+ <dl><div class="market-price"><dt>TAO <span class="price-currency">USD</span></dt><dd><span id="tao-price">—</span><span id="tao-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price"><dt>Alpha <span class="price-subnet">120</span><span class="price-currency">USD</span></dt><dd><span id="alpha-price">—</span><span id="alpha-price-tao" class="price-secondary"></span><span id="alpha-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price batch-total"><dt>Groups</dt><dd><span id="batches-total" aria-label="Total submitted groups">—</span></dd></div></dl>
+ </aside>
++<script>/* pt1070u: put the price strip in its desktop place before the first paint (network-desktop.js used to move it after load, shifting the page 100px) */(()=>{const m=document.querySelector('.market-prices'),h=document.createComment('market prices home');m.before(h);window.AFX_marketHome=h;if(matchMedia('(min-width:1000px)').matches)document.querySelector('header').insertBefore(m,document.querySelector('header nav'));})();</script>
++<!-- pt1070u: tile shells at their final size and order; the chart scripts fill them in place -->
++<section id="bench-table" aria-label="Benchmarks"><div class="bench-sparks" aria-label="King score history per benchmark"><div class="bench-spark"><div class="section-heading"><h2>Avg</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>MATH-500</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>MATH (5,000)</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 22-26</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 2022</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 2023</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 2024</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 2025</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AIME 2026</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>AMC 2023</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div><div class="bench-spark"><div class="section-heading"><h2>GSM8K</h2><span class="reading">—</span></div><div class="chart-wrap k1-chart bs-plot afx afx-wait"></div></div></div><div class="bench-scroll afx afx-wait afx-rows"></div></section>
+ <main id="main" tabindex="-1" data-state="loading" aria-busy="true">
++<section id="panel-performance" class="site-panel k1-tile perf-tile" aria-labelledby="panel-performance-t"><div class="section-heading"><h2 id="panel-performance-t">Performance</h2><div class="measurement-reading"><span class="reading" id="panel-performance-r">—</span></div></div><div class="perf-body"><div class="chart-wrap k1-chart perf-chart afx afx-wait" role="img" aria-label="Pass rate per king on the full set and the holdout"></div><dl class="perf-latest"></dl></div><div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>Holdout</span><span><i class="swatch" style="background:var(--guide)"></i>Full set</span></div><p class="perf-note"></p></section>
++<section id="panel-k1-z" class="site-panel k1-tile " aria-labelledby="panel-k1-z-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-z-t">Gate z per turn</h2><div class="measurement-reading"><span class="reading" id="panel-k1-z-r">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div><div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span><span><i class="swatch" style="width:12px;height:0;border-top:1px dashed var(--performance);background:none"></i>z = 1 bar</span></div></section>
++<section id="panel-k1-pass" class="site-panel k1-tile " aria-labelledby="panel-k1-pass-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-pass-t">Pass rate per turn</h2><div class="measurement-reading"><span class="reading" id="panel-k1-pass-r">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div><div class="legend chart-legend"><span><i class="swatch" style="background:var(--guide)"></i>Head</span><span><i class="swatch" style="background:var(--performance)"></i>Candidate</span></div></section>
++<section id="panel-k1-batch" class="site-panel k1-tile " aria-labelledby="panel-k1-batch-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-batch-t">Batch per turn</h2><div class="measurement-reading"><span class="reading" id="panel-k1-batch-r">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div></section>
++<section id="panel-timing" class="site-panel k1-tile" aria-labelledby="panel-timing-t"><div class="section-heading"><h2 id="panel-timing-t" title="Wall-clock minutes per epoch, start to finalized, stacked by the phases recorded in site-metrics.json and gate.json. Only phases that took time are drawn. Head probe (reused or run in parallel with training) is in the tooltip.">Epoch duration</h2><div class="measurement-reading"><span class="reading">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div><div class="legend chart-legend"><span title="epoch opened (previous epoch finalized) until the turn batch was sealed; under immediate seal this is the wait for the first ready K=1 batch"><i class="swatch" style="background:var(--incentive)"></i>Open → seal</span><span title="seal until training started (an operator stall shows here)"><i class="swatch" style="background:var(--unchecked)"></i>Prepare</span><span title="training run"><i class="swatch" style="background:var(--performance)"></i>Train</span><span title="training finished until the gate started probing the candidate (probe pod busy, e.g. the new head&#x27;s re-probe)"><i class="swatch" style="background:var(--muted)"></i>Wait for probe</span><span title="gate probe of the candidate"><i class="swatch" style="background:var(--accepted)"></i>Candidate probe</span><span title="decision and publication"><i class="swatch" style="background:var(--axis)"></i>Finalize</span></div></section>
++<section id="panel-regcost" class="site-panel k1-tile rc-tile" aria-labelledby="panel-regcost-t"><div class="section-heading"><h2 id="panel-regcost-t">SN120 registration cost</h2><div class="measurement-reading"><span class="reading">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div></section>
++<section id="panel-k1-lr" class="site-panel k1-tile " aria-labelledby="panel-k1-lr-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-lr-t">Learning rate per turn</h2><div class="measurement-reading"><span class="reading" id="panel-k1-lr-r">—</span></div></div><div class="chart-wrap k1-chart afx afx-wait"></div><div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span><span><i class="swatch" style="border:1px dashed var(--rejected)"></i>Miner lr private (RED)</span></div></section>
++<section id="panel-k1-queue" class="site-panel k1-tile " aria-labelledby="panel-k1-queue-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-queue-t">Next in line</h2><div class="measurement-reading"><span class="reading" id="panel-k1-queue-r">—</span></div></div><div class="flip-table-wrap afx afx-wait afx-rows"></div></section>
++<section id="panel-k1-payees" class="site-panel k1-tile " aria-labelledby="panel-k1-payees-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-payees-t">Payees (last 10 GREEN)</h2><div class="measurement-reading"><span class="reading" id="panel-k1-payees-r">—</span></div></div><div class="flip-table-wrap afx afx-wait afx-rows"></div></section>
++<section id="panel-k1-lineage" class="site-panel k1-tile " aria-labelledby="panel-k1-lineage-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-lineage-t">Head lineage</h2><div class="measurement-reading"><span class="reading" id="panel-k1-lineage-r">—</span></div></div><ul class="k1-lineage afx afx-wait afx-rows"></ul></section>
++<section id="panel-k1-turns" class="site-panel k1-tile k1-wide" aria-labelledby="panel-k1-turns-t" data-placed="1"><div class="section-heading"><h2 id="panel-k1-turns-t">Turns</h2><div class="measurement-reading"><span class="reading" id="panel-k1-turns-r">—</span></div></div><div class="flip-table-wrap afx afx-wait afx-rows"></div></section>
+ </main>
+ <footer><span class="footer-identity"><span class="footer-brand">Affine</span><span aria-hidden="true">·</span><span>Subnet 120</span></span><div class="footer-actions"><span id="connection" role="status">Connecting</span><button id="copy-view" type="button" aria-label="Copy link to this view">Copy view</button><span id="copy-view-status" class="sr-only" role="status"></span></div></footer>
+ <noscript><p class="noscript">Enable JavaScript to view measurements, or read <a href="/llms.txt">llms.txt</a>.</p></noscript>
+diff -ru -x curves.json -x '*.css' orig/k1.js new/k1.js
+--- website/k1.js	2026-11-02 08:36:08.000000000 -0600
++++ website/k1.js	2026-11-02 09:39:09.729353196 -0600
+@@ -190,11 +190,13 @@
+   a.querySelector('h2').title='Commitment = sha256(version|seed|ids) matches the hash published when the epoch opened and the ids are the draw the seed implies. Verdict recomputed = gate_core.decide on the revealed per-task grades gives the published verdict. Replay = our one-GPU replay of the step vs the published candidate (bf16 elements that differ, max abs difference).';
+   const tt=document.getElementById('panel-k1-turns');if(tt&&tt.nextElementSibling!==a)tt.after(a);
+  }
+- async function j(u){const r=await fetch(u+(u.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
++ async function j(u){const r=await (window.AFX&&AFX.take(u)||fetch(u+(u.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'}));/* pt1070u: first load uses the fetch started in <head> */if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
++ let last=null;
+  async function load(){
+-  try{const [k1,scores,mining,lrj]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({})),j('/k1/lr.json').catch(()=>null)]);render(k1,scores,mining,lrj);document.getElementById('panel-k1-artifacts')?.remove();}
++  try{const [k1,scores,mining,lrj]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({})),j('/k1/lr.json').catch(()=>null)]);last=[k1,scores,mining,lrj];render(k1,scores,mining,lrj);document.getElementById('panel-k1-artifacts')?.remove();}
+   catch(e){console.warn('k1',e);}
+  }
+  load();setInterval(load,60000);
+- let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(load,250);});
++ /* pt1070u: a resize redraws from the data already loaded (it used to refetch all four files, ~3x on every page load) */
++let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>last?render(...last):load(),250);});
+ })();
+Only in new: load.js
+diff -ru -x curves.json -x '*.css' orig/network-desktop.js new/network-desktop.js
+--- website/network-desktop.js	2026-10-21 20:18:28.000000000 -0600
++++ website/network-desktop.js	2026-11-02 09:40:46.381225263 -0600
+@@ -1,7 +1,7 @@
+ /* Layout only: every graph is rendered by the shared phone chart code. */
+ (()=>{
+  const media=matchMedia('(min-width:1000px)'),market=document.querySelector('.market-prices');
+- const home=document.createComment('market prices home');market.before(home);
++ const home=window.AFX_marketHome||document.createComment('market prices home');if(!window.AFX_marketHome)market.before(home);/* pt1070u: the inline script in index.html already placed it */
+  const readings=['tao-price','alpha-price','batches-total'].map(id=>document.getElementById(id));
+  function fit(){
+   for(const reading of readings){
+diff -ru -x curves.json -x '*.css' orig/perf.js new/perf.js
+--- website/perf.js	2026-11-01 09:20:45.000000000 -0600
++++ website/perf.js	2026-11-02 09:39:09.725353201 -0600
+@@ -53,7 +53,7 @@
+   at(e0,'start',P.l);if(e1!==e0&&pts.length>1)at(e1,'end',W-P.r);
+  }
+  let data=null;
+- async function load(){try{const r=await fetch('/performance.json',{cache:'no-store'});if(!r.ok)throw 0;data=await r.json();requestAnimationFrame(()=>draw(data));}
++ async function load(){try{const r=await (window.AFX&&AFX.take('/performance.json')||fetch('/performance.json',{cache:'no-store'}));/* pt1070u: first load uses the fetch started in <head> */if(!r.ok)throw 0;data=await r.json();requestAnimationFrame(()=>draw(data));}
+   catch(e){sec.querySelector('.reading').textContent='unavailable';}}
+  load();setInterval(load,120000);
+  let rt;const re=()=>{clearTimeout(rt);rt=setTimeout(()=>data&&draw(data),150);};window.addEventListener('resize',re);
+diff -ru -x curves.json -x '*.css' orig/regcost.js new/regcost.js
+--- website/regcost.js	2026-11-01 09:12:59.000000000 -0600
++++ website/regcost.js	2026-11-02 09:39:09.729353196 -0600
+@@ -17,7 +17,7 @@
+   {id:'panel-regcost',key:'sn120',title:'SN120 registration cost',color:'--incentive',span:7,band:true,
+    tip:'Burn in TAO to register one UID (hotkey) on subnet 120, over time. Line: value at the end of each hour; faint band: the hourly high-low range (the burn steps up after registrations and decays back toward the floor). Source: TaoMarketCap public API (subnet burn chart + current subnet snapshot), refreshed hourly into /reg-cost.json. Times in Costa Rica time.'}];
+  let doc=null;
+- const tiles=DEF.map(d=>{const s=document.createElement('section');s.id=d.id;s.className='site-panel k1-tile rc-tile';s.setAttribute('aria-labelledby',d.id+'-t');
++ const tiles=DEF.map(d=>{const s=document.getElementById(d.id)||document.createElement('section');/* pt1070u: adopt the shell in index.html */s.id=d.id;s.className='site-panel k1-tile rc-tile';s.setAttribute('aria-labelledby',d.id+'-t');
+   s.innerHTML=`<div class="section-heading"><h2 id="${d.id}-t" title="${esc(d.tip)}">${esc(d.title)}</h2><div class="measurement-reading"><span class="reading">—</span></div></div><div class="chart-wrap k1-chart"></div><div class="legend chart-legend rc-legend"></div>`;
+   const lg=s.querySelector('.legend');lg.innerHTML=`<span class="grid-legend-static"><i class="swatch" style="background:var(${d.color})"></i>TAO</span>`+SPANS.map(([l,n])=>`<button type="button" class="rc-span" data-days="${n}" aria-pressed="${n===d.span}">${l}</button>`).join('');
+   lg.addEventListener('click',e=>{const b=e.target.closest('.rc-span');if(!b)return;d.span=+b.dataset.days;lg.querySelectorAll('.rc-span').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));draw(d,s);});
+@@ -79,7 +79,7 @@
+   svg.append(hit);
+  }
+  const drawAll=()=>{if(!place())return;DEF.forEach((d,k)=>draw(d,tiles[k]));};
+- async function load(){try{const r=await fetch('/reg-cost.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(20000)});if(r.ok)doc=await r.json();}catch{}drawAll();}
++ async function load(){try{const r=await (window.AFX&&AFX.take('/reg-cost.json')||fetch('/reg-cost.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(20000)}));/* pt1070u */if(r.ok)doc=await r.json();}catch{}drawAll();}
+  load();setInterval(load,15*60000);
+  new MutationObserver(()=>{if(tiles.some(t=>!t.isConnected)&&place())drawAll();}).observe(main,{childList:true});
+  let rt;const re=()=>{clearTimeout(rt);rt=setTimeout(drawAll,150);};window.addEventListener('resize',re);window.addEventListener('affine:chart-resize',re);
+diff -ru -x curves.json -x '*.css' orig/timing.js new/timing.js
+--- website/timing.js	2026-10-29 12:22:04.000000000 -0600
++++ website/timing.js	2026-11-02 09:39:09.729353196 -0600
+@@ -14,7 +14,8 @@
+  const PH=[['Open → seal','--incentive','epoch opened (previous epoch finalized) until the turn batch was sealed; under immediate seal this is the wait for the first ready K=1 batch'],['Prepare','--unchecked','seal until training started (an operator stall shows here)'],
+   ['Train','--performance','training run'],['Wait for probe','--muted','training finished until the gate started probing the candidate (probe pod busy, e.g. the new head\'s re-probe)'],['Candidate probe','--accepted','gate probe of the candidate'],['Finalize','--axis','decision and publication']];
+  let sm=null,gate=null;
+- const tile=(()=>{const s=document.createElement('section');s.id='panel-timing';s.className='site-panel k1-tile';s.setAttribute('aria-labelledby','panel-timing-t');
++ /* pt1070u: adopt the tile shell already in index.html (same markup, legend prefilled so the plot keeps its size) */
++ const tile=document.getElementById('panel-timing')||(()=>{const s=document.createElement('section');s.id='panel-timing';s.className='site-panel k1-tile';s.setAttribute('aria-labelledby','panel-timing-t');
+   s.innerHTML='<div class="section-heading"><h2 id="panel-timing-t" title="Wall-clock minutes per epoch, start to finalized, stacked by the phases recorded in site-metrics.json and gate.json. Only phases that took time are drawn. Head probe (reused or run in parallel with training) is in the tooltip.">Epoch duration</h2><div class="measurement-reading"><span class="reading">—</span></div></div><div class="chart-wrap k1-chart"></div><div class="legend chart-legend"></div>';return s;})();
+  function place(){if(tile.isConnected)return true;const ref=document.getElementById('panel-k1-batch');if(!ref)return false;ref.after(tile);return true;}
+  function rows(){
+@@ -55,7 +56,7 @@
+   lab(0,'start',P.l);if(n>1)lab(n-1,'end',P.l+n*bw);
+   const lg=tile.querySelector('.legend');lg.innerHTML=PH.map((p,k)=>used[k]?`<span title="${esc(p[2])}"><i class="swatch" style="background:var(${p[1]})"></i>${esc(p[0])}</span>`:'').join('');
+  }
+- async function j(u){const r=await fetch(u+'?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error(u);return r.json();}
++ async function j(u){const r=await (window.AFX&&AFX.take(u)||fetch(u+'?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(15000)}));/* pt1070u */if(!r.ok)throw Error(u);return r.json();}
+  async function load(){try{[sm,gate]=await Promise.all([j('/site-metrics.json'),j('/gate.json')]);}catch{}draw();}
+  load();setInterval(load,60000);
+  new MutationObserver(()=>{if(!tile.isConnected&&place())draw();}).observe(main,{childList:true});
+diff -ru -x curves.json -x '*.css' orig/top.js new/top.js
+--- website/top.js	2026-10-29 09:41:56.000000000 -0600
++++ website/top.js	2026-11-02 09:39:09.729353196 -0600
+@@ -4,7 +4,7 @@
+  const $=id=>document.getElementById(id),fin=n=>typeof n==='number'&&Number.isFinite(n);
+  const utc=t=>new Date(t*1000).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false});
+  const main=$('main');if(main){main.dataset.state='ready';main.setAttribute('aria-busy','false');}
+- async function j(u){const r=await fetch(u,{cache:'no-store',signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error(u+' '+r.status);return r.json();}
++ async function j(u){const r=await (window.AFX&&AFX.take(u)||fetch(u,{cache:'no-store',signal:AbortSignal.timeout(15000)}));/* pt1070u */if(!r.ok)throw Error(u+' '+r.status);return r.json();}
+  async function prices(){
+   const c=$('connection');
+   try{const d=await j('/incentive-live.json'),p=d.incentive_prices||{};
+--- /dev/null	2026-10-28 06:15:33.052915681 -0600
++++ website/load.css	2026-11-02 09:39:45.157306483 -0600
+@@ -0,0 +1,34 @@
++/* Load sequence (Jacob pt1070u 2026-11-02): every chart tile is in the HTML at its final size with its title and legend,
++   the plot area shows faint placeholder gridlines + a subtle shimmer, and the data fades/draws in once (~450 ms) when it arrives.
++   Later refreshes and resizes redraw without animation. Colours are the site tokens only. Built by load.js. */
++.afx{position:relative}
++.afx::before,.afx::after{content:'';position:absolute;pointer-events:none;opacity:0;transition:opacity .3s ease-out;z-index:0;border:0;animation:none}
++/* plot area of the k1 charts: P = {l:40, r:10, t:10, b:22}; gridlines at 0/25/50/75 %, axis at the bottom */
++.chart-wrap.afx::before{inset:10px 10px 22px 40px;background:linear-gradient(to bottom,var(--line) 1px,transparent 1px) 0 0/100% 25% repeat-y;border-bottom:1px solid var(--axis)}
++.chart-wrap.afx::after{inset:10px 10px 22px 40px;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
++#bench-table .bs-plot.afx::before,#bench-table .bs-plot.afx::after{inset:2px 0 16px 30px}
++.bl-chart.afx::before,.bl-chart.afx::after{inset:8px 10px 22px 44px}
++/* tables and lists: row rules */
++.afx-rows.afx::before{inset:0;background:linear-gradient(to bottom,transparent 25px,var(--line) 25px) 0 0/100% 26px repeat-y}
++.afx-rows.afx::after{inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
++.afx.afx-wait::before{opacity:1}
++.afx.afx-wait::after{opacity:1;animation:afx-shimmer 1.6s ease-in-out infinite}
++@keyframes afx-shimmer{from{background-position:100% 0}to{background-position:-50% 0}}
++/* skeleton benchmark table (replaced by bench.js) */
++#bench-table .bench-scroll.afx-rows{height:347px;max-height:none}
++/* data reveal */
++.afx-in{animation:afx-fade .42s cubic-bezier(.2,.7,.2,1) backwards}
++.afx-dot{animation:afx-fade .3s ease-out backwards}
++.afx-draw{stroke-dasharray:1;animation:afx-draw .5s cubic-bezier(.3,.6,.2,1) backwards}
++.afx-grow{transform-box:fill-box;transform-origin:50% 100%;animation:afx-grow .45s cubic-bezier(.2,.7,.2,1) backwards}
++.afx-grow.afx-down{transform-origin:50% 0}
++@keyframes afx-fade{from{opacity:0}}
++@keyframes afx-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
++@keyframes afx-grow{from{transform:scaleY(0);opacity:.2}}
++@media(prefers-reduced-motion:reduce){
++ .afx.afx-wait::after{animation:none!important;opacity:0}
++ .afx-in,.afx-dot,.afx-draw,.afx-grow{animation:none!important}
++ .afx-draw{stroke-dasharray:none}
++}
++/* these two legends live in the (hidden) tile details; keep them out of the plot's height from the first paint */
++#main>#panel-k1-batch>.legend,#main>#panel-regcost>.legend{display:none!important}
