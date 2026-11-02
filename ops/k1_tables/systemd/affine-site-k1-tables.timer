@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh affine.io k1/tables.json every minute
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=60s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target

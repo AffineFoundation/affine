@@ -1,0 +1,28 @@
+/* Kings / Queue / History tables (Jacob pt1100u 2026-11-02). Full-width tiles in the site grid, same frame, type and colours
+   as the chart tiles; ~10 rows tall with a sticky header, scroll inside; frames and headers are in the HTML, rows fade in. */
+#main>section#k1-kings,#main>section#k1-queue,#main>section#k1-history{grid-column:1/-1!important;aspect-ratio:auto!important;height:auto!important;max-height:none!important;overflow:hidden!important}
+#main>section>.k1t-scroll{flex:none!important;height:310px;min-height:0;overflow:auto!important;overscroll-behavior:contain;border:1px solid var(--line);border-radius:3px;background:var(--bg);scrollbar-width:thin;position:relative}
+#main .k1t{table-layout:fixed;width:100%;border-collapse:separate;border-spacing:0}
+#main .k1t th,#main .k1t td{padding:5px 8px;font-size:11px;line-height:16px;height:27px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-bottom:1px solid var(--line)}
+#main .k1t thead th{height:26px;z-index:2}
+#main .k1t th:first-child,#main .k1t td:first-child{position:sticky;left:0;background:var(--bg);z-index:1}
+#main .k1t thead th:first-child{z-index:3}
+#main .k1t tbody tr:hover td{background:var(--hover)}
+#main .k1t a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--muted)}
+#main .k1t a:hover{border-bottom-style:solid}
+.k1t-key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono);border-bottom:1px dotted transparent}
+.k1t-key:hover,.k1t-key:focus-visible{color:var(--ink);border-bottom-color:var(--muted)}
+.k1t-key.copied{color:var(--performance)}
+.k1t-key.copied::after{content:' copied';font-size:9px}
+.k1t-mute{color:var(--muted)}
+.k1t-private{display:inline-block;padding:0 6px;border:1px dashed var(--axis);border-radius:999px;color:var(--muted);font:10px/1.5 var(--mono);letter-spacing:.04em;cursor:help}
+.k1t-private.red{border-color:color-mix(in srgb,var(--rejected) 60%,var(--line));color:color-mix(in srgb,var(--rejected) 75%,var(--muted))}
+.k1t-hp{cursor:help}
+.k1t-hk{color:var(--muted)}
+.k1t-sep{color:var(--axis)}
+.k1t-up{color:var(--performance)}
+.k1t-dn{color:var(--rejected)}
+.k1t-m{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px}
+.k1t-m i{display:inline-block;height:6px;border-radius:1px;background:currentColor;opacity:.55}
+.k1t-tag{padding:0 5px!important;font-size:9px!important}
+#main .k1t td.flip-loading{text-align:center;color:var(--muted);height:auto;padding:28px;position:static}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Affine website k1/tables.json (Kings / Queue / History tables: gain, decided_at, GREEN-only train params + file links, coldkeys, queue file checks, epoch timing). Jacob pt1100u 2026-11-02
+[Service]
+Type=oneshot
+WorkingDirectory=/home/const/subnet120/affine
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -B /home/const/subnet120/affine/site-tools/build_k1_tables.py
+TimeoutStartSec=240
+Nice=10
+NoNewPrivileges=true
