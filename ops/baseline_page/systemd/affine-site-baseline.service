@@ -4,6 +4,7 @@ Description=Affine website baseline/curves.json (shape of the live prior-v1 base
 Type=oneshot
 WorkingDirectory=/home/const/subnet120/affine
 ExecStart=/usr/bin/python3 -I -B /home/const/subnet120/affine/site-tools/build_baseline_curves.py
+ExecStart=/usr/bin/python3 -I -B /home/const/subnet120/affine/site-tools/build_baseline_irt_curves.py
 TimeoutStartSec=300
 Nice=10
 NoNewPrivileges=true

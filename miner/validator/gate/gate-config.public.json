@@ -24,6 +24,26 @@
   "enabled": true,
   "fail_closed_s": 3300,
   "from_epoch": 271,
+  "irt_history": [
+   {
+    "applies_to": "the next prior-v1 round open (an open round keeps the weighting it opened with)",
+    "authorized_by": [
+     "Jacob 2026-11-02 10:23 CR: ship the IRT information-weighted baseline draw live now, no shadow period (pt1083u)"
+    ],
+    "by": "irt-info activation 2026-11-02 10:31 CR",
+    "mode": "on",
+    "set_at": "20261102T163118Z",
+    "set_at_cr": "2026-11-02 10:31 CR",
+    "values": {
+     "a_hi": 2.0,
+     "a_lo": 0.5,
+     "a_shrink": 0.5,
+     "theta_min_rollouts": 200,
+     "theta_prior_sd": 2.0,
+     "weighting": "irt-info"
+    }
+   }
+  ],
   "k_block": 4,
   "k_cand": 8,
   "max_round_turns": 8,
@@ -31,6 +51,9 @@
   "n": 2000,
   "prior_v1": {
    "N": 500,
+   "a_hi": 2.0,
+   "a_lo": 0.5,
+   "a_shrink": 0.5,
    "bar_z": 1.0,
    "block_delay": 3,
    "cap": 0.1,
@@ -51,6 +74,9 @@
    "sigma_run_floor": 0.003,
    "tau_run_same": 0.0,
    "tau_run_separate": 0.0,
+   "theta_min_rollouts": 200,
+   "theta_prior_sd": 2.0,
+   "weighting": "irt-info",
    "z_bar_fixed_from_epoch": 553,
    "z_inclusive": false
   },

@@ -10,9 +10,12 @@ head baseline: head_blocks runs x (head_rollouts / head_blocks) rollouts on ever
 when scoring_mode = "separate"; fresh for every turn when scoring_mode = "same-run") -> every candidate runs k_cand rollouts on every
 drawn task (plan seed = cand_seed(seed, epoch): independent of the head blocks) -> baseline_v1.estimate (per-env Hajek Delta, z, cap) -> DECISION.
 Closed rounds reveal secret, block, seed and drawn ids (/gate/heldout/<round>.json); per-task grades only for the GREEN turn.
-The prior table values (s, n, pi) are never published."""
+The prior table values (s, n, pi) are never published.
+weighting (heldout.prior_v1.weighting, frozen into each round at open): 'prior-v1' (default) = sqrt(E[p(1-p)]) from the prior table;
+'irt-info' (live from 2026-11-02) = sqrt(2PL Fisher information) at the head's ability (baseline_v1.irt_score). The IRT a, b and the
+head's theta are private like the table; if the IRT weights cannot be computed the round falls back to prior-v1 (event prior_irt_fallback)."""
 from __future__ import annotations
-import hashlib, json, os, sys, time, urllib.request
+import hashlib, json, math, os, sys, time, urllib.request
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import baseline_v1 as BV
@@ -23,6 +26,7 @@ RA = Path('/home/const/subnet120-rewrite/state/root-audits')
 PATHS = dict(table=str(RA / '20261101-prior-table/private/table/prior_table.private.sqlite'),
              pool_file=str(RA / '20261101-baseline-switch/public/gate-pool-v1.jsonl'),
              pool_url='https://github.com/AffineFoundation/affine/blob/main/miner/data/gate-pool-v1.jsonl',
+             irt_params=str(RA / '20261102-irt-baseline/private/live/irt_params.private.json'),
              rpc=['https://entrypoint-finney.opentensor.ai:443'])
 _POOL = {}
 EPD = Path('/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/epochs')
@@ -102,7 +106,7 @@ def load_pool(pv):
 
 
 # ------------------------------------------------------------------ public texts
-RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from the public gate pool (affine_math + dapo) with inclusion '
+RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks from the public gate pool (affine_math + dapo) with inclusion '
         'probability pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) from the private prior table (s/n = the head\'s '
         'solved/sampled counts on task i from the prior sampler; x0.5 on every head change; tasks without samples start at their env '
         'average), mixed with a 10% uniform floor and capped at pi 0.10 (Poisson sampling). Seed = sha256(secret, block B, hash of B): '
@@ -117,10 +121,35 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
 
 
+RULE_IRT = RULE_V1.replace(
+    "with inclusion probability pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) from the private prior table (s/n = the head's "
+    "solved/sampled counts on task i from the prior sampler; x0.5 on every head change; tasks without samples start at their env average)",
+    "with inclusion probability pi_i proportional to sqrt(I_i), I_i = a_i'^2 P_i (1 - P_i) = the Fisher information of task i at the head's "
+    "ability theta_h under a 2PL item response model (P_i = 1/(1+exp(-a_i(theta_h - b_i))), fitted on every recorded checkpoint x task "
+    "pass/fail, refit daily; a_i' = a_i shrunk halfway (log scale) toward the pool median and clipped to [0.5, 2] x median; theta_h = MAP "
+    "of the head's own gate-pool rollouts; per-task a_i, b_i and theta_h are private)", 1).replace(
+    'prior-v1 baseline:', 'prior-v1 baseline (irt-info weighting, live from 2026-11-02):', 1)
+assert RULE_IRT != RULE_V1
+
+
+def rule_for(pv):
+    return RULE_IRT if (pv or {}).get('weighting') == 'irt-info' else RULE_V1
+
+
+def __getattr__(name):
+    """PG.RULE (gate_ledger's gate.json text) = the rule of the CURRENT flag setting (PEP 562 module attribute)."""
+    if name == 'RULE':
+        try: return rule_for(pv_of(json.loads(FLAGP.read_text())))
+        except Exception: return RULE_V1
+    raise AttributeError(name)
+
+
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
                                    'bar_z', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
-        tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']))
+        tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']),
+        weighting=pv.get('weighting') or 'prior-v1') | ({k: pv.get(k, BV.IRT_DEFAULTS[k]) for k in ('a_shrink', 'a_lo', 'a_hi', 'theta_prior_sd')}
+                                                           if pv.get('weighting') == 'irt-info' else {})
 
 
 def public_commit(r) -> dict:
@@ -133,14 +162,15 @@ def public_commit(r) -> dict:
                 draw=dict(done=bool(r.get('ids') is not None), n=r.get('n'), expected_n=r.get('expected_n'),
                           draw_commitment=r.get('draw_commitment'), drawn_at_cr=r.get('drawn_at_cr')),
                 table_snapshot_sha256=r['table']['sha256'], k_cand=pv['k_cand'], bar_z=pv['bar_z'], z_inclusive=pv['z_inclusive'],
-                settings=settings_public(pv), rule=RULE)
+                settings=settings_public(pv), rule=rule_for(pv),
+                weighting=r.get('weighting') or 'prior-v1', irt=(r.get('irt_public') if r.get('weighting') == 'irt-info' else None))
 
 
 def public_params(h: dict, cur) -> dict:
     """mining.json promotion_gate.heldout block when the prior-v1 baseline is on."""
     pv = _merge(h)
     keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'secret_commitment', 'target_block', 'draw', 'opened_at',
-            'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand', 'bar_z', 'z_inclusive', 'settings', 'status', 'rule')
+            'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand', 'bar_z', 'z_inclusive', 'settings', 'status', 'rule', 'weighting', 'irt')
     return dict(baseline='prior-v1', from_epoch=h.get('from_epoch'), settings_next_round=settings_public(pv),
                 pool=dict(url=pv['pool_url'], manifest=pv['pool_url'].replace('gate-pool-v1.jsonl', 'gate-pool-v1.manifest.json')),
                 code=dict(baseline='https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py',
@@ -149,8 +179,15 @@ def public_params(h: dict, cur) -> dict:
                 prior_method=('per task: s/n = head solved/sampled counts from the prior sampler pod (k=4 per pass over the whole pool, continuously); '
                        'x0.5 on every head change; tasks without samples start at their env average; Beta(s+1, n-s+1) posterior. '
                        'The table values are private.'),
+                weighting=(pv.get('weighting') or 'prior-v1'),
+                irt_method=('2PL item response model P_i(theta) = 1/(1+exp(-a_i(theta-b_i))) fitted (MAP) on every recorded checkpoint x gate-pool '
+                            'task pass/fail, refit daily; draw score sqrt(a_i\'^2 P_i(1-P_i)) at the head ability theta_h (MAP of the head\'s '
+                            'own gate-pool rollouts, refreshed at every round open); a_i\' = a_i shrunk halfway (log) toward the pool median, '
+                            'clipped to [0.5, 2] x median. Per-task a_i, b_i, theta_h and pi_i are private. Code: '
+                            'https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py (irt_score, theta_map), '
+                            'https://github.com/AffineFoundation/affine/blob/main/priors/irt/') if pv.get('weighting') == 'irt-info' else None,
                 current_round=({k: cur.get(k) for k in keep} if isinstance(cur, dict) else None),
-                rounds='https://affine.io/gate/heldout/index.json', current='https://affine.io/gate/heldout/current.json', rule=RULE,
+                rounds='https://affine.io/gate/heldout/index.json', current='https://affine.io/gate/heldout/current.json', rule=rule_for(pv),
                 z_bar=z_bar_public())
 
 
@@ -162,14 +199,87 @@ def _deadline(S, e):
     return m.get('deadline')
 
 
+def _rjq(p):
+    try: return json.loads(Path(p).read_text())
+    except Exception: return None
+
+
+def head_cells(S, pv, H, snap_path):
+    """The head's own pass/fail cells on gate-pool tasks: its candidate probe(s) (prior-v1 turns), the head blocks of earlier rounds on
+    this head, and prior-table cells of this head. -> ([(task_id, n, solved)], {source: rollouts})."""
+    cells, src = [], {}
+    def add(per_task, tag, cfg):
+        for k, v in (per_task or {}).items():
+            if isinstance(v, dict) and v.get('n'):
+                cells.append((BV.task_of(int(k), cfg), int(v['n']), int(v.get('c') or 0))); src[tag] = src.get(tag, 0) + int(v['n'])
+    eps = sorted(int(p.name) for p in EPD.iterdir() if p.name.isdigit())[-80:] if EPD.exists() else []
+    for e in eps:
+        d = _rjq(EPD / str(e) / 'C-PROBE.private.json')
+        if d and d.get('candidate') == H and d.get('prior_v1') and not d.get('partial'): add(d.get('per_task'), 'candidate_probe', pv)
+    R = S.rounds()
+    for rd in sorted(R.root.glob('r2*'))[-60:]:
+        rr = _rjq(rd / 'ROUND.private.json') or {}
+        if rr.get('head') != H or not is_prior(rr): continue
+        for b in sorted(rd.glob('BLOCK-*.private.json')): add((_rjq(b) or {}).get('per_task'), 'head_blocks', rr.get('cfg') or pv)
+    try:
+        import sqlite3
+        con = sqlite3.connect('file:%s?mode=ro' % snap_path, uri=True)
+        for t, n, c in con.execute('SELECT task_id, sum(n), sum(c) FROM cells WHERE head IN (?, ?) GROUP BY task_id', (H, H[:8])):
+            if n: cells.append((t, int(n), int(c or 0))); src['prior_table'] = src.get('prior_table', 0) + int(n)
+        con.close()
+    except Exception: pass
+    return cells, src
+
+
+def irt_round(S, pv, H, rows, snap_path):
+    """-> (private irt record, draw score per row). Raises if the params are missing/inconsistent (open_round falls back to prior-v1)."""
+    raw = open(pv['irt_params'], 'rb').read(); P = json.loads(raw); sha = hashlib.sha256(raw).hexdigest()
+    ab = {t: (float(v[0]), float(v[1])) for t, v in P['tasks'].items()}
+    miss = [r['task_id'] for r in rows if r['task_id'] not in ab]
+    if miss: raise RuntimeError('irt params miss %d pool tasks' % len(miss))
+    k = {x: float(pv.get(x, BV.IRT_DEFAULTS[x])) for x in BV.IRT_DEFAULTS}
+    cells, src = head_cells(S, pv, H, snap_path)
+    th, se, nroll = BV.theta_map(cells, ab, k['theta_prior_sd']) if cells else (None, None, 0)
+    if nroll >= k['theta_min_rollouts']: how = 'map of the head rollouts'
+    elif H[:8] in (P.get('ckpt_theta') or {}): th, se, how = float(P['ckpt_theta'][H[:8]]), None, 'fit'
+    else:
+        th, se, how = None, None, None
+        R = S.rounds()
+        for rd in sorted(R.root.glob('r2*'), reverse=True)[:30]:
+            rr = _rjq(rd / 'ROUND.private.json') or {}
+            if rr.get('weighting') == 'irt-info' and (rr.get('irt') or {}).get('theta') is not None:
+                th, how = float(rr['irt']['theta']), 'previous irt round %s (head %s)' % (rr['id'], rr['head'][:12]); break
+        if th is None: th, how = float(P['theta_fallback']), 'fit fallback (top checkpoint)'
+    th = max(-4.0, min(4.0, th))
+    score = BV.irt_score(rows, ab, th, float(P['a_median']), k['a_shrink'], k['a_lo'], k['a_hi'])
+    if not all(math.isfinite(x) and x >= 0 for x in score) or sum(score) <= 0: raise RuntimeError('irt score not finite/positive')
+    rec = dict(params=pv['irt_params'], params_sha256=sha, fit=P.get('fit'), fitted_at_cr=P.get('fitted_at_cr'), theta=th, theta_se=se,
+               theta_source=how, theta_rollouts=nroll, theta_sources=src, a_median=P['a_median'], knobs=k)
+    S.log(event='prior_irt_theta', head=H[:12], theta=round(th, 4), se=(round(se, 4) if se else None), rollouts=nroll, source=how)
+    return rec, score
+
+
 def open_round(S, f, H, e, reason, prev=None):
     pv = pv_of(f); R = S.rounds(); R.root.mkdir(parents=True, exist_ok=True, mode=0o700)
     secret = BV.new_secret(); now = time.time(); rid = HO.round_id(secret, now); d = R.d(rid)
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
     snap = BV.snapshot_table(pv['table'], str(d / 'PRIOR-SNAPSHOT.private.sqlite'))
     pool = load_pool(pv); rows = BV.load_rows(snap['path'], pool['ids'])
-    pi = BV.inclusion(rows, int(pv['N']), float(pv['floor']), float(pv['cap']), pv['shares'], float(pv['n_init']))
-    S.wj(d / 'PI.private.json', dict(round=rid, pi=pi, env={r['task_id']: r['env'] for r in rows}, table_digest=BV.table_digest(rows)), 0o600)
+    weighting = 'prior-v1'; irt = None; irt_pub = None
+    if pv.get('weighting') == 'irt-info':
+        try:
+            irt, score = irt_round(S, pv, H, rows, snap['path'])
+            pi = BV.inclusion_from(rows, score, int(pv['N']), float(pv['floor']), float(pv['cap']), pv['shares'])
+            weighting = 'irt-info'
+            irt_pub = dict(params_sha256=irt['params_sha256'], fitted_at_cr=irt['fitted_at_cr'], fit=irt['fit'],
+                           theta_source=irt['theta_source'], method='sqrt(2PL Fisher information) at the head ability; values private')
+        except Exception as ex:
+            irt = dict(failed=repr(ex)[:300]); pi = None
+            S.log(event='prior_irt_fallback', id=rid, head=H[:12], epoch=e, why=repr(ex)[:300])
+    if weighting != 'irt-info':
+        pi = BV.inclusion(rows, int(pv['N']), float(pv['floor']), float(pv['cap']), pv['shares'], float(pv['n_init']))
+    S.wj(d / 'PI.private.json', dict(round=rid, pi=pi, env={r['task_id']: r['env'] for r in rows}, table_digest=BV.table_digest(rows),
+                                     weighting=weighting), 0o600)
     frozen = {k: v for k, v in pv.items() if k not in ('table', 'rpc')}
     r = dict(schema=BV.ROUND_SCHEMA, baseline='prior-v1', id=rid, secret=secret, secret_commitment=BV.secret_commitment(secret),
              head=H, opened_at=now, opened_at_cr=S.cr(now), opened_epoch=e, reason=reason, previous=(prev or {}).get('id'),
@@ -178,11 +288,11 @@ def open_round(S, f, H, e, reason, prev=None):
              z_inclusive=bool(pv['z_inclusive']), env=pv['probe_env'],
              pool=dict(sha256=pool['sha256'], tasks=len(pool['ids']), per_env=pool['per_env']),
              table=dict(sha256=snap['sha256'], rows=len(rows), digest=BV.table_digest(rows), source='read-only snapshot at round open'),
-             gate_version=S.G.VERSION)
+             gate_version=S.G.VERSION, weighting=weighting, irt=irt, irt_public=irt_pub)
     S.wj(d / 'ROUND.private.json', r, 0o600)
     S.wj(d / 'COMMIT.json', public_commit(r), 0o644)
     S.wj(R.root / 'CURRENT.private.json', dict(id=rid, head=H), 0o600)
-    S.log(event='prior_round_open', id=rid, head=H[:12], epoch=e, expected_n=r['expected_n'], reason=reason)
+    S.log(event='prior_round_open', id=rid, head=H[:12], epoch=e, expected_n=r['expected_n'], reason=reason, weighting=weighting)
     return r
 
 

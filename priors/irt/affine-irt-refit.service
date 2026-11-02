@@ -1,0 +1,8 @@
+[Unit]
+Description=SN120 irt-info draw: daily 2PL refit (low priority; RA/20261102-irt-live)
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=400%
+ExecStart=/usr/bin/bash /home/const/subnet120-rewrite/state/root-audits/20261102-irt-live/code/refit/refit.sh

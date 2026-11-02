@@ -10,6 +10,8 @@ Draw (per round, Poisson sampling, expected size N):
   a_i = w_i * sqrt(v_i)                        (Neyman allocation)
   pi_i = N * ((1 - floor) * a_i / sum a + floor * w_i / sum w)    (floor = uniform part, default 0.10)
   pi_i capped at `cap` (default 0.10), the excess re-spread over the uncapped tasks until no pi_i exceeds the cap.
+  weighting = 'irt-info' (live from 2026-11-02): sqrt(v_i) is replaced by sqrt(I_i), the 2PL Fisher information of task i at the
+  head's ability (see irt_score below); w, N, floor and cap unchanged.
   task i is drawn iff u_i < pi_i, u_i = int(sha256(VERSION|draw|seed|task_id)[:16], 16) / 2^64.
 Seed (commit-reveal): secret = 32 random bytes; secret_commitment = sha256(VERSION|secret|<secret hex>) is published when the round
   opens; after the upload deadline the gate fixes a future block number B (published before B exists);
@@ -93,16 +95,24 @@ def post_var(s, n):
 
 
 def inclusion(rows, N=500, floor=0.10, cap=0.10, shares='size', n_init=2.0) -> dict:
-    """-> {task_id: pi}. rows = prior rows of the gate pool."""
+    """-> {task_id: pi}. rows = prior rows of the gate pool. prior-v1 weighting: score_i = sqrt(E[p_i(1-p_i)])."""
     sh, cnt = env_shares(rows, shares)
     tot = {}
     for r in rows:
         if r['n'] > 0: t = tot.setdefault(r['env'], [0.0, 0.0]); t[0] += r['s']; t[1] += r['n']
     m = {e: (v[0] / v[1] if v[1] > 0 else 0.5) for e, v in tot.items()}
-    w, a = [], []
+    score = []
     for r in rows:
         s, n = (r['s'], r['n']) if r['n'] > 0 else (m.get(r['env'], 0.5) * n_init, n_init)
-        wi = sh[r['env']] / cnt[r['env']]; w.append(wi); a.append(wi * math.sqrt(post_var(s, n)))
+        score.append(math.sqrt(post_var(s, n)))
+    return inclusion_from(rows, score, N, floor, cap, shares)
+
+
+def inclusion_from(rows, score, N=500, floor=0.10, cap=0.10, shares='size') -> dict:
+    """-> {task_id: pi} for any per-task draw score (same order as rows): a_i = w_i * score_i,
+    pi_i = N * ((1 - floor) * a_i / sum a + floor * w_i / sum w), capped at cap with the excess re-spread."""
+    sh, cnt = env_shares(rows, shares)
+    w = [sh[r['env']] / cnt[r['env']] for r in rows]; a = [wi * si for wi, si in zip(w, score)]
     P = len(rows); cv = min(float(cap) if cap else 1.0, 1.0)
     if cv * P < N * 1.0001: raise ValueError('cap %.3f infeasible for N=%d over %d tasks' % (cv, N, P))
     Sa, Sw = sum(a), sum(w)
@@ -115,6 +125,48 @@ def inclusion(rows, N=500, floor=0.10, cap=0.10, shares='size', n_init=2.0) -> d
         free = [i for i, p in enumerate(pi) if p < cv]; F = sum(pi[i] for i in free)
         for i in free: pi[i] *= 1 + ex / F
     return {r['task_id']: p for r, p in zip(rows, pi)}
+
+
+# ------------------------------------------------------------------ irt-info weighting (live from 2026-11-02, Jacob Steeves)
+# 2PL item response model fitted on every pass/fail the network has recorded (checkpoints x gate-pool tasks):
+#   P_i(theta) = 1 / (1 + exp(-a_i (theta - b_i)))   (a_i discrimination, b_i difficulty, theta = checkpoint ability, sd 1 over checkpoints)
+# Draw score at the current head (theta_h): score_i = sqrt(I_i), I_i = a'_i^2 P_i(theta_h) (1 - P_i(theta_h)) (Fisher information),
+#   a'_i = a_i shrunk toward the pool median m (log a' = (1 - a_shrink) log a + a_shrink log m) and clipped to [a_lo m, a_hi m],
+#   because a_i is weakly determined for many tasks. Same N, floor and cap as prior-v1 (the 10% uniform floor keeps every task drawable).
+# theta_h: 1-D MAP of the head's own pass/fail cells (its candidate probe + earlier head runs on the gate pool) under the fitted a, b
+#   with a N(0, theta_prior_sd^2) prior; refreshed at every round open. a, b: refit daily; per-task a, b values are private.
+IRT_DEFAULTS = dict(a_shrink=0.5, a_lo=0.5, a_hi=2.0, theta_prior_sd=2.0, theta_min_rollouts=200)
+
+
+def _sig(x):
+    return 1.0 / (1.0 + math.exp(-x)) if x >= 0 else math.exp(x) / (1.0 + math.exp(x))
+
+
+def irt_a_used(a_raw, a_med, a_shrink=0.5, a_lo=0.5, a_hi=2.0):
+    la = (1.0 - a_shrink) * math.log(max(a_raw, 1e-6)) + a_shrink * math.log(a_med)
+    return min(max(math.exp(la), a_lo * a_med), a_hi * a_med)
+
+
+def theta_map(cells, ab, prior_sd=2.0, iters=60):
+    """cells = [(task_id, n, solved)], ab = {task_id: (a, b)} -> (theta, se, rollouts). Newton steps on the 1-D log posterior."""
+    cl = [(ab[t][0], ab[t][1], float(n), float(c)) for t, n, c in cells if t in ab and n]
+    th = 0.0; tau = 1.0 / (prior_sd * prior_sd); h = tau
+    for _ in range(iters):
+        g = -th * tau; h = tau
+        for a, b, n, c in cl:
+            p = _sig(a * (th - b)); g += a * (c - n * p); h += a * a * n * p * (1 - p)
+        step = max(-1.0, min(1.0, g / h)); th += step
+        if abs(step) < 1e-7: break
+    return th, 1.0 / math.sqrt(h), int(sum(n for _, _, n, _ in cl))
+
+
+def irt_score(rows, ab, theta, a_med, a_shrink=0.5, a_lo=0.5, a_hi=2.0) -> list:
+    """sqrt(Fisher information) per task at theta (same order as rows); P from the fitted a, b, the multiplier from the shrunk a'."""
+    out = []
+    for r in rows:
+        a, b = ab[r['task_id']]; p = _sig(a * (theta - b)); au = irt_a_used(a, a_med, a_shrink, a_lo, a_hi)
+        out.append(au * math.sqrt(p * (1.0 - p)))
+    return out
 
 
 # ------------------------------------------------------------------ commit-reveal seed and draw
@@ -227,7 +279,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
 
 
 # ------------------------------------------------------------------ public-safety guard
-PRIVATE_KEYS = ('"pi"', '"prior"', '"s_head"', '"n_head"', '"prior_s"', '"prior_n"', '"inclusion"', '"table_rows"', '"a0"', '"b0"')
+PRIVATE_KEYS = ('"irt_ab"', '"theta"', '"a_used"', '"pi"', '"prior"', '"s_head"', '"n_head"', '"prior_s"', '"prior_n"', '"inclusion"', '"table_rows"', '"a0"', '"b0"')
 OPEN_ROUND_KEYS = ('"secret"', '"seed"', '"ids"', '"indices"', '"per_task"', '"drawn_ids"', '"head_per_task"', '"candidate_per_task"')
 
 

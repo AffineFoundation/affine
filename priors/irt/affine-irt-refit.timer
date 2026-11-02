@@ -1,0 +1,7 @@
+[Unit]
+Description=SN120 irt-info draw: daily 2PL refit at 03:30 CR
+[Timer]
+OnCalendar=*-*-* 09:30:00 UTC
+Persistent=false
+[Install]
+WantedBy=timers.target

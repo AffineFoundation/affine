@@ -160,7 +160,7 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   checked with math-verify 0.9.0 against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1
   (P1/P2 projection, E1-E7 answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
 
-## 6. The promotion gate (held-out, prior-v1)
+## 6. The promotion gate (held-out, prior-v1, IRT information-weighted draw)
 
 - Rounds: one round per head. A round opens when a new head is promoted (or the previous round reached 8 decided turns) and
   closes on a GREEN, a head change or 8 decided turns.
@@ -168,8 +168,17 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   keeps, per task, s/n = solved/sampled counts (every count is multiplied by 0.5 when the head changes; a task without samples
   starts at its env's average). The prior's code is public (priors/ in the repo); its table values (s, n per task) are private.
   The gate reads a read-only snapshot of the table taken when the round opens; its sha256 is published with the round.
-- The draw: inclusion probability pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) (tasks the head
-  sometimes solves get the most weight), mixed with a 10 % uniform floor (every task can be drawn), capped at 0.10, scaled
+- The draw (IRT information-weighted, live from 2026-11-02 10:31 CR): inclusion probability pi_i proportional to sqrt(I_i),
+  I_i = a_i'^2 P_i (1 - P_i) = the Fisher information of task i at the head's ability theta_h under a 2PL item response
+  model P_i(theta) = 1 / (1 + exp(-a_i (theta - b_i))). a_i (discrimination) and b_i (difficulty) are fitted (MAP) on every
+  recorded checkpoint x gate-pool task pass/fail (first fit: 365 checkpoints, 3.06M rollouts; refit daily); theta_h is the
+  MAP of the head's own gate-pool rollouts (its winning candidate probe + its head runs), recomputed when each round opens.
+  a_i' = a_i shrunk halfway (log scale) toward the pool median and clipped to [0.5, 2] x median, so a weakly determined a_i
+  can't give a task extreme weight. Tasks the head almost always (or never) solves get little weight; tasks near the head's
+  ability that separate stronger from weaker checkpoints get the most. a_i, b_i, theta_h and pi_i are private (like the prior
+  table); the method and code are public (priors/baseline_v1.py irt_score / theta_map, priors/irt/). Before the switch
+  (prior-v1, E497 on): pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) from the prior table.
+  Both: mixed with a 10 % uniform floor (every task can be drawn), capped at 0.10, scaled
   so the expected size is N = 500; each task is drawn independently (Poisson sampling) with u_i < pi_i,
   u_i = sha256(version|draw|seed|task id). The seed is commit-reveal:
   - at open the gate publishes sha256(version|secret|<secret>) of a fresh 32-byte secret (/gate/heldout/current.json);
@@ -236,7 +245,8 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   problem, mostly MATH Level 4-5 (e368: 72 at Level 5, 33 at Level 4). Each rollout was the head's own sample with a `<think>` block and exactly one final `\boxed{}`.
 - That shape is common and not sufficient. The REDs e362-e367 and e370-e376 had the same public counts (125 x 1 correct),
   and several scored strongly negative (z -3 to -5.6). Which problems you pick and which samples you keep decide the sign.
-- Borderline difficulty: the draw favours tasks the head sometimes solves (pi ~ sqrt(p(1-p)) from the prior), and every
+- Borderline difficulty: the draw favours tasks near the head's ability that discriminate (pi ~ sqrt of the task's IRT
+  information at the head), and every
   drawn task counts with weight 1/pi, so the estimate covers the whole pool (affine_math + dapo). Correct samples on
   problems the head usually fails or caps out on are where the signal is.
 - Fewer capped replies: on the full pool (performance.json), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit

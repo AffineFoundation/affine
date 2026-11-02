@@ -3,6 +3,7 @@
    equal-count bins and rounded - no task ids, no per-task values. Two charts share the same x (percentile of tasks by pass rate):
    pass rate (--performance) and per-round selection probability of the Neyman/Hajek draw (--incentive). Chart look as the site's
    k1 tiles / bench cards (b969182): k1-grid gridlines, mono tick labels, line with hollow points, .chart-tip hover.
+   pt1083u (2026-11-02): the IRT draw is LIVE - solid lines = irt-curves.json (live builder on the 15-min timer), dashed --muted = previous prior-v1.
    pt1080u: dashed --accepted overlays from the static /baseline/irt-curves.json (site-tools/build_baseline_irt_curves.py, a 2PL
    item-response fit, PROPOSED, NOT LIVE): IRT selection probability over the live one, a^2 P(1-P) vs E[p(1-p)] (both / mean) in
    their own tile, and the binned median discrimination a (relative to its median, right axis) on the pass-rate chart. */
@@ -55,35 +56,37 @@
  const rj=(k,i,n)=>{const v=R&&R[k];if(!v||!v.length)return null;return v[Math.min(v.length-1,Math.floor(i*v.length/n))];};
  function tipText(i){const n=D?D.pass_rate.length:R.info_irt.length,a=Math.round(100*i/n),b=Math.round(100*(i+1)/n);
   let t=`<strong>Tasks at percentile ${a}${b>a?'&ndash;'+b:''}</strong>`;
-  if(D)t+=`<span>pass rate</span> &asymp; ${D.pass_rate[i].toFixed(2)}\n<span>selection per round</span> &asymp; ${D.select_pct[i].toFixed(1)}%`;
+  if(D)t+=`<span>pass rate</span> &asymp; ${D.pass_rate[i].toFixed(2)}`;
+  {const s0=rj('select_pct_irt',i,n);if(s0!=null)t+=`\n<span>selection per round (live)</span> &asymp; ${s0.toFixed(1)}%`;else if(D)t+=`\n<span>selection per round</span> &asymp; ${D.select_pct[i].toFixed(1)}%`;}
   const s=rj('select_pct_irt',i,n),ii=rj('info_irt',i,n),ic=rj('info_current',i,n),ar=rj('a_rel_median',i,n);
-  if(s!=null)t+=`\n<span>IRT selection (proposed, not live)</span> &asymp; ${s.toFixed(1)}%\n<span>a&sup2;P(1&minus;P) / E[p(1&minus;p)], each / mean</span> &asymp; ${ii.toFixed(1)} / ${ic.toFixed(1)}\n<span>discrimination a / median</span> &asymp; ${ar.toFixed(1)} (model-dependent)`;
+  if(s!=null)t+=`\n<span>previous prior-v1 selection</span> &asymp; ${D?D.select_pct[i].toFixed(1):'&mdash;'}%\n<span>a&prime;&sup2;P(1&minus;P) / previous E[p(1&minus;p)], each / mean</span> &asymp; ${ii.toFixed(1)} / ${ic.toFixed(1)}\n<span>discrimination a&prime; / median</span> &asymp; ${ar.toFixed(1)}`;
   return t;}
  function draw(){
   charts.length=0;
   if(R&&R.info_irt){const m=R.info_irt.length,top=Math.ceil(Math.max(...R.info_irt,...R.info_current)+.25),st=top>6?2:1,tk=[];for(let g=0;g<=top+1e-9;g+=st)tk.push(g);
    let k=D?D.pass_rate.findIndex(v=>v>=.5):-1;
-   charts.push(chart($('bl-info-c'),{v:R.info_current,lo:0,hi:tk[tk.length-1],ticks:tk,tick:g=>String(g),color:'var(--incentive)',mid:k<0?null:k/D.pass_rate.length,uniform:1,
-    over:[{v:R.info_irt,color:'var(--accepted)'}]}));$('bl-info-c').classList.remove('afx-wait');}
+   charts.push(chart($('bl-info-c'),{v:R.info_irt,lo:0,hi:tk[tk.length-1],ticks:tk,tick:g=>String(g),color:'var(--incentive)',mid:k<0||!D?null:k/D.pass_rate.length,uniform:1,
+    over:[{v:R.info_current,color:'var(--muted)',width:1.3}]}));$('bl-info-c').classList.remove('afx-wait');}
   if(!D)return;const n=D.pass_rate.length;
   let k=D.pass_rate.findIndex(v=>v>=.5);const mid=k<0?null:k/n;
   const ar=R&&R.a_rel_median,atop=ar?Math.max(2,Math.ceil(Math.max(...ar)*2)/2):2;
   charts.unshift(chart($('bl-pass-c'),{v:D.pass_rate,lo:0,hi:1,ticks:[0,.25,.5,.75,1],tick:g=>g===0||g===1?String(g):g.toFixed(2),color:'var(--performance)',mid,
    over:ar?[{v:ar,color:'var(--accepted)',dash:'2 3',width:1.3,lo:0,hi:atop,ticks:[0,atop/2,atop],tick:g=>g+'\u00d7'}]:[]}));
   const si=R&&R.select_pct_irt,top=Math.ceil(Math.max(...D.select_pct,D.uniform_pct,...(si||[0]))+.25),st=top>6?2:1,tk=[];for(let g=0;g<=top+1e-9;g+=st)tk.push(g);
-  charts.splice(1,0,chart($('bl-select-c'),{v:D.select_pct,lo:0,hi:tk[tk.length-1],ticks:tk,tick:g=>g+'%',color:'var(--incentive)',uniform:D.uniform_pct,mid,
-   over:si?[{v:si,color:'var(--accepted)'}]:[]}));
+  charts.splice(1,0,chart($('bl-select-c'),{v:si||D.select_pct,lo:0,hi:tk[tk.length-1],ticks:tk,tick:g=>g+'%',color:'var(--incentive)',uniform:D.uniform_pct,mid,
+   over:si?[{v:D.select_pct,color:'var(--muted)',width:1.3}]:[]}));
  }
  function fill(){
   if(D.cfg)document.querySelectorAll('[data-cfg]').forEach(e=>{const v=D.cfg[e.dataset.cfg];if(typeof v==='number')e.textContent=e.dataset.cfg==='floor'||e.dataset.cfg==='cap'?v.toFixed(2):String(v);});
   document.querySelectorAll('[data-bl]').forEach(e=>{const v=D[e.dataset.bl];if(v!=null)e.textContent=fmt(v);});
   $('bl-pass-r').textContent='mean '+D.mean_pass.toFixed(2);
   $('bl-select-r').textContent='~'+fmt(D.per_round)+' / '+fmt(D.n_tasks)+' tasks';
-  $('bl-stats').textContent=`${D.baseline} · live since E${D.since_epoch} · ${fmt(D.n_tasks)} tasks · mean pass rate ${D.mean_pass.toFixed(2)} · ~${fmt(D.per_round)} drawn per round (uniform would be ${D.uniform_pct.toFixed(1)}% each)`;
+  $('bl-stats').textContent=`${R&&R.status==='live'?'IRT information-weighted draw · live since '+(R.live_since||'Nov 2, 2026'):D.baseline+' · live since E'+D.since_epoch} · ${fmt(D.n_tasks)} tasks · mean pass rate ${D.mean_pass.toFixed(2)} · ~${fmt(D.per_round)} drawn per round (uniform would be ${D.uniform_pct.toFixed(1)}% each)`;
   if(D.updated)$('bl-updated').textContent='Updated '+new Date(D.updated.replace('Z',':00Z')).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
  }
  (window.AFX&&AFX.take('/baseline/irt-curves.json')||fetch('/baseline/irt-curves.json',{cache:'no-store'})).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{R=d;
-   if(R.generated)document.querySelectorAll('[data-irt="generated"]').forEach(e=>{e.textContent=new Date(R.generated.replace('Z',':00Z')).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});});
+   if(R.fitted)document.querySelectorAll('[data-irt="fitted"]').forEach(e=>{e.textContent=R.fitted;});if(R.at_cap!=null)document.querySelectorAll('[data-irt="at_cap"]').forEach(e=>{e.textContent=fmt(R.at_cap);});
+   if(D)fill();
    draw();})
   .catch(()=>{document.querySelectorAll('.bl-irt-only').forEach(e=>{e.hidden=true;});const p=document.createElement('p');p.className='empty';p.textContent='IRT overlay unavailable.';const b=$('bl-info-c');if(b){b.classList.remove('afx-wait');b.append(p);}});
  (window.AFX&&AFX.take('/baseline/curves.json')||fetch('/baseline/curves.json',{cache:'no-store'})).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{D=d;fill();draw();$('bl-main').dataset.state='ready';})
