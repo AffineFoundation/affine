@@ -67,12 +67,12 @@
  };
  const head=n=>'<colgroup>'+T[n].cols.map(k=>`<col style="width:${C[k].w}px">`).join('')+'</colgroup><thead><tr>'+T[n].cols.map(k=>`<th class="${C[k].c||''}"${C[k].t?` title="${esc(C[k].t)}"`:''}>${esc(C[k].h)}</th>`).join('')+'</tr></thead>';
  window.K1T_HEAD=head;/* used once to write the static shells in index.html */
- function fill(n,rows,D,reading,title){
+ function fill(n,rows,D,reading,title,more){
   const s=document.getElementById('k1-'+n);if(!s)return;
   const box=s.querySelector('.k1t-scroll'),tb=box&&box.querySelector('tbody');if(!tb)return;
   const tbl=box.querySelector('table');const sig=T[n].cols.join(',');if(tbl.dataset.cols!==sig){tbl.querySelector('colgroup')?.remove();tbl.querySelector('thead')?.remove();tbl.insertAdjacentHTML('afterbegin',head(n));tbl.dataset.cols=sig;}
   tbl.style.minWidth=T[n].cols.reduce((a,k)=>a+C[k].w,0)+'px';
-  tb.innerHTML=rows.length?rows.map(r=>'<tr>'+T[n].cols.map(k=>`<td class="${C[k].c||''}">${C[k].r(r,D)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${T[n].cols.length}" class="flip-loading">${esc(T[n].empty)}</td></tr>`;
+  tb.innerHTML=(rows.length?rows.map(r=>'<tr>'+T[n].cols.map(k=>`<td class="${C[k].c||''}">${C[k].r(r,D)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${T[n].cols.length}" class="flip-loading">${esc(T[n].empty)}</td></tr>`)+(more?`<tr class="k1t-more"><td colspan="${T[n].cols.length}">${more}</td></tr>`:'');
   s.querySelector('.reading').textContent=reading;if(title)s.querySelector('h2').title=title;
   if(box.classList.contains('afx-wait')){box.classList.remove('afx','afx-wait');if(!matchMedia('(prefers-reduced-motion:reduce)').matches){tb.classList.add('afx-in');tb.addEventListener('animationend',()=>tb.classList.remove('afx-in'),{once:true});}}
  }
@@ -104,7 +104,9 @@
     fileState:'private',fileWhy:'Queued files stay private; published only if the turn is GREEN',
     regAgo:blk&&r.registration_block?dur((blk-r.registration_block)*12):null,
     eta,etaWhy:med?`turn starts in ~${dur(eta-med)}, verdict ~${dur(eta)} (median epoch ${dur(med)} over the last ${E.sample||'?'} epochs; ${line} ahead with a valid file)`:''};});
-  fill('queue',queue,D,q.queue_length??queue.length,(q.queue_rule==='hotkey-registration-once'?'Unserved entries (one turn per hotkey and per UID + registration block, permanently)':'Unserved hotkeys (one turn per hotkey, permanently)')+' with a valid batch file now, in turn order. Order = position among all unserved entries. A forecast: the turn decides.');
+  const nReady=q.queue_length??queue.length,nUn=q.registrations_unserved,rest2=nReady-queue.length;
+  const more=(rest2>0?`+${rest2} more with a valid file now (only the next ${queue.length} are published)`:'')+(nUn!=null&&nUn>nReady?(rest2>0?' · ':'')+`${nUn-nReady} unserved registrations without a valid file are skipped and keep their place`:'');
+  fill('queue',queue,D,`${queue.length} of ${nReady} ready`,(q.queue_rule==='hotkey-registration-once'?'Unserved entries (one turn per hotkey and per UID + registration block, permanently)':'Unserved hotkeys (one turn per hotkey, permanently)')+' with a valid batch file now, in the gate\'s pick order: open grants first, then registration block, then UID; at each seal the first member with a valid file takes the turn. '+nReady+' have a valid file now; the next '+queue.length+' are listed. Order = position among all '+(nUn??'')+' unserved entries. A forecast: a file uploaded or invalidated before the seal changes it.',more);
   // History: every turn, newest first
   const hist=turns.map(turnRow);
   const nd=turns.filter(t=>t.status==='turn'),ng=nd.filter(t=>t.verdict==='green').length;

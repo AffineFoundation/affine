@@ -26,3 +26,6 @@
 .k1t-m i{display:inline-block;height:6px;border-radius:1px;background:currentColor;opacity:.55}
 .k1t-tag{padding:0 5px!important;font-size:9px!important}
 #main .k1t td.flip-loading{text-align:center;color:var(--muted);height:auto;padding:28px;position:static}
+#main .k1t tr.k1t-more td{position:static;color:var(--muted);font-size:10px;text-align:left;border-bottom:0;white-space:normal;height:auto;padding:8px}
+#main .k1t tr.k1t-more:hover td{background:none}
+#main>section#k1-queue .section-heading .reading{white-space:nowrap}

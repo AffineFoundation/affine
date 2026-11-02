@@ -22,3 +22,17 @@ header in a fixed-height scroll box, relative times with the exact time in the t
 - Load: frames and headers are static HTML (afx placeholder rows), rows fade in once (200 ms, reduced-motion honoured).
   ?v=pt1100u-tables-20261102 on k1.js, k1-tables.js, k1-tables.css; /k1/tables.json prefetched in <head>.
 - Deployed 20261102T173422Z. Backup + revert: ~/subnet120-rewrite/state/bench-results/site-backup/20261102T173422Z/revert.sh (copy in this dir).
+
+## Queue count fix (20261102T173805Z, Jacob follow-up 11:36 CR)
+- The Queue title read 64 over 8 rows. k1.json queue.queue_length is the number of unserved members with a valid file now;
+  only the next 8 (QUEUE_N) are published. The title now reads "8 of 64 ready", and a muted last row says
+  "+N more with a valid file now · M unserved registrations without a valid file are skipped and keep their place"
+  (M = registrations_unserved - queue_length). Option 1 (list every unserved entry) was not used: the k1 service publishes
+  only the next 8, and rebuilding the full line outside it could drift from the gate's real order.
+- Order verified against ff_lifecycle.queue/select: open grants first, then (registration block, UID) ascending; at each
+  seal the first member with a valid file takes the turn. k1.json next[].line is the same order filtered to valid files.
+  UID 371 (order 131) sat at line 0 because its file was first checked at 11:25:26 CR, after the E563 seal (11:19:31 CR,
+  which went to UID 456 at order 147); E564 then went to UID 371 as listed. Est. eval = rest of the current epoch + (line + 1)
+  median epochs, consistent with that order.
+- ?v=pt1100u-queue-20261102 on k1-tables.js / k1-tables.css. Revert this step: revert-queue.sh
+  (~/subnet120-rewrite/state/bench-results/site-backup/20261102T173805Z/revert.sh); full revert: revert.sh.
