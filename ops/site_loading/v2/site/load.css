@@ -1,0 +1,16 @@
+/* Load sequence (Jacob pt1070u, tightened pt1076u 2026-11-02): every chart tile is in the HTML at its final size with its
+   title and legend; the plot area shows faint static placeholder gridlines (no shimmer). Each chart fades in on its own as
+   soon as its own data is drawn (200 ms, no delay, no stagger); later refreshes/resizes redraw instantly. Built by load.js. */
+.afx{position:relative}
+.afx::before{content:'';position:absolute;pointer-events:none;opacity:0;transition:opacity .15s ease-out;z-index:0;border:0;animation:none}
+.chart-wrap.afx::before{inset:10px 10px 22px 40px;background:linear-gradient(to bottom,var(--line) 1px,transparent 1px) 0 0/100% 25% repeat-y;border-bottom:1px solid var(--axis)}
+#bench-table .bs-plot.afx::before{inset:2px 0 16px 30px}
+.bl-chart.afx::before{inset:8px 10px 22px 44px}
+.afx-rows.afx::before{inset:0;background:linear-gradient(to bottom,transparent 25px,var(--line) 25px) 0 0/100% 26px repeat-y}
+.afx.afx-wait::before{opacity:1}
+#bench-table .bench-scroll.afx-rows{height:347px;max-height:none}
+.afx-in{animation:afx-fade .2s ease-out backwards}
+@keyframes afx-fade{from{opacity:0}}
+@media(prefers-reduced-motion:reduce){.afx-in{animation:none!important}.afx::before{transition:none}}
+/* these two legends live in the (hidden) tile details; keep them out of the plot's height from the first paint */
+#main>#panel-k1-batch>.legend,#main>#panel-regcost>.legend{display:none!important}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Affine website first-view JSON slices (site-metrics/gate/reg-cost -recent.json, read-only projection; Jacob pt1076u)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I -B /home/const/subnet120/affine/site-tools/build_site_slices.py /home/const/subnet120/affine/website
+Nice=10
+TimeoutStartSec=60
+NoNewPrivileges=true

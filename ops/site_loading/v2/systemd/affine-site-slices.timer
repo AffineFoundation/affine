@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the Affine website first-view JSON slices every 15 s (writes only when a source file changed)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

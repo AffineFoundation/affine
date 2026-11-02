@@ -1,0 +1,226 @@
+diff -ru -x curves.json -x '*.json' new/baseline/index.html new2/baseline/index.html
+--- new/baseline/index.html	2026-11-02 09:39:45.153306489 -0600
++++ new2/baseline/index.html	2026-11-02 09:58:15.647774856 -0600
+@@ -14,8 +14,8 @@
+ <link rel="stylesheet" href="/network.css?v=20261020-video-nav">
+ <link rel="stylesheet" href="/k1.css?v=20261029-grid2">
+ <link rel="stylesheet" href="/baseline/baseline.css?v=bl2b-20261102">
+-<link rel="stylesheet" href="/load.css?v=pt1070u-20261102">
+-<script defer src="/load.js?v=pt1070u-20261102"></script>
++<link rel="stylesheet" href="/load.css?v=pt1076u-20261102">
++<script defer src="/load.js?v=pt1076u-20261102"></script>
+ <script defer src="/baseline/baseline.js?v=pt1070u-20261102"></script>
+ </head>
+ <body>
+diff -ru -x curves.json -x '*.json' new/index.html new2/index.html
+--- new/index.html	2026-11-02 09:43:13.105028418 -0600
++++ new2/index.html	2026-11-02 09:58:15.647774856 -0600
+@@ -7,7 +7,7 @@
+ <script>try{const theme=localStorage.getItem("affine:theme");if(theme==="light")document.documentElement.dataset.theme=theme;}catch{}if(document.documentElement.dataset.theme==="light")document.querySelector('meta[name="theme-color"]').content="#ffffff";</script>
+ <meta name="description" content="Affine subnet 120: K=1 per-UID turns, gate z and pass rates, batches, queue, payees, head lineage, turn ledger and registration cost.">
+ <title>Affine · Subnet 120</title>
+-<script>/* pt1070u: start every data fetch while the page is still parsing; each chart script's first load takes its copy (AFX.take), later refreshes fetch as before */(()=>{const t0=Date.now(),m={};for(const u of ['/performance.json','/benchmarks.json','/k1.json','/scores.json','/mining.json','/k1/lr.json','/incentive-live.json','/site-metrics.json','/gate.json','/reg-cost.json'])m[u]=fetch(u+'?t='+t0,{cache:'no-store'}).catch(()=>null);window.AFX={take(u){const p=m[u];if(!p||Date.now()-t0>20000)return null;return p.then(r=>r?r.clone():fetch(u+'?t='+Date.now(),{cache:'no-store'}));}};})();</script>
++<script>/* pt1070u: start every data fetch while the page is still parsing; each chart script's first load takes its copy (AFX.take), later refreshes fetch as before */(()=>{const t0=Date.now(),m={};for(const u of ['/performance.json','/benchmarks.json','/k1.json','/scores.json','/mining.json','/k1/lr.json','/incentive-live.json','/site-metrics-recent.json','/gate-recent.json','/reg-cost-recent.json'])m[u]=fetch(u+'?t='+t0,{cache:'no-store'}).catch(()=>null);window.AFX={take(u){const p=m[u];if(!p||Date.now()-t0>20000)return null;return p.then(r=>r?r.clone():fetch(u+'?t='+Date.now(),{cache:'no-store'}));}};})();</script>
+ <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+ <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+ <link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
+@@ -21,16 +21,16 @@
+ <link rel="stylesheet" href="/bench.css?v=pt1048u-20261102T124904Z">
+ <link rel="stylesheet" href="/regcost.css?v=20261030-regcost2">
+ <link rel="stylesheet" href="/tile-details.css?v=20261031-td3">
+-<link rel="stylesheet" href="/load.css?v=pt1070u-20261102">
+-<script defer src="/load.js?v=pt1070u-20261102"></script>
++<link rel="stylesheet" href="/load.css?v=pt1076u-20261102">
++<script defer src="/load.js?v=pt1076u-20261102"></script>
+ <script defer src="/network-desktop.js?v=pt1070u-20261102"></script>
+ <script defer src="/chart-expand.js?v=20261026-expand1"></script>
+ <script defer src="/perf.js?v=pt1070u-20261102"></script>
+ <script defer src="/bench.js?v=pt1070u-20261102b"></script>
+ <script defer src="/k1.js?v=pt1070u-20261102"></script>
+-<script defer src="/top.js?v=pt1070u-20261102"></script>
+-<script defer src="/timing.js?v=pt1070u-20261102"></script>
+-<script defer src="/regcost.js?v=pt1070u-20261102"></script>
++<script defer src="/top.js?v=pt1076u-20261102"></script>
++<script defer src="/timing.js?v=pt1076u-20261102"></script>
++<script defer src="/regcost.js?v=pt1076u-20261102"></script>
+ <script defer src="/tile-details.js?v=pt1039u-20261102T0205Z"></script>
+ </head>
+ <body>
+diff -ru -x curves.json -x '*.json' new/load.css new2/load.css
+--- new/load.css	2026-11-02 09:39:45.157306483 -0600
++++ new2/load.css	2026-11-02 09:58:15.651774849 -0600
+@@ -1,34 +1,16 @@
+-/* Load sequence (Jacob pt1070u 2026-11-02): every chart tile is in the HTML at its final size with its title and legend,
+-   the plot area shows faint placeholder gridlines + a subtle shimmer, and the data fades/draws in once (~450 ms) when it arrives.
+-   Later refreshes and resizes redraw without animation. Colours are the site tokens only. Built by load.js. */
++/* Load sequence (Jacob pt1070u, tightened pt1076u 2026-11-02): every chart tile is in the HTML at its final size with its
++   title and legend; the plot area shows faint static placeholder gridlines (no shimmer). Each chart fades in on its own as
++   soon as its own data is drawn (200 ms, no delay, no stagger); later refreshes/resizes redraw instantly. Built by load.js. */
+ .afx{position:relative}
+-.afx::before,.afx::after{content:'';position:absolute;pointer-events:none;opacity:0;transition:opacity .3s ease-out;z-index:0;border:0;animation:none}
+-/* plot area of the k1 charts: P = {l:40, r:10, t:10, b:22}; gridlines at 0/25/50/75 %, axis at the bottom */
++.afx::before{content:'';position:absolute;pointer-events:none;opacity:0;transition:opacity .15s ease-out;z-index:0;border:0;animation:none}
+ .chart-wrap.afx::before{inset:10px 10px 22px 40px;background:linear-gradient(to bottom,var(--line) 1px,transparent 1px) 0 0/100% 25% repeat-y;border-bottom:1px solid var(--axis)}
+-.chart-wrap.afx::after{inset:10px 10px 22px 40px;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
+-#bench-table .bs-plot.afx::before,#bench-table .bs-plot.afx::after{inset:2px 0 16px 30px}
+-.bl-chart.afx::before,.bl-chart.afx::after{inset:8px 10px 22px 44px}
+-/* tables and lists: row rules */
++#bench-table .bs-plot.afx::before{inset:2px 0 16px 30px}
++.bl-chart.afx::before{inset:8px 10px 22px 44px}
+ .afx-rows.afx::before{inset:0;background:linear-gradient(to bottom,transparent 25px,var(--line) 25px) 0 0/100% 26px repeat-y}
+-.afx-rows.afx::after{inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--ink) 5%,transparent) 50%,transparent 70%) 0 0/250% 100% no-repeat}
+ .afx.afx-wait::before{opacity:1}
+-.afx.afx-wait::after{opacity:1;animation:afx-shimmer 1.6s ease-in-out infinite}
+-@keyframes afx-shimmer{from{background-position:100% 0}to{background-position:-50% 0}}
+-/* skeleton benchmark table (replaced by bench.js) */
+ #bench-table .bench-scroll.afx-rows{height:347px;max-height:none}
+-/* data reveal */
+-.afx-in{animation:afx-fade .42s cubic-bezier(.2,.7,.2,1) backwards}
+-.afx-dot{animation:afx-fade .3s ease-out backwards}
+-.afx-draw{stroke-dasharray:1;animation:afx-draw .5s cubic-bezier(.3,.6,.2,1) backwards}
+-.afx-grow{transform-box:fill-box;transform-origin:50% 100%;animation:afx-grow .45s cubic-bezier(.2,.7,.2,1) backwards}
+-.afx-grow.afx-down{transform-origin:50% 0}
++.afx-in{animation:afx-fade .2s ease-out backwards}
+ @keyframes afx-fade{from{opacity:0}}
+-@keyframes afx-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+-@keyframes afx-grow{from{transform:scaleY(0);opacity:.2}}
+-@media(prefers-reduced-motion:reduce){
+- .afx.afx-wait::after{animation:none!important;opacity:0}
+- .afx-in,.afx-dot,.afx-draw,.afx-grow{animation:none!important}
+- .afx-draw{stroke-dasharray:none}
+-}
++@media(prefers-reduced-motion:reduce){.afx-in{animation:none!important}.afx::before{transition:none}}
+ /* these two legends live in the (hidden) tile details; keep them out of the plot's height from the first paint */
+ #main>#panel-k1-batch>.legend,#main>#panel-regcost>.legend{display:none!important}
+diff -ru -x curves.json -x '*.json' new/load.js new2/load.js
+--- new/load.js	2026-11-02 09:39:09.749353170 -0600
++++ new2/load.js	2026-11-02 09:58:15.651774849 -0600
+@@ -1,56 +1,26 @@
+-/* Load sequence (Jacob pt1070u 2026-11-02). Shapes first, data second:
+-   - the tiles are already in the HTML at their final size (title, legend, placeholder gridlines + shimmer: class afx afx-wait);
+-   - when a chart's first svg arrives the placeholder fades out and the data elements draw in once: lines draw left to right,
+-     bars grow from their axis, points and bands fade (~450 ms). Tables and lists fade in.
+-   - a redraw inside the first ~900 ms (tile-details/resize settle) continues the same animation instead of restarting it;
+-     any later redraw (refresh timers, resize, theme) is instant, as before.
+-   No chart script logic or data is changed; this only watches the DOM. Respects prefers-reduced-motion (CSS). */
++/* Load sequence (Jacob pt1070u, tightened pt1076u 2026-11-02). Shapes first, data second, no waiting:
++   - the tiles are already in the HTML at their final size (title, legend, static placeholder gridlines: class afx afx-wait);
++   - the moment a chart's own first svg is drawn, its placeholder goes and the svg fades in over 200 ms (no delay, no
++     stagger, nothing waits for other charts); tables and lists fade the same way;
++   - a redraw within the first 200 ms continues that fade; any later redraw (refresh, resize, theme) is instant.
++   Only watches the DOM; no chart logic or data changes. prefers-reduced-motion: no fade. */
+ (()=>{
+- const WIN=900,first=new Map(),reduce=matchMedia('(prefers-reduced-motion:reduce)');
++ const WIN=200,first=new Map();
+  const PLOT='.chart-wrap',LIST='.flip-table-wrap,.k1-lineage,.bench-scroll';
+- const key=el=>{const host=el.closest('[id]');const i=el.closest('[data-i]');const sel=el.matches(PLOT)?'p':'l';return (host?host.id:'?')+':'+(i?i.dataset.i:'')+':'+sel+':'+(el.id||'');};
+- // returns the ms elapsed since this element's first data, or -1 when the reveal window is over
++ const key=el=>{const host=el.closest('[id]'),i=el.closest('[data-i]');return (host?host.id:'?')+':'+(i?i.dataset.i:'')+':'+(el.matches(PLOT)?'p':'l')+':'+(el.id||'');};
+  const phase=el=>{const k=key(el),now=performance.now();if(!first.has(k)){first.set(k,now);return 0;}const d=now-first.get(k);return d<WIN?d:-1;};
+- const settle=(wrap,ms)=>setTimeout(()=>{wrap.classList.remove('afx');},ms);
+- const done=el=>el.addEventListener('animationend',()=>{el.classList.remove('afx-in','afx-dot','afx-draw','afx-grow','afx-down');if(el.dataset.afxPl){el.removeAttribute('pathLength');delete el.dataset.afxPl;}},{once:true});
+- function animateSvg(svg,t){
+-  const lag=-t;// negative delay keeps an in-flight reveal continuous across a redraw
+-  const axis=svg.querySelector('line.k1-axis');const ay=axis?+axis.getAttribute('y1'):null;
+-  let bars=0;
+-  for(const n of svg.querySelectorAll('polyline,path,rect,circle,line,polygon')){
+-   if(n.matches('line.k1-grid,line.k1-axis'))continue;
+-   const fill=n.getAttribute('fill');
+-   if(n.tagName==='rect'&&(fill==='transparent'||fill==='none'&&!n.getAttribute('stroke')))continue;// hover targets
+-   if(n.getAttribute('visibility')==='hidden'||n.getAttribute('pointer-events')==='none')continue;// hover markers
+-   let cls='afx-in',delay=0;
+-   if((n.tagName==='polyline'||n.tagName==='path')&&fill==='none'&&!n.getAttribute('stroke-dasharray')){n.setAttribute('pathLength','1');n.dataset.afxPl='1';cls='afx-draw';}
+-   else if(n.tagName==='rect'){cls='afx-grow';delay=Math.min(bars++*3,180);if(ay!=null&&+n.getAttribute('y')>=ay-0.5)n.classList.add('afx-down');}
+-   else if(n.tagName==='circle'){cls='afx-dot';delay=160;}
+-   n.classList.add(cls);n.style.animationDelay=(delay+lag)+'ms';done(n);
+-  }
++ const fade=(el,t)=>{if(t<0)return;el.classList.add('afx-in');el.style.animationDelay=(-t)+'ms';el.addEventListener('animationend',()=>{el.classList.remove('afx-in');el.style.animationDelay='';},{once:true});};
++ function onSvg(svg){const w=svg.parentElement;if(!w||!w.matches(PLOT))return;const t=phase(w);if(w.classList.contains('afx-wait'))w.classList.remove('afx-wait','afx');fade(svg,t);}
++ function onWrap(w){if(!w.querySelector(':scope>svg')&&!first.has(key(w)))w.classList.add('afx','afx-wait');}
++ function scan(n){
++  if(n.nodeType!==1)return;
++  if(n.matches('svg')){onSvg(n);return;}
++  if(n.matches(PLOT))onWrap(n);
++  if(n.matches(LIST)&&!n.classList.contains('afx-rows'))fade(n,phase(n));
++  for(const w of n.querySelectorAll(PLOT))onWrap(w);
++  for(const s of n.querySelectorAll('.chart-wrap>svg'))onSvg(s);
++  for(const l of n.querySelectorAll(LIST))if(!l.classList.contains('afx-rows'))fade(l,phase(l));
+  }
+- function onSvg(svg){
+-  const wrap=svg.parentElement;if(!wrap||!wrap.matches(PLOT))return;
+-  const t=phase(wrap);
+-  if(wrap.classList.contains('afx-wait')){wrap.classList.remove('afx-wait');settle(wrap,400);}
+-  if(t<0||reduce.matches)return;animateSvg(svg,t);
+- }
+- function onList(el){
+-  const t=phase(el);if(t<0||reduce.matches)return;
+-  el.classList.add('afx-in');el.style.animationDelay=(-t)+'ms';done(el);
+- }
+- // a chart box created by a script before its data (timing.js, regcost.js, bench sparks) gets the placeholder too
+- function onWrap(w){if(!w.querySelector(':scope>svg')&&!first.has(key(w))){w.classList.add('afx','afx-wait');}}
+- function scan(root){
+-  if(root.nodeType!==1)return;
+-  if(root.matches('svg')){onSvg(root);return;}
+-  if(root.matches(PLOT))onWrap(root);
+-  if(root.matches(LIST)&&!root.classList.contains('afx-rows'))onList(root);
+-  for(const w of root.querySelectorAll(PLOT))onWrap(w);
+-  for(const s of root.querySelectorAll(PLOT.split(',').map(p=>p+'>svg').join(',')))onSvg(s);
+-  for(const l of root.querySelectorAll(LIST))if(!l.classList.contains('afx-rows'))onList(l);
+- }
+- new MutationObserver(recs=>{for(const r of recs)for(const n of r.addedNodes)scan(n);}).observe(document.body,{childList:true,subtree:true});
+- // never shimmer forever: if a source is down the chart script shows its own empty/unavailable text
+- setTimeout(()=>{for(const w of document.querySelectorAll('.afx-wait')){w.classList.remove('afx-wait');settle(w,400);}},15000);
++ new MutationObserver(r=>{for(const x of r)for(const n of x.addedNodes)scan(n);}).observe(document.body,{childList:true,subtree:true});
++ setTimeout(()=>{for(const w of document.querySelectorAll('.afx-wait'))w.classList.remove('afx-wait','afx');},15000);
+ })();
+diff -ru -x curves.json -x '*.json' new/regcost.js new2/regcost.js
+--- new/regcost.js	2026-11-02 09:39:09.729353196 -0600
++++ new2/regcost.js	2026-11-02 09:58:15.639774867 -0600
+@@ -20,7 +20,7 @@
+  const tiles=DEF.map(d=>{const s=document.getElementById(d.id)||document.createElement('section');/* pt1070u: adopt the shell in index.html */s.id=d.id;s.className='site-panel k1-tile rc-tile';s.setAttribute('aria-labelledby',d.id+'-t');
+   s.innerHTML=`<div class="section-heading"><h2 id="${d.id}-t" title="${esc(d.tip)}">${esc(d.title)}</h2><div class="measurement-reading"><span class="reading">—</span></div></div><div class="chart-wrap k1-chart"></div><div class="legend chart-legend rc-legend"></div>`;
+   const lg=s.querySelector('.legend');lg.innerHTML=`<span class="grid-legend-static"><i class="swatch" style="background:var(${d.color})"></i>TAO</span>`+SPANS.map(([l,n])=>`<button type="button" class="rc-span" data-days="${n}" aria-pressed="${n===d.span}">${l}</button>`).join('');
+-  lg.addEventListener('click',e=>{const b=e.target.closest('.rc-span');if(!b)return;d.span=+b.dataset.days;lg.querySelectorAll('.rc-span').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));draw(d,s);});
++  lg.addEventListener('click',e=>{const b=e.target.closest('.rc-span');if(!b)return;d.span=+b.dataset.days;if(doc&&doc.slice&&(d.span===0||d.span>30))load();/* pt1076u: full history on demand */lg.querySelectorAll('.rc-span').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));draw(d,s);});
+   return s;});
+  function place(){
+   if(tiles.every(t=>t.isConnected))return true;
+@@ -79,8 +79,10 @@
+   svg.append(hit);
+  }
+  const drawAll=()=>{if(!place())return;DEF.forEach((d,k)=>draw(d,tiles[k]));};
+- async function load(){try{const r=await (window.AFX&&AFX.take('/reg-cost.json')||fetch('/reg-cost.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(20000)}));/* pt1070u */if(r.ok)doc=await r.json();}catch{}drawAll();}
+- load();setInterval(load,15*60000);
++ async function load(){try{const r=await fetch('/reg-cost.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(20000)});if(r.ok)doc=await r.json();}catch{}drawAll();}
++ /* pt1076u: first view = /reg-cost-recent.json (last 35 days, identical 7D/30D chart, ~15 KB gz instead of ~135 KB); the full history follows in the background for 1Y/All */
++ async function first(){try{const r=await (window.AFX&&AFX.take('/reg-cost-recent.json')||fetch('/reg-cost-recent.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(20000)}));if(r.ok)doc=await r.json();}catch{}if(doc)drawAll();setTimeout(load,doc?3000:0);}
++ first();setInterval(load,15*60000);
+  new MutationObserver(()=>{if(tiles.some(t=>!t.isConnected)&&place())drawAll();}).observe(main,{childList:true});
+  let rt;const re=()=>{clearTimeout(rt);rt=setTimeout(drawAll,150);};window.addEventListener('resize',re);window.addEventListener('affine:chart-resize',re);
+ })();
+diff -ru -x curves.json -x '*.json' new/timing.js new2/timing.js
+--- new/timing.js	2026-11-02 09:39:09.729353196 -0600
++++ new2/timing.js	2026-11-02 09:57:54.887804021 -0600
+@@ -57,7 +57,9 @@
+   const lg=tile.querySelector('.legend');lg.innerHTML=PH.map((p,k)=>used[k]?`<span title="${esc(p[2])}"><i class="swatch" style="background:var(${p[1]})"></i>${esc(p[0])}</span>`:'').join('');
+  }
+  async function j(u){const r=await (window.AFX&&AFX.take(u)||fetch(u+'?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(15000)}));/* pt1070u */if(!r.ok)throw Error(u);return r.json();}
+- async function load(){try{[sm,gate]=await Promise.all([j('/site-metrics.json'),j('/gate.json')]);}catch{}draw();}
++ /* pt1076u: the tile only shows the last 20 finalized epochs; the -recent slices (site-tools/build_site_slices.py) carry exactly what it reads, ~11 KB gzipped instead of ~205 KB. Full files are the fallback. */
++ const jr=(a,b)=>j(a).catch(()=>j(b));
++ async function load(){try{[sm,gate]=await Promise.all([jr('/site-metrics-recent.json','/site-metrics.json'),jr('/gate-recent.json','/gate.json')]);}catch{}draw();}
+  load();setInterval(load,60000);
+  new MutationObserver(()=>{if(!tile.isConnected&&place())draw();}).observe(main,{childList:true});
+  let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(draw,250);});
+diff -ru -x curves.json -x '*.json' new/top.js new2/top.js
+--- new/top.js	2026-11-02 09:39:09.729353196 -0600
++++ new2/top.js	2026-11-02 09:57:54.887804021 -0600
+@@ -14,7 +14,7 @@
+   }catch{if(c){c.dataset.state='unavailable';c.textContent='Chain data · unavailable · retrying';}}
+  }
+  async function groups(){
+-  try{const d=await j('/site-metrics.json'),rows=(d.epochs||[]).filter(e=>fin(e.index)&&fin(e.groups_total));if(!rows.length)return;
++  try{const d=await j('/site-metrics-recent.json').catch(()=>j('/site-metrics.json')),/* pt1076u: slice has every epoch's groups_total */rows=(d.epochs||[]).filter(e=>fin(e.index)&&fin(e.groups_total));if(!rows.length)return;
+    const total=rows.reduce((a,e)=>a+e.groups_total,0),n=$('batches-total');n.textContent=total.toLocaleString('en-GB');
+    const t='Rollout groups submitted across '+rows.length+' epochs (E'+rows[0].index+'–E'+rows[rows.length-1].index+'); K=1 trains one UID\'s batch per epoch';n.title=t;n.setAttribute('aria-label',t);
+   }catch{}

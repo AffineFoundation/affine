@@ -1,15 +1,17 @@
 # Origin for https://affine.io (Cloudflare Flexible SSL -> :80). Port 80 restricted to Cloudflare ranges by ufw.
 http://affine.io, http://www.affine.io {
-	encode gzip
+	# pt1076u: zstd for browsers/edges that ask for it, gzip otherwise (covers JSON, HTML, js, css)
+	encode zstd gzip
 	# pt1070u (Jacob 2026-11-02): browser cache for versioned scripts/styles (?v=...) and the two fonts; the upstream sends no-store.
-	# private = browsers only, never the Cloudflare edge. HTML and JSON keep the upstream headers.
+	# HTML and JSON keep the upstream no-store headers (never edge-cached).
 	@afx_versioned {
 		path *.js *.css
 		query v=*
 	}
-	header @afx_versioned >Cache-Control "private, max-age=86400"
-	@afx_fonts path /network-haffer.ttf /network-mono.ttf
-	header @afx_fonts >Cache-Control "private, max-age=604800"
+	# pt1076u: public so the Cloudflare edge also caches them (query string is part of the edge cache key; checked)
+	header @afx_versioned >Cache-Control "public, max-age=86400"
+	@afx_static path /network-haffer.ttf /network-mono.ttf /favicon.svg /favicon-96x96.png /affine-mark.png
+	header @afx_static >Cache-Control "public, max-age=604800"
 	# affine.io/baseline page (Jacob 2026-11-02): serve the directory index without a trailing-slash redirect
 	rewrite /baseline /baseline/index.html
 	reverse_proxy 127.0.0.1:8787

@@ -32,3 +32,17 @@
 ## Revert
 `~/subnet120-rewrite/state/bench-results/site-backup/20261102T154146Z/revert.sh` on affinevalidator (restores the 10 files and the
 Caddyfile, removes load.js/load.css, validates and reloads Caddy).
+
+## v2 - speed (Jacob pt1076u, 2026-11-02 ~10:00 CR)
+"The website is now a lot slower to load."
+- Cause: the v1 reveal animated every chart for ~450 ms plus point/bar delays and stagger (up to ~0.8 s after the data
+  had arrived), over a shimmering skeleton, so charts looked finished much later than before even though the data
+  arrived sooner. The first view also still downloaded ~340 KB gz of site-metrics/gate/reg-cost JSON for two small tiles.
+- Reveal: static placeholder gridlines (no shimmer); each chart fades in over 200 ms the moment its own svg is drawn.
+- First-view slices built by site-tools/build_site_slices.py (user timer affine-site-slices, every 15 s, writes only on
+  change; exact copies of the fields the tiles read): site-metrics-recent.json 5 KB gz (was 108), gate-recent.json 6 KB
+  (was 97), reg-cost-recent.json 15 KB (was 135; full file loads 3 s later for 1Y/All). Timing tile and header Groups
+  total verified identical to the full files. Full files remain the fallback.
+- Caddy (affine.io only): encode zstd gzip; versioned js/css and fonts/favicons now public so Cloudflare caches them at
+  the edge (verified the query string is in the edge cache key). HTML and JSON stay no-store / DYNAMIC.
+- Revert v2: ~/subnet120-rewrite/state/bench-results/site-backup/20261102T155908Z/revert.sh
