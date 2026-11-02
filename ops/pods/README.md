@@ -8,9 +8,9 @@ It is deployed to `~/subnet120-rewrite/ops/pods/`. State is in `~/subnet120-rewr
 
 | file | what |
 |---|---|
-| `status.json`, `status.md` | per-role liveness: `up` / `unreachable` / `dead` (unreachable for 20 min or more) / `down` (Lium status not RUNNING) / `gone` (no longer listed), plus the action |
+| `status.json`, `status.md` | per-role liveness: `up` / `unreachable` / `dead` (unreachable for 20 min or more) / `down` (Lium status not RUNNING) / `gone` (no longer listed) / `released` (bench daemon let it go on purpose; it rents on demand), plus the action |
 | `events.jsonl` | one line per state change (node-gone, node-back) |
-| `rents.jsonl` | rent ledger. It enforces the caps: `max_rents_24h` per role and 6 in total |
+| `rents.jsonl` | rent ledger. It enforces the caps: `max_rents_24h` per role and 6 in total. Other SN120 tools log here too (e.g. `seqgate-shadow`), and their rents count toward the global cap |
 | `golden/<role>/` | the role's code and runtime, copied from the live pod with no secrets (`snapshot`) |
 | `runs/<ts>-<role>/` | backups of every host file a run changed, plus `revert.sh` |
 | `ssh/<role>.sh` | ssh wrapper for a newly rented pod |
@@ -39,6 +39,7 @@ Watch timer, every 5 min. It only runs `status` and never rents:
   - the pod has been unreachable for less than 20 min;
   - a reachable pod already carries the role's name.
 - **Rent caps:** the per-role cap and 6 rents per 24 h in total.
+- **Price cap:** the standing permission covers replacements up to `_limits.auto_max_price_h` = $35/h. A node above that (today: any 8xB200/8xB300 for the probe, ~$55-71/h) is only listed (`over auto cap`). Renting it needs Jacob's OK and `--over-auto-cap`.
 - **Removal:** only `lium rm <exact old id>`. It runs only if Lium still lists that id, the pod carries one of the role's names, and it is unreachable.
 - **No secrets on pods:**
   - Code comes from GitHub (`git clone` on the pod) or from the host's golden copy. The golden copy excludes `*.seed`, `r2.env`, `private/` and `id_*`, and the file list is checked again before copying.
@@ -51,7 +52,7 @@ Watch timer, every 5 min. It only runs `status` and never rents:
 1. Read `~/subnet120-rewrite/state/pods/status.json`. Run `replace_pod.py status` first if it is older than 10 min.
 2. For each role whose `state` is `gone`, `down` or `dead`, follow `action`:
    - `auto-replace` (`prior`, `perf`, `probe`): run `python3 replace_pod.py replace ROLE`, then report the new pod, its $/h and `revert.sh`.
-     - **Probe:** if the output says `no node offered` and shows a `--allow-gpu-change` alternative (8xB300 or 8xH200), rerun with `--allow-gpu-change`. Tell Jacob, because gate probe numerics move slightly. Both sides of a gate comparison still run on the same pod.
+     - **Probe:** 8xB200 costs ~$71/h, above the $35/h standing cap, so `replace probe` refuses with `above the standing auto-rent cap`. Ask Jacob: either the B200 with `--over-auto-cap`, or the 8xH200 (~$30/h) with `--allow-gpu-change`. Also, if the output says `no node offered` and shows a `--allow-gpu-change` alternative (8xB300 or 8xH200), rerun with `--allow-gpu-change`. Tell Jacob, because gate probe numerics move slightly. Both sides of a gate comparison still run on the same pod.
    - `delegated` (bench): the affine-bench daemon replaces it by itself. Only check `journalctl --user -u affine-bench`.
    - `manual` (trainer, evaluator): rent and restore the public runtime with `replace ROLE --allow-manual`, then stop. A ROOT step is needed (below), so ask Jacob.
    - `optional` (perf2): do nothing unless asked.

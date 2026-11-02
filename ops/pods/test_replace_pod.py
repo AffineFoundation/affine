@@ -109,3 +109,45 @@ def test_probe_gpu_change_only_with_flag():
     assert rp.candidates("probe") == []
     c = rp.candidates("probe", allow_gpu_change=True)
     assert c and c[0]["gpu"] == "H200" and c[0]["tier"] == "secure"   # fake lium offers no B200/B300; H200 fallback, secure only
+
+
+def _role_with_pp(tmp_id="aaaaaaaa-0000-4000-8000-000000000009"):
+    f = TMP / "pp_assess.sh"
+    f.write_text("exec ssh -o UserKnownHostsFile=/x/known_hosts/%s -p 20555 root@198.51.100.9 \"$@\"\n" % tmp_id)
+    rp.ROLES["_a"] = dict(name="affine-a", names=["affine-a"], current_from=dict(file=str(f)))
+    return tmp_id
+
+
+def test_assess_states(monkeypatch=None):
+    pid = _role_with_pp()
+    listed = dict(id=pid, huid="h-a", name="affine-a", status="RUNNING", ip="198.51.100.9", ports={"22": 20555})
+    orig = rp.ssh_ok
+    try:
+        rp.ssh_ok = lambda *a, **k: True
+        assert rp.assess("_a", [listed], None)["state"] == "up"
+        assert rp.assess("_a", [], None)["state"] == "gone"
+        assert rp.assess("_a", [dict(listed, status="STOPPED")], None)["state"] == "down"
+        assert rp.assess("_a", [dict(listed, name="affine-tobias-4xh200")], None)["state"] == "excluded"
+        rp.ssh_ok = lambda *a, **k: False
+        r = rp.assess("_a", [listed], None); assert r["state"] == "unreachable"
+        old = dict(id=pid, unreachable_since=time.time() - 60 * 25)
+        assert rp.assess("_a", [listed], old)["state"] == "dead"          # unreachable >= dead_after_min (20)
+        old = dict(id="someone-else", unreachable_since=time.time() - 60 * 25)
+        assert rp.assess("_a", [listed], old)["state"] == "unreachable"   # the clock restarts for a different pod id
+    finally:
+        rp.ssh_ok = orig; del rp.ROLES["_a"]
+
+
+def test_auto_price_cap_blocks_without_flag():
+    import argparse, contextlib, io
+    a = argparse.Namespace(role="prior", dry_run=True, node=None, resume=None, allow_manual=False, allow_gpu_change=False, over_auto_cap=False)
+    old = rp.LIM.get("auto_max_price_h"); rp.LIM["auto_max_price_h"] = 5   # every fake offer (>= $8/h) is above it
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): rp.cmd_replace(a)
+        assert "above the standing auto-rent cap $5/h" in out.getvalue() and "WOULD REPLACE" not in out.getvalue()
+        a.over_auto_cap = True; out = io.StringIO()
+        with contextlib.redirect_stdout(out): rp.cmd_replace(a)
+        assert "auto-rent cap" not in out.getvalue() and "candidate cheap-spot-1" in out.getvalue()
+    finally:
+        rp.LIM["auto_max_price_h"] = old

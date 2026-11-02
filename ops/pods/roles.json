@@ -1,6 +1,6 @@
 {
  "_doc": "SN120 Lium pod roles for ops/pods/replace_pod.py. current_from = the host file the live service reads (source of truth for the pod's id/ip/port). gpu_specs are fallbacks in order; within a spec the cheapest node wins. Paths may use ~ and {RA} (= ~/subnet120-rewrite/state/root-audits).",
- "_limits": {"max_rents_24h_global": 6, "dead_after_min": 20},
+ "_limits": {"max_rents_24h_global": 6, "dead_after_min": 20, "auto_max_price_h": 35},
  "_excluded": {"names_re": "casper|tobias|mech-?1", "huids": ["swift-wolf-bd", "zesty-orbit-fe"], "ids": []},
  "_scan_roots": ["~/.config/systemd/user", "{RA}/20261026-promotion-gate/code", "{RA}/20261022-env-probe/code", "{RA}/20261031-performance-eval/code",
                  "{RA}/20261101-prior-table", "{RA}/20261030-plain-disk", "{RA}/20261030-trainer-speed/release", "{RA}/20261031-renorm-step-live/release",
@@ -105,7 +105,7 @@
   "root": "/opt/plain/probe",
   "golden": {"paths": ["opt/plain/probe/affine-env-probe", "opt/plain/probe/affine-mimo-20261013", "opt/plain/probe/affine-mimo-public-evaluator-20261013",
                        "opt/plain/probe/.local", "opt/plain/probe/.cache/uv", "opt/plain/probe/.cache/verifiers", "opt/affine-vllm-venv"],
-             "exclude": ["opt/plain/probe/affine-env-probe/ckpt", "opt/plain/probe/affine-env-probe/runs", "opt/plain/probe/affine-env-probe/vcache",
+             "exclude": ["opt/plain/probe/.cache/verifiers/runtimes", "opt/plain/probe/affine-env-probe/ckpt", "opt/plain/probe/affine-env-probe/runs", "opt/plain/probe/affine-env-probe/vcache",
                          "opt/plain/probe/affine-env-probe/hf", "opt/plain/probe/affine-env-probe/gate/work", "opt/plain/probe/affine-env-probe/push",
                          "opt/plain/probe/affine-env-probe/bench", "opt/plain/probe/affine-env-probe/survey", "opt/plain/probe/affine-env-probe/pre-continuous-partial-20261023",
                          "opt/plain/probe/affine-mimo-public-evaluator-20261013/private", "*.seed", "r2.env", "*.urls.private.json",
@@ -118,7 +118,7 @@
    {"type": "pod_cmd", "cmd": "mkdir -p /opt/plain/probe/affine-env-probe/ckpt /opt/plain/probe/affine-env-probe/runs /opt/plain/probe/affine-env-probe/gate/work /opt/plain/probe/affine-env-probe/vcache /opt/plain/probe/.triton /opt/plain/probe/.nv && ln -sfn /opt/plain/probe/.triton /root/.triton && ln -sfn /opt/plain/probe/.nv /root/.nv && echo ok"},
    {"type": "fetch_head", "ckpt_dir": "/root/affine-env-probe/ckpt", "fetch_py": "/root/affine-env-probe/gate/gate_fetch.py"}
   ],
-  "health": "/root/affine-mimo-20261013/venv/bin/python -c 'import vllm, torch; assert torch.cuda.device_count() == 8; print(\"OK\", vllm.__version__)' && python3 /root/affine-env-probe/podctl.py status > /dev/null && echo podctl-ok",
+  "health": "/root/affine-env-probe/venv/bin/python -c 'import vllm, torch; assert torch.cuda.device_count() == 8; print(\"OK\", vllm.__version__)' && python3 /root/affine-env-probe/podctl.py status > /dev/null && echo podctl-ok",
   "repoint": {
    "files": ["{RA}/20261026-promotion-gate/code/gate_service.py", "{RA}/20261022-env-probe/code/probe_daemon.py", "{RA}/20261027-k-half/code/khalf_build.py",
              "{RA}/20261029-red-skip/release/percache_watch.py", "~/subnet120-rewrite/ops/disk_guard/disk_guard.py", "{RA}/20261030-plain-disk/pod.sh", "{RA}/20261030-plain-disk/podin.sh"],
@@ -136,7 +136,7 @@
   "root": "/opt/plain/trainer",
   "golden": {"paths": ["workspace/affine-mimo-trainer-prod"],
              "exclude": ["workspace/affine-mimo-trainer-prod/private", "workspace/affine-mimo-trainer-prod/trainer-state", "workspace/affine-mimo-trainer-prod/fp32-master",
-                         "workspace/affine-mimo-trainer-prod/fp32-publish", "workspace/affine-mimo-trainer-prod/checkpoint-cache", "workspace/affine-mimo-trainer-prod/backup-*",
+                         "workspace/affine-mimo-trainer-prod/fp32-publish", "workspace/affine-mimo-trainer-prod/workspace", "workspace/affine-mimo-trainer-prod/checkpoint-cache", "workspace/affine-mimo-trainer-prod/backup-*",
                          "*.seed", "r2.env", "*.private.*", "*.log", "*.pid", "__pycache__"],
              "links": {}},
   "provision": [

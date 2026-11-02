@@ -91,7 +91,8 @@ def current_ref(role):
     try: txt = Path(f).read_text()
     except FileNotFoundError: return None
     if f.endswith(".json"):
-        d = json.loads(txt); return dict(id=d.get("id") or d.get("lium_id"), huid=d.get("huid"), ip=d.get("ip"), port=d.get("port"), file=f)
+        d = json.loads(txt); return dict(id=d.get("id") or d.get("lium_id"), huid=d.get("huid"), ip=d.get("ip"), port=d.get("port"), file=f,
+                                         released=d.get("released") if not (d.get("id") or d.get("lium_id")) else None)
     m = re.search(r"known_hosts/(" + UUID + ")", txt)
     e = re.search(r"""-p['"]?,?\s*['"]?(\d{2,5})['"]?,?\s*['"]?root@([\d.]+)""", txt)
     return dict(id=m.group(1) if m else None, ip=e.group(2) if e else None, port=int(e.group(1)) if e else None, file=f)
@@ -132,6 +133,7 @@ def assess(role, ps, prev, probes=1):
         rec.update(huid=listed["huid"], name=listed.get("name"), lium_status=listed.get("status"), price_h=listed.get("price_per_hour"),
                    gpu=listed.get("config"), ip=listed.get("ip") or ref.get("ip"), port=(listed.get("ports") or {}).get("22") or ref.get("port"))
     else: rec.update(ip=ref.get("ip"), port=ref.get("port"), huid=ref.get("huid"))
+    if not ref.get("id") and ref.get("released"): rec.update(state="released", released_cr=cr(ref["released"])); return rec  # owner daemon let it go on purpose
     if not ref.get("id"): rec["state"] = "no-config"; return rec
     if excluded(listed): rec["state"] = "excluded"; return rec
     if not listed: rec["state"] = "gone"; return rec
@@ -182,7 +184,7 @@ def cmd_status(a):
 
 
 # ---------------- node choice ----------------
-def candidates(role, only=None, allow_gpu_change=False):
+def candidates(role, only=None, allow_gpu_change=False, cap=None):
     R = ROLES[role]; out = []
     for spec in R["gpu_specs"]:
         if spec.get("gpu_change") and not allow_gpu_change: continue
@@ -198,10 +200,11 @@ def candidates(role, only=None, allow_gpu_change=False):
             price = round(r["price_per_gpu_hour"] * n, 2)
             if price > R["max_price_h"] or (r.get("disk_gb") or 0) < R.get("min_disk_gb", 0): continue
             rows.append(dict(huid=r["huid"], gpu=spec["gpu"], count=n, node_gpus=r["gpu_count"], price_h=price, tier=r.get("tier"),
-                             disk_gb=r.get("disk_gb"), country=r.get("country_code"), down=r.get("download_mbps")))
+                             disk_gb=r.get("disk_gb"), country=r.get("country_code"), down=r.get("download_mbps"),
+                             over=cap is not None and price > cap))
         rows.sort(key=lambda r: (r["price_h"], -(r["down"] or 0)))
         if rows: out.append((spec, rows))
-        if rows and not only: break      # first spec with offers wins (fallbacks only when it has none)
+        if any(not r["over"] for r in rows) and not only: break   # first spec with an offer within the cap wins; fallbacks otherwise
     return [r for _, rows in out for r in rows]
 
 
@@ -468,14 +471,20 @@ def cmd_replace(a):
     if not resume:
         if rents_24h(role) >= R.get("max_rents_24h", 2): verdict.append("role rent cap %d/24h reached" % R.get("max_rents_24h", 2))
         if rents_24h() >= LIM["max_rents_24h_global"]: verdict.append("global rent cap %d/24h reached" % LIM["max_rents_24h_global"])
-    cands = [] if resume else candidates(role, a.node, a.allow_gpu_change)
+    cap = LIM.get("auto_max_price_h", 35)  # standing permission (Jacob pt1087u) covers replacements up to this $/h only
+    cands = [] if resume else candidates(role, a.node, a.allow_gpu_change, None if a.over_auto_cap else cap)
+    over = [c for c in cands if c["over"]]
+    if over:
+        cands = [c for c in cands if not c["over"]]
+        if not cands: verdict.append("cheapest offer %s $%s/h is above the standing auto-rent cap $%s/h: needs Jacob's OK, then rerun with --over-auto-cap" % (over[0]["huid"], over[0]["price_h"], cap))
     say(" spec: %s, <= $%s/h, disk >= %s GB, tiers %s" % (", ".join("%dx%s%s%s" % (s["count"], s["gpu"], " (whole node)" if s.get("whole_node") else "",
         " [only with --allow-gpu-change]" if s.get("gpu_change") else "") for s in R["gpu_specs"]), R["max_price_h"], R.get("min_disk_gb"), R.get("tiers")))
     if not a.allow_gpu_change and any(s.get("gpu_change") for s in R["gpu_specs"]) and not resume:
-        alt = candidates(role, a.node, True)
+        alt = [c for c in candidates(role, a.node, True, None if a.over_auto_cap else cap) if not c["over"]]
         if alt and not cands: say("   (with --allow-gpu-change: %s %dx%s $%s/h %s)" % (alt[0]["huid"], alt[0]["count"], alt[0]["gpu"], alt[0]["price_h"], alt[0]["tier"]))
     for c in cands[:5]: say("   candidate %(huid)s %(count)dx%(gpu)s of %(node_gpus)d  $%(price_h)s/h  %(tier)s disk %(disk_gb)s GB %(country)s" % c)
-    if not cands and not resume: verdict.append("no node offered within the spec")
+    if not cands and not resume and not over: verdict.append("no node offered within the spec")
+    for c in over[:3]: say("   over auto cap: %(huid)s %(count)dx%(gpu)s $%(price_h)s/h %(tier)s" % c)
     say(" rents last 24h: role %d, global %d" % (rents_24h(role), rents_24h()))
     if dry:
         fake = dict(id="NEW-LIUM-ID-0000-0000-000000000000", ip="203.0.113.1", port=40000, huid=(cands[0]["huid"] if cands else "new-huid"),
@@ -573,6 +582,8 @@ def cmd_verify(a):
         else:
             now_ = listing(pod, gspec(role))
             then = dict(l.split("\t", 1)[::-1] for l in (gdir(role) / man["listing"]).read_text().splitlines() if "\t" in l)
+            exc = [x.rstrip("/") for x in gspec(role).get("exclude", [])]  # an exclude added after the snapshot is not drift
+            then = {k: v for k, v in then.items() if not any(k == x or k.startswith(x + "/") for x in exc)}
             add = sorted(set(now_) - set(then)); gone = sorted(set(then) - set(now_)); chg = sorted(k for k in set(now_) & set(then) if now_[k] != then[k])
             say(" golden %s (%s, %s): live has %d new, %d removed, %d size-changed files %s" % (man["tar"], man["pod"], man["at_cr"], len(add), len(gone), len(chg), (add + chg)[:6]))
             if add or chg or gone: rc = 1
@@ -586,6 +597,7 @@ def main():
     s = sp.add_parser("status"); s.add_argument("--json", action="store_true"); s.add_argument("--quiet", action="store_true")
     s = sp.add_parser("replace"); s.add_argument("role"); s.add_argument("--dry-run", action="store_true"); s.add_argument("--node")
     s.add_argument("--resume"); s.add_argument("--allow-manual", action="store_true")
+    s.add_argument("--over-auto-cap", action="store_true", help="allow nodes above _limits.auto_max_price_h ($35/h); only after Jacob approved that price")
     s.add_argument("--allow-gpu-change", action="store_true", help="also use the role's fallback GPU types marked gpu_change (probe: B300/H200 instead of B200)")
     s = sp.add_parser("snapshot"); s.add_argument("role")
     s = sp.add_parser("verify"); s.add_argument("role")
