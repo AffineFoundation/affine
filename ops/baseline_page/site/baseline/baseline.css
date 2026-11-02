@@ -42,3 +42,9 @@ footer #bl-updated{font:10px/1.6 var(--mono);color:var(--muted)}
 .bl-knobs li::marker{color:var(--muted)}
 .bl-knobs code{font:12px var(--mono);color:var(--ink);padding:1px 5px;border-radius:3px;background:var(--control);white-space:nowrap}
 @media(max-width:700px){.bl-how p,.bl-how li{font-size:14px}.bl-eq{font-size:15px;padding:10px 12px}.bl-how>.section-heading{height:auto;flex-wrap:wrap}}
+/* pt1080u: IRT overlay (proposed, not live) - dashed --accepted accent, own legend swatch, right-axis ticks for a/median */
+.bl-swatch-irt{background:none!important;border-top:2px dashed var(--accepted);height:0!important;width:14px!important}
+.bl-swatch-irt.bl-swatch-dot{border-top-style:dotted}
+.bl-chart text.bl-rtick{fill:var(--accepted)}
+.bl-how p.bl-irt-only{padding-top:4px;border-top:1px solid var(--line)}
+.bl-how p.bl-irt-only strong{font-weight:400;color:var(--accepted)}

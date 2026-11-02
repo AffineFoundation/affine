@@ -6,14 +6,17 @@
 <meta name="color-scheme" content="dark light">
 <script>try{const theme=localStorage.getItem("affine:theme");if(theme==="light")document.documentElement.dataset.theme=theme;}catch{}if(document.documentElement.dataset.theme==="light")document.querySelector('meta[name="theme-color"]').content="#ffffff";</script>
 <title>Affine · Baseline</title>
+<script>/* pt1070u: start every data fetch while the page is still parsing; each chart script's first load takes its copy (AFX.take), later refreshes fetch as before */(()=>{const t0=Date.now(),m={};for(const u of ['/baseline/curves.json','/baseline/irt-curves.json'])m[u]=fetch(u+'?t='+t0,{cache:'no-store'}).catch(()=>null);window.AFX={take(u){const p=m[u];if(!p||Date.now()-t0>20000)return null;return p.then(r=>r?r.clone():fetch(u+'?t='+Date.now(),{cache:'no-store'}));}};})();</script>
 <meta name="description" content="How the SN120 gate draws its baseline tasks: the shape of the prior-v1 pass-rate table and of the per-task selection probability.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="/network.css?v=20261020-video-nav">
 <link rel="stylesheet" href="/k1.css?v=20261029-grid2">
-<link rel="stylesheet" href="/baseline/baseline.css?v=bl2b-20261102">
-<script defer src="/baseline/baseline.js?v=bl2b-20261102"></script>
+<link rel="stylesheet" href="/baseline/baseline.css?v=pt1080u-20261102">
+<link rel="stylesheet" href="/load.css?v=pt1076u-20261102">
+<script defer src="/load.js?v=pt1076u-20261102"></script>
+<script defer src="/baseline/baseline.js?v=pt1080u-20261102"></script>
 </head>
 <body>
 <a class="skip-link" href="#bl-main">Skip to charts</a>
@@ -29,13 +32,18 @@
 </div>
 <section id="bl-pass" class="bl-tile" aria-labelledby="bl-pass-t">
 <div class="section-heading"><h2 id="bl-pass-t" title="The head&rsquo;s pass rate on each baseline task, tasks sorted from hardest to easiest. Averaged over equal-count bins; no task is shown individually.">Head pass rate by task</h2><span class="reading" id="bl-pass-r">&mdash;</span></div>
-<div class="chart-wrap k1-chart bl-chart" id="bl-pass-c" role="img" aria-label="Sorted pass-rate curve of the baseline tasks"></div>
-<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>Pass rate</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
+<div class="chart-wrap k1-chart bl-chart afx afx-wait" id="bl-pass-c" role="img" aria-label="Sorted pass-rate curve of the baseline tasks"></div>
+<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>Pass rate</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span><span class="bl-irt-only"><i class="swatch bl-swatch-irt bl-swatch-dot"></i>IRT discrimination a &divide; median, right axis (model-dependent, not live)</span></div>
 </section>
 <section id="bl-select" class="bl-tile" aria-labelledby="bl-select-t">
 <div class="section-heading"><h2 id="bl-select-t" title="Chance that a task is in a round&rsquo;s baseline draw (Neyman allocation, Hajek estimate), in the same task order as the chart above.">Selection probability per round</h2><span class="reading" id="bl-select-r">&mdash;</span></div>
-<div class="chart-wrap k1-chart bl-chart" id="bl-select-c" role="img" aria-label="Per-task selection probability, same task order as the pass-rate chart"></div>
-<div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Selection probability</span><span><i class="swatch bl-swatch-dash"></i>Uniform draw</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
+<div class="chart-wrap k1-chart bl-chart afx afx-wait" id="bl-select-c" role="img" aria-label="Per-task selection probability, same task order as the pass-rate chart"></div>
+<div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Selection probability (live)</span><span class="bl-irt-only"><i class="swatch bl-swatch-irt"></i>IRT information weighting (proposed, not live)</span><span><i class="swatch bl-swatch-dash"></i>Uniform draw</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
+</section>
+<section id="bl-info" class="bl-tile bl-irt-only" aria-labelledby="bl-info-t">
+<div class="section-heading"><h2 id="bl-info-t" title="The term each design draws on, at the head, each divided by its mean over all tasks so the shapes compare. Live: the posterior p(1-p). Proposed: the 2PL information a&sup2;P(1-P). Same task order as above.">Draw weight term at the head</h2><span class="reading">IRT fit <span data-irt="generated">&mdash;</span> &middot; not live</span></div>
+<div class="chart-wrap k1-chart bl-chart afx afx-wait" id="bl-info-c" role="img" aria-label="Normalised current variance term and proposed IRT information term, same task order"></div>
+<div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Live: E[p(1&minus;p)] &divide; mean</span><span><i class="swatch bl-swatch-irt"></i>IRT information a&sup2;P(1&minus;P) &divide; mean (proposed, not live)</span><span><i class="swatch bl-swatch-dash"></i>Mean = 1</span><span><i class="swatch bl-swatch-guide"></i>Pass rate 0.5</span></div>
 </section>
 <section id="bl-how" class="bl-tile bl-how" aria-labelledby="bl-how-t">
 <div class="section-heading"><h2 id="bl-how-t">How the draw works</h2><a class="bl-code" href="https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py#L95">priors/baseline_v1.py <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3 9 9 3M3 3h6v6"/></svg></a></div>
@@ -55,8 +63,9 @@
 </ul>
 <p>The gain is a H&aacute;jek (inverse-probability ratio) estimate per environment, so the non-uniform draw does not bias it. Every drawn task <var>i</var> is weighted by 1&thinsp;/&thinsp;<var>π</var><sub>i</sub>, with <var>d</var><sub>i</sub> = candidate minus head pass rate:</p>
 <div class="bl-eq" role="math" aria-label="m e equals the sum of d i over pi i divided by the sum of one over pi i; Delta is the share-weighted sum over environments"><var>m</var><sub>e</sub> = <span class="bl-frac"><span>&Sigma;<sub><var>i</var>&isin;<var>e</var></sub>&thinsp;<var>d</var><sub>i</sub>&thinsp;/&thinsp;<var>π</var><sub>i</sub></span><span>&Sigma;<sub><var>i</var>&isin;<var>e</var></sub>&thinsp;1&thinsp;/&thinsp;<var>π</var><sub>i</sub></span></span>,&ensp; &Delta; = &Sigma;<sub><var>e</var></sub>&thinsp;share<sub><var>e</var></sub>&thinsp;<var>m</var><sub>e</sub></div>
+<p class="bl-irt-only"><strong>Proposed, not live: IRT information weighting.</strong> The dashed curves come from a one-off two-parameter logistic (2PL) item-response fit to the past pass/fail counts of many checkpoints: <var>P</var><sub>i</sub>(<var>&theta;</var>) = 1&thinsp;/&thinsp;(1 + e<sup>&minus;<var>a</var><sub>i</sub>(<var>&theta;</var> &minus; <var>b</var><sub>i</sub>)</sup>), with <var>&theta;</var> the checkpoint&rsquo;s ability, <var>b</var><sub>i</sub> the task&rsquo;s difficulty and <var>a</var><sub>i</sub> its discrimination (how sharply it separates slightly stronger from slightly weaker checkpoints). The information a task carries about a small change of <var>&theta;</var> at the head is <var>I</var><sub>i</sub> = <var>a</var><sub>i</sub><sup>2</sup>&thinsp;<var>P</var><sub>i</sub>(1 &minus; <var>P</var><sub>i</sub>); the proposal would draw with &radic;<span class="bl-ov"><var>I</var><sub>i</sub></span> in place of &radic;<span class="bl-ov"><var>v</var><sub>i</sub></span>, same <span class="bl-k">N</span>, <span class="bl-k">floor</span> and <span class="bl-k">cap</span>. Fit <span data-irt="generated">&mdash;</span>, not refreshed. The checkpoints all come from one training chain and sit close together, so <var>a</var> is weakly determined for many tasks: read the overlay as a model-dependent sketch, not a measurement. The live gate does not use it.</p>
 </section>
-<p class="bl-note">x: percentile of tasks sorted by the head&rsquo;s current pass rate (0 = hardest, 100 = easiest). Both charts use the same order. Curves are averages over equal-count bins of about 120 tasks, rounded; task ids and per-task values stay private. Computed from the live prior table with the gate&rsquo;s own draw code (what the next round would use; an open round keeps the snapshot it took when it opened), refreshed every 15 minutes.</p>
+<p class="bl-note">x: percentile of tasks sorted by the head&rsquo;s current pass rate (0 = hardest, 100 = easiest). The charts use the same order (the dashed IRT overlays keep the order of the prior table at the time of the one-off fit). Curves are averages over equal-count bins of about 120 tasks, rounded; task ids and per-task values stay private. Computed from the live prior table with the gate&rsquo;s own draw code (what the next round would use; an open round keeps the snapshot it took when it opened), refreshed every 15 minutes.</p>
 </main>
 <footer><span class="footer-identity"><span class="footer-brand">Affine</span><span aria-hidden="true">&middot;</span><span>Subnet 120</span></span><span id="bl-updated">&nbsp;</span></footer>
 </body>
