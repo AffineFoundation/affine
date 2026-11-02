@@ -1,0 +1,147 @@
+--- index.html.bak-pre-lrchart-20261102T015639Z	2026-11-02 01:50:28.098077530 +0000
++++ index.html	2026-11-02 01:59:07.407284318 +0000
+@@ -24,11 +24,11 @@
+ <script defer src="/chart-expand.js?v=20261026-expand1"></script>
+ <script defer src="/perf.js?v=t995u-20261101T152045Z"></script>
+ <script defer src="/bench.js?v=202611020150"></script>
+-<script defer src="/k1.js?v=t995u-20261101T152045Z"></script>
++<script defer src="/k1.js?v=pt1039u-20261102T0205Z"></script>
+ <script defer src="/top.js?v=20261029-trim1"></script>
+ <script defer src="/timing.js?v=20261029-grid3"></script>
+ <script defer src="/regcost.js?v=t994u-20261101T151259Z"></script>
+-<script defer src="/tile-details.js?v=t995u-20261101T152045Z"></script>
++<script defer src="/tile-details.js?v=pt1039u-20261102T0205Z"></script>
+ </head>
+ <body>
+ <a class="skip-link" href="#main">Skip to measurements</a>
+--- k1.js.bak-pre-lrchart-20261102T015639Z	2026-11-01 15:20:45.646660394 +0000
++++ k1.js	2026-11-02 01:59:07.402284201 +0000
+@@ -42,7 +42,7 @@
+   edgeLabels(svg,items.length,i=>P.l+i*bw,bw,H-6,i=>items[i].x);
+   if(opt.right){for(const [v,yy] of [[opt.rightMax,P.t],[0,H-P.b]]){const t=svgEl('text',{x:W-P.r+4,y:yy+3,fill:'var(--accepted)'});t.textContent=v;svg.append(t);}}
+  }
+- function render(k1,scores,mining){
++ function render(k1,scores,mining,lrj){
+   const turns=(k1.turns||[]).slice().sort((a,b)=>a.epoch_index-b.epoch_index);
+   const done=turns.filter(t=>t.status==='turn');
+   const q=k1.queue||{};const payees=k1.payees||[];
+@@ -94,6 +94,13 @@
+   const bs=tile('panel-k1-batch','Batch per turn');const bwrap=bs.querySelector('.k1-chart')||bs.appendChild($('div',{class:'chart-wrap k1-chart'}));
+   if(!bs.querySelector('.legend'))bs.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--incentive)"></i>Rollouts</span></div>');
+   bs.querySelector('.reading').textContent=done.length?(done[done.length-1].tasks+' × '+(done[done.length-1].rollouts/done[done.length-1].tasks|0)):'—';
++  // 6b. learning rate per turn (Jacob pt1039u 2026-11-01; data /k1/lr.json from affine-training-params)
++  const lrT=(lrj&&lrj.turns)||[];const lrBy=new Map(lrT.map(r=>[r.epoch,r]));
++  const fe=v=>{if(v==null)return'—';const e=Math.floor(Math.log10(v)),m=v/Math.pow(10,e);return(Math.abs(m-Math.round(m))<1e-9?Math.round(m):+m.toFixed(2))+'e'+e;};
++  const lt=tile('panel-k1-lr','Learning rate per turn');const lwrap=lt.querySelector('.k1-chart')||lt.appendChild($('div',{class:'chart-wrap k1-chart'}));
++  if(!lt.querySelector('.legend'))lt.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span><span><i class="swatch" style="border:1px dashed var(--rejected)"></i>Miner lr private (RED)</span></div>');
++  {const lastLr=[...lrT].reverse().find(r=>r.lr!=null);lt.querySelector('.reading').textContent=lastLr?fe(lastLr.lr):'—';}
++  lt.querySelector('h2').title='The learning rate the trainer applied to each turn batch (trainer report TRAINING-RESULT: train_params.lr, else the optimizer lr). Default 5e-7; a miner may set lr in [1.25e-7, 1e-6] in an affine-batch-v2 file. A miner-chosen lr on a RED turn stays private, like the rest of its train params (hollow marker at the bottom). Log scale.';
+   // 7. lineage
+   const li=tile('panel-k1-lineage','Head lineage');li.querySelector('.k1-lineage')?.remove();
+   let rows=[],cur=null;
+@@ -109,7 +116,7 @@
+    `<tr><td class="num">E${t.epoch_index}</td><td class="num">${esc(t.uid)}</td><td class="k1-hash" title="${esc(t.hotkey)}">${hk(t.hotkey)}</td><td class="num">${esc(t.reg_block??'—')}</td><td class="k1-hash">${esc({'hotkey-registration-once':'hotkey + reg once','hotkey-once':'per hotkey','registration-once':'per registration','fewest-turns':'fewest-turns'}[t.queue_rule]||esc(t.queue_rule||'—'))}</td><td class="num">${esc(t.skipped_not_ready??'—')}</td><td class="num">${esc(t.tasks)}</td><td class="num">${esc(t.rollouts)}</td><td class="num">${pct(t.h_pass)}</td><td class="num">${pct(t.c_pass)}</td><td class="num">${fz(t.z)}</td><td class="num">${pct(t.cap)}</td><td>${pill(t.verdict)}</td><td class="k1-hash">${sh(t.head)} → ${sh(t.candidate)}</td><td class="k1-hash">${esc((t.decided_at_cr||'').replace(' CR (UTC-6)','').slice(5))}</td></tr>`).join('')+
+    '</tbody></table></div>');
+   // place tiles: status first, then charts, then tables; ahead of existing tiles
+-  st.remove();/* pt931u 2026-10-31: K=1 network text tile removed from the page */for(const s of [gz,pr,bs,qu,pa,li,tt]){if(s.parentNode!==main||s.dataset.placed!=='1'){anchor&&anchor!==s?anchor.before(s):main.append(s);s.dataset.placed='1';}}
++  st.remove();/* pt931u 2026-10-31: K=1 network text tile removed from the page */for(const s of [gz,pr,bs,lt,qu,pa,li,tt]){if(s.parentNode!==main||s.dataset.placed!=='1'){anchor&&anchor!==s?anchor.before(s):main.append(s);s.dataset.placed='1';}}
+   // charts (after layout)
+   requestAnimationFrame(()=>{
+    const lab=t=>'E'+t.epoch_index;
+@@ -147,6 +154,26 @@
+    barChart(bwrap,done.map(t=>({x:lab(t),v:t.rollouts||0,c:'var(--incentive)',
+     tip:`<strong>E${t.epoch_index} · UID ${esc(t.uid)}</strong><span>tasks</span> ${esc(t.tasks)} <span>rollouts</span> ${esc(t.rollouts)}\n<span>skipped ahead</span> ${esc(t.skipped_not_ready??'—')} <span>rule</span> ${esc(t.queue_rule||'')}`})),
+     {label:'Batch per turn',empty:'No K=1 turn yet.',slots:10,max:72,fmt:v=>v,ticks:(lo,hi)=>{const s=hi>500?250:hi>100?50:24;const o=[];for(let v=0;v<=hi;v+=s)o.push(v);return o;}});
++   // lr chart: one slot per epoch over the same range as the pass chart, log y
++   lwrap.querySelector('svg')?.remove();
++   {const W=lwrap.clientWidth||400,H=lwrap.clientHeight||220,P={l:44,r:10,t:10,b:22};const svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`});lwrap.prepend(svg);
++    const byE=new Map(done.map(t=>[t.epoch_index,t]));const e0=done.length?done[0].epoch_index:0,e1=done.length?done[done.length-1].epoch_index:-1;
++    const slots=[];for(let e=e0;e<=e1;e++)slots.push({e,t:byE.get(e)||null,r:lrBy.get(e)||null});
++    const vals=lrT.map(r=>r.lr).filter(v=>v!=null);let lo=Math.min(1e-7,...vals),hi=Math.max(1.2e-6,...vals);
++    const L=Math.log10,ys=v=>P.t+(H-P.t-P.b)*(1-(L(v)-L(lo))/((L(hi)-L(lo))||1));
++    for(const g of [1.25e-7,2.5e-7,5e-7,1e-6]){if(g<lo||g>hi)continue;svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:ys(g),y2:ys(g),class:'k1-grid'}));const t=svgEl('text',{x:P.l-6,y:ys(g)+3,'text-anchor':'end'});t.textContent=fe(g);svg.append(t);}
++    const n=Math.max(slots.length,10),bw=(W-P.l-P.r)/n,tp=tip(lwrap),rr=Math.max(2,Math.min(3,bw/2));
++    slots.forEach((s,i)=>{const r=s.r;if(!r)return;const x=P.l+i*bw+bw/2,v=(s.t&&s.t.verdict)||r.verdict;
++     const c=v==='green'?'var(--performance)':v==='red'?'var(--rejected)':'var(--accepted)';
++     if(r.lr==null){svg.append(svgEl('circle',{cx:x,cy:H-P.b-4,r:rr,fill:'none',stroke:'var(--rejected)','stroke-dasharray':'1.5 1','stroke-width':1.2}));return;}
++     svg.append(svgEl('circle',{cx:x,cy:ys(r.lr),r:rr,fill:v==='green'||v==='red'?c:'var(--bg)',stroke:c,'stroke-width':1.2}));});
++    slots.forEach((s,i)=>{const t=s.t,r=s.r;
++     const hit=svgEl('rect',{x:P.l+i*bw,y:P.t,width:bw,height:H-P.t-P.b,fill:'transparent'});hit.addEventListener('mouseenter',()=>{
++      tp.innerHTML=!r?`<strong>E${s.e}</strong>${t?'no trainer lr published yet':'no K=1 turn this epoch'}`:
++       `<strong>E${s.e}${t?' · UID '+esc(t.uid):''} · ${esc(((t&&t.verdict)||r.verdict||'pending').toUpperCase())}</strong><span>lr</span> ${r.lr==null?'private (miner-chosen, RED)':fe(r.lr)}\n<span>source</span> ${esc(r.source==='miner'?'miner-chosen':r.source==='default'?'default':'miner-chosen')}`;
++      tp.hidden=false;tp.style.left=Math.min(P.l+i*bw,W-220)+'px';tp.style.top='4px';});hit.addEventListener('mouseleave',()=>tp.hidden=true);svg.append(hit);});
++    edgeLabels(svg,slots.length,i=>P.l+i*bw,bw,H-6,i=>'E'+slots[i].e);
++    if(!lrT.length){const e=lwrap.querySelector('.empty')||lwrap.appendChild($('p',{class:'empty'}));e.textContent='No learning rate published yet.';}}
+   });
+  }
+  // 9. post-decision artifacts + gate reveals + replay (t764u transparency; data: /k1/turns/index.json, /gate/reveal/index.json, /k1/replay/results.json)
+@@ -165,7 +192,7 @@
+  }
+  async function j(u){const r=await fetch(u+(u.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
+  async function load(){
+-  try{const [k1,scores,mining]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({}))]);render(k1,scores,mining);document.getElementById('panel-k1-artifacts')?.remove();}
++  try{const [k1,scores,mining,lrj]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({})),j('/k1/lr.json').catch(()=>null)]);render(k1,scores,mining,lrj);document.getElementById('panel-k1-artifacts')?.remove();}
+   catch(e){console.warn('k1',e);}
+  }
+  load();setInterval(load,60000);
+--- tile-details.js.bak-pre-lrchart-20261102T015639Z	2026-11-01 15:20:45.646660394 +0000
++++ tile-details.js	2026-11-02 01:59:02.866178110 +0000
+@@ -3,7 +3,7 @@
+    or tap. Nodes are moved, not copied, so the chart scripts keep updating them through their own references. */
+ (()=>{
+  const main=document.getElementById('main');if(!main)return;
+- const LEG=new Set(['panel-timing','panel-performance','panel-k1-pass','panel-k1-z']);/* t994u: simple legend stays visible on these tiles */
++ const LEG=new Set(['panel-timing','panel-performance','panel-k1-pass','panel-k1-z','panel-k1-lr']);/* t994u: simple legend stays visible on these tiles */
+  const KEEP=el=>el.matches('.section-heading,.chart-wrap,.heatmap-wrap,.sp-plot,.cx-btn,.tile-details,.perf-body')||(el.matches('.legend')&&LEG.has(el.parentNode&&el.parentNode.id));
+  const touch=matchMedia('(hover:none)');
+  let rt;const redraw=()=>{clearTimeout(rt);rt=setTimeout(()=>{window.dispatchEvent(new Event('resize'));window.dispatchEvent(new Event('affine:chart-resize'));},60);};
+--- /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/training_params.py.bak-pre-lrchart-20261102T015639Z	2026-11-01 22:56:22.531733982 +0000
++++ /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/training_params.py	2026-11-02 01:56:51.911115365 +0000
+@@ -559,6 +559,36 @@
+     return d
+ 
+ 
++LR_OUT = HOME / 'subnet120/affine/website/k1/lr.json'
++
++
++def lr_turns_public(start=286):
++    """Jacob pt1039u 2026-11-01: the learning rate the trainer applied on each K=1 turn (TRAINING-RESULT). GREEN: always.
++    RED / pending: the validator default is shown; a miner-chosen lr on a RED turn stays private (as in turn.json), value null."""
++    out = []
++    for d in sorted((p for p in (STATE_ROOT / 'epochs').iterdir() if p.name.isdigit() and int(p.name) >= start), key=lambda p: int(p.name)):
++        if not (d / 'TRAINING-RESULT.json').exists(): continue
++        dp = GATE_STATE / 'epochs' / d.name / 'DECISION.json'
++        dec = (rj(dp).get('decision') if dp.exists() else None) or 'pending'
++        r = rj(d / 'TRAINING-RESULT.json'); r = r.get('payload', r)
++        t = (r.get('report') or {}).get('training') or {}
++        tp = t.get('train_params') or {}; opt = t.get('optimizer') or {}
++        lr = tp.get('lr', (opt.get('sgd') or {}).get('sgd_lr', opt.get('lr')))
++        miner = 'lr' in (tp.get('given') or [])
++        if not isinstance(lr, (int, float)): continue
++        row = dict(epoch=int(d.name), verdict=dec, lr=float(lr), source='miner' if miner else 'default')
++        if miner and dec != 'green': row.update(lr=None, source='miner-private')
++        out.append(row)
++    return dict(version='sn120-k1-lr-per-turn-v1', generated_at=int(time.time()),
++                note='lr the trainer applied per K=1 turn (TRAINING-RESULT train_params.lr, else the optimizer sgd_lr). '
++                     'A miner-chosen lr on a RED or pending turn stays private (null), as in turn.json.', turns=out)
++
++
++def write_lr():
++    d = lr_turns_public()
++    tmp = LR_OUT.with_name(LR_OUT.name + '.tmp'); tmp.write_text(json.dumps(d, separators=(',', ':')) + '\n'); os.chmod(tmp, 0o644); os.replace(tmp, LR_OUT)
++
++
+ if __name__ == '__main__':
+     import sys
+     if '--watch' not in sys.argv:
+@@ -567,6 +597,10 @@
+     while True:
+         try:
+             write(); last_err = None
++            try:
++                write_lr()
++            except Exception as ex2:
++                print(json.dumps(dict(event='lr_error', error=str(ex2)[:300], at=time.time())), flush=True)
+         except Exception as ex:
+             if str(ex) != last_err: print(json.dumps(dict(event='error', error=str(ex)[:300], at=time.time())), flush=True)
+             last_err = str(ex)
