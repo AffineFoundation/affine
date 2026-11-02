@@ -1,0 +1,10 @@
+[Unit]
+Description=SN120 Lium pod watch every 5 min (ops/pods/README.md)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

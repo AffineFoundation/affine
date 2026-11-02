@@ -1,0 +1,175 @@
+{
+ "_doc": "SN120 Lium pod roles for ops/pods/replace_pod.py. current_from = the host file the live service reads (source of truth for the pod's id/ip/port). gpu_specs are fallbacks in order; within a spec the cheapest node wins. Paths may use ~ and {RA} (= ~/subnet120-rewrite/state/root-audits).",
+ "_limits": {"max_rents_24h_global": 6, "dead_after_min": 20},
+ "_excluded": {"names_re": "casper|tobias|mech-?1", "huids": ["swift-wolf-bd", "zesty-orbit-fe"], "ids": []},
+ "_scan_roots": ["~/.config/systemd/user", "{RA}/20261026-promotion-gate/code", "{RA}/20261022-env-probe/code", "{RA}/20261031-performance-eval/code",
+                 "{RA}/20261101-prior-table", "{RA}/20261030-plain-disk", "{RA}/20261030-trainer-speed/release", "{RA}/20261031-renorm-step-live/release",
+                 "{RA}/20261029-red-skip/release", "{RA}/20261027-k-half/code", "{RA}/20261026-rollback-189de412/scripts", "~/subnet120-rewrite/ops/disk_guard"],
+
+ "bench": {
+  "what": "benchmarks node (affine-bench daemon). Rent/bootstrap/release/replace are automatic in bench/affine_bench/pod.py; this tool only reports status.",
+  "delegate": "affine-bench daemon (bench/affine_bench/pod.py + bench/deploy/rent.sh + bench/deploy/bootstrap.sh). Manual: bash ~/bench-work/affine/bench/deploy/rent.sh",
+  "name": "affine-bench-1", "names": ["affine-bench-1"],
+  "current_from": {"file": "~/subnet120-rewrite/state/bench-results/pod.json"},
+  "optional": true
+ },
+
+ "prior": {
+  "what": "prior-table sampler pod (affine-prior-table controller on the host drives it).",
+  "name": "affine-prior-1", "names": ["affine-prior-1"],
+  "current_from": {"file": "{RA}/20261101-prior-table/pp.sh"},
+  "gpu_specs": [{"gpu": "H100", "count": 8, "whole_node": true}, {"gpu": "H200", "count": 8, "whole_node": true}, {"gpu": "B200", "count": 8, "whole_node": true}],
+  "max_price_h": 32, "min_disk_gb": 400, "tiers": ["secure", "spot"], "max_rents_24h": 3,
+  "auto": true,
+  "root": "/opt/prior",
+  "provision": [
+   {"type": "clone", "dest": "/opt/prior/src/affine"},
+   {"type": "script", "script": "ops/pods/provision/vllm_venv.sh", "args": ["/opt/prior"]},
+   {"type": "push_dir", "src": "~/subnet120-rewrite/priors", "dest": "/opt/prior/code/priors", "exclude": ["__pycache__", "tests", "*.bak*"]},
+   {"type": "push_file", "src": "~/subnet120-rewrite/priors/pod/serve.sh", "dest": "/opt/prior/code/serve.sh", "mode": "755"},
+   {"type": "pod_cmd", "cmd": "cp /opt/prior/src/affine/bench/deploy/gate_fetch.py /opt/prior/code/gate_fetch.py"},
+   {"type": "push_file", "src": "{RA}/20261101-prior-table/serve.env", "dest": "/opt/prior/serve/serve.env", "optional": true},
+   {"type": "push_file", "src": "~/subnet120-rewrite/priors/pod/sampler.config.json", "dest": "/opt/prior/code/sampler.json", "if_missing": true},
+   {"type": "push_file", "src": "~/subnet120-rewrite/assets/original-math7496.tasks.json", "dest": "/opt/prior/data/original-math7496.tasks.json", "sha256": "77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3"},
+   {"type": "push_file", "src": "{RA}/20261101-prior-table/private/dapo_pool.jsonl", "dest": "/opt/prior/data/dapo_pool.jsonl", "sha256": "18d6951e47b85e824fe6f57b986c912d4f939b4c167374e98f4451d18b238a95"},
+   {"type": "fetch_head", "ckpt_dir": "/opt/prior/ckpt", "fetch_py": "/opt/prior/code/gate_fetch.py"},
+   {"type": "pod_cmd", "cmd": "mkdir -p /opt/prior/logs /opt/prior/tmp && /opt/prior/code/serve.sh {head} 0.90 > /opt/prior/logs/serve-ctl.log 2>&1; tail -1 /opt/prior/logs/serve-ctl.log", "timeout": 2400},
+   {"type": "pod_cmd", "cmd": "cd /opt/prior/code && mkdir -p /opt/prior/runs/sampler /opt/prior/hf && rm -f /opt/prior/runs/sampler/STOP && (pid=$(cat /opt/prior/runs/sampler/worker.pid 2>/dev/null); [ -n \"$pid\" ] && kill -0 $pid 2>/dev/null && echo worker-already-running $pid || (TOKENIZERS_PARALLELISM=false TMPDIR=/opt/prior/tmp HF_HUB_OFFLINE=1 HF_HOME=/opt/prior/hf setsid nohup /opt/prior/venv/bin/python -u priors/worker.py sampler.json >> /opt/prior/logs/worker.log 2>&1 < /dev/null & echo worker-started))"}
+  ],
+  "health": "python3 -c \"import json;s=json.load(open('/opt/prior/serve/SERVING.json'));assert s['replicas']==s['gpus']>0,s;print('OK',s['ckpt'][:12],s['replicas'])\" && kill -0 $(cat /opt/prior/runs/sampler/worker.pid)",
+  "repoint": {
+   "files": ["{RA}/20261101-prior-table/pp.sh", "{RA}/20261101-prior-table/controller.json"],
+   "reset_json": [{"file": "{RA}/20261101-prior-table/private/table/pull.json", "set": {"offset": 0}}],
+   "units_stop_first": ["affine-prior-table"], "units_restart": ["affine-prior-table"]
+  },
+  "verify": {"venv": "/opt/prior/venv", "extra_pins": ["math-verify==0.9.0"], "files": {"/opt/prior/code/serve.sh": "~/subnet120-rewrite/priors/pod/serve.sh", "/opt/prior/code/gate_fetch.py": "~/bench-work/affine/bench/deploy/gate_fetch.py", "/opt/prior/code/priors/worker.py": "~/subnet120-rewrite/priors/worker.py", "/opt/prior/code/priors/grader.py": "~/subnet120-rewrite/priors/grader.py", "/opt/prior/code/sampler.json": "~/subnet120-rewrite/priors/pod/sampler.config.json"}}
+ },
+
+ "perf": {
+  "what": "performance-eval pod 1 (affine-perf-eval unit; newest king + history; publishes performance.json).",
+  "name": "affine-perf-eval", "names": ["affine-perf-eval"],
+  "current_from": {"file": "{RA}/20261031-performance-eval/pp.sh"},
+  "gpu_specs": [{"gpu": "H200", "count": 2}, {"gpu": "B200", "count": 2}, {"gpu": "H100", "count": 2}, {"gpu": "B200", "count": 1}],
+  "max_price_h": 13, "min_disk_gb": 120, "tiers": ["secure", "spot"], "max_rents_24h": 3,
+  "auto": true,
+  "root": "/data",
+  "golden": {"paths": ["data/perf/perf_eval.py", "data/perf/run_king.sh", "data/perf/allan_src.py", "data/perf/gate_fetch.py", "data/perf/env.sh", "data/perf/tasks.private.json"]},
+  "provision": [
+   {"type": "clone", "dest": "/data/src/affine"},
+   {"type": "script", "script": "ops/pods/provision/vllm_venv.sh", "args": ["/data", "venv"]},
+   {"type": "golden_restore"},
+   {"type": "pod_cmd", "cmd": "mkdir -p /data/perf/ckpt /data/perf/runs /data/perf/work /data/home /data/cache /data/tmp && echo ok"}
+  ],
+  "health": "test -s /data/perf/tasks.private.json && test -x /data/perf/run_king.sh -o -f /data/perf/run_king.sh && /data/venv/bin/python -c 'import vllm, math_verify, torch; assert torch.cuda.device_count() > 0; print(\"OK\", vllm.__version__, torch.cuda.device_count())'",
+  "repoint": {
+   "files": ["{RA}/20261031-performance-eval/pp.sh", "{RA}/20261031-performance-eval/code/perf_service.py", "{RA}/20261031-performance-eval/code/revert_perf.sh"],
+   "units_stop_first": ["affine-perf-eval"], "units_restart": ["affine-perf-eval"],
+   "line_subs": [["gpu='[^']*'", "gpu='{gpu}'"], ["cost=[0-9.]+", "cost={price}"]]
+  },
+  "verify": {"venv": "/data/venv", "extra_pins": ["math-verify==0.9.0"]}
+ },
+
+ "perf2": {
+  "what": "performance-eval pod 2 (history backfill only; its unit tears the pod down when history is done). Not auto-replaced: re-rent only on request.",
+  "name": "affine-perf-eval-2", "names": ["affine-perf-eval-2"],
+  "current_from": {"file": "{RA}/20261031-performance-eval/pp2.sh"},
+  "gpu_specs": [{"gpu": "B200", "count": 1}, {"gpu": "H200", "count": 1}],
+  "max_price_h": 7, "min_disk_gb": 120, "tiers": ["secure", "spot"], "max_rents_24h": 2,
+  "auto": false, "optional": true,
+  "root": "/data",
+  "golden": {"from_role": "perf"},
+  "provision": [
+   {"type": "clone", "dest": "/data/src/affine"},
+   {"type": "script", "script": "ops/pods/provision/vllm_venv.sh", "args": ["/data", "venv"]},
+   {"type": "golden_restore"},
+   {"type": "pod_cmd", "cmd": "mkdir -p /data/perf/ckpt /data/perf/runs /data/perf/work /data/home /data/cache /data/tmp && echo ok"}
+  ],
+  "health": "test -s /data/perf/tasks.private.json && /data/venv/bin/python -c 'import vllm, math_verify, torch; assert torch.cuda.device_count() > 0; print(\"OK\", vllm.__version__, torch.cuda.device_count())'",
+  "repoint": {
+   "files": ["{RA}/20261031-performance-eval/pp2.sh", "{RA}/20261031-performance-eval/code/perf_service.py", "{RA}/20261031-performance-eval/code/revert_perf.sh"],
+   "units_stop_first": [], "units_restart": ["affine-perf-eval-2"],
+   "line_subs": [["gpu='[^']*'", "gpu='{gpu}'"], ["cost=[0-9.]+", "cost={price}"]]
+  },
+  "verify": {"venv": "/data/venv", "extra_pins": ["math-verify==0.9.0"]}
+ },
+
+ "probe": {
+  "what": "gate probe + env probe pod (affine-promotion-gate, affine-env-probe drive it over ssh). 8xB200 only: another GPU type would change gate probe numerics.",
+  "name": "affine-probe-8xb200-1", "names": ["affine-probe-8xb200-1"],
+  "current_from": {"file": "{RA}/20261026-promotion-gate/code/gate_service.py"},
+  "gpu_specs": [{"gpu": "B200", "count": 8, "whole_node": true},
+                {"gpu": "B300", "count": 8, "whole_node": true, "tiers": ["secure", "spot"], "gpu_change": true},
+                {"gpu": "H200", "count": 8, "whole_node": true, "gpu_change": true}],
+  "max_price_h": 80, "min_disk_gb": 800, "tiers": ["secure"], "max_rents_24h": 2,
+  "auto": true,
+  "root": "/opt/plain/probe",
+  "golden": {"paths": ["opt/plain/probe/affine-env-probe", "opt/plain/probe/affine-mimo-20261013", "opt/plain/probe/affine-mimo-public-evaluator-20261013",
+                       "opt/plain/probe/.local", "opt/plain/probe/.cache/uv", "opt/plain/probe/.cache/verifiers", "opt/affine-vllm-venv"],
+             "exclude": ["opt/plain/probe/affine-env-probe/ckpt", "opt/plain/probe/affine-env-probe/runs", "opt/plain/probe/affine-env-probe/vcache",
+                         "opt/plain/probe/affine-env-probe/hf", "opt/plain/probe/affine-env-probe/gate/work", "opt/plain/probe/affine-env-probe/push",
+                         "opt/plain/probe/affine-env-probe/bench", "opt/plain/probe/affine-env-probe/survey", "opt/plain/probe/affine-env-probe/pre-continuous-partial-20261023",
+                         "opt/plain/probe/affine-mimo-public-evaluator-20261013/private", "*.seed", "r2.env", "*.urls.private.json",
+                         "*.log", "*.log.*", "*.pid", "*.partial", "*.gocryptfs-orig", "*.gocryptfs-tail", "*.bak*", "__pycache__"],
+             "links": {"/root/affine-env-probe": "/opt/plain/probe/affine-env-probe", "/root/affine-mimo-20261013": "/opt/plain/probe/affine-mimo-20261013",
+                       "/root/affine-mimo-public-evaluator-20261013": "/opt/plain/probe/affine-mimo-public-evaluator-20261013",
+                       "/root/.local": "/opt/plain/probe/.local", "/root/.cache": "/opt/plain/probe/.cache"}},
+  "provision": [
+   {"type": "golden_restore"},
+   {"type": "pod_cmd", "cmd": "mkdir -p /opt/plain/probe/affine-env-probe/ckpt /opt/plain/probe/affine-env-probe/runs /opt/plain/probe/affine-env-probe/gate/work /opt/plain/probe/affine-env-probe/vcache /opt/plain/probe/.triton /opt/plain/probe/.nv && ln -sfn /opt/plain/probe/.triton /root/.triton && ln -sfn /opt/plain/probe/.nv /root/.nv && echo ok"},
+   {"type": "fetch_head", "ckpt_dir": "/root/affine-env-probe/ckpt", "fetch_py": "/root/affine-env-probe/gate/gate_fetch.py"}
+  ],
+  "health": "/root/affine-mimo-20261013/venv/bin/python -c 'import vllm, torch; assert torch.cuda.device_count() == 8; print(\"OK\", vllm.__version__)' && python3 /root/affine-env-probe/podctl.py status > /dev/null && echo podctl-ok",
+  "repoint": {
+   "files": ["{RA}/20261026-promotion-gate/code/gate_service.py", "{RA}/20261022-env-probe/code/probe_daemon.py", "{RA}/20261027-k-half/code/khalf_build.py",
+             "{RA}/20261029-red-skip/release/percache_watch.py", "~/subnet120-rewrite/ops/disk_guard/disk_guard.py", "{RA}/20261030-plain-disk/pod.sh", "{RA}/20261030-plain-disk/podin.sh"],
+   "units_stop_first": [], "units_restart": ["affine-promotion-gate", "affine-env-probe"]
+  }
+ },
+
+ "trainer": {
+  "what": "MiMo trainer pod (affine-mimo-trainer-supervised + -tunnel; gate trainer_keep/restore via rssh.sh). Holds role seeds + R2 creds by design, so this tool rents and restores the PUBLIC runtime only and stops; staging the private files is a ROOT step (see README).",
+  "name": "affine-trainer-1", "names": ["affine-trainer-1", "affine-shadow-trainer-8xh200-20261025"],
+  "current_from": {"file": "{RA}/20261026-rollback-189de412/scripts/rssh.sh"},
+  "gpu_specs": [{"gpu": "H200", "count": 8, "whole_node": true}, {"gpu": "B200", "count": 8, "whole_node": true}],
+  "max_price_h": 45, "min_disk_gb": 1500, "tiers": ["secure"], "max_rents_24h": 2,
+  "auto": false, "needs_secrets": true,
+  "root": "/opt/plain/trainer",
+  "golden": {"paths": ["workspace/affine-mimo-trainer-prod"],
+             "exclude": ["workspace/affine-mimo-trainer-prod/private", "workspace/affine-mimo-trainer-prod/trainer-state", "workspace/affine-mimo-trainer-prod/fp32-master",
+                         "workspace/affine-mimo-trainer-prod/fp32-publish", "workspace/affine-mimo-trainer-prod/checkpoint-cache", "workspace/affine-mimo-trainer-prod/backup-*",
+                         "*.seed", "r2.env", "*.private.*", "*.log", "*.pid", "__pycache__"],
+             "links": {}},
+  "provision": [
+   {"type": "golden_restore"}
+  ],
+  "health": "/workspace/affine-mimo-trainer-prod/runtime-exact/venv/bin/python -c 'import torch; print(\"OK\", torch.__version__, torch.cuda.device_count())'",
+  "repoint": {
+   "files": ["{RA}/20261026-rollback-189de412/scripts/rssh.sh", "~/subnet120-rewrite/ops/disk_guard/disk_guard.py", "{RA}/20261030-trainer-speed/release/fp32_prune.py",
+             "{RA}/20261030-trainer-speed/release/watchdog_ts.py", "{RA}/20261031-renorm-step-live/release/watchdog_ff.py", "{RA}/20261030-plain-disk/pod.sh", "{RA}/20261030-plain-disk/podin.sh"],
+   "last_dropin": ["~/.config/systemd/user/affine-mimo-trainer-supervised.service.d", "~/.config/systemd/user/affine-mimo-trainer-tunnel.service.d"],
+   "units_stop_first": ["affine-mimo-trainer-supervised"], "units_restart": ["affine-mimo-trainer-tunnel", "affine-mimo-trainer-supervised", "ts-fp32-prune"]
+  }
+ },
+
+ "evaluator": {
+  "what": "MiMo public evaluator pod (affine-mimo-evaluator-supervised + -tunnel). Holds evaluator.seed by design: public runtime only, private staging is a ROOT step.",
+  "name": "affine-evaluator-1", "names": ["affine-evaluator-1"],
+  "current_from": {"glob_last": "~/.config/systemd/user/affine-mimo-evaluator-supervised.service.d/*.conf"},
+  "gpu_specs": [{"gpu": "H200", "count": 1}, {"gpu": "B200", "count": 1}],
+  "max_price_h": 7, "min_disk_gb": 140, "tiers": ["secure"], "max_rents_24h": 2,
+  "auto": false, "needs_secrets": true,
+  "root": "/opt/plain/eval",
+  "golden": {"paths": ["root/affine-mimo-20261013", "opt/plain/eval/affine-mimo-20261013", "root/affine-mimo-public-evaluator-20261013", "opt/plain/eval/.local", "opt/plain/eval/affine-evaluator-setup"],
+             "exclude": ["root/affine-mimo-public-evaluator-20261013/private", "root/affine-mimo-public-evaluator-20261013/workspace", "*.seed", "r2.env", "*.private.*", "*.log", "*.pid", "__pycache__", "*.gocryptfs-orig"],
+             "links": {"/root/.local": "/opt/plain/eval/.local", "/root/affine-evaluator-setup": "/opt/plain/eval/affine-evaluator-setup"}},
+  "provision": [
+   {"type": "golden_restore"}
+  ],
+  "health": "/root/affine-mimo-20261013/venv/bin/python -c 'import torch; print(\"OK\", torch.__version__, torch.cuda.device_count())'",
+  "repoint": {
+   "files": ["~/subnet120-rewrite/ops/disk_guard/disk_guard.py", "{RA}/20261030-plain-disk/pod.sh", "{RA}/20261030-plain-disk/podin.sh", "~/.config/systemd/user/affine-mimo-evaluator-tunnel.service"],
+   "last_dropin": ["~/.config/systemd/user/affine-mimo-evaluator-supervised.service.d"],
+   "units_stop_first": ["affine-mimo-evaluator-supervised"], "units_restart": ["affine-mimo-evaluator-tunnel", "affine-mimo-evaluator-supervised"]
+  }
+ }
+}

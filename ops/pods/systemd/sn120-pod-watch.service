@@ -1,0 +1,9 @@
+[Unit]
+Description=SN120 Lium pod watch (lium ps + ssh per role -> state/pods/status.json; read-only, never rents)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B %h/subnet120-rewrite/ops/pods/replace_pod.py status --quiet
+SuccessExitStatus=3
+TimeoutStartSec=600
+Nice=10
