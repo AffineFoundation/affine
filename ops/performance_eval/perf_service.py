@@ -13,7 +13,7 @@ import fetch_king
 from fetch_king import fetch, descriptor
 ST = RA + '/state'; RES = ST + '/results'; os.makedirs(RES, exist_ok=True)
 SITE = '/home/const/subnet120/affine/website'; OUTJ = SITE + '/performance.json'
-# pt1130u 2026-11-02: the full/holdout series is private now (affine.io shows passrate.json instead). Full doc -> OUTP (0600);
+# pt1130u/pt1132u 2026-11-02: the full/holdout series is private (no chart on affine.io). Full doc -> OUTP (0600);
 # the public performance.json keeps only the king list (the bench daemon reads kings[] from it).
 OUTP = ST + '/performance.private.json'
 LEDGER = '/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/LEDGER.public.jsonl'
@@ -262,7 +262,7 @@ def publish(ks, cur=None):
                kings=rows)
     wj(OUTP, out, 0o600)
     wj(OUTJ, dict(version='sn120-kings-v1', updated_at=out['updated_at'], updated_at_cr=out['updated_at_cr'],
-                  about='King (head) list in crowned order. Pass rate of each king across all envs: https://affine.io/passrate.json',
+                  about='King (head) list in crowned order.',
                   kings=[{f: r.get(f) for f in ('king', 'epoch', 'head_from_epoch', 'era', 'parent', 'crowned_at', 'crowned_at_cr')} for r in rows]))
 def teardown():
     """History pod only: remove THIS pod (exact lium id) once no history king is left to claim. Logged; never touches other pods."""

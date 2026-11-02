@@ -1,9 +1,0 @@
-[Unit]
-Description=Affine website passrate.json (pass rate of each king across all envs = whole gate pool, from the prior sampler's complete passes, else the gate head baseline 1/pi-weighted; aggregates only) for the first tile on affine.io. Jacob pt1130u 2026-11-02
-[Service]
-Type=oneshot
-WorkingDirectory=/home/const/subnet120/affine
-ExecStart=/usr/bin/python3 -I -B /home/const/subnet120/affine/site-tools/build_passrate.py
-TimeoutStartSec=240
-Nice=10
-NoNewPrivileges=true

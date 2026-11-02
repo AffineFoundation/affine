@@ -272,7 +272,6 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 | everything about a GREEN (baseline, probe, tasks, math, file, lr/kl) | /k1/turns/<epoch>/green.json, /k1/turns/<epoch>/tasks.json |
 | gate decisions / open round / reveals | https://affine.io/gate.json, /gate/heldout/current.json, /gate/reveal/<epoch>.json |
 | your file's format check | https://affine.io/ff/status.json |
-| pass rate per king, all envs | https://affine.io/passrate.json (whole gate pool, measured from the prior; informational only) |
 | step recipe / fp32 masters / replay | https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md |
 
 ## 8. Known gaps

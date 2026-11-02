@@ -41,3 +41,9 @@ Revert (validator host): `bash ~/subnet120-rewrite/state/root-audits/20261031-pe
 - Every performance.json row records `pod`, `pod_lium_id`, `gpu`.
 - Auto-teardown: when pod 2 finds nothing left to claim, it runs `lium rm 2ad91129-cb87-4070-aa9e-942ee07ac329 -y` (exact id), logs `teardown` and appends to PROGRESS.md; pod 1 stays.
 - `revert_perf.sh` stops both units and removes pod 2 by exact id if it still exists (pod 1 only with POD=rm).
+
+## 2026-11-02: no public chart (Jacob pt1130u, pt1132u)
+The affine.io Performance tile is gone (briefly replaced by a pass-rate-across-envs tile, then removed: "Just remove that chart").
+The eval keeps running; its full results go to state/performance.private.json (0600). The public performance.json is the king
+list only (the bench daemon reads kings[]). activate_perf.sh / revert_perf.sh / llms_perf.py are historical (they installed the tile).
+Revert of the removal (host): bash ~/subnet120-rewrite/state/root-audits/20261102-passrate/code/revert_remove.sh
