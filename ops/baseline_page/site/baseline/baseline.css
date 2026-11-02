@@ -1,0 +1,24 @@
+/* affine.io/baseline (Jacob 2026-11-02): site tile frame + k1-chart look (gridlines, mono labels), like the bench cards (b969182). */
+.baseline-page{display:flex;flex-direction:column;gap:16px;padding:28px 0 36px}
+.bl-intro{max-width:800px}
+.bl-intro h1{margin:0 0 14px}
+.bl-intro p{margin:0 0 12px;font:15px/1.65 Haffer,Arial,sans-serif;color:var(--ink)}
+.bl-intro .bl-stats{margin:0;font:11px/1.6 var(--mono);color:var(--muted)}
+.bl-tile{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:4px;background:var(--bg)}
+.baseline-page>section+section{border-top:1px solid var(--line)}
+.bl-tile>.section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0;height:22px;overflow:hidden;white-space:nowrap}
+.bl-tile h2,.bl-tile .reading{font:400 15px/22px Haffer,Arial,sans-serif;letter-spacing:-.035em;color:var(--ink)}
+.bl-tile h2{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.bl-tile .reading{min-width:0;flex-shrink:0;text-align:right}
+.bl-chart.chart-wrap{height:280px;min-width:0;overflow:visible}
+.bl-chart svg{width:100%;height:100%;display:block;overflow:visible}
+.bl-chart .chart-tip{z-index:5;min-width:170px}
+.bl-tile .legend{font:10px/16px var(--mono);gap:10px;margin:0}
+.bl-swatch-dash{background:none!important;border-top:1px dashed var(--guide);height:0!important;width:12px!important}
+.bl-swatch-guide{background:none!important;border-left:1px dashed var(--axis);height:10px!important;width:1px!important}
+.bl-chart .bl-guide{stroke:var(--axis);stroke-width:1;stroke-dasharray:3 3}
+.bl-chart .bl-uniform{stroke:var(--guide);stroke-width:1;stroke-dasharray:4 3}
+.bl-note{margin:0;max-width:800px;font:11px/1.6 var(--mono);color:var(--muted)}
+footer #bl-updated{font:10px/1.6 var(--mono);color:var(--muted)}
+.theme-toggle{flex:none}
+@media(max-width:700px){.baseline-page{padding:20px 0 28px}.bl-intro p{font-size:14px}.bl-chart.chart-wrap{height:220px}.bl-tile{padding:10px 12px}}

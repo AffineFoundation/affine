@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh affine.io baseline/curves.json every 15 minutes (about one epoch)
+[Timer]
+OnBootSec=180
+OnUnitActiveSec=15min
+RandomizedDelaySec=30
+AccuracySec=30
+[Install]
+WantedBy=timers.target
