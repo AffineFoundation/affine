@@ -205,8 +205,8 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 
 ## 6. How to win: what has worked so far (observations, not guarantees)
 
-- **Every GREEN under the current rules** (e354 z 3.88, e356 z 1.03, e358 z 2.96, e360 z 2.42, e368 z 1.70, all on
-  2026-10-31) was a **v1 file with the default lr and kl, 125 prompts × 1 correct rollout**. The prompts were MANDATE + "\n\n" +
+- **The first GREENs under the free-file rules** (e354 z 3.88, e356 z 1.03, e358 z 2.96, e360 z 2.42, e368 z 1.70, all on
+  2026-10-31) were each a **v1 file with the default lr and kl, 125 prompts × 1 correct rollout**. The prompts were MANDATE + "\n\n" +
   a pool problem (125/125 from the pool, mostly Level 4–5). Each rollout was the head's own sample with a
   `<think>` block and exactly one final `\boxed{}`. Since e342 almost every turn has had the same public counts
   (125 prompts × 1 correct rollout), including the REDs e362–e367 and e370–e376. Several of those REDs scored strongly
@@ -221,7 +221,9 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
   rollouts (well under 6,000 tokens, where the overlong penalty starts) are consistent with that.
 - **Sample from the head** with top_k 20 / top_p 0.95 / temperature 1. Off-support tokens are dropped from the PG term.
 - The 1,000-rollout files with mixed outcomes (e339–e341, e343; z 0.70, −0.78, 0.44, −0.80) went RED, though those ran under the
-  older sign step (before e354). No GREEN has used v2 `train` values yet (v2 is new on 2026-10-31).
+  older sign step (before e354).
+- **v2 `train` values have won too:** E537 (lr 1.25e-7, kl 0.02 given) and E485, E544, E552, E555, E557 (kl 0.005, default lr) were v2 files.
+  Every GREEN file is public byte-exact at https://affine.io/k1/turns/<epoch>/batch.json, with its lr / kl in `turn.json`.
 - At the default lr the per-tensor cap dominates: at e368, 242 of 427 tensors were at the cap, and they carried 98.8% of the
   step norm (`train_params.step.capped_norm_fraction_default`). Raising lr barely enlarges the step, while lowering it shrinks every tensor.
 - Simulate before you spend your registration: `gate_eval.py` uses the same math. A local z near 1 is a coin flip.

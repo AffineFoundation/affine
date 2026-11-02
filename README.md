@@ -1,27 +1,33 @@
 # Affine epoch subnet
 
-Bittensor subnet120 (MiMo GRPO). **Miners upload one batch file** (prompts, rollouts,
+Bittensor subnet 120 (MiMo GRPO). **Miners upload one free batch file** (prompts, rollouts,
 rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
-checks the format, trains one GRPO step from the published head and the promotion gate
-keeps the candidate only if it improves the model on a private held-out set.
+checks the format, trains one GRPO step from the published head (trainer v8.3.3j) and the
+promotion gate keeps the candidate only if it improves the model on a private held-out set.
 Rewards are used as given; no mining software is needed.
 
+**Gate (prior-v1 baseline):** GREEN iff gain > 0, z > 1 (flat bar, no time relaxation),
+pooled cap-hit < 0.33 and at least 100 tasks scored. GREEN -> the candidate becomes the head and
+the turn earns; RED -> the head is kept and the turn earns nothing.
+**GREEN files are public** byte-exact at `https://affine.io/k1/turns/<epoch>/batch.json`
+(with their lr / kl in `turn.json`); RED files and RED training params stay private.
+
 - **[Mining: the batch file, upload and rules](docs/MINER_QUICKSTART.md)** ·
-  reference helper [`miner/affine_batch.py`](miner/affine_batch.py) ·
+  reference helper [`miner/affine_batch.py`](miner/affine_batch.py) · [miner kit and validator code](miner/README.md) ·
   live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
-- [Validator side of the free-file protocol (lifecycle, trainer v8.3.3h, activation/revert)](ops/free_file/README.md)
-- Optional per-turn `lr` (1.25e-7 to 1e-6, default 5e-7) and `kl` (0.005 to 0.1, default 0.02) in an `affine-batch-v2` file, live from e362: [format and math](docs/MINER_QUICKSTART.md#optional-affine-batch-v2-optional-lr-and-kl-from-2026-10-31) · [validator side (trainer v8.3.3j, activation/revert)](ops/ff_train_params/README.md)
+- Optional per-turn `lr` (1.25e-7 to 1e-6, default 5e-7) and `kl` (0.005 to 0.1, default 0.02) in an `affine-batch-v2` file: [format and math](docs/MINER_QUICKSTART.md#optional-affine-batch-v2-optional-lr-and-kl-from-2026-10-31) · [validator side](ops/ff_train_params/README.md)
+- [Held-out gate and prior-v1 baseline (code)](priors/gate/README.md)
+- [GREEN-file publishing (default on)](ops/green_publish_default/README.md)
+- [Validator side of the free-file protocol (lifecycle, activation/revert)](ops/free_file/README.md)
 - [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
-- [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
-- [Architecture and runtime](docs/ARCHITECTURE.md)
-- [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
-- [MiMo operator lifecycle and independent audit loop](docs/MIMO_LIFECYCLE.md)
-- [Experimental retained-Adam NLL objective (inactive)](docs/EXPERIMENTAL_RETAINED_NLL.md)
 - [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
-- [Implementation plan](IMPLEMENTATION_PLAN.md)
-- [Operational state and evidence](STATE.md)
-- [Original RCore common adapter and private terminal package](docs/NATIVE_RCORE_COMMON.md)
 - [Changelog](CHANGELOG.md)
+
+History and inactive designs (not the live protocol): [architecture and runtime](docs/ARCHITECTURE.md) ·
+[MiMo operator lifecycle](docs/MIMO_LIFECYCLE.md) · [flip-incentive shadow scoring](docs/FLIP_INCENTIVE.md) ·
+[fixed-nonce GRPO cutover plan](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md) ·
+[retained-Adam NLL experiment](docs/EXPERIMENTAL_RETAINED_NLL.md) · [RCore adapter](docs/NATIVE_RCORE_COMMON.md) ·
+[implementation plan](IMPLEMENTATION_PLAN.md) · [operational state and evidence](STATE.md)
 
 Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
 `.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
