@@ -2,7 +2,7 @@
 
 Bittensor subnet 120 (MiMo GRPO). **Miners upload one free batch file** (prompts, rollouts,
 rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
-checks the format, trains one GRPO step from the published head (trainer v8.3.3j) and the
+checks the format, trains one GRPO step from the published head (trainer v8.3.3l) and the
 promotion gate keeps the candidate only if it improves the model on a private held-out set.
 Rewards are used as given; no mining software is needed.
 
@@ -16,6 +16,7 @@ the turn earns; RED -> the head is kept and the turn earns nothing.
   reference helper [`miner/affine_batch.py`](miner/affine_batch.py) · [miner kit and validator code](miner/README.md) ·
   live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
 - Optional per-turn `lr` (1.25e-7 to 1e-6, default 5e-7) and `kl` (0.005 to 0.1, default 0.02) in an `affine-batch-v2` file: [format and math](docs/MINER_QUICKSTART.md#optional-affine-batch-v2-optional-lr-and-kl-from-2026-10-31) · [validator side](ops/ff_train_params/README.md)
+- Optional per-turn `step_mult` (integer: 1, 2, default 1; duongna's step multiplier) and optimizer / loss knobs (per-group lr scales, adam_eps, weight_decay, clamp_mode, loss_agg, adv_center, adv_clip; all default to the previous trainer) in an `affine-batch-v2` file, from e575: [fields and math](docs/MINER_QUICKSTART.md) · [validator side (trainer v8.3.3l, replay, activation/revert)](ops/step_mult/README.md)
 - [Held-out gate and prior-v1 baseline (code)](priors/gate/README.md)
 - [GREEN-file publishing (default on)](ops/green_publish_default/README.md)
 - [Validator side of the free-file protocol (lifecycle, activation/revert)](ops/free_file/README.md)

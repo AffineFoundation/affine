@@ -4,6 +4,13 @@ v8.3.3h = v8.3.3g + free-file turns (Jacob pt898u 2026-10-30, RA/20261030-free-f
   selection is prepared by ff_trainer.prepare (miner rewards used as given, any number of rollouts per group);
   v8211_batched._layout uses each rollout's reward and its group's own size (identical numbers for native groups).
 
+v8.3.3k = v8.3.3j + optional per-turn step multiplier k = train.step_mult (integer 1..8, default 1) from a free-file dispatch
+  (duongna #120 proposal, Jacob 2026-11-02 10:19 CR, RA/20261102-step-mult): the whole per-tensor step is multiplied by k, i.e. lr and the
+  per-tensor cap are scaled together; one gradient, one step, same trainer time. k = 1 (or no step_mult) runs the exact v8.3.3j step.
+v8.3.3l = v8.3.3k + optional per-turn knobs from the dispatch's train.knobs (RA/20261102-step-mult, Jacob 2026-11-02 11:19 CR):
+  per-group lr scales (attn, mlp, embed, lm_head, early / late layers), adam_eps, weight_decay, clamp_mode + global_norm_cap (step),
+  loss_agg, adv_center, adv_clip (loss). Every knob defaults to today's value; a turn whose knobs are all default runs the exact
+  v8.3.3k code path (TURN['opt'] is None and v8211_batched.KNOBS is None).
 v8.3.3j = v8.3.3i + per-turn training params (lr, kl) from a free-file affine-batch-v2 dispatch (Jacob 2026-10-31 pt902u,
   RA/20261031-ff-train-params). No engine key; a dispatch without 'train' or with the defaults runs the exact v8.3.3i step.
 v8.3.3i = v8.3.3h + optional engine.sgd_direction normgrad + engine.support_renorm (Allan; Jacob 2026-10-31 07:00 CR).
@@ -360,7 +367,67 @@ def support_summary(trajectories, support):
 #      s    = min(1, sgd_update_norm_cap / sqrt(sum_t n_t^2)) the unchanged global cap
 #      Delta_t = fp32(s * n_t / ||g_t||) * g_t (fp64 scalars);  M_C = M_H - Delta_t;  W_C = bf16_rne(M_C)
 #  training.optimizer.sgd keeps the default-lr (v8.3.3i) statistics; the turn's own step norms are in training.train_params.step.
-TURN = dict(lr_multiplier=1.0, last=None)      # set only by train_update_v833j around one update
+#  step_mult (v8.3.3k, RA/20261102-step-mult): k = the dispatch's train.step_mult (int, 1..8, default 1). With n_t the v8.3.3j per-tensor
+#      step norm above (n_t = n0_t when m = 1):  n_t(k) = k * n_t  ==  min(k*m*n0_t, k*c_t) for m >= 1: lr and the per-tensor cap scaled
+#      together;  s = min(1, sgd_update_norm_cap / sqrt(sum_t n_t(k)^2)) (global cap unchanged, ~0.023*k << 1 so it does not fire);
+#      Delta_t = fp32(s * n_t(k) / ||g_t||) * g_t.  k = 1 -> no change at all (same code path as v8.3.3j).
+TURN = dict(lr_multiplier=1.0, step_mult=1, opt=None, last=None)      # set only by train_update_v833j around one update
+# v8.3.3l knobs (RA/20261102-step-mult). TURN['opt'] (None = the v8.3.3k step exactly) = the step knobs of one turn:
+#   e_t = lr * (g_t / (|g_t| + adam_eps) + weight_decay * W_t * [decayed_t]);  sq_t = ||e_t||;  a_t = lr scale of t's group x early/late scale
+#   per_tensor / both: n_t = k * min(m * a_t * min(sq_t, c_t), c_t);  global_norm: n_t = k * m * a_t * sq_t (no per-tensor cap)
+#   s = min(1, G / ||n||), G = sgd_update_norm_cap (per_tensor) or min(sgd_update_norm_cap, global_norm_cap) (global_norm / both)
+#   Delta_t = fp32(s * n_t / ||g_t||) * g_t  (direction unchanged: g_t / ||g_t||). a_t = 0 freezes t.
+KNOB_SPEC = {
+    'lr_scale_attn':    ('number', (0.0, 2.0), 1.0),     # self_attn.* and linear_attn.* tensors
+    'lr_scale_mlp':     ('number', (0.0, 2.0), 1.0),     # mlp.* tensors
+    'lr_scale_embed':   ('number', (0.0, 2.0), 1.0),     # embed_tokens
+    'lr_scale_lm_head': ('number', (0.0, 2.0), 1.0),     # lm_head
+    'lr_scale_early':   ('number', (0.0, 2.0), 1.0),     # every tensor of layers 0..15 (x the group scale)
+    'lr_scale_late':    ('number', (0.0, 2.0), 1.0),     # every tensor of layers 16..31 (x the group scale)
+    'adam_eps':         ('number', (1e-10, 1e-3), 1e-08),
+    'weight_decay':     ('number', (0.0, 0.05), 0.01),
+    'clamp_mode':       ('choice', ('per_tensor', 'global_norm', 'both'), 'per_tensor'),
+    'global_norm_cap':  ('number', (0.005, 1.0), 1.0),   # used by clamp_mode global_norm / both
+    'loss_agg':         ('choice', ('seq_mean', 'token_mean'), 'seq_mean'),
+    'adv_center':       ('choice', ('mean', 'none', 'group_norm'), 'mean'),
+    'adv_clip':         ('number', (0.1, 100.0), None),  # omitted = no clip
+}
+KNOB_DEFAULTS = {k: v[2] for k, v in KNOB_SPEC.items()}
+
+
+def knob_value(k, v):
+    """-> the effective value of one knob, or raise ValueError(reason). Never clamps (same policy as lr / kl)."""
+    import json, math
+    kind, b, _ = KNOB_SPEC[k]
+    if kind == 'number':
+        if type(v) not in (int, float) or not math.isfinite(v) or not b[0] <= v <= b[1]:
+            raise ValueError('train.%s must be a number in [%r, %r] (got %s)' % (k, b[0], b[1], json.dumps(v)[:40]))
+        return float(v)
+    if type(v) is not str or v not in b:
+        raise ValueError('train.%s must be one of %s (got %s)' % (k, ', '.join(b), json.dumps(v)[:40]))
+    return v
+
+
+def knob_group(name):
+    if name.startswith('lm_head'): return 'lm_head'
+    if 'embed_tokens' in name: return 'embed'
+    if '.self_attn.' in name or '.linear_attn.' in name: return 'attn'
+    if '.mlp.' in name: return 'mlp'
+    return 'other'
+
+
+def knob_layer(name):
+    p = name.split('.layers.', 1)
+    if len(p) != 2: return None
+    i = p[1].split('.', 1)[0]
+    return int(i) if i.isdigit() else None
+
+
+def knob_scale(name, opt, half):
+    g = knob_group(name); a = opt['lr_scale_' + g] if g != 'other' else 1.0
+    li = knob_layer(name)
+    if li is not None: a = a * (opt['lr_scale_early'] if li < half else opt['lr_scale_late'])
+    return a
 TURN_PARAMS = dict(params=None)                # set by prepare_signed_dispatch for the job being prepared
 
 
@@ -623,6 +690,51 @@ def _fresh_adam_step(opt, gradients, live, lr, cap, freeze, emit_, t0, tensor_re
         TURN['last'] = dict(path='v833i-exact', lr_multiplier=1.0, raw_update_norm=raw, cap_scale=scale, cap_fired=scale < 1.0,
                             tensors=len(r), raw_update_norm_default=raw, cap_scale_default=scale,
                             tensors_rel_capped_default=sum(v < 1.0 for v in r.values()), capped_norm_fraction_default=capped_frac)
+    k_mult = TURN.get('step_mult', 1)                      # v8.3.3k
+    if k_mult != 1:
+        if not (normgrad and tensor_rel_cap is not None and fp32_master):
+            raise ValueError('v8.3.3k: a turn step_mult needs the normgrad fp32-master step with the per-tensor cap')
+        base = nj if lr_mult != 1.0 else n0
+        nk = {name: k_mult * base[name] for name in r}
+        raw_k = math.sqrt(math.fsum(v * v for v in nk.values())); scale_k = min(1.0, cap / raw_k) if raw_k > 0 else 1.0
+        coef_j = {name: (scale_k * nk[name] / math.sqrt(gn2[name])) if gn2[name] > 0 else 0.0 for name in r}
+        TURN['last'].update(path=TURN['last']['path'] + '+step_mult', step_mult=k_mult, raw_update_norm_k1=TURN['last']['raw_update_norm'],
+                            raw_update_norm=raw_k, cap_scale=scale_k, cap_fired=scale_k < 1.0, tensor_rel_cap_effective=tensor_rel_cap * k_mult)
+    ok = TURN.get('opt')                                   # v8.3.3l step knobs (None -> nothing below runs)
+    if ok is not None:
+        if not (normgrad and tensor_rel_cap is not None and fp32_master):
+            raise ValueError('v8.3.3l: step knobs need the normgrad fp32-master step with the per-tensor cap')
+        eps_l, wd_l, mode_l = ok['adam_eps'], ok['weight_decay'], ok['clamp_mode']
+        q_l = qd; wn_l = dict(wnd)
+        if eps_l != FRESH_ADAM_EPS or wd_l != FRESH_ADAM_WD:
+            q_l = {}
+            with torch.no_grad():
+                for name, parameter in live:
+                    g = gradients[name].detach().to(device=parameter.device); w32 = W32(name, parameter)
+                    e = g / (g.abs() + torch.tensor(eps_l, dtype=torch.float32, device=g.device))
+                    if w32.dim() >= 2 and not name.endswith('bias'):
+                        e = e + torch.tensor(wd_l, dtype=torch.float32, device=g.device) * w32
+                    e = torch.tensor(lr, dtype=torch.float32, device=g.device) * e
+                    q_l[name] = float(e.double().pow(2).sum())
+                    if name not in wn_l: wn_l[name] = math.sqrt(float(w32.double().pow(2).sum()))
+                    del w32, g, e
+        layers = [knob_layer(n) for n in r]; half = (max([x for x in layers if x is not None] or [-1]) + 1) // 2
+        n_l = {}; at_cap = 0; grp = {}
+        for name in r:
+            a = knob_scale(name, ok, half); sq = math.sqrt(q_l[name])
+            c = tensor_rel_cap * (1 - 1e-6) * wn_l[name] if wn_l.get(name, 0.0) > 0 else None
+            if mode_l in ('per_tensor', 'both') and c is not None:
+                v = lr_mult * a * min(sq, c); at_cap += v >= c; v = min(v, c)
+            else:
+                v = lr_mult * a * sq
+            n_l[name] = k_mult * v; gk = knob_group(name); grp[gk] = grp.get(gk, 0.0) + n_l[name] ** 2
+        G = cap if mode_l == 'per_tensor' else min(cap, ok['global_norm_cap'])
+        raw_l = math.sqrt(math.fsum(v * v for v in n_l.values())); scale_l = min(1.0, G / raw_l) if raw_l > 0 else 1.0
+        coef_j = {name: (scale_l * n_l[name] / math.sqrt(gn2[name])) if gn2[name] > 0 else 0.0 for name in r}
+        TURN['last'].update(path=TURN['last']['path'] + '+knobs', knobs_step=dict(ok), raw_update_norm_pre_knobs=TURN['last']['raw_update_norm'],
+                            raw_update_norm=raw_l, cap_scale=scale_l, cap_fired=scale_l < 1.0, global_cap_effective=G,
+                            tensors_at_ceiling_knobs=int(at_cap), frozen_tensors=sum(1 for v in n_l.values() if v == 0.0),
+                            group_step_norms={k2: math.sqrt(v2) * scale_l for k2, v2 in sorted(grp.items())})
     changed = 0; dsq = []; wsq = []; msq = []
     try:
         with torch.no_grad():
@@ -1036,37 +1148,60 @@ def install(config, start_dp=False):
     def train_update_v833j(runtime, optimizer, groups, binding, *, config, **kwargs):
         """v8.3.3j: apply the prepared free-file turn's lr / kl to this one update (defaults -> exact v8.3.3i)."""
         tp = TURN_PARAMS['params']
-        TURN['lr_multiplier'] = 1.0; TURN['last'] = None
+        TURN['lr_multiplier'] = 1.0; TURN['step_mult'] = 1; TURN['opt'] = None; TURN['last'] = None; batched.KNOBS = None
         if tp is None:
             return train_update_v833i(runtime, optimizer, groups, binding, config=config, **kwargs)
         if (binding.epoch, binding.checkpoint) != (tp['epoch'], tp['checkpoint']):
             raise ValueError('v8.3.3j: turn params belong to another job')
-        if tp['defaults'] != dict(lr=sgd_lr, kl=float(config.kl_coefficient)):
+        if {k: v for k, v in tp['defaults'].items() if k != 'step_mult'} != dict(lr=sgd_lr, kl=float(config.kl_coefficient)) or tp['defaults'].get('step_mult', 1) != 1:
             raise ValueError('v8.3.3j: dispatch defaults %r != trainer defaults lr %r kl %r' % (tp['defaults'], sgd_lr, config.kl_coefficient))
         lr, kl = tp['lr'], tp['kl']
         m = 1.0 if lr == sgd_lr else lr / sgd_lr
-        if m != 1.0 and not (sgd_mode == 'fresh-adam' and sgd_fp32 and sgd_dir == 'normgrad' and sgd_trc is not None):
+        k_mult = tp.get('step_mult', 1)                     # v8.3.3k
+        if type(k_mult) is not int or not 1 <= k_mult <= 8:
+            raise ValueError('v8.3.3k: step_mult %r not an integer in 1..8' % (k_mult,))
+        if (m != 1.0 or k_mult != 1) and not (sgd_mode == 'fresh-adam' and sgd_fp32 and sgd_dir == 'normgrad' and sgd_trc is not None):
             raise ValueError('v8.3.3j: a turn lr needs fresh-adam + fp32 master + normgrad + sgd_tensor_rel_cap')
+        kn = tp.get('knobs') or dict(KNOB_DEFAULTS)          # v8.3.3l
+        if type(kn) is not dict or set(kn) != set(KNOB_SPEC):
+            raise ValueError('v8.3.3l: knobs keys %r' % (sorted(kn) if type(kn) is dict else kn,))
+        for kk, vv in kn.items():
+            if not (vv is None and KNOB_SPEC[kk][2] is None) and knob_value(kk, vv) != vv:
+                raise ValueError('v8.3.3l: knob %s not normalized' % kk)
+        OPT_KEYS = ('lr_scale_attn', 'lr_scale_mlp', 'lr_scale_embed', 'lr_scale_lm_head', 'lr_scale_early', 'lr_scale_late',
+                    'adam_eps', 'weight_decay', 'clamp_mode', 'global_norm_cap')
+        LOSS_KEYS = ('loss_agg', 'adv_center', 'adv_clip')
+        opt_on = kn['clamp_mode'] != 'per_tensor' or any(kn[x] != KNOB_DEFAULTS[x] for x in OPT_KEYS if x != 'global_norm_cap')
+        loss_on = any(kn[x] != KNOB_DEFAULTS[x] for x in LOSS_KEYS)
+        if opt_on and not (sgd_mode == 'fresh-adam' and sgd_fp32 and sgd_dir == 'normgrad' and sgd_trc is not None):
+            raise ValueError('v8.3.3l: step knobs need fresh-adam + fp32 master + normgrad + sgd_tensor_rel_cap')
+        if loss_on and batched.DROP_UNRESOLVED:
+            raise ValueError('v8.3.3l: loss knobs need drop_unresolved off')
         cfg = config if kl == config.kl_coefficient else _dc.replace(config, kl_coefficient=kl).validate()
         saved = optimizer.config
-        TURN['lr_multiplier'] = m
+        TURN['lr_multiplier'] = m; TURN['step_mult'] = k_mult
+        TURN['opt'] = {x: kn[x] for x in OPT_KEYS} if opt_on else None
+        batched.KNOBS = {x: kn[x] for x in LOSS_KEYS} if loss_on else None
         try:
             if cfg is not config:
                 optimizer.config = cfg
             out = train_update_v833i(runtime, optimizer, groups, binding, config=cfg, **kwargs)
         finally:
-            optimizer.config = saved; TURN['lr_multiplier'] = 1.0
+            optimizer.config = saved; TURN['lr_multiplier'] = 1.0; TURN['step_mult'] = 1; TURN['opt'] = None; batched.KNOBS = None
         if isinstance(out, dict):
             if cfg is not config and 'config' in out:
                 out['config'] = config.document()           # the signed config document, unchanged (validate_result)
             if out.get('status') == 'updated':
                 out['train_params'] = dict(
                     version='v833j-turn-train-params-v1', lr=lr, kl=kl, given=list(tp['given']), defaults=dict(tp['defaults']),
-                    defaults_used=(m == 1.0 and cfg is config), lr_multiplier=m, kl_applied=float(cfg.kl_coefficient),
+                    defaults_used=(m == 1.0 and cfg is config and k_mult == 1 and not opt_on and not loss_on), lr_multiplier=m, kl_applied=float(cfg.kl_coefficient),
+                    step_mult=k_mult, knobs=dict(kn), knobs_applied=dict(step=opt_on, loss=loss_on),
                     step=TURN['last'],
                     rule=('kl replaces kl_coefficient in L = loss_scale * (1/N) * sum_i (1/K_i) * sum_t [pg + kl * k3]; '
                           'lr: m = lr / sgd_lr, n_t = min(m * r_t * ||d_t||, sgd_tensor_rel_cap * (1 - 1e-6) * ||M_H,t||), '
-                          's = min(1, sgd_update_norm_cap / ||n||), Delta_t = s * n_t * g_t / ||g_t||; m = 1 -> the v8.3.3i step exactly'))
+                          's = min(1, sgd_update_norm_cap / ||n||), Delta_t = s * n_t * g_t / ||g_t||; m = 1 -> the v8.3.3i step exactly; '
+                          'step_mult k (v8.3.3k): n_t := k * n_t before the global cap (lr and per-tensor cap scaled together), k = 1 -> unchanged; '
+                          'knobs (v8.3.3l): see the TURN comment / mining.json batch_file.train; all default -> unchanged'))
         TURN['last'] = None
         return out
     train_update_v833j._original = dp_update._original
@@ -1077,7 +1212,7 @@ def install(config, start_dp=False):
                 drop_policy=batched.DROP_POLICY, optimizer_persistence=engine['optimizer_persistence'],
                 drift_control=dict(drift_cap_rel=drift_cap, restart_lr_warm_steps=restart_warm, restart_lr_scale=restart_scale),
                 sgd=dict(sgd_lr=sgd_lr, sgd_update_norm_cap=sgd_cap, sgd_mode=sgd_mode, sgd_freeze=list(sgd_freeze), sgd_tensor_rel_cap=sgd_trc, fp32_master=sgd_fp32, direction=sgd_dir, on=sgd_lr is not None),
-                support_renorm=support, turn_train_params='v833j: free-file dispatch train {lr, kl}',
+                support_renorm=support, turn_train_params='v833l: free-file dispatch train {lr, kl, step_mult, knobs}',
                 sites=sorted(SITES))
 
 

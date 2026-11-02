@@ -1,5 +1,5 @@
-# Trainer step (kit/train_step.py, validator/trainer-v833j). Exact versions the live v8.3.3j trainer reports:
-#   torch / transformers / toploc  = TRAINING-RESULT runtime_versions of every v8.3.3j turn (validator/trainer-v833j/trainer-config.public.json)
+# Trainer step (kit/train_step.py, validator/trainer-v833l). Exact versions the live v8.3.3l trainer reports:
+#   torch / transformers / toploc  = TRAINING-RESULT runtime_versions of every v8.3.3l turn (validator/trainer-v833l/trainer-config.public.json)
 #   flash-linear-attention / fla-core = the engine block's training_kernels (live runs engine packed with these kernels)
 # safetensors / numpy: from requirements-grader.txt (the validator-recorded eval venv freeze, same torch/transformers/toploc).
 # A full pip freeze of the 8-GPU trainer pod is not published; these are the packages the trainer code imports.

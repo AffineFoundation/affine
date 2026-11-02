@@ -11,16 +11,48 @@
 Your link is https://affine.io/ff/links/<hotkey>.json: a SealedBox (libsodium crypto_box_seal) sealed to your hotkey's Ed25519
 public key (converted to X25519). Only your seed opens it. Format and rules: https://affine.io/mining.json -> batch_file.
 
-Formats: affine-batch-v1, and affine-batch-v2 = v1 + an optional top-level "train": {"lr": <number>, "kl": <number>}
-(either may be omitted; defaults lr 5e-7, kl 0.02; bounds lr [1.25e-7, 1e-6], kl [0.005, 0.1]; out of range = invalid file).
+Formats: affine-batch-v1, and affine-batch-v2 = v1 + an optional top-level "train" (also the v8.3.3l knobs, KNOB_SPEC below): {"lr": <number>, "kl": <number>, "step_mult": <integer>}
+(any may be omitted; defaults lr 5e-7, kl 0.02, step_mult 1; bounds lr [1.25e-7, 1e-6], kl [0.005, 0.1], step_mult one of 1, 2;
+out of range = invalid file). step_mult k multiplies the whole one-step update by k (lr and the per-tensor cap scaled together).
 """
 import argparse, base64, hashlib, json, math, sys, time, urllib.request
 
 SITE = 'https://affine.io'
 FORMAT = 'affine-batch-v1'
 FORMAT_V2 = 'affine-batch-v2'
-TRAIN_DEFAULTS = {'lr': 5e-07, 'kl': 0.02}
+TRAIN_DEFAULTS = {'lr': 5e-07, 'kl': 0.02, 'step_mult': 1}
 TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}
+STEP_MULT_ALLOWED = (1, 2)
+KNOB_SPEC = {
+    'lr_scale_attn':    ('number', (0.0, 2.0), 1.0),     # self_attn.* and linear_attn.* tensors
+    'lr_scale_mlp':     ('number', (0.0, 2.0), 1.0),     # mlp.* tensors
+    'lr_scale_embed':   ('number', (0.0, 2.0), 1.0),     # embed_tokens
+    'lr_scale_lm_head': ('number', (0.0, 2.0), 1.0),     # lm_head
+    'lr_scale_early':   ('number', (0.0, 2.0), 1.0),     # every tensor of layers 0..15 (x the group scale)
+    'lr_scale_late':    ('number', (0.0, 2.0), 1.0),     # every tensor of layers 16..31 (x the group scale)
+    'adam_eps':         ('number', (1e-10, 1e-3), 1e-08),
+    'weight_decay':     ('number', (0.0, 0.05), 0.01),
+    'clamp_mode':       ('choice', ('per_tensor', 'global_norm', 'both'), 'per_tensor'),
+    'global_norm_cap':  ('number', (0.005, 1.0), 1.0),   # used by clamp_mode global_norm / both
+    'loss_agg':         ('choice', ('seq_mean', 'token_mean'), 'seq_mean'),
+    'adv_center':       ('choice', ('mean', 'none', 'group_norm'), 'mean'),
+    'adv_clip':         ('number', (0.1, 100.0), None),  # omitted = no clip
+}
+KNOB_DEFAULTS = {k: v[2] for k, v in KNOB_SPEC.items()}
+
+
+def knob_value(k, v):
+    """-> the effective value of one knob, or raise ValueError(reason). Never clamps (same policy as lr / kl)."""
+    import json, math
+    kind, b, _ = KNOB_SPEC[k]
+    if kind == 'number':
+        if type(v) not in (int, float) or not math.isfinite(v) or not b[0] <= v <= b[1]:
+            raise ValueError('train.%s must be a number in [%r, %r] (got %s)' % (k, b[0], b[1], json.dumps(v)[:40]))
+        return float(v)
+    if type(v) is not str or v not in b:
+        raise ValueError('train.%s must be one of %s (got %s)' % (k, ', '.join(b), json.dumps(v)[:40]))
+    return v
+
 
 # ---- libsodium crypto_box_seal_open in pure Python (X25519 + XSalsa20-Poly1305, nonce = blake2b(epk || pk, 24)) ----
 P = 2 ** 255 - 19
@@ -139,14 +171,22 @@ def check(raw, hotkey, caps):
         if not ({'version', 'hotkey', 'groups'} <= set(v) <= {'version', 'hotkey', 'groups', 'train'}):
             return False, 'top level keys must be version, hotkey, groups and optionally train (%s)' % FORMAT_V2
         t = v.get('train', {})
-        if not isinstance(t, dict): return False, 'train must be an object {"lr": number, "kl": number} (either may be omitted)'
-        if set(t) - set(TRAIN_BOUNDS): return False, 'train keys must be among lr, kl'
+        if not isinstance(t, dict): return False, 'train must be an object {"lr": number, "kl": number, "step_mult": integer} (any may be omitted)'
+        if set(t) - set(TRAIN_BOUNDS) - {'step_mult'} - set(KNOB_SPEC): return False, 'train keys must be among lr, kl, step_mult, ' + ', '.join(KNOB_SPEC)
         for k, (lo, hi) in TRAIN_BOUNDS.items():
             if k in t:
                 x = t[k]
                 if type(x) not in (int, float) or not math.isfinite(x) or not lo <= x <= hi:
                     return False, 'train.%s must be a number in [%r, %r] (got %s)' % (k, lo, hi, json.dumps(x)[:40])
                 train[k] = float(x)
+        if 'step_mult' in t:
+            if type(t['step_mult']) is not int or t['step_mult'] not in STEP_MULT_ALLOWED:
+                return False, 'train.step_mult must be one of the integers 1, 2 (got %s)' % json.dumps(t['step_mult'])[:40]
+            train['step_mult'] = t['step_mult']
+        for k in KNOB_SPEC:
+            if k in t:
+                try: train[k] = knob_value(k, t[k])
+                except ValueError as e: return False, str(e)
     else:
         if set(v) != {'version', 'hotkey', 'groups'}:
             return False, 'top level keys must be exactly version, hotkey, groups' + (' ("train" needs %s)' % FORMAT_V2 if 'train' in v else '')
@@ -173,9 +213,10 @@ def check(raw, hotkey, caps):
             kept += 1; n += len(rs)
         elif kept == 0:
             return False, 'the first group alone exceeds the rollout cap'
-    return True, 'ok (%s): %d prompts, %d rollouts will be trained (cap %d prompts / %d rollouts), lr %g, kl %g%s' % (
-        v['version'], kept, n, caps['max_tasks_per_miner'], caps['max_rollouts_per_miner'], train['lr'], train['kl'],
-        '' if kept == len(gs) else '; %d prompts beyond the cap are dropped' % (len(gs) - kept))
+    return True, 'ok (%s): %d prompts, %d rollouts will be trained (cap %d prompts / %d rollouts), lr %g, kl %g, step_mult %d%s' % (
+        v['version'], kept, n, caps['max_tasks_per_miner'], caps['max_rollouts_per_miner'], train['lr'], train['kl'], train['step_mult'],
+        ''.join(', %s %s' % (k, train[k]) for k in KNOB_SPEC if k in train) + (
+        '' if kept == len(gs) else '; %d prompts beyond the cap are dropped' % (len(gs) - kept)))
 
 
 def caps_now():

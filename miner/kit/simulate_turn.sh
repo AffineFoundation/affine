@@ -26,7 +26,7 @@ EXTRA=(); [ -n "${LR:-}" ] && EXTRA+=(--lr "$LR"); [ -n "${KL:-}" ] && EXTRA+=(-
 python3 "$KIT/make_batch.py" --head "$W/head" --hotkey "$HOTKEY" --rollouts "$W/rollouts.jsonl" --out "$W/batch.json" --select "$SELECT" "${EXTRA[@]}"
 python3 "$KIT/check_batch.py" --hotkey "$HOTKEY" --tokenizer "$W/head" "$W/batch.json"
 
-echo "== 4. one v8.3.3j step (live trainer code) -> candidate"
+echo "== 4. one v8.3.3l step (live trainer code) -> candidate"
 kill $VH; wait $VH 2>/dev/null || true
 python3 "$KIT/train_step.py" --head "$W/head" --ref "$W/ref" --batch "$W/batch.json" --hotkey "$HOTKEY" --out "$W/cand" --device cuda --report "$W/step.json"
 

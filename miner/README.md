@@ -4,7 +4,7 @@ Everything a miner needs to build a batch file, train the exact step the validat
 the exact held-out gate math, before you spend a turn. Start here. The plain-text version of this guide is
 https://affine.io/llms.txt. The live contract is https://affine.io/mining.json, and it wins if the two disagree.
 
-**What's published here.** The code below is the code the validator runs today (trainer v8.3.3j, gate `prior-v1`,
+**What's published here.** The code below is the code the validator runs today (trainer v8.3.3l, gate `prior-v1`,
 free-file `affine-batch-v1/v2`). Every file's sha256 and its live source are in
 [`validator/MANIFEST.sha256`](validator/MANIFEST.sha256). Only one file is changed from the live copy:
 `gate_service.py`, which has the probe-pod SSH host and absolute paths replaced by placeholders. The task
@@ -19,14 +19,14 @@ miner/
     generate.py                 sample rollouts from the head at the gate's settings and grade them with the gate's grader
     make_batch.py               rollouts -> affine-batch-v1/v2 file, checked with the validator's checker
     check_batch.py              the validator's FULL format check (tokenizes like the trainer)
-    train_step.py               ONE v8.3.3j step with the live trainer code -> candidate checkpoint
+    train_step.py               ONE v8.3.3l step with the live trainer code -> candidate checkpoint
     gate_eval.py                the prior-v1 gate (weighted draw, fresh head, candidate, per-env Hajek estimate) on your GPUs
     gate_eval_ivw_v2.py         the old ivw-v2 gate (before 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
     simulate_turn.sh            all of the above, end to end
     prompts.py / grade.py / sampler.py / kitpath.py   shared helpers (pool, prompt renderings, grader, vLLM client, imports)
     tests/test_kit_cpu.py       CPU self-test of the whole chain (tiny model + fake vLLM; no GPU)
   validator/                    the live code (verbatim; MANIFEST.sha256)
-    trainer-v833j/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step), v8211_batched.py (loss), v83_*.py, patched/
+    trainer-v833l/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step), v8211_batched.py (loss), v83_*.py, patched/
                                 trainer-config.public.json = the live engine block + TrainerConfig + runtime versions
     engine/                     subnet/mimo_grpo (the engine the host trainer drives) + vendor/mimo_verl_pinned (GRPO advantage)
     batch/ff_format.py          the batch-file parser / checker / tokenizer the lifecycle uses
@@ -88,7 +88,27 @@ miner/
 ```
 
 - **v1** has exactly `version, hotkey, groups`. **v2** adds an optional `train` with `lr` in [1.25e-7, 1e-6]
-  (default 5e-7) and `kl` in [0.005, 0.1] (default 0.02). The bounds are inclusive and values are never clamped.
+  (default 5e-7) and `kl` in [0.005, 0.1] (default 0.02). From epoch 575 (trainer v8.3.3l) also `step_mult` and the optional
+  knobs below; every one defaults to the previous trainer, so a file without them trains bit-identically to before.
+  The bounds are inclusive and values are never clamped (a non-integer step_mult such as 2.0 is invalid).
+
+| field | default | range | what it does |
+|---|---|---|---|
+| `train.step_mult` | 1 | integer: 1, 2 | multiplies the whole one-step update: lr and the per-tensor cap scale together, one gradient, no extra trainer time |
+| `train.lr_scale_attn` | 1 | 0 .. 2 | multiplies the step of every attention tensor (self_attn.*, linear_attn.*); 0 freezes them |
+| `train.lr_scale_mlp` | 1 | 0 .. 2 | multiplies the step of every mlp.* tensor; 0 freezes them |
+| `train.lr_scale_embed` | 1 | 0 .. 2 | multiplies the step of embed_tokens; 0 freezes it |
+| `train.lr_scale_lm_head` | 1 | 0 .. 2 | multiplies the step of lm_head; 0 freezes it |
+| `train.lr_scale_early` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 0..15 (on top of the group scale); 0 freezes them |
+| `train.lr_scale_late` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 16..31 (on top of the group scale); 0 freezes them |
+| `train.adam_eps` | 1e-8 | 1e-10 .. 1e-3 | eps in the normalized-gradient term g / (abs(g) + eps); larger eps shrinks the per-tensor step of tensors with small gradients (the step direction stays g / norm(g)) |
+| `train.weight_decay` | 0.01 | 0 .. 0.05 | decoupled weight decay inside the per-tensor step norm (2-D non-bias tensors); it changes step sizes, not the direction |
+| `train.clamp_mode` | per_tensor | per_tensor, global_norm or both | per_tensor: each tensor's step is capped at c_t = 2e-5 x norm(W_t) (today). global_norm: no per-tensor cap; the whole step is scaled down to global_norm_cap if larger. both: per-tensor cap, then the global cap at global_norm_cap |
+| `train.global_norm_cap` | 1 | 0.005 .. 1 | the global step-norm cap used by clamp_mode global_norm / both (ignored with per_tensor, which keeps the fixed cap 1.0) |
+| `train.loss_agg` | seq_mean | seq_mean or token_mean | seq_mean: every rollout weighs the same (mean over its tokens, then over rollouts; today). token_mean: every token weighs the same (long rollouts weigh more) |
+| `train.adv_center` | mean | mean, none or group_norm | advantage of a rollout: mean = reward - mean reward of its prompt group (today); none = the raw reward; group_norm = (reward - mean) / (std + 1e-6) within the group |
+| `train.adv_clip` | none (no clip) | 0.1 .. 100 | if set, advantages are clipped to [-adv_clip, +adv_clip] after centering; omit it for no clip (today) |
+
   A value out of range, a non-number or an extra key makes the file invalid (you're skipped, not charged).
   Putting `train` in a v1 file is also invalid.
 - The file is UTF-8 JSON, at most 64 MiB. Prompts must be non-empty and distinct, and each needs at least one rollout.
@@ -106,9 +126,9 @@ miner/
 - Check a file the way the validator does: `python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`
   (`affine_batch.py check` does the structural part without a tokenizer).
 
-## 3. The training step (v8.3.3j): what `kit/train_step.py` runs
+## 3. The training step (v8.3.3l): what `kit/train_step.py` runs
 
-This is one stateless step from the published head. All the code is in `validator/trainer-v833j` and `validator/engine`.
+This is one stateless step from the published head. All the code is in `validator/trainer-v833l` and `validator/engine`.
 The live settings are in `trainer-config.public.json`.
 
 - **Loss** (`v8211_batched.train_update_batched`): GRPO with one group per prompt, PPO clip 0.2, dual clip 3.0,
@@ -129,6 +149,15 @@ The live settings are in `trainer-config.public.json`.
   the global cap is s = min(1, 1/‖n‖); Δ_t = s·n_t·g_t/‖g_t‖; M_C = M_H − Δ; and the candidate = bf16_rne(M_C).
   With the default lr, many tensors already sit at the per-tensor cap, so lr 1e-6 moves the model less than 2×
   (at e368, 242 of 427 tensors were at the cap; turn.json `training.train_params.step`).
+  **step_mult k** (v8.3.3l, from epoch 575; proposed in #120 by duongna): n_t := k·n_t before the global cap, i.e. lr and the
+  per-tensor cap scale together and every tensor moves k× (the capped ones too). One gradient, one step, no extra trainer
+  time. The default step norm is ≈0.023, so the global cap (1.0) does not fire for any allowed k. k = 1 is exactly the v8.3.3j step.
+  **Knobs** (v8.3.3l, only when one differs from its default): eps = adam_eps and 0.01 = weight_decay in d_t; n_t is multiplied
+  by the tensor's group scale (lr_scale_attn / mlp / embed / lm_head; norms 1) × lr_scale_early (layers 0–15) or lr_scale_late
+  (16–31); clamp_mode global_norm drops c_t and caps the whole step at global_norm_cap (both: c_t and then global_norm_cap);
+  adv_center / adv_clip set the GRPO advantages; loss_agg token_mean weighs tokens instead of rollouts. The direction is
+  always g_t/‖g_t‖. Code: `validator/trainer-v833l/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
+  `v8211_batched.py` (`_apply_knobs`); `kit/train_step.py` applies them exactly like the live wrapper.
 - **Differences in the local run (execution only, same math):** it runs in one process with engine `padded`
   (the live run uses 8 GPUs, engine `packed`, fla 0.6.0 kernels), so it matches at the bf16-ulp level, not bit-exactly.
   Without `--master` the step bootstraps M_H = fp32(bf16 head). The live trainer uses the published fp32 master,

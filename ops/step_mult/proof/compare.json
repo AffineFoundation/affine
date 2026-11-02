@@ -1,0 +1,91 @@
+{
+ "runs": {
+  "J": {
+   "model_files": {
+    "model.safetensors": "315afb1e27b2600555f074c7b17b7e54196a8d22faf3d237ad8f221f840714ba"
+   },
+   "fp32_master_sha256": "2682631393a08be8f1159dd29ba946c5fae11a209683909626221050c9d84a48",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  },
+  "L0": {
+   "model_files": {
+    "model.safetensors": "315afb1e27b2600555f074c7b17b7e54196a8d22faf3d237ad8f221f840714ba"
+   },
+   "fp32_master_sha256": "2682631393a08be8f1159dd29ba946c5fae11a209683909626221050c9d84a48",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  },
+  "LD": {
+   "model_files": {
+    "model.safetensors": "315afb1e27b2600555f074c7b17b7e54196a8d22faf3d237ad8f221f840714ba"
+   },
+   "fp32_master_sha256": "2682631393a08be8f1159dd29ba946c5fae11a209683909626221050c9d84a48",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  },
+  "LK": {
+   "model_files": {
+    "model.safetensors": "d27beb0288b44121e8223213266766b2178f2340745df77f673e1c79748d607d"
+   },
+   "fp32_master_sha256": "d1d735eccdb1f82b2b16c13af776b9430c8b49855df63144ebfe1fe85a94c8bf",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  }
+ },
+ "compare": {
+  "L0_vs_J": {
+   "same_tensor_names": true,
+   "bf16_identical": true,
+   "fp32_identical": true,
+   "tensors_differing_bf16": 0,
+   "model_file_shas_equal": true,
+   "fp32_master_file_sha_equal": true
+  },
+  "LD_vs_J": {
+   "same_tensor_names": true,
+   "bf16_identical": true,
+   "fp32_identical": true,
+   "tensors_differing_bf16": 0,
+   "model_file_shas_equal": true,
+   "fp32_master_file_sha_equal": true
+  },
+  "LK_vs_J": {
+   "same_tensor_names": true,
+   "bf16_identical": false,
+   "fp32_identical": false,
+   "tensors_differing_bf16": 177,
+   "model_file_shas_equal": false,
+   "fp32_master_file_sha_equal": false
+  }
+ },
+ "all_identical": false
+}

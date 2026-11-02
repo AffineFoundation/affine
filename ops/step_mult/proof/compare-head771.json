@@ -1,0 +1,68 @@
+{
+ "runs": {
+  "c3J": {
+   "model_files": {
+    "model.safetensors": "7f4aeaafd1b359a04bf3dfa90428c32176dd499dd688b79885b9c3a18f0a32e9"
+   },
+   "fp32_master_sha256": "36e29964d7c47c11702f793d973e6d95d44aae6f3e6f153820ac5e31e150a2e3",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  },
+  "c3L0": {
+   "model_files": {
+    "model.safetensors": "7f4aeaafd1b359a04bf3dfa90428c32176dd499dd688b79885b9c3a18f0a32e9"
+   },
+   "fp32_master_sha256": "36e29964d7c47c11702f793d973e6d95d44aae6f3e6f153820ac5e31e150a2e3",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  },
+  "c3LD": {
+   "model_files": {
+    "model.safetensors": "7f4aeaafd1b359a04bf3dfa90428c32176dd499dd688b79885b9c3a18f0a32e9"
+   },
+   "fp32_master_sha256": "36e29964d7c47c11702f793d973e6d95d44aae6f3e6f153820ac5e31e150a2e3",
+   "train_params": null,
+   "report_keys": [
+    "file_summary",
+    "head",
+    "report",
+    "sgd_events",
+    "trajectories",
+    "wall_seconds"
+   ]
+  }
+ },
+ "compare": {
+  "c3L0_vs_c3J": {
+   "same_tensor_names": true,
+   "bf16_identical": true,
+   "fp32_identical": true,
+   "tensors_differing_bf16": 0,
+   "model_file_shas_equal": true,
+   "fp32_master_file_sha_equal": true
+  },
+  "c3LD_vs_c3J": {
+   "same_tensor_names": true,
+   "bf16_identical": true,
+   "fp32_identical": true,
+   "tensors_differing_bf16": 0,
+   "model_file_shas_equal": true,
+   "fp32_master_file_sha_equal": true
+  }
+ },
+ "all_identical": true
+}

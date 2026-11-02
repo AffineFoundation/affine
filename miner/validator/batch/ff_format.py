@@ -24,6 +24,14 @@ Format "affine-batch-v2" (Jacob 2026-10-31 pt902u, RA/20261031-ff-train-params) 
     (no clamping). "train" may be {} (all defaults). v1 files are unchanged and still accepted (they train with the
     defaults); "train" in a v1 file is invalid (v1 keys stay exact). v2 is accepted only while the validator enables it
     (FF-TRAIN.json); otherwise a v2 file is invalid.
+  * "step_mult" (RA/20261102-step-mult; duongna's #120 proposal, Jacob 2026-11-02): optional INTEGER, one of 1, 2 (default 1) inside "train".
+  * knobs (trainer v8.3.3l, Jacob 2026-11-02 11:19 CR): optional "train" keys, each defaulting to today's trainer: lr_scale_attn /
+    lr_scale_mlp / lr_scale_embed / lr_scale_lm_head / lr_scale_early / lr_scale_late [0, 2] (1), adam_eps [1e-10, 1e-3] (1e-8),
+    weight_decay [0, 0.05] (0.01), clamp_mode per_tensor|global_norm|both (per_tensor), global_norm_cap [0.005, 1] (1),
+    loss_agg seq_mean|token_mean (seq_mean), adv_center mean|none|group_norm (mean), adv_clip [0.1, 100] (none). Out of range,
+    wrong type or unknown key = invalid file (never clamped), like lr.
+    The trainer multiplies the whole one-step update by it (lr and the per-tensor cap scaled together; one gradient, one step,
+    no extra trainer time). A non-integer (2.0, "2", true), 0, or > 8 makes the file invalid (no clamping).
 """
 import hashlib, json, math
 from pathlib import Path
@@ -31,8 +39,40 @@ from pathlib import Path
 FORMAT = 'affine-batch-v1'
 FORMAT_V2 = 'affine-batch-v2'
 FORMATS = (FORMAT, FORMAT_V2)
-TRAIN_DEFAULTS = {'lr': 5e-07, 'kl': 0.02}
+TRAIN_DEFAULTS = {'lr': 5e-07, 'kl': 0.02, 'step_mult': 1}
 TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}
+STEP_MULT_ALLOWED = (1, 2)       # RA/20261102-step-mult
+KNOB_SPEC = {
+    'lr_scale_attn':    ('number', (0.0, 2.0), 1.0),     # self_attn.* and linear_attn.* tensors
+    'lr_scale_mlp':     ('number', (0.0, 2.0), 1.0),     # mlp.* tensors
+    'lr_scale_embed':   ('number', (0.0, 2.0), 1.0),     # embed_tokens
+    'lr_scale_lm_head': ('number', (0.0, 2.0), 1.0),     # lm_head
+    'lr_scale_early':   ('number', (0.0, 2.0), 1.0),     # every tensor of layers 0..15 (x the group scale)
+    'lr_scale_late':    ('number', (0.0, 2.0), 1.0),     # every tensor of layers 16..31 (x the group scale)
+    'adam_eps':         ('number', (1e-10, 1e-3), 1e-08),
+    'weight_decay':     ('number', (0.0, 0.05), 0.01),
+    'clamp_mode':       ('choice', ('per_tensor', 'global_norm', 'both'), 'per_tensor'),
+    'global_norm_cap':  ('number', (0.005, 1.0), 1.0),   # used by clamp_mode global_norm / both
+    'loss_agg':         ('choice', ('seq_mean', 'token_mean'), 'seq_mean'),
+    'adv_center':       ('choice', ('mean', 'none', 'group_norm'), 'mean'),
+    'adv_clip':         ('number', (0.1, 100.0), None),  # omitted = no clip
+}
+KNOB_DEFAULTS = {k: v[2] for k, v in KNOB_SPEC.items()}
+
+
+def knob_value(k, v):
+    """-> the effective value of one knob, or raise ValueError(reason). Never clamps (same policy as lr / kl)."""
+    import json, math
+    kind, b, _ = KNOB_SPEC[k]
+    if kind == 'number':
+        if type(v) not in (int, float) or not math.isfinite(v) or not b[0] <= v <= b[1]:
+            raise ValueError('train.%s must be a number in [%r, %r] (got %s)' % (k, b[0], b[1], json.dumps(v)[:40]))
+        return float(v)
+    if type(v) is not str or v not in b:
+        raise ValueError('train.%s must be one of %s (got %s)' % (k, ', '.join(b), json.dumps(v)[:40]))
+    return v
+
+TRAIN_KEYS = ('lr', 'kl', 'step_mult') + tuple(KNOB_SPEC)
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_OUTPUT = 8192          # output tokens incl. the appended EOS
 MAX_CONTEXT = 12288        # prompt + output tokens
@@ -63,9 +103,9 @@ def _reject_constant(name):
 
 def train_params(value):
     """The v2 "train" object -> (effective {lr, kl} with defaults, the keys the file set). Raises Invalid; never clamps."""
-    need(isinstance(value, dict), 'train must be an object {"lr": number, "kl": number} (either may be omitted)')
-    extra = sorted(set(value) - set(TRAIN_BOUNDS))
-    need(not extra, 'train keys must be among lr, kl (got %s)' % ', '.join(map(repr, extra))[:100])
+    need(isinstance(value, dict), 'train must be an object {"lr": number, "kl": number, "step_mult": integer} (any may be omitted)')
+    extra = sorted(set(value) - set(TRAIN_KEYS))
+    need(not extra, 'train keys must be among %s (got %s)' % (', '.join(TRAIN_KEYS), ', '.join(map(repr, extra))[:100]))
     out = dict(TRAIN_DEFAULTS)
     for k, (lo, hi) in TRAIN_BOUNDS.items():
         if k in value:
@@ -73,7 +113,17 @@ def train_params(value):
             need(type(v) in (int, float) and math.isfinite(v) and lo <= v <= hi,
                  'train.%s must be a number in [%r, %r] (got %s)' % (k, lo, hi, json.dumps(v)[:40]))
             out[k] = float(v)
-    return out, sorted(k for k in TRAIN_BOUNDS if k in value)
+    if 'step_mult' in value:
+        v = value['step_mult']
+        need(type(v) is int and v in STEP_MULT_ALLOWED, 'train.step_mult must be one of the integers 1, 2 (got %s)' % json.dumps(v)[:40])
+        out['step_mult'] = v
+    for k in KNOB_SPEC:                                # v8.3.3l knobs: effective value (default when omitted)
+        if k in value:
+            try: out[k] = knob_value(k, value[k])
+            except ValueError as e: raise Invalid(str(e))
+        else:
+            out[k] = KNOB_DEFAULTS[k]
+    return out, sorted(k for k in TRAIN_KEYS if k in value)
 
 
 def parse_full(raw, hotkey, v2=True):

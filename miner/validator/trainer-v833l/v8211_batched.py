@@ -82,8 +82,40 @@ def _layout(groups, config):
             rows.append(dict(group=group, rollout=rollout, advantage=float(advantage), active=active,
                              keep=len(rollout.tokens), derail_index=None,
                              reward=rollout_reward(config, rollout)))
+    if KNOBS is not None:          # v8.3.3l per-turn loss knobs (None -> the exact previous rows)
+        _apply_knobs(rows)
     _prompt_weights(rows)
     return rows
+
+
+KNOBS = None   # v8.3.3l: dict(loss_agg, adv_center, adv_clip) for one turn, set by the host around one update (+ broadcast to DP helpers)
+
+
+def _apply_knobs(rows):
+    """adv_center: 'mean' (upstream GRPO mean baseline, no std; a 1-rollout group keeps A = r), 'none' (A = r),
+    'group_norm' (upstream GRPO with std normalisation, eps 1e-6; 1-rollout group A = r). adv_clip c: A = clamp(A, -c, c).
+    loss_agg 'token_mean': each active rollout's loss x N * len_i / sum_j len_j (N active rollouts, len = rollout tokens),
+    i.e. (1/sum len) * sum_i sum_t instead of (1/N) * sum_i (1/len_i) * sum_t."""
+    k = KNOBS; c = k.get('adv_center', 'mean'); clip = k.get('adv_clip'); agg = k.get('loss_agg', 'seq_mean')
+    if c not in ('mean', 'none', 'group_norm') or agg not in ('seq_mean', 'token_mean'):
+        raise ValueError('loss knobs %r' % (k,))
+    if c != 'mean':
+        by = {}
+        for i, r in enumerate(rows):
+            by.setdefault(id(r['group']), []).append(i)
+        for idx in by.values():
+            if c == 'none':
+                for i in idx: rows[i]['advantage'] = float(rows[i]['reward'])
+            else:
+                rewards = torch.tensor([[rows[i]['reward']] for i in idx], dtype=torch.float32)
+                vals, _ = reference().compute_grpo_outcome_advantage(rewards, torch.ones_like(rewards),
+                    np.array([rows[idx[0]]['group'].task_id] * len(idx)), norm_adv_by_std_in_grpo=True)
+                for i, v in zip(idx, vals[:, 0], strict=True): rows[i]['advantage'] = float(v)
+    if clip is not None:
+        for r in rows: r['advantage'] = max(-float(clip), min(float(clip), r['advantage']))
+    if agg == 'token_mean':
+        act = [r for r in rows if r['active']]; total = sum(len(r['rollout'].tokens) for r in act)
+        for r in act: r['agg_w'] = len(act) * len(r['rollout'].tokens) / total
 
 DROP_UNRESOLVED = False   # v8.2.5: set only by mimo_host_trainer_v825.install from engine['drop_unresolved']
 LOSS_AGG_MODE = 'config'   # v8.2.11: set only by mimo_host_trainer_v8211.install from engine['loss_agg_mode']
@@ -185,6 +217,8 @@ ENGINES = ('padded', 'packed')
 def layout_drop_unresolved(groups, config):
     """v8.2.5: rows like training._layout, but unresolved rollouts never enter the loss and the
     group baseline is computed over resolved rollouts only; groups with < 2 resolved are dropped."""
+    if KNOBS is not None:
+        raise ValueError('v8.3.3l loss knobs need drop_unresolved off')
     rows = []
     stats = dict(enabled=True, policy=DROP_POLICY, groups_total=len(groups), dropped_groups=0,
                  dropped_unresolved_rollouts=0, dropped_resolved_rollouts_in_dropped_groups=0,
@@ -392,6 +426,8 @@ def _gradient_pass(runtime, rows, plan, config, agg_config, loss_scale, active_r
                 kl_mean = float((kld.detach() * mask).sum() / mask.sum().clamp_min(1))
             if loss_scale != 1.0:
                 loss = loss * loss_scale
+            if row.get('agg_w') is not None:           # v8.3.3l loss_agg token_mean (absent -> unchanged)
+                loss = loss * row['agg_w']
             if not torch.isfinite(loss):
                 raise ValueError('finite upstream PPO loss required')
             detail = dict(task_id=group.task_id, nonce=rollout.nonce, tokens=len(rollout.tokens),

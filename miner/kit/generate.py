@@ -4,7 +4,7 @@
   python3 generate.py --head ./head --url http://127.0.0.1:8000 --tasks 0-7495 --k 8 --out rollouts.jsonl
 
 Rollouts are sampled from the TRAINER's rendering of the batch prompt (one user message = MANDATE + "\\n\\n" + problem), so the
-tokens you upload are tokens the head actually produced for that exact context. That matters: the v8.3.3j step replays the
+tokens you upload are tokens the head actually produced for that exact context. That matters: the v8.3.3l step replays the
 head's top_k 20 -> top_p 0.95 support at temperature 1 and drops any sampled token outside it from the policy-gradient term
 (support renorm), so hand-written or other-model text mostly trains nothing but KL.
 Each line: {task, prompt, answer, k, rollouts: [{output, tokens, stop, kind, how, reencode_ok}]}; kind is the gate grader's verdict

@@ -18,6 +18,8 @@ VERSION = 'sn120-ff-dispatch-v1'
 # v8.3.3j (RA/20261031-ff-train-params, Jacob pt902u): optional selection key 'train' = {lr, kl, given, defaults} (lifecycle fills the
 # defaults for keys the file omitted). Same bounds as the lifecycle format check (ff_format.TRAIN_BOUNDS); checked again here.
 TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}
+# v8.3.3k (RA/20261102-step-mult): optional 'step_mult' (int 1..8; absent = 1) in 'train' and in 'given'; defaults may carry step_mult 1.
+STEP_MULT_ALLOWED = (1, 2, 3, 4, 5, 6, 7, 8)
 DOCUMENT = 'sn120-ff-group-v1'
 MAX_DOCUMENT_BYTES = 128 * 1024 * 1024
 
@@ -63,18 +65,59 @@ def label(stop, reward):
     return 'unresolved' if stop == 'max_tokens' else ('correct' if reward > 0 else 'wrong')
 
 
+KNOB_SPEC = {
+    'lr_scale_attn':    ('number', (0.0, 2.0), 1.0),     # self_attn.* and linear_attn.* tensors
+    'lr_scale_mlp':     ('number', (0.0, 2.0), 1.0),     # mlp.* tensors
+    'lr_scale_embed':   ('number', (0.0, 2.0), 1.0),     # embed_tokens
+    'lr_scale_lm_head': ('number', (0.0, 2.0), 1.0),     # lm_head
+    'lr_scale_early':   ('number', (0.0, 2.0), 1.0),     # every tensor of layers 0..15 (x the group scale)
+    'lr_scale_late':    ('number', (0.0, 2.0), 1.0),     # every tensor of layers 16..31 (x the group scale)
+    'adam_eps':         ('number', (1e-10, 1e-3), 1e-08),
+    'weight_decay':     ('number', (0.0, 0.05), 0.01),
+    'clamp_mode':       ('choice', ('per_tensor', 'global_norm', 'both'), 'per_tensor'),
+    'global_norm_cap':  ('number', (0.005, 1.0), 1.0),   # used by clamp_mode global_norm / both
+    'loss_agg':         ('choice', ('seq_mean', 'token_mean'), 'seq_mean'),
+    'adv_center':       ('choice', ('mean', 'none', 'group_norm'), 'mean'),
+    'adv_clip':         ('number', (0.1, 100.0), None),  # omitted = no clip
+}
+KNOB_DEFAULTS = {k: v[2] for k, v in KNOB_SPEC.items()}
+
+
+def knob_value(k, v):
+    """-> the effective value of one knob, or raise ValueError(reason). Never clamps (same policy as lr / kl)."""
+    import json, math
+    kind, b, _ = KNOB_SPEC[k]
+    if kind == 'number':
+        if type(v) not in (int, float) or not math.isfinite(v) or not b[0] <= v <= b[1]:
+            raise ValueError('train.%s must be a number in [%r, %r] (got %s)' % (k, b[0], b[1], json.dumps(v)[:40]))
+        return float(v)
+    if type(v) is not str or v not in b:
+        raise ValueError('train.%s must be one of %s (got %s)' % (k, ', '.join(b), json.dumps(v)[:40]))
+    return v
+
+
 def train_params(selection, binding):
     """The signed selection's 'train' -> dict(lr, kl, given, defaults, epoch, checkpoint), or None when absent."""
     t = selection.get('train')
     if t is None:
         return None
-    need(type(t) is dict and set(t) == {'lr', 'kl', 'given', 'defaults'}, 'train keys')
+    need(type(t) is dict and set(t) - {'step_mult', 'knobs'} == {'lr', 'kl', 'given', 'defaults'}, 'train keys')
+    kn = t.get('knobs', dict(KNOB_DEFAULTS))                # v8.3.3l
+    need(type(kn) is dict and set(kn) == set(KNOB_SPEC), 'train.knobs keys')
+    for kk, vv in kn.items():
+        if vv is None and KNOB_SPEC[kk][2] is None: continue
+        try: ok = knob_value(kk, vv) == vv and type(vv) is (float if KNOB_SPEC[kk][0] == 'number' else str)
+        except ValueError: ok = False
+        need(ok, 'train.knobs.%s' % kk)
+    km = t.get('step_mult', 1)
+    need(type(km) is int and km in STEP_MULT_ALLOWED, 'train.step_mult in %r' % (STEP_MULT_ALLOWED,))
     for k, (lo, hi) in TRAIN_BOUNDS.items():
         need(type(t[k]) is float and lo <= t[k] <= hi, 'train.%s in [%r, %r]' % (k, lo, hi))
-    need(type(t['given']) is list and set(t['given']) <= set(TRAIN_BOUNDS) and len(set(t['given'])) == len(t['given']), 'train.given')
+    need(type(t['given']) is list and set(t['given']) <= set(TRAIN_BOUNDS) | {'step_mult'} | set(KNOB_SPEC) and len(set(t['given'])) == len(t['given']), 'train.given')
     d = t['defaults']
-    need(type(d) is dict and set(d) == set(TRAIN_BOUNDS) and all(type(d[k]) is float for k in d), 'train.defaults')
-    return dict(lr=t['lr'], kl=t['kl'], given=list(t['given']), defaults=dict(lr=d['lr'], kl=d['kl']),
+    need(type(d) is dict and set(d) - {'step_mult'} == set(TRAIN_BOUNDS) and all(type(d[x]) is float for x in TRAIN_BOUNDS)
+         and type(d.get('step_mult', 1)) is int and d.get('step_mult', 1) == 1, 'train.defaults')
+    return dict(lr=t['lr'], kl=t['kl'], step_mult=km, knobs=dict(kn), given=list(t['given']), defaults=dict(lr=d['lr'], kl=d['kl']),
                 epoch=binding.epoch, checkpoint=binding.checkpoint)
 
 

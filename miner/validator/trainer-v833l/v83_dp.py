@@ -211,7 +211,7 @@ def make_train_update(B, FK):
         _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0); _install_fast(B, FK, reference_runtime, 0)
         # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor)
         t = time.monotonic()
-        _bcast(dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM,
+        _bcast(dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
                     actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
                     ref_dir=str(reference_runtime._checkpoint_guard.directory), ref_desc=reference_runtime._checkpoint_guard.descriptor,
                     spec=runtime.spec.to_dict(), assign=assign))
@@ -361,6 +361,7 @@ def helper_main(rank, world, port, host_dir, source_root):
             break
         B.DROP_UNRESOLVED, B.LOSS_AGG_MODE, B.LOSS_SCALE = job['drop'], job['mode'], job['scale']
         B.SUPPORT_RENORM = job.get('support')
+        B.KNOBS = job.get('knobs')                       # v8.3.3l
         if STATE['ref'] is None or STATE['ref'].checkpoint_id != job['ref_desc']['id']:
             STATE['ref'] = MimoRuntime.load(job['ref_dir'], job['ref_desc'], job['spec'], device='cuda', trainable=False)
             _install_fast(B, FK, STATE['ref'], 0)

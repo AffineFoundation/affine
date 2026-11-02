@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.3j).
+"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.3l).
 
 What runs here is the validator's own code, imported from miner/validator/ (verbatim copies, sha256 in
 miner/validator/MANIFEST.sha256):
@@ -8,7 +8,7 @@ miner/validator/MANIFEST.sha256):
   * loss + gradient: v8211_batched.train_update_batched (rewards + overlong penalty, GRPO advantage, derail mask,
     support renorm top-20 / top-p 0.95, seq-mean-token-mean x 0.5635, k3 KL to the reference, fp32 accumulation, clip 1.0)
   * step: engine CPUAdamW.step routed to mimo_host_trainer_v83.sgd_step exactly as the host install() does
-    (fresh-adam, per-tensor cap 2e-5, global cap 1.0, fp32 master, direction normgrad) + the v8.3.3j lr multiplier / kl.
+    (fresh-adam, per-tensor cap 2e-5, global cap 1.0, fp32 master, direction normgrad) + the v8.3.3j lr multiplier / kl + the v8.3.3l step_mult and knobs.
 Differences from the live run (execution only, same math): one process and engine 'padded' (live: 8 GPUs, engine
 'packed' with fla/FlashAttention varlen kernels, NCCL SUM); gradients therefore differ at the bf16-ulp level
 (see ops/renorm_step/results/EIGHT-VS-ONE-e354.json for the size of that difference). The fp32 master: pass the
@@ -82,7 +82,13 @@ def main(argv=None):
     raw = Path(a.batch).read_bytes()
     v = ff_format.validate(raw, a.hotkey, tok, a.max_tasks, a.max_rollouts, v2=True)
     s = v['summary']; train = s.get('train') or dict(ff_format.TRAIN_DEFAULTS)
-    lr, kl = float(train['lr']), float(train['kl'])
+    lr, kl = float(train['lr']), float(train['kl']); k_mult = int(train.get('step_mult', 1))
+    kn = {x: train.get(x, H.KNOB_DEFAULTS[x]) for x in H.KNOB_SPEC}          # v8.3.3l knobs, as train_update_v833j applies them
+    OPT_KEYS = ('lr_scale_attn', 'lr_scale_mlp', 'lr_scale_embed', 'lr_scale_lm_head', 'lr_scale_early', 'lr_scale_late',
+                'adam_eps', 'weight_decay', 'clamp_mode', 'global_norm_cap')
+    LOSS_KEYS = ('loss_agg', 'adv_center', 'adv_clip')
+    opt_on = kn['clamp_mode'] != 'per_tensor' or any(kn[x] != H.KNOB_DEFAULTS[x] for x in OPT_KEYS if x != 'global_norm_cap')
+    loss_on = any(kn[x] != H.KNOB_DEFAULTS[x] for x in LOSS_KEYS)
     # 2. groups exactly as ff_trainer.prepare builds them (document -> RewardedTrajectory / FreeGroup)
     groups = []
     for i, g in enumerate(v['groups']):
@@ -130,17 +136,19 @@ def main(argv=None):
         if got != len(opt.masters): raise SystemExit('fp32 master covers %d of %d trainable tensors' % (got, len(opt.masters)))
         opt._v833f_bf16, _ = H._digest_map(list(opt.parameters))
     binding = InputBinding('local-sim', 'local-sim', head_id, '0' * 64, opt.global_step)
-    H.TURN['lr_multiplier'] = m; H.TURN['last'] = None
+    H.TURN['lr_multiplier'] = m; H.TURN['step_mult'] = k_mult; H.TURN['last'] = None
+    H.TURN['opt'] = {x: kn[x] for x in OPT_KEYS} if opt_on else None
+    B.KNOBS = {x: kn[x] for x in LOSS_KEYS} if loss_on else None
     try:
         out = B.train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=ref_rt, engine='padded',
                                      token_budget=a.token_budget, max_rows=E['max_rows'])
     finally:
         H._PUBLISHED.set()
-    out['train_params'] = dict(lr=lr, kl=kl, lr_multiplier=m, kl_applied=float(config.kl_coefficient), given=s.get('train_given'),
+    out['train_params'] = dict(lr=lr, kl=kl, step_mult=k_mult, knobs=kn, knobs_applied=dict(step=opt_on, loss=loss_on), lr_multiplier=m, kl_applied=float(config.kl_coefficient), given=s.get('train_given'),
                                step=H.TURN['last'])
     if out.get('status') == 'updated':
         out['support_renorm'] = H.support_summary(out.get('trajectories') or [], B.SUPPORT_RENORM)
-    H.TURN['lr_multiplier'] = 1.0
+    H.TURN['lr_multiplier'] = 1.0; H.TURN['step_mult'] = 1; H.TURN['opt'] = None; B.KNOBS = None
     Path(a.out).mkdir(parents=True, exist_ok=True)
     model.save_pretrained(a.out)
     tok.save_pretrained(a.out)
@@ -157,7 +165,7 @@ def main(argv=None):
     o = rep['report']; sgd = (o.get('optimizer') or {}).get('sgd') or {}
     print(json.dumps(dict(status=o.get('status'), loss=o.get('objective_loss'), preclip_gradient_norm=o.get('preclip_gradient_norm'),
                           raw_update_norm=sgd.get('raw_update_norm'), update_norm_master=(sgd.get('fp32_master') or {}).get('update_norm_master'),
-                          tensors_rel_capped=sgd.get('tensors_rel_capped'), lr=lr, kl=kl, out=a.out)))
+                          tensors_rel_capped=sgd.get('tensors_rel_capped'), lr=lr, kl=kl, step_mult=k_mult, knobs={x: v for x, v in kn.items() if v != H.KNOB_DEFAULTS[x]}, out=a.out)))
     return rep
 
 

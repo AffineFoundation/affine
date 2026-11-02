@@ -5,7 +5,7 @@
   python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok [--work /tmp/kit-test]
 
 Checks: verbatim copies match MANIFEST.sha256; pool sha; prompt renderings; the grader (positive/negative/capped); the batch checker
-(v1, v2, invalid files); ONE live-trainer step (v8.3.3j) on a tiny random model with the MiMo tokenizer (single-rollout advantage =
+(v1, v2, invalid files); ONE live-trainer step (v8.3.3l) on a tiny random model with the MiMo tokenizer (single-rollout advantage =
 reward, group advantages, lr multiplier, candidate written); the gate math (score_ivw on hand-computed cells); and the whole
 generate -> make_batch -> train_step -> gate_eval chain against a fake vLLM server.
 """
@@ -86,7 +86,7 @@ def main():
     r = sh(py, KIT / 'tests' / 'make_tiny.py', a.tokenizer, W / 'head', W / 'ref'); check('tiny head/ref built', r.returncode == 0)
     t = time.time()
     r = sh(py, KIT / 'train_step.py', '--head', W / 'head', '--ref', W / 'ref', '--batch', W / 'v2.json', '--hotkey', HK, '--out', W / 'cand', '--device', 'cpu', '--report', W / 'step.json')
-    check('train_step (v8.3.3j) dry run on CPU', r.returncode == 0, '%.1fs' % (time.time() - t))
+    check('train_step (v8.3.3l) dry run on CPU', r.returncode == 0, '%.1fs' % (time.time() - t))
     if r.returncode == 0:
         rep = json.loads((W / 'step.json').read_text()); tr = rep['trajectories']
         adv = [(x['reward'], x['advantage']) for x in tr]
