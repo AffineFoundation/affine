@@ -218,7 +218,7 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 - **Borderline difficulty.** The gate only scores tasks the head sometimes solves (0 < c < 4). Correct samples on
   problems the head usually fails or caps out on carry the signal. `make_batch.py --select correct1` picks those
   (hardest first, shortest correct sample).
-- **Fewer capped replies.** In the performance eval (https://affine.io/performance.json, full pool) the pass rate went from
+- **Fewer capped replies.** In the performance eval (full affine_math pool) the pass rate went from
   0.8448 (E0) to 0.9014 (E368), while the cap-hit rate fell from 0.1175 to 0.0736. About 4.4 of those 5.7 points
   come from fewer replies hitting the 8,192-token cap, and the mean output length dropped from 2,043 to 1,769 tokens. Short correct
   rollouts (well under 6,000 tokens, where the overlong penalty starts) are consistent with that.
@@ -243,7 +243,7 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 | everything about a GREEN (baseline, probe, tasks, math, file, lr/kl) | /k1/turns/<epoch>/green.json, /k1/turns/<epoch>/tasks.json |
 | gate decisions / open round / reveals | https://affine.io/gate.json, /gate/heldout/current.json, /gate/reveal/<epoch>.json |
 | your file's format check | https://affine.io/ff/status.json |
-| performance tile data | https://affine.io/performance.json (fixed full pool + private holdout; informational only) |
+| pass rate per king, all envs | https://affine.io/passrate.json (whole gate pool, measured from the prior; informational only) |
 | step recipe / fp32 masters / replay | https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md |
 
 ## 8. Known gaps
