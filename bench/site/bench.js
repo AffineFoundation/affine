@@ -9,6 +9,8 @@
    (Jacob 2026-11-01 18:22 CR).
    Sparklines (Jacob pt1046u 2026-11-02): a row of small cards above the table, one per score column (Avg + each benchmark): the kings'
    score over time (x = crowned_at, scored kings only), LATEST = newest scored king; hover shows the king under the cursor.
+   Restyled to the site's chart look (Jacob pt1048u): tile frame + Haffer heading/reading, k1-chart gridlines and mono labels, --performance line with
+   hollow points, E-epoch x labels, .chart-tip hover tooltip.
    Kings sit in a scroll box ~5 rows deep (sticky header); references + Genesis are a sticky <tfoot> so they stay visible without
    scrolling through the kings (Jacob pt1046u). */
 (()=>{
@@ -58,9 +60,9 @@
   const prev=box.querySelector('.bench-scroll'),keep=prev?[prev.scrollTop,prev.scrollLeft]:null;
   const cols=[AVG,...B],lab=b=>b===AVG?'Avg':b.label;
   const hist=kings.filter(m=>R[m.model_id]).sort((a,b)=>(a.crowned_at??a.epoch??0)-(b.crowned_at??b.epoch??0));
-  SP=cols.map(b=>({b,lab:lab(b),pts:hist.map(m=>({t:m.crowned_at??m.epoch,v:val(m,b),m})).filter(p=>p.v!=null&&p.t!=null)}));
+  SP=cols.map(b=>({b,lab:lab(b),pts:hist.map(m=>({t:m.crowned_at??m.epoch,v:val(m,b),se:b===AVG?null:((R[m.model_id]||{})[b.id]||{}).se??null,m})).filter(p=>p.v!=null&&p.t!=null)}));
   const sparks=SP.map((s,i)=>{const l=s.pts[s.pts.length-1];
-   return`<div class="bench-spark" data-i="${i}" title="${esc(s.lab)}: king score over time (${s.pts.length} scored kings)"><div class="bs-head"><span class="bs-name">${esc(s.lab)}</span><span class="bs-latest">${l?'Latest '+pct(l.v)+'%':'—'}</span></div><div class="bs-plot"></div><div class="bs-axis"><span>${s.pts.length?dt(s.pts[0].t):''}</span><span>${l?dt(l.t):''}</span></div></div>`;}).join('');
+   return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: score of each scored king, by crowning time (${s.pts.length} kings)">${esc(s.lab)}</h2><span class="reading">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history"></div></div>`;}).join('');
   box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the benchmark columns">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
    kings.map(m=>row(m)).join('')+`</tbody><tfoot>`+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tfoot></table></div>`;
   layout();
@@ -70,17 +72,30 @@
  const dt=t=>new Date(t*1000).toLocaleDateString('en-US',{month:'short',day:'2-digit'});
  const NS='http://www.w3.org/2000/svg',el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
  function spark(card,s){
-  const plot=card.querySelector('.bs-plot'),lt=card.querySelector('.bs-latest'),base=lt.textContent;plot.textContent='';
-  const W=plot.clientWidth||160,H=plot.clientHeight||46,P=3,ps=s.pts;if(!ps.length)return;
+  const plot=card.querySelector('.bs-plot');plot.textContent='';const ps=s.pts;
+  const W=plot.clientWidth||200,H=plot.clientHeight||90,P={l:30,r:6,t:6,b:16};
+  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`});plot.append(svg);
+  if(!ps.length){const e=document.createElement('p');e.className='empty';e.textContent='No king scored yet.';plot.append(e);return;}
   const t0=ps[0].t,t1=ps[ps.length-1].t;let lo=Math.min(...ps.map(p=>p.v)),hi=Math.max(...ps.map(p=>p.v));
-  const pad=Math.max((hi-lo)*.08,.005);lo-=pad;hi+=pad;
-  const x=t=>t1>t0?P+(W-2*P)*(t-t0)/(t1-t0):W/2,y=v=>P+(H-2*P)*(1-(v-lo)/(hi-lo));
-  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,width:W,height:H,'aria-hidden':'true'});
-  svg.append(el('polyline',{points:ps.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),class:'bs-line'}));
-  const dot=el('circle',{r:2.5,class:'bs-dot',cx:x(t1),cy:y(ps[ps.length-1].v)});svg.append(dot);plot.append(svg);
-  plot.onmousemove=e=>{const r=plot.getBoundingClientRect(),mx=e.clientX-r.left;let b=ps[0];for(const p of ps)if(Math.abs(x(p.t)-mx)<Math.abs(x(b.t)-mx))b=p;
-   dot.setAttribute('cx',x(b.t));dot.setAttribute('cy',y(b.v));lt.textContent=`E${b.m.epoch} · ${pct(b.v)}%`;};
-  plot.onmouseleave=()=>{const l=ps[ps.length-1];dot.setAttribute('cx',x(l.t));dot.setAttribute('cy',y(l.v));lt.textContent=base;};
+  const st=hi-lo>.2?.1:hi-lo>.08?.05:hi-lo>.03?.02:.01;lo=Math.max(0,Math.floor(lo/st)*st);hi=Math.min(1,Math.ceil(hi/st)*st);if(hi<=lo)hi=Math.min(1,lo+st);
+  const x=t=>t1>t0?P.l+(W-P.l-P.r)*(t-t0)/(t1-t0):(P.l+W-P.r)/2,y=v=>P.t+(H-P.t-P.b)*(1-(v-lo)/(hi-lo));
+  for(const g of [lo,(lo+hi)/2,hi]){svg.append(el('line',{x1:P.l,x2:W-P.r,y1:y(g),y2:y(g),class:'k1-grid'}));
+   const tx=el('text',{x:P.l-5,y:y(g)+3,'text-anchor':'end'});{const v=100*g;tx.textContent=(Math.abs(v-Math.round(v))<1e-6?v.toFixed(0):v.toFixed(1))+'%';}svg.append(tx);}
+  const C='var(--performance)';
+  if(ps.length>1)svg.append(el('polyline',{points:ps.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C,'stroke-width':1.5,'stroke-linejoin':'round'}));
+  const r=ps.length>40?1.6:2.2;
+  ps.forEach((p,i)=>svg.append(el('circle',{cx:x(p.t),cy:y(p.v),r:i===ps.length-1?r+.6:r,fill:i===ps.length-1?C:'var(--bg)',stroke:C,'stroke-width':1.2})));
+  const at=(e,a,xx)=>{const tx=el('text',{x:xx,y:H-3,'text-anchor':a});tx.textContent='E'+e;svg.append(tx);};
+  at(ps[0].m.epoch,'start',P.l);if(ps.length>1)at(ps[ps.length-1].m.epoch,'end',W-P.r);
+  const hl=el('circle',{r:r+1.6,fill:C,stroke:'var(--bg)','stroke-width':1,'pointer-events':'none',visibility:'hidden'});svg.append(hl);
+  let tp=document.createElement('output');tp.className='chart-tip';tp.hidden=true;plot.append(tp);
+  const xs=ps.map(p=>x(p.t));
+  ps.forEach((p,i)=>{const l=i?(xs[i-1]+xs[i])/2:P.l,rr=i<ps.length-1?(xs[i]+xs[i+1])/2:W-P.r;
+   const h=el('rect',{x:l,y:P.t,width:Math.max(1,rr-l),height:H-P.t-P.b,fill:'transparent'});
+   h.addEventListener('mouseenter',()=>{hl.setAttribute('cx',xs[i]);hl.setAttribute('cy',y(p.v));hl.setAttribute('visibility','visible');
+    tp.innerHTML=`<strong>E${esc(p.m.epoch)} · king ${esc(String(p.m.king).slice(0,8))}</strong><span>${esc(s.lab)}</span> ${pct(p.v)}%${p.se!=null?' ±'+(100*p.se).toFixed(1):''}\n<span>crowned</span> ${esc(new Date(p.t*1000).toLocaleString('en-US',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}))}`;
+    tp.hidden=false;const tw=tp.offsetWidth;tp.style.left=Math.min(Math.max(0,xs[i]-tw/2),Math.max(0,W-tw))+'px';tp.style.top=(y(p.v)>H/2?2:H/2)+'px';});
+   h.addEventListener('mouseleave',()=>{tp.hidden=true;hl.setAttribute('visibility','hidden');});svg.append(h);});
  }
  // kings box: header + 5 king rows + the sticky reference/Genesis footer
  function fit(){const sc=box.querySelector('.bench-scroll');if(!sc)return;const t=sc.querySelector('table'),rs=t.tBodies[0]?t.tBodies[0].rows:[];
