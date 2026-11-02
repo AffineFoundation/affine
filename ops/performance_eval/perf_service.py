@@ -13,6 +13,9 @@ import fetch_king
 from fetch_king import fetch, descriptor
 ST = RA + '/state'; RES = ST + '/results'; os.makedirs(RES, exist_ok=True)
 SITE = '/home/const/subnet120/affine/website'; OUTJ = SITE + '/performance.json'
+# pt1130u 2026-11-02: the full/holdout series is private now (affine.io shows passrate.json instead). Full doc -> OUTP (0600);
+# the public performance.json keeps only the king list (the bench daemon reads kings[] from it).
+OUTP = ST + '/performance.private.json'
 LEDGER = '/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/LEDGER.public.jsonl'
 FFL = '/home/const/subnet120-rewrite/state/mimo-mainnet-v1/epochs'
 # Two eval pods (Jacob 11:10 CR): pod 1 = newest king first + history; pod 2 = history only, removed automatically when history is done.
@@ -257,7 +260,10 @@ def publish(ks, cur=None):
                cross_check=rj(XC + '/LATEST.json'), holdout_guard=holdout_guard(), backfill=backfill_summary(ks),
                evaluating=(dict(king=cur, **({k: v for k, v in (S.get('running') or {}).items() if k in ('started',)})) if cur else None),
                kings=rows)
-    wj(OUTJ, out)
+    wj(OUTP, out, 0o600)
+    wj(OUTJ, dict(version='sn120-kings-v1', updated_at=out['updated_at'], updated_at_cr=out['updated_at_cr'],
+                  about='King (head) list in crowned order. Pass rate of each king across all envs: https://affine.io/passrate.json',
+                  kings=[{f: r.get(f) for f in ('king', 'epoch', 'head_from_epoch', 'era', 'parent', 'crowned_at', 'crowned_at_cr')} for r in rows]))
 def teardown():
     """History pod only: remove THIS pod (exact lium id) once no history king is left to claim. Logged; never touches other pods."""
     lid = CFG['lium_id']

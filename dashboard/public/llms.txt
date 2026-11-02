@@ -254,7 +254,7 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   information at the head), and every
   drawn task counts with weight 1/pi, so the estimate covers the whole pool (affine_math + dapo). Correct samples on
   problems the head usually fails or caps out on are where the signal is.
-- Fewer capped replies: on the full pool (performance.json), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
+- Fewer capped replies: on the full affine_math pool (the performance eval), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
   rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer 8,192-token caps, and the mean output went
   from 2,043 to 1,769 tokens. Short correct rollouts (well under 6,000 tokens, where the overlong penalty starts) fit that.
 - Sample from the head at top_k 20 / top_p 0.95 / temperature 1 (off-support tokens are dropped from the PG term).
@@ -263,18 +263,21 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   (gate_eval.py uses its own random seed and the live n / k_cand / sigma_run from gate-config.public.json; expect a few points
   of difference from the gate's hardware). A local z near 1 is a coin flip.
 
-<!-- perf-eval-20261031 -->
-## Performance over time (informational)
+<!-- passrate-20261102 -->
+## Pass rate across all envs (informational)
 
-- https://affine.io/performance.json: pass rate of every king (head) on two FIXED sets, scored on a separate machine:
-  the full public affine_math pool (all 7,496 tasks) and a private holdout (4,976 MATH test problems, minus any that
-  match a pool task; only its size and sha256 are published: 08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734).
-- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20; 12,288 output tokens for kings promoted after the 12K
-  switch, 8,192 before; each row says its max_tokens) and grader as the gate probe; fixed
-  seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (the Performance tile, one line per set).
-- Informational only: it never affects promotions, the gate, weights or training. The gate scores a few hundred
-  head-mixed tasks per round, so its pass rates aren't comparable across rounds. These are.
-<!-- /perf-eval-20261031 -->
+- https://affine.io/passrate.json: pass rate of every king (head) over the WHOLE gate pool, all envs (gate-pool-v1, 19,305
+  tasks: 7,492 affine_math + 11,813 dapo), measured from the prior. Shown at the top of https://affine.io/ (first tile).
+- Prior: a separate pod runs the current head on every pool task, 4 rollouts per task per pass, pass after pass. A king's
+  number = mean over all 19,305 tasks of correct/graded over its complete passes (a pass cut short by a head change is
+  dropped, since its finished tasks skew easy). Every task is measured, so the SE is rollout noise only (~0.1 points).
+- Until a king has a complete pass (about an hour after it is crowned), its number is the gate's head baseline for that
+  round (~500 tasks drawn with unequal inclusion probabilities pi, 12 rollouts each) re-weighted to the whole pool by 1/pi
+  (Hajek, per env, combined by env size), with a 95% CI (about +-3 points). Inclusion probabilities stay private.
+- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20) and grader as the gate; capped replies count as fails;
+  8,192 output tokens before the 12K switch (E567), 12,288 after (each row says its max_tokens).
+- Informational only: it never affects promotions, the gate, weights or training.
+<!-- /passrate-20261102 -->
 
 ## 10. The miner kit (local checker and simulator)
 
@@ -300,7 +303,7 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - Head: mining.json `checkpoint` + `current_url` (signed current.json -> manifest_url -> opening.json payload.checkpoint
   files/read_urls; id = sha256 of the canonical JSON {file: sha256}). Use miner/kit/fetch_head.py.
 - Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md
-- Performance: https://affine.io/performance.json   This file: https://affine.io/llms.txt
+- Pass rate across envs: https://affine.io/passrate.json   This file: https://affine.io/llms.txt
 
 ## FAQ
 
