@@ -6,7 +6,11 @@
    full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF.
    Avg column (first score column, Jacob 18:26 CR) = mean over the shown benchmark columns (same mean as the Pareto filter; … when a row is incomplete). Shading: per column,
    min..max of the visible rows, red tint at the bottom -> strong green at the top; a small star marks each column max (ties all marked)
-   (Jacob 2026-11-01 18:22 CR). */
+   (Jacob 2026-11-01 18:22 CR).
+   Sparklines (Jacob pt1046u 2026-11-02): a row of small cards above the table, one per score column (Avg + each benchmark): the kings'
+   score over time (x = crowned_at, scored kings only), LATEST = newest scored king; hover shows the king under the cursor.
+   Kings sit in a scroll box ~5 rows deep (sticky header); references + Genesis are a sticky <tfoot> so they stay visible without
+   scrolling through the kings (Jacob pt1046u). */
 (()=>{
  const main=document.getElementById('main');if(!main)return;
  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -47,13 +51,43 @@
   const shade=f=>{const d=1-f,k=Math.min(1,Math.max(0,(d-.1)/.75)),h=Math.round(130*(1-Math.pow(k,.75)));return`hsl(${h} 65% 45% / ${(.30+.14*Math.abs(.5-k)*2).toFixed(2)})`;};
   const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG||m.status==='evaluating'||m.status==='queued'?'…':'—'}</td>`;
    const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
-   return`<td class="${top?'best':''}${c}" style="background:${shade(f)}"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
+   return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
   const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
   const suites=[...new Set(B.map(b=>b.suite))];
   const head=suites.length>1?`<tr><th></th><th class="avg"></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}</tr>`:'';
-  box.innerHTML=`<div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the benchmark columns">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
-   kings.map((m,i)=>row(m,i===kings.length-1?'last-king':'')).join('')+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tbody></table></div>`;
+  const prev=box.querySelector('.bench-scroll'),keep=prev?[prev.scrollTop,prev.scrollLeft]:null;
+  const cols=[AVG,...B],lab=b=>b===AVG?'Avg':b.label;
+  const hist=kings.filter(m=>R[m.model_id]).sort((a,b)=>(a.crowned_at??a.epoch??0)-(b.crowned_at??b.epoch??0));
+  SP=cols.map(b=>({b,lab:lab(b),pts:hist.map(m=>({t:m.crowned_at??m.epoch,v:val(m,b),m})).filter(p=>p.v!=null&&p.t!=null)}));
+  const sparks=SP.map((s,i)=>{const l=s.pts[s.pts.length-1];
+   return`<div class="bench-spark" data-i="${i}" title="${esc(s.lab)}: king score over time (${s.pts.length} scored kings)"><div class="bs-head"><span class="bs-name">${esc(s.lab)}</span><span class="bs-latest">${l?'Latest '+pct(l.v)+'%':'—'}</span></div><div class="bs-plot"></div><div class="bs-axis"><span>${s.pts.length?dt(s.pts[0].t):''}</span><span>${l?dt(l.t):''}</span></div></div>`;}).join('');
+  box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the benchmark columns">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
+   kings.map(m=>row(m)).join('')+`</tbody><tfoot>`+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tfoot></table></div>`;
+  layout();
+  const sc=box.querySelector('.bench-scroll');if(keep){sc.scrollTop=keep[0];sc.scrollLeft=keep[1];}
  }
+ let SP=[];
+ const dt=t=>new Date(t*1000).toLocaleDateString('en-US',{month:'short',day:'2-digit'});
+ const NS='http://www.w3.org/2000/svg',el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+ function spark(card,s){
+  const plot=card.querySelector('.bs-plot'),lt=card.querySelector('.bs-latest'),base=lt.textContent;plot.textContent='';
+  const W=plot.clientWidth||160,H=plot.clientHeight||46,P=3,ps=s.pts;if(!ps.length)return;
+  const t0=ps[0].t,t1=ps[ps.length-1].t;let lo=Math.min(...ps.map(p=>p.v)),hi=Math.max(...ps.map(p=>p.v));
+  const pad=Math.max((hi-lo)*.08,.005);lo-=pad;hi+=pad;
+  const x=t=>t1>t0?P+(W-2*P)*(t-t0)/(t1-t0):W/2,y=v=>P+(H-2*P)*(1-(v-lo)/(hi-lo));
+  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,width:W,height:H,'aria-hidden':'true'});
+  svg.append(el('polyline',{points:ps.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),class:'bs-line'}));
+  const dot=el('circle',{r:2.5,class:'bs-dot',cx:x(t1),cy:y(ps[ps.length-1].v)});svg.append(dot);plot.append(svg);
+  plot.onmousemove=e=>{const r=plot.getBoundingClientRect(),mx=e.clientX-r.left;let b=ps[0];for(const p of ps)if(Math.abs(x(p.t)-mx)<Math.abs(x(b.t)-mx))b=p;
+   dot.setAttribute('cx',x(b.t));dot.setAttribute('cy',y(b.v));lt.textContent=`E${b.m.epoch} · ${pct(b.v)}%`;};
+  plot.onmouseleave=()=>{const l=ps[ps.length-1];dot.setAttribute('cx',x(l.t));dot.setAttribute('cy',y(l.v));lt.textContent=base;};
+ }
+ // kings box: header + 5 king rows + the sticky reference/Genesis footer
+ function fit(){const sc=box.querySelector('.bench-scroll');if(!sc)return;const t=sc.querySelector('table'),rs=t.tBodies[0]?t.tBodies[0].rows:[];
+  if(rs.length<=5){sc.style.maxHeight='none';return;}
+  let h=t.tHead.offsetHeight+(t.tFoot?t.tFoot.offsetHeight:0)+2;for(let i=0;i<5;i++)h+=rs[i].offsetHeight;sc.style.maxHeight=h+'px';}
+ function layout(){box.querySelectorAll('.bench-spark').forEach(c=>{const s=SP[+c.dataset.i];if(s)spark(c,s);});fit();}
+ let rt=0;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(layout,150);});
  let data=null;
  async function load(){try{const r=await fetch('/benchmarks.json',{cache:'no-store'});if(!r.ok)throw 0;data=await r.json();table(data);}catch(e){}}
  load();setInterval(load,120000);
