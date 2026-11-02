@@ -156,15 +156,25 @@ def current_status():
 HELDOUT_RULE = ('Promotion gate (held-out, live from E271; text updated 2026-10-30): the candidate is promoted (GREEN) only if its '
                 'weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), the estimated cap-hit rate stays under 0.20 '
                 'and at least 100 tasks are kept. Head and candidate are scored on the same tasks of a private held-out probe set (one round '
-                'per head, 4 seeded samples per task with shared seeds on both sides); gain = inverse-variance-weighted mean of the per-task '
+                'per head; set size and candidate samples are fixed per round: 1000 tasks and 4 candidate samples per task before, 2000 tasks and 8 candidate samples per task in rounds opened after 2026-11-01 14:19 CR, the first 4 with the same request seeds as head block 1; the head gets 4 samples on every task + 12 per kept task); gain = inverse-variance-weighted mean of the per-task '
                 'pass-rate differences (weights from the round baseline), weighted_z = gain / SE, SE = sqrt(se_task^2 + sigma_run^2 (1 + 1/3)): se_task is the per-task standard error of the gain and '
                 'sigma_run the head\'s run-to-run noise measured on the round\'s 3 replicate head runs (E271-E353: sigma_run floored '
-                'at 0.022 = 2.2 points; from E354 no fixed floor, the measured value is used). From E296 (free-file '
+                'at 0.022 = 2.2 points; from E354 no fixed floor, the measured value is used; rounds opened after 2026-11-01 14:19 CR: the pooled value over the last 20 finished rounds, frozen when the round opens, published as sigma_run in current.json). From E296 (free-file '
                 'cutover) the turn batch is not excluded: every kept task counts. The round commitment is public '
                 '(https://affine.io/gate/heldout/current.json); a round is revealed only if a GREEN closed it, and then only the GREEN turn '
                 '(seed, task ids, head baseline, the GREEN candidate per-task grades: https://affine.io/gate/heldout/<round>.json, '
                 'https://affine.io/gate/reveal/<epoch>.json); RED turns and their probe results are never published. RED = candidate '
                 'discarded, head kept. In each entry, paired_z holds the weighted_z.')
+
+
+def _prior_rule():
+    # prior-v1 baseline (RA/20261101-baseline-switch): rule text when PROMOTION-GATE.json heldout.baseline == 'prior-v1'
+    try:
+        f = json.loads(Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json').read_text())
+        if (f.get('heldout') or {}).get('baseline') != 'prior-v1': return None
+        import sys; sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import prior_gate as _PG; return 'Promotion gate (held-out, ' + _PG.RULE + ') Earlier rule: ' + HELDOUT_RULE
+    except Exception: return None
 
 
 def K1_RULE_SUFFIX():
@@ -190,12 +200,22 @@ def tick():
         if ent['decision'] == 'red' and (e, ent['candidate']) not in rseen:
             append(REJECTED, private_reject(e, ent), 0o600); rseen.add((e, ent['candidate']))
     doc = dict(version=VERSION, updated_at=time.time(), updated_at_cr=cr(time.time()),
-               rule=HELDOUT_RULE + ' History: E152-E153 paired z > -1, E154-E167 paired z >= -1.5, E168-E270 paired z > 0 on a 1000-task '
+               rule=(_prior_rule() or HELDOUT_RULE) + ' History: E152-E153 paired z > -1, E154-E167 paired z >= -1.5, E168-E270 paired z > 0 on a 1000-task '
                     'private probe sample minus the epoch batch (cap-hit < 0.20); held-out gate from E271. ' + SCORE_RULE() + ' Append-only.'
                     + K1_RULE_SUFFIX(),
                counts=dict(total=len(ledger), promoted=sum(r['verdict'] == 'promoted' for r in ledger),
                            rejected=sum(r['verdict'] == 'rejected' for r in ledger)),
                current=current_status(), entries=ledger)
+    try:   # z bar step-down (RA/20261101-zbar-stepdown): current bar + next step, and the per-turn bar for the Gate z chart
+        import prior_gate as _PG; zb = _PG.z_bar_public()
+        if zb:
+            doc['z_bar'] = zb
+            zt = [dict(epoch=r['epoch'], z_bar=(r.get('thresholds') or {}).get('z_min'), decision=r['decision'],
+                       decided_at=(r.get('timestamps') or {}).get('decided_at')) for r in ledger]
+            zp = SITE_OUT.with_name('gate'); zp.mkdir(exist_ok=True); zp = zp / 'zbar.json'; zt_ = zp.with_name('.zbar.json.tmp')
+            zt_.write_text(json.dumps(dict(zb, turns=zt), indent=1, sort_keys=True) + '\n'); os.chmod(zt_, 0o644); os.replace(zt_, zp)
+    except Exception as ex:
+        doc['z_bar'] = None; print('z_bar publish error: %s' % ex, flush=True)
     s = json.dumps(doc, sort_keys=True)
     for bad in ('"seed"', '"indices"', '"per_task"', 'revealed_'):
         if bad in s: raise ValueError('refusing to publish %s' % bad)

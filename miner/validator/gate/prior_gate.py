@@ -25,6 +25,53 @@ PATHS = dict(table=str(RA / '20261101-prior-table/private/table/prior_table.priv
              pool_url='https://github.com/AffineFoundation/affine/blob/main/miner/data/gate-pool-v1.jsonl',
              rpc=['https://entrypoint-finney.opentensor.ai:443'])
 _POOL = {}
+EPD = Path('/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/epochs')
+FLAGP = Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json')
+ZB_CLOCK = ('since_last_green: hours = (candidate TRAINING-RESULT time - decided_at of the last GREEN decision of an earlier epoch) / 3600; '
+            'both are public in https://affine.io/gate.json (entries[].timestamps.training_result, entries[].timestamps.decided_at)')
+
+
+def _crs(t, fmt='%Y-%m-%d %H:%M:%S CR'):
+    return time.strftime(fmt, time.gmtime(float(t) - 6 * 3600))   # Costa Rica = UTC-6, no DST
+
+
+def last_green(ep, before=None):
+    """-> (epoch, decided_at) of the last GREEN DECISION.json of an epoch < before (any gate design), or (None, None)."""
+    for e in sorted((int(p.name) for p in Path(ep).iterdir() if p.name.isdigit()), reverse=True):
+        if before is not None and e >= before: continue
+        try: d = json.loads((Path(ep) / str(e) / 'DECISION.json').read_text())
+        except Exception: continue
+        if d.get('decision') == 'green' and d.get('decided_at'): return e, float(d['decided_at'])
+    return None, None
+
+
+def z_bar_for(pv, ep, e, t_clock, default):
+    """z bar for the candidate of epoch e whose clock time is t_clock (its TRAINING-RESULT time). No schedule -> default."""
+    sch = pv.get('z_bar_schedule')
+    if not sch or pv.get('z_bar_clock') != 'since_last_green': return dict(value=float(default), schedule=None)
+    ge, gt = last_green(ep, e)
+    h = max(0.0, (float(t_clock) - gt) / 3600.0) if gt else 0.0
+    nx = BV.z_bar_next(h, sch)
+    return dict(value=BV.z_bar_at(h, sch), hours_since_green=round(h, 4), last_green_epoch=ge, last_green_decided_at=gt,
+                last_green_decided_at_cr=(_crs(gt) if gt else None),
+                clock_at=float(t_clock), clock='since_last_green', schedule=sch,
+                next_step=(dict(after_hours=nx[0], z_bar=nx[1], at=gt + nx[0] * 3600) if (nx and gt) else None))
+
+
+def z_bar_public(now=None):
+    """Current z bar (for a candidate whose training result lands now) + the next step, for gate.json / mining.json."""
+    try: f = json.loads(FLAGP.read_text())
+    except Exception: return None
+    pv = pv_of(f)
+    if not pv.get('z_bar_schedule'): return None
+    now = time.time() if now is None else now; zb = z_bar_for(pv, EPD, 10 ** 9, now, pv['bar_z'])
+    ns = zb.get('next_step')
+    if ns: ns = dict(ns, at_cr=_crs(ns['at'], '%Y-%m-%d %H:%M CR (UTC-6)'))
+    return dict(current=zb['value'], hours_since_green=zb.get('hours_since_green'), last_green_epoch=zb.get('last_green_epoch'),
+                last_green_decided_at=zb.get('last_green_decided_at'), last_green_decided_at_cr=zb.get('last_green_decided_at_cr'),
+                next_step=ns, schedule=zb.get('schedule'), clock=ZB_CLOCK, from_epoch=pv.get('z_bar_from_epoch'),
+                rule='GREEN needs z > z_bar; z_bar = 1.00 below 6 h, 0.50 from 6 h, 0.25 from 12 h since the last GREEN; reset to 1.00 on GREEN.',
+                computed_at=now, computed_at_cr=_crs(now, '%Y-%m-%d %H:%M:%S CR (UTC-6)'))
 
 
 def pv_of(f) -> dict:
@@ -89,15 +136,18 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         'is revealed when the round closes. The head is scored fresh on every drawn task (head_rollouts rollouts), every candidate with '
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
-        'GREEN iff Delta > 0 AND z = Delta/SE > bar_z AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
+        'GREEN iff Delta > 0 AND z = Delta/SE > z_bar AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
         'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (8,192 tokens): RED if >= 33% '
-        'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). '
+        'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar step-down (from E513): z_bar = 1.00, 0.50 once 6 h '
+        'and 0.25 once 12 h have passed since the last GREEN, back to 1.00 after every GREEN; clock = the candidate\'s TRAINING-RESULT time '
+        'minus the last GREEN\'s decided_at (gate.json entries[].timestamps); the bar used is in each entry (thresholds.z_min) and the current '
+        'bar + next step in gate.json z_bar. Before E513: z_bar = bar_z = 1.00. '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
 
 
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
-                                   'bar_z', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
+                                   'bar_z', 'z_bar_schedule', 'z_bar_clock', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
         tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']))
 
 
@@ -128,7 +178,8 @@ def public_params(h: dict, cur) -> dict:
                        'x0.5 on every head change; tasks without samples start at their env average; Beta(s+1, n-s+1) posterior. '
                        'The table values are private.'),
                 current_round=({k: cur.get(k) for k in keep} if isinstance(cur, dict) else None),
-                rounds='https://affine.io/gate/heldout/index.json', current='https://affine.io/gate/heldout/current.json', rule=RULE)
+                rounds='https://affine.io/gate/heldout/index.json', current='https://affine.io/gate/heldout/current.json', rule=RULE,
+                z_bar=z_bar_public())
 
 
 # ------------------------------------------------------------------ round open + draw
@@ -354,7 +405,8 @@ def process_epoch(S, e, s, f):
     PI = S.rj(R.d(rid) / 'PI.private.json')
     drawn = {t: dict(env=PI['env'][t], pi=PI['pi'][t]) for t in r['ids']}
     tau = float(pv['tau_run_same'] if per_turn else pv['tau_run_separate'])
-    dec = BV.estimate(drawn, bl, cpt, r['pool']['per_env'], shares=pv['shares'], tau=tau, sigma_run_floor=float(pv['sigma_run_floor']), bar_z=float(pv['bar_z']),
+    zb = z_bar_for(pv_of(f), S.EP, e, tl['result_mtime'], pv['bar_z']); zbar = float(zb['value'])   # z bar step-down (live flag)
+    dec = BV.estimate(drawn, bl, cpt, r['pool']['per_env'], shares=pv['shares'], tau=tau, sigma_run_floor=float(pv['sigma_run_floor']), bar_z=zbar,
                       z_inclusive=bool(pv['z_inclusive']), cap_max=float(pv_of(f).get('cap_max', BV.CAP_HIT_MAX)),   # task-level cap rule: live flag value
                       min_scored=int(pv['min_scored']), min_cover=float(pv['min_cover']))
     S.wj(d / 'C-PROBE.private.json', dict(candidate=C, per_task=cpt_i, wall=res.get('wall_seconds'), partial=res.get('partial'),
@@ -368,11 +420,11 @@ def process_epoch(S, e, s, f):
                            fetch_s=round(tl.get('fetched', tl['h_ready']) - tl.get('fetch_start', tl.get('fetched', tl['h_ready'])), 1),
                            serve_s=round(tl.get('served', 0) - tl.get('serve_start', tl.get('served', 0)), 1),
                            run_s=round(tl['run_done'] - tl.get('run_start', tl['run_done']), 1)),
-               red_credit=f.get('red_credit', 'zero'), commitment=r['draw_commitment'],
+               red_credit=f.get('red_credit', 'zero'), commitment=r['draw_commitment'], z_bar=zb,
                probe=dict(k=kp['k'], seeded=True, common_random_numbers=False, crn='none: candidate plan seed = sha256(seed:prior-baseline:cand:<epoch>), independent of the head blocks',
                           h_side='prior-v1 head baseline (%s rollouts/task on every drawn task, %s)' % (b.get('rollouts_per_task'),
                                  'fresh this turn' if per_turn else 'once per round')),
-               heldout=dict(round_id=rid, baseline='prior-v1', set_size=r['n'], bar_z=float(pv['bar_z']), z_inclusive=bool(pv['z_inclusive']),
+               heldout=dict(round_id=rid, baseline='prior-v1', set_size=r['n'], bar_z=zbar, z_inclusive=bool(pv['z_inclusive']),
                             k_cand=kp['k'], head_rollouts=b.get('rollouts_per_task'), scoring_mode=pv['scoring_mode'], tau_run=tau, sigma_run_floor=float(pv['sigma_run_floor']),
                             baseline_done_at_cr=b.get('done_at_cr'), scoring=BV.VERSION, settings_hash=b.get('settings_hash')))
     BV.assert_public(dict(evaluated=dec['evaluated'], reasons=dec['reasons'], heldout=dec['heldout']), True)
@@ -382,7 +434,7 @@ def process_epoch(S, e, s, f):
     if dec['decision'] == 'green': R.close(rid, 'green e%d (candidate %s promoted)' % (e, C[:12]), e)
     S.busy(False)
     S.log(event='decision', epoch=e, decision=dec['decision'], mode=dec['mode'], z=round(dec['evaluated']['z'], 3), heldout_round=rid,
-          baseline='prior-v1', bar=float(pv['bar_z']), gain=dec['evaluated']['gain'], cap=dec['evaluated']['c_cap_rate'], cap_rule='task-level', cap_max=dec['cap_max'],
+          baseline='prior-v1', bar=zbar, z_bar=zb, gain=dec['evaluated']['gain'], cap=dec['evaluated']['c_cap_rate'], cap_rule='task-level', cap_max=dec['cap_max'],
           h_cap=dec['evaluated']['h_cap_rate'], per_env_cap={k: dict(h=v['h_cap'], c=v['c_cap']) for k, v in dec['evaluated']['per_env'].items()},
           n=dec['evaluated']['n'], reasons=dec['reasons'], timing=dec['timing'])
     return 'decided'

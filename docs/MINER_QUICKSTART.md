@@ -132,6 +132,8 @@ Overwrite the file as often as you like. Whatever is stored when your turn comes
 - Gate: head and candidate are scored on the same tasks of the validator's private held-out set
   (4 seeded samples per task, same seeds on both sides). GREEN needs a positive weighted per-task gain
   (inverse-variance-weighted mean of candidate − head pass-rate differences) with weighted_z > 1.00 (strict),
+  (from E513 the bar is a step-down: z > 1.00, 0.50 once 6 h and 0.25 once 12 h have passed since the last GREEN, reset to
+  1.00 on GREEN; current bar and next drop: https://affine.io/gate.json `z_bar`),
   fewer than 33% of the candidate's baseline answers hitting the token cap (task-level, from E507; before: under 0.20) and at least 100 kept tasks. The turn batch is not excluded from the
   probe (from E296). The baseline is revealed only after a GREEN or when the round closes. Exact text:
   https://affine.io/gate.json → `rule`.

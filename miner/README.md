@@ -170,10 +170,15 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   Δ = Σ_e share_e·m_e with share = env size / pool size (affine_math 0.388, dapo 0.612). SE = √(Σ_e share_e²·Var_e + σ_run²),
   Var_e = the Hájek sampling + rollout variance, σ_run = 0.003 (a floor; the 2026-11-01 head-vs-itself test found no measurable
   run-to-run noise). z = Δ/SE.
-- **GREEN iff** Δ > 0 **and** z > 1.0 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
+- **GREEN iff** Δ > 0 **and** z > z_bar (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
   8,192-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
-  E507: affine_math cap-hit < 0.20). The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
+  E507: affine_math cap-hit < 0.20).
+- **z_bar step-down (from E513):** z_bar = 1.00, then **0.50 once 6 h** and **0.25 once 12 h** have passed since the last
+  GREEN, back to 1.00 after every GREEN. Clock = your candidate's TRAINING-RESULT time minus the last GREEN's decided_at (both
+  public in https://affine.io/gate.json `entries[].timestamps`), so gate latency does not move the bar. Current bar and when it next
+  drops: https://affine.io/gate.json `z_bar` (also `/gate/zbar.json`, mining.json `heldout.z_bar`, the Gate z chart's z bar line).
+  The bar each turn was judged against: `entries[].thresholds.z_min`. Before E513: z > 1.00. The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
 - **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v1.jsonl`: the secret commitment, the block
   hash on chain, the seed, the draw commitment and that every drawn task is in the pool; plus the GREEN turn's grades. **What you
   can't:** recompute Δ/SE/z exactly or check u_i < π_i, because π comes from the private prior table (only its snapshot sha256 is

@@ -51,6 +51,22 @@
    "sigma_run_floor": 0.003,
    "tau_run_same": 0.0,
    "tau_run_separate": 0.0,
+   "z_bar_clock": "since_last_green",
+   "z_bar_from_epoch": 513,
+   "z_bar_schedule": [
+    [
+     0,
+     1.0
+    ],
+    [
+     6,
+     0.5
+    ],
+    [
+     12,
+     0.25
+    ]
+   ],
    "z_inclusive": false
   },
   "prior_v1_history": [
@@ -96,6 +112,35 @@
      "cap_envs": null,
      "cap_max": 0.33,
      "cap_rule": "task-level"
+    }
+   },
+   {
+    "applies_to": "gate decisions from this epoch (decision-time rule; the draw is unchanged)",
+    "authorized_by": [
+     "Jacob 2026-11-01 21:23 CR: \"Go with the step-down: z>1, 0.5 after 6h, 0.25 after 12h without a GREEN, reset on GREEN\"; 21:25 CR: \"Go live with this change as soon as it is written\""
+    ],
+    "by": "z bar step-down activation after e512 DECISION",
+    "from_epoch": 513,
+    "mode": "on",
+    "rule": "z bar step-down: GREEN needs z > z_bar; z_bar = 1.00 below 6 h, 0.50 from 6 h, 0.25 from 12 h since the last GREEN (clock: candidate TRAINING-RESULT time - last GREEN decided_at); reset to 1.00 on GREEN",
+    "set_at": "20261102T034246Z",
+    "set_at_cr": "2026-11-01 21:42 CR",
+    "values": {
+     "z_bar_clock": "since_last_green",
+     "z_bar_schedule": [
+      [
+       0,
+       1.0
+      ],
+      [
+       6,
+       0.5
+      ],
+      [
+       12,
+       0.25
+      ]
+     ]
     }
    }
   ],
