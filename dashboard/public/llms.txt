@@ -172,7 +172,7 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   keeps, per task, s/n = solved/sampled counts (every count is multiplied by 0.5 when the head changes; a task without samples
   starts at its env's average). The prior's code is public (priors/ in the repo); its table values (s, n per task) are private.
   The gate reads a read-only snapshot of the table taken when the round opens; its sha256 is published with the round.
-- The draw (IRT information-weighted, live from 2026-11-02 10:31 CR): inclusion probability pi_i proportional to sqrt(I_i),
+- The draw (IRT information-weighted, live from the round after the 12K-cap round, 2026-11-02): inclusion probability pi_i proportional to sqrt(I_i),
   I_i = a_i'^2 P_i (1 - P_i) = the Fisher information of task i at the head's ability theta_h under a 2PL item response
   model P_i(theta) = 1 / (1 + exp(-a_i (theta - b_i))). a_i (discrimination) and b_i (difficulty) are fitted (MAP) on every
   recorded checkpoint x gate-pool task pass/fail (first fit: 365 checkpoints, 3.06M rollouts; refit daily); theta_h is the

@@ -39,3 +39,8 @@ the knobs (settings.weighting, a_shrink, a_lo, a_hi, theta_prior_sd).
 - `watchdog_irt.py` (unit affine-irt-watchdog, 72 h): auto-revert on an IRT fallback at round open, a draw size off N, a draw not
   done 30 min after the deadline, a stalled head baseline (30 min), a fail-closed turn, or >= 3 gate errors in 20 min.
 - If the IRT weights cannot be computed at a round open, that round uses prior-v1 weighting (event `prior_irt_fallback`).
+
+## 2026-11-02 stagger
+The 12K max_tokens switch (Jacob pt1084u) was set to land at the same round open. To keep the two effects attributable, the
+weighting was switched off at 11:14 CR (`stagger_arm.sh`): the next round opens with 12K + prior-v1 weighting, and once it has
+opened the script sets weighting = irt-info again, so the round after it is the first irt-info round.
