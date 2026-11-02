@@ -5,13 +5,18 @@ node, collect finished benchmarks into state/bench-results/, publish affine.io/b
 a result file per (model, benchmark, version) is the only "done" marker; a crashed run is resumed in place
 (vf-eval --resume keeps finished rollouts); nothing is published per task.
 
-Queue order: the newest king -> new GREEN kings (crowned less than NEW_KING_H hours ago), newest first -> Genesis + every
-reference (registry priority order) -> the rest of the GREEN (gate-era) kings, newest first -> every other king, newest first.
-Manual requests (`affine-bench run`) go before all of that."""
+Queue (Jacob 2026-11-02 10:08 CR: bench only kings going forward, no backlog): manual requests (`affine-bench run`) first, then
+every GREEN king with epoch >= MIN_EPOCH (544 = the first king after the last benched one, E540), newest first. Older kings,
+Genesis and the reference models are never queued automatically (their existing results stay published).
+
+Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
+empty queue; a pod Lium reclaims is detected (node-gone) and replaced the same way. A king's weights are deleted from the pod
+as soon as all of its results are collected (results on the host are never deleted)."""
 import glob, json, math, os, re, shlex, subprocess, sys, time, traceback, urllib.request
 from . import config as C, registry as R
 from .node import Node
 from .fetch import fetch as fetch_king, descriptor
+from . import pod as P
 
 ST = C.STATE; RES = ST + "/results"; PRIV = ST + "/private"; REQ = ST + "/requests"
 for d in (ST, RES, PRIV, REQ):
@@ -19,7 +24,7 @@ for d in (ST, RES, PRIV, REQ):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400
-NEW_KING_H = float(os.environ.get("BENCH_NEW_KING_H", "6"))  # a GREEN king crowned this recently runs before the references
+MIN_EPOCH = int(os.environ.get("BENCH_MIN_EPOCH", "544"))  # kings before this epoch are not benched (backlog dropped 2026-11-02)
 NODE = Node()
 
 
@@ -87,19 +92,13 @@ def missing(m, bs):
 def queue(rows=None):
     rows = rows or model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs)
-    kings_ = [m for m in rows if m["kind"] == "king"]
-    newest = max(kings_, key=lambda m: m.get("epoch") or 0) if kings_ else None
     q = []
     for f in sorted(glob.glob(REQ + "/*.json")):
         r = rj(f)
         if r: q.append(dict(r, request=f))
-    by_epoch = sorted(kings_, key=lambda m: -(m.get("epoch") or 0))
-    new = lambda m: m.get("green") and now() - float(m.get("crowned_at") or 0) < NEW_KING_H * 3600
-    if newest and ok(newest): q.append(dict(newest, why="newest-king"))
-    q += [dict(m, why="new-green-king") for m in by_epoch if new(m) and ok(m)]
-    q += [dict(m, why="genesis/ref") for m in sorted((m for m in rows if m["kind"] in ("genesis", "reference")), key=lambda m: m["priority"]) if ok(m)]
-    q += [dict(m, why="green-king") for m in by_epoch if m.get("green") and ok(m)]
-    q += [dict(m, why="king") for m in by_epoch if not m.get("green") and ok(m)]
+    kings_ = sorted((m for m in rows if m["kind"] == "king" and m.get("green") and (m.get("epoch") or 0) >= MIN_EPOCH),
+                    key=lambda m: -(m.get("epoch") or 0))
+    q += [dict(m, why="new-king") for m in kings_ if ok(m)]
     seen, out = set(), []
     for m in q:
         k = m["model_id"] + (m.get("tag") or "")
@@ -136,23 +135,15 @@ def ensure_weights(m):
     return have_weights(m)
 
 
-def prune(keep_dirs):
-    """Disk policy. Deleting weights needs the owner's explicit approval, so by default this only reports what
-    could be removed (the pod has ~21 TB; all kings + refs need ~3.5 TB). Set BENCH_PRUNE=1 to actually delete."""
-    if os.environ.get("BENCH_PRUNE") != "1":
+def prune_king(m):
+    """Delete one king's weights from the pod once all its results are in (fetch is a full checkpoint, so no later king
+    needs them). Only {NODE_KINGS}/<64-hex ckpt>[.partial|.descriptor.json|.fetch.log]; never run dirs, never host results."""
+    ck = m.get("king") or ""
+    if not re.fullmatch(r"[0-9a-f]{64}", ck):
         return
-    pruned = set()
-    for root in (C.NODE_KINGS, C.NODE_REFS):
-        for n in NODE.out(f"ls {root} 2>/dev/null").split():
-            base = n.split(".")[0] if root == C.NODE_KINGS else n
-            path = f"{root}/{base}"
-            if path in keep_dirs or not (re.fullmatch(r"[0-9a-f]{64}", base) or root == C.NODE_REFS):
-                continue
-            if path in pruned:
-                continue
-            pruned.add(path)
-            NODE.run(f"rm -rf {root}/{base} {root}/{base}.partial {root}/{base}.descriptor.json {root}/{base}.fetch.log", timeout=300)
-            log(event="pruned", path=path)
+    D = C.NODE_KINGS
+    NODE.run(f"rm -rf {D}/{ck} {D}/{ck}.partial {D}/{ck}.descriptor.json {D}/{ck}.fetch.log", timeout=300)
+    log(event="pruned", path=f"{D}/{ck}")
 
 
 def run_key(m):
@@ -202,7 +193,7 @@ def collect(run):
         if not s.strip():
             continue
         r = json.loads(s)
-        r.update(model_id=m["model_id"], model_kind=m["kind"], tag=m.get("tag"), node=dict(pod=C_POD["name"], lium_id=C_POD["id"], gpu=C_POD["gpu"]),
+        r.update(model_id=m["model_id"], model_kind=m["kind"], tag=m.get("tag"), node=dict(pod=C_POD.get("name"), lium_id=C_POD.get("id"), gpu=C_POD.get("gpu")),
                  collected_at=now(), serve_s=None)
         pt = NODE.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/per_task.jsonl 2>/dev/null", timeout=120)
         os.makedirs(f"{PRIV}/{rk}", exist_ok=True)
@@ -229,45 +220,51 @@ def rj_node_done(rk):
     except Exception: return None
 
 
-C_POD = rj(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "pod.json"), {}) or {}
-C_POD = dict(name=C_POD.get("name"), id=C_POD.get("lium_id"), gpu=C_POD.get("gpu"), cost=C_POD.get("price_per_hour"), **{k: v for k, v in C_POD.items() if k in ("huid",)})
+C_POD = P.load()  # mutable: replaced in place when the pod is rented, released or reclaimed
 
 
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
 
 
-def lium_pod_state(pod_id):
-    """'gone' if Lium says the pod no longer exists (reclaimed/deleted), 'listed' if it does, None if Lium could not be asked.
-    Read-only: `lium describe` on this host (the Lium key stays in ~/.lium and is never printed or logged)."""
-    if not pod_id:
-        return None
-    try:
-        p = subprocess.run([os.path.expanduser("~/.lium/bin/lium"), "describe", pod_id], capture_output=True, text=True, timeout=60)
-    except Exception:
-        return None
-    o = p.stdout + p.stderr
-    if "no longer listed" in o or "DELETED" in o:
-        return "gone"
-    return "listed" if p.returncode == 0 else None
-
-
 def node_down(run):
     """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
-    whether the pod still exists. A reclaimed pod never comes back, so say so once, loudly, instead of polling it forever
-    (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and the daemon logged node-unreachable for 3.5 h). The fix is a
-    new pod (deploy/rent.sh + bootstrap + deploy/pod.json, see REDEPLOY.md); that spends money, so it is left to a human."""
+    whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
+    the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the next step rents a new pod."""
     d = S.setdefault("node_down", dict(since=now(), checked=0, state=None))
     if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
-        if d.get("state") != "gone":
-            log(event="node-unreachable", model=run["run_key"])
-        return
-    d["checked"] = now(); st = lium_pod_state(C_POD.get("id"))
-    if st == "gone" and d.get("state") != "gone":
-        log(event="node-gone", model=run["run_key"], pod=C_POD.get("name"), lium_id=C_POD.get("id"), down_since_cr=cr(d["since"]),
-            action="pod reclaimed/deleted on Lium: rent a new bench pod (bench/deploy/rent.sh), bootstrap it, update deploy/pod.json, restart affine-bench")
-    elif st != "gone":
+        log(event="node-unreachable", model=run["run_key"]); return
+    d["checked"] = now(); st = P.state(C_POD.get("id")); d["state"] = st
+    if st == "gone":
+        log(event="node-gone", model=run["run_key"], pod=C_POD.get("huid"), lium_id=C_POD.get("id"), down_since_cr=cr(d["since"]))
+        P.save(dict(gone=now(), last=dict(C_POD))); C_POD.clear(); S["running"] = None; S.pop("node_down", None)
+    else:
         log(event="node-unreachable", model=run["run_key"], lium=st, down_min=round((now() - d["since"]) / 60))
-    d["state"] = st; save()
+    save()
+
+
+def pod_ready(q):
+    """Make sure a bootstrapped pod exists iff there is work. Returns True when the node can be used this step."""
+    if C_POD and C_POD.get("bootstrapped") is False:  # a crash mid-bootstrap: start over on a fresh pod
+        if P.release(log, why="not bootstrapped"): C_POD.clear()
+        return False
+    if C_POD:
+        return True
+    if not q:
+        return False
+    rec = P.rent(S, log); save()
+    if rec:
+        C_POD.clear(); C_POD.update(rec); S.pop("idle_since", None); save()
+    return bool(rec)
+
+
+def maybe_release():
+    if not C_POD or S.get("running"):
+        S.pop("idle_since", None); return
+    S.setdefault("idle_since", now())
+    if now() - S["idle_since"] >= P.IDLE_RELEASE_S:
+        if P.release(log, why="queue empty for %d min" % round((now() - S["idle_since"]) / 60)):
+            C_POD.clear(); S.pop("idle_since", None)
+    save()
 
 
 # ------------------------------------------------------------------------------------------------ main loop
@@ -275,6 +272,8 @@ def step():
     from . import publish
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     run = S.get("running")
+    if not run and not pod_ready(queue(rows)):
+        S["queue"] = [m["model_id"] for m in queue(rows)]; publish.publish(rows, S); return
     if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
         # The run belonged to a pod that has since been replaced (deploy/pod.json); its run dir went with that pod.
         # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
@@ -291,6 +290,8 @@ def step():
             run["progress"] = lines; run["last_progress"] = now(); save()
         if st.get("done") == "1":
             collect(run); S["running"] = None; save()
+            if run["model"].get("king") and not run["model"].get("tag") and not missing(run["model"], bs):
+                prune_king(run["model"])
         elif st.get("alive") != "1":
             k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
             log(event="run-died", model=run["run_key"], fails=S["fail"][k]); S["running"] = None; save()
@@ -309,13 +310,13 @@ def step():
             if not ok:
                 S["fail"][m["model_id"]] = S["fail"].get(m["model_id"], 0) + 1; save(); continue
             nxt = next((x for x in q if x["model_id"] != m["model_id"]), None)
-            prune({model_dir(m)} | ({model_dir(nxt)} if nxt else set()))
             launch(m, bids)
             if nxt:
                 try: ensure_weights(nxt); S["next"] = nxt["model_id"]; save()
                 except Exception: log(event="prefetch-failed", model=nxt["model_id"])
             break
-    publish.publish(rows, S)
+    maybe_release()
+    S["queue"] = [m["model_id"] for m in queue(rows)]; publish.publish(rows, S)
 
 
 def main():

@@ -34,9 +34,9 @@ def pooled(mid, b, results):
 
 
 def _node(S):
-    p = _rj(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "pod.json")) or {}
+    p = _rj(os.path.join(C.STATE, "pod.json")) or {}
     d = (S or {}).get("node_down") or {}
-    return dict(pod=p.get("name", "affine-bench-1"), gpu=p.get("gpu"), down_since=d.get("since"), pod_gone=d.get("state") == "gone")
+    return dict(pod=p.get("name"), gpu=p.get("gpu"), usd_h=p.get("cost"), up=bool(p.get("id")), down_since=d.get("since"))
 
 
 def publish(rows, S, max_fail=3):
@@ -75,7 +75,7 @@ def publish(rows, S, max_fail=3):
     hist = [h for h in (S or {}).get("history", []) if not h["model"].count(".")]
     per = sorted(h["wall_s"] for h in hist[-20:]) if hist else []
     med = per[len(per) // 2] if per else None
-    left = sum(1 for m in models if m["status"] != "scored")
+    left = len(set((S or {}).get("queue") or []) | ({run["model"]["model_id"]} if run else set()))  # kings only, no backlog
     out = dict(version="affine-bench-v1", updated_at=time.time(), serving=sv,
                about="Public math benchmarks for every SN120 king and for reference models, all re-run on the same node, endpoint, prompts, "
                      "graders and sampling (Prime Intellect verifiers envs, pinned). Score = mean over problems of the per-problem mean over "
@@ -85,6 +85,6 @@ def publish(rows, S, max_fail=3):
                suites=sorted({b["suite"] for b in bs if b.get("enabled")}),
                models=models, results=sorted(recs, key=lambda r: (r["model_id"], r["benchmark_id"])),
                node=_node(S),
-               progress=dict(models_total=len(models), models_scored=len(models) - left, evaluating=run and run["model"]["model_id"],
+               progress=dict(models_total=sum(m["status"] == "scored" for m in models) + left, models_scored=sum(m["status"] == "scored" for m in models), queued=left, evaluating=run and run["model"]["model_id"],
                              median_model_wall_s=med, eta_hours=round(left * med / 3600, 1) if med else None))
     t = OUT + ".tmp"; json.dump(out, open(t, "w"), separators=(",", ":")); os.chmod(t, 0o644); os.replace(t, OUT)

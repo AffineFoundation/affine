@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rent the bench node on Lium (run on the host that holds the Lium CLI config; the key never leaves it) and write the ssh wrapper.
 # Pick: 4xB300 if offered, else the cheapest secure 4-8x B300/B200/H200 node <= MAX_PRICE $/h (see pod.json for what we run).
-# MAX_PRICE defaults to the owner's bench-pod cap (~$30/h; stop above $35/h). Rents the whole node (-c gpu_count).
+# MAX_PRICE defaults to the owner's bench-pod cap (~$30/h; stop above $35/h). Cheapest $/GPU-h first, then more GPUs (same cost
+# per king, lower latency). Rents the whole node (-c gpu_count). The daemon calls this on demand (affine_bench/pod.py).
 #   bash bench/deploy/rent.sh [NODE_HUID]          -> prints the pod; writes ~/bench-work/bp.sh
 set -euo pipefail
 L=${LIUM:-$HOME/.lium/bin/lium}; NAME=${NAME:-affine-bench-1}; MAX_PRICE=${MAX_PRICE:-30}
@@ -16,7 +17,7 @@ while i<len(s):  # concatenated (pretty-printed) JSON arrays
     o,i=dec.raw_decode(s,i); rows+=o
 ok=[r for r in rows if 4<=r['gpu_count']<=8 and r.get('available_gpu_count',r['gpu_count'])>=r['gpu_count'] and r['tier']=='secure' and r['price_per_hour']<=$MAX_PRICE]
 pref=[r for r in ok if r['gpu_type']=='B300' and r['gpu_count']==4]
-r=(pref or sorted(ok,key=lambda r:r['price_per_hour']))[0]; print(r['huid'], r['gpu_count'])")
+r=(pref or sorted(ok,key=lambda r:(r['price_per_gpu_hour'],-r['gpu_count'])))[0]; print(r['huid'], r['gpu_count'])")
 fi
 read -r NODE NG <<< "$NODE"; NG=${NG:-${GPUS:-8}}
 echo "renting $NODE ($NG GPUs) as $NAME"
