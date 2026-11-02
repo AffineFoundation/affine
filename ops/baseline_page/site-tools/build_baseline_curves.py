@@ -59,6 +59,7 @@ def main() -> int:
         schema='affine-baseline-curves-v1', baseline='prior-v1', since_epoch=SINCE_EPOCH,
         n_tasks=P, per_round=int(pv['N']), mean_pass=round(sum(p for p, _ in pts) / P, 2),
         uniform_pct=round(100.0 * int(pv['N']) / P, 2), bins=k,
+        cfg=dict(N=int(pv['N']), floor=float(pv['floor']), cap=float(pv['cap']), n_init=float(pv['n_init']), shares=str(pv['shares'])),
         pass_rate=[round(v, 2) for v in bins([p for p, _ in pts], k)],
         select_pct=[round(100.0 * v, 2) for v in bins([q for _, q in pts], k)],
         note='Shapes only: tasks sorted by pass rate, averaged over equal-count bins; no task ids or per-task values.')

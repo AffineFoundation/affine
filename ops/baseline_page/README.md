@@ -16,3 +16,11 @@ Deploy (AffineValidator):
 - Nav link "Baseline" in `website/index.html`; Caddy (affine.io block only) `rewrite /baseline /baseline/index.html`. See changes.diff.
 
 Revert: `~/subnet120-rewrite/state/bench-results/site-backup/20261102T142823Z/revert.sh` on AffineValidator (copy: revert.sh).
+
+## v2 (Jacob pt1059u, 2026-11-02)
+- Caption fixed: the draw follows the Neyman allocation, weight = sqrt of v_i (not p(1-p)).
+- New "How the draw works" section: the inclusion formula as in `priors/baseline_v1.py` `inclusion()`
+  (v_i = E[p(1-p)] under Beta(s+1, n-s+1) = AB/((A+B)(A+B+1)), as the code computes it), cap + redistribution,
+  commit-reveal Poisson draw, the knobs with live values (curves.json now carries cfg: N, floor, cap, n_init, shares),
+  and the per-env Hajek estimator. Plain HTML/CSS math, no external library. No new data published.
+- Revert: `~/subnet120-rewrite/state/bench-results/site-backup/20261102T151156Z/revert.sh` (copy: revert-v2.sh).

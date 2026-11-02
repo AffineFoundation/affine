@@ -54,6 +54,7 @@
   charts.push(chart($('bl-select-c'),{v:D.select_pct,lo:0,hi:tk[tk.length-1],ticks:tk,tick:g=>g+'%',color:'var(--incentive)',uniform:D.uniform_pct,mid}));
  }
  function fill(){
+  if(D.cfg)document.querySelectorAll('[data-cfg]').forEach(e=>{const v=D.cfg[e.dataset.cfg];if(typeof v==='number')e.textContent=e.dataset.cfg==='floor'||e.dataset.cfg==='cap'?v.toFixed(2):String(v);});
   document.querySelectorAll('[data-bl]').forEach(e=>{const v=D[e.dataset.bl];if(v!=null)e.textContent=fmt(v);});
   $('bl-pass-r').textContent='mean '+D.mean_pass.toFixed(2);
   $('bl-select-r').textContent='~'+fmt(D.per_round)+' / '+fmt(D.n_tasks)+' tasks';
