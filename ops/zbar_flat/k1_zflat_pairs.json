@@ -1,0 +1,42 @@
+[
+[
+"EXT=(opt.refSteps&&opt.refNow!=null)?46:0,P={l:40,r:(opt.right?40:10)+EXT,",
+"P={l:40,r:(opt.right?40:10),"
+],
+[
+"  if(opt.refSteps){const yv=v=>y(Math.min(hi,Math.max(lo,v)));let d='',pv=null,px=null;const xc=i=>P.l+i*bw+bw/2;\n   opt.refSteps.forEach((v,i)=>{if(v==null){pv=null;return;}d+=(pv==null?'M':'L')+`${xc(i)},${yv(v)}`;pv=v;px=xc(i);});\n   if(d)svg.append(svgEl('path',{d,fill:'none',stroke:'var(--performance)','stroke-width':1.6,'stroke-linejoin':'round',opacity:.9}));\n   if(opt.refNow!=null){const x0=px??P.l,x1=W-P.r+EXT-2;\n    svg.append(svgEl('path',{d:`M${x0},${yv(pv??opt.refNow)}L${x1},${yv(opt.refNow)}`,fill:'none',stroke:'var(--performance)','stroke-width':1.6,'stroke-dasharray':'3 3',opacity:.9}));\n    svg.append(svgEl('circle',{cx:x1,cy:yv(opt.refNow),r:2.5,fill:'var(--performance)'}));\n    const t=svgEl('text',{x:x1,y:yv(opt.refNow)-6,'text-anchor':'end',fill:'var(--performance)','font-size':9,stroke:'var(--bg)','stroke-width':3,'paint-order':'stroke'});t.textContent=opt.refLabel||'';svg.append(t);}}\n  else if(opt.ref!=null",
+"  if(opt.ref!=null"
+],
+[
+"function render(k1,scores,mining,lrj,zbj){",
+"function render(k1,scores,mining,lrj){"
+],
+[
+"<span><i class=\"swatch\" style=\"width:12px;height:0;border-top:2px solid var(--performance);background:none\"></i>z bar</span>",
+"<span><i class=\"swatch\" style=\"width:12px;height:0;border-top:1px dashed var(--performance);background:none\"></i>z = 1 bar</span>"
+],
+[
+"gz.querySelector(\"h2\").title='z = gain/SE of candidate vs head on the held-out round (prior-v1 baseline). GREEN needs gain > 0, z > z bar and cap-hit < 33%. z bar (line) = the exact bar each turn was judged against: max(0.25, 1.0 - 0.75 \u00d7 h/12), h = hours since the last GREEN (clock: the candidate\\'s training-result time), back to 1.00 after a GREEN; the dashed end runs to the bar now (gate.json z_bar).';\n",
+"gz.querySelector(\"h2\").title='z = gain/SE of candidate vs head on the held-out round (prior-v1 baseline). GREEN needs gain > 0, z > 1 and cap-hit < 33%.';\n"
+],
+[
+"const pg=(mining.training&&mining.training.promotion_gate)||{},ho=pg.heldout||{};const zbar=Number((zbj&&zbj.current)??(ho.current_round&&ho.current_round.bar_z)??ho.bar_z??1);\n   const zbE=new Map(((zbj&&zbj.turns)||[]).map(r=>[r.epoch,r.z_bar]));const zsteps=done.map(t=>{const v=zbE.get(t.epoch_index);return v==null?((t.verdict==='green'||t.verdict==='red')?null:zbar):Number(v);});\n   {const fa=zbj&&(zbj.floor_at_cr||(zbj.next_step&&zbj.next_step.at_cr));gz.querySelector('.reading').title='z bar now '+zbar.toFixed(3)+(zbj&&zbj.formula?' \u00b7 '+zbj.formula:'')+(fa?' \u00b7 floor '+(zbj.floor??0.25)+' at '+String(fa).replace(' (UTC-6)',''):'');}\n",
+"const zbar=1;\n"
+],
+[
+"<span>z</span> ${fz(t.z)}  ${esc((t.verdict||'pending').toUpperCase())}\\n<span>z bar</span> ${zbE.has(t.epoch_index)?Number(zbE.get(t.epoch_index)).toFixed(3):'\u2014'}\\n<span>head</span>",
+"<span>z</span> ${fz(t.z)}  ${esc((t.verdict||'pending').toUpperCase())}\\n<span>head</span>"
+],
+[
+"refSteps:zsteps,refNow:zbar,refLabel:'z bar now '+zbar.toFixed(2),",
+"ref:zbar,refLabel:'',"
+],
+[
+",j('/k1/lr.json').catch(()=>null),j('/gate/zbar.json').catch(()=>null)]);render(k1,scores,mining,lrj,zbj);",
+",j('/k1/lr.json').catch(()=>null)]);render(k1,scores,mining,lrj);"
+],
+[
+"const [k1,scores,mining,lrj,zbj]=await",
+"const [k1,scores,mining,lrj]=await"
+]
+]

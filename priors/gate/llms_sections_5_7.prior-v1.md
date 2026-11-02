@@ -48,13 +48,10 @@
   Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
   scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
   Formulas: priors/baseline_v1.py (module docstring + estimate()).
-- **GREEN iff Delta > 0 AND z > z_bar (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
-  z_bar linear drop (from E514): z_bar = max(0.25, 1.0 - 0.75 * h / 12), h = hours since the last GREEN: 1.00 right after a
-  GREEN, 0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN. Clock = the candidate's TRAINING-RESULT time
-  minus the last GREEN's decided_at (both public in https://affine.io/gate.json entries[].timestamps), so gate latency does not
-  move the bar. The exact bar each turn was judged against: entries[].thresholds.z_min. The current bar, the formula and when
-  it reaches the floor: gate.json `z_bar` (also /gate/zbar.json, mining.json heldout.z_bar, the Gate z chart's z bar line).
-  E513-E513: steps (1.00, 0.50 from 6 h, 0.25 from 12 h). Before E513: z > 1.00.
+- **GREEN iff Delta > 0 AND z > 1 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
+  The z bar is fixed at 1.00 (gate.json `z_bar`, mining.json heldout.z_bar); the bar each turn was judged against:
+  gate.json entries[].thresholds.z_min.
+  History: from E553 the bar is fixed at z > 1; E513-E552 used a time-relaxed bar.
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 8,192-token
   cap, every task counted alike: RED if >= 33% of the candidate's baseline answers hit the token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.

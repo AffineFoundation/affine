@@ -26,23 +26,17 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
             noise), so Var_run = 0.003^2
     SE = sqrt(sum_e share_e^2 Var_e + Var_run);  z = Delta / SE
   Request seeds: head block b uses plan_seed(seed, b); the candidate of epoch e uses cand_seed(seed, e) (independent seeds).
-  GREEN iff Delta > 0 AND z > z_bar AND candidate cap-hit < cap_max (CAP_HIT_MAX = 0.33) AND >= min_scored tasks scored.
+  GREEN iff Delta > 0 AND z > 1.00 (bar_z) AND candidate cap-hit < cap_max (CAP_HIT_MAX = 0.33) AND >= min_scored tasks scored.
   cap-hit (task-level, Jacob 2026-11-01 19:43 CR): the share of ALL the candidate's rollouts on the scored baseline tasks that hit
   the token cap (8,192 tokens, no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike, no env distinction.
   RED if >= 33% of the candidate's baseline answers hit the token cap. (Before E507: Hajek capped share on affine_math < 0.20.)
   The head's rate is computed the same way and recorded (h_cap_rate); per-env rates are diagnostics only (per_env).
-  z_bar linear drop (Jacob 2026-11-01 21:51 CR, from E514): z_bar = z_bar_at(h) = max(0.25, 1.0 - 0.75 * h / 12), h = hours
-  since the last GREEN (Z_BAR_SCHEDULE = {kind: linear, start: 1.0, floor: 0.25, hours_to_floor: 12}): 1.00 right after a GREEN,
-  0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN. (E513-E513: steps 1.00 / 0.50 from 6 h / 0.25 from 12 h.)
-  The clock for the
-  candidate of epoch e = its TRAINING-RESULT time minus the decided_at of the last GREEN decision of an epoch < e (both public in
-  https://affine.io/gate.json: entries[].timestamps.training_result / .decided_at), so gate latency does not move the bar."""
+  z bar: fixed at z > 1.00 (bar_z = 1.0) from E553 (Jacob 2026-11-02 08:20 CR); E513-E552 used a time-relaxed bar (the exact
+  bar of every decision is in its thresholds.z_min)."""
 from __future__ import annotations
 import hashlib, json, math, os, sqlite3
 
 VERSION = 'sn120-prior-baseline-v1'
-Z_BAR_SCHEDULE = dict(kind='linear', start=1.0, floor=0.25, hours_to_floor=12.0)   # z_bar = max(floor, start - (start - floor) * h / hours_to_floor); reset on GREEN
-# (a list [[hours, z bar], ...] is a step schedule, as live E513-E513)
 CAP_HIT_MAX = 0.33   # task-level cap rule: RED if >= 33% of the candidate's baseline answers hit the token cap
 ROUND_SCHEMA = 'sn120-heldout-gate-prior-v1'
 DEFAULTS = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', floor=0.10, cap=0.10, shares='size',
@@ -167,29 +161,6 @@ def probe_index(task_id: str, cfg=None) -> int:
 def task_of(index: int, cfg=None) -> str:
     c = dict(DEFAULTS, **(cfg or {})); i = int(index)
     return ('dapo:%d' % (i - int(c['dapo_offset']))) if i >= int(c['dapo_offset']) else ('math:%d' % (i - int(c['math_offset'])))
-
-
-# ------------------------------------------------------------------ z bar step-down
-def z_bar_at(hours, schedule=None) -> float:
-    """z bar for a candidate whose clock reads `hours` since the last GREEN (deterministic: linear drop to a floor, or steps)."""
-    schedule = schedule or Z_BAR_SCHEDULE
-    if isinstance(schedule, dict):
-        s0, fl, H = float(schedule['start']), float(schedule['floor']), float(schedule['hours_to_floor'])
-        return max(fl, s0 - (s0 - fl) * max(0.0, float(hours)) / H)
-    sch = sorted((float(h), float(v)) for h, v in (schedule or Z_BAR_SCHEDULE)); b = sch[0][1]
-    for h0, v in sch:
-        if hours >= h0: b = v
-    return b
-
-
-def z_bar_next(hours, schedule=None):
-    """-> (hours, z bar) of the next step after `hours` (linear: when the floor is reached), or None at the last step / the floor."""
-    schedule = schedule or Z_BAR_SCHEDULE
-    if isinstance(schedule, dict):
-        H = float(schedule['hours_to_floor']); return (H, float(schedule['floor'])) if hours < H else None
-    for h0, v in sorted((float(h), float(v)) for h, v in (schedule or Z_BAR_SCHEDULE)):
-        if h0 > hours: return h0, v
-    return None
 
 
 # ------------------------------------------------------------------ estimate + decision

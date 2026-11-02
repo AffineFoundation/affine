@@ -20,7 +20,7 @@
   if(count===1){at(0,'start',slotX(0));return;}at(0,'start',slotX(0));at(count-1,'end',slotX(count-1)+slotW);}
  function barChart(wrap,items,opt){
   wrap.querySelector('svg')?.remove();
-  const W=wrap.clientWidth||400,H=wrap.clientHeight||220,EXT=(opt.refSteps&&opt.refNow!=null)?46:0,P={l:40,r:(opt.right?40:10)+EXT,t:10,b:22};
+  const W=wrap.clientWidth||400,H=wrap.clientHeight||220,P={l:40,r:(opt.right?40:10),t:10,b:22};
   const svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':opt.label});wrap.prepend(svg);
   if(!items.length){const e=wrap.querySelector('.empty')||wrap.appendChild($('p',{class:'empty'}));e.textContent=opt.empty;return;}
   wrap.querySelector('.empty')?.remove();
@@ -38,18 +38,11 @@
    hit.addEventListener('mouseenter',()=>{tp.innerHTML=it.tip;tp.hidden=false;const L=Math.min(Math.max(0,x-60),W-220);tp.style.left=L+'px';tp.style.top='4px';});
    hit.addEventListener('mouseleave',()=>{tp.hidden=true;});svg.append(hit);
   });
-  if(opt.refSteps){const yv=v=>y(Math.min(hi,Math.max(lo,v)));let d='',pv=null;const xe=i=>P.l+i*bw;
-   opt.refSteps.forEach((v,i)=>{if(v==null){pv=null;return;}d+=(pv==null?`M${xe(i)},${yv(v)}`:`L${xe(i)},${yv(v)}`)+`L${xe(i+1)},${yv(v)}`;pv=v;});
-   if(d)svg.append(svgEl('path',{d,fill:'none',stroke:'var(--performance)','stroke-width':1.6,opacity:.9}));
-   if(opt.refNow!=null){const x0=xe(items.length),x1=W-P.r+EXT-2,xm=x0+(x1-x0)*.45;let e=`M${x0},${yv(pv??opt.refNow)}L${x0},${yv(opt.refNow)}L${xm},${yv(opt.refNow)}`;
-    if(opt.refNext!=null)e+=`L${xm},${yv(opt.refNext)}L${x1},${yv(opt.refNext)}`;else e+=`L${x1},${yv(opt.refNow)}`;
-    svg.append(svgEl('path',{d:e,fill:'none',stroke:'var(--performance)','stroke-width':1.6,'stroke-dasharray':'3 3',opacity:.9}));
-    const t=svgEl('text',{x:x1,y:Math.min(yv(opt.refNow),yv(opt.refNext??opt.refNow))-5,'text-anchor':'end',fill:'var(--performance)','font-size':9,stroke:'var(--bg)','stroke-width':3,'paint-order':'stroke'});t.textContent=opt.refLabel||'';svg.append(t);}}
-  else if(opt.ref!=null&&opt.ref>=lo&&opt.ref<=hi){const yr=y(opt.ref);svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:yr,y2:yr,stroke:'var(--performance)','stroke-dasharray':'4 3','stroke-width':1,opacity:.8}));const t=svgEl('text',{x:W-P.r-2,y:yr-4,'text-anchor':'end',fill:'var(--performance)','font-size':9,stroke:'var(--bg)','stroke-width':3,'paint-order':'stroke'});t.textContent=opt.refLabel||'';svg.append(t);}
+  if(opt.ref!=null&&opt.ref>=lo&&opt.ref<=hi){const yr=y(opt.ref);svg.append(svgEl('line',{x1:P.l,x2:W-P.r,y1:yr,y2:yr,stroke:'var(--performance)','stroke-dasharray':'4 3','stroke-width':1,opacity:.8}));const t=svgEl('text',{x:W-P.r-2,y:yr-4,'text-anchor':'end',fill:'var(--performance)','font-size':9,stroke:'var(--bg)','stroke-width':3,'paint-order':'stroke'});t.textContent=opt.refLabel||'';svg.append(t);}
   edgeLabels(svg,items.length,i=>P.l+i*bw,bw,H-6,i=>items[i].x);
   if(opt.right){for(const [v,yy] of [[opt.rightMax,P.t],[0,H-P.b]]){const t=svgEl('text',{x:W-P.r+4,y:yy+3,fill:'var(--accepted)'});t.textContent=v;svg.append(t);}}
  }
- function render(k1,scores,mining,lrj,zbj){
+ function render(k1,scores,mining,lrj){
   const turns=(k1.turns||[]).slice().sort((a,b)=>a.epoch_index-b.epoch_index);
   const done=turns.filter(t=>t.status==='turn');
   const q=k1.queue||{};const payees=k1.payees||[];
@@ -90,8 +83,8 @@
   // 4. gate z per turn
   const gz=tile('panel-k1-z','Gate z per turn');const gw=gz.querySelector('.k1-chart')||gz.appendChild($('div',{class:'chart-wrap k1-chart'}));
   gz.querySelector('.reading').textContent=done.length?fz(done[done.length-1].z):'—';
-  if(!gz.querySelector('.legend'))gz.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span><span><i class="swatch" style="width:12px;height:0;border-top:2px solid var(--performance);background:none"></i>z bar</span></div>');
-  gz.querySelector("h2").title='z = gain/SE of candidate vs head on the held-out round (prior-v1 baseline). GREEN needs gain > 0, z > z bar and cap-hit < 33%. z bar (line) = the bar each turn was judged against: 1.00, 0.50 once 6 h and 0.25 once 12 h have passed since the last GREEN (clock: the candidate\'s training-result time), back to 1.00 after a GREEN; the dotted end shows the bar now and its next step (gate.json z_bar).';
+  if(!gz.querySelector('.legend'))gz.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--performance)"></i>GREEN</span><span><i class="swatch" style="background:var(--rejected)"></i>RED</span><span><i class="swatch" style="border:1px solid var(--accepted)"></i>Pending</span><span><i class="swatch" style="width:12px;height:0;border-top:1px dashed var(--performance);background:none"></i>z = 1 bar</span></div>');
+  gz.querySelector("h2").title='z = gain/SE of candidate vs head on the held-out round (prior-v1 baseline). GREEN needs gain > 0, z > 1 and cap-hit < 33%.';
   // 5. pass rates
   const pr=tile('panel-k1-pass','Pass rate per turn');const pw=pr.querySelector('.k1-chart')||pr.appendChild($('div',{class:'chart-wrap k1-chart'}));
   if(!pr.querySelector('.legend'))pr.insertAdjacentHTML('beforeend','<div class="legend chart-legend"><span><i class="swatch" style="background:var(--guide)"></i>Head</span><span><i class="swatch" style="background:var(--performance)"></i>Candidate</span></div>');
@@ -127,12 +120,10 @@
   // charts (after layout)
   requestAnimationFrame(()=>{
    const lab=t=>'E'+t.epoch_index;
-   const pg=(mining.training&&mining.training.promotion_gate)||{},ho=pg.heldout||{};const zbar=Number((zbj&&zbj.current)??(ho.current_round&&ho.current_round.bar_z)??ho.bar_z??1);
-   const zbE=new Map(((zbj&&zbj.turns)||[]).map(r=>[r.epoch,r.z_bar]));const zsteps=done.map(t=>{const v=zbE.get(t.epoch_index);return v==null?((t.verdict==='green'||t.verdict==='red')?null:zbar):Number(v);});
-   {const ns=zbj&&zbj.next_step;gz.querySelector('.reading').title='z bar now '+zbar.toFixed(2)+(ns?' · drops to '+Number(ns.z_bar).toFixed(2)+' at '+String(ns.at_cr||'').replace(' (UTC-6)',''):'');}
+   const zbar=1;
    barChart(gw,done.map(t=>({x:lab(t),v:t.z??0,c:t.verdict==='green'?'var(--performance)':t.verdict==='red'?'var(--rejected)':'var(--accepted)',hollow:!(t.verdict==='green'||t.verdict==='red'),
-    tip:`<strong>E${t.epoch_index} · UID ${esc(t.uid)}</strong><span>z</span> ${fz(t.z)}  ${esc((t.verdict||'pending').toUpperCase())}\n<span>z bar</span> ${zbE.has(t.epoch_index)?Number(zbE.get(t.epoch_index)).toFixed(2):'—'}\n<span>head</span> ${pct(t.h_pass)} <span>cand</span> ${pct(t.c_pass)}\n<span>cap-hit</span> ${pct(t.cap)} <span>n</span> ${esc(t.n??'—')}`})),
-    {label:'Gate z per turn',empty:'No K=1 turn decided yet.',refSteps:zsteps,refNow:zbar,refNext:(zbj&&zbj.next_step)?Number(zbj.next_step.z_bar):null,refLabel:'z bar '+zbar.toFixed(2)+((zbj&&zbj.next_step)?'→'+Number(zbj.next_step.z_bar).toFixed(2):''),min:-3,max:3,slots:10,fmt:v=>(v>0?'+':'')+v,ticks:(lo,hi)=>{const s=Math.ceil(Math.max(-lo,hi)/3)||1;const o=[];for(let v=Math.ceil(lo/s)*s;v<=hi;v+=s)o.push(v);return o;}});
+    tip:`<strong>E${t.epoch_index} · UID ${esc(t.uid)}</strong><span>z</span> ${fz(t.z)}  ${esc((t.verdict||'pending').toUpperCase())}\n<span>head</span> ${pct(t.h_pass)} <span>cand</span> ${pct(t.c_pass)}\n<span>cap-hit</span> ${pct(t.cap)} <span>n</span> ${esc(t.n??'—')}`})),
+    {label:'Gate z per turn',empty:'No K=1 turn decided yet.',ref:zbar,refLabel:'',min:-3,max:3,slots:10,fmt:v=>(v>0?'+':'')+v,ticks:(lo,hi)=>{const s=Math.ceil(Math.max(-lo,hi)/3)||1;const o=[];for(let v=Math.ceil(lo/s)*s;v<=hi;v+=s)o.push(v);return o;}});
    // pass chart (pt904u 2026-10-31): one slot per epoch from the first to the last turn, head + candidate pass rate per decided turn.
    // Lines break at gaps (no turn, fail-closed, pending, held-out round still open) and where the measurement set changes (E272: held-out gate).
    pw.querySelector('svg')?.remove();
@@ -201,7 +192,7 @@
  }
  async function j(u){const r=await fetch(u+(u.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
  async function load(){
-  try{const [k1,scores,mining,lrj,zbj]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({})),j('/k1/lr.json').catch(()=>null),j('/gate/zbar.json').catch(()=>null)]);render(k1,scores,mining,lrj,zbj);document.getElementById('panel-k1-artifacts')?.remove();}
+  try{const [k1,scores,mining,lrj]=await Promise.all([j('/k1.json'),j('/scores.json').catch(()=>({})),j('/mining.json').catch(()=>({})),j('/k1/lr.json').catch(()=>null)]);render(k1,scores,mining,lrj);document.getElementById('panel-k1-artifacts')?.remove();}
   catch(e){console.warn('k1',e);}
  }
  load();setInterval(load,60000);

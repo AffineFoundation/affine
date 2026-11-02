@@ -51,15 +51,7 @@
    "sigma_run_floor": 0.003,
    "tau_run_same": 0.0,
    "tau_run_separate": 0.0,
-   "z_bar_clock": "since_last_green",
-   "z_bar_from_epoch": 513,
-   "z_bar_linear_from_epoch": 514,
-   "z_bar_schedule": {
-    "floor": 0.25,
-    "hours_to_floor": 12.0,
-    "kind": "linear",
-    "start": 1.0
-   },
+   "z_bar_fixed_from_epoch": 553,
    "z_inclusive": false
   },
   "prior_v1_history": [
@@ -154,6 +146,26 @@
       "kind": "linear",
       "start": 1.0
      }
+    }
+   },
+   {
+    "applies_to": "gate decisions from this epoch (decision-time rule; the draw is unchanged)",
+    "authorized_by": [
+     "Jacob 2026-11-02 08:20 CR (pt1055u): remove the z bar reduction, keep it flat at 1 going forward"
+    ],
+    "by": "z bar fixed at 1.00 after e552 DECISION",
+    "from_epoch": 553,
+    "mode": "on",
+    "rule": "z bar fixed: GREEN needs z > 1.00 (the time-relaxed bar is removed)",
+    "set_at": "20261102T144032Z",
+    "set_at_cr": "2026-11-02 08:40 CR",
+    "values": {
+     "bar_z": 1.0,
+     "z_bar_clock": null,
+     "z_bar_fixed_from_epoch": 553,
+     "z_bar_from_epoch": null,
+     "z_bar_linear_from_epoch": null,
+     "z_bar_schedule": null
     }
    }
   ],
