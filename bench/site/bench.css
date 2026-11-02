@@ -22,4 +22,4 @@
 #bench-table td.best{color:var(--ink)}
 #bench-table .max-ic{width:9px;height:9px;margin-right:4px;vertical-align:-0.5px;fill:#f5c542;filter:drop-shadow(0 0 1px #0008)}
 :root[data-theme="light"] #bench-table .max-ic{fill:#c98a00;filter:none}
-#bench-table th.avg,#bench-table td.avg{border-left:1px solid var(--muted);font-weight:600}
+#bench-table th.avg,#bench-table td.avg{border-right:1px solid var(--muted);font-weight:600}
