@@ -52,7 +52,7 @@ def z_bar_for(pv, ep, e, t_clock, default):
     ge, gt = last_green(ep, e)
     h = max(0.0, (float(t_clock) - gt) / 3600.0) if gt else 0.0
     nx = BV.z_bar_next(h, sch)
-    return dict(value=BV.z_bar_at(h, sch), hours_since_green=round(h, 4), last_green_epoch=ge, last_green_decided_at=gt,
+    return dict(value=BV.z_bar_at(h, sch), hours_since_green=h, last_green_epoch=ge, last_green_decided_at=gt,
                 last_green_decided_at_cr=(_crs(gt) if gt else None),
                 clock_at=float(t_clock), clock='since_last_green', schedule=sch,
                 next_step=(dict(after_hours=nx[0], z_bar=nx[1], at=gt + nx[0] * 3600) if (nx and gt) else None))
@@ -65,12 +65,18 @@ def z_bar_public(now=None):
     pv = pv_of(f)
     if not pv.get('z_bar_schedule'): return None
     now = time.time() if now is None else now; zb = z_bar_for(pv, EPD, 10 ** 9, now, pv['bar_z'])
-    ns = zb.get('next_step')
+    ns = zb.get('next_step'); sch = zb.get('schedule'); lin = isinstance(sch, dict)
     if ns: ns = dict(ns, at_cr=_crs(ns['at'], '%Y-%m-%d %H:%M CR (UTC-6)'))
+    hs = zb.get('hours_since_green')
+    lx = (dict(formula='z_bar = max(%g, %g - %g * h / %g), h = hours since the last GREEN' % (sch['floor'], sch['start'], sch['start'] - sch['floor'], sch['hours_to_floor']),
+               floor=sch['floor'], floor_at=(ns or {}).get('at'), floor_at_cr=(ns or {}).get('at_cr'),
+               hours_until_floor=(max(0.0, sch['hours_to_floor'] - hs) if hs is not None else None),
+               drop_per_hour=(sch['start'] - sch['floor']) / sch['hours_to_floor']) if lin else {})
     return dict(current=zb['value'], hours_since_green=zb.get('hours_since_green'), last_green_epoch=zb.get('last_green_epoch'),
                 last_green_decided_at=zb.get('last_green_decided_at'), last_green_decided_at_cr=zb.get('last_green_decided_at_cr'),
-                next_step=ns, schedule=zb.get('schedule'), clock=ZB_CLOCK, from_epoch=pv.get('z_bar_from_epoch'),
-                rule='GREEN needs z > z_bar; z_bar = 1.00 below 6 h, 0.50 from 6 h, 0.25 from 12 h since the last GREEN; reset to 1.00 on GREEN.',
+                next_step=ns, schedule=sch, clock=ZB_CLOCK, from_epoch=pv.get('z_bar_from_epoch'), **lx,
+                rule=('GREEN needs z > z_bar; z_bar = max(0.25, 1.0 - 0.75 * h / 12), h = hours since the last GREEN (0.25 floor from 12 h); reset to 1.00 on GREEN.' if lin else
+                      'GREEN needs z > z_bar; z_bar = 1.00 below 6 h, 0.50 from 6 h, 0.25 from 12 h since the last GREEN; reset to 1.00 on GREEN.'),
                 computed_at=now, computed_at_cr=_crs(now, '%Y-%m-%d %H:%M:%S CR (UTC-6)'))
 
 
@@ -138,10 +144,11 @@ RULE = ('prior-v1 baseline: each round (one per head) draws about N tasks from t
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > z_bar AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
         'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (8,192 tokens): RED if >= 33% '
-        'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar step-down (from E513): z_bar = 1.00, 0.50 once 6 h '
-        'and 0.25 once 12 h have passed since the last GREEN, back to 1.00 after every GREEN; clock = the candidate\'s TRAINING-RESULT time '
-        'minus the last GREEN\'s decided_at (gate.json entries[].timestamps); the bar used is in each entry (thresholds.z_min) and the current '
-        'bar + next step in gate.json z_bar. Before E513: z_bar = bar_z = 1.00. '
+        'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar linear drop (from E514): z_bar = max(0.25, 1.0 - 0.75 * h / 12), '
+        'h = hours since the last GREEN (1.00 right after a GREEN, 0.625 at 6 h, the 0.25 floor from 12 h), back to 1.00 after every GREEN; '
+        'clock = the candidate\'s TRAINING-RESULT time minus the last GREEN\'s decided_at (gate.json entries[].timestamps); the exact bar used is '
+        'in each entry (thresholds.z_min) and the current bar, formula and floor time in gate.json z_bar. E513-E513: steps 1.00 / 0.50 from '
+        '6 h / 0.25 from 12 h; before E513: z_bar = 1.00. '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
 
 

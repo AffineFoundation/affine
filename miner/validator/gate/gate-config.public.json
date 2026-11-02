@@ -53,20 +53,13 @@
    "tau_run_separate": 0.0,
    "z_bar_clock": "since_last_green",
    "z_bar_from_epoch": 513,
-   "z_bar_schedule": [
-    [
-     0,
-     1.0
-    ],
-    [
-     6,
-     0.5
-    ],
-    [
-     12,
-     0.25
-    ]
-   ],
+   "z_bar_linear_from_epoch": 514,
+   "z_bar_schedule": {
+    "floor": 0.25,
+    "hours_to_floor": 12.0,
+    "kind": "linear",
+    "start": 1.0
+   },
    "z_inclusive": false
   },
   "prior_v1_history": [
@@ -141,6 +134,26 @@
        0.25
       ]
      ]
+    }
+   },
+   {
+    "applies_to": "gate decisions from this epoch (decision-time rule; the draw is unchanged)",
+    "authorized_by": [
+     "Jacob 2026-11-01 21:51 CR: replace the step-down with a linear slow drop, z_bar(h) = max(0.25, 1.0 - 0.75 * h/12), reset to 1.0 on GREEN"
+    ],
+    "by": "z bar linear activation after e513 DECISION",
+    "from_epoch": 514,
+    "mode": "on",
+    "rule": "z bar linear drop: z_bar = max(0.25, 1.0 - 0.75 * h / 12), h = hours since the last GREEN (clock: candidate TRAINING-RESULT time - last GREEN decided_at); reset to 1.00 on GREEN",
+    "set_at": "20261102T040554Z",
+    "set_at_cr": "2026-11-01 22:05 CR",
+    "values": {
+     "z_bar_schedule": {
+      "floor": 0.25,
+      "hours_to_floor": 12.0,
+      "kind": "linear",
+      "start": 1.0
+     }
     }
    }
   ],

@@ -174,11 +174,12 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
   8,192-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
   E507: affine_math cap-hit < 0.20).
-- **z_bar step-down (from E513):** z_bar = 1.00, then **0.50 once 6 h** and **0.25 once 12 h** have passed since the last
-  GREEN, back to 1.00 after every GREEN. Clock = your candidate's TRAINING-RESULT time minus the last GREEN's decided_at (both
-  public in https://affine.io/gate.json `entries[].timestamps`), so gate latency does not move the bar. Current bar and when it next
-  drops: https://affine.io/gate.json `z_bar` (also `/gate/zbar.json`, mining.json `heldout.z_bar`, the Gate z chart's z bar line).
-  The bar each turn was judged against: `entries[].thresholds.z_min`. Before E513: z > 1.00. The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
+- **z_bar linear drop (from E514):** **z_bar = max(0.25, 1.0 − 0.75 · h / 12)**, h = hours since the last GREEN: 1.00
+  right after a GREEN, 0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN (E513–E513: steps 1.00 /
+  0.50 from 6 h / 0.25 from 12 h). Clock = your candidate's TRAINING-RESULT time minus the last GREEN's decided_at (both
+  public in https://affine.io/gate.json `entries[].timestamps`), so gate latency does not move the bar. Current bar, the formula and
+  when it reaches the floor: https://affine.io/gate.json `z_bar` (also `/gate/zbar.json`, mining.json `heldout.z_bar`, the Gate z chart's z bar line).
+  The exact bar each turn was judged against: `entries[].thresholds.z_min`. Before E513: z > 1.00. The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
 - **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v1.jsonl`: the secret commitment, the block
   hash on chain, the seed, the draw commitment and that every drawn task is in the pool; plus the GREEN turn's grades. **What you
   can't:** recompute Δ/SE/z exactly or check u_i < π_i, because π comes from the private prior table (only its snapshot sha256 is

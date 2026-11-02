@@ -31,15 +31,18 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
   the token cap (8,192 tokens, no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike, no env distinction.
   RED if >= 33% of the candidate's baseline answers hit the token cap. (Before E507: Hajek capped share on affine_math < 0.20.)
   The head's rate is computed the same way and recorded (h_cap_rate); per-env rates are diagnostics only (per_env).
-  z_bar step-down (Jacob 2026-11-01 21:23 CR, from E513): z_bar = z_bar_at(hours since the last GREEN), Z_BAR_SCHEDULE =
-  [[0, 1.0], [6, 0.5], [12, 0.25]]: 1.00 below 6 h, 0.50 from 6 h, 0.25 from 12 h; back to 1.00 after every GREEN. The clock for the
+  z_bar linear drop (Jacob 2026-11-01 21:51 CR, from E514): z_bar = z_bar_at(h) = max(0.25, 1.0 - 0.75 * h / 12), h = hours
+  since the last GREEN (Z_BAR_SCHEDULE = {kind: linear, start: 1.0, floor: 0.25, hours_to_floor: 12}): 1.00 right after a GREEN,
+  0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN. (E513-E513: steps 1.00 / 0.50 from 6 h / 0.25 from 12 h.)
+  The clock for the
   candidate of epoch e = its TRAINING-RESULT time minus the decided_at of the last GREEN decision of an epoch < e (both public in
   https://affine.io/gate.json: entries[].timestamps.training_result / .decided_at), so gate latency does not move the bar."""
 from __future__ import annotations
 import hashlib, json, math, os, sqlite3
 
 VERSION = 'sn120-prior-baseline-v1'
-Z_BAR_SCHEDULE = [[0, 1.0], [6, 0.5], [12, 0.25]]   # [hours since the last GREEN, z bar]; reset to the first step on GREEN
+Z_BAR_SCHEDULE = dict(kind='linear', start=1.0, floor=0.25, hours_to_floor=12.0)   # z_bar = max(floor, start - (start - floor) * h / hours_to_floor); reset on GREEN
+# (a list [[hours, z bar], ...] is a step schedule, as live E513-E513)
 CAP_HIT_MAX = 0.33   # task-level cap rule: RED if >= 33% of the candidate's baseline answers hit the token cap
 ROUND_SCHEMA = 'sn120-heldout-gate-prior-v1'
 DEFAULTS = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', floor=0.10, cap=0.10, shares='size',
@@ -168,7 +171,11 @@ def task_of(index: int, cfg=None) -> str:
 
 # ------------------------------------------------------------------ z bar step-down
 def z_bar_at(hours, schedule=None) -> float:
-    """z bar for a candidate whose clock reads `hours` since the last GREEN (deterministic step function)."""
+    """z bar for a candidate whose clock reads `hours` since the last GREEN (deterministic: linear drop to a floor, or steps)."""
+    schedule = schedule or Z_BAR_SCHEDULE
+    if isinstance(schedule, dict):
+        s0, fl, H = float(schedule['start']), float(schedule['floor']), float(schedule['hours_to_floor'])
+        return max(fl, s0 - (s0 - fl) * max(0.0, float(hours)) / H)
     sch = sorted((float(h), float(v)) for h, v in (schedule or Z_BAR_SCHEDULE)); b = sch[0][1]
     for h0, v in sch:
         if hours >= h0: b = v
@@ -176,7 +183,10 @@ def z_bar_at(hours, schedule=None) -> float:
 
 
 def z_bar_next(hours, schedule=None):
-    """-> (hours, z bar) of the next step after `hours`, or None at the last step."""
+    """-> (hours, z bar) of the next step after `hours` (linear: when the floor is reached), or None at the last step / the floor."""
+    schedule = schedule or Z_BAR_SCHEDULE
+    if isinstance(schedule, dict):
+        H = float(schedule['hours_to_floor']); return (H, float(schedule['floor'])) if hours < H else None
     for h0, v in sorted((float(h), float(v)) for h, v in (schedule or Z_BAR_SCHEDULE)):
         if h0 > hours: return h0, v
     return None
@@ -228,7 +238,7 @@ def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='siz
     if scored < min_scored: reasons.append('insufficient_scored_tasks(%d<%d)' % (scored, min_scored))
     if cover < min_cover: reasons.append('coverage %.3f < %.2f' % (cover, min_cover))
     if delta is None or not delta > 0: reasons.append('gain %s <= 0' % (None if delta is None else round(delta, 5)))
-    if not ((z >= bar_z) if z_inclusive else (z > bar_z)): reasons.append('z %.3f %s %.2f' % (z, '<' if z_inclusive else '<=', bar_z))
+    if not ((z >= bar_z) if z_inclusive else (z > bar_z)): reasons.append(('z %.3f %s %.2f' if round(bar_z, 2) == bar_z else 'z %.3f %s %.4f') % (z, '<' if z_inclusive else '<=', bar_z))
     if cap is None or not cap < cap_max: reasons.append('cap_rate %s >= %.2f' % (None if cap is None else round(cap, 4), cap_max))
     ev = dict(z=z, gain=delta, delta=delta, se=se, se_task=math.sqrt(var_s), se_run=math.sqrt(var_r), tau_run=float(tau), sigma_run_floor=float(sigma_run_floor), n=scored,
               drawn=len(drawn), cover=cover, h_pass=sum(shx[e] * envs[e]['h_pass'] for e in have) if have else None,

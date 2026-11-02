@@ -15,3 +15,4 @@ Jacob 2026-11-01 21:23 CR: "Go with the step-down: z>1, 0.5 after 6h, 0.25 after
 - Offline replay E497-E511: no outcome changes (every candidate's clock was < 6 h after the E491 GREEN, so z_bar = 1.00).
 - Files: `activate_zbar.sh` (install at a quiet gap, health check, `MODE=revert` reverts only this change), `watchdog_zbar.py`,
   `setflag_zbar.py`, `patch_texts_zbar.py`, `replay_zbar.py`, `site/k1.js`.
+- Superseded from E514 by the linear drop (ops/zbar_linear).
