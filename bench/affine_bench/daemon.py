@@ -6,7 +6,8 @@ a result file per (model, benchmark, version) is the only "done" marker; a crash
 (vf-eval --resume keeps finished rollouts); nothing is published per task.
 
 Queue (Jacob 2026-11-02 10:08 CR: bench only kings going forward, no backlog): manual requests (`affine-bench run`) first, then
-every GREEN king with epoch >= MIN_EPOCH (544 = the first king after the last benched one, E540), newest first. Older kings,
+every GREEN king with epoch >= MIN_EPOCH (544 = the first king after the last benched one, E540), newest first, then backfill
+requests (`affine-bench run --backfill`, e.g. a new benchmark on older kings / Genesis / references; Jacob pt1159u arxivmath). Older kings,
 Genesis and the reference models are never queued automatically (their existing results stay published).
 
 Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
@@ -92,13 +93,19 @@ def missing(m, bs):
 def queue(rows=None):
     rows = rows or model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs)
-    q = []
+    q, back = [], []
     for f in sorted(glob.glob(REQ + "/*.json")):
         r = rj(f)
-        if r: q.append(dict(r, request=f))
+        if not r:
+            continue
+        if r.get("backfill"):  # `run --backfill`: after the new kings, and dropped once the model has failed MAX_FAIL times
+            if r["model_id"] not in S["unavailable"] and S["fail"].get(r["model_id"], 0) < MAX_FAIL:
+                back.append(dict(r, request=f))
+        else:
+            q.append(dict(r, request=f))
     kings_ = sorted((m for m in rows if m["kind"] == "king" and m.get("green") and (m.get("epoch") or 0) >= MIN_EPOCH),
                     key=lambda m: -(m.get("epoch") or 0))
-    q += [dict(m, why="new-king") for m in kings_ if ok(m)]
+    q += [dict(m, why="new-king") for m in kings_ if ok(m)] + back
     seen, out = set(), []
     for m in q:
         k = m["model_id"] + (m.get("tag") or "")
@@ -346,11 +353,13 @@ def cli(cmd, argv):
         ap.add_argument("--model", required=True, help="king:<hash prefix> | registry id (genesis, qwen3-8b, ...)")
         ap.add_argument("--benchmarks", required=True); ap.add_argument("--rollouts", default="", help="e.g. math500=16")
         ap.add_argument("--tag", default="", help="non-empty = side run kept under state/bench-results/tagged/, never published")
+        ap.add_argument("--backfill", action="store_true", help="queue after the new kings (e.g. a new benchmark on old models)")
         a = ap.parse_args(argv); rows = model_rows()
         if a.model.startswith("king:"):
             m = next(x for x in rows if x.get("king", "").startswith(a.model[5:]))
         else:
             m = next(x for x in rows if x["model_id"] == a.model)
-        m = dict(m, benchmarks=a.benchmarks.split(","), rollouts=a.rollouts, tag=a.tag or None, why="request")
+        m = dict(m, benchmarks=a.benchmarks.split(","), rollouts=a.rollouts, tag=a.tag or None, why="backfill" if a.backfill else "request",
+                 backfill=a.backfill)
         p = f"{REQ}/{int(now())}-{run_key(m)}.json"; wj(p, m); print("queued", p); return
     raise SystemExit("unknown command " + cmd)

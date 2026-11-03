@@ -26,7 +26,8 @@ host (affinevalidator)                              node (Lium GPU pod, e.g. aff
 * Envs: Prime Hub `primeintellect/{math500,aime24,aime25,aime26,gsm8k}` pinned by wheel sha256, wrapped by
   `environments/local-*` only to open the sandbox network policy for the local subprocess runtime (prompt, data, order and
   reward unchanged); own envs `aime22`, `aime23`, `amc23`, `math-test` (full MATH test, 5,000) in the same format and
-  reward (`vf.verify_boxed_math_answer`); `olympiadbench` + `omni-math` use `affine-math-grader` (tests in `tests/`) and are
+  reward (`vf.verify_boxed_math_answer`); `arxivmath` (MathArena ArXivMath, 103 research-level questions, pinned; MathArena
+  grades it with an LLM judge, ours is math-verify plus an implicit-multiplication retry, tests in `tests/test_arxivmath.py`); `olympiadbench` + `omni-math` use `affine-math-grader` (tests in `tests/`) and are
   disabled for now. Harness = verifiers `null` (one chat turn, no tools).
 
 ## Use

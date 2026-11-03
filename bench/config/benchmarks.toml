@@ -110,6 +110,17 @@ enabled = true
 order = 40
 
 [[benchmark]]
+id = "arxivmath"
+label = "ArXivMath"
+suite = "math"
+env = "arxivmath"
+source = "repo:bench/environments/arxivmath"
+dataset = "MathArena/arxivmath@f0a9cf83259855c31b37168eca646ec6f0e2598c (train, 103: arXiv Dec 2025 - Mar 2026)"
+rollouts = 16
+enabled = true
+order = 45
+
+[[benchmark]]
 id = "gsm8k"
 label = "GSM8K"
 suite = "math"
