@@ -128,10 +128,6 @@ CONSUMERS = [
          rules=[J(MML, ['max_model_len'])]),
     dict(id='prior_pod_vllm', cls='derived', render=False, optional=True, pod=('prior', 'curl -s -m 5 http://127.0.0.1:8100/v1/models'),
          rules=[J(MML, ['data', 0, 'max_model_len'])]),
-    # ---------------- gain multiplier (prior-table pairs) ----------------
-    dict(id='gain_mult_config', cls='derived', render=False, host=RA + '/20261102-gain-mult/code/config.json',
-         rules=[J(MAXOUT, ['pair_caps', 0]), J(MAXOUT, ['cap_regimes', -1, 'cap'])],
-         note='caps_apply appends a cap_regime {from_t, cap} and sets pair_caps at activation'),
     # ---------------- published (mining.json, training.json, llms.txt, dashboards) ----------------
     dict(id='training_json', cls='derived', render=False, host=WEB + '/training.json',
          rules=[J(SOFT, ['loss', 'overlong_soft_start']), J(OLMAX, ['loss', 'overlong_max_tokens']),

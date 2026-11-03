@@ -1,0 +1,111 @@
+{
+ "n": 10,
+ "live_now": [
+  [
+   517,
+   0.192867299959
+  ],
+  [
+   475,
+   0.096885593041
+  ],
+  [
+   546,
+   0.096433649979
+  ],
+  [
+   479,
+   0.096433649979
+  ],
+  [
+   447,
+   0.096433649979
+  ],
+  [
+   344,
+   0.096433649979
+  ],
+  [
+   443,
+   0.096433649979
+  ],
+  [
+   355,
+   0.096433649979
+  ],
+  [
+   489,
+   0.083428382133
+  ],
+  [
+   248,
+   0.04821682499
+  ]
+ ],
+ "staged": [
+  [
+   489,
+   0.1
+  ],
+  [
+   475,
+   0.1
+  ],
+  [
+   546,
+   0.1
+  ],
+  [
+   248,
+   0.1
+  ],
+  [
+   517,
+   0.1
+  ],
+  [
+   479,
+   0.1
+  ],
+  [
+   447,
+   0.1
+  ],
+  [
+   344,
+   0.1
+  ],
+  [
+   443,
+   0.1
+  ],
+  [
+   355,
+   0.1
+  ]
+ ],
+ "staged_eq_pre_multiplier_code": true,
+ "staged_all_equal": true,
+ "staged_total": 1.0,
+ "same_uids": false,
+ "formula": [
+  "k1-last10-green-gainmult-v1",
+  "k1-last10-green-equal-v1"
+ ],
+ "floor": {
+  "floor_applied": false,
+  "reason": "k1_payees",
+  "n": 10
+ },
+ "any_gain_key": false,
+ "sha": [
+  "9441614f5a67",
+  "a7d2bb886c7f"
+ ],
+ "tp_live_has_kgm": true,
+ "tp_staged_has_kgm": false,
+ "tp_other_diffs": [
+  "/generated_at",
+  "/promotion_gate/heldout/z_bar/computed_at"
+ ]
+}

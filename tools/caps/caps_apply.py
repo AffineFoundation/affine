@@ -15,8 +15,8 @@ Exit 0 = done / nothing to do; 1 = refused (see message); 2 = verification faile
      no gate restore running, no running train job in roles.sqlite3 (same rule as RA/20261102-12k-everywhere activate_12k.sh);
   3. flock state/mimo-mainnet-v1/lifecycle.lock + RA/LIFECYCLE-ACTIVATION.lock, stop affine-mimo-lifecycle + mining-discovery;
   4. back up every file it writes to state/caps/apply-<ts>/backup/ (+ the pod files), write, re-pin FF-PINS if ff_format moved,
-     set the gate flag max_tokens (under its flock; rounds already open keep their cap), append a gain-mult cap regime and
-     reset the prior parent-hold clock when the cap moved, push the prior pod files and restart its sampler on a fresh pass;
+     set the gate flag max_tokens (under its flock; rounds already open keep their cap), push the prior pod files and restart
+     its sampler on a fresh pass;
   5. restart affine-ff / affine-mining-discovery / affine-training-params / affine-k1-transparency, start the lifecycle, release
      the locks; run caps_check --scope host,pods; write state/caps/ACTIVE.json and the REVERT.sh of this apply.
 """
@@ -127,18 +127,6 @@ def repin_ff(bdir, rev):
     if new != old: rev.append(str(backup(bdir, pins_p))), atomic_write(pins_p, new)
 
 
-def set_regimes(C, old_cap, bdir, rev, t):
-    """cap moved: gain-mult pairs only same-cap data from t; the prior parent-hold counts tasks from t."""
-    gp = CS.RA + '/20261102-gain-mult/code/config.json'; old = Path(gp).read_text(); g = json.loads(old)
-    g['cap_regimes'].append(dict(from_t=t, cap=C['max_output_tokens'], note='caps_apply %s: %d -> %d' % (cr(t), old_cap, C['max_output_tokens'])))
-    g['pair_caps'] = [C['max_output_tokens']]
-    backup(bdir, gp); atomic_write(gp, L._json_dump_like(old, g)); rev.append(gp)
-    cp = CS.RA + '/20261101-prior-table/controller.json'; old = Path(cp).read_text(); c = json.loads(old)
-    if c.get('parent_hold'):
-        c['parent_hold'].update(cap_from_t=t, cap_from_note='caps_apply %s: cap %d -> %d' % (cr(t), old_cap, C['max_output_tokens']))
-        backup(bdir, cp); atomic_write(cp, L._json_dump_like(old, c)); rev.append(cp)
-
-
 def prior_rollout(pods_changed, bdir, log):
     """write the prior pod files, re-serve the current checkpoint, restart the sampler (exact PID) on a fresh pass."""
     import caps_check as CC
@@ -209,7 +197,6 @@ def main():
             else: atomic_write(p, new)
             log('wrote %s (%s)' % (p, con['id']))
             if con['id'] == 'ff_format': repin_ff(bdir, rev)
-        if C['max_output_tokens'] != old_cap: set_regimes(C, old_cap, bdir, rev, time.time())
         pc = [x for x in pt if x[2] != x[3]]
         if pc: prior_rollout(pc, bdir, log)
     if a.locks_held:

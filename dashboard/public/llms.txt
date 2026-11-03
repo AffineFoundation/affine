@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-02 19:54 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-03 08:50 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -277,14 +277,6 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
 - Each of the last (up to) 10 distinct GREEN UIDs gets 1/N of the miner weight, for as long as the hotkey that earned
   it stays registered on that UID. RED, skipped and pending turns earn nothing. Unearned weight burns to UID 0. Weights
   are never all zero (there's a nonzero floor), and they're set hourly. Current payees are in https://affine.io/k1.json (`payees`).
-- King gain multiplier <!-- gain-mult-20261102 --> (from E581, 2026-11-02): a king crowned after E580 has its 1/N share multiplied
-  by m, then the payees' shares are rescaled so their total stays the same. m measures how much the king actually improved
-  on its parent across the whole gate pool. The prior sampler runs both heads on the same tasks at the same token cap, and
-  gain = the king's mean pass rate minus the parent's on those shared tasks. cons = max(0, gain - 1 SE). Then
-  m = clamp(cons / median, 0.5, 2) (lambda = 1). The median is taken over recent positive cons values (the last 10; it is about
-  0.004 today). m stays 1 until the pair shares at least 2,000 tasks (`gain_settled` false). Kings crowned at or before E580
-  keep m = 1 for good. Per-king m and settled: https://affine.io/mining.json `training.k1.king_gain_multiplier`, and
-  k1.json `payees[].gain_m` / `gain_settled`. Per-task data stays private.
 
 ## 9. How to win: observations so far (not guarantees)
 

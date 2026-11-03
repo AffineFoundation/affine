@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-11-03** (Jacob t1150u: "I think we should remove the multiplier it just adds complexity"). The king gain multiplier is
+> removed: every payee is back to the equal 1/N split, the prior parent_hold is gone and mining.json no longer has
+> `training.k1.king_gain_multiplier`. See `ops/gain_mult_removal/`. This folder is kept as history only.
+
 # King gain multiplier (live from E581, 2026-11-02; Jacob pt1136u/pt1137u)
 
 Each payee (king) crowned after the activation epoch (E580) gets weight (1/N) x m_i. The payees' shares are then

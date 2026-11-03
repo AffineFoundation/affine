@@ -10,8 +10,8 @@
 | `legacy_capped_output_tokens` | 8192 | an output of exactly this length still counts as capped (files generated at the old cap) |
 | `signed_manifest` | 8192 / 12288 / 6000 | what the root-signed lifecycle job settings say; never edited, overridden by the above |
 
-`tools/caps/consumers.py` lists every place that carries a cap (35 consumers with 106 checked values - 12 live, 17 derived, 5 docs, 1 signed - plus 3 files that must hold no cap literals: ff_format, kit, trainer, gate flag, probe, prior pod,
-gain-mult, training.json / mining.json, llms.txt, READMEs, the live pods). Each one is either read from `caps.py` at run time
+`tools/caps/consumers.py` lists every place that carries a cap (34 consumers with 104 checked values - 12 live, 16 derived, 5 docs, 1 signed - plus 3 files that must hold no cap literals: ff_format, kit, trainer, gate flag, probe, prior pod,
+training.json / mining.json, llms.txt, READMEs, the live pods). Each one is either read from `caps.py` at run time
 (training_params, site_metrics, replace_pod roles.json `{CAPS:key}` placeholders) or rendered from `caps.json` and checked against it.
 
 ## Check
@@ -26,7 +26,7 @@ if the pod is not at the caps.
    the old cap and append a `history` entry (`from_epoch`, `label`).
 2. `python3 tools/caps/caps_apply.py` shows the plan; `python3 tools/caps/caps_apply.py --apply` waits for an idle epoch boundary,
    takes the lifecycle locks, backs everything up, renders every host file (gate flag, ff_format + FF-PINS, FF-PUBLIC, probe config,
-   prior sampler/serve files, docs), pushes the prior pod config and restarts its sampler on a fresh pass, records a gain-mult cap regime,
+   prior sampler/serve files, docs), pushes the prior pod config and restarts its sampler on a fresh pass,
    restarts the publishers, verifies with caps_check and writes `REVERT.sh`.
    The trainer constants live in a root-signed release: if they would change, apply stops first and `--stage-trainer` writes the patched
    files for the signing step (then switch the release and re-run apply).
