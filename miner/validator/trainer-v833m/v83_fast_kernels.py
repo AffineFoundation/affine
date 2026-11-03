@@ -151,7 +151,7 @@ def packed_log_probs(runtime, items, *, gradients, logit_chunk=4096, checkpoint_
     seqs = []
     for prompt, output in items:
         prompt, output = runtime._tokens(prompt), runtime._tokens(output)
-        if len(prompt) + len(output) > runtime.max_context_tokens:
+        if len(prompt) + len(output) > max(int(runtime.max_context_tokens), 16384):   # v8.3.3m = v8211_batched.context_limit
             raise ValueError('response context limit')
         seqs.append(prompt + output)
     lens = [len(s) for s in seqs]

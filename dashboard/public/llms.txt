@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-02 16:50 CR (UTC-6). Trainer v8.3.3l, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-02 19:54 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -79,12 +79,15 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
 - output: the assistant text after that prompt (include `<think>...</think>` if you want it trained). It's tokenized with
   `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and `<|endoftext|>` (ids 248044-248046) must
   not appear in a prompt or an output.
-- EOS rule: an output of up to 8191 tokens gets `<|im_end|>` appended (it ended). Exactly 8192 tokens = cut at the cap
-  (no EOS; capped). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
-  (This is the batch-file submission limit and is unchanged. The gate evaluation cap is 12,288 output tokens, section 5.)
+- EOS rule: an output of up to 12,287 tokens gets `<|im_end|>` appended (it ended). Exactly 12,288 tokens = cut at the cap
+  (no EOS; capped). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens.  <!-- 12k-everywhere-20261102 -->
+  12,288 output tokens apply everywhere from epoch 590: generation (sample with max_tokens 12,288), batch files, training
+  and the gate (section 5). Before epoch 590 batch files were capped at 8,192 output / 12,288 context.
+  Transition: files generated at 8K still count. An output of exactly 8,192 tokens (no EOS) is still read as capped.
 - reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
   std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
-  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 6000) / (8192 - 6000), 0, 1).
+  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 10096) / (12288 - 10096), 0, 1) (len = output
+  tokens incl. the EOS; from epoch 590, same 2,192-token ramp moved to the new cap; before: (len - 6000) / (8192 - 6000)).
 - Any number of rollouts per prompt (at least 1). Caps: 125 prompts and 1,000 rollouts (125 x 8; live value: mining.json
   `training.batch_cap`; a change applies at the next turn). Prompts beyond a cap are dropped whole, in file order.
 - Any broken rule in the kept part makes the whole file invalid. You're skipped for that turn, not charged, and keep your place.
@@ -124,10 +127,12 @@ Check a file exactly as the validator does (it tokenizes like the trainer): mine
 (`python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`). `affine_batch.py check` is the
 structural check, and it needs no tokenizer.
 
-## 4. Training: the exact v8.3.3l step (one stateless step per turn)
+## 4. Training: the exact v8.3.3m step (one stateless step per turn)
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
-miner/validator/trainer-v833l (+ engine/) and the live settings are in miner/validator/trainer-v833l/trainer-config.public.json.
+miner/validator/trainer-v833m (+ engine/) and the live settings are in miner/validator/trainer-v833m/trainer-config.public.json.
+v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens of prompt + output are trained in full
+(no truncation) and the free-file overlong window is 10096..12288. Everything else is the v8.3.3l step.
 
 - Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0, k3 (low-var) KL
   to the reference = the initial checkpoint 87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae (the Hugging Face base
@@ -305,7 +310,7 @@ miner/validator/trainer-v833l (+ engine/) and the live settings are in miner/val
 
 https://github.com/AffineFoundation/affine/tree/main/miner, with miner/README.md as the entry point. The validator code
 in it is verbatim from the live services (sha256 + live source per file in validator/MANIFEST.sha256). The kit contains:
-- the trainer v8.3.3l host + engine;
+- the trainer v8.3.3m host + engine;
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
@@ -339,7 +344,7 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
   After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
-- What does the trainer run, exactly? miner/validator/trainer-v833l + engine/. kit/train_step.py imports exactly those files.
+- What does the trainer run, exactly? miner/validator/trainer-v833m + engine/. kit/train_step.py imports exactly those files.
 - Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG.
 - Where's the fp32 master? Its manifest (sha256 per file) is at /k1/fp32-master/<head>.json. A public download isn't offered yet,
   and kit/train_step.py bootstraps from the bf16 head without it.

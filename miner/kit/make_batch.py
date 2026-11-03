@@ -2,13 +2,14 @@
 """Turn rollouts.jsonl (from generate.py) into an upload-ready batch file and check it with the validator's own checker.
 
   python3 make_batch.py --head ./head --hotkey 5F... --rollouts rollouts.jsonl --out batch.json \\
-      [--select correct1|mixed|all] [--max-prompts 125] [--per-prompt 8] [--lr 5e-7 --kl 0.02] [--max-tokens 6000]
+      [--select correct1|mixed|all] [--max-prompts 125] [--per-prompt 8] [--lr 5e-7 --kl 0.02] [--max-tokens 10096]
 
 --select correct1 (default): one correct rollout per prompt, reward 1.0, only prompts the head got right at least once but not
           always (0 < c < k), hardest first (lowest c/k). This is the shape of every GREEN so far (125 x 1, v1 defaults).
 --select mixed:  prompts with 0 < c < k, up to --per-prompt rollouts each, reward 1.0 correct / 0.0 otherwise.
 --select all:    every prompt, up to --per-prompt rollouts each, reward 1.0 / 0.0.
---max-tokens:    skip rollouts longer than this (the trainer subtracts 0.5*clip((len-6000)/2192, 0, 1) from longer ones).
+--max-tokens:    skip rollouts longer than this (default 12288 = the cap; the trainer subtracts 0.5*clip((len-10096)/2192, 0, 1)
+                 from longer ones, len incl. EOS; trainer v8.3.3m from epoch 590, before: (len-6000)/2192 at an 8192 cap).
 --lr/--kl:       write affine-batch-v2 with a train block (lr 1.25e-7..1e-6, kl 0.005..0.1); omit both for v1 defaults.
 Observations, not rules: see miner/README.md "How to win".
 """
@@ -25,7 +26,7 @@ def main():
     ap.add_argument('--rollouts', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--select', choices=('correct1', 'mixed', 'all'), default='correct1')
     ap.add_argument('--max-prompts', type=int, default=125); ap.add_argument('--per-prompt', type=int, default=8)
-    ap.add_argument('--max-tokens', type=int, default=8192)
+    ap.add_argument('--max-tokens', type=int, default=12288)
     ap.add_argument('--lr', type=float); ap.add_argument('--kl', type=float)
     a = ap.parse_args()
     recs = [json.loads(l) for l in open(a.rollouts) if l.strip()]

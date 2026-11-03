@@ -1,5 +1,5 @@
 {
- "about": "Public copy of the live trainer v8.3.3j settings (no secrets). engine = the ROOT-admitted host engine block (trainer-host config sha256 e21ab827... = mining.json training.sources.trainer_host_operator_config_sha256); trainer_config = the signed GRPO config document (turn.json training.config). The KL reference 87de8304... is the original base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B. Live step = v8211_batched.train_update_batched (engine packed, 8-GPU data parallel) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad) + v8.3.3j lr/kl.",
+ "about": "Public copy of the live trainer v8.3.3m settings (no secrets). engine = the ROOT-admitted host engine block (trainer-host config sha256 e21ab827... = mining.json training.sources.trainer_host_operator_config_sha256); trainer_config = the signed GRPO config document (turn.json training.config). The KL reference 87de8304... is the original base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B. Live step = v8211_batched.train_update_batched (engine packed, 8-GPU data parallel) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad) + v8.3.3j lr/kl.",
  "configuration_sha256": "426ef403292023d3852200e22477f38d4bfea5f81e830eeeb8b10c2fa5d1d75a",
  "engine": {
   "batched_engine": "packed",
@@ -37,6 +37,13 @@
    "flash-linear-attention": "0.6.0"
   }
  },
+ "free_file_overlong": {
+  "from_epoch": 590,
+  "overlong_max_tokens": 12288,
+  "overlong_penalty": 0.5,
+  "overlong_soft_start": 10096,
+  "rule": "reward -= 0.5 * clip((len - 10096) / (12288 - 10096), 0, 1), len = output tokens incl. EOS"
+ },
  "host_files_sha256": {
   "ff_trainer.py": "da4bbf257f42c5710c719bf4267f2b5b2f624a2e82a5d772fa21eb4cc1bf876f",
   "math_levels.json": "c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50",
@@ -46,15 +53,16 @@
   "patched/mimo_grpo.transaction.py": "f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217",
   "patched/mimo_training_worker.py": "7469d2984b0771ef975f0d6348314334571437bc8a6db398508b4c39abce79cc",
   "v8210_optimizer_offpath.py": "8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad",
-  "v8211_batched.py": "b4a4cb78b7fbeb20698880196f5933855529d027908830da05e9a67dc809f966",
+  "v8211_batched.py": "b5913a522f57c07af240305fac492d122f947b00ee2b0c4f9f6791dc91346715",
   "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
   "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
   "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-  "v83_dp.py": "afc0408dc9f4a929523488679ebed37b3a2d687a6f45b7d536811b5edb0a27ac",
-  "v83_fast_kernels.py": "ec5cc5f5c920e469b3731ce93dc6d592f2a054ed25c2785f865d30efb42c829f",
+  "v83_dp.py": "e7874b54e2dca7e43d224da5ff0a64bb6c3388713497f475359b3629514e9f76",
+  "v83_fast_kernels.py": "0d7df5e85d6c35053af66b73dccad1b3b4f4f2a327af7eb194d0472c53dd8c73",
   "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
  },
  "host_version": "affine-mimo-trainer-host-v833",
+ "host_version_note": "v8.3.3m (from epoch 590, RA/20261102-12k-everywhere) = v8.3.3l + 12K everywhere: host prompt+output limit max(signed runtime 12288, 16384) in v8211_batched / v83_dp / v83_fast_kernels, and free-file rollouts use the overlong window free_file_overlong below instead of the signed 6000/8192. trainer_config is the signed job document and is unchanged.",
  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
  "runtime_versions": {
   "toploc": "0.1.6",

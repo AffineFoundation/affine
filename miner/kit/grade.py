@@ -9,8 +9,8 @@ allan_src.py, byte-identical to probe_worker.py _ALLAN_SRC). tests/test_kit_cpu.
   render(problem) -> prompt token ids the gate's prompt: [system: SYSTEM, user: problem], enable_thinking=True
   grade(out_ids, stop, gold, problem) -> (kind, how); kind 'positive' = correct, 'negative' = wrong,
                                          'neutral' = unresolved (capped or no single final \\boxed), 'indeterminate'
-  H                                   the gate harness: temperature 1.0, top_p 0.95, top_k 20, 8192 output / 12288 context (grading view; the gate
-                                      generates with max_tokens 12288 / context 16384 from 2026-11-02, see gate_eval.GATE_MAX_TOKENS)
+  H                                   the gate harness: temperature 1.0, top_p 0.95, top_k 20, 12288 output / 16384 context (12K everywhere:
+                                      generation, batch files, training and the gate; see gate_eval.GATE_MAX_TOKENS)
   seed_of(P, set, task, j)            per-request seed rule (the gate uses sha256(P:env:task:j)[:12] with env='affine_math')
 """
 import hashlib, json, os
@@ -26,7 +26,7 @@ def init(head_dir):
 EOS = (248046, 248044); OPEN_T, CLOSE_T = 248068, 248069
 SYSTEM = ("Solve the math problem. Reason step by step in plain text, then end your response with the final answer in `\\boxed{}`. "
           "Emit exactly one `\\boxed{}` block and nothing after it.")
-H = dict(enable_thinking=True, max_context_tokens=12288, max_output_tokens=8192, temperature=1.0, top_k=20, top_p=0.95)
+H = dict(enable_thinking=True, max_context_tokens=16384, max_output_tokens=12288, temperature=1.0, top_k=20, top_p=0.95)
 _G = {}
 def _init(ckpt_dir):
     os.nice(5)

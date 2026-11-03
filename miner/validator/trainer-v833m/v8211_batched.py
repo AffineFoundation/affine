@@ -59,12 +59,28 @@ from subnet.mimo_grpo.upstream import reference
 import numpy as np
 
 
+# v8.3.3m (RA/20261102-12k-everywhere, Jacob 2026-11-02 18:48 CR "12 k should be everywhere"): the 12,288-token output cap in training.
+TRAIN_MAX_CONTEXT = 16384          # prompt + output tokens (12,288 output + prompt; the gate serves 16,384)
+FF_OVERLONG = (10096, 12288)       # free-file overlong window (soft_start, max_tokens); None = the signed job settings (v8.3.3l: 6000, 8192)
+
+
+def context_limit(runtime):
+    """v8.3.3m: prompt+output limit for training/scoring = max(signed runtime context, TRAIN_MAX_CONTEXT)."""
+    return max(int(runtime.max_context_tokens), TRAIN_MAX_CONTEXT)
+
+
 def rollout_reward(config, rollout):
     """v8.3.3h: native rollouts -> config.reward (unchanged). Free-file rollouts carry the miner's reward; the same
-    soft overlong penalty applies (config.reward of a non-correct outcome is exactly minus that penalty)."""
+    soft overlong penalty applies (config.reward of a non-correct outcome is exactly minus that penalty).
+    v8.3.3m: free-file rollouts use the FF_OVERLONG window (same penalty and formula, ramp ending at the 12,288 cap)."""
     reward = getattr(rollout, 'reward', None)
     if reward is None:
         return config.reward(rollout.outcome, len(rollout.tokens))
+    if FF_OVERLONG is not None and config.overlong_penalty:
+        start, cap = FF_OVERLONG
+        value = 0.
+        value -= config.overlong_penalty * min(1., max(0., (len(rollout.tokens) - start) / (cap - start)))
+        return reward + value
     return reward + config.reward('wrong', len(rollout.tokens))
 
 
@@ -309,7 +325,7 @@ def batched_log_probs(runtime, items, *, gradients, engine, logit_chunk=2048, su
     seqs = []
     for prompt, output in items:
         prompt, output = runtime._tokens(prompt), runtime._tokens(output)
-        if len(prompt) + len(output) > runtime.max_context_tokens:
+        if len(prompt) + len(output) > context_limit(runtime):
             raise ValueError('response context limit')
         seqs.append(prompt + output)
     with torch.set_grad_enabled(gradients):
@@ -483,7 +499,7 @@ def train_update_batched(runtime, optimizer, groups, binding, *, config, guard=l
             raise ValueError('native trusted TaskGroup required')
         group.validate(config.group_size, vocab_size=runtime.vocab_size, eos_token_ids=set(runtime.eos_token_ids),
                        unresolved_failures=config.cap_policy == TRAIN_UNRESOLVED)
-        if any(len(group.prompt) + len(r.tokens) > runtime.max_context_tokens for r in group.trajectories):
+        if any(len(group.prompt) + len(r.tokens) > context_limit(runtime) for r in group.trajectories):
             raise ValueError('complete rollout exceeds qualified total context')
     guard()
     base_report = dict(version='affine-mimo-grpo-update-v1', config=config.document(), input=dict(

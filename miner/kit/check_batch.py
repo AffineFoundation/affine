@@ -4,7 +4,7 @@
   python3 check_batch.py --hotkey 5F... --tokenizer ./head batch.json
 
 ../affine_batch.py check does the structural part without a tokenizer; this one also tokenizes exactly like the trainer:
-control tokens 248044-248046 forbidden, output <= 8192 tokens incl. EOS (exactly 8192 = capped, no EOS), prompt+output <= 12288,
+control tokens 248044-248046 forbidden, output <= 12288 tokens incl. EOS (exactly 12288 = capped, no EOS; exactly 8192 = capped too, for 8K-generated files), prompt+output <= 16384,
 then the caps (first 125 prompts / 1000 rollouts, whole prompts dropped). Prints the same summary the lifecycle logs.
 """
 import argparse, json, sys

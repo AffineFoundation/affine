@@ -302,7 +302,7 @@ class PRE:
                 raise ValueError('native trusted TaskGroup required')
             group.validate(config.group_size, vocab_size=runtime.vocab_size, eos_token_ids=set(runtime.eos_token_ids),
                            unresolved_failures=config.cap_policy == TRAIN_UNRESOLVED)
-            if any(len(group.prompt) + len(r.tokens) > runtime.max_context_tokens for r in group.trajectories):
+            if any(len(group.prompt) + len(r.tokens) > max(int(runtime.max_context_tokens), 16384) for r in group.trajectories):   # v8.3.3m = v8211_batched.context_limit
                 raise ValueError('complete rollout exceeds qualified total context')
 
     @staticmethod

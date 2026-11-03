@@ -26,7 +26,7 @@ miner/
     prompts.py / grade.py / sampler.py / kitpath.py   shared helpers (pool, prompt renderings, grader, vLLM client, imports)
     tests/test_kit_cpu.py       CPU self-test of the whole chain (tiny model + fake vLLM; no GPU)
   validator/                    the live code (verbatim; MANIFEST.sha256)
-    trainer-v833l/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step), v8211_batched.py (loss), v83_*.py, patched/
+    trainer-v833m/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step), v8211_batched.py (loss), v83_*.py, patched/
                                 trainer-config.public.json = the live engine block + TrainerConfig + runtime versions
     engine/                     subnet/mimo_grpo (the engine the host trainer drives) + vendor/mimo_verl_pinned (GRPO advantage)
     batch/ff_format.py          the batch-file parser / checker / tokenizer the lifecycle uses
@@ -120,20 +120,23 @@ miner/
 - **prompt.** It's rendered as ONE user message: `apply_chat_template([{"role":"user","content":prompt}], add_generation_prompt=True)`
   with the head tokenizer. There's no system message, and the generation prompt is `<|im_start|>assistant\n`.
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
-  `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 8191 tokens, `<|im_end|>` is appended (it ended).
-  Exactly 8192 tokens counts as capped (no EOS). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
-  (Batch-file limit, unchanged. The gate evaluates at a 12,288-token output cap, see Sampling below.)
+  `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 12,287 tokens, `<|im_end|>` is appended (it ended).
+  Exactly 12,288 tokens counts as capped (no EOS). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens.
+  **12,288 output tokens apply everywhere from epoch 590**: generation (sample with `max_tokens` 12,288; kit/sampler.py does),
+  batch files, training and the gate (see Sampling below). Before: 8,192 output / 12,288 context for batch files.
+  Transition: 8K-generated files still count; an output of exactly 8,192 tokens (no EOS) is still read as capped.
 - **Caps.** At most 125 prompts and 1,000 rollouts (live value: mining.json `training.batch_cap`). Prompts past
   a cap are dropped whole, in file order.
 - **reward.** Any finite number, used as given. Advantage = reward − the mean reward of that prompt's
   rollouts (no std normalisation), so **a prompt with one rollout gets advantage = its reward** (+1 for a correct
-  reward-1 rollout). The trainer adds an overlong penalty of −0.5·clip((len−6000)/(8192−6000), 0, 1) to the reward.
+  reward-1 rollout). The trainer adds an overlong penalty of −0.5·clip((len−10096)/(12288−10096), 0, 1) to the reward
+  (len incl. EOS; trainer v8.3.3m from epoch 590, the same 2,192-token ramp moved to the new cap; before: (len−6000)/(8192−6000)).
 - Check a file the way the validator does: `python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`
   (`affine_batch.py check` does the structural part without a tokenizer).
 
 ## 3. The training step (v8.3.3l): what `kit/train_step.py` runs
 
-This is one stateless step from the published head. All the code is in `validator/trainer-v833l` and `validator/engine`.
+This is one stateless step from the published head. All the code is in `validator/trainer-v833m` and `validator/engine`.
 The live settings are in `trainer-config.public.json`.
 
 - **Loss** (`v8211_batched.train_update_batched`): GRPO with one group per prompt, PPO clip 0.2, dual clip 3.0,
@@ -161,7 +164,7 @@ The live settings are in `trainer-config.public.json`.
   by the tensor's group scale (lr_scale_attn / mlp / embed / lm_head; norms 1) × lr_scale_early (layers 0–15) or lr_scale_late
   (16–31); clamp_mode global_norm drops c_t and caps the whole step at global_norm_cap (both: c_t and then global_norm_cap);
   adv_center / adv_clip set the GRPO advantages; loss_agg token_mean weighs tokens instead of rollouts. The direction is
-  always g_t/‖g_t‖. Code: `validator/trainer-v833l/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
+  always g_t/‖g_t‖. Code: `validator/trainer-v833m/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
   `v8211_batched.py` (`_apply_knobs`); `kit/train_step.py` applies them exactly like the live wrapper.
 - **Differences in the local run (execution only, same math):** it runs in one process with engine `padded`
   (the live run uses 8 GPUs, engine `packed`, fla 0.6.0 kernels), so it matches at the bf16-ulp level, not bit-exactly.
