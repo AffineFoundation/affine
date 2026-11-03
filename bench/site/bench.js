@@ -4,7 +4,7 @@
    References: only the Pareto front over (parameters, lower better) x (mean score over the table's columns, higher better) is shown;
    a ref is hidden if Genesis or another fully scored ref is no larger and scores higher. Kings and Genesis always shown; refs without a
    full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF.
-   Avg column (first score column, Jacob 18:26 CR) = mean over the shown benchmark columns (same mean as the Pareto filter; … when a row is incomplete). Shading: per column,
+   Avg column (first score column, Jacob 18:26 CR) = mean over the row's non-null benchmark cells (same mean as the Pareto filter; a missing cell, e.g. ArXivMath before it has run, is left out and shown as —, Jacob 2026-11-03). Shading: per column,
    min..max of the visible rows, red tint at the bottom -> strong green at the top; a small star marks each column max (ties all marked)
    (Jacob 2026-11-01 18:22 CR).
    Sparklines (Jacob pt1046u 2026-11-02): a row of small cards above the table, one per score column (Avg + each benchmark): the kings'
@@ -38,20 +38,22 @@
   const R={};for(const r of d.results||[])(R[r.model_id]||(R[r.model_id]={}))[r.benchmark_id]=r;
   const ms=d.models||[],gen=ms.find(m=>m.kind==='genesis');
   const kings=ms.filter(m=>m.kind==='king'&&(R[m.model_id]||m.status==='evaluating')).sort((a,b)=>(b.epoch??0)-(a.epoch??0));
-  const full=m=>R[m.model_id]&&B.every(b=>R[m.model_id][b.id])&&PARAMS[m.model_id]!=null;
-  const avg=m=>B.reduce((t,b)=>t+R[m.model_id][b.id].score,0)/B.length;
+  // Avg = mean over the row's non-null benchmark cells (Jacob 2026-11-03: a missing cell, e.g. ArXivMath not yet run, is left out, shown as —)
+  const have=m=>B.filter(b=>((R[m.model_id]||{})[b.id]||{}).score!=null);
+  const full=m=>R[m.model_id]&&have(m).length>0&&PARAMS[m.model_id]!=null;
+  const avg=m=>{const h=have(m);return h.length?h.reduce((t,b)=>t+R[m.model_id][b.id].score,0)/h.length:null;};
   const cand=ms.filter(m=>(m.kind==='reference'||m.kind==='genesis')&&full(m));
   const refs=cand.filter(m=>m.kind==='reference'&&!cand.some(o=>o!==m&&PARAMS[o.model_id]<=PARAMS[m.model_id]&&avg(o)>avg(m)))
    .sort((a,b)=>PARAMS[b.model_id]-PARAMS[a.model_id]||avg(b)-avg(a));
   const G=gen?R[gen.model_id]||{}:{};
   const all=[...kings,...refs,...(gen?[gen]:[])];
-  const AVG={id:'_avg'};const val=(m,b)=>b===AVG?(R[m.model_id]&&B.every(x=>R[m.model_id][x.id])?avg(m):null):((R[m.model_id]||{})[b.id]||{}).score??null;
+  const AVG={id:'_avg'};const val=(m,b)=>b===AVG?(R[m.model_id]?avg(m):null):((R[m.model_id]||{})[b.id]||{}).score??null;
   const r1=x=>Math.round(1000*x);  // compare at display precision (0.1 pp) so visible ties are all starred
   const span={};for(const b of [...B,AVG]){const v=all.map(m=>val(m,b)).filter(x=>x!=null);if(v.length)span[b.id]=[Math.min(...v),Math.max(...v)];}
   const STAR='<svg class="max-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
   // d=(max-v)/(max-min): green to d~.2, amber d~.4-.5, strong red near d~.85+ (Jacob 19:50 CR)
   const shade=f=>{const d=1-f,k=Math.min(1,Math.max(0,(d-.1)/.75)),h=Math.round(130*(1-Math.pow(k,.75)));return`hsl(${h} 65% 45% / ${(.30+.14*Math.abs(.5-k)*2).toFixed(2)})`;};
-  const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG||m.status==='evaluating'||m.status==='queued'?'…':'—'}</td>`;
+  const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG&&!R[m.model_id]&&(m.status==='evaluating'||m.status==='queued')?'…':'—'}</td>`;
    const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
    return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
   const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
@@ -63,7 +65,7 @@
   SP=cols.map(b=>({b,lab:lab(b),pts:hist.map(m=>({t:m.crowned_at??m.epoch,v:val(m,b),se:b===AVG?null:((R[m.model_id]||{})[b.id]||{}).se??null,m})).filter(p=>p.v!=null&&p.t!=null)}));
   const sparks=SP.map((s,i)=>{const l=s.pts[s.pts.length-1];
    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: score of each scored king, by crowning time (${s.pts.length} kings)">${esc(s.lab)}</h2><span class="reading">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history"></div></div>`;}).join('');
-  box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the benchmark columns">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
+  box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the row's scored benchmark columns (empty cells left out)">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
    kings.map(m=>row(m)).join('')+`</tbody><tfoot>`+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tfoot></table></div>`;
   layout();
   const sc=box.querySelector('.bench-scroll');if(keep){sc.scrollTop=keep[0];sc.scrollLeft=keep[1];}
@@ -98,12 +100,12 @@
    h.addEventListener('mouseleave',()=>{tp.hidden=true;hl.setAttribute('visibility','hidden');});svg.append(h);});
  }
  // kings box: header + 5 king rows + the sticky reference/Genesis footer
- function fit(){const sc=box.querySelector('.bench-scroll');if(!sc)return;const t=sc.querySelector('table'),rs=t.tBodies[0]?t.tBodies[0].rows:[];
+ function fit(){const sc=box.querySelector('.bench-scroll'),t=sc&&sc.querySelector('table');if(!t)return;/* pt1070u: the skeleton box has no table yet */const rs=t.tBodies[0]?t.tBodies[0].rows:[];
   if(rs.length<=5){sc.style.maxHeight='none';return;}
   let h=t.tHead.offsetHeight+(t.tFoot?t.tFoot.offsetHeight:0)+2;for(let i=0;i<5;i++)h+=rs[i].offsetHeight;sc.style.maxHeight=h+'px';}
  function layout(){box.querySelectorAll('.bench-spark').forEach(c=>{const s=SP[+c.dataset.i];if(s)spark(c,s);});fit();}
  let rt=0;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(layout,150);});
  let data=null;
- async function load(){try{const r=await fetch('/benchmarks.json',{cache:'no-store'});if(!r.ok)throw 0;data=await r.json();table(data);}catch(e){}}
+ async function load(){try{const r=await (window.AFX&&AFX.take('/benchmarks.json')||fetch('/benchmarks.json',{cache:'no-store'}));/* pt1070u */if(!r.ok)throw 0;data=await r.json();table(data);}catch(e){}}
  load();setInterval(load,120000);
 })();
