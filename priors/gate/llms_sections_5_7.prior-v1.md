@@ -45,7 +45,7 @@
   <epoch>)). Same grader, same tasks, same settings for head and candidates. The turn batch is NOT excluded.
 - Estimate: Delta = sum over envs of share_e x Hajek mean_e(candidate rate - head rate), where the Hajek mean weights each
   drawn task by 1/pi_i (share_e = env size / pool size: affine_math 0.388, dapo 0.612). SE = sqrt(sampling variance of the
-  Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
+  Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0 (0.003 before 2026-11-03) on the whole-pool
   scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
   Formulas: priors/baseline_v1.py (module docstring + estimate()).
 - **GREEN iff Delta > 0 AND z > 1 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**

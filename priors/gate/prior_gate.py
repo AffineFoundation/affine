@@ -37,6 +37,20 @@ def _crs(t, fmt='%Y-%m-%d %H:%M:%S CR'):
     return time.strftime(fmt, time.gmtime(float(t) - 6 * 3600))   # Costa Rica = UTC-6, no DST
 
 
+def _ctx(pv):
+    """The round's prompt + output context: max_tokens + 4096 (caps.json prompt_headroom_tokens) for 12K rounds, 12288 before."""
+    return _mt(pv) + 4096 if _mt(pv) > 8192 else 12288
+
+
+def _baseline_settings(rs, pv):
+    """BASELINE settings: harness max_output/max_context = the round's task cap (what the probe samples with). The probe pod's
+    manifest copy (the root-signed pre-12K values) is kept apart under pod_manifest_harness so it is not read as the cap."""
+    rs = dict(rs, generation_max_tokens=_mt(pv)); h = dict(rs.get('harness') or {})
+    rs['pod_manifest_harness'] = {k: h[k] for k in ('max_output_tokens', 'max_context_tokens') if k in h}
+    h.update(max_output_tokens=_mt(pv), max_context_tokens=_ctx(pv)); rs['harness'] = h
+    return rs
+
+
 def _mt(pv):
     """The round's task cap (generation max_tokens), frozen into cfg at round open: 8192 unless the flag's prior_v1.max_tokens says
     otherwise (12288 from the first round opened after the 12K switch, Jacob pt1084u 2026-11-02). Head baseline and every candidate of
@@ -120,9 +134,9 @@ RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks fro
         'the secret commitment is published when the round opens and B (a block after the upload deadline) before B exists; the secret '
         'is revealed when the round closes. The head is scored fresh on every drawn task (head_rollouts rollouts), every candidate with '
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
-        '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003 (floor; head run-to-run noise measured ~0); '
+        '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = the round\'s sigma_run_floor (settings.sigma_run_floor): 0 = no floor, SE = sqrt(sampling + rollout variance), in rounds opened after the 2026-11-03 change (0.003 before; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks that hit the token cap (the round\'s max_tokens: 12,288 tokens from the first round opened after the 12K switch of 2026-11-02, 8,192 before): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 12,288 tokens from the first round opened after the 12K switch of 2026-11-02, 8,192 before): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
@@ -154,7 +168,7 @@ def __getattr__(name):
 def settings_public(pv):
     return {k: pv.get(k) for k in ('N', 'k_cand', 'head_rollouts', 'head_blocks', 'scoring_mode', 'floor', 'cap', 'shares', 'n_init',
                                    'bar_z', 'z_inclusive', 'cap_rule', 'cap_max', 'cap_envs', 'min_scored', 'min_cover', 'block_delay', 'sigma_run_floor') if k in pv} | dict(
-        max_tokens=_mt(pv), max_context_tokens=_mt(pv) + 4096 if _mt(pv) > 8192 else 12288,
+        max_tokens=_mt(pv), max_context_tokens=_ctx(pv),
         tau_run=(pv['tau_run_separate'] if pv['scoring_mode'] == 'separate' else pv['tau_run_same']),
         weighting=pv.get('weighting') or 'prior-v1') | ({k: pv.get(k, BV.IRT_DEFAULTS[k]) for k in ('a_shrink', 'a_lo', 'a_hi', 'theta_prior_sd')}
                                                            if pv.get('weighting') == 'irt-info' else {})
@@ -434,7 +448,7 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
     hp = sum(v['c'] for v in per_task.values()) / max(1, sum(v['n'] for v in per_task.values()))
     b = dict(schema=BV.ROUND_SCHEMA, round=rid, head=H, epoch=(e if per_turn else None), per_task=per_task, tasks=len(per_task),
              rollouts_per_task=kb * nb, head_pass_raw=hp, plan_seeds=[BV.plan_seed(r['seed'], bi) for bi in range(nb)],
-             settings=dict(S.round_settings(), generation_max_tokens=_mt(pv)), fingerprint=S.pod_fingerprint(), source='prior-v1-head-baseline', max_tokens=_mt(pv),
+             settings=_baseline_settings(S.round_settings(), pv), fingerprint=S.pod_fingerprint(), source='prior-v1-head-baseline', max_tokens=_mt(pv),
              timing=dict(total_s=round(btl['done'] - btl['start'], 1)), done_at=btl['done'], done_at_cr=S.cr(btl['done']))
     b['settings_hash'] = HO.settings_hash(b['settings'])
     S.wj(btp, btl); S.wj(bp, b, 0o600)

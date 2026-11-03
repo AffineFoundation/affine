@@ -5,9 +5,11 @@ must equal and how to find it:
   R(key, regex)          regex with ONE group around the number; every match must equal the key ("{:,}" with fmt=',')
   J(key, path)           JSON value at path ('*' = every dict value / list item) must equal the key
   E(key, value)          the key must equal a literal (for the signed-legacy values: they are known and must NOT move)
+  A(path)                the JSON path must not exist (a stale cap label, e.g. the signed 8192 shown as a harness value)
 Places (where the consumer lives):
   repo='rel/path'        path in the AffineFoundation/affine repo (CI / pre-push: tools/caps/caps_check.py --scope repo)
   host='/abs/path'       path on the validator host (--scope host)
+  host_glob='/abs/*/f'   the newest matching host file written after newer_than='/abs/marker' (SKIP until there is one)
   pod=('role', 'cmd')    stdout of a read-only command on a live pod of roles.json (--scope pods; excluded pods never touched)
   url='https://...'      a public URL (--scope public)
 Classes:
@@ -27,6 +29,8 @@ WEB = H + '/subnet120/affine/website'
 FF = RA + '/20261030-free-file/release'
 TRH = RA + '/20261102-12k-everywhere/release-v833m-signed/trainer-host-v833m'
 TRP = '/workspace/affine-mimo-trainer-prod/host-v833m'
+PG = RA + '/20261026-promotion-gate'
+RF0 = RA + '/20261103-run-floor-zero'
 
 
 def R(key, rx, fmt='d', flags=re.M):
@@ -39,6 +43,10 @@ def J(key, path):
 
 def E(key, sub=None):
     return dict(kind='signed', key=key, sub=sub)
+
+
+def A(path, key='max_output_tokens'):
+    return dict(kind='absent', key=key, path=path)   # the JSON path must not exist (a stale cap label that must not come back)
 
 
 MAXOUT, CTX, MML, SOFT, OLMAX, LEG, EOS1 = ('max_output_tokens', 'max_context_tokens', 'max_model_len', 'overlong_soft_start',
@@ -102,6 +110,16 @@ CONSUMERS = [
          note='gate task cap: frozen into each round at open; the gate raises the probe pod context to max_tokens + 4096 itself'),
     dict(id='gate_cap_switch', cls='derived', render=False, host=RA + '/20261102-task-cap-12k/SWITCH.json',
          rules=[J(MAXOUT, ['max_tokens']), J(CTX, ['max_context_tokens'])], note='written by the gate when a round with a larger cap opens'),
+    dict(id='gate_baseline_doc', cls='docs', render=True, repo=['priors/baseline_v1.py', 'miner/validator/gate/baseline_v1.py'],
+         host=PG + '/code/baseline_v1.py', rules=[R(MAXOUT, r"the round's max_tokens = caps\.json max_output_tokens, ([\d,]+) tokens", ',')],
+         note='baseline_v1 docstring: the token cap of the task-level cap-hit rule'),
+    dict(id='gate_rule_text', cls='docs', render=True, repo=['priors/gate/prior_gate.py', 'miner/validator/gate/prior_gate.py'],
+         host=PG + '/code/prior_gate.py', rules=[R(MAXOUT, r"the round\\'s max_tokens: ([\d,]+) tokens from the first round", ',')],
+         note='prior_gate RULE_V1 (published as mining.json / gate.json heldout.rule): the cap-hit token cap'),
+    dict(id='gate_baseline_record', cls='derived', render=False, host_glob=PG + '/state/heldout/r*/BASELINE.private.json', newer_than=RF0 + '/ACTIVATED',
+         rules=[J(MAXOUT, ['max_tokens']), J(MAXOUT, ['settings', 'generation_max_tokens']), J(MAXOUT, ['settings', 'harness', 'max_output_tokens']),
+                J(CTX, ['settings', 'harness', 'max_context_tokens'])],
+         note='newest round head baseline (private; only numbers are compared): harness = the round task cap, the pod manifest copy is pod_manifest_harness'),
     dict(id='probe_config', cls='live', render=True, host=RA + '/20261022-env-probe/code/config.json',
          rules=[R(MAXOUT, r'^ "max_tokens": (\d+)'), R(CTX, r'"max_context_tokens": (\d+)'), R(MAXOUT, r'"max_output_tokens": (\d+)')],
          note='env-probe defaults (the gate SWITCH.json wins while active; these are the fallback)'),
@@ -132,11 +150,13 @@ CONSUMERS = [
     dict(id='training_json', cls='derived', render=False, host=WEB + '/training.json',
          rules=[J(SOFT, ['loss', 'overlong_soft_start']), J(OLMAX, ['loss', 'overlong_max_tokens']),
                 J(MAXOUT, ['sampling', 'harness', '*', 'max_output_tokens']), J(CTX, ['sampling', 'harness', '*', 'max_context_tokens']),
-                J(MAXOUT, ['k1', 'caps', 'max_output_tokens']), J(CTX, ['k1', 'caps', 'max_context_tokens']), J(LEG, ['k1', 'caps', LEG])],
+                J(MAXOUT, ['k1', 'caps', 'max_output_tokens']), J(CTX, ['k1', 'caps', 'max_context_tokens']), J(LEG, ['k1', 'caps', LEG]),
+                A(['sampling', 'harness', '*', 'signed_manifest_max_output_tokens']), A(['sampling', 'harness', '*', 'signed_manifest_max_context_tokens'])],
          note='written by training_params.py (reads caps.py)'),
     dict(id='mining_json', cls='derived', render=False, host=WEB + '/mining.json', url='https://affine.io/mining.json',
          rules=[J(MAXOUT, ['max_output_tokens']), J(SOFT, ['training', 'loss', 'overlong_soft_start']), J(OLMAX, ['training', 'loss', 'overlong_max_tokens']),
-                J(MAXOUT, ['training', 'sampling', 'harness', '*', 'max_output_tokens']), J(MAXOUT, ['training', 'k1', 'caps', 'max_output_tokens'])]),
+                J(MAXOUT, ['training', 'sampling', 'harness', '*', 'max_output_tokens']), J(MAXOUT, ['training', 'k1', 'caps', 'max_output_tokens']),
+                A(['training', 'sampling', 'harness', '*', 'signed_manifest_max_output_tokens'])]),
     dict(id='mining_json_caps', cls='derived', render=False, host=WEB + '/mining.json', url='https://affine.io/mining.json', after='caps-v1',
          rules=[J(MAXOUT, ['training', 'caps', 'max_output_tokens']), J(CTX, ['training', 'caps', 'max_context_tokens']),
                 J(SOFT, ['training', 'caps', 'overlong_soft_start'])], note='the canonical caps as published (training.caps)'),

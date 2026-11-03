@@ -71,7 +71,7 @@
    "probe_env": "affine_gatepool",
    "scoring_mode": "separate",
    "shares": "size",
-   "sigma_run_floor": 0.003,
+   "sigma_run_floor": 0.0,
    "tau_run_same": 0.0,
    "tau_run_separate": 0.0,
    "theta_min_rollouts": 200,
@@ -192,6 +192,20 @@
      "z_bar_from_epoch": null,
      "z_bar_linear_from_epoch": null,
      "z_bar_schedule": null
+    }
+   },
+   {
+    "applies_to": "rounds opened after this change (sigma_run_floor is frozen into each round at open; the open round keeps 0.003)",
+    "authorized_by": [
+     "Jacob 2026-11-03 13:55 CR (pt1180u): set the gate's run-noise floor sigma_run_floor from 0.003 to 0, effective from the next round"
+    ],
+    "by": "run-noise floor removed (RA/20261103-run-floor-zero)",
+    "mode": "on",
+    "rule": "SE = sqrt(sampling + rollout variance): no run-noise floor (tau_run = 0 already, so Var_run = 0)",
+    "set_at": "20261103T200739Z",
+    "set_at_cr": "2026-11-03 14:07 CR",
+    "values": {
+     "sigma_run_floor": 0.0
     }
    }
   ],

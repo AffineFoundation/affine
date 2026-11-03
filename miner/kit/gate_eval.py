@@ -15,8 +15,9 @@ What the live gate does each round (one round per head; settings in validator/ga
   4. head: 3 blocks x 4 rollouts on every drawn task (plan seed baseline_v1.plan_seed(seed, b)); candidate: k_cand = 8 rollouts
      per drawn task with an independent plan seed (baseline_v1.cand_seed(seed, epoch)).
   5. baseline_v1.estimate: Delta = sum_env share_env x Hajek mean_env(cand - head) (weights 1/pi);
-     SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = 0.003; GREEN iff Delta > 0, z > 1.00,
-     affine_math cap-hit < 0.20, >= 100 tasks scored (>= 95 % of the draw).
+     SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = sigma_run_floor = 0 (no floor; 0.003 before 2026-11-03);
+     GREEN iff Delta > 0, z > 1.00, cap-hit < 0.33 (task-level: capped / all candidate rollouts on the scored tasks, affine_math
+     and dapo alike), >= 100 tasks scored (>= 95 % of the draw).
 Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the gate's task cap from 2026-11-02; 8,192 before), context 16,384;
 grading = the probe's grader (kit/grade.py), the same for both envs. Request seed = int(sha256('<plan seed>:affine_gatepool:<probe
 index>:j')[:12], 16), probe index = math index, or 7496 + j for dapo:j.
@@ -105,7 +106,7 @@ def main():
     for r in pool.values(): env_size[r['env']] = env_size.get(r['env'], 0) + 1
     dec = BV.estimate({t: dict(env=pool[t]['env'], pi=pi[t]) for t in S}, head, cand, env_size, shares=cfg['shares'],
                       tau=float(cfg['tau_run_separate']), sigma_run_floor=float(cfg['sigma_run_floor']), bar_z=float(cfg['bar_z']),
-                      z_inclusive=bool(cfg['z_inclusive']), cap_max=float(cfg['cap_max']), cap_envs=tuple(cfg['cap_envs']),
+                      z_inclusive=bool(cfg['z_inclusive']), cap_max=float(cfg['cap_max']),
                       min_scored=int(cfg['min_scored']), min_cover=float(cfg['min_cover']))
     dec['seed'] = seed; dec['drawn'] = len(S); dec['prior'] = a.prior or 'none (env averages)'
     Path(a.out).write_text(json.dumps(dict(decision=dec, cand=cand), indent=1))

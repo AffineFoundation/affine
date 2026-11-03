@@ -203,8 +203,8 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   GREEN turn's per-task grades).
 - **Score** (`baseline_v1.estimate`): per env, the Hájek mean m_e = Σ(d_i/π_i)/Σ(1/π_i), d_i = candidate rate − head rate;
   Δ = Σ_e share_e·m_e with share = env size / pool size (affine_math 0.388, dapo 0.612). SE = √(Σ_e share_e²·Var_e + σ_run²),
-  Var_e = the Hájek sampling + rollout variance, σ_run = 0.003 (a floor; the 2026-11-01 head-vs-itself test found no measurable
-  run-to-run noise). z = Δ/SE.
+  Var_e = the Hájek sampling + rollout variance, σ_run = 0: no run-noise floor in rounds opened after the 2026-11-03 change
+  (0.003 before; the 2026-11-01 head-vs-itself test found no measurable run-to-run noise). z = Δ/SE.
 - **GREEN iff** Δ > 0 **and** z > 1 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
   12,288-token cap (8,192 before the 12K switch), every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before

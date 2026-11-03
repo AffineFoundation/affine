@@ -21,13 +21,32 @@ ACTIVE = Path(CS.REPO) / 'state/caps/ACTIVE.json'   # written by the caps-v1 act
 
 def places(con, scopes, root):
     out = []
-    if 'repo' in scopes and con.get('repo'): out.append(('repo', con['repo'], lambda p=con['repo']: (root / p).read_text()))
+    if 'repo' in scopes and con.get('repo'):
+        for p in ([con['repo']] if isinstance(con['repo'], str) else con['repo']):
+            out.append(('repo', p, lambda p=p: (root / p).read_text()))
     if 'host' in scopes and con.get('host'):
         for h in ([con['host']] if isinstance(con['host'], str) else con['host']):
             out.append(('host', h, lambda h=h: Path(h).read_text()))
+    if 'host' in scopes and con.get('host_glob'):
+        out.append(('host', con['host_glob'], lambda c=con: newest(c)))
     if 'pods' in scopes and con.get('pod'): out.append(('pod', '%s: %s' % con['pod'], ('pod',) + tuple(con['pod'])))
     if 'public' in scopes and con.get('url'): out.append(('public', con['url'], lambda u=con['url']: fetch(u)))
     return out
+
+
+class Skip(Exception):
+    pass
+
+
+def newest(con):
+    """The newest file matching con['host_glob'] written after con['newer_than'] (a marker file); Skip if there is none yet."""
+    import glob
+    m = Path(con['newer_than']) if con.get('newer_than') else None
+    if m is not None and not m.exists(): raise Skip('marker %s not there yet' % m)
+    t0 = m.stat().st_mtime if m is not None else 0
+    fs = sorted((f for f in glob.glob(con['host_glob']) if os.path.getmtime(f) > t0), key=os.path.getmtime)
+    if not fs: raise Skip('no file newer than %s yet' % (m or 'epoch 0'))
+    return Path(fs[-1]).read_text()
 
 
 def fetch(url):
@@ -58,6 +77,8 @@ def run(scopes, root, C, quiet=False):
                 rows.append(dict(row, status='SKIP', detail='before the caps-v1 activation')); continue
             try:
                 text = pod_run(*get[1:]) if isinstance(get, tuple) else get()
+            except Skip as e:
+                rows.append(dict(row, status='SKIP', detail=str(e)[:200])); continue
             except Exception as e:
                 rows.append(dict(row, status='ERROR', detail='%s: %s' % (type(e).__name__, str(e)[:200]))); continue
             if con.get('optional') and not text.strip():

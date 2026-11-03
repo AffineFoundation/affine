@@ -47,6 +47,10 @@ def check_text(con, text, C):
     res = []
     for r in con['rules']:
         exp = expected(r, C); desc = r.get('rx') or r.get('sub') or '.'.join(map(str, r.get('path', [])))
+        if r['kind'] == 'absent':   # the path must not exist (a stale field that must not come back)
+            try: vals = [v for v, _, _ in _walk(json.loads(text), r['path'])]
+            except ValueError as e: vals = ['bad json: %s' % e]
+            res.append(dict(rule=desc, key=r['key'], expected='absent', found=sorted({json.dumps(v) for v in vals}), ok=not vals, n=len(vals), signed=False)); continue
         if r['kind'] == 'json':
             try: vals = [v for v, _, _ in _walk(json.loads(text), r['path'])]
             except ValueError as e: res.append(dict(rule=desc, key=r['key'], expected=exp, found=['bad json: %s' % e], ok=False, n=0)); continue
@@ -74,7 +78,7 @@ def _json_dump_like(text, obj):
 def render_text(con, text, C):
     """-> the text with every rule's value set to caps (byte-identical when everything already matches)."""
     for r in con['rules']:
-        if r['kind'] == 'signed': continue
+        if r['kind'] in ('signed', 'absent'): continue
         exp = expected(r, C)
         if r['kind'] == 'json':
             obj = json.loads(text); hits = _walk(obj, r['path'])

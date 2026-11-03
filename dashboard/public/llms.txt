@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-03 08:50 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-03 14:07 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -227,17 +227,15 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
   <epoch>)). Same grader, same tasks, same settings for head and candidates. The turn batch is NOT excluded.
 - Estimate: Delta = sum over envs of share_e x Hajek mean_e(candidate rate - head rate), where the Hajek mean weights each
   drawn task by 1/pi_i (share_e = env size / pool size: affine_math 0.388, dapo 0.612). SE = sqrt(sampling variance of the
-  Hajek estimate + rollout variance (k_cand and 12 head samples per task) + sigma_run^2), sigma_run = 0.003 on the whole-pool
-  scale (a floor for run-to-run noise: a head-vs-itself test on 2026-11-01 found none measurable). z = Delta / SE.
+  Hajek estimate + rollout variance (k_cand and 12 head samples per task)). No run-noise floor: sigma_run_floor = 0 in rounds
+  opened after the 2026-11-03 change (0.003 before; a head-vs-itself test on 2026-11-01 found no measurable run-to-run noise).
+  z = Delta / SE. The round's value: https://affine.io/mining.json heldout.current_round.settings.sigma_run_floor.
   Formulas: priors/baseline_v1.py (module docstring + estimate()).
-- **GREEN iff Delta > 0 AND z > z_bar (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
-  z_bar linear drop (from E514): z_bar = max(0.25, 1.0 - 0.75 * h / 12), h = hours since the last GREEN: 1.00 right after a
-  GREEN, 0.625 at 6 h, the 0.25 floor from 12 h; back to 1.00 after every GREEN. Clock = the candidate's TRAINING-RESULT time
-  minus the last GREEN's decided_at (both public in https://affine.io/gate.json entries[].timestamps), so gate latency does not
-  move the bar. The exact bar each turn was judged against: entries[].thresholds.z_min. The current bar, the formula and when
-  it reaches the floor: gate.json `z_bar` (also /gate/zbar.json, mining.json heldout.z_bar, the Gate z chart's z bar line).
-  E513-E513: steps (1.00, 0.50 from 6 h, 0.25 from 12 h). Before E513: z > 1.00.
-  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the 12,288-token
+- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
+  z bar: fixed at 1.00 from E553 (gate.json `z_bar`, /gate/zbar.json, mining.json heldout.z_bar). The exact bar each turn was
+  judged against: https://affine.io/gate.json entries[].thresholds.z_min. History: before E513 z > 1.00; E513 steps (0.50 from
+  6 h, 0.25 from 12 h since the last GREEN); E514-E552 a linear drop max(0.25, 1.0 - 0.75 h / 12). Both are removed.
+  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks (affine_math and dapo alike) that hit the 12,288-token
   cap (8,192 before the 12K switch), every task counted alike: RED if >= 33% of the candidate's baseline answers hit the
   token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.

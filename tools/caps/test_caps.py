@@ -16,7 +16,8 @@ ROOT = L.ROOT
 
 
 def repo_cons():
-    return [c for c in CS.CONSUMERS if c.get('repo') and (ROOT / c['repo']).exists()]
+    """-> [(consumer, repo path)] (a consumer may list several repo copies)."""
+    return [(c, p) for c in CS.CONSUMERS if c.get('repo') for p in ([c['repo']] if isinstance(c['repo'], str) else c['repo']) if (ROOT / p).exists()]
 
 
 def other_caps(C, out=16384):
@@ -34,24 +35,24 @@ def test_loader_derives():
 
 def test_repo_consumers_match_caps():
     C, _ = L.load_caps(); bad = []
-    for c in repo_cons():
-        for r in L.check_text(c, (ROOT / c['repo']).read_text(), C):
-            if not r['ok']: bad.append((c['id'], c['repo'], r['key'], r['expected'], r['found'], r['n']))
+    for c, p in repo_cons():
+        for r in L.check_text(c, (ROOT / p).read_text(), C):
+            if not r['ok']: bad.append((c['id'], p, r['key'], r['expected'], r['found'], r['n']))
     assert not bad, 'consumers that disagree with caps.json (run tools/caps/caps_apply.py --scope repo --write): %s' % bad
 
 
 def test_render_is_identity_today():
     C, _ = L.load_caps()
-    for c in repo_cons():
+    for c, p in repo_cons():
         if c.get('render') in (True, 'json', 'sign'):
-            t = (ROOT / c['repo']).read_text(); assert L.render_text(c, t, C) == t, c['id']
+            t = (ROOT / p).read_text(); assert L.render_text(c, t, C) == t, c['id']
 
 
 def test_cap_change_roundtrip():
     C, _ = L.load_caps(); C2 = other_caps(C)
-    for c in repo_cons():
+    for c, p in repo_cons():
         if c.get('render') not in (True, 'json', 'sign'): continue
-        t = (ROOT / c['repo']).read_text(); t2 = L.render_text(c, t, C2)
+        t = (ROOT / p).read_text(); t2 = L.render_text(c, t, C2)
         assert t2 != t, '%s did not move with the cap' % c['id']
         assert all(r['ok'] for r in L.check_text(c, t2, C2)), (c['id'], [r for r in L.check_text(c, t2, C2) if not r['ok']])
         assert L.render_text(c, t2, C) == t, '%s: render back is not byte-identical' % c['id']

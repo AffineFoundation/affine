@@ -24,13 +24,15 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
             v_i = x(1-x)/(k-1) + h(1-h)/(m-1)   (rollout noise)
     run term (head and candidate are separate fresh runs; a run can shift all its pass rates a little):
             Var_run = max(tau^2 * 2 * A^2, sigma_run_floor^2), A = sum_e share_e * Hajek_e(h(1-h) m/(m-1));
-            live: tau = 0 and sigma_run_floor = 0.003 (whole-pool scale; the 2026-11-01 head-vs-itself test found no measurable run
-            noise), so Var_run = 0.003^2
+            live: tau = 0 and sigma_run_floor = 0 (no run-noise floor) in rounds opened after the 2026-11-03 change (Jacob pt1180u;
+            0.003 before; the 2026-11-01 head-vs-itself test found no measurable run noise), so Var_run = 0 and
+            SE = sqrt(sum_e share_e^2 Var_e). The round's value is frozen at open: ROUND cfg / settings.sigma_run_floor.
     SE = sqrt(sum_e share_e^2 Var_e + Var_run);  z = Delta / SE
   Request seeds: head block b uses plan_seed(seed, b); the candidate of epoch e uses cand_seed(seed, e) (independent seeds).
   GREEN iff Delta > 0 AND z > 1.00 (bar_z) AND candidate cap-hit < cap_max (CAP_HIT_MAX = 0.33) AND >= min_scored tasks scored.
   cap-hit (task-level, Jacob 2026-11-01 19:43 CR): the share of ALL the candidate's rollouts on the scored baseline tasks that hit
-  the token cap (8,192 tokens, no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike, no env distinction.
+  the token cap (the round's max_tokens = caps.json max_output_tokens, 12,288 tokens; 8,192 in rounds opened before the 12K
+  switch of 2026-11-02; no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike (affine_math and dapo), no env distinction.
   RED if >= 33% of the candidate's baseline answers hit the token cap. (Before E507: Hajek capped share on affine_math < 0.20.)
   The head's rate is computed the same way and recorded (h_cap_rate); per-env rates are diagnostics only (per_env).
   z bar: fixed at z > 1.00 (bar_z = 1.0) from E553 (Jacob 2026-11-02 08:20 CR); E513-E552 used a time-relaxed bar (the exact
@@ -42,7 +44,7 @@ VERSION = 'sn120-prior-baseline-v1'
 CAP_HIT_MAX = 0.33   # task-level cap rule: RED if >= 33% of the candidate's baseline answers hit the token cap
 ROUND_SCHEMA = 'sn120-heldout-gate-prior-v1'
 DEFAULTS = dict(N=500, k_cand=8, head_rollouts=12, head_blocks=3, scoring_mode='separate', floor=0.10, cap=0.10, shares='size',
-                n_init=2.0, tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False, cap_max=CAP_HIT_MAX,
+                n_init=2.0, tau_run_separate=0.0, tau_run_same=0.0, sigma_run_floor=0.0, bar_z=1.0, z_inclusive=False, cap_max=CAP_HIT_MAX,
                 cap_rule='task-level', min_scored=100, min_cover=0.95, block_delay=3, baseline_parallel=3,
                 stall_s=2100, probe_env='affine_gatepool', math_offset=0, dapo_offset=7496)
 
@@ -220,7 +222,7 @@ def _rate(cl):
     return cl['c'] / cl['n']
 
 
-def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='size', tau=0.0, sigma_run_floor=0.003, bar_z=1.0, z_inclusive=False,
+def estimate(drawn: dict, head: dict, cand: dict, env_size: dict, *, shares='size', tau=0.0, sigma_run_floor=0.0, bar_z=1.0, z_inclusive=False,
              cap_max=CAP_HIT_MAX, min_scored=100, min_cover=0.95) -> dict:
     """drawn = {task_id: dict(env, pi)}; head/cand = {task_id: probe cell {n, c, b, ...}}; env_size = {env: tasks in the pool}.
     -> dict(decision, reasons, evaluated, evaluated_private). evaluated holds no per-task data and no prior values."""

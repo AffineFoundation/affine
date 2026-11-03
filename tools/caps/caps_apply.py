@@ -52,7 +52,8 @@ def repo_targets(C, root):
     out = []
     for con in CS.CONSUMERS:
         if con.get('render') not in (True, 'json') or not con.get('repo'): continue   # 'sign': only via a signed trainer release
-        p = root / con['repo']; old = p.read_text(); out.append((con, str(p), old, L.render_text(con, old, C)))
+        for rp in ([con['repo']] if isinstance(con['repo'], str) else con['repo']):
+            p = root / rp; old = p.read_text(); out.append((con, str(p), old, L.render_text(con, old, C)))
     return out
 
 
