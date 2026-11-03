@@ -22,7 +22,7 @@ function expected(snapshot){
 async function structure(page){
  const actual=await page.evaluate(()=>({charts:document.querySelectorAll('main .chart-wrap>svg').length,sections:document.querySelectorAll('main>section').length,removed_controls:!!document.querySelector('#grid,#metric,#environment,#evaluation,#batch-source,[data-scope]'),llms_links:document.querySelectorAll('a[href="/llms.txt"]').length,video_links:document.querySelectorAll('nav a[href="https://video.affine.io/"]').length,github_links:document.querySelectorAll('a[href="https://github.com/AffineFoundation/affine"]').length,overflow:document.documentElement.scrollWidth>innerWidth}));
  assert(actual.charts===2&&actual.sections===2&&!actual.removed_controls,'Current two-chart structure mismatch');
- assert(actual.llms_links>0&&actual.github_links>0&&!actual.overflow,'Document links or viewport layout mismatch');assert(actual.video_links===1,'Affine Video header entry missing or duplicated');return actual;
+ assert(actual.llms_links>0&&actual.github_links>0&&!actual.overflow,'Document links or viewport layout mismatch');assert(actual.video_links===0,'Affine Video header entry should be removed (video.affine.io torn down 2026-11-03)');return actual;
 }
 async function plotted(page,kind){return page.locator(`#${kind}-chart .chart-point`).evaluateAll(nodes=>nodes.map(n=>({value:Number(n.dataset.value),record:n.dataset.record})));}
 async function compare(page,snapshot){
