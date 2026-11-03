@@ -12,7 +12,7 @@ from . import config as C
 LIUM = os.path.expanduser("~/.lium/bin/lium")
 NAME = os.environ.get("BENCH_POD_NAME", "affine-bench-1")
 MAX_PRICE = min(float(os.environ.get("BENCH_MAX_PRICE", "30")), 30.0)  # standing bench auto-rent cap: never above $30/h
-GPU_PREF = os.environ.get("BENCH_GPU_PREF", "H200:8 B200:8 B300:8 H100:8")  # rent.sh walks this in order (8xH200 first)
+GPU_PREF = os.environ.get("BENCH_GPU_PREF", "B300:8 B200:8 H200:8 H100:8")  # rent.sh walks this best-first
 NO_OFFER_RETRY_S = float(os.environ.get("BENCH_NO_OFFER_RETRY_S", "300"))
 MAX_RENTS_PER_DAY = int(os.environ.get("BENCH_MAX_RENTS_PER_DAY", "8"))
 IDLE_RELEASE_S = float(os.environ.get("BENCH_IDLE_RELEASE_S", "900"))
