@@ -206,7 +206,7 @@ def collect(run):
         got[bid] = round(r["score"], 4) if r.get("score") is not None else None
     done = rj_node_done(rk)
     S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
-                             serve_s=(done or {}).get("serve_seconds"), scores=got))
+                             serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=C_POD.get("gpu"), usd_h=C_POD.get("cost"), pod=C_POD.get("huid")))
     S["history"] = S["history"][-400:]
     log(event="collected", model=rk, scores=got)
     if m.get("request"):

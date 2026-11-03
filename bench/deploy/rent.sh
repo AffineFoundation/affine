@@ -1,26 +1,45 @@
 #!/usr/bin/env bash
 # Rent the bench node on Lium (run on the host that holds the Lium CLI config; the key never leaves it) and write the ssh wrapper.
-# Pick: 4xB300 if offered, else the cheapest secure 4-8x B300/B200/H200 node <= MAX_PRICE $/h (see pod.json for what we run).
-# MAX_PRICE defaults to the owner's bench-pod cap (~$30/h; stop above $35/h). Cheapest $/GPU-h first, then more GPUs (same cost
-# per king, lower latency). Rents the whole node (-c gpu_count). The daemon calls this on demand (affine_bench/pod.py).
+# Pick (Jacob 2026-11-03): walk GPU_PREF in order (default 8xH200, then 8xB200, 8xB300, 8xH100) and take the cheapest fully free
+# secure node of the first tier that has one; never above MAX_PRICE $/h, and MAX_PRICE itself is clamped to the standing $30/h
+# bench auto-rent cap. Rents the whole node (-c gpu_count). The daemon calls this on demand (affine_bench/pod.py).
+# No offer in any tier: prints {"no_offer": true, ...} and exits 3 (no pod is created; the daemon does not count it as a rent).
 #   bash bench/deploy/rent.sh [NODE_HUID]          -> prints the pod; writes ~/bench-work/bp.sh
 set -euo pipefail
 L=${LIUM:-$HOME/.lium/bin/lium}; NAME=${NAME:-affine-bench-1}; MAX_PRICE=${MAX_PRICE:-30}
+GPU_PREF=${GPU_PREF:-"H200:8 B200:8 B300:8 H100:8"}
+MAX_PRICE=$(python3 -c "import sys; print(min(float(sys.argv[1]), 30.0))" "$MAX_PRICE")  # hard cap: never above $30/h
 NODE=${1:-}
 if [ -z "$NODE" ]; then
-  NODE=$( { $L ls --gpu B300 --format json; $L ls --gpu B200 --format json; $L ls --gpu H200 --format json; } | python3 -c "
-import json,sys
+  TYPES=$(for t in $GPU_PREF; do echo "${t%%:*}"; done | awk '!s[$0]++')
+  set +e
+  PICK=$( { for g in $TYPES; do $L ls --gpu "$g" --format json || echo '[]'; done; } | MAX_PRICE="$MAX_PRICE" GPU_PREF="$GPU_PREF" python3 -c "
+import json, os, sys
 rows=[]; s=sys.stdin.read(); dec=json.JSONDecoder(); i=0
 while i<len(s):  # concatenated (pretty-printed) JSON arrays
     while i<len(s) and s[i].isspace(): i+=1
     if i>=len(s): break
-    o,i=dec.raw_decode(s,i); rows+=o
-ok=[r for r in rows if 4<=r['gpu_count']<=8 and r.get('available_gpu_count',r['gpu_count'])>=r['gpu_count'] and r['tier']=='secure' and r['price_per_hour']<=$MAX_PRICE]
-pref=[r for r in ok if r['gpu_type']=='B300' and r['gpu_count']==4]
-r=(pref or sorted(ok,key=lambda r:(r['price_per_gpu_hour'],-r['gpu_count'])))[0]; print(r['huid'], r['gpu_count'])")
+    try: o,i=dec.raw_decode(s,i)
+    except ValueError: break
+    if isinstance(o,list): rows+=[r for r in o if isinstance(r,dict)]
+cap=float(os.environ['MAX_PRICE'])
+def ok(r,g,n):
+    p=r.get('price_per_hour')
+    return (r.get('gpu_type')==g and r.get('gpu_count')==n and (r.get('available_gpu_count') if r.get('available_gpu_count') is not None else n)>=n
+            and r.get('tier')=='secure' and p is not None and p<=cap)
+for t in os.environ['GPU_PREF'].split():
+    g,_,n=t.partition(':'); n=int(n or 8)
+    c=sorted((r for r in rows if ok(r,g,n)), key=lambda r:(r['price_per_hour'], r.get('huid','')))
+    if c: print(c[0]['huid'], n, '%sx%s'%(n,g), c[0]['price_per_hour']); sys.exit(0)
+seen=sorted({'%sx%s %s/%s %s \$%s'%(r.get('gpu_count'),r.get('gpu_type'),r.get('available_gpu_count'),r.get('gpu_count'),r.get('tier'),r.get('price_per_hour')) for r in rows if (r.get('gpu_count') or 0)>=4})
+print(json.dumps(dict(no_offer=True, max_price=cap, gpu_pref=os.environ['GPU_PREF'], seen=seen[:20]))); sys.exit(3)")
+  rc=$?; set -e
+  if [ $rc -eq 3 ]; then echo "$PICK"; exit 3; fi
+  [ $rc -eq 0 ] && [ -n "$PICK" ] || { echo "offer pick failed (rc $rc)" >&2; exit 1; }
+  NODE=$PICK
 fi
-read -r NODE NG <<< "$NODE"; NG=${NG:-${GPUS:-8}}
-echo "renting $NODE ($NG GPUs) as $NAME"
+read -r NODE NG CFG PRICE <<< "$NODE"; NG=${NG:-${GPUS:-8}}
+echo "renting $NODE ($NG GPUs ${CFG:-} \$${PRICE:-?}/h, cap \$$MAX_PRICE/h) as $NAME" >&2
 $L up "$NODE" -c "$NG" --name "$NAME" --verify-gpus --strict-gpus -y --json > /tmp/$NAME.up.json
 python3 - "$NAME" <<'PY'
 import json, os, sys

@@ -30,7 +30,12 @@ def pooled(mid, b, results):
     rs = [results[(mid, p)] for p in parts]
     return dict(score=s, se=se, n=m, samples=sum(r["samples"] for r in rs), run_at=max(r.get("finished_at") or 0 for r in rs),
                 cap_rate=sum(r["cap_rate"] * r["samples"] for r in rs) / max(1, sum(r["samples"] for r in rs)),
-                env_version="+".join(r.get("bench_version", "") for r in rs))
+                env_version="+".join(r.get("bench_version", "") for r in rs), gpu="+".join(sorted({_gpu(r) or "?" for r in rs})))
+
+
+def _gpu(r):
+    """GPU config the result was produced on (e.g. "8xH200"), from the node record collect() stores with every result."""
+    return (r.get("node") or {}).get("gpu")
 
 
 def _node(S):
@@ -52,7 +57,7 @@ def publish(rows, S, max_fail=3):
             continue
         recs.append(dict(model_id=mid, model_kind=r.get("model_kind"), benchmark_id=bid, suite=b["suite"], env_version=r.get("bench_version"),
                          score=r["score"], se=r["se"], n=r["tasks"], samples=r["samples"], rollouts=r["rollouts"], cap_rate=r["cap_rate"],
-                         mean_out_tokens=round(r["mean_out_tokens"]), run_at=r.get("finished_at"), wall_s=round(r.get("wall_seconds") or 0)))
+                         mean_out_tokens=round(r["mean_out_tokens"]), run_at=r.get("finished_at"), wall_s=round(r.get("wall_seconds") or 0), gpu=_gpu(r)))
     kinds = {m["model_id"]: m["kind"] for m in rows}
     for b in bs:
         if not b.get("pooled_from"):
