@@ -11,7 +11,7 @@ from . import config as C
 
 LIUM = os.path.expanduser("~/.lium/bin/lium")
 NAME = os.environ.get("BENCH_POD_NAME", "affine-bench-1")
-MAX_PRICE = min(float(os.environ.get("BENCH_MAX_PRICE", "30")), 30.0)  # standing bench auto-rent cap: never above $30/h
+MAX_PRICE = float(os.environ.get("BENCH_MAX_PRICE") or "inf")  # no $/h cap (Jacob 2026-11-03 09:23 CR); BENCH_MAX_PRICE sets one
 GPU_PREF = os.environ.get("BENCH_GPU_PREF", "B300:8 B200:8 H200:8 H100:8")  # rent.sh walks this best-first
 NO_OFFER_RETRY_S = float(os.environ.get("BENCH_NO_OFFER_RETRY_S", "300"))
 MAX_RENTS_PER_DAY = int(os.environ.get("BENCH_MAX_RENTS_PER_DAY", "8"))
@@ -92,7 +92,7 @@ def rent(S, log):
     except Exception:
         info = None
     if p.returncode == 3 or (isinstance(info, dict) and info.get("no_offer")):
-        log(event="rent-no-offer", max_usd_h=MAX_PRICE, gpu_pref=GPU_PREF, seen=(info or {}).get("seen") if isinstance(info, dict) else None)
+        log(event="rent-no-offer", max_usd_h=None if MAX_PRICE == float("inf") else MAX_PRICE, gpu_pref=GPU_PREF, seen=(info or {}).get("seen") if isinstance(info, dict) else None)
         S["no_offer_at"] = time.time(); return None
     if not isinstance(info, dict) or not info.get("id"):
         made = [q for q in (listed() or []) if q.get("name") == NAME]

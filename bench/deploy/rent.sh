@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Rent the bench node on Lium (run on the host that holds the Lium CLI config; the key never leaves it) and write the ssh wrapper.
 # Pick (Jacob 2026-11-03): walk GPU_PREF best-first (default 8xB300, then 8xB200, 8xH200, 8xH100) and take the cheapest fully free
-# secure node of the first tier that has one; never above MAX_PRICE $/h, and MAX_PRICE itself is clamped to the standing $30/h
-# bench auto-rent cap. Rents the whole node (-c gpu_count). The daemon calls this on demand (affine_bench/pod.py).
+# secure node of the first tier that has one, at any price (Jacob 2026-11-03 09:23 CR removed the $30/h bench cap; set MAX_PRICE
+# to bring a cap back). Rents the whole node (-c gpu_count). The daemon calls this on demand (affine_bench/pod.py).
 # No offer in any tier: prints {"no_offer": true, ...} and exits 3 (no pod is created; the daemon does not count it as a rent).
 #   bash bench/deploy/rent.sh [NODE_HUID]          -> prints the pod; writes ~/bench-work/bp.sh
 set -euo pipefail
-L=${LIUM:-$HOME/.lium/bin/lium}; NAME=${NAME:-affine-bench-1}; MAX_PRICE=${MAX_PRICE:-30}
+L=${LIUM:-$HOME/.lium/bin/lium}; NAME=${NAME:-affine-bench-1}; MAX_PRICE=${MAX_PRICE:-inf}
 GPU_PREF=${GPU_PREF:-"B300:8 B200:8 H200:8 H100:8"}
-MAX_PRICE=$(python3 -c "import sys; print(min(float(sys.argv[1]), 30.0))" "$MAX_PRICE")  # hard cap: never above $30/h
 NODE=${1:-}
 if [ -z "$NODE" ]; then
   TYPES=$(for t in $GPU_PREF; do echo "${t%%:*}"; done | awk '!s[$0]++')
