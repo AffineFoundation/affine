@@ -1,0 +1,20 @@
+{
+ "schema": "sn120-caps-v1",
+ "about": "SN120 token caps: the ONE canonical source. Edit max_output_tokens here, then run tools/caps/caps_apply.py (see tools/caps/README.md). Everything else is derived (caps.py) and every consumer is rendered from / checked against this file by tools/caps/caps_check.py.",
+ "max_output_tokens": 12288,
+ "prompt_headroom_tokens": 4096,
+ "overlong_ramp_tokens": 2192,
+ "overlong_penalty": 0.5,
+ "legacy_capped_output_tokens": 8192,
+ "signed_manifest": {
+  "note": "values in the root-signed lifecycle job settings / epoch manifests (unchanged since v8.2.3); the trainer (v8.3.3m+), ff_format and training_params override them with the caps above",
+  "max_output_tokens": 8192,
+  "max_context_tokens": 12288,
+  "overlong_soft_start": 6000,
+  "overlong_max_tokens": 8192
+ },
+ "history": [
+  {"from_epoch": 0, "max_output_tokens": 8192, "max_context_tokens": 12288, "overlong_window": [6000, 8192]},
+  {"from_epoch": 590, "max_output_tokens": 12288, "max_context_tokens": 16384, "overlong_window": [10096, 12288], "label": "12K everywhere (2026-11-02, trainer v8.3.3m)", "note": "12K everywhere (Jacob 2026-11-02 18:48 CR); gate task cap 12288 from round r20261102T182701Z-0667f11c (opened at epoch 567)"}
+ ]
+}

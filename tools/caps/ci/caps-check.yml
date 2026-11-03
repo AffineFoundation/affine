@@ -1,0 +1,11 @@
+name: caps-check
+on: [push, pull_request]
+jobs:
+  caps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python3 tools/caps/caps_check.py --scope repo
+      - run: python3 tools/caps/test_caps.py

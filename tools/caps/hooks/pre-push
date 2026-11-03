@@ -1,0 +1,22 @@
+#!/bin/bash
+# SN120 pre-push: refuse a push whose token caps disagree with caps.json (tools/caps), and never push host-only files.
+# Install in a clone:  git config --local core.hooksPath tools/caps/hooks
+set -u
+ROOT=$(git rev-parse --show-toplevel)
+PY=$(command -v python3)
+z40=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z40" ] && continue
+  range=$([ "$rsha" = "$z40" ] && echo "$lsha" || echo "$rsha..$lsha")
+  if git log --format= --name-only $range -- 2>/dev/null | grep -qx 'ops/pods/roles.json'; then
+    echo "pre-push: REFUSED - ops/pods/roles.json (internal pod names) is in the pushed commits ($range); it stays host-local." >&2; exit 1
+  fi
+done
+if [ -f "$ROOT/caps.json" ] && [ -f "$ROOT/tools/caps/caps_check.py" ]; then
+  SCOPE=repo; [ -d "$ROOT/miner/kit" ] || SCOPE=host   # the validator host tree (no miner/): check the live host files instead
+  if ! "$PY" "$ROOT/tools/caps/caps_check.py" --scope $SCOPE --quiet --root "$ROOT"; then
+    echo "pre-push: REFUSED - files disagree with caps.json. Fix: python3 tools/caps/caps_apply.py --scope repo --write" >&2; exit 1
+  fi
+  [ $SCOPE = repo ] && { "$PY" "$ROOT/tools/caps/test_caps.py" >/dev/null || { echo "pre-push: REFUSED - tools/caps/test_caps.py failed" >&2; exit 1; }; }
+fi
+exit 0

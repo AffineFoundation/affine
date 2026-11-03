@@ -16,13 +16,22 @@ Roles and their specs: roles.json next to this file. Safety:
     and checkpoints from short-lived presigned R2 GETs (gate presign.py), deleted on the pod right after the fetch
   * every host file it edits is backed up first; each run writes runs/<ts>-<role>/revert.sh
 """
-import argparse, fnmatch, glob, hashlib, json, os, re, shlex, subprocess, sys, tempfile, time
+import argparse, fnmatch, glob, hashlib, importlib.util, json, os, re, shlex, subprocess, sys, tempfile, time
 from pathlib import Path
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
 RA = str(HOME / "subnet120-rewrite/state/root-audits")
-CFG = json.loads(Path(os.environ.get("PODS_ROLES", HERE / "roles.json")).read_text())
+def caps_text(txt):
+    """caps-v1: roles.json says {CAPS:max_output_tokens} / {CAPS:max_context_tokens} / {CAPS:max_model_len} instead of numbers;
+    the values come from caps.json at the repo root (the one canonical source), so pod configs and health checks follow it."""
+    if "{CAPS:" not in txt: return txt
+    spec = importlib.util.spec_from_file_location("sn120_caps", os.environ.get("SN120_CAPS_PY", str(HOME / "subnet120-rewrite/caps.py")))
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); C = m.load()
+    return re.sub(r"\{CAPS:([a-z_]+)\}", lambda x: str(C[x.group(1)]), txt)
+
+
+CFG = json.loads(caps_text(Path(os.environ.get("PODS_ROLES", HERE / "roles.json")).read_text()))
 LIUM = os.path.expanduser(os.environ.get("LIUM", "~/.lium/bin/lium"))
 ST = Path(os.path.expanduser(os.environ.get("PODS_STATE", "~/subnet120-rewrite/state/pods")))
 KH = HOME / ".lium/known_hosts"
