@@ -84,6 +84,8 @@ def result_path(mid, bid): return f"{RES}/{mid}/{bid}.json"
 def missing(m, bs):
     out = []
     for b in bs:
+        if m.get("kind") == "king" and (m.get("epoch") or 0) < b.get("kings_from_epoch", 0):
+            continue  # benchmark added later; older kings are not auto-queued for it (an explicit request still runs it)
         r = rj(result_path(m["model_id"], b["id"]))
         if not r or r.get("bench_version") != R.bench_version(b):
             out.append(b["id"])

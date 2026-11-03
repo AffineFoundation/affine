@@ -7,6 +7,7 @@
 #   rollouts  -r: samples per problem (score = mean over problems of the per-problem mean)
 #   harness / runtime  verifiers agent harness + runtime (null = one plain chat turn, no tools)
 #   enabled   the daemon only schedules enabled benchmarks
+#   kings_from_epoch  only kings with epoch >= this are auto-queued for it (older kings keep an empty cell, left out of Avg)
 #   publish_per_task  never true for anything drawn from the MATH test split (our private holdout comes from it)
 [defaults]
 harness = "null"
@@ -119,6 +120,8 @@ dataset = "MathArena/arxivmath@f0a9cf83259855c31b37168eca646ec6f0e2598c (train, 
 rollouts = 16
 enabled = true
 order = 45
+# auto-scheduled only for kings from E587 on (Jacob 2026-11-03 10:45 CR: recent kings + refs, not the older kings; their cells stay empty)
+kings_from_epoch = 587
 
 [[benchmark]]
 id = "gsm8k"
