@@ -86,7 +86,7 @@ def publish(rows, S, max_fail=3):
                      "graders and sampling (Prime Intellect verifiers envs, pinned). Score = mean over problems of the per-problem mean over "
                      "rollouts; se = task-clustered standard error. Aggregates only. Informational; never used for promotions or weights.",
                benchmarks=[{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime")}
-                           for b in bs if b.get("enabled")],
+                           | dict(in_avg=b.get("in_avg", True)) for b in bs if b.get("enabled")],
                suites=sorted({b["suite"] for b in bs if b.get("enabled")}),
                models=models, results=sorted(recs, key=lambda r: (r["model_id"], r["benchmark_id"])),
                node=_node(S),

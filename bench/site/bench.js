@@ -4,7 +4,7 @@
    References: only the Pareto front over (parameters, lower better) x (mean score over the table's columns, higher better) is shown;
    a ref is hidden if Genesis or another fully scored ref is no larger and scores higher. Kings and Genesis always shown; refs without a
    full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF.
-   Avg column (first score column, Jacob 18:26 CR) = mean over the row's non-null benchmark cells (same mean as the Pareto filter; a missing cell, e.g. ArXivMath before it has run, is left out and shown as —, Jacob 2026-11-03). Shading: per column,
+   Avg column (first score column, Jacob 18:26 CR) = mean over the row's non-null benchmark cells, in_avg:false columns excluded (display only, Jacob pt1172u) (same mean as the Pareto filter; a missing cell, e.g. ArXivMath before it has run, is left out and shown as —, Jacob 2026-11-03). Shading: per column,
    min..max of the visible rows, red tint at the bottom -> strong green at the top; a small star marks each column max (ties all marked)
    (Jacob 2026-11-01 18:22 CR).
    Sparklines (Jacob pt1046u 2026-11-02): a row of small cards above the table, one per score column (Avg + each benchmark): the kings'
@@ -39,7 +39,9 @@
   const ms=d.models||[],gen=ms.find(m=>m.kind==='genesis');
   const kings=ms.filter(m=>m.kind==='king'&&(R[m.model_id]||m.status==='evaluating')).sort((a,b)=>(b.epoch??0)-(a.epoch??0));
   // Avg = mean over the row's non-null benchmark cells (Jacob 2026-11-03: a missing cell, e.g. ArXivMath not yet run, is left out, shown as —)
-  const have=m=>B.filter(b=>((R[m.model_id]||{})[b.id]||{}).score!=null);
+  // in_avg:false (benchmarks.json, from benchmarks.toml) = display-only column: not in Avg, the Pareto filter, stars or shading (Jacob pt1172u)
+  const AB=B.filter(b=>b.in_avg!==false);
+  const have=m=>AB.filter(b=>((R[m.model_id]||{})[b.id]||{}).score!=null);
   const full=m=>R[m.model_id]&&have(m).length>0&&PARAMS[m.model_id]!=null;
   const avg=m=>{const h=have(m);return h.length?h.reduce((t,b)=>t+R[m.model_id][b.id].score,0)/h.length:null;};
   const cand=ms.filter(m=>(m.kind==='reference'||m.kind==='genesis')&&full(m));
@@ -54,6 +56,7 @@
   // d=(max-v)/(max-min): green to d~.2, amber d~.4-.5, strong red near d~.85+ (Jacob 19:50 CR)
   const shade=f=>{const d=1-f,k=Math.min(1,Math.max(0,(d-.1)/.75)),h=Math.round(130*(1-Math.pow(k,.75)));return`hsl(${h} 65% 45% / ${(.30+.14*Math.abs(.5-k)*2).toFixed(2)})`;};
   const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG&&!R[m.model_id]&&(m.status==='evaluating'||m.status==='queued')?'…':'—'}</td>`;
+   if(b.in_avg===false)return`<td class="disp" title="display only, not in Avg">${pct(x)}</td>`;
    const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
    return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
   const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
@@ -65,7 +68,7 @@
   SP=cols.map(b=>({b,lab:lab(b),pts:hist.map(m=>({t:m.crowned_at??m.epoch,v:val(m,b),se:b===AVG?null:((R[m.model_id]||{})[b.id]||{}).se??null,m})).filter(p=>p.v!=null&&p.t!=null)}));
   const sparks=SP.map((s,i)=>{const l=s.pts[s.pts.length-1];
    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: score of each scored king, by crowning time (${s.pts.length} kings)">${esc(s.lab)}</h2><span class="reading">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history"></div></div>`;}).join('');
-  box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the row's scored benchmark columns (empty cells left out)">Avg</th>${B.map(b=>`<th scope="col">${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
+  box.innerHTML=`<div class="bench-sparks" aria-label="King score history per benchmark">${sparks}</div><div class="bench-scroll"><table><thead>${head}<tr><th scope="col">Model</th><th scope="col" class="avg" title="mean of the row's scored benchmark columns (empty cells left out)">Avg</th>${B.map(b=>`<th scope="col"${b.in_avg===false?' class="disp" title="display only: not counted in Avg yet"':''}>${esc(b.label)}</th>`).join('')}</tr></thead><tbody>`+
    kings.map(m=>row(m)).join('')+`</tbody><tfoot>`+refs.map(m=>row(m)).join('')+(gen?row(gen,'genesis'):'')+`</tfoot></table></div>`;
   layout();
   const sc=box.querySelector('.bench-scroll');if(keep){sc.scrollTop=keep[0];sc.scrollLeft=keep[1];}

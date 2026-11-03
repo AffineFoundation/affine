@@ -7,6 +7,8 @@
 #   rollouts  -r: samples per problem (score = mean over problems of the per-problem mean)
 #   harness / runtime  verifiers agent harness + runtime (null = one plain chat turn, no tools)
 #   enabled   the daemon only schedules enabled benchmarks
+#   in_avg    false = display-only column on affine.io: left out of Avg, the reference (Pareto) filter, column stars and shading;
+#             flip to true (or delete the line) once every shown row has it (default true)
 #   kings_from_epoch  only kings with epoch >= this are auto-queued for it (older kings keep an empty cell, left out of Avg)
 #   publish_per_task  never true for anything drawn from the MATH test split (our private holdout comes from it)
 [defaults]
@@ -120,6 +122,8 @@ dataset = "MathArena/arxivmath@f0a9cf83259855c31b37168eca646ec6f0e2598c (train, 
 rollouts = 16
 enabled = true
 order = 45
+# display-only until it is filled for the shown rows (Jacob pt1172u 2026-11-03 11:26 CR); set true to count it in Avg
+in_avg = false
 # auto-scheduled only for kings from E587 on (Jacob 2026-11-03 10:45 CR: recent kings + refs, not the older kings; their cells stay empty)
 kings_from_epoch = 587
 
