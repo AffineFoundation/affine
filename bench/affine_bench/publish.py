@@ -12,8 +12,14 @@ def _rj(p):
     except Exception: return None
 
 
-def pooled(mid, b, results):
-    """Pooled benchmark (e.g. AIME 22-26): mean over all problems of all parts, task-clustered SE; only when every part is in."""
+def expected(r, bid, full):
+    """Samples a complete run has: the benchmark's full task count (the most tasks any model was run on) x rollouts."""
+    return max(full.get(bid, 0), r.get("tasks_total") or r["tasks"]) * max(1, int(r.get("rollouts") or 1))
+
+
+def pooled(mid, b, results, full):
+    """Pooled benchmark (e.g. AIME 22-26): mean over all problems of all parts, task-clustered SE; only when every part is in.
+    Per-problem mean = correct / rollouts, so errored rollouts count as wrong; errors/complete say whether any were lost."""
     parts = b["pooled_from"]
     if not all((mid, p) in results for p in parts):
         return None
@@ -22,13 +28,16 @@ def pooled(mid, b, results):
         f = f"{C.STATE}/private/{mid}/{p}.per_task.jsonl"
         if not os.path.exists(f):
             return None
+        k = max(1, int(results[(mid, p)].get("rollouts") or 1))
         for l in open(f):
             t = json.loads(l)
-            if t["n"]: means.append(t["correct"] / t["n"])
+            means.append(t["correct"] / k)  # an errored rollout is a failed sample (never dropped: 2026-11-04 MiMo/Phi inflation)
     m = len(means); s = sum(means) / m
     se = math.sqrt(sum((x - s) ** 2 for x in means) / (m - 1) / m)
     rs = [results[(mid, p)] for p in parts]
-    return dict(score=s, se=se, n=m, samples=sum(r["samples"] for r in rs), run_at=max(r.get("finished_at") or 0 for r in rs),
+    exp = sum(expected(r, p, full) for r, p in zip(rs, parts)); ns = sum(r["samples"] for r in rs)
+    return dict(score=s, se=se, n=m, samples=ns, samples_expected=exp, errors=exp - ns, complete=exp == ns,
+                run_at=max(r.get("finished_at") or 0 for r in rs),
                 cap_rate=sum(r["cap_rate"] * r["samples"] for r in rs) / max(1, sum(r["samples"] for r in rs)),
                 env_version="+".join(r.get("bench_version", "") for r in rs), gpu="+".join(sorted({_gpu(r) or "?" for r in rs})))
 
@@ -50,20 +59,27 @@ def publish(rows, S, max_fail=3):
     for f in glob.glob(f"{C.STATE}/results/*/*.json"):
         r = _rj(f)
         if r: results[(r["model_id"], r["benchmark"])] = r
+    full = {}
+    for (mid, bid), r in results.items():
+        full[bid] = max(full.get(bid, 0), r.get("tasks_total") or r["tasks"])
     recs = []
     for (mid, bid), r in results.items():
         b = next((x for x in bs if x["id"] == bid), None)
         if not b or r.get("bench_version") != R.bench_version(b):
             continue
+        # errors/complete: a run that lost samples (errored rollouts, missing tasks) is flagged, never silently shown as complete.
+        # Runs summarized since 2026-11-04 already score an errored rollout as wrong; older ones dropped it (score is then optimistic).
+        exp = expected(r, bid, full)
         recs.append(dict(model_id=mid, model_kind=r.get("model_kind"), benchmark_id=bid, suite=b["suite"], env_version=r.get("bench_version"),
-                         score=r["score"], se=r["se"], n=r["tasks"], samples=r["samples"], rollouts=r["rollouts"], cap_rate=r["cap_rate"],
+                         score=r["score"], se=r["se"], n=r["tasks"], samples=r["samples"], samples_expected=exp, errors=exp - r["samples"],
+                         complete=exp == r["samples"], rollouts=r["rollouts"], cap_rate=r["cap_rate"],
                          mean_out_tokens=round(r["mean_out_tokens"]), run_at=r.get("finished_at"), wall_s=round(r.get("wall_seconds") or 0), gpu=_gpu(r)))
     kinds = {m["model_id"]: m["kind"] for m in rows}
     for b in bs:
         if not b.get("pooled_from"):
             continue
         for m in rows:
-            p = pooled(m["model_id"], b, results)
+            p = pooled(m["model_id"], b, results, full)
             if p:
                 recs.append(dict(model_id=m["model_id"], model_kind=kinds[m["model_id"]], benchmark_id=b["id"], suite=b["suite"], rollouts=16, **p))
     have = {r["model_id"] for r in recs}
