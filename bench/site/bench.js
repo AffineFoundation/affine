@@ -28,7 +28,8 @@
   'openreasoning-nemotron-7b':'OR-Nemotron-7B','acereason-nemotron-1.1-7b':'AceReason-7B','llama-nemotron-nano-8b-v1':'Nemotron-Nano-8B',
   'phi-4-reasoning':'Phi-4-R-14B','phi-4-mini-reasoning':'Phi-4-mini-R','deepscaler-1.5b':'DeepScaleR-1.5B'};
  const gb=p=>p==null?'':(p/1e9).toFixed(1)+'B';
- const name=m=>{const n=esc(SHORT[m.model_id]||m.label);const repo=m.hf&&String(m.hf).split('@')[0];
+ const kname=m=>'Affine-'+String(m.king).slice(0,8)+'-9B';
+const name=m=>{const n=esc(SHORT[m.model_id]||m.label);const repo=m.hf&&String(m.hf).split('@')[0];
   const t=esc((repo||m.label)+(PARAMS[m.model_id]?' · '+gb(PARAMS[m.model_id])+' params':''));
   return (repo?`<a href="https://huggingface.co/${esc(repo)}" target="_blank" rel="noopener" title="${t}">${n}</a>`:n)+(PARAMS[m.model_id]?` <span>${gb(PARAMS[m.model_id])}</span>`:'');};
  let box=document.getElementById('bench-table');
@@ -62,7 +63,7 @@
    if(b.in_avg===false)return`<td class="disp" title="display only, not in Avg${pt?'; '+pt:''}">${pct(x)}${dg}</td>`;
    const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);const tt=[top?'column best':'',pt].filter(Boolean).join('; ');
    return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${tt?` title="${tt}"`:''}>${top?STAR:''}${pct(x)}${dg}</td>`;};
-  const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
+  const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(kname(m))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
   const suites=[...new Set(B.map(b=>b.suite))];
   const head=suites.length>1?`<tr><th></th><th class="avg"></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}</tr>`:'';
   const prev=box.querySelector('.bench-scroll'),keep=prev?[prev.scrollTop,prev.scrollLeft]:null;
@@ -101,7 +102,7 @@
   ps.forEach((p,i)=>{const l=i?(xs[i-1]+xs[i])/2:P.l,rr=i<ps.length-1?(xs[i]+xs[i+1])/2:W-P.r;
    const h=el('rect',{x:l,y:P.t,width:Math.max(1,rr-l),height:H-P.t-P.b,fill:'transparent'});
    h.addEventListener('mouseenter',()=>{hl.setAttribute('cx',xs[i]);hl.setAttribute('cy',y(p.v));hl.setAttribute('visibility','visible');
-    tp.innerHTML=`<strong>E${esc(p.m.epoch)} · king ${esc(String(p.m.king).slice(0,8))}</strong><span>${esc(s.lab)}</span> ${pct(p.v)}%${p.se!=null?' ±'+(100*p.se).toFixed(1):''}\n<span>crowned</span> ${esc(new Date(p.t*1000).toLocaleString('en-US',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}))}`;
+    tp.innerHTML=`<strong>E${esc(p.m.epoch)} · ${esc(kname(p.m))}</strong><span>${esc(s.lab)}</span> ${pct(p.v)}%${p.se!=null?' ±'+(100*p.se).toFixed(1):''}\n<span>crowned</span> ${esc(new Date(p.t*1000).toLocaleString('en-US',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}))}`;
     tp.hidden=false;const tw=tp.offsetWidth;tp.style.left=Math.min(Math.max(0,xs[i]-tw/2),Math.max(0,W-tw))+'px';tp.style.top=(y(p.v)>H/2?2:H/2)+'px';});
    h.addEventListener('mouseleave',()=>{tp.hidden=true;hl.setAttribute('visibility','hidden');});svg.append(h);});
  }
