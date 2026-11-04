@@ -62,6 +62,14 @@ def opts():
                 standing_min_cover=float(d.get('standing_min_cover', 0.8)),
                 # probe-speed 20261030: an early-staged delta make waits for TRAINING-RESULT (trainer idle); early makes ran 4-8x slower
                 delta_after_result=d.get('delta_after_result') is True,
+                # B0 early fetch (RA/20261103-b0-early-fetch, Jacob 2026-11-03 16:00 CR): "published" = start the H->C delta as soon as the
+                # trainer has PUBLISHED C (trainer TRANSACTION state 'published' for exactly this C id + files), not after the lifecycle's
+                # TRAINING-RESULT readback; "published-shadow" = keep waiting for TRAINING-RESULT but record when C was published.
+                # Absent / anything else = the delta_after_result behaviour above.
+                delta_after=(d.get('delta_after') if d.get('delta_after') in ('published', 'published-shadow') else None),
+                # B0: seconds after the publish was first seen before the make starts (the trainer writes its fp32 master ~40 s after
+                # publishing; probe-speed 20261030 saw a make overlapping trainer I/O run 4-8x slower)
+                delta_published_grace_s=max(0.0, float(d.get('delta_published_grace_s', 45))),
                 # stall fix 20261101 (RA/20261101-grade-stall-fix): no-progress salvage after this many seconds (0 = off)
                 stall_salvage_s=float(d.get('stall_salvage_s', 300)))
 
@@ -379,6 +387,52 @@ def start_delta(e, C, H, tl):
     log(event='gate_delta_start', epoch=e, candidate=C[:12], base=H[:12], pid=p.pid)
 
 
+_pub_poll = {}
+TRAINER_HIST = '/workspace/affine-mimo-trainer-prod/trainer-state/affine-mimo9b-grpo-20261013'   # = gate_delta.R
+
+
+def published_check(e, tl):
+    """B0: True iff the trainer pod reports that the generation of epoch e trained from tl['head'] is in TRANSACTION state
+    'published' (R2 publication complete and content-verified by the trainer's publisher) for EXACTLY the staged candidate the
+    gate holds (same output id, same per-file sha256 descriptor, same input head). Never trusts a cached answer for 'published':
+    the first positive check is recorded in tl['published_seen'] and only then may the delta start. Any error / mismatch -> False
+    (the gate keeps waiting; at TRAINING-RESULT the normal path starts the delta). The delta apply on the probe pod still sha256-
+    checks every rebuilt file against tl['files'], and the DECISION still requires TRAINING-RESULT's descriptor == tl['files']."""
+    if tl.get('published_seen'): return True
+    if time.time() - _pub_poll.get(e, 0) < max(10.0, opts()['early_poll_s']): return False
+    _pub_poll[e] = time.time()
+    plan = rj(LIFE / 'epochs' / str(e) / 'PLAN.json') or {}
+    name = (plan.get('manifest') or {}).get('epoch')
+    if not name: return False
+    try:
+        rc, out, err = trainer_pod('python3 %s staged %s %s' % (TRAINER_DELTA, shlex.quote(name), tl['head']), timeout=90)
+        k = json.loads(out.strip().splitlines()[-1])
+    except Exception as ex:
+        log(event='b0_check_failed', epoch=e, error=str(ex)[:200]); return False
+    ok = (rc == 0 and k.get('state') == 'published' and k.get('id') == tl['candidate'] and k.get('input') == tl['head']
+          and k.get('files') == tl['files'])
+    if ok:   # second, independent read of the generation's TRANSACTION.json: the publish step itself recorded C
+        g = str(k.get('gen') or '')
+        ok = bool(g) and all(ch.isalnum() or ch in '._-' for ch in g)
+        if ok:
+            try:
+                rc2, out2, _ = trainer_pod(("python3 -c 'import json,sys;t=json.load(open(sys.argv[1]));print(json.dumps(dict(state=t.get(\"state\"),"
+                                            "out=t.get(\"output_checkpoint\"),pub=bool(t.get(\"publication\")))))' %s")
+                                           % shlex.quote('%s/history/%s/TRANSACTION.json' % (TRAINER_HIST, g)), timeout=60)
+                t2 = json.loads(out2.strip().splitlines()[-1])
+            except Exception as ex:
+                log(event='b0_check_failed', epoch=e, error='transaction: %s' % str(ex)[:200]); return False
+            ok = rc2 == 0 and t2.get('state') == 'published' and t2.get('out') == tl['candidate'] and t2.get('pub') is True
+    if not ok:
+        if k.get('state') == 'published':   # published, but not the candidate we hold: never fetch it
+            log(event='b0_published_mismatch', epoch=e, staged=str(tl.get('candidate'))[:12], trainer=str(k.get('id'))[:12],
+                files_equal=k.get('files') == tl['files'])
+        return False
+    tl['published_seen'] = time.time(); tl['published_gen'] = k.get('gen')
+    log(event='b0_published_seen', epoch=e, candidate=tl['candidate'][:12], gen=k.get('gen'), mode=opts()['delta_after'])
+    return True
+
+
 def delta_stage(e, C, tl, st):
     """None = delta not used / finished (caller continues); str = stage to report this tick."""
     o = opts()
@@ -389,7 +443,16 @@ def delta_stage(e, C, tl, st):
         if H not in st['ckpts']:
             tl['delta_done'] = time.time(); tl['delta_rc'] = 'no-base'
             return None
-        if o['delta_after_result'] and not (LIFE / 'epochs' / str(e) / 'TRAINING-RESULT.json').exists(): return 'delta-await-result'
+        has_result = (LIFE / 'epochs' / str(e) / 'TRAINING-RESULT.json').exists()
+        if o['delta_after'] and not has_result:
+            pub = published_check(e, tl)
+            if o['delta_after'] == 'published-shadow':
+                return 'delta-await-result'   # shadow: behaviour and reported stage identical to delta_after_result
+            if not pub or time.time() - tl['published_seen'] < o['delta_published_grace_s']: return 'delta-await-published'
+        elif o['delta_after_result'] and not has_result: return 'delta-await-result'
+        if o['delta_after'] == 'published-shadow' and has_result and 'published_seen' in tl:
+            tl.setdefault('b0_shadow_saving_s', round(time.time() - tl['published_seen'], 1))
+        tl['delta_trigger'] = 'result' if has_result else 'published'
         start_delta(e, C, H, tl); tl.setdefault('fetch_start', tl['delta_start'])
         return 'fetching-delta'
     rc = _delta_status(e)
