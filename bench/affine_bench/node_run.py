@@ -9,7 +9,7 @@
 3. reduces each traces.jsonl to OUT/<bench>/summary.json (aggregate) and OUT/<bench>/per_task.jsonl (kept on the node/host,
    never published), then writes OUT/DONE."""
 import argparse
-import fcntl, resource, glob, json, math, os, subprocess, sys, time
+import fcntl, resource, glob, json, math, os, shlex, subprocess, sys, time
 from . import registry as R
 
 ROOT = os.environ.get("BENCH_ROOT", "/data/bench")
@@ -20,34 +20,46 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
 
 
-def ensure_server(model_dir, rp, max_model_len, chat_template=""):
+def serve_key(model_dir, hf_overrides=""):
+    """What deploy/serve.sh writes to serve/model: a server is reused only when the model AND its overrides match."""
+    return model_dir + (" hf_overrides=" + hf_overrides if hf_overrides else "")
+
+
+def server_up():
+    return sh("curl -sf -m 5 http://127.0.0.1:8000/v1/models").returncode == 0
+
+
+def ensure_server(model_dir, rp, max_model_len, chat_template="", hf_overrides=""):
     cur = open(ROOT + "/serve/model").read().strip() if os.path.exists(ROOT + "/serve/model") else None
-    up = sh("curl -sf -m 5 http://127.0.0.1:8000/v1/models").returncode == 0
-    if up and cur == model_dir:
+    if server_up() and cur == serve_key(model_dir, hf_overrides):
         return "reused"
     sh(f"bash {REPO}/bench/deploy/stop.sh", timeout=200)
-    p = sh(f"bash {REPO}/bench/deploy/serve.sh {model_dir} {rp} {max_model_len} {chat_template}", timeout=3700)
+    args = " ".join(shlex.quote(str(x)) for x in (model_dir, rp, max_model_len, chat_template or "", hf_overrides or ""))
+    p = sh(f"bash {REPO}/bench/deploy/serve.sh {args}", timeout=3700)
     if p.returncode != 0:
         raise SystemExit("serve failed: " + (p.stdout + p.stderr)[-2000:])
     return "started"
 
 
 def summarize(b, run_dir):
+    """traces.jsonl -> (summary, per-task records). An errored rollout (no reply, server error, timeout) is a FAILED sample,
+    never dropped: each task's score is correct / rollouts, so a missing rollout counts as 0 (2026-11-04: MiMo-7B-RL and
+    Phi-4-reasoning lost 20-70% of their rollouts to a dead server and the dropped ones inflated their scores).
+    errors = errored samples (expected - valid), errored_tasks = tasks with at least one, complete = errors == 0."""
     tr = glob.glob(run_dir + "/*/traces.jsonl")
     if not tr:
         return None
-    per = {}; ntok = []; capped = 0; errors = 0; rows = 0
+    k = max(1, int(b["rollouts"]))
+    per = {}; ntok = []; capped = 0
     for line in open(tr[0]):
         try:
             r = json.loads(line)
         except Exception:
             continue
-        rows += 1
         t = r["task"]["data"]; idx = t["idx"]
         rec = per.setdefault(idx, dict(idx=idx, key=r["task"].get("key"), n=0, correct=0.0, errors=0, capped=0, tokens=[]))
         trs = r.get("traces") or []
-        if not r.get("ok") or not trs:
-            rec["errors"] += 1; errors += 1
+        if not r.get("ok") or not trs or rec["n"] >= k:  # rec["n"] >= k: a duplicate row from a resumed run
             continue
         tc = trs[-1]
         score = sum(v["score"] * v.get("weight", 1.0) for v in (tc.get("rewards") or {}).values())
@@ -55,17 +67,18 @@ def summarize(b, run_dir):
         cap = any(f == "length" for f in fin)
         rec["n"] += 1; rec["correct"] += float(score); rec["capped"] += cap; capped += cap
         rec["tokens"].append(tc.get("num_output_tokens") or 0); ntok.append(tc.get("num_output_tokens") or 0)
-    tasks = [p for p in per.values() if p["n"] > 0]
-    errors = sum(1 for p in per.values() if p["n"] == 0)  # tasks with no valid rollout (retried rollouts excluded)
-    means = [p["correct"] / p["n"] for p in tasks]
+    for p in per.values():
+        p["errors"] = k - p["n"]
+    means = [p["correct"] / k for p in per.values()]
     m = len(means); score = sum(means) / m if m else None
     se = math.sqrt(sum((x - score) ** 2 for x in means) / (m - 1) / m) if m > 1 else None
-    ns = sum(p["n"] for p in tasks); ntok.sort()
-    return dict(benchmark=b["id"], env=b["env"], source=b.get("source"), dataset=b.get("dataset"), rollouts=b["rollouts"],
-                score=score, se=se, tasks=m, tasks_total=len(per), samples=ns, errors=errors, cap_rate=capped / max(1, ns),
+    ns = sum(p["n"] for p in per.values()); errors = sum(p["errors"] for p in per.values()); ntok.sort()
+    return dict(benchmark=b["id"], env=b["env"], source=b.get("source"), dataset=b.get("dataset"), rollouts=k,
+                score=score, se=se, tasks=m, tasks_total=m, samples=ns, samples_expected=m * k, errors=errors,
+                errored_tasks=sum(1 for p in per.values() if p["errors"]), complete=errors == 0, cap_rate=capped / max(1, ns),
                 mean_out_tokens=sum(ntok) / max(1, len(ntok)), median_out_tokens=ntok[len(ntok) // 2] if ntok else None,
                 p95_out_tokens=ntok[int(len(ntok) * .95)] if ntok else None,
-                pass_at_k=sum(1 for p in tasks if p["correct"] > 0) / max(1, m)), per
+                pass_at_k=sum(1 for p in per.values() if p["correct"] > 0) / max(1, m)), per
 
 
 def main(argv=None):
@@ -75,6 +88,7 @@ def main(argv=None):
     ap.add_argument("--max-model-len", type=int, default=None); ap.add_argument("--out", default=None)
     ap.add_argument("--chat-template", default="", help="jinja file (bench/config/templates/) when the model card needs a non-default prompt")
     ap.add_argument("--rollouts", default="", help="override, e.g. math500=16 (calibration runs)")
+    ap.add_argument("--hf-overrides", default="", help="vLLM --hf-overrides JSON (models.toml hf_overrides), e.g. a longer max_position_embeddings")
     a = ap.parse_args(argv)
     # one runner per node, ever: a second runner would share the server and the run dirs (and overload the box)
     lk = open(f"{ROOT}/runs/.node-run.lock", "a")
@@ -96,7 +110,7 @@ def main(argv=None):
         bs.append(b)
     json.dump(dict(model_id=a.model_id, model_dir=a.model_dir, pid=os.getpid(), started=time.time(),
                    benchmarks=[b["id"] for b in bs]), open(out + "/node_run.json", "w"))
-    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template); t_serve = time.time() - t0
+    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, a.hf_overrides); t_serve = time.time() - t0
     sp = S["sampling"]; total_c = S["client"]["max_concurrent_total"]
     todo = [b for b in bs if not os.path.exists(f"{out}/{b['id']}/summary.json")]
     weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319}.get(b["id"], 40) for b in todo}
@@ -133,6 +147,15 @@ def main(argv=None):
             del procs[bid]
             d = f"{out}/{bid}"
             res = summarize(b, d + "/vf")
+            if rc == 0 and res and res[0]["errors"] and att < MAX_ATTEMPTS:
+                # errored rollouts: bring the server back if it died, then --resume re-runs only the failed ones
+                json.dump(dict(rc=rc, at=time.time(), attempt=att, errors=res[0]["errors"]), open(d + f"/ERRORS.{att}", "w"))
+                if not server_up():
+                    try:
+                        ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, a.hf_overrides)
+                    except BaseException as e:  # a failed restart just makes the retry fail too; keep the other runs going
+                        print(json.dumps(dict(event="serve-restart-failed", bench=bid, err=str(e)[-500:])), flush=True)
+                procs[bid] = (launch(b, att + 1), b, ts, att + 1); continue
             if (rc != 0 or res is None) and att < MAX_ATTEMPTS:
                 json.dump(dict(rc=rc, at=time.time(), attempt=att), open(d + "/FAILED", "w"))
                 time.sleep(5); procs[bid] = (launch(b, att + 1), b, ts, att + 1); continue

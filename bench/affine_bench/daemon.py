@@ -62,7 +62,8 @@ def model_rows():
     rows = []
     for m in reg:
         r = dict(model_id=m["id"], label=m["label"], kind=m["kind"], reasoning_parser=m.get("reasoning_parser", "qwen3"),
-                 priority=m.get("priority", 999), max_model_len=m.get("max_model_len"), chat_template=m.get("chat_template"))
+                 priority=m.get("priority", 999), max_model_len=m.get("max_model_len"), chat_template=m.get("chat_template"),
+                 hf_overrides=m.get("hf_overrides"))
         if m.get("king"):
             r["king"] = m["king"]; k = next((k for k in ks if k["king"] == m["king"]), None)
             if k: r.update(epoch=k.get("epoch"), crowned_at=k.get("crowned_at"), era=k.get("era"))
@@ -166,6 +167,7 @@ def launch(m, bids):
     if m.get("max_model_len"): args += ["--max-model-len", str(m["max_model_len"])]
     if m.get("chat_template"): args += ["--chat-template", f"{C.NODE_REPO}/bench/config/{m['chat_template']}"]
     if m.get("rollouts"): args += ["--rollouts", m["rollouts"]]
+    if m.get("hf_overrides"): args += ["--hf-overrides", m["hf_overrides"]]
     # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
     cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
            f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")

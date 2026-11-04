@@ -6,6 +6,9 @@
 #             then Genesis + ALL references, then the GREEN backlog, then every other king (daemon.queue)
 #   max_model_len   only when a model cannot take the common 34816 window
 #   chat_template   bench/config/templates/<file>, only when the model card asks for a non-default prompt to enable thinking
+#   hf_overrides    vLLM --hf-overrides JSON. Needed when config.json max_position_embeddings < 34816: vLLM sizes the RoPE cache
+#                   from it, and VLLM_ALLOW_LONG_MAX_MODEL_LEN alone lets the first sequence past it kill the engine
+#                   (2026-11-04 MiMo-7B-RL / Phi-4-reasoning). Positions below the native length are unchanged.
 [[model]]
 id = "genesis"
 label = "Genesis"
@@ -136,8 +139,10 @@ id = "mimo-7b-rl"
 label = "MiMo-7B-RL"
 kind = "reference"
 hf = "XiaomiMiMo/MiMo-7B-RL@7c7707596b0ef1032ef82970d7a4a484ca457c4d"
-# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B). MiMoForCausalLM (native in vLLM; MTP layers unused)
+# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN + hf_overrides max_position_embeddings 34816
+# (without the override the first rollout past 32768 positions crashed the engine: 2026-11-01 run lost 20-70% of rollouts). MiMoForCausalLM (native in vLLM; MTP layers unused)
 reasoning_parser = "mimo"
+hf_overrides = '{"max_position_embeddings": 34816}'
 priority = 21
 
 [[model]]
@@ -165,8 +170,10 @@ id = "phi-4-reasoning"
 label = "Phi-4-reasoning"
 kind = "reference"
 hf = "microsoft/Phi-4-reasoning@1de18ec97600877ce63dbf60c73b998da99f0195"
-# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B). The repo template always adds its own reasoning system prompt
+# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN + hf_overrides max_position_embeddings 34816
+# (same engine crash as MiMo-7B-RL without it). The repo template always adds its own reasoning system prompt
 reasoning_parser = "deepseek_r1"
+hf_overrides = '{"max_position_embeddings": 34816}'
 priority = 24
 
 [[model]]
