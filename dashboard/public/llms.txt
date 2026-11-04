@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-03 14:07 CR (UTC-6). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-04 06:20 CR (UTC-6): fp32 master downloads. Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
@@ -166,6 +166,26 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
   The loss knobs change the advantages (adv_center, adv_clip) or the weighting (loss_agg token_mean: every token
   counts the same instead of every rollout). The step direction is always g_t / ||g_t||.
   Recipe: https://affine.io/k1/spec/step-recipe.json. fp32 master manifests: https://affine.io/k1/fp32-master/<head>.json.
+<!-- fp32-master-download-20261104 -->
+- The fp32 master (public downloads from the e679 head, Jacob 2026-11-04): every GREEN publishes the head twice, the bf16 checkpoint and the
+  fp32 master M_C the trainer stepped (bf16 head = round-to-nearest-even(M_C)). The next turn steps that master, not
+  fp32(bf16 head). A local step from the bf16 upcast drifts from the gate's candidate, so use the master.
+  - Manifest: https://affine.io/k1/fp32-master/<head>.json (files {name: sha256, bytes}, tensor_sha256, master_digest,
+    and `download`: presigned R2 GET links, valid 7 days, re-signed when 3 days are left, for the newest 3 GREEN heads).
+    Current: https://affine.io/k1/fp32-master/current.json. All heads: https://affine.io/k1/fp32-master/index.json.
+  - Contents: 9 safetensors shards, 427 float32 tensors (model.language_model.*, lm_head.*), about 35.8 GB (the bf16
+    head is 18.8 GB). Weights only: the step is stateless (fresh zero Adam moments every turn), so there is no optimizer state.
+  - master_digest = sha256 of the canonical JSON {tensor name: sha256(little-endian fp32 bytes)} (sorted keys, separators , :).
+    It equals turn.json training.optimizer.sgd.fp32_master.output_master_digest of the GREEN turn.
+  - Fetch and verify (sha256 per file + master digest):
+      python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master            # current head (mining.json checkpoint)
+      python3 miner/kit/fetch_fp32_master.py --head <checkpoint> --out DIR       # a specific GREEN head
+    Keep it in its own directory, never inside the bf16 head directory (vLLM loads every *.safetensors there).
+    kit/train_step.py uses HEAD_DIR-fp32-master automatically when it was verified for that head (or pass --master DIR).
+  - Published by a sidecar after each GREEN, usually within ~10 minutes. Until current.json names the head in mining.json,
+    the master for that head is still uploading. A failed upload only raises an alert: it never delays or changes the gate,
+    the king or weights. Not published: masters of heads whose store entry was gone before the upload (e651 head 4df7fb61).
+<!-- /fp32-master-download-20261104 -->
 <!-- /renorm-step-20261031 -->
 
 ## 5. The task pool, prompt, sampling and grader
@@ -307,9 +327,11 @@ in it is verbatim from the live services (sha256 + live source per file in valid
 - the 7,496-task affine_math file and the 19,305-task gate pool (miner/data/gate-pool-v1.jsonl + manifest);
 - exact pins (requirements-*.txt).
 
-Tools: kit/fetch_head.py (sha256-verified head / reference download), generate.py, make_batch.py, check_batch.py,
-train_step.py (one live step on your hardware), gate_eval.py (the gate procedure and math), simulate_turn.sh, and
-tests/test_kit_cpu.py (a CPU self-test, no GPU).
+Tools: kit/fetch_head.py (sha256-verified head / reference download), fetch_fp32_master.py (the head's fp32 master,
+sha256 + master digest verified), generate.py, make_batch.py, check_batch.py, train_step.py (one live step on your hardware;
+uses the fp32 master when present; --activation-checkpointing, off by default, fits a full file on one H200), gate_eval.py
+(the gate procedure and math), simulate_turn.sh (FP32_MASTER=1 default, ACT_CKPT=1 opt-in), and tests/test_kit_cpu.py
+(a CPU self-test, no GPU).
 
 ## 11. Public endpoints
 
@@ -319,7 +341,8 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - Your file's check: https://affine.io/ff/status.json   Your link: https://affine.io/ff/links/<hotkey>.json
 - Head: mining.json `checkpoint` + `current_url` (signed current.json -> manifest_url -> opening.json payload.checkpoint
   files/read_urls; id = sha256 of the canonical JSON {file: sha256}). Use miner/kit/fetch_head.py.
-- Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md
+- Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json (+ current.json,
+  index.json; download links in `download`, miner/kit/fetch_fp32_master.py), /k1/replay/README.md
 - This file: https://affine.io/llms.txt
 
 ## FAQ
@@ -336,5 +359,6 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
 - What does the trainer run, exactly? miner/validator/trainer-v833m + engine/. kit/train_step.py imports exactly those files.
 - Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG.
-- Where's the fp32 master? Its manifest (sha256 per file) is at /k1/fp32-master/<head>.json. A public download isn't offered yet,
-  and kit/train_step.py bootstraps from the bf16 head without it.
+- Where's the fp32 master? https://affine.io/k1/fp32-master/<head>.json lists it (sha256 per file) with download links.
+  python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master fetches and verifies the current head's master (~36 GB).
+  Without it kit/train_step.py bootstraps fp32(bf16 head), which drifts from the gate's candidate.

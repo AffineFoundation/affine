@@ -1,0 +1,12 @@
+[Unit]
+Description=Affine SN120 fp32 head master publisher (every GREEN -> R2 + affine.io/k1/fp32-master; ALERT-ONLY on failure, never touches gate/king/weights). Jacob 2026-11-04, RA/20261104-fp32-master-publish
+After=network-online.target
+
+[Service]
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261104-fp32-master-publish/code/fp32_master_publish.py
+Restart=always
+RestartSec=30s
+Nice=10
+
+[Install]
+WantedBy=default.target

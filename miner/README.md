@@ -16,10 +16,11 @@ miner/
   affine_batch.py               link / check / upload / download / status   (standard library only; also at affine.io/ff/affine_batch.py)
   kit/                          the tools you run
     fetch_head.py               download + sha256-verify the head (or --reference, or --tokenizer-only)
+    fetch_fp32_master.py        download + verify the head's fp32 master (sha256 per file + master digest; own directory)
     generate.py                 sample rollouts from the head at the gate's settings and grade them with the gate's grader
     make_batch.py               rollouts -> affine-batch-v1/v2 file, checked with the validator's checker
     check_batch.py              the validator's FULL format check (tokenizes like the trainer)
-    train_step.py               ONE v8.3.3l step with the live trainer code -> candidate checkpoint
+    train_step.py               ONE v8.3.3m step with the live trainer code -> candidate checkpoint (+ cand/fp32-master/)
     gate_eval.py                the prior-v1 gate (weighted draw, fresh head, candidate, per-env Hajek estimate) on your GPUs
     gate_eval_ivw_v2.py         the old ivw-v2 gate (before 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
     simulate_turn.sh            all of the above, end to end
@@ -163,12 +164,22 @@ The live settings are in `trainer-config.public.json`.
   `v8211_batched.py` (`_apply_knobs`); `kit/train_step.py` applies them exactly like the live wrapper.
 - **Differences in the local run (execution only, same math):** it runs in one process with engine `padded`
   (the live run uses 8 GPUs, engine `packed`, fla 0.6.0 kernels), so it matches at the bf16-ulp level, not bit-exactly.
-  Without `--master` the step bootstraps M_H = fp32(bf16 head). The live trainer uses the published fp32 master,
-  whose manifest is at https://affine.io/k1/fp32-master/<head>.json.
+- **The fp32 master.** The live trainer steps the head's fp32 master M_H, not fp32(bf16 head). Every GREEN publishes it
+  next to the bf16 head: https://affine.io/k1/fp32-master/<head>.json (files + sha256, master_digest, presigned download
+  links in `download`; current head: /k1/fp32-master/current.json). `kit/fetch_fp32_master.py` downloads it (~36 GB,
+  9 float32 shards, weights only) and verifies every file's sha256 and the master digest (= the GREEN turn.json
+  `training.optimizer.sgd.fp32_master.output_master_digest`). `train_step.py` uses `HEAD_DIR-fp32-master` automatically
+  when it was verified for that head (or `--master DIR`; `--no-master` forces the fp32(bf16) bootstrap, which drifts from
+  the gate's candidate). Keep the master in its own directory: vLLM loads every `*.safetensors` in a model directory.
+  The candidate's own master is written to `cand/fp32-master/` for the same reason.
+- **One GPU.** `--activation-checkpointing` (opt-in, off by default) recomputes each decoder layer in the backward pass
+  instead of storing its activations: same math, slower, much less memory. Use it when a full file OOMs on one GPU (1x H200).
 
 ```
 python3 kit/fetch_head.py --out head && python3 kit/fetch_head.py --out ref --reference
-python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss58> --out cand --report step.json
+python3 kit/fetch_fp32_master.py --out head-fp32-master        # fp32 master of the same head, sha256 + master digest verified
+python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss58> --out cand --report step.json \
+    [--activation-checkpointing]                                # uses head-fp32-master automatically
 ```
 
 ## 4. The gate (held-out, prior-v1 since 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812)): what `kit/gate_eval.py` runs
@@ -226,7 +237,8 @@ differences. `--baseline` reuses a head baseline across candidates. The old ivw-
 
 ```
 pip install -r miner/requirements-trainer.txt vllm==0.32.0 math-verify==0.9.0 httpx huggingface_hub
-HOTKEY=5Your... bash miner/kit/simulate_turn.sh ./turn          # head -> rollouts -> batch -> step -> gate
+HOTKEY=5Your... bash miner/kit/simulate_turn.sh ./turn          # head (+ fp32 master) -> rollouts -> batch -> step -> gate
+#   ACT_CKPT=1 for one GPU (activation checkpointing); FP32_MASTER=0 to skip the 36 GB master download
 python3 miner/affine_batch.py upload --hotkey 5Your... --key /private/miner.seed ./turn/batch.json
 ```
 
@@ -279,8 +291,8 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 
 ## 8. Known gaps
 
-- **fp32 master bytes.** The manifest (sha256 per file) is public, but the bytes aren't publicly downloadable yet.
-  Without them `train_step.py` bootstraps from the bf16 head, which can differ slightly from the live step.
+- **fp32 master history.** Download links are kept for the newest 3 GREEN heads (older manifests keep their sha256s).
+  The e651 head 4df7fb61 has no published master (its store entry was gone before the upload).
 - **Trainer pod pip freeze.** Only the versions the trainer reports are published (torch, transformers, toploc, fla).
   `requirements-trainer.txt` pins those, plus what the code imports.
 - **Packed 8-GPU kernels.** The local step runs `padded` in one process, which matches at the bf16-ulp level.

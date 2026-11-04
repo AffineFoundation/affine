@@ -12,11 +12,18 @@ miner/validator/MANIFEST.sha256):
 Differences from the live run (execution only, same math): one process and engine 'padded' (live: 8 GPUs, engine
 'packed' with fla/FlashAttention varlen kernels, NCCL SUM); gradients therefore differ at the bf16-ulp level
 (see ops/renorm_step/results/EIGHT-VS-ONE-e354.json for the size of that difference). The fp32 master: pass the
-published one with --master (affine.io/k1/fp32-master/<head>.json lists it); without it the step bootstraps
-M_H = fp32(bf16 head), which is what the live trainer does when it has no master.
+published one (fetch_fp32_master.py --out HEAD_DIR-fp32-master; affine.io/k1/fp32-master/<head>.json). It is used
+automatically when HEAD_DIR-fp32-master/FP32-MASTER.json names this head, or pass --master DIR. Without it the step
+bootstraps M_H = fp32(bf16 head), which drifts from the gate's candidate (the live trainer steps the stored master).
+The candidate's own fp32 master is written to CANDIDATE_DIR/fp32-master/ (a subdirectory, so vLLM / from_pretrained
+never load it as model weights and the checkpoint id is unchanged).
+--activation-checkpointing (opt-in, default off): recompute each decoder layer in the backward pass instead of keeping its
+activations (torch.utils.checkpoint, use_reentrant=False). Same math, more compute, much less memory: use it when one
+GPU runs out of memory on a full batch file (e.g. 1x H200 with 1,000 rollouts).
 
 usage: train_step.py --head HEAD_DIR --ref REF_DIR --batch batch.json --hotkey SS58 --out CANDIDATE_DIR
-       [--master FP32_MASTER_DIR] [--device cuda|cpu] [--report report.json] [--max-tasks 125 --max-rollouts 1000]
+       [--master FP32_MASTER_DIR | --no-master] [--activation-checkpointing] [--device cuda|cpu] [--report report.json]
+       [--max-tasks 125 --max-rollouts 1000]
 """
 import argparse, dataclasses, hashlib, json, math, sys, time
 from pathlib import Path
@@ -61,10 +68,41 @@ def load_model(path, device, dtype, trainable):
     return model
 
 
+def enable_activation_checkpointing(model):
+    """Opt-in: wrap every decoder layer's forward in torch.utils.checkpoint (non-reentrant) while gradients are on.
+    The trainer forward always runs with use_cache=False and no dropout (eval mode), so recompute gives the same values."""
+    import torch
+    from torch.utils.checkpoint import checkpoint
+    lm = getattr(model.model, 'language_model', model.model)
+    layers = getattr(lm, 'layers', None)
+    if layers is None:
+        raise SystemExit('--activation-checkpointing: no decoder layers found')
+    for layer in layers:
+        def fwd(*args, _f=layer.forward, **kw):
+            if torch.is_grad_enabled() and not kw.get('use_cache') and kw.get('past_key_values') is None:
+                return checkpoint(_f, *args, use_reentrant=False, **kw)
+            return _f(*args, **kw)
+        layer.forward = fwd
+    return len(layers)
+
+
+def find_master(head_dir, head_id):
+    """HEAD_DIR-fp32-master (fetch_fp32_master.py --out) when it was verified for this exact head."""
+    d = Path(str(Path(head_dir)).rstrip('/') + '-fp32-master'); tag = d / 'FP32-MASTER.json'
+    try:
+        return str(d) if json.loads(tag.read_text()).get('checkpoint') == head_id else None
+    except Exception:
+        return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--head', required=True); ap.add_argument('--ref', required=True); ap.add_argument('--batch', required=True)
-    ap.add_argument('--hotkey', required=True); ap.add_argument('--out', required=True); ap.add_argument('--master')
+    ap.add_argument('--hotkey', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--master', help='published fp32 master dir of the head (default: HEAD_DIR-fp32-master when verified)')
+    ap.add_argument('--no-master', action='store_true', help='ignore any master; bootstrap M_H = fp32(bf16 head)')
+    ap.add_argument('--activation-checkpointing', action='store_true',
+                    help='opt-in (default off): recompute decoder layers in backward to fit one GPU; same math, slower')
     ap.add_argument('--device', default='cuda'); ap.add_argument('--report')
     ap.add_argument('--max-tasks', type=int, default=125); ap.add_argument('--max-rollouts', type=int, default=1000)
     ap.add_argument('--token-budget', type=int, default=16384)
@@ -112,6 +150,14 @@ def main(argv=None):
     head_id = descriptor_id(a.head)
     dev = torch.device(a.device)
     model = load_model(a.head, dev, torch.bfloat16, True)
+    if a.activation_checkpointing:
+        print(json.dumps(dict(activation_checkpointing=enable_activation_checkpointing(model))), flush=True)
+    master = None if a.no_master else (a.master or find_master(a.head, head_id))
+    if master:
+        tag = Path(master) / 'FP32-MASTER.json'
+        if tag.exists() and json.loads(tag.read_text()).get('checkpoint') != head_id:
+            raise SystemExit(f'{master} is the fp32 master of another head (FP32-MASTER.json), not {head_id}')
+    print(json.dumps(dict(fp32_master=master or 'bootstrap fp32(bf16 head)')), flush=True)
     ref = load_model(a.ref, dev, torch.bfloat16, False).eval()
     runtime = Runtime(model, head_id, dev, True, eos, ff_format.MAX_CONTEXT)
     ref_rt = Runtime(ref, config.kl_reference_checkpoint, dev, False, eos, ff_format.MAX_CONTEXT)
@@ -127,12 +173,15 @@ def main(argv=None):
     engine_opt.CPUAdamW.step = step
     H.FP32_STORE = str(Path(a.out) / '.fp32-store-unused')
     H._fp32_save = lambda *x, **k: None            # the live trainer persists the master to its pod disk; not needed here
-    if a.master:                                   # published head master -> the trainer's 'memory' path (verified bf16(M) == W)
+    if master:                                     # published head master -> the trainer's 'memory' path (verified bf16(M) == W)
         from safetensors.torch import load_file
-        got = 0
-        for f in sorted(Path(a.master).glob('*.safetensors')):
+        got = 0; params = dict(model.named_parameters())
+        for f in sorted(Path(master).glob('*.safetensors')):
             for n, t in load_file(str(f)).items():
-                if n in opt.masters: opt.masters[n].data.copy_(t.float()); got += 1
+                if n in opt.masters:
+                    opt.masters[n].data.copy_(t.float()); got += 1
+                    if not torch.equal(opt.masters[n].to(params[n].device, torch.bfloat16), params[n].data):
+                        raise SystemExit(f'bf16(master) != head weight for {n}: the master is not this head\'s')
         if got != len(opt.masters): raise SystemExit('fp32 master covers %d of %d trainable tensors' % (got, len(opt.masters)))
         opt._v833f_bf16, _ = H._digest_map(list(opt.parameters))
     binding = InputBinding('local-sim', 'local-sim', head_id, '0' * 64, opt.global_step)
@@ -156,8 +205,9 @@ def main(argv=None):
         p = Path(a.head) / extra
         if p.exists() and not (Path(a.out) / extra).exists(): (Path(a.out) / extra).write_bytes(p.read_bytes())
     from safetensors.torch import save_file
-    save_file({n: t.detach().contiguous() for n, t in opt.masters.items()}, str(Path(a.out) / 'fp32-master.safetensors'))
-    rep = dict(head=head_id, file_summary=s, wall_seconds=time.time() - t0, sgd_events=rows,
+    (Path(a.out) / 'fp32-master').mkdir(exist_ok=True)   # subdirectory: never picked up as model weights
+    save_file({n: t.detach().contiguous() for n, t in opt.masters.items()}, str(Path(a.out) / 'fp32-master' / 'fp32-master.safetensors'))
+    rep = dict(head=head_id, fp32_master=master, activation_checkpointing=a.activation_checkpointing, file_summary=s, wall_seconds=time.time() - t0, sgd_events=rows,
                report={k: out[k] for k in out if k not in ('trajectories', 'admitted_groups')},
                trajectories=out.get('trajectories'))
     txt = json.dumps(rep, indent=1, default=str)
