@@ -53,6 +53,8 @@ def test_old_cap_scan_catches_a_planted_value():
         assert fails, (name, text)
     fails, _ = L.old_cap_hits('mining.json', json.dumps({'k1': {'served': old, 'max_output_tokens': 12 * 1024}}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
     assert not fails, 'a count is not a cap'
+    fails, _ = L.old_cap_hits('gate.json', json.dumps({'commitment': 'caea27399300%de1ee4' % old}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert not fails, 'a hash is not a cap'
 
 
 def test_repo_consumers_match_caps():

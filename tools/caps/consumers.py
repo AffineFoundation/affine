@@ -195,7 +195,7 @@ NO_LITERALS = [
 # The patterns are built from the numbers so this file never contains them literally.
 _O, _C, _S = 8 * 1024, 12 * 1024, 6 * 1000   # the old output cap, the old (output) context and the old overlong start
 OLD_CAP_RX = [
-    (r'(?<![\d.,])%d,?%03d(?![\d])' % divmod(_O, 1000), 'the old output cap'),
+    (r'(?<![0-9A-Za-z_.,])%d,?%03d(?![0-9A-Za-z_])' % divmod(_O, 1000), 'the old output cap'),   # not inside a hash / id
     (r'(?<![\w.])%dK(?![\w])' % (_O // 1024), 'the old cap label'),
     (r'legacy_capped_output_tokens|LEGACY_CAP\b|signed_manifest\b', 'a legacy / transition cap field'),
     (r'\(len ?[-−] ?%d\)|(?<![\d.,])%d,?%03d tokens, where the overlong|overlong_soft_start\W+%d\b' % ((_S,) + divmod(_S, 1000) + (_S,)),
@@ -211,13 +211,14 @@ OLD_CAP_SCAN = dict(
           'miner/validator/gate/*.json', 'miner/validator/probe/*', 'miner/validator/trainer-v833m/trainer-config.public.json',
           'priors/*.py', 'priors/*.md', 'priors/gate/*.py', 'priors/gate/*.md', 'priors/pod/*', 'priors/irt/*.py',
           'bench/README.md', 'bench/config/*.toml'],
-    host=[REPO + '/caps.json', REPO + '/caps.py', WEB + '/caps.json', WEB + '/llms.txt', WEB + '/mining.json', WEB + '/training.json',
+    host=[REPO + '/caps.json', REPO + '/caps.py', WEB + '/caps.json', WEB + '/llms.txt', WEB + '/mining.json', WEB + '/training.json', WEB + '/gate.json', WEB + '/site-metrics.json',
           WEB + '/site-metrics.js', WEB + '/ff/affine_batch.py', WEB + '/gate/heldout/prior_gate.py', WEB + '/gate/heldout/baseline_v1.py',
           FF + '/ff_format.py', FF + '/affine_batch.py', FF + '/FF-PUBLIC.json', PG + '/code/prior_gate.py', PG + '/code/gate_service.py',
           PG + '/code/baseline_v1.py', PG + '/code/training_params.py', REPO + '/dashboard/site_metrics.py',
           RA + '/20261022-env-probe/code/config.json', REPO + '/priors/pod/sampler.config.json', REPO + '/priors/pod/serve.sh',
           REPO + '/priors/README.md'],
-    public=['https://affine.io/llms.txt', 'https://affine.io/mining.json', 'https://affine.io/training.json', 'https://affine.io/caps.json'],
+    public=['https://affine.io/llms.txt', 'https://affine.io/mining.json', 'https://affine.io/training.json', 'https://affine.io/caps.json',
+            'https://affine.io/gate.json', 'https://affine.io/site-metrics.json'],
 )
 # Reviewed hits that are NOT a token cap (path glob, line regex, why). A hit listed here is reported INFO, never silently.
 OLD_CAP_ALLOW = [
