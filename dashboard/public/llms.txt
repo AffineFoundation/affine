@@ -1,8 +1,12 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-04 06:20 CR (UTC-6): fp32 master downloads. Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-04 07:38 CR (UTC-6): token caps from one source (https://affine.io/caps.json). Trainer v8.3.3m, gate heldout prior-v1, batch format affine-batch-v1 / v2.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
+Token caps: https://affine.io/caps.json is THE one source of every token cap (repo: caps.json, loader caps.py). Today it says
+max_output_tokens 12,288 and max_context_tokens 16,384 (prompt + output), overlong window 10096..12288. Every cap number in this
+file, mining.json, the miner kit, the batch validator, the trainer, the gate and the probe is rendered from caps.json and
+checked against it (tools/caps/caps_check.py); if a number anywhere differs from caps.json, caps.json wins.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
 Miner kit (the live trainer, gate, grader, task pool, simulator): https://github.com/AffineFoundation/affine/blob/main/miner/README.md
 Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
@@ -80,14 +84,14 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
   `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and `<|endoftext|>` (ids 248044-248046) must
   not appear in a prompt or an output.
 - EOS rule: an output of up to 12,287 tokens gets `<|im_end|>` appended (it ended). Exactly 12,288 tokens = cut at the cap
-  (no EOS; capped). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens.  <!-- 12k-everywhere-20261102 -->
-  12,288 output tokens apply everywhere from epoch 590: generation (sample with max_tokens 12,288), batch files, training
-  and the gate (section 5). Before epoch 590 batch files were capped at 8,192 output / 12,288 context.
-  Transition: files generated at 8K still count. An output of exactly 8,192 tokens (no EOS) is still read as capped.
+  (no EOS; capped). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens. Every shorter output is an
+  ordinary ended rollout (EOS appended), whatever its length.
+  12,288 output tokens apply everywhere: generation (sample with max_tokens 12,288), batch files, training
+  and the gate (section 5). Source: https://affine.io/caps.json (max_output_tokens, max_context_tokens).
 - reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
   std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
   The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 10096) / (12288 - 10096), 0, 1) (len = output
-  tokens incl. the EOS; from epoch 590, same 2,192-token ramp moved to the new cap; before: (len - 6000) / (8192 - 6000)).
+  tokens incl. the EOS; window = caps.json overlong_soft_start..overlong_max_tokens).
 - Any number of rollouts per prompt (at least 1). Caps: 125 prompts and 1,000 rollouts (125 x 8; live value: mining.json
   `training.batch_cap`; a change applies at the next turn). Prompts beyond a cap are dropped whole, in file order.
 - Any broken rule in the kept part makes the whole file invalid. You're skipped for that turn, not charged, and keep your place.
@@ -131,7 +135,7 @@ structural check, and it needs no tokenizer.
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
 miner/validator/trainer-v833m (+ engine/) and the live settings are in miner/validator/trainer-v833m/trainer-config.public.json.
-v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens of prompt + output are trained in full
+v8.3.3m = v8.3.3l + the caps.json caps: rollouts up to 16,384 tokens of prompt + output are trained in full
 (no truncation) and the free-file overlong window is 10096..12288. Everything else is the v8.3.3l step.
 
 - Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0, k3 (low-var) KL
@@ -205,8 +209,7 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
 - Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
   Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
   block and nothing after it." (Your batch prompt is a single user message, section 3.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context. The cap is 12,288
-  from the first gate round opened after 2026-11-02 10:41 CR (earlier rounds: 8,192 output / 12,288 context); each round's cap
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context (caps.json); each round's cap
   is in mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens. Head and candidates in a round always
   use the same cap. It runs on vLLM 0.32.0 on 8 x B200
   (`--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
@@ -224,7 +227,7 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
   keeps, per task, s/n = solved/sampled counts (every count is multiplied by 0.5 when the head changes; a task without samples
   starts at its env's average). The prior's code is public (priors/ in the repo); its table values (s, n per task) are private.
   The gate reads a read-only snapshot of the table taken when the round opens; its sha256 is published with the round.
-- The draw (IRT information-weighted, live from the round after the 12K-cap round, 2026-11-02): inclusion probability pi_i proportional to sqrt(I_i),
+- The draw (IRT information-weighted, live since 2026-11-02): inclusion probability pi_i proportional to sqrt(I_i),
   I_i = a_i'^2 P_i (1 - P_i) = the Fisher information of task i at the head's ability theta_h under a 2PL item response
   model P_i(theta) = 1 / (1 + exp(-a_i (theta - b_i))). a_i (discrimination) and b_i (difficulty) are fitted (MAP) on every
   recorded checkpoint x gate-pool task pass/fail (first fit: 365 checkpoints, 3.06M rollouts; refit daily); theta_h is the
@@ -256,7 +259,7 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
   judged against: https://affine.io/gate.json entries[].thresholds.z_min. History: before E513 z > 1.00; E513 steps (0.50 from
   6 h, 0.25 from 12 h since the last GREEN); E514-E552 a linear drop max(0.25, 1.0 - 0.75 h / 12). Both are removed.
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks (affine_math and dapo alike) that hit the 12,288-token
-  cap (8,192 before the 12K switch), every task counted alike: RED if >= 33% of the candidate's baseline answers hit the
+  cap, every task counted alike: RED if >= 33% of the candidate's baseline answers hit the
   token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
@@ -308,8 +311,8 @@ v8.3.3m (from epoch 590) = v8.3.3l + the 12K cap: rollouts up to 16,384 tokens o
   drawn task counts with weight 1/pi, so the estimate covers the whole pool (affine_math + dapo). Correct samples on
   problems the head usually fails or caps out on are where the signal is.
 - Fewer capped replies: on the full affine_math pool (the performance eval), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
-  rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer 8,192-token caps, and the mean output went
-  from 2,043 to 1,769 tokens. Short correct rollouts (well under 6,000 tokens, where the overlong penalty starts) fit that.
+  rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer capped replies, and the mean output went
+  from 2,043 to 1,769 tokens. Short correct rollouts (well under the overlong window, where the penalty starts) fit that.
 - Sample from the head at top_k 20 / top_p 0.95 / temperature 1 (off-support tokens are dropped from the PG term).
 - The 1,000-rollout mixed files (e339-e341, e343) went RED, under the older sign step. No GREEN has used v2 train values yet.
 - Simulate first: miner/kit/simulate_turn.sh runs head -> rollouts -> batch -> the live step -> the live gate math on your GPUs

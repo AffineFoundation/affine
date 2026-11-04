@@ -118,15 +118,16 @@ miner/
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
   `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 12,287 tokens, `<|im_end|>` is appended (it ended).
   Exactly 12,288 tokens counts as capped (no EOS). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens.
-  **12,288 output tokens apply everywhere from epoch 590**: generation (sample with `max_tokens` 12,288; kit/sampler.py does),
-  batch files, training and the gate (see Sampling below). Before: 8,192 output / 12,288 context for batch files.
-  Transition: 8K-generated files still count; an output of exactly 8,192 tokens (no EOS) is still read as capped.
+  **12,288 output tokens apply everywhere**: generation (sample with `max_tokens` 12,288; kit/sampler.py does),
+  batch files, training and the gate (see Sampling below). The one source of every cap number is
+  [https://affine.io/caps.json](https://affine.io/caps.json) (repo `caps.json`); this README, llms.txt, mining.json, the kit,
+  the batch validator, the trainer and the gate are checked against it by `tools/caps/caps_check.py`.
 - **Caps.** At most 125 prompts and 1,000 rollouts (live value: mining.json `training.batch_cap`). Prompts past
   a cap are dropped whole, in file order.
 - **reward.** Any finite number, used as given. Advantage = reward − the mean reward of that prompt's
   rollouts (no std normalisation), so **a prompt with one rollout gets advantage = its reward** (+1 for a correct
   reward-1 rollout). The trainer adds an overlong penalty of −0.5·clip((len−10096)/(12288−10096), 0, 1) to the reward
-  (len incl. EOS; trainer v8.3.3m from epoch 590, the same 2,192-token ramp moved to the new cap; before: (len−6000)/(8192−6000)).
+  (len incl. EOS; window = caps.json `overlong_soft_start`..`overlong_max_tokens`).
 - Check a file the way the validator does: `python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`
   (`affine_batch.py check` does the structural part without a tokenizer).
 
@@ -191,7 +192,7 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
 - **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context, vLLM 0.32.0 on
-  8×B200. The cap is 12,288 from the first gate round opened after 2026-11-02 10:41 CR (before: 8,192 / 12,288); a round's
+  8×B200. A round's
   cap is `mining.json` → `training.promotion_gate.heldout.current_round.settings.max_tokens`, the same for head and candidates
   (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). One request per
   sample, seed = int(sha256(`<plan seed>:affine_gatepool:<probe index>:j`)[:12], 16); probe index = the math index, or
@@ -218,7 +219,7 @@ python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss5
   (0.003 before; the 2026-11-01 head-vs-itself test found no measurable run-to-run noise). z = Δ/SE.
 - **GREEN iff** Δ > 0 **and** z > 1 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
-  12,288-token cap (8,192 before the 12K switch), every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
+  12,288-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
   E507: affine_math cap-hit < 0.20).
 - **z bar: fixed at 1.00** (https://affine.io/gate.json `z_bar`, mining.json `heldout.z_bar`). The bar each turn was judged
   against: `entries[].thresholds.z_min`. History: from E553 the bar is fixed at z > 1; E513–E552 used a time-relaxed bar.
@@ -264,8 +265,8 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
   (hardest first, shortest correct sample).
 - **Fewer capped replies.** In the performance eval (full affine_math pool) the pass rate went from
   0.8448 (E0) to 0.9014 (E368), while the cap-hit rate fell from 0.1175 to 0.0736. About 4.4 of those 5.7 points
-  come from fewer replies hitting the 8,192-token cap, and the mean output length dropped from 2,043 to 1,769 tokens. Short correct
-  rollouts (well under 6,000 tokens, where the overlong penalty starts) are consistent with that.
+  come from fewer replies hitting the token cap, and the mean output length dropped from 2,043 to 1,769 tokens. Short correct
+  rollouts (well under the overlong window, where the overlong penalty starts) are consistent with that.
 - **Sample from the head** with top_k 20 / top_p 0.95 / temperature 1. Off-support tokens are dropped from the PG term.
 - The 1,000-rollout files with mixed outcomes (e339–e341, e343; z 0.70, −0.78, 0.44, −0.80) went RED, though those ran under the
   older sign step (before e354).

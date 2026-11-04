@@ -3,7 +3,8 @@
 * every repo consumer equals caps.json (the CI / pre-push gate);
 * rendering is the identity today (rendered == current bytes);
 * a hypothetical cap change renders to files that pass the check at the new cap and renders back to the exact bytes;
-* the loader derives the documented values.
+* the loader derives the documented values, and refuses history / legacy keys in caps.json;
+* the old-cap scan finds no old cap value in the repo and does catch a planted one.
 """
 import copy, json, sys
 from pathlib import Path
@@ -21,7 +22,7 @@ def repo_cons():
 
 
 def other_caps(C, out=16384):
-    raw = json.loads((ROOT / 'caps.json').read_text()); raw['max_output_tokens'] = out; raw['legacy_capped_output_tokens'] = C['max_output_tokens']
+    raw = json.loads((ROOT / 'caps.json').read_text()); raw['max_output_tokens'] = out
     return L.load_caps()[1].derive(raw)
 
 
@@ -30,7 +31,28 @@ def test_loader_derives():
     assert C['max_context_tokens'] == C['max_output_tokens'] + C['prompt_headroom_tokens'] == C['max_model_len']
     assert C['overlong_window'] == [C['max_output_tokens'] - C['overlong_ramp_tokens'], C['max_output_tokens']]
     assert C['last_eos_output_tokens'] == C['max_output_tokens'] - 1
-    assert m.at_epoch(0)['max_output_tokens'] <= C['max_output_tokens']
+    raw = json.loads((ROOT / 'caps.json').read_text())
+    for bad in ('history', 'legacy_capped_output_tokens', 'signed_manifest'):
+        try: m.derive(dict(raw, **{bad: 1})); raise AssertionError('caps.json accepted %s' % bad)
+        except ValueError: pass
+
+
+def test_no_old_cap_in_repo():
+    import caps_check as CC
+    rows = CC.old_cap_scan({'repo'}, ROOT)
+    assert rows and not [r for r in rows if r['status'] in ('FAIL', 'ERROR')], [r for r in rows if r['status'] in ('FAIL', 'ERROR')]
+
+
+def test_old_cap_scan_catches_a_planted_value():
+    old = 8 * 1024
+    for name, text in (('llms.txt', 'Exactly %d tokens = cut at the cap' % old), ('llms.txt', 'cap: {:,} output tokens'.format(old)),
+                       ('mining.json', json.dumps({'caps': {'max_output_tokens': old}})), ('x.py', 'LEGACY_CAP = 1'),
+                       ('mining.json', json.dumps({'training': {'caps': {'history': [], 'legacy_capped_output_tokens': 1}}})),
+                       ('serve.sh', '--max-model-len %d' % (12 * 1024)), ('README.md', 'files generated at %dK still count' % (old // 1024))):
+        fails, _ = L.old_cap_hits(name, text, CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+        assert fails, (name, text)
+    fails, _ = L.old_cap_hits('mining.json', json.dumps({'k1': {'served': old, 'max_output_tokens': 12 * 1024}}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert not fails, 'a count is not a cap'
 
 
 def test_repo_consumers_match_caps():

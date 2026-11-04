@@ -16,9 +16,9 @@ Only the format is checked. Rewards are used exactly as given (no regrade). Rule
     add_special_tokens=False). Neither may contain a chat control token (<|im_start|>, <|im_end|>, <|endoftext|>).
   * EOS: an output of <= MAX_OUTPUT-1 tokens gets <|im_end|> appended (stop "eos"); exactly MAX_OUTPUT tokens is
     a length-capped rollout (stop "max_tokens", no EOS); longer is invalid. prompt + output <= MAX_CONTEXT tokens.
-  * 12K everywhere (RA/20261102-12k-everywhere, Jacob 2026-11-02 18:48 CR): MAX_OUTPUT 12288 (was 8192), MAX_CONTEXT 16384 (was 12288).
-    Transition: an output of exactly LEGACY_CAP (8192) tokens is still length-capped (an 8K-generated file queued before the switch);
-    every file valid before stays valid with the same EOS/capped meaning.
+  * MAX_OUTPUT / MAX_CONTEXT = caps.json max_output_tokens / max_context_tokens (https://affine.io/caps.json, the one cap source;
+    tools/caps/caps_check.py fails if these numbers differ from it). Every length below MAX_OUTPUT is an ordinary EOS-terminated
+    rollout; only exactly MAX_OUTPUT is capped.
 
 Format "affine-batch-v2" (Jacob 2026-10-31 pt902u, RA/20261031-ff-train-params) = v1 + ONE optional top-level key
     "train": {"lr": <number>, "kl": <number>}      (either field may be omitted; an omitted field takes its default)
@@ -77,9 +77,8 @@ def knob_value(k, v):
 
 TRAIN_KEYS = ('lr', 'kl', 'step_mult') + tuple(KNOB_SPEC)
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_OUTPUT = 12288         # output tokens incl. the appended EOS (12K everywhere, 2026-11-02; was 8192)
-MAX_CONTEXT = 16384        # prompt + output tokens (= the gate's 16,384 context; was 12288)
-LEGACY_CAP = 8192          # exactly 8192 output tokens = length-capped too (8K-generated files queued before the switch)
+MAX_OUTPUT = 12288         # output tokens incl. the appended EOS = caps.json max_output_tokens
+MAX_CONTEXT = 16384        # prompt + output tokens = caps.json max_context_tokens
 EOS = 248046               # <|im_end|>
 CONTROL = frozenset({248044, 248045, 248046})   # <|endoftext|> <|im_start|> <|im_end|>
 
@@ -227,7 +226,7 @@ def tokenize(tok, groups):
             ot = list(encoded[k]); k += 1
             need(not CONTROL & set(ot), 'groups[%d].rollouts[%d].output contains a chat control token' % (i, j))
             need(len(ot) <= MAX_OUTPUT, 'groups[%d].rollouts[%d].output is %d tokens > %d' % (i, j, len(ot), MAX_OUTPUT))
-            stop = 'max_tokens' if len(ot) in (MAX_OUTPUT, LEGACY_CAP) else 'eos'
+            stop = 'max_tokens' if len(ot) == MAX_OUTPUT else 'eos'
             if stop == 'eos':
                 ot.append(EOS)
             need(len(pt) + len(ot) <= MAX_CONTEXT, 'groups[%d].rollouts[%d]: prompt+output %d tokens > %d' % (i, j, len(pt) + len(ot), MAX_CONTEXT))

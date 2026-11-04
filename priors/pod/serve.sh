@@ -12,7 +12,7 @@ stop() {
 }
 if [ "${1:-}" = "--stop" ]; then stop; echo stopped; exit 0; fi
 CK=$1; GMU=${2:-0.90}; M=$D/ckpt/$CK
-# optional overrides (e.g. MAX_MODEL_LEN=16384 when the gate's max output moves 8192 -> 12288): /opt/prior/serve/serve.env
+# optional overrides (MAX_MODEL_LEN = caps.json max_model_len, written by tools/caps/caps_apply.py): /opt/prior/serve/serve.env
 [ -f $S/serve.env ] && . $S/serve.env
 MML=${MAX_MODEL_LEN:-16384}
 [ -f $M/.verified ] || { echo "ckpt $CK not verified"; exit 3; }

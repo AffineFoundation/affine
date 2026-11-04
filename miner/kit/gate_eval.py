@@ -18,7 +18,7 @@ What the live gate does each round (one round per head; settings in validator/ga
      SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = sigma_run_floor = 0 (no floor; 0.003 before 2026-11-03);
      GREEN iff Delta > 0, z > 1.00, cap-hit < 0.33 (task-level: capped / all candidate rollouts on the scored tasks, affine_math
      and dapo alike), >= 100 tasks scored (>= 95 % of the draw).
-Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the gate's task cap from 2026-11-02; 8,192 before), context 16,384;
+Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the gate's task cap = caps.json max_output_tokens), context 16,384;
 grading = the probe's grader (kit/grade.py), the same for both envs. Request seed = int(sha256('<plan seed>:affine_gatepool:<probe
 index>:j')[:12], 16), probe index = math index, or 7496 + j for dapo:j.
 Your local GPUs/vLLM build are not the gate's (vLLM 0.32.0 on 8 x B200), so expect differences of a few tenths of a point.
@@ -34,7 +34,7 @@ GATE_POOL = kitpath.DATA / 'gate-pool-v1.jsonl'
 GATE_POOL_SHA256 = '9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e'
 
 
-GATE_MAX_TOKENS = 12288   # the gate's per-task generation cap (Jacob 2026-11-02; 8192 before): serve with --max-model-len 16384
+GATE_MAX_TOKENS = 12288   # the gate's per-task generation cap = caps.json max_output_tokens: serve with --max-model-len 16384
 
 
 def gate_pool():

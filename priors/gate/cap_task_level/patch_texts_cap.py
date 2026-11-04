@@ -4,7 +4,7 @@ import os, sys
 OLD = ("- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND estimated cap-hit on affine_math < 0.20 AND >= 100 drawn tasks scored\n"
        "  (and >= 95 % of the draw).** With N = 500")
 NEW = ("- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**\n"
-       "  Cap-hit (task-level, from E{E}): the share of all the candidate's answers on the scored baseline tasks that hit the 8,192-token\n"
+       "  Cap-hit (task-level, from E{E}): the share of all the candidate's answers on the scored baseline tasks that hit the token\n"
        "  cap, every task counted alike: RED if >= 33% of the candidate's baseline answers hit the token cap (before E{E}: affine_math\n"
        "  cap-hit < 0.20). With N = 500")
 mode, e = sys.argv[1], sys.argv[2]; new = NEW.replace('{E}', e)

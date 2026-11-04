@@ -15,7 +15,7 @@
 - Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
   Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
   block and nothing after it." (Your batch prompt is a single user message, section 3.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap; 8,192 before 2026-11-02), 16,384 context. It runs on vLLM 0.32.0 on 8 x B200
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap, https://affine.io/caps.json), 16,384 context. It runs on vLLM 0.32.0 on 8 x B200
   (`--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
   On the probe the pool is one task list: probe index = math index (0-7495), or 7496 + j for dapo:j.
 - Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (12,288 tokens, no EOS) is unresolved.

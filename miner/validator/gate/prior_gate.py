@@ -21,6 +21,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import baseline_v1 as BV
 import heldout as HO
 
+def _caps():   # THE token caps (caps.json next to caps.py in the validator repo; https://affine.io/caps.json)
+    import importlib.util
+    for p in (os.environ.get('SN120_CAPS_PY'), str(Path.home() / 'subnet120-rewrite/caps.py'),
+              *(str(q / 'caps.py') for q in Path(__file__).resolve().parents[:4])):
+        if p and Path(p).exists():
+            spec = importlib.util.spec_from_file_location('sn120_caps', p); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+            return m.load()
+    raise RuntimeError('caps.py not found (set SN120_CAPS_PY)')
+
 PASS = object()
 RA = Path('/home/const/subnet120-rewrite/state/root-audits')
 PATHS = dict(table=str(RA / '20261101-prior-table/private/table/prior_table.private.sqlite'),
@@ -38,8 +47,8 @@ def _crs(t, fmt='%Y-%m-%d %H:%M:%S CR'):
 
 
 def _ctx(pv):
-    """The round's prompt + output context: max_tokens + 4096 (caps.json prompt_headroom_tokens) for 12K rounds, 12288 before."""
-    return _mt(pv) + 4096 if _mt(pv) > 8192 else 12288
+    """The round's prompt + output context: max_tokens + caps.json prompt_headroom_tokens."""
+    return _mt(pv) + int(_caps()['prompt_headroom_tokens'])
 
 
 def _baseline_settings(rs, pv):
@@ -52,10 +61,10 @@ def _baseline_settings(rs, pv):
 
 
 def _mt(pv):
-    """The round's task cap (generation max_tokens), frozen into cfg at round open: 8192 unless the flag's prior_v1.max_tokens says
-    otherwise (12288 from the first round opened after the 12K switch, Jacob pt1084u 2026-11-02). Head baseline and every candidate of
-    a round use the same value; process_epoch re-baselines if a cached baseline was made at another cap."""
-    return int(pv.get('max_tokens') or 8192)
+    """The round's task cap (generation max_tokens), frozen into cfg at round open: the flag's prior_v1.max_tokens (= caps.json
+    max_output_tokens, set by tools/caps/caps_apply.py), else caps.json max_output_tokens. Head baseline and every candidate of a round
+    use the same value; process_epoch re-baselines if a cached baseline was made at another cap."""
+    return int(pv.get('max_tokens') or _caps()['max_output_tokens'])
 
 
 def z_bar_for(pv):
@@ -136,7 +145,7 @@ RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks fro
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = the round\'s sigma_run_floor (settings.sigma_run_floor): 0 = no floor, SE = sqrt(sampling + rollout variance), in rounds opened after the 2026-11-03 change (0.003 before; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 12,288 tokens from the first round opened after the 12K switch of 2026-11-02, 8,192 before): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 12,288 tokens = caps.json max_output_tokens, https://affine.io/caps.json): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
@@ -394,9 +403,8 @@ def ensure_baseline(S, e, r, f, per_turn: bool):
     btl = S.rj(btp) or dict(candidate=H, head=H, files=S.ckpt_files(H), start=now, start_cr=S.cr(now), blocks={}, last_progress=now)
     S.busy(True, epoch=e, candidate=H, stage='prior-baseline', round=rid)
     f2 = dict(f, env=pv['probe_env'])
-    if _mt(pv) > 8192:   # 12K round: make sure the probe pod context holds prompt + max_tokens before serving H
-        cx = S.ensure_pod_ctx(_mt(pv), rid)
-        if cx != 'ready': S.wj(btp, btl); return 'baseline-' + cx
+    cx = S.ensure_pod_ctx(_mt(pv), rid)   # make sure the probe pod context holds prompt + max_tokens before serving H
+    if cx != 'ready': S.wj(btp, btl); return 'baseline-' + cx
     stage = S.fetch_and_serve(H, f2, btl, None)
     if stage != 'ready': S.wj(btp, btl); return 'baseline-' + stage
     st = S.podctl('status'); nb = int(pv['head_blocks']); kb = int(pv['head_rollouts']) // nb
@@ -493,9 +501,8 @@ def process_epoch(S, e, s, f):
     f2 = dict(f, env=pv['probe_env'])
     kp = dict(k=int(pv['k_cand']), seeded=True); pseed = BV.cand_seed(r['seed'], e)
     if not tl.get('run_done'):
-        if _mt(pv) > 8192:
-            cx = S.ensure_pod_ctx(_mt(pv), rid)
-            if cx != 'ready': S.wj(tlp, tl); return cx + ('(early)' if early else '')
+        cx = S.ensure_pod_ctx(_mt(pv), rid)   # the probe pod context holds prompt + max_tokens
+        if cx != 'ready': S.wj(tlp, tl); return cx + ('(early)' if early else '')
         stage = S.fetch_and_serve(C, f2, tl, e); S.wj(tlp, tl)
         if stage != 'ready': return stage + ('(early)' if early else '')
     res = S.run_candidate(e, C, list(r['indices']), s, f2, tl, kp=kp, pseed=pseed, mt=_mt(pv)); S.wj(tlp, tl)
@@ -504,7 +511,7 @@ def process_epoch(S, e, s, f):
     if early: S.wj(tlp, tl); S.busy(False); return 'staged-await-result'
     bfn = R.d(rid) / ('BASELINE%s.private.json' % (('-e%d' % e) if per_turn else ''))
     b = S.rj(bfn) or {}
-    if b and int(b.get('max_tokens') or 8192) != _mt(pv):   # never mix task caps within a round
+    if b and int(b.get('max_tokens') or 0) != _mt(pv):   # never mix task caps within a round (a baseline without a cap = re-baseline)
         os.replace(bfn, R.d(rid) / ('BASELINE.capmix-%d.private.json' % int(time.time())))
         S.log(event='prior_baseline_cap_mismatch', round=rid, epoch=e, baseline=b.get('max_tokens'), round_cap=_mt(pv)); return 'prior-baseline-cap-mismatch'
     if not per_turn and S.pod_fingerprint() != b.get('fingerprint'):

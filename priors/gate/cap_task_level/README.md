@@ -2,7 +2,7 @@
 
 Jacob 2026-11-01 19:42-19:43 CR: one flat cap rule over the whole baseline, no env-specific rules.
 
-- **Rule:** RED if >= 33% of the candidate's baseline answers hit the token cap (8,192 tokens, no EOS).
+- **Rule:** RED if >= 33% of the candidate's baseline answers hit the token cap (the round's max_tokens = caps.json max_output_tokens, no EOS).
   cap-hit = capped / all candidate rollouts on the scored baseline tasks, every task counted alike (`CAP_HIT_MAX = 0.33`
   in `priors/baseline_v1.py`, `heldout.prior_v1.cap_max` in the gate flag). It replaces the affine_math-only rule
   (Hajek capped share on affine_math < 0.20), which applied before E507.

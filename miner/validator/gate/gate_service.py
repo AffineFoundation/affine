@@ -564,7 +564,7 @@ def run_candidate(e, C, tasks, seed, f, tl, kp=None, side='C', pseed=None, mt=No
             pseed = plan_seed(seed, kp, C)   # seed = the sample dict here: H and C share P (common random numbers)
         plan = dict(run_name=name, checkpoint_id=C, seed=pseed,
                     concurrency=4096, grade_workers=160, resume=False, bandit_topk=False, concurrency_per_replica=512,
-                    envs=[dict(env_id=f['env'], indices=list(tasks), k=(1 if kp is None else kp['k']), max_tokens=int(mt or 8192))])   # task cap: the round's max_tokens (12K switch 2026-11-02)
+                    envs=[dict(env_id=f['env'], indices=list(tasks), k=(1 if kp is None else kp['k']), max_tokens=int(mt or _caps()['max_output_tokens']))])   # task cap: the round's max_tokens (= caps.json)
         podctl('start-run', C, stdin=json.dumps(plan)); tl['run_start'] = time.time(); tl['plan_seed'] = pseed
         log(event='gate_run_started', epoch=e, candidate=C[:12], tasks=len(tasks), side=side, k=(1 if kp is None else kp['k']), seeded=(kp or {}).get('seeded'))
     elif not r.get('running') and time.time() - tl.get('run_start', 0) > 60:
@@ -610,13 +610,23 @@ def ensure_heldout_sample(e, H, f, d, sp):
     return s
 
 
+def _caps():   # THE token caps (caps.json next to caps.py in the validator repo; https://affine.io/caps.json)
+    import importlib.util
+    for p in (os.environ.get('SN120_CAPS_PY'), str(Path.home() / 'subnet120-rewrite/caps.py'),
+              *(str(q / 'caps.py') for q in Path(__file__).resolve().parents[:4])):
+        if p and Path(p).exists():
+            spec = importlib.util.spec_from_file_location('sn120_caps', p); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+            return m.load()
+    raise RuntimeError('caps.py not found (set SN120_CAPS_PY)')
+
+
 CAP_SWITCH = Path('/home/const/subnet120-rewrite/state/root-audits/20261102-task-cap-12k/SWITCH.json')
 CAP_PROMPT_HEADROOM = 4096   # gate-pool prompts (system mandate + problem) are < 2k tokens; context = max_tokens + 4096
 
 
 def ensure_pod_ctx(mt, rid=None):
-    """Task cap 12K (Jacob pt1084u, 2026-11-02): the probe pod must hold prompt + max_tokens. Called only by a round whose frozen
-    max_tokens > 8192, before its head baseline / candidate is served, so an in-flight 8K round is never touched. If the pod's
+    """The probe pod must hold prompt + max_tokens (caps.json). Called by every round before its head baseline / candidate is
+    served (a no-op read when the pod is already at the cap). If the pod's
     manifest harness context or serve.sh --max-model-len is below max_tokens + 4096: back both up (*.bak-pre-cap12k-<ts>), raise
     them, stop the replicas (the next fetch_and_serve cold-serves with the new length) and write CAP_SWITCH (read by the env
     probe and the perf eval). If the files are right but the running replicas were started with a shorter length: stop them.
@@ -664,7 +674,7 @@ def round_settings():
 
 def _plan(name, ck, pseed, f, indices, k, grade_workers=160):
     return dict(run_name=name, checkpoint_id=ck, seed=pseed, concurrency=4096, grade_workers=int(grade_workers), resume=False, bandit_topk=False,
-                concurrency_per_replica=512, envs=[dict(env_id=f['env'], indices=list(indices), k=int(k), max_tokens=8192)])
+                concurrency_per_replica=512, envs=[dict(env_id=f['env'], indices=list(indices), k=int(k), max_tokens=int(_caps()['max_output_tokens']))])
 
 
 def ensure_round_baseline(e, r, f):

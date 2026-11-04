@@ -5,7 +5,10 @@
   python3 tools/caps/caps_check.py --scope host,pods       # validator host: live files + live pods over ssh (read-only)
   python3 tools/caps/caps_check.py --scope public          # affine.io + GitHub copies
   options: --json OUT (machine-readable result; '-' = stdout, table to stderr), --quiet (only problems), --caps PATH
-Exit 0 = every live/derived/docs value equals caps.json; 1 = a mismatch (FAIL); 2 = could not check something required.
+Exit 0 = every live/derived/docs value equals caps.json and no old cap value appears anywhere; 1 = a mismatch or an old cap
+value (FAIL); 2 = could not check something required.
+Old-cap scan (consumers.OLD_CAP_*): every scanned file of the chosen scopes must hold no old token-cap value / legacy field /
+transition wording; reviewed non-cap hits (OLD_CAP_ALLOW) are listed as INFO.
 Consumers and classes: tools/caps/consumers.py. Pods: the current pod of each roles.json role (ops/pods/replace_pod.py
 current_ref); excluded pods (roles.json _excluded) are never touched; commands are read-only (cat / grep / curl).
 """
@@ -67,6 +70,34 @@ def pod_run(role, cmd):
     return _PODS[role].run(cmd, timeout=90, check=False)
 
 
+def old_cap_scan(scopes, root):
+    """One row per scanned file: FAIL on any old cap value / legacy field / transition wording not in OLD_CAP_ALLOW."""
+    import glob
+    rows = []
+    for scope in ('repo', 'host', 'public'):
+        if scope not in scopes: continue
+        if scope == 'repo':
+            files = sorted({f for g in CS.OLD_CAP_SCAN['repo'] for f in glob.glob(str(root / g)) if os.path.isfile(f)})
+            todo = [(os.path.relpath(f, root), (lambda f=f: Path(f).read_text(errors='replace'))) for f in files]
+        elif scope == 'host':
+            todo = [(h, (lambda h=h: Path(h).read_text(errors='replace'))) for h in CS.OLD_CAP_SCAN['host']]
+        else:
+            todo = [(u, (lambda u=u: fetch(u))) for u in CS.OLD_CAP_SCAN['public']]
+        for name, get in todo:
+            row = dict(id='no_old_cap', cls='live', scope=scope, where=name)
+            try: text = get()
+            except Exception as e: rows.append(dict(row, status='ERROR', detail='%s: %s' % (type(e).__name__, str(e)[:200]))); continue
+            key = name.split('?')[0]
+            fails, infos = L.old_cap_hits(key, text, CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+            if fails:
+                rows.append(dict(row, status='FAIL', detail='old cap value(s): %s' % '; '.join('%s: %s (%s)' % h for h in fails[:4])))
+            elif infos:
+                rows.append(dict(row, status='INFO', detail='reviewed non-cap: %s' % '; '.join('%s (%s)' % (h[0], h[2][:90]) for h in infos[:3])))
+            else:
+                rows.append(dict(row, status='OK', detail='no old cap value'))
+    return rows
+
+
 def run(scopes, root, C, quiet=False):
     rows = []
     active = ACTIVE.exists()
@@ -85,9 +116,10 @@ def run(scopes, root, C, quiet=False):
                 rows.append(dict(row, status='SKIP', detail='not serving')); continue
             res = L.check_text(con, text, C)
             bad = [r for r in res if not r['ok']]
-            st = 'OK' if not bad else ('INFO' if con['cls'] == 'signed' else 'FAIL')
+            st = 'OK' if not bad else 'FAIL'
             rows.append(dict(row, status=st, results=res,
                              detail='; '.join('%s=%s found %s (%d)' % (r['key'], r['expected'], ','.join(r['found']) or 'nothing', r['n']) for r in (bad or res))))
+    rows += old_cap_scan(scopes, root)
     if 'host' in scopes:
         for nl in CS.NO_LITERALS:
             row = dict(id=nl['id'], cls='live', scope='host', where=nl['host'])
@@ -116,7 +148,7 @@ def run(scopes, root, C, quiet=False):
     if 'public' in scopes:
         try:
             pub = json.loads(fetch('https://raw.githubusercontent.com/AffineFoundation/affine/main/caps.json'))
-            same = all(pub.get(k) == C[k] for k in ('max_output_tokens', 'prompt_headroom_tokens', 'overlong_ramp_tokens', 'legacy_capped_output_tokens'))
+            same = pub == L.stored(C)
             rows.append(dict(id='caps_json_github', cls='derived', scope='public', where='github main caps.json', status='OK' if same else 'FAIL',
                              detail='max_output_tokens %s' % pub.get('max_output_tokens')))
         except Exception as e:
@@ -137,9 +169,9 @@ def main():
     for r in rows:
         if a.quiet and r['status'] in ('OK', 'SKIP'): continue
         print('%-5s %-7s %-6s %-26s %s | %s' % (r['status'], r['cls'], r['scope'], r['id'], r['where'][-70:], r['detail'][:300]), file=out)
-    head = 'caps-check %s: max_output %d / context %d / overlong %d..%d / legacy %d -- %s' % (
+    head = 'caps-check %s: max_output %d / context %d / overlong %d..%d (caps.json, %s) -- %s' % (
         ','.join(sorted(scopes)), C['max_output_tokens'], C['max_context_tokens'], C['overlong_soft_start'], C['overlong_max_tokens'],
-        C['legacy_capped_output_tokens'], ' '.join('%s %d' % kv for kv in n.items()))
+        L.load_caps()[1].URL, ' '.join('%s %d' % kv for kv in n.items()))
     print(head, file=out)
     if a.json:
         (sys.stdout.write if a.json == '-' else Path(a.json).write_text)(json.dumps(dict(version='sn120-caps-check-v1', at=time.time(), at_cr=time.strftime('%Y-%m-%d %H:%M:%S CR', time.gmtime(time.time() - 21600)),

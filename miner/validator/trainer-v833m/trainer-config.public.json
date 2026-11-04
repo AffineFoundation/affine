@@ -62,7 +62,7 @@
   "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
  },
  "host_version": "affine-mimo-trainer-host-v833",
- "host_version_note": "v8.3.3m (from epoch 590, RA/20261102-12k-everywhere) = v8.3.3l + 12K everywhere: host prompt+output limit max(signed runtime 12288, 16384) in v8211_batched / v83_dp / v83_fast_kernels, and free-file rollouts use the overlong window free_file_overlong below instead of the signed 6000/8192. trainer_config is the signed job document and is unchanged.",
+ "host_version_note": "v8.3.3m = v8.3.3l + the caps.json token caps (https://affine.io/caps.json): host prompt+output limit 16384 (= max_context_tokens) in v8211_batched / v83_dp / v83_fast_kernels, and free-file rollouts use the overlong window free_file_overlong below (caps.json overlong_soft_start..overlong_max_tokens). trainer_config is the signed job document; its own overlong_* fields are not used for free-file turns (free_file_overlong replaces them).",
  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
  "runtime_versions": {
   "toploc": "0.1.6",

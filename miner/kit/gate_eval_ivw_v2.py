@@ -15,7 +15,7 @@ Same procedure as the live gate (validator/gate/heldout.py, scoring ivw-v2; gate
      heldout.sigma_run_pooled, also in https://affine.io/gate/heldout/current.json sigma_run.value), old policy 'per-round' =
      max(floor, run_sigma of your 3 head blocks); GREEN iff gain > 0 and z > 1.0 and estimated whole-set cap-hit < 0.20 and >= 100 kept.
   Defaults (n, k_cand, sigma_run policy) come from validator/gate/gate-config.public.json = the live flag.
-Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 8192 output tokens;
+Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, the caps.json max_output_tokens (sampler.H);
 grading = the probe's grader (kit/grade.py). Request seed = int(sha256('P:affine_math:task:j')[:12], 16).
 Your local GPUs/vLLM build are not the gate's (vLLM 0.32.0 on 8 x B200), so expect run-to-run differences of a few pp.
 """

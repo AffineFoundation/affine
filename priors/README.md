@@ -14,7 +14,7 @@ prior pod only. Never commit or publish them.
 
 | file | runs on | what |
 |---|---|---|
-| `pod/serve.sh` | prior pod | one vLLM 0.32 replica per GPU (ports 8100+g), same flags as the live probe `serve.sh` (bf16, max-model-len 16384 via serve.env since the 12K switch, prefix caching, max-num-seqs 512, gmu 0.90); kills only PIDs it recorded |
+| `pod/serve.sh` | prior pod | one vLLM 0.32 replica per GPU (ports 8100+g), same flags as the live probe `serve.sh` (bf16, max-model-len 16384 via serve.env = caps.json max_model_len, prefix caching, max-num-seqs 512, gmu 0.90); kills only PIDs it recorded |
 | `worker.py` | prior pod | continuous sampler: pass after pass over the active set, `k` (4) rollouts per task per pass, private shuffle per pass, appends one line per task to `grades.jsonl` |
 | `grader.py`, `allan_src.py` | prior pod | the live affine_math grade: native final-channel projection + math_verify, then Allan's lenient fixes (`allan-lenient-v1-786cdb9`, byte-identical to the live probe worker's `_ALLAN_SRC`, sha256 pinned); capped replies never count |
 | `tasks.py` | both | active-set loader; ids are env-prefixed (`math:5442`, `dapo:123`); both envs use the affine_math system prompt + bare problem |
@@ -27,7 +27,7 @@ prior pod only. Never commit or publish them.
 | `baseline_v1.py`, `gate/` | host | the prior-v1 gate baseline (staged, not live): see `gate/README.md` |
 
 Sampling settings = the live probe harness for affine_math: temperature 1.0, top_p 0.95, top_k 20, thinking on, checkpoint
-`chat_template.jinja`, max output 12288, context 16384 (= the gate task cap; 8192 / 12288 before the 2026-11-02 12K switch; pod: serve.env MAX_MODEL_LEN=16384), EOS ids 248046/248044, one request per sample with its own seed.
+`chat_template.jinja`, max output 12288, context 16384 (= the gate task cap from https://affine.io/caps.json; pod: serve.env MAX_MODEL_LEN=16384), EOS ids 248046/248044, one request per sample with its own seed.
 
 ## Prior table
 

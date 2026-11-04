@@ -8,7 +8,7 @@
 Exit 0 = done / nothing to do; 1 = refused (see message); 2 = verification failed after apply (REVERT.sh printed).
 
 --apply, in order:
-  1. render every host consumer (consumers.py, render=True/'json') and every pod file (render='pod'); stop if the
+  1. render every host consumer (consumers.py, render=True/'json'; 'copy' = https://affine.io/caps.json) and every pod file (render='pod'); stop if the
      root-signed trainer constants would change (render='sign'): that needs a signed trainer release first (--stage-trainer
      writes the patched files to state/caps/stage/trainer/ for the signing step) - nothing is written in that case;
   2. wait (up to --wait s) for an idle decision gap: lifecycle active, no open training job, every finished turn decided,
@@ -42,9 +42,11 @@ def host_targets(C):
     """-> [(consumer, path, old, new)] for every renderable host file."""
     out = []
     for con in CS.CONSUMERS:
-        if con.get('render') not in (True, 'json', 'sign') or not con.get('host'): continue
+        if con.get('render') not in (True, 'json', 'sign', 'copy') or not con.get('host'): continue
         for h in ([con['host']] if isinstance(con['host'], str) else con['host']):
-            old = Path(h).read_text(); out.append((con, h, old, L.render_text(con, old, C)))
+            old = Path(h).read_text() if Path(h).exists() else ''
+            new = (L.ROOT / 'caps.json').read_text() if con['render'] == 'copy' else L.render_text(con, old, C)
+            out.append((con, h, old, new))
     return out
 
 

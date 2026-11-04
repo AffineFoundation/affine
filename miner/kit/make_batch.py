@@ -9,7 +9,7 @@
 --select mixed:  prompts with 0 < c < k, up to --per-prompt rollouts each, reward 1.0 correct / 0.0 otherwise.
 --select all:    every prompt, up to --per-prompt rollouts each, reward 1.0 / 0.0.
 --max-tokens:    skip rollouts longer than this (default 12288 = the cap; the trainer subtracts 0.5*clip((len-10096)/2192, 0, 1)
-                 from longer ones, len incl. EOS; trainer v8.3.3m from epoch 590, before: (len-6000)/2192 at an 8192 cap).
+                 from longer ones, len incl. EOS; all numbers from https://affine.io/caps.json).
 --lr/--kl:       write affine-batch-v2 with a train block (lr 1.25e-7..1e-6, kl 0.005..0.1); omit both for v1 defaults.
 Observations, not rules: see miner/README.md "How to win".
 """

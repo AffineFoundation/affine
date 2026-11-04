@@ -5,7 +5,7 @@ Start a server per GPU (or one with tensor parallel) using the gate's flags (val
 """
 import asyncio, hashlib, random
 EOS = (248046, 248044)
-H = dict(temperature=1.0, top_p=0.95, top_k=20, max_output_tokens=12288, max_context_tokens=16384)   # 12K everywhere from epoch 590 (was 8192 / 12288)
+H = dict(temperature=1.0, top_p=0.95, top_k=20, max_output_tokens=12288, max_context_tokens=16384)   # = https://affine.io/caps.json (caps_check verifies)
 
 
 def request_seed(plan_seed, env, task, j):
@@ -14,7 +14,7 @@ def request_seed(plan_seed, env, task, j):
 
 
 async def sample_all(urls, jobs, *, model='m', concurrency=512, max_tokens=None):
-    """max_tokens: None = H (12288: the batch-file, training and gate cap since epoch 590; 8192 before)."""
+    """max_tokens: None = H (12288 = caps.json max_output_tokens: the generation, batch-file, training and gate cap)."""
     cap = int(max_tokens or H['max_output_tokens']); ctx = max(H['max_context_tokens'], cap + 4096) if cap > H['max_output_tokens'] else H['max_context_tokens']
     """jobs: [(key, prompt_ids, seed)] -> {key: (out_ids_with_eos, stop)}; stop is 'eos' or 'budget' (hit 12288 / context)."""
     import httpx

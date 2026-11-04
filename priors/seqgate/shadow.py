@@ -189,7 +189,7 @@ def full_pass(S, c):
     act = S.get('active')
     if act:   # finish the turn in flight first (its own baseline), even if the live head/round moved on meanwhile
         return turn_pass(S, c, P, X, S['baselines'][act['key']], act['key'])
-    H = X['r']['head']; mt = int(X['pv'].get('max_tokens') or 8192); env = X['pv']['probe_env']
+    H = X['r']['head']; mt = int(X['pv']['max_tokens'])   # the round's task cap (= caps.json max_output_tokens); env = X['pv']['probe_env']
     bkey = '%s-%d' % (H[:12], mt); B = S.setdefault('baselines', {}).get(bkey)
     if not B or not B.get('done'):
         if not B:
