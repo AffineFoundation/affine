@@ -214,13 +214,15 @@ OLD_CAP_SCAN = dict(
           'miner/kit/*.py', 'miner/kit/*.sh', 'miner/kit/*.md', 'miner/validator/batch/*.py', 'miner/validator/gate/*.py',
           'miner/validator/gate/*.json', 'miner/validator/probe/*', 'miner/validator/trainer-v833m/trainer-config.public.json',
           'priors/*.py', 'priors/*.md', 'priors/gate/*.py', 'priors/gate/*.md', 'priors/pod/*', 'priors/irt/*.py',
-          'bench/README.md', 'bench/config/*.toml'],
+          'bench/README.md', 'bench/config/*.toml',
+          'subnet/complete_group_harness.py', 'subnet/mimo_parallel_mining.py', 'tests/test_mimo_parallel_mining.py'],
     host=[REPO + '/caps.json', REPO + '/caps.py', WEB + '/caps.json', WEB + '/llms.txt', WEB + '/mining.json', WEB + '/training.json', WEB + '/gate.json', WEB + '/site-metrics.json',
           WEB + '/site-metrics.js', WEB + '/ff/affine_batch.py', WEB + '/gate/heldout/prior_gate.py', WEB + '/gate/heldout/baseline_v1.py',
           FF + '/ff_format.py', FF + '/affine_batch.py', FF + '/FF-PUBLIC.json', PG + '/code/prior_gate.py', PG + '/code/gate_service.py',
           PG + '/code/baseline_v1.py', PG + '/code/training_params.py', REPO + '/dashboard/site_metrics.py',
           RA + '/20261022-env-probe/code/config.json', REPO + '/priors/pod/sampler.config.json', REPO + '/priors/pod/serve.sh',
-          REPO + '/priors/README.md', EPOCHS + '/*/PLAN.json'],   # a '*' entry = the newest matching file
+          REPO + '/priors/README.md', EPOCHS + '/*/PLAN.json',
+          REPO + '/subnet/complete_group_harness.py', REPO + '/subnet/mimo_parallel_mining.py'],   # a '*' entry = the newest matching file
     public=['https://affine.io/llms.txt', 'https://affine.io/mining.json', 'https://affine.io/training.json', 'https://affine.io/caps.json',
             'https://affine.io/gate.json', 'https://affine.io/site-metrics.json'],
 )
@@ -237,4 +239,12 @@ OLD_CAP_ALLOW = [
     # mimo_runtime.max_context_tokens.
     ('*/PLAN.json', r'^\.manifest\.(mimo_release_policy\.payload\.scope\.immutable_manifest\.)?(environments\[\d+\]\.(harness\.max_(output|context)_tokens|spec\.max_output_tokens)|group_transport_policy\.max_context_tokens|mimo_runtime\.max_context_tokens) = ',
      'signed MiMo release policy harness (immutable until the source release in SCOPE-mimo-removal.md; not used by free-file turns)'),
+    # NARROW, TEMPORARY exemption (same decision, same release): the signed MiMo complete-group source bounds its own harness.
+    # Exactly these lines are exempt; any other old cap in these files FAILs. Remove with the source release in SCOPE-mimo-removal.md.
+    ('*subnet/complete_group_harness.py', r'^MAX_CONTEXT = %d$|^\s*need\(type\(value\[.max_output_tokens.\]\) is int and 1 <= value\[.max_output_tokens.\] <= %d,' % (_O, _O),
+     'signed MiMo complete-group harness source bound (normalize_mimo; pending the source release in SCOPE-mimo-removal.md)'),
+    ('*subnet/mimo_parallel_mining.py', r"^\s*if runtime\.harness\[.max_output_tokens.\] ?> ?%d:$" % _O,
+     'signed MiMo parallel-mining memory-profile bound (pending the source release in SCOPE-mimo-removal.md)'),
+    ('*tests/test_mimo_parallel_mining.py', r"^\s*facade\.harness=\{.max_output_tokens.:%d\}$" % _O,
+     'unit-test fixture of the signed MiMo parallel-mining bound (goes with the source release in SCOPE-mimo-removal.md)'),
 ]

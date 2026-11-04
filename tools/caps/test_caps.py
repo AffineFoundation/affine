@@ -71,6 +71,13 @@ def test_signed_policy_exemption_is_narrow():
     assert fails, 'the signed trainer overlong window is 12K now: an old value FAILs'
     fails, _ = L.old_cap_hits('trainer-config.public.json', json.dumps({'trainer_config': {'settings': {'loss_scale_factor': old}}}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
     assert not fails, 'loss_scale_factor is GRPO math, not a cap'
+    src = 'MAX_CONTEXT = %d\n    need(type(value[\'max_output_tokens\']) is int and 1 <= value[\'max_output_tokens\'] <= %d,\n' % (old, old)
+    fails, infos = L.old_cap_hits('subnet/complete_group_harness.py', src, CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert not fails and len(infos) == 2, 'the signed MiMo harness source bound is the documented exemption (INFO)'
+    for name, bad in (('subnet/complete_group_harness.py', 'DEFAULT_MAX_TOKENS = %d\n' % old), ('subnet/mimo_parallel_mining.py', 'MAX_OUT = %d\n' % old),
+                      ('subnet/harness.py', 'MAX_CONTEXT = %d\n' % old)):
+        fails, _ = L.old_cap_hits(name, bad, CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+        assert fails, (name, bad)
 
 
 def test_repo_consumers_match_caps():
