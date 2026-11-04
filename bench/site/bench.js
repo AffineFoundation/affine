@@ -56,9 +56,12 @@
   // d=(max-v)/(max-min): green to d~.2, amber d~.4-.5, strong red near d~.85+ (Jacob 19:50 CR)
   const shade=f=>{const d=1-f,k=Math.min(1,Math.max(0,(d-.1)/.75)),h=Math.round(130*(1-Math.pow(k,.75)));return`hsl(${h} 65% 45% / ${(.30+.14*Math.abs(.5-k)*2).toFixed(2)})`;};
   const cell=(m,b)=>{const x=val(m,b),c=b===AVG?' avg':'';if(x==null)return`<td class="na${c}">${b===AVG&&!R[m.model_id]&&(m.status==='evaluating'||m.status==='queued')?'…':'—'}</td>`;
-   if(b.in_avg===false)return`<td class="disp" title="display only, not in Avg">${pct(x)}</td>`;
-   const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);
-   return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${top?' title="column best"':''}>${top?STAR:''}${pct(x)}</td>`;};
+   // partial run (Jacob pt1236u 2026-11-04): result rows carry complete/errors/samples_expected; >1% samples lost = dagger + tooltip
+   const rr=b===AVG?null:(R[m.model_id]||{})[b.id],inc=rr&&rr.complete===false,pp=inc&&rr.errors>.01*rr.samples_expected;
+   const pt=inc?`partial run: ${rr.samples} of ${rr.samples_expected} samples (${rr.errors} errored)`:'',dg=pp?'<sup title="'+pt+'">†</sup>':'';
+   if(b.in_avg===false)return`<td class="disp" title="display only, not in Avg${pt?'; '+pt:''}">${pct(x)}${dg}</td>`;
+   const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);const tt=[top?'column best':'',pt].filter(Boolean).join('; ');
+   return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${tt?` title="${tt}"`:''}>${top?STAR:''}${pct(x)}${dg}</td>`;};
   const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(String(m.king).slice(0,8))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
   const suites=[...new Set(B.map(b=>b.suite))];
   const head=suites.length>1?`<tr><th></th><th class="avg"></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}</tr>`:'';
