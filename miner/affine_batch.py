@@ -230,7 +230,7 @@ def main():
     ap.add_argument('file', nargs='?')
     ap.add_argument('--hotkey', required=True)
     ap.add_argument('--key')
-    a = ap.parse_args()
+    a = ap.parse_intermixed_args()   # the file may follow the options (check --hotkey <ss58> batch.json)
     if a.command == 'link':
         v = link(a.hotkey, a.key)
         print(json.dumps(dict(object_key=v['object_key'], expires_at=v['expires_at']), indent=1)); return
