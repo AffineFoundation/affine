@@ -80,7 +80,8 @@ def old_cap_scan(scopes, root):
             files = sorted({f for g in CS.OLD_CAP_SCAN['repo'] for f in glob.glob(str(root / g)) if os.path.isfile(f)})
             todo = [(os.path.relpath(f, root), (lambda f=f: Path(f).read_text(errors='replace'))) for f in files]
         elif scope == 'host':
-            todo = [(h, (lambda h=h: Path(h).read_text(errors='replace'))) for h in CS.OLD_CAP_SCAN['host']]
+            hosts = [(max(glob.glob(h), key=os.path.getmtime, default=h) if '*' in h else h) for h in CS.OLD_CAP_SCAN['host']]   # '*' = newest match
+            todo = [(h, (lambda h=h: Path(h).read_text(errors='replace'))) for h in hosts]
         else:
             todo = [(u, (lambda u=u: fetch(u))) for u in CS.OLD_CAP_SCAN['public']]
         for name, get in todo:

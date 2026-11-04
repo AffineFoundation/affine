@@ -61,7 +61,7 @@ import numpy as np
 
 # v8.3.3m (RA/20261102-12k-everywhere, Jacob 2026-11-02 18:48 CR "12 k should be everywhere"): the 12,288-token output cap in training.
 TRAIN_MAX_CONTEXT = 16384          # prompt + output tokens (12,288 output + prompt; the gate serves 16,384)
-FF_OVERLONG = (10096, 12288)       # free-file overlong window (soft_start, max_tokens); None = the signed job settings (v8.3.3l: 6000, 8192)
+FF_OVERLONG = (10096, 12288)       # free-file overlong window (soft_start, max_tokens) = caps.json (https://affine.io/caps.json); None = the signed job settings
 
 
 def context_limit(runtime):

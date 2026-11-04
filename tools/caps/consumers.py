@@ -29,8 +29,9 @@ REPO = H + '/subnet120-rewrite'
 RA = REPO + '/state/root-audits'
 WEB = H + '/subnet120/affine/website'
 FF = RA + '/20261030-free-file/release'
-TRH = RA + '/20261102-12k-everywhere/release-v833m-signed/trainer-host-v833m'
-TRP = '/workspace/affine-mimo-trainer-prod/host-v833m'
+TRH = RA + '/20261104-drop-8k-legacy/release-v833n-signed/trainer-host-v833n'   # trainer v8.3.3n (= v8.3.3m, comment-only change)
+TRP = '/workspace/affine-mimo-trainer-prod/host-v833n'
+EPOCHS = REPO + '/state/mimo-mainnet-v1/epochs'
 PG = RA + '/20261026-promotion-gate'
 RF0 = RA + '/20261103-run-floor-zero'
 
@@ -97,7 +98,7 @@ CONSUMERS = [
     dict(id='kit_gate_eval', cls='live', render=True, repo='miner/kit/gate_eval.py',
          rules=[R(MAXOUT, r'^GATE_MAX_TOKENS = (\d+)'), R(MML, r'--max-model-len (\d+)')]),
     dict(id='kit_simulate_turn', cls='derived', render=True, repo='miner/kit/simulate_turn.sh', rules=[R(MML, r'--max-model-len (\d+)')]),
-    # ---------------- training (trainer v8.3.3m: root-signed release) ----------------
+    # ---------------- training (trainer v8.3.3n: root-signed release; repo dir keeps the v833m name for kit imports) ----------------
     dict(id='trainer_v8211_batched', cls='live', render='sign',
          repo='miner/validator/trainer-v833m/v8211_batched.py', host=TRH + '/v8211_batched.py', pod=('trainer', 'cat %s/v8211_batched.py' % TRP),
          rules=[R(CTX, r'^TRAIN_MAX_CONTEXT = (\d+)'), R(SOFT, r'^FF_OVERLONG = \((\d+), \d+\)'), R(OLMAX, r'^FF_OVERLONG = \(\d+, (\d+)\)')]),
@@ -219,14 +220,21 @@ OLD_CAP_SCAN = dict(
           FF + '/ff_format.py', FF + '/affine_batch.py', FF + '/FF-PUBLIC.json', PG + '/code/prior_gate.py', PG + '/code/gate_service.py',
           PG + '/code/baseline_v1.py', PG + '/code/training_params.py', REPO + '/dashboard/site_metrics.py',
           RA + '/20261022-env-probe/code/config.json', REPO + '/priors/pod/sampler.config.json', REPO + '/priors/pod/serve.sh',
-          REPO + '/priors/README.md'],
+          REPO + '/priors/README.md', EPOCHS + '/*/PLAN.json'],   # a '*' entry = the newest matching file
     public=['https://affine.io/llms.txt', 'https://affine.io/mining.json', 'https://affine.io/training.json', 'https://affine.io/caps.json',
             'https://affine.io/gate.json', 'https://affine.io/site-metrics.json'],
 )
 # Reviewed hits that are NOT a token cap (path glob, line regex, why). A hit listed here is reported INFO, never silently.
 OLD_CAP_ALLOW = [
     ('*trainer-config.public.json', r'^\.trainer_config\.settings\.loss_scale_factor = ', 'GRPO loss normalisation constant of the signed trainer config (trainer math, not a token cap)'),
-    ('*trainer-config.public.json', r'^\.trainer_config\.settings\.overlong_(max_tokens|soft_start) = ',
-     'copy of the root-signed GRPO job document (trainer_config.settings): not used for free-file turns (free_file_overlong = caps.json); '
-     'changing it needs a root-signed config + trainer release'),
+    # NARROW, TEMPORARY exemption (Jacob 2026-11-04 08:38 CR): the root-signed MiMo release policy carried in every epoch's
+    # PLAN.json pins the old complete-group harness (max_output_tokens/max_context_tokens). Free-file turns, the gate and
+    # weights do not read it (they use caps.json). It can only change with a new signed source release; see
+    # state/root-audits/20261104-drop-8k-legacy/SCOPE-mimo-removal.md. Only the harness token fields are exempt; any other
+    # old cap in PLAN.json still FAILs. Remove this entry with that release.
+    # The exempt fields (and their copies under the signed policy's immutable_manifest) are exactly: environments[i].harness.
+    # max_output_tokens / max_context_tokens, environments[i].spec.max_output_tokens, group_transport_policy.max_context_tokens,
+    # mimo_runtime.max_context_tokens.
+    ('*/PLAN.json', r'^\.manifest\.(mimo_release_policy\.payload\.scope\.immutable_manifest\.)?(environments\[\d+\]\.(harness\.max_(output|context)_tokens|spec\.max_output_tokens)|group_transport_policy\.max_context_tokens|mimo_runtime\.max_context_tokens) = ',
+     'signed MiMo release policy harness (immutable until the source release in SCOPE-mimo-removal.md; not used by free-file turns)'),
 ]

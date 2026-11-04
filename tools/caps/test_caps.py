@@ -57,6 +57,22 @@ def test_old_cap_scan_catches_a_planted_value():
     assert not fails, 'a hash is not a cap'
 
 
+def test_signed_policy_exemption_is_narrow():
+    old = 8 * 1024
+    h = {'harness': {'max_output_tokens': old, 'max_context_tokens': 12 * 1024}}
+    plan = {'manifest': {'environments': [dict(h)], 'mimo_release_policy': {'payload': {'scope': {'immutable_manifest': {'environments': [dict(h)]}}}}}}
+    fails, infos = L.old_cap_hits('epochs/692/PLAN.json', json.dumps(plan), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert not fails and infos, 'the signed release-policy harness is the documented exemption (INFO)'
+    for bad in ({'manifest': {'max_output_tokens': old}}, {'manifest': {'training': {'overlong_max_tokens': old}}},
+                {'manifest': {'environments': [{'harness': {'max_tokens': old}}]}}, {'other': {'environments': [dict(h)]}}):
+        fails, _ = L.old_cap_hits('epochs/692/PLAN.json', json.dumps(bad), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+        assert fails, bad
+    fails, _ = L.old_cap_hits('trainer-config.public.json', json.dumps({'trainer_config': {'settings': {'overlong_max_tokens': old}}}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert fails, 'the signed trainer overlong window is 12K now: an old value FAILs'
+    fails, _ = L.old_cap_hits('trainer-config.public.json', json.dumps({'trainer_config': {'settings': {'loss_scale_factor': old}}}), CS.OLD_CAP_RX, CS.OLD_CAP_ALLOW)
+    assert not fails, 'loss_scale_factor is GRPO math, not a cap'
+
+
 def test_repo_consumers_match_caps():
     C, _ = L.load_caps(); bad = []
     for c, p in repo_cons():
