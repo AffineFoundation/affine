@@ -28,9 +28,9 @@ def normalize_mimo(value):
          'max_context_tokens', 'temperature', 'top_p', 'top_k', 'enable_thinking'},
          'exact MiMo complete-group harness fields')
     need(value['version'] == MIMO_VERSION and value['policy'] == 'autoregressive', 'MiMo autoregressive harness')
-    need(type(value['max_output_tokens']) is int and 1 <= value['max_output_tokens'] <= 8192,
+    need(type(value['max_output_tokens']) is int and 1 <= value['max_output_tokens'] <= 32768,
          'bounded MiMo output horizon')
-    need(type(value['max_context_tokens']) is int and value['max_output_tokens'] < value['max_context_tokens'] <= 32768,
+    need(type(value['max_context_tokens']) is int and value['max_output_tokens'] < value['max_context_tokens'] <= 36864,
          'separate bounded MiMo context horizon')
     need(type(value['temperature']) in (int, float) and value['temperature'] == 1.
          and type(value['top_p']) in (int, float) and value['top_p'] == .95

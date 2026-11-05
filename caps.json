@@ -1,8 +1,8 @@
 {
  "schema": "sn120-caps-v2",
  "about": "SN120 token caps: the ONE canonical source, published at https://affine.io/caps.json (repo: caps.json, loader caps.py). Edit max_output_tokens here, then run tools/caps/caps_apply.py (see tools/caps/README.md). Every other cap value (generation, batch files, training, gate, probe, prior sampler, miner kit, llms.txt, mining.json) is derived from this file and checked against it by tools/caps/caps_check.py.",
- "max_output_tokens": 12288,
+ "max_output_tokens": 32768,
  "prompt_headroom_tokens": 4096,
- "overlong_ramp_tokens": 2192,
+ "overlong_ramp_tokens": 5845,
  "overlong_penalty": 0.5
 }

@@ -5,15 +5,15 @@ Only max_output_tokens (and the two small constants next to it) are stored; ever
 change is ONE edit of caps.json plus `tools/caps/caps_apply.py` (renders every consumer, rolls out at an epoch boundary).
 
     import caps; C = caps.load()
-    C['max_output_tokens']    12288   generation max_tokens / batch-file output cap / gate task cap
-    C['max_context_tokens']   16384   prompt + output (= max_output_tokens + prompt_headroom_tokens)
-    C['max_model_len']        16384   vLLM --max-model-len / MAX_MODEL_LEN (= max_context_tokens)
-    C['overlong_soft_start']  10096   overlong penalty ramp start (= max_output_tokens - overlong_ramp_tokens)
-    C['overlong_max_tokens']  12288   overlong penalty ramp end (= max_output_tokens)
-    C['last_eos_output_tokens'] 12287 the longest output that still gets an EOS appended (exactly max_output_tokens = capped, no EOS)
+    C['max_output_tokens']    32768   generation max_tokens / batch-file output cap / gate task cap
+    C['max_context_tokens']   36864   prompt + output (= max_output_tokens + prompt_headroom_tokens)
+    C['max_model_len']        36864   vLLM --max-model-len / MAX_MODEL_LEN (= max_context_tokens)
+    C['overlong_soft_start']  26923   overlong penalty ramp start (= max_output_tokens - overlong_ramp_tokens)
+    C['overlong_max_tokens']  32768   overlong penalty ramp end (= max_output_tokens)
+    C['last_eos_output_tokens'] 32767 the longest output that still gets an EOS appended (exactly max_output_tokens = capped, no EOS)
 
 CLI:  python3 caps.py                 -> all values (JSON)
-      python3 caps.py max_model_len   -> 16384   (for shell scripts)
+      python3 caps.py max_model_len   -> 36864   (for shell scripts)
 Stdlib only, Python >= 3.6. Path override: SN120_CAPS=/path/to/caps.json.
 """
 import json, os, sys

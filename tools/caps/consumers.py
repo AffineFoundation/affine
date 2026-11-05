@@ -29,8 +29,8 @@ REPO = H + '/subnet120-rewrite'
 RA = REPO + '/state/root-audits'
 WEB = H + '/subnet120/affine/website'
 FF = RA + '/20261030-free-file/release'
-TRH = RA + '/20261104-drop-8k-legacy/release-v833n-signed/trainer-host-v833n'   # trainer v8.3.3n (= v8.3.3m, comment-only change)
-TRP = '/workspace/affine-mimo-trainer-prod/host-v833n'
+TRH = RA + '/20261105-cap-32k-scope/release-v833o-signed/trainer-host-v833o'   # trainer v8.3.3o = 32K caps + BUDGET 65536
+TRP = '/workspace/affine-mimo-trainer-prod/host-v833o'
 EPOCHS = REPO + '/state/mimo-mainnet-v1/epochs'
 PG = RA + '/20261026-promotion-gate'
 RF0 = RA + '/20261103-run-floor-zero'
@@ -59,7 +59,7 @@ CLIP = [R(SOFT, r'clip\(\(len ?[-−] ?(\d+)\) ?/ ?\(\d+ ?[-−] ?\d+\)'), R(OLM
 LLMS = [R(EOS1, r'output of up to ([\d,]+) tokens gets', ','), R(MAXOUT, r'Exactly ([\d,]+) tokens = cut at the cap', ','),
         R(MAXOUT, r'More than ([\d,]+) is invalid', ','), R(CTX, r'Prompt \+ output can be at most ([\d,]+) tokens', ','),
         R(MAXOUT, r'^\s*([\d,]+) output tokens apply everywhere', ','), R(MAXOUT, r'sample with max_tokens ([\d,]+)\)', ','),
-        R(SOFT, r'-0\.5 x clip\(\(len - (\d+)\)'), R(OLMAX, r'-0\.5 x clip\(\(len - \d+\) / \((\d+) - '),
+        R(SOFT, r'-0\.5 x clip\(\(len - (\d+)\)'), R(OLMAX, r'-0\.5 x clip\(\(len - \d+\) / \((\d+) - '), R(SOFT, r'-0\.5 x clip\(\(len - \d+\) / \(\d+ - (\d+)\)'),
         R(SOFT, r'overlong window is (\d+)\.\.\d+'), R(OLMAX, r'overlong window is \d+\.\.(\d+)'),
         R(CTX, r'rollouts up to ([\d,]+) tokens of prompt \+ output', ','),
         R(MAXOUT, r'top_k 20, ([\d,]+) output tokens \(the task cap\)', ','), R(CTX, r'output tokens \(the task cap\), ([\d,]+) context', ','),
@@ -124,7 +124,7 @@ CONSUMERS = [
     dict(id='gate_rule_text', cls='docs', render=True, repo=['priors/gate/prior_gate.py', 'miner/validator/gate/prior_gate.py'],
          host=PG + '/code/prior_gate.py', rules=[R(MAXOUT, r"the round\\'s max_tokens: ([\d,]+) tokens = caps\.json max_output_tokens", ',')],
          note='prior_gate RULE_V1 (published as mining.json / gate.json heldout.rule): the cap-hit token cap'),
-    dict(id='gate_baseline_record', cls='derived', render=False, host_glob=PG + '/state/heldout/r*/BASELINE.private.json', newer_than=RF0 + '/ACTIVATED',
+    dict(id='gate_baseline_record', cls='derived', render=False, host_glob=PG + '/state/heldout/r*/BASELINE.private.json', newer_than=RA + '/20261105-cap-32k-scope/ACTIVATED',
          rules=[J(MAXOUT, ['max_tokens']), J(MAXOUT, ['settings', 'generation_max_tokens']), J(MAXOUT, ['settings', 'harness', 'max_output_tokens']),
                 J(CTX, ['settings', 'harness', 'max_context_tokens'])],
          note='newest round head baseline (private; only numbers are compared): harness = the round task cap, the pod manifest copy is pod_manifest_harness'),
@@ -146,9 +146,9 @@ CONSUMERS = [
     dict(id='prior_serve_sh', cls='derived', render=True, repo='priors/pod/serve.sh', host=REPO + '/priors/pod/serve.sh',
          rules=[R(MML, r'MML=\$\{MAX_MODEL_LEN:-(\d+)\}'), R(MML, r'serve\.sh \(bf16, max-model-len (\d+)')]),
     dict(id='prior_readme', cls='docs', render=True, repo='priors/README.md', host=REPO + '/priors/README.md',
-         rules=[R(MAXOUT, r'max output (\d+), context \d+'), R(CTX, r'max output \d+, context (\d+)'), R(MML, r'bf16, max-model-len (\d+)')]),
+         rules=[R(MAXOUT, r'max output (\d+), context \d+'), R(CTX, r'max output \d+, context (\d+)'), R(MML, r'bf16, max-model-len (\d+)'), R(MML, r'MAX_MODEL_LEN=(\d+)')]),
     dict(id='prior_pod_sampler', cls='live', render='pod', pod=('prior', 'cat /opt/prior/code/sampler.json'),
-         rules=[J(MAXOUT, ['harness', 'max_output_tokens']), J(CTX, ['harness', 'max_context_tokens'])]),
+         rules=[R(CTX, r'"max_context_tokens": (\d+)'), R(MAXOUT, r'"max_output_tokens": (\d+)')]),
     dict(id='prior_pod_serve_env', cls='derived', render='pod', pod=('prior', 'cat /opt/prior/serve/serve.env'),
          rules=[R(MML, r'^MAX_MODEL_LEN=(\d+)')]),
     dict(id='prior_pod_serving', cls='derived', render=False, pod=('prior', 'cat /opt/prior/serve/SERVING.json'),
@@ -181,7 +181,7 @@ CONSUMERS = [
          rules=[R(MAXOUT, r'Exactly ([\d,]+) tokens counts as capped', ','), R(MAXOUT, r'More than ([\d,]+) is invalid', ','),
                 R(CTX, r'Prompt \+ output can be at most ([\d,]+) tokens', ','), R(MAXOUT, r'\*\*([\d,]+) output tokens apply everywhere', ','),
                 R(MAXOUT, r'sample with `max_tokens` ([\d,]+)', ','), R(MAXOUT, r'top_k 20, ([\d,]+) output tokens \(the task cap\)', ','),
-                R(CTX, r'output tokens \(the task cap\), ([\d,]+) context', ','), R(MML, r'--max-model-len (\d+)')] + CLIP[:2]),
+                R(CTX, r'output tokens \(the task cap\), ([\d,]+) context', ','), R(MML, r'--max-model-len (\d+)')] + CLIP),
     dict(id='site_metrics', cls='derived', render=False, host=WEB + '/site-metrics.json', after='caps-v1',
          rules=[J(MAXOUT, ['caps', 'max_output_tokens']), A(['epochs', '*', 'training', 'output_token_cap'])],
          note='dashboard: the cap once, from caps.json (site_metrics.py); no per-epoch cap history'),
