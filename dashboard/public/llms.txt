@@ -27,14 +27,21 @@ can reproduce a turn locally before you spend one.
   Ed25519 hotkey, plus the one-time signed Affine activation (zero fee):
   `python -m subnet.register --wallet W --hotkey H` previews it, and adding `--execute` publishes it (from the repo above).
 - Your key file holds the hotkey's 32-byte Ed25519 seed as 64 hex characters, mode 0600. Never share it, a coldkey or a mnemonic.
-- **One turn per registration** (UID + registration block), permanently, whether it passes or fails. The order is
+- **One turn per registration** (UID + registration block), permanently, whether it passes or fails. Base order is
   registration block, then UID. UID 0 is excluded. Served hotkeys and registrations leave the line. **To try again you
   must register again** (pay the registration again) and wait for that new registration's turn. Don't deregister a
   hotkey that is earning: its weight stops when it leaves the UID.
-- At each turn the queue is walked in order, and the first member with a **valid stored file** takes the turn. If your
-  file is **missing or broken** at that moment, you're **skipped**: you aren't charged and you keep your place.
-  If nobody is ready, the epoch is a no-update epoch. There is one turn per epoch.
+- **Squat-trim** (from 2026-11-05): expected wait = max(1 day, N_ahead / turn_rate), with N_ahead = unserved
+  registrations ahead of you in registration-block order and turn_rate = turns/day over the last 24h. If you have
+  **no present+valid batch file** and your age exceeds **2x** that expected wait, your registration is moved to the
+  **back of the queue** (you keep eligibility; demoted keys stay ordered by registration block among themselves).
+  Any key with a valid file is **never** demoted. This is recomputed each turn. See k1.json `expired_back_of_queue`,
+  `expected_wait_seconds` / `deadline_cr` on queue members.
+- At each turn the queue is walked in the (possibly demoted) order, and the first member with a **valid stored file**
+  takes the turn. If your file is **missing or broken** at that moment, you're **skipped**: you aren't charged and
+  you keep your place. If nobody is ready, the epoch is a no-update epoch. There is one turn per epoch.
 - The next 8 in line are at https://affine.io/k1.json (`queue.next`, with `file_valid` per member) and
+  https://affine.io/training.json (`k1.queue_next`). Fresh-turn grants: `k1.queue_grants` (mining.json `batch_file.fresh_turns`).
   https://affine.io/training.json (`k1.queue_next`). Fresh-turn grants: `k1.queue_grants` (mining.json `batch_file.fresh_turns`).
 
 ## 2. Your private file: link, upload, overwrite
