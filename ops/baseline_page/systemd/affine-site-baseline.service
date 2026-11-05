@@ -1,5 +1,5 @@
 [Unit]
-Description=Affine website baseline/curves.json (shape of the live prior-v1 baseline: sorted pass rates + selection probability, binned, no task ids) for affine.io/baseline. Jacob 2026-11-02
+Description=Affine website baseline/curves.json + irt-curves.json (gate-pool-v2 shapes: sorted pass rates + selection probability, binned, no task ids; hard-v1 uses 32K-filter interim until prior samples exist) for affine.io/baseline
 [Service]
 Type=oneshot
 WorkingDirectory=/home/const/subnet120/affine
