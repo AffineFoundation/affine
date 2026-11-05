@@ -201,15 +201,21 @@ v8.3.3m = v8.3.3l + the caps.json caps: rollouts up to 36,864 tokens of prompt +
 
 ## 5. The task pool, prompt, sampling and grader
 
-- Gate pool (prior-v1, from epoch 497: first round opened 2026-11-01 17:14 CR): **gate-pool-v1, 19,305 public tasks** in two envs:
+- Gate pool (prior-v1): **gate-pool-v2, 21,574 public tasks**, from the flag change of 2026-11-05 13:43 CR (epoch 767): the first round opened on the next new head
+  (before: gate-pool-v1, 19,305 tasks, from epoch 497 / 2026-11-01 17:14 CR; v2 = v1 byte-for-byte + the hard-v1 slice appended).
+  The pool is public; only each round's draw (which tasks, committed in advance) is secret until it is revealed. Two envs:
   - affine_math: 7,492 MATH train problems (the 7,496-task pool minus 4 that are near-duplicates of the private
     performance holdout, see below), id math:<index in original-math7496.tasks.json>;
   - dapo: 11,813 DAPO-Math-17k problems with integer answers (BytedTsinghua-SIA/DAPO-Math-17k rev 65877096, de-duplicated and
-    decontaminated against public math benchmarks by priors/dapo/build_dapo.py), id dapo:<position>.
-  Both files are in the kit, byte-exact: miner/data/gate-pool-v1.jsonl (one JSON object per line: id, env, problem, answer),
-  sha256 9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e, with miner/data/gate-pool-v1.manifest.json
-  (sources, sha256s, dropped ids). The old affine_math file (miner/data/original-math7496.tasks.json, sha256 77a4524a...)
-  is unchanged.
+    decontaminated against public math benchmarks by priors/dapo/build_dapo.py), id dapo:0..dapo:11812, plus the hard-v1 slice,
+    2,269 harder problems (dapo:11813..dapo:14081, field slice = "hard-v1"): CrystalMath-rewritten (268) and INTELLECT-3-RL math (2,001),
+    de-duplicated against gate-pool-v1 and all of DAPO-Math-17k, decontaminated against AIME 2022-2026, AMC, MATH-500 / MATH test,
+    GSM8K, arXivMath, OlympiadBench, Omni-MATH and OlymMATH, and kept only if king 8389b90b (E761) solved 5-60% of its
+    4-12 rollouts at the 32,768-token cap with cap-hit < 1/3. Same prompt, sampling and grader as every other task.
+  Files in the kit, byte-exact: miner/data/gate-pool-v2.jsonl (one JSON object per line: id, env, problem, answer; slice rows
+  add slice, src, src_index, uid), sha256 8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc, with miner/data/gate-pool-v2.manifest.json
+  (sources, sha256s). gate-pool-v1.jsonl (sha256 9e05d47c...) stays in the kit unchanged for rounds before the switch.
+  The old affine_math file (miner/data/original-math7496.tasks.json, sha256 77a4524a...) is unchanged.
 - Holdout exclusion: a pool task is dropped if its problem matches a problem of the private performance holdout by
   sha256 of the raw text, sha256 of the normalised text, or token-3-gram Jaccard >= 0.9. 0 matched by hash; 4 affine_math
   tasks were dropped by the Jaccard rule (math:3322, math:6297, math:6512, math:6801: same template, different numbers).
@@ -334,7 +340,7 @@ in it is verbatim from the live services (sha256 + live source per file in valid
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
-- the 7,496-task affine_math file and the 19,305-task gate pool (miner/data/gate-pool-v1.jsonl + manifest);
+- the 7,496-task affine_math file and the 21,574-task gate pool (miner/data/gate-pool-v2.jsonl + manifest; gate-pool-v1.jsonl kept);
 - exact pins (requirements-*.txt).
 
 Tools: kit/fetch_head.py (sha256-verified head / reference download), fetch_fp32_master.py (the head's fp32 master,

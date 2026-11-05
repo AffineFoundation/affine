@@ -5,7 +5,7 @@
       [--prior my_prior.jsonl] [--n 500] [--seed HEX]
 
 What the live gate does each round (one round per head; settings in validator/gate/gate-config.public.json heldout.prior_v1):
-  1. pool = miner/data/gate-pool-v1.jsonl (affine_math + dapo, 19,305 tasks).
+  1. pool = miner/data/gate-pool-v2.jsonl (affine_math + dapo incl. the hard-v1 slice, 21,574 tasks; gate-pool-v1, 19,305, before the switch).
   2. prior: per task s/n = the head's solved/sampled counts from the validator's prior sampler (method public in priors/, values
      PRIVATE). Here: --prior FILE (jsonl lines {"id", "s", "n"}, e.g. from your own head samples) or, by default, no prior
      (every task gets its env average -> the draw is close to uniform; the estimate stays unbiased either way).
@@ -18,7 +18,7 @@ What the live gate does each round (one round per head; settings in validator/ga
      SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = sigma_run_floor = 0 (no floor; 0.003 before 2026-11-03);
      GREEN iff Delta > 0, z > 1.00, cap-hit < 0.33 (task-level: capped / all candidate rollouts on the scored tasks, affine_math
      and dapo alike), >= 100 tasks scored (>= 95 % of the draw).
-Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the gate's task cap = caps.json max_output_tokens), context 16,384;
+Prompt = [system: MANDATE, user: problem], enable_thinking=True; sampling temperature 1.0, top_p 0.95, top_k 20, 32,768 output tokens (the gate's task cap = caps.json max_output_tokens), context 36,864;
 grading = the probe's grader (kit/grade.py), the same for both envs. Request seed = int(sha256('<plan seed>:affine_gatepool:<probe
 index>:j')[:12], 16), probe index = math index, or 7496 + j for dapo:j.
 Your local GPUs/vLLM build are not the gate's (vLLM 0.32.0 on 8 x B200), so expect differences of a few tenths of a point.
@@ -30,8 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kitpath, sampler, grade, prompts  # noqa: E402
 import baseline_v1 as BV  # noqa: E402  (verbatim live gate module, validator/gate/, via kitpath)
 ENV = 'affine_gatepool'
-GATE_POOL = kitpath.DATA / 'gate-pool-v1.jsonl'
-GATE_POOL_SHA256 = '9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e'
+GATE_POOL = kitpath.DATA / 'gate-pool-v2.jsonl'
+GATE_POOL_SHA256 = '8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc'
 
 
 GATE_MAX_TOKENS = 32768   # the gate's per-task generation cap = caps.json max_output_tokens: serve with --max-model-len 36864

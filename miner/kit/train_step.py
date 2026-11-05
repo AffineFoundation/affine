@@ -151,7 +151,7 @@ def main(argv=None):
                     help="default packed on CUDA (the live trainer kernels), padded on CPU. padded on a GPU is the pre-2026-11-05 "
                          "kit path whose bf16 GDN short-conv backward (torch F.conv1d) gives wrong gradients: CPU self-test only")
     ap.add_argument('--max-tasks', type=int, default=125); ap.add_argument('--max-rollouts', type=int, default=1000)
-    ap.add_argument('--token-budget', type=int, default=16384)
+    ap.add_argument('--token-budget', type=int, default=36864)
     a = ap.parse_args(argv)
     import torch
     import ff_format, ff_trainer, v8211_batched as B, mimo_host_trainer_v83 as H

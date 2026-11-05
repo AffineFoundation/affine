@@ -10,7 +10,7 @@ import prompts  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 tok = AutoTokenizer.from_pretrained(sys.argv[1], local_files_only=True); PORT = int(sys.argv[2]); SKILL = float(sys.argv[3])
 POOL = prompts.pool(); BY = {t['prompt']: (i, t['answer']) for i, t in enumerate(POOL)}
-GP = Path(__file__).resolve().parent.parent.parent / 'data' / 'gate-pool-v1.jsonl'   # prior-v1 gate pool (math + dapo)
+GP = Path(__file__).resolve().parent.parent.parent / 'data' / 'gate-pool-v2.jsonl'   # prior-v1 gate pool (math + dapo)
 if GP.exists():
     for l in GP.read_text().splitlines():
         r = json.loads(l); BY.setdefault(r['problem'], (r['id'], r['answer']))

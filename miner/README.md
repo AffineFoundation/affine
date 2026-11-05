@@ -37,6 +37,8 @@ miner/
   data/original-math7496.tasks.json   the 7,496-task affine_math file (sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3)
   data/gate-pool-v1.jsonl             the prior-v1 gate pool: 19,305 tasks, affine_math 7,492 + dapo 11,813 (sha256 9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e)
   data/gate-pool-v1.manifest.json     its sources, sha256s and the 4 ids dropped for overlap with the private perf holdout
+  data/gate-pool-v2.jsonl             the live gate pool: 21,574 tasks = gate-pool-v1 + 2,269 hard-v1 tasks (dapo env, dapo:11813..dapo:14081) (sha256 8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc)
+  data/gate-pool-v2.manifest.json     its sources and sha256s
   requirements-trainer.txt      torch 2.14.0, transformers 5.14.1, fla 0.6.0 ... (trainer)
   requirements-gate-vllm.txt    the gate probe's pip freeze (vLLM 0.32.0, torch 2.13.0 ...)
   requirements-grader.txt       the validator-recorded eval venv freeze (math_verify 0.9.0 closure)
@@ -215,9 +217,12 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
 
 ## 4. The gate (held-out, prior-v1 since 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812)): what `kit/gate_eval.py` runs
 
-- **Pool:** `data/gate-pool-v1.jsonl`, 19,305 public tasks: affine_math 7,492 (MATH; `math:<index>` into
-  `data/original-math7496.tasks.json`, minus 4 near-duplicates of the private perf holdout) + dapo 11,813 (DAPO-Math-17k,
-  integer answers, built by `priors/dapo/build_dapo.py`). Manifest with sha256s: `data/gate-pool-v1.manifest.json`. The gate
+- **Pool:** `data/gate-pool-v2.jsonl` (from the flag change of 2026-11-05 13:43 CR (epoch 767): the first round opened on the next new head; before: `data/gate-pool-v1.jsonl`, 19,305 tasks), 21,574 public
+  tasks: affine_math 7,492 (MATH; `math:<index>` into `data/original-math7496.tasks.json`, minus 4 near-duplicates of the
+  private perf holdout) + dapo 14,082 = DAPO-Math-17k 11,813 (integer answers, built by `priors/dapo/build_dapo.py`) + the
+  hard-v1 slice, 2,269 harder problems (dapo:11813..dapo:14081; CrystalMath-rewritten + INTELLECT-3-RL math, decontaminated, kept at a 5-60% solve
+  rate of king 8389b90b at 32K, see `priors/hard_v1/`). The pool is public; only the per-round draw is secret. Manifest with
+  sha256s: `data/gate-pool-v2.manifest.json`. The gate
   prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
@@ -254,7 +259,7 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
 - **z bar: fixed at 1.00** (https://affine.io/gate.json `z_bar`, mining.json `heldout.z_bar`). The bar each turn was judged
   against: `entries[].thresholds.z_min`. History: from E553 the bar is fixed at z > 1; E513–E552 used a time-relaxed bar.
   The bar (= SE) is expected near +0.8 to +1.2 points of pool-wide gain.
-- **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v1.jsonl`: the secret commitment, the block
+- **What you can verify:** with `priors/gate/verify_round.py <round.json> data/gate-pool-v2.jsonl (v1 for rounds before the switch)`: the secret commitment, the block
   hash on chain, the seed, the draw commitment and that every drawn task is in the pool; plus the GREEN turn's grades. **What you
   can't:** recompute Δ/SE/z exactly or check u_i < π_i, because π comes from the private prior table (only its snapshot sha256 is
   published).

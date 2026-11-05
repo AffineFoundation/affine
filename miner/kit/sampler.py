@@ -1,7 +1,7 @@
 """Minimal async vLLM /v1/completions client with the gate's request shape (same body and stop handling as
 validator/probe/probe_worker.py: one request per sample, n=1, its own seed, stop_token_ids = EOS, token ids returned).
 Start a server per GPU (or one with tensor parallel) using the gate's flags (validator/probe/serve.sh):
-  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512   (16384 = the gate's 12,288 cap + prompt)
+  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512   (36864 = the gate's 32,768 cap + prompt)
 """
 import asyncio, hashlib, random
 EOS = (248046, 248044)
@@ -14,9 +14,9 @@ def request_seed(plan_seed, env, task, j):
 
 
 async def sample_all(urls, jobs, *, model='m', concurrency=512, max_tokens=None):
-    """max_tokens: None = H (12288 = caps.json max_output_tokens: the generation, batch-file, training and gate cap)."""
+    """max_tokens: None = H (32768 = caps.json max_output_tokens: the generation, batch-file, training and gate cap)."""
     cap = int(max_tokens or H['max_output_tokens']); ctx = max(H['max_context_tokens'], cap + 4096) if cap > H['max_output_tokens'] else H['max_context_tokens']
-    """jobs: [(key, prompt_ids, seed)] -> {key: (out_ids_with_eos, stop)}; stop is 'eos' or 'budget' (hit 12288 / context)."""
+    """jobs: [(key, prompt_ids, seed)] -> {key: (out_ids_with_eos, stop)}; stop is 'eos' or 'budget' (hit 32768 / context)."""
     import httpx
     sem = asyncio.Semaphore(concurrency); inflight = [0] * len(urls); res = {}
     async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0), limits=httpx.Limits(max_connections=concurrency + 8)) as client:

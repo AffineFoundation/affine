@@ -1,0 +1,54 @@
+{
+ "decontamination": "Crystal: 642 rows dropped by source field + 312 by matching; I3: 7134 by matching (incl. live pool + all DAPO), see crystal/i3math",
+ "extends": {
+  "file": "gate-pool-v1.jsonl",
+  "note": "v2 = v1 byte-for-byte + the hard-v1 slice appended",
+  "sha256": "9e05d47c4672c8e066a15079577334f0432898ea06afc7045c82862345465a8e",
+  "tasks": 19305
+ },
+ "files": {
+  "gate-pool-v2.jsonl": "8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc"
+ },
+ "grader": "the live affine_math grader (probe_worker.grade), unchanged",
+ "line_format": "one JSON object per line, sorted keys; v1 rows unchanged, slice rows: answer, env, id, problem, slice, src, src_index, uid",
+ "per_env": {
+  "affine_math": 7492,
+  "dapo": 14082
+ },
+ "prompt": "[system: MANDATE, user: problem], unchanged",
+ "slice": {
+  "field": "slice = \"hard-v1\" on every appended row; src / src_index = source dataset and row id",
+  "ids": "dapo:11813..dapo:14081",
+  "name": "hard-v1",
+  "sources": {
+   "crystal": {
+    "config": "rewritten",
+    "file": "rewritten/train.parquet",
+    "hf_repo": "ycchen/Crystal-Math-Preview",
+    "kept_by_license": {
+     "Apache 2.0": 37,
+     "CC BY-NC 4.0": 135,
+     "MIT": 16,
+     "mixed (CC BY 4.0 / CC BY-SA 4.0)": 80
+    },
+    "license": "per-row (card: license other/mixed): Apache-2.0, MIT, CC0-1.0, CC-BY-4.0, CC-BY/CC-BY-SA mixed, CC-BY-NC-4.0 (ODA-Math), CC-BY-NC-SA-4.0 (MathArena)",
+    "license_note": "per-row licenses; CC-BY-NC rows (ODA-Math-460k) are non-commercial - decide before activation whether SN120 use is OK; activation can drop them (see NOTE.md)",
+    "revision": "03fc77140fc0fe9f9f9fb32b5514ad3183428628",
+    "sha256": "fb44c4d7fd40b630807b54098f46c9dd0239e0cc4b570636d06195e11eb204a1",
+    "used": "rewritten config (integer answers); rows whose source field is DAPO-17K / Omni-MATH / IMO-AnswerBench / MathArena / OlymMATH / BeyondAIME / AMO-Bench dropped"
+   },
+   "i3math": {
+    "config": "math",
+    "file": "math/train-00000-of-00001.parquet",
+    "hf_repo": "PrimeIntellect/INTELLECT-3-RL",
+    "license": "NONE DECLARED (no license field in the dataset card or repo at this revision) - legal status unclear",
+    "license_note": "NO LICENSE DECLARED: the INTELLECT-3-RL dataset card and repo carry no license at revision a9eb9183. Redistribution / use terms are unknown. Treat as unlicensed until PrimeIntellect states one; publishing the v2 pool at activation would redistribute these problems.",
+    "revision": "a9eb9183224cec63fe9a71e7a3a80cff14868624",
+    "sha256": "fce6fa97e44fab1129754409448152e0f2b2c36267b6480def654713e94e06b1",
+    "used": "math config (question, answer); the shipped Qwen3-4B pass-rate columns were NOT used for filtering"
+   }
+  },
+  "tasks": 2269
+ },
+ "tasks": 21574
+}

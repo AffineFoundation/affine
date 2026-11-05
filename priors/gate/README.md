@@ -7,7 +7,7 @@ sections 5-7.
 
 ## The rule (`../baseline_v1.py`)
 
-- One round per head. Pool: the public gate pool (affine_math + dapo, `miner/data/gate-pool-v1.jsonl`, published at the switch).
+- One round per head. Pool: the public gate pool (affine_math + dapo, `miner/data/gate-pool-v2.jsonl` = v1 + the hard-v1 slice, from the flag change of 2026-11-05 13:43 CR (epoch 767): the first round opened on the next new head; `gate-pool-v1.jsonl` before).
 - Prior (from `priors/`, code public, table values private): per task s/n = the current head's solved/sampled counts from the
   prior sampler pod, x0.5 on every head change, unsampled tasks start at their env average; posterior Beta(s+1, n-s+1).
 - Inclusion probability pi_i proportional to sqrt(E[p_i(1-p_i)]), mixed with a 10 % uniform floor, capped at 0.10, expected size N = 500.

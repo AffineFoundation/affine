@@ -9,7 +9,7 @@ allan_src.py, byte-identical to probe_worker.py _ALLAN_SRC). tests/test_kit_cpu.
   render(problem) -> prompt token ids the gate's prompt: [system: SYSTEM, user: problem], enable_thinking=True
   grade(out_ids, stop, gold, problem) -> (kind, how); kind 'positive' = correct, 'negative' = wrong,
                                          'neutral' = unresolved (capped or no single final \\boxed), 'indeterminate'
-  H                                   the gate harness: temperature 1.0, top_p 0.95, top_k 20, 32768 output / 36864 context (12K everywhere:
+  H                                   the gate harness: temperature 1.0, top_p 0.95, top_k 20, 32768 output / 36864 context (32K everywhere:
                                       generation, batch files, training and the gate; see gate_eval.GATE_MAX_TOKENS)
   seed_of(P, set, task, j)            per-request seed rule (the gate uses sha256(P:env:task:j)[:12] with env='affine_math')
 """

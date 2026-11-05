@@ -2,7 +2,7 @@
 """Turn rollouts.jsonl (from generate.py) into an upload-ready batch file and check it with the validator's own checker.
 
   python3 make_batch.py --head ./head --hotkey 5F... --rollouts rollouts.jsonl --out batch.json \\
-      [--select correct1|mixed|all] [--max-prompts 125] [--per-prompt 8] [--lr 5e-7 --kl 0.02] [--max-tokens 10096]
+      [--select correct1|mixed|all] [--max-prompts 125] [--per-prompt 8] [--lr 5e-7 --kl 0.02] [--max-tokens 26923]
 
 --select correct1 (default): one correct rollout per prompt, reward 1.0, only prompts the head got right at least once but not
           always (0 < c < k), hardest first (lowest c/k). This is the shape of every GREEN so far (125 x 1, v1 defaults).
