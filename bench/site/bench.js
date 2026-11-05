@@ -151,7 +151,7 @@
   const sparks=SP.map((s,i)=>{
     const l=s.latest;
     const n=s.v1.length+s.v2.length;
-    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: king scores by epoch; bench-v2 (64K) kings. Headline=latest complete v2.">${esc(s.lab)}</h2><span class="reading" title="${l?`E${l.m.epoch} ${l.proto}`:''}">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history (${n} points)"></div></div>`;
+    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: king scores by epoch; grey line = older stricter bench (v1), accent = bench-v2 (64K). Headline=latest complete v2.">${esc(s.lab)}</h2><span class="reading" title="${l?`E${l.m.epoch} ${l.proto}`:''}">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history (${n} points)"></div></div>`;
   }).join('');
 
   const footnote=reported.length?`<p class="bench-footnote">Rows marked <em>reported, not run</em> show developer-published scores (not Affine-graded). ${reported.map(m=>`<a href="${esc(m.source||('#') )}" target="_blank" rel="noopener">${esc(m.label)}</a>`).join(' · ')}.</p>`:'';
@@ -165,7 +165,7 @@
  const NS='http://www.w3.org/2000/svg',el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
  function spark(card,s){
   const plot=card.querySelector('.bs-plot');plot.textContent='';
-  const v1=[], v2=s.v2||[]; // v1 (old bench) dots hidden per Jacob 2026-11-05; data kept in benchmarks.json
+  const v1=s.v1||[], v2=s.v2||[]; // full history kept (Jacob 2026-11-05): v1 as a thin muted line, v2 accent
   const all=[...v1,...v2].sort((a,b)=>a.t-b.t);
   const W=plot.clientWidth||200,H=plot.clientHeight||90,P={l:30,r:6,t:6,b:16};
   const svg=el('svg',{viewBox:`0 0 ${W} ${H}`});plot.append(svg);
@@ -179,7 +179,7 @@
    const tx=el('text',{x:P.l-5,y:y(g)+3,'text-anchor':'end'});{const v=100*g;tx.textContent=(Math.abs(v-Math.round(v))<1e-6?v.toFixed(0):v.toFixed(1))+'%';}svg.append(tx);}
   // v1: muted grey dots only (no connecting line across eras)
   const C1='var(--text-muted, #8a8a8a)', C2='var(--performance)';
-  v1.forEach(p=>svg.append(el('circle',{cx:x(p.t),cy:y(p.v),r:1.8,fill:C1,stroke:C1,'stroke-width':1,opacity:'0.85'})));
+  if(v1.length>1)svg.append(el('polyline',{points:v1.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C1,'stroke-width':1,'stroke-linejoin':'round',opacity:'0.7'}));
   // v2: accent line + hollow/filled points
   if(v2.length>1)svg.append(el('polyline',{points:v2.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C2,'stroke-width':1.5,'stroke-linejoin':'round'}));
   v2.forEach((p,i)=>svg.append(el('circle',{cx:x(p.t),cy:y(p.v),r:i===v2.length-1?2.8:2.0,fill:i===v2.length-1?C2:'var(--bg)',stroke:C2,'stroke-width':1.2})));
