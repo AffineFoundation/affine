@@ -151,7 +151,7 @@
   const sparks=SP.map((s,i)=>{
     const l=s.latest;
     const n=s.v1.length+s.v2.length;
-    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: king scores by epoch; grey line = older stricter bench (v1), accent = bench-v2 (64K). Headline=latest complete v2.">${esc(s.lab)}</h2><span class="reading" title="${l?`E${l.m.epoch} ${l.proto}`:''}">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history (${n} points)"></div></div>`;
+    return`<div class="bench-spark" data-i="${i}"><div class="section-heading"><h2 title="${esc(s.lab)}: king scores by epoch; all king bench results. Headline=latest complete v2.">${esc(s.lab)}</h2><span class="reading" title="${l?`E${l.m.epoch} ${l.proto}`:''}">${l?pct(l.v)+'%':'—'}</span></div><div class="chart-wrap k1-chart bs-plot" role="img" aria-label="${esc(s.lab)} king score history (${n} points)"></div></div>`;
   }).join('');
 
   const footnote=reported.length?`<p class="bench-footnote">Rows marked <em>reported, not run</em> show developer-published scores (not Affine-graded). ${reported.map(m=>`<a href="${esc(m.source||('#') )}" target="_blank" rel="noopener">${esc(m.label)}</a>`).join(' · ')}.</p>`:'';
@@ -179,10 +179,9 @@
    const tx=el('text',{x:P.l-5,y:y(g)+3,'text-anchor':'end'});{const v=100*g;tx.textContent=(Math.abs(v-Math.round(v))<1e-6?v.toFixed(0):v.toFixed(1))+'%';}svg.append(tx);}
   // v1: muted grey dots only (no connecting line across eras)
   const C1='var(--text-muted, #8a8a8a)', C2='var(--performance)';
-  if(v1.length>1)svg.append(el('polyline',{points:v1.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C1,'stroke-width':1,'stroke-linejoin':'round',opacity:'0.7'}));
-  // v2: accent line + hollow/filled points
-  if(v2.length>1)svg.append(el('polyline',{points:v2.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C2,'stroke-width':1.5,'stroke-linejoin':'round'}));
-  v2.forEach((p,i)=>svg.append(el('circle',{cx:x(p.t),cy:y(p.v),r:i===v2.length-1?2.8:2.0,fill:i===v2.length-1?C2:'var(--bg)',stroke:C2,'stroke-width':1.2})));
+  // one series, one color (Jacob 2026-11-05): all kings, old + 64K bench
+  if(all.length>1)svg.append(el('polyline',{points:all.map(p=>x(p.t).toFixed(1)+','+y(p.v).toFixed(1)).join(' '),fill:'none',stroke:C2,'stroke-width':1.2,'stroke-linejoin':'round',opacity:'0.6'}));
+  all.forEach((p,i)=>svg.append(el('circle',{cx:x(p.t),cy:y(p.v),r:i===all.length-1?2.6:1.8,fill:C2,stroke:C2,'stroke-width':1})));
   const at=(e,a,xx)=>{const tx=el('text',{x:xx,y:H-3,'text-anchor':a});tx.textContent='E'+e;svg.append(tx);};
   at(all[0].m.epoch,'start',P.l); if(all.length>1) at(all[all.length-1].m.epoch,'end',W-P.r);
   // hover over union of points
@@ -193,7 +192,7 @@
     const l=i?(xs[i-1]+xs[i])/2:P.l, rr=i<pts.length-1?(xs[i]+xs[i+1])/2:W-P.r;
     const h=el('rect',{x:l,y:P.t,width:Math.max(1,rr-l),height:H-P.t-P.b,fill:'transparent'});
     h.addEventListener('mouseenter',()=>{
-      hl.setAttribute('cx',xs[i]);hl.setAttribute('cy',y(p.v));hl.setAttribute('fill',p.proto==='v2'?C2:C1);hl.setAttribute('visibility','visible');
+      hl.setAttribute('cx',xs[i]);hl.setAttribute('cy',y(p.v));hl.setAttribute('fill',C2);hl.setAttribute('visibility','visible');
       const prot=p.proto==='v2'?'bench-v2 (64K)':'bench-v1 (32K-era)';
       tp.innerHTML=`<strong>E${esc(p.m.epoch)} · ${esc(kname(p.m))}</strong><span>${esc(s.lab)}</span> ${pct(p.v)}%${p.se!=null?' ±'+(100*p.se).toFixed(1):''}\n<span>${esc(prot)}</span>`;
       tp.hidden=false;const tw=tp.offsetWidth;tp.style.left=Math.min(Math.max(0,xs[i]-tw/2),Math.max(0,W-tw))+'px';tp.style.top=(y(p.v)>H/2?2:H/2)+'px';
