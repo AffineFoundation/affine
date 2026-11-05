@@ -1,8 +1,8 @@
 /* Benchmarks (Jacob 2026-11-01): table at the very top of affine.io (benchmarks = columns from the registry, grouped by suite;
    models = rows: kings newest first, then reference models (queued ones as … rows), Genesis at the bottom; each cell shaded relative to its column best (Jacob 2026-11-01 09:08 CR)).
    Table only: the per-benchmark chart tiles were removed (Jacob 2026-11-01 08:35 CR). Data: /benchmarks.json.
-   References: only the Pareto front over (parameters, lower better) x (mean score over the table's columns, higher better) is shown;
-   a ref is hidden if Genesis or another fully scored ref is no larger and scores higher. Kings and Genesis always shown; refs without a
+   References: a ref is shown if it is on the Pareto front over (parameters, lower better) x (score, higher better) for ANY single
+   in-Avg benchmark or for the Avg (Jacob 2026-11-05 pt1257u; was Avg-only since 2026-11-01). Kings and Genesis always shown; refs without a
    full set of scores (queued/evaluating/failed) or without a PARAMS entry are hidden (Jacob 2026-11-01 18:13 CR). Short names link to HF.
    Avg column (first score column, Jacob 18:26 CR) = mean over the row's non-null benchmark cells, in_avg:false columns excluded (display only, Jacob pt1172u) (same mean as the Pareto filter; a missing cell, e.g. ArXivMath before it has run, is left out and shown as —, Jacob 2026-11-03). Shading: per column,
    min..max of the visible rows, red tint at the bottom -> strong green at the top; a small star marks each column max (ties all marked)
@@ -46,7 +46,11 @@ const name=m=>{const n=esc(SHORT[m.model_id]||m.label);const repo=m.hf&&String(m
   const full=m=>R[m.model_id]&&have(m).length>0&&PARAMS[m.model_id]!=null;
   const avg=m=>{const h=have(m);return h.length?h.reduce((t,b)=>t+R[m.model_id][b.id].score,0)/h.length:null;};
   const cand=ms.filter(m=>(m.kind==='reference'||m.kind==='genesis')&&full(m));
-  const refs=cand.filter(m=>m.kind==='reference'&&!cand.some(o=>o!==m&&PARAMS[o.model_id]<=PARAMS[m.model_id]&&avg(o)>avg(m)))
+  // per-benchmark frontier (Jacob pt1256u/pt1257u 2026-11-05): a ref is shown if, on ANY in-Avg benchmark or on the Avg itself,
+  // no other candidate (ref or Genesis) that is no larger and has that score scores strictly higher
+  const bsc=(m,id)=>id==='_avg'?avg(m):(((R[m.model_id]||{})[id]||{}).score??null);
+  const front=(m,id)=>{const x=bsc(m,id);return x!=null&&!cand.some(o=>{const y=bsc(o,id);return o!==m&&y!=null&&PARAMS[o.model_id]<=PARAMS[m.model_id]&&y>x;});};
+  const refs=cand.filter(m=>m.kind==='reference'&&['_avg',...AB.map(b=>b.id)].some(id=>front(m,id)))
    .sort((a,b)=>PARAMS[b.model_id]-PARAMS[a.model_id]||avg(b)-avg(a));
   const G=gen?R[gen.model_id]||{}:{};
   const all=[...kings,...refs,...(gen?[gen]:[])];
