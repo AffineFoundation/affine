@@ -21,6 +21,7 @@ miner/
     make_batch.py               rollouts -> affine-batch-v1/v2 file, checked with the validator's checker
     check_batch.py              the validator's FULL format check (tokenizes like the trainer)
     train_step.py               ONE v8.3.3m step with the live trainer code -> candidate checkpoint (+ cand/fp32-master/)
+    grad_probe.py               check your gradient against the live trainer's (same loss, same rollouts; cosine per layer block)
     gate_eval.py                the prior-v1 gate (weighted draw, fresh head, candidate, per-env Hajek estimate) on your GPUs
     gate_eval_ivw_v2.py         the old ivw-v2 gate (before 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812))
     simulate_turn.sh            all of the above, end to end
@@ -163,8 +164,18 @@ The live settings are in `trainer-config.public.json`.
   adv_center / adv_clip set the GRPO advantages; loss_agg token_mean weighs tokens instead of rollouts. The direction is
   always g_t/‖g_t‖. Code: `validator/trainer-v833m/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
   `v8211_batched.py` (`_apply_knobs`); `kit/train_step.py` applies them exactly like the live wrapper.
-- **Differences in the local run (execution only, same math):** it runs in one process with engine `padded`
-  (the live run uses 8 GPUs, engine `packed`, fla 0.6.0 kernels), so it matches at the bf16-ulp level, not bit-exactly.
+- **Kernels.** On a GPU `train_step.py` runs the live trainer's own training forward: engine `packed` with the trainer's
+  kernels installed on the actor and the KL reference (`validator/trainer-v833m/v83_fast_kernels.py`: fla 0.6.0
+  `causal_conv1d` + `chunk_gated_delta_rule` varlen, torch gated RMSNorm, FlashAttention-2 varlen; packed log-probs as in
+  `v83_dp.py`). What still differs from the live run: one process instead of 8 GPUs with an NCCL sum, and the micro-batch
+  grouping, so the gradient differs at the bf16 rounding level (sum order, atomics), not bit-exactly.
+  Until 2026-11-05 the kit ran engine `padded` with the stock transformers forward, which is not the trainer's math: the
+  GatedDeltaNet short conv falls back to torch `F.conv1d` (bf16 backward), and the attention / gated-norm kernels differ.
+  Allan (catoneone) measured that path at cosine 0.58 to an fp32 reference and a 1.36× norm, layers 0–7 mostly noise, on the
+  E718 file with head 58bcc262 ([sn120-k1-fixes exp024/phase5](https://github.com/catoneone/sn120-k1-fixes/tree/main/exp024/phase5)).
+  On our 1×H200 re-run (head 7214d10a, E745 and E718 files) the old path was closer (cosine 0.957–0.967 to the trainer, layers
+  0–7 0.91–0.94) and the current default 0.9997–0.9998 in every block, so the size of the error depends on the setup:
+  measure yours with `grad_probe.py`. `--engine padded` is kept only for the CPU self-test.
 - **The fp32 master.** The live trainer steps the head's fp32 master M_H, not fp32(bf16 head). Every GREEN publishes it
   next to the bf16 head: https://affine.io/k1/fp32-master/<head>.json (files + sha256, master_digest, presigned download
   links in `download`; current head: /k1/fp32-master/current.json). `kit/fetch_fp32_master.py` downloads it (~36 GB,
@@ -174,7 +185,7 @@ The live settings are in `trainer-config.public.json`.
   the gate's candidate). Keep the master in its own directory: vLLM loads every `*.safetensors` in a model directory.
   The candidate's own master is written to `cand/fp32-master/` for the same reason.
 - **One GPU.** `--activation-checkpointing` (opt-in, off by default) recomputes each decoder layer in the backward pass
-  instead of storing its activations: same math, slower, much less memory. Use it when a full file OOMs on one GPU (1x H200).
+  instead of storing its activations: same values (recomputed), slower, much less memory. Use it when a full file OOMs on one GPU (1x H200).
 
 ```
 python3 kit/fetch_head.py --out head && python3 kit/fetch_head.py --out ref --reference
@@ -182,6 +193,25 @@ python3 kit/fetch_fp32_master.py --out head-fp32-master        # fp32 master of 
 python3 kit/train_step.py --head head --ref ref --batch batch.json --hotkey <ss58> --out cand --report step.json \
     [--activation-checkpointing]                                # uses head-fp32-master automatically
 ```
+
+### Check your gradients (`kit/grad_probe.py`)
+
+`grad_probe.py` computes the gradient of one fixed loss on the same rollouts with different implementations and compares
+them per tensor (cosine and norm ratio, overall and per 8-layer block). Any public GREEN batch works
+(`https://affine.io/k1/turns/<epoch>/batch.json`, hotkey in that turn's `turn.json`); one H200, a few minutes per run.
+
+```
+python3 kit/grad_probe.py run --head head --batch batch.json --hotkey <ss58> --mode kit     --out g_kit.safetensors
+python3 kit/grad_probe.py run --head head --batch batch.json --hotkey <ss58> --mode trainer --out g_trainer.safetensors
+python3 kit/grad_probe.py compare g_kit.safetensors g_trainer.safetensors
+```
+
+`kit` is what `train_step.py` runs; `trainer` is the live trainer's forward set up directly from `validator/trainer-v833m`;
+`legacy` is the old `padded` path; `fp32ref` is a slow fp32 pure-torch reference. Kit vs trainer should give a cosine of at
+least 0.99 and a norm ratio near 1.0 in every block, layers 0–7 included. Much lower means your environment (package
+versions, kernels, edited files) does not compute the gate trainer's gradient.
+Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosine 0.9998, norm ratio 1.0002 (layers 0–7:
+0.9997, 1.0006); legacy vs trainer 0.957, 0.993 (layers 0–7: 0.910); every bf16 path vs fp32ref about 0.96.
 
 ## 4. The gate (held-out, prior-v1 since 2026-11-01 17:14 CR, epoch 497 (first round r20261101T231445Z-fb048812)): what `kit/gate_eval.py` runs
 
@@ -296,4 +326,5 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
   The e651 head 4df7fb61 has no published master (its store entry was gone before the upload).
 - **Trainer pod pip freeze.** Only the versions the trainer reports are published (torch, transformers, toploc, fla).
   `requirements-trainer.txt` pins those, plus what the code imports.
-- **Packed 8-GPU kernels.** The local step runs `padded` in one process, which matches at the bf16-ulp level.
+- **8-GPU reduction.** The local step runs the trainer's packed kernels in one process; the live run sums 8 GPUs
+  with NCCL, so gradients match at the bf16 rounding level, not bit-exactly (`kit/grad_probe.py` measures it).
