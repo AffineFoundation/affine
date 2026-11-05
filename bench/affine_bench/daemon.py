@@ -25,7 +25,7 @@ for d in (ST, RES, PRIV, REQ):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400
-MIN_EPOCH = int(os.environ.get("BENCH_MIN_EPOCH", "544"))  # kings before this epoch are not benched (backlog dropped 2026-11-02)
+MIN_EPOCH = int(os.environ.get("BENCH_MIN_EPOCH", "587"))  # bench-v2: kings from E587 onward (Jacob 2026-11-05); older stay published only if still matching version
 NODE = Node()
 
 
@@ -162,12 +162,14 @@ def run_key(m):
 
 def launch(m, bids):
     rk = run_key(m)
+    st = R.resolve_settings(m["model_id"], m.get("kind"))
     args = ["affine-bench", "node-run", "--model-id", rk, "--model-dir", model_dir(m), "--reasoning-parser", m.get("reasoning_parser", "qwen3"),
-            "--benchmarks", ",".join(bids)]
-    if m.get("max_model_len"): args += ["--max-model-len", str(m["max_model_len"])]
+            "--benchmarks", ",".join(bids), "--max-model-len", str(st["max_model_len"])]
     if m.get("chat_template"): args += ["--chat-template", f"{C.NODE_REPO}/bench/config/{m['chat_template']}"]
     if m.get("rollouts"): args += ["--rollouts", m["rollouts"]]
-    if m.get("hf_overrides"): args += ["--hf-overrides", m["hf_overrides"]]
+    # Prefer explicit models.toml hf_overrides only when set; else the (usually empty) per-model native clamp.
+    ho = m.get("hf_overrides") or st.get("hf_overrides") or ""
+    if ho: args += ["--hf-overrides", ho]
     # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
     cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
            f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")

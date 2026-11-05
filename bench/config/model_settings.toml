@@ -1,0 +1,263 @@
+# Per-model native sampling for affine-bench-v2 (Jacob 2026-11-05).
+# Global ceiling: max_tokens <= 65536. max_model_len = max_tokens + prompt_headroom, never past native context.
+# Kings / Genesis inherit profile "qwen3.5-family" (Affine kings are Qwen3.5-9B fine-tunes).
+# Citations point at the HF model card / tech report that justified each row (see REPORT.md).
+
+prompt_headroom = 4096
+global_max_tokens_ceiling = 65536
+
+default_profile = "qwen3.5-family"
+king_profile = "qwen3.5-family"
+
+[profiles."qwen3.5-family"]
+# Qwen/Qwen3.5-9B Best Practices: thinking general + math/competition length (capped at 64K ceiling; card says 81920).
+# MathArena uses the same sampling (temp 1.0, top_k 20, presence_penalty 1.5): https://matharena.ai/models/qwen_qwen3_5_9b
+# https://huggingface.co/Qwen/Qwen3.5-9B
+max_tokens = 65536
+native_context = 262144
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/Qwen/Qwen3.5-9B (Best Practices: thinking general + 81920 for math contests; Affine caps at 65536)"
+
+[profiles.qwen3]
+# Qwen3-8B/4B/14B: thinking temp 0.6 top_p 0.95 top_k 20; math contests max_out 38912.
+# https://huggingface.co/Qwen/Qwen3-8B
+max_tokens = 38912
+native_context = 40960
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/Qwen/Qwen3-8B (Best Practices: thinking 0.6/0.95/top_k20; math/programming max_out 38912)"
+
+[profiles."r1-0528"]
+# DeepSeek-R1-0528-Qwen3-8B: max generation 64K, temp 0.6, top_p 0.95, 16 samples.
+# https://huggingface.co/deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+max_tokens = 65536
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/deepseek-ai/DeepSeek-R1-0528-Qwen3-8B (max generation 64K; temp 0.6 top_p 0.95)"
+
+[profiles."r1-distill"]
+# DeepSeek-R1-Distill-*: temp 0.6 top_p 0.95; 32K common eval budget.
+# https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B (temp 0.6 top_p 0.95; 32K)"
+
+[profiles.mimo]
+# XiaomiMiMo/MiMo-7B-RL: native 32768; temp 0.6; stay within native ctx.
+# https://huggingface.co/XiaomiMiMo/MiMo-7B-RL
+max_tokens = 30720
+native_context = 32768
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/XiaomiMiMo/MiMo-7B-RL (temp 0.6; native context 32768)"
+
+[profiles."phi4-reasoning"]
+# microsoft/Phi-4-reasoning: temp 0.8 top_k 50 top_p 0.95; max_new_tokens 32768; native 32768.
+# https://huggingface.co/microsoft/Phi-4-reasoning
+max_tokens = 30720
+native_context = 32768
+temperature = 0.8
+top_p = 0.95
+top_k = 50
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/microsoft/Phi-4-reasoning (temp 0.8 top_k 50 top_p 0.95; max_new_tokens 32768; native 32768)"
+
+[profiles.acereason]
+# nvidia/AceReason-Nemotron-1.1-7B: vLLM temp 0.6 top_p 0.95 max_tokens 32768.
+# https://huggingface.co/nvidia/AceReason-Nemotron-1.1-7B
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/nvidia/AceReason-Nemotron-1.1-7B (temp 0.6 top_p 0.95 max_tokens 32768)"
+
+[profiles.skywork]
+# Skywork-OR1-7B tech report: temp 1.0 top_p 1.0 max 32768 Avg@32.
+# https://huggingface.co/Skywork/Skywork-OR1-7B · arXiv:2505.22312
+max_tokens = 32768
+native_context = 131072
+temperature = 1.0
+top_p = 1.0
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/Skywork/Skywork-OR1-7B / arXiv:2505.22312 (temp 1.0 top_p 1.0 max 32768)"
+
+[profiles.deepscaler]
+# agentica-org/DeepScaleR-1.5B-Preview: R1-distill lineage; 32K eval.
+# https://huggingface.co/agentica-org/DeepScaleR-1.5B-Preview
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/agentica-org/DeepScaleR-1.5B-Preview (temp 0.6 top_p 0.95; 32K)"
+
+[profiles.openreasoning]
+# nvidia/OpenReasoning-Nemotron-7B: card example max_new_tokens=64000 (Affine ceiling 65536).
+# https://huggingface.co/nvidia/OpenReasoning-Nemotron-7B
+max_tokens = 64000
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/nvidia/OpenReasoning-Nemotron-7B (max_new_tokens 64000 example)"
+
+[profiles."nemotron-nano-9b"]
+# nvidia/NVIDIA-Nemotron-Nano-9B-v2: reasoning on temp 0.6 top_p 0.95.
+# https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2 (reasoning on: temp 0.6 top_p 0.95)"
+
+[profiles."llama-nemotron-nano"]
+# nvidia/Llama-3.1-Nemotron-Nano-8B-v1: Reasoning ON temp 0.6 top_p 0.95 max 32768.
+# https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-8B-v1
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-8B-v1 (Reasoning ON: 0.6/0.95; 32768)"
+
+[profiles."glm-z1"]
+# zai-org/GLM-Z1-9B-0414: temp 0.6 top_k 40 max_new_tokens 30000; native 32768.
+# https://huggingface.co/zai-org/GLM-Z1-9B-0414
+max_tokens = 30000
+native_context = 32768
+temperature = 0.6
+top_p = 0.95
+top_k = 40
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/zai-org/GLM-Z1-9B-0414 (temp 0.6 top_k 40 max_new_tokens 30000)"
+
+[profiles.openthinker3]
+# open-thoughts/OpenThinker3-7B: generation_config temp 0.7 top_p 0.8 top_k 20 rep 1.05; native 32768.
+# https://huggingface.co/open-thoughts/OpenThinker3-7B
+max_tokens = 30720
+native_context = 32768
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.05
+enable_thinking = true
+source = "https://huggingface.co/open-thoughts/OpenThinker3-7B (generation_config 0.7/0.8/top_k20/rep1.05)"
+
+[profiles."phi4-mini"]
+# microsoft/Phi-4-mini-reasoning: max_new_tokens 32768; temp 0.8 fair-compare note.
+# https://huggingface.co/microsoft/Phi-4-mini-reasoning
+max_tokens = 32768
+native_context = 131072
+temperature = 0.8
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/microsoft/Phi-4-mini-reasoning (max_new_tokens 32768; temp 0.8)"
+
+[profiles."gpt-oss"]
+# openai/gpt-oss-20b: medium reasoning; Affine keeps common-ish 0.6/0.95 (card often 1.0/1.0).
+# https://huggingface.co/openai/gpt-oss-20b
+max_tokens = 32768
+native_context = 131072
+temperature = 0.6
+top_p = 0.95
+top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "https://huggingface.co/openai/gpt-oss-20b (Affine: temp 0.6 top_p 0.95 medium effort; 32768)"
+
+# ---- model_id -> profile ----
+[models]
+genesis = "qwen3.5-family"
+"qwen3.5-9b" = "qwen3.5-family"
+"qwen3.5-4b" = "qwen3.5-family"
+"qwen3-8b" = "qwen3"
+"qwen3-4b" = "qwen3"
+"qwen3-14b" = "qwen3"
+"deepseek-r1-0528-qwen3-8b" = "r1-0528"
+"r1-distill-qwen-7b" = "r1-distill"
+"r1-distill-qwen-14b" = "r1-distill"
+"r1-distill-qwen-1.5b" = "r1-distill"
+"r1-distill-llama-8b" = "r1-distill"
+"mimo-7b-rl" = "mimo"
+"phi-4-reasoning" = "phi4-reasoning"
+"acereason-nemotron-1.1-7b" = "acereason"
+"skywork-or1-7b" = "skywork"
+"deepscaler-1.5b" = "deepscaler"
+"openreasoning-nemotron-7b" = "openreasoning"
+"nemotron-nano-9b-v2" = "nemotron-nano-9b"
+"llama-nemotron-nano-8b-v1" = "llama-nemotron-nano"
+"glm-z1-9b" = "glm-z1"
+"openthinker3-7b" = "openthinker3"
+"phi-4-mini-reasoning" = "phi4-mini"
+"gpt-oss-20b" = "gpt-oss"
+
+# Kings (Affine-*-9B Qwen3.5 fine-tunes) and any unknown model_id fall back to top-level default_profile / king_profile.

@@ -4,11 +4,9 @@
 #   reasoning_parser   vLLM --reasoning-parser so the graded reply is the final answer, not the thinking
 #   priority  order among Genesis + references (lower first). Queue: newest king, new GREEN kings (crowned < 6 h ago),
 #             then Genesis + ALL references, then the GREEN backlog, then every other king (daemon.queue)
-#   max_model_len   only when a model cannot take the common 34816 window
 #   chat_template   bench/config/templates/<file>, only when the model card asks for a non-default prompt to enable thinking
-#   hf_overrides    vLLM --hf-overrides JSON. Needed when config.json max_position_embeddings < 34816: vLLM sizes the RoPE cache
-#                   from it, and VLLM_ALLOW_LONG_MAX_MODEL_LEN alone lets the first sequence past it kill the engine
-#                   (2026-11-04 MiMo-7B-RL / Phi-4-reasoning). Positions below the native length are unchanged.
+#   Sampling / max_tokens / max_model_len: bench-v2 per-model native protocol in model_settings.toml (64K ceiling).
+#   Do not set max_model_len / hf_overrides here for context window — resolve_settings clamps to native_context.
 [[model]]
 id = "genesis"
 label = "Genesis"
@@ -70,7 +68,7 @@ id = "glm-z1-9b"
 label = "GLM-Z1-9B-0414"
 kind = "reference"
 hf = "zai-org/GLM-Z1-9B-0414@b221b06fefb23ca320922cf6e68ab5f2fb82de81"
-# native context is 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (only answers longer than ~30.7K tokens go past the trained range)
+# native context 32768; bench-v2 budget 30000 stays within native
 reasoning_parser = "deepseek_r1"
 priority = 13
 
@@ -139,10 +137,8 @@ id = "mimo-7b-rl"
 label = "MiMo-7B-RL"
 kind = "reference"
 hf = "XiaomiMiMo/MiMo-7B-RL@7c7707596b0ef1032ef82970d7a4a484ca457c4d"
-# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN + hf_overrides max_position_embeddings 34816
-# (without the override the first rollout past 32768 positions crashed the engine: 2026-11-01 run lost 20-70% of rollouts). MiMoForCausalLM (native in vLLM; MTP layers unused)
+# native context 32768; bench-v2 budget 30720 stays within native (see model_settings.toml mimo profile)
 reasoning_parser = "mimo"
-hf_overrides = '{"max_position_embeddings": 34816}'
 priority = 21
 
 [[model]]
@@ -161,7 +157,7 @@ id = "openthinker3-7b"
 label = "OpenThinker3-7B"
 kind = "reference"
 hf = "open-thoughts/OpenThinker3-7B@864fb9aefbb91f257c4911e4b9f85a6986f8eab2"
-# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN (as GLM-Z1-9B)
+# native context 32768; bench-v2 budget 30720 stays within native
 reasoning_parser = "deepseek_r1"
 priority = 23
 
@@ -170,10 +166,8 @@ id = "phi-4-reasoning"
 label = "Phi-4-reasoning"
 kind = "reference"
 hf = "microsoft/Phi-4-reasoning@1de18ec97600877ce63dbf60c73b998da99f0195"
-# native context 32768; served at the common 34816 via VLLM_ALLOW_LONG_MAX_MODEL_LEN + hf_overrides max_position_embeddings 34816
-# (same engine crash as MiMo-7B-RL without it). The repo template always adds its own reasoning system prompt
+# native context 32768; bench-v2 budget 30720 stays within native. Repo template always adds its reasoning system prompt.
 reasoning_parser = "deepseek_r1"
-hf_overrides = '{"max_position_embeddings": 34816}'
 priority = 24
 
 [[model]]
@@ -208,7 +202,7 @@ id = "gpt-oss-20b"
 label = "gpt-oss-20b"
 kind = "reference"
 hf = "openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
-# 21B MoE (3.6B active), MXFP4 weights; harmony format, default reasoning effort (medium). Served with the common sampling
-# (temp 0.6 / top_p 0.95), not the model card temp 1.0 / top_p 1.0. Last in the ref order: if it fails to serve 3 times it is skipped
+# 21B MoE (3.6B active), MXFP4 weights; harmony format, default reasoning effort (medium).
+# bench-v2 gpt-oss profile: temp 0.6 / top_p 0.95 / 32768 (not the card's 1.0/1.0). Last in ref order; skipped after 3 serve fails.
 reasoning_parser = "openai_gptoss"
 priority = 28

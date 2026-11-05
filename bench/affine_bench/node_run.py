@@ -99,7 +99,11 @@ def main(argv=None):
     # each in-flight rollout holds sockets + subprocess pipes; the default soft limit (1024) kills big runs with EMFILE
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard, 1 << 20) if hard != resource.RLIM_INFINITY else 1 << 20, hard))
-    S = R.serving(); ml = a.max_model_len or S["server"]["max_model_len"]
+    S = R.serving()
+    st = R.resolve_settings(a.model_id)
+    # CLI --max-model-len / --hf-overrides win; else per-model native protocol (bench-v2).
+    ml = a.max_model_len or st["max_model_len"]
+    ho = a.hf_overrides if a.hf_overrides else st.get("hf_overrides") or ""
     out = a.out or f"{ROOT}/runs/{a.model_id}"; os.makedirs(out, exist_ok=True)
     over = dict(x.split("=") for x in a.rollouts.split(",") if x)
     bs = []
@@ -108,10 +112,15 @@ def main(argv=None):
         if bid in over:
             b["rollouts"] = int(over[bid])
         bs.append(b)
+    sp = dict(temperature=st["temperature"], top_p=st["top_p"], top_k=st["top_k"], min_p=st["min_p"],
+              presence_penalty=st["presence_penalty"], repetition_penalty=st["repetition_penalty"],
+              max_tokens=st["max_tokens"], enable_thinking=st["enable_thinking"],
+              profile=st["profile"], source=st["source"], budget=st["budget"],
+              native_context=st["native_context"], max_model_len=ml)
     json.dump(dict(model_id=a.model_id, model_dir=a.model_dir, pid=os.getpid(), started=time.time(),
-                   benchmarks=[b["id"] for b in bs]), open(out + "/node_run.json", "w"))
-    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, a.hf_overrides); t_serve = time.time() - t0
-    sp = S["sampling"]; total_c = S["client"]["max_concurrent_total"]
+                   benchmarks=[b["id"] for b in bs], sampling=sp, serving=S["version"]), open(out + "/node_run.json", "w"))
+    t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, ho); t_serve = time.time() - t0
+    total_c = S["client"]["max_concurrent_total"]
     todo = [b for b in bs if not os.path.exists(f"{out}/{b['id']}/summary.json")]
     weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319}.get(b["id"], 40) for b in todo}
     W = sum(weights.values()) or 1
@@ -131,8 +140,15 @@ def main(argv=None):
         else:
             cmd = ["vf-eval", b["env"], "-m", "bench", "--client.base-url", "http://127.0.0.1:8000/v1", "--client.api-key-var", "BENCH_API_KEY",
                    "-r", str(b["rollouts"]), "-c", str(c), "--no-push", "--no-rich", "--env.agent.harness.id", b.get("harness", "null"),
-                   "--env.agent.runtime.type", b.get("runtime", "subprocess"), "--sampling.temperature", str(sp["temperature"]),
-                   "--sampling.top-p", str(sp["top_p"]), "--sampling.max-tokens", str(sp["max_tokens"]), "-o", vf]
+                   "--env.agent.runtime.type", b.get("runtime", "subprocess"),
+                   "--sampling.temperature", str(sp["temperature"]),
+                   "--sampling.top-p", str(sp["top_p"]),
+                   "--sampling.max-tokens", str(sp["max_tokens"]),
+                   "--sampling.top-k", str(sp["top_k"]),
+                   "--sampling.min-p", str(sp["min_p"]),
+                   "--sampling.presence-penalty", str(sp["presence_penalty"]),
+                   "--sampling.repetition-penalty", str(sp["repetition_penalty"]),
+                   "-o", vf]
         json.dump(dict(cmd=cmd, started=time.time(), concurrency=c, attempt=attempt), open(d + "/run.json", "w"))
         return subprocess.Popen(cmd, stdout=open(d + "/vf-eval.log", "a"), stderr=subprocess.STDOUT, env=env, cwd=d)
 
@@ -152,7 +168,7 @@ def main(argv=None):
                 json.dump(dict(rc=rc, at=time.time(), attempt=att, errors=res[0]["errors"]), open(d + f"/ERRORS.{att}", "w"))
                 if not server_up():
                     try:
-                        ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, a.hf_overrides)
+                        ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, ho)
                     except BaseException as e:  # a failed restart just makes the retry fail too; keep the other runs going
                         print(json.dumps(dict(event="serve-restart-failed", bench=bid, err=str(e)[-500:])), flush=True)
                 procs[bid] = (launch(b, att + 1), b, ts, att + 1); continue
@@ -162,8 +178,10 @@ def main(argv=None):
             if rc != 0 or res is None:
                 status[bid] = dict(rc=rc); json.dump(dict(rc=rc, at=time.time()), open(d + "/FAILED", "w")); continue
             summ, per = res
-            summ.update(model_id=a.model_id, wall_seconds=time.time() - ts, serving=S["version"], sampling=sp, harness=b.get("harness"),
-                        runtime=b.get("runtime"), bench_version=R.bench_version(b), finished_at=time.time())
+            summ.update(model_id=a.model_id, wall_seconds=time.time() - ts, serving=S["version"], sampling=sp,
+                        budget=sp["budget"], max_tokens=sp["max_tokens"], max_model_len=ml, profile=sp["profile"],
+                        harness=b.get("harness"), runtime=b.get("runtime"), bench_version=R.bench_version(b),
+                        finished_at=time.time())
             with open(d + "/per_task.jsonl", "w") as f:
                 for p_ in sorted(per.values(), key=lambda x: x["idx"]):
                     p_ = dict(p_); p_["tokens"] = sum(p_["tokens"]); f.write(json.dumps(p_) + "\n")

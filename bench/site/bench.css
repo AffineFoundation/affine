@@ -46,3 +46,6 @@
 #bench-table .bs-plot .empty{margin:0;font:11px var(--mono);color:var(--muted)}
 #bench-table .bench-sparks .bench-spark:hover{z-index:4}
 @media (max-width:760px){#bench-table .bench-spark{padding:8px 10px}#bench-table .bs-plot.chart-wrap{height:80px}#bench-table .bench-spark h2,#bench-table .bench-spark .reading{font-size:13px}}
+
+/* bench-v2: budget + cut-off under the model name */
+#bench-table th .bench-meta{display:block;font:10px/14px var(--mono);color:var(--muted);font-weight:400;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

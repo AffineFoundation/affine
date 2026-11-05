@@ -1,4 +1,6 @@
-/* Benchmarks (Jacob 2026-11-01): table at the very top of affine.io (benchmarks = columns from the registry, grouped by suite;
+/* Benchmarks (Jacob 2026-11-01; bench-v2 2026-11-05): table at the very top of affine.io (benchmarks = columns from the registry, grouped by suite;
+   bench-v2: per-model native sampling + budget (64K ceiling); each row shows budget + cut-off (cap_rate) in the model-cell tooltip;
+
    models = rows: kings newest first, then reference models (queued ones as … rows), Genesis at the bottom; each cell shaded relative to its column best (Jacob 2026-11-01 09:08 CR)).
    Table only: the per-benchmark chart tiles were removed (Jacob 2026-11-01 08:35 CR). Data: /benchmarks.json.
    References: a ref is shown if it is on the Pareto front over (parameters, lower better) x (score, higher better) for ANY single
@@ -64,10 +66,19 @@ const name=m=>{const n=esc(SHORT[m.model_id]||m.label);const repo=m.hf&&String(m
    // partial run (Jacob pt1236u 2026-11-04): result rows carry complete/errors/samples_expected; >1% samples lost = dagger + tooltip
    const rr=b===AVG?null:(R[m.model_id]||{})[b.id],inc=rr&&rr.complete===false,pp=inc&&rr.errors>.01*rr.samples_expected;
    const pt=inc?`partial run: ${rr.samples} of ${rr.samples_expected} samples (${rr.errors} errored)`:'',dg=pp?'<sup title="'+pt+'">†</sup>':'';
-   if(b.in_avg===false)return`<td class="disp" title="display only, not in Avg${pt?'; '+pt:''}">${pct(x)}${dg}</td>`;
-   const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);const tt=[top?'column best':'',pt].filter(Boolean).join('; ');
-   return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${tt?` title="${tt}"`:''}>${top?STAR:''}${pct(x)}${dg}</td>`;};
-  const row=(m,cls='')=>`<tr class="${cls}"><th scope="row">${m.kind==='king'?`E${esc(m.epoch)} <span>${esc(kname(m))}</span>`:name(m)}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;
+   const cap=rr&&rr.cap_rate!=null?`cut-off ${(100*rr.cap_rate).toFixed(1)}%`:'';
+   const bud=rr&&rr.budget!=null?`budget ${Number(rr.budget).toLocaleString()}`:(m.budget!=null?`budget ${Number(m.budget).toLocaleString()}`:'');
+   if(b.in_avg===false){const t=['display only, not in Avg',bud,cap,pt].filter(Boolean).join('; ');return`<td class="disp" title="${esc(t)}">${pct(x)}${dg}</td>`;}
+   const [lo,hi]=span[b.id];const f=hi>lo?(x-lo)/(hi-lo):1;const top=r1(x)===r1(hi);const tt=[top?'column best':'',bud,cap,pt].filter(Boolean).join('; ');
+   return`<td class="${top?'best':''}${c}" style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"${tt?` title="${esc(tt)}"`:''}>${top?STAR:''}${pct(x)}${dg}</td>`;};
+  // bench-v2: per-row budget (from model profile) + mean cut-off rate across scored cells
+  const rowMeta=m=>{const rs=Object.values(R[m.model_id]||{});const caps=rs.map(r=>r.cap_rate).filter(x=>x!=null);
+    const budget=m.budget??(rs.find(r=>r.budget!=null)||{}).budget;const cap=caps.length?caps.reduce((a,b)=>a+b,0)/caps.length:null;
+    const bits=[];if(budget!=null)bits.push('budget '+Number(budget).toLocaleString()+' tok');
+    if(cap!=null)bits.push('cut-off '+(100*cap).toFixed(1)+'%');if(m.profile)bits.push(m.profile);
+    return bits.join(' · ');};
+  const row=(m,cls='')=>{const meta=rowMeta(m);const label=m.kind==='king'?`E${esc(m.epoch)} <span>${esc(kname(m))}</span>`:name(m);
+    return`<tr class="${cls}"><th scope="row" title="${esc(meta)}">${label}${meta?` <span class="bench-meta">${esc(meta)}</span>`:''}</th>${cell(m,AVG)}${B.map(b=>cell(m,b)).join('')}</tr>`;};
   const suites=[...new Set(B.map(b=>b.suite))];
   const head=suites.length>1?`<tr><th></th><th class="avg"></th>${suites.map(s=>`<th colspan="${B.filter(b=>b.suite===s).length}" class="suite">${esc(s)}</th>`).join('')}</tr>`:'';
   const prev=box.querySelector('.bench-scroll'),keep=prev?[prev.scrollTop,prev.scrollLeft]:null;

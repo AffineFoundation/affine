@@ -1,19 +1,28 @@
-# Inference + sampling settings shared by every model and benchmark (part of the benchmark definition: bump `version`
-# when anything here changes; results carry it and the site only compares like with like).
-version = "bench-v1"
+# Inference defaults for affine-bench-v2. Per-model sampling + budgets live in model_settings.toml
+# (Jacob 2026-11-05: replace uniform 32K bench-v1 with per-model native protocol, 64K ceiling).
+# Bump `version` whenever anything that changes scores changes; results carry it.
+version = "bench-v2"
 [server]
 engine = "vllm==0.32.0"
 data_parallel = "all GPUs (one replica per GPU)"
 dtype = "bfloat16"
-max_model_len = 34816
+# Fallback window when a model has no profile; real runs use model_settings.max_model_len.
+max_model_len = 69632
 max_num_seqs = 512
 gpu_memory_utilization = 0.90
-generation_config = "vllm"   # ignore each model's generation_config.json defaults (e.g. top_k=20) so sampling is identical
+# Empty vLLM defaults; per-request sampling from model_settings.toml is authoritative (node_run forwards
+# temperature/top_p/top_k/min_p/presence_penalty/repetition_penalty/max_tokens). Do NOT load each HF
+# generation_config.json (that would fight the per-model protocol).
+generation_config = "vllm"
 [sampling]
+# Fallback only — node_run overlays the model's profile from model_settings.toml.
 temperature = 0.6
 top_p = 0.95
 top_k = -1
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
 max_tokens = 32768
-enable_thinking = true       # chat-template default for every thinking model here; reasoning is split off by --reasoning-parser
+enable_thinking = true
 [client]
-max_concurrent_total = 3072  # rollouts in flight across all benchmarks of one model (vLLM: 8 x 512 seqs)
+max_concurrent_total = 3072

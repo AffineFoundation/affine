@@ -73,6 +73,8 @@ def publish(rows, S, max_fail=3):
         recs.append(dict(model_id=mid, model_kind=r.get("model_kind"), benchmark_id=bid, suite=b["suite"], env_version=r.get("bench_version"),
                          score=r["score"], se=r["se"], n=r["tasks"], samples=r["samples"], samples_expected=exp, errors=exp - r["samples"],
                          complete=exp == r["samples"], rollouts=r["rollouts"], cap_rate=r["cap_rate"],
+                         budget=r.get("budget") or (r.get("sampling") or {}).get("budget") or (r.get("sampling") or {}).get("max_tokens"),
+                         profile=r.get("profile") or (r.get("sampling") or {}).get("profile"),
                          mean_out_tokens=round(r["mean_out_tokens"]), run_at=r.get("finished_at"), wall_s=round(r.get("wall_seconds") or 0), gpu=_gpu(r)))
     kinds = {m["model_id"]: m["kind"] for m in rows}
     for b in bs:
@@ -92,15 +94,25 @@ def publish(rows, S, max_fail=3):
             status = "evaluating" if run and run["model"]["model_id"] == m["model_id"] else ("scored" if m["model_id"] in have else "queued")
             if status == "queued" and (m["model_id"] in (S or {}).get("unavailable", []) or (S or {}).get("fail", {}).get(m["model_id"], 0) >= max_fail):
                 status = "failed"  # gave up after max_fail attempts (daemon.MAX_FAIL); hidden on the site
-        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "king", "hf", "epoch", "crowned_at", "era", "green")} | dict(status=status))
+        try:
+            st = R.resolve_settings(m["model_id"], m.get("kind"))
+            budget, profile = st["budget"], st["profile"]
+        except Exception:
+            budget, profile = None, None
+        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "king", "hf", "epoch", "crowned_at", "era", "green")}
+                      | dict(status=status, budget=budget, profile=profile))
     hist = [h for h in (S or {}).get("history", []) if not h["model"].count(".")]
     per = sorted(h["wall_s"] for h in hist[-20:]) if hist else []
     med = per[len(per) // 2] if per else None
     left = len(set((S or {}).get("queue") or []) | ({run["model"]["model_id"]} if run else set()))  # kings only, no backlog
-    out = dict(version="affine-bench-v1", updated_at=time.time(), serving=sv,
-               about="Public math benchmarks for every SN120 king and for reference models, all re-run on the same node, endpoint, prompts, "
-                     "graders and sampling (Prime Intellect verifiers envs, pinned). Score = mean over problems of the per-problem mean over "
-                     "rollouts; se = task-clustered standard error. Aggregates only. Informational; never used for promotions or weights.",
+    out = dict(version="affine-bench-v2", updated_at=time.time(), serving=sv,
+               about="Public math benchmarks for every SN120 king and for reference models (affine-bench-v2). All re-run on the same node, "
+                     "endpoint, prompts and graders (Prime Intellect verifiers envs, pinned). Sampling and output budget are per-model native "
+                     "settings from model_settings.toml (citations on each profile), with a global 64K max_tokens ceiling; max_model_len = "
+                     "budget + prompt headroom, never past the model's native context. Kings/Genesis use the Qwen3.5-family profile. "
+                     "Score = mean over problems of the per-problem mean over rollouts; se = task-clustered standard error. "
+                     "Each result carries budget and cap_rate (fraction of rollouts that hit max_tokens). Aggregates only. "
+                     "Informational; never used for promotions or weights.",
                benchmarks=[{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime")}
                            | dict(in_avg=b.get("in_avg", True)) for b in bs if b.get("enabled")],
                suites=sorted({b["suite"] for b in bs if b.get("enabled")}),
