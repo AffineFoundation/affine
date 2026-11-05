@@ -1,0 +1,31 @@
+# Developer-published scores, NOT run on Affine (Jacob 2026-11-05 pt1299u / 1:41 CR).
+# merge-only publisher includes these as model_kind=reported; never GPU-benched.
+# Leave unspecified benchmarks blank; Avg is n/a (excluded from mean).
+
+[[reported]]
+id = "intellect-3"
+label = "INTELLECT-3"
+hf = "PrimeIntellect/INTELLECT-3"
+params = "106B MoE (A12B active)"
+source = "https://huggingface.co/PrimeIntellect/INTELLECT-3"
+source_note = "Developer-reported: AIME pass@1 averaged over 32 samples (Avg@32, not pass@32); MATH-500 pass@1 over 2 samples, math-verify. Not run on Affine."
+protocol = "reported · pass@1 (avg of 32 samples) · math-verify"
+priority = 100
+[reported.scores]
+math500 = 0.981
+aime24 = 0.908
+aime25 = 0.880
+
+[[reported]]
+id = "glm-4.5-air"
+label = "GLM-4.5-Air"
+hf = "zai-org/GLM-4.5-Air"
+params = ""
+source = "https://arxiv.org/html/2512.16144"
+source_note = "Developer-reported (arXiv 2512.16144): AIME pass@1 averaged over 32 samples (Avg@32, not pass@32); MATH-500 pass@1 over 2 samples, math-verify. Not run on Affine."
+protocol = "reported · pass@1 (avg of 32 samples) · math-verify"
+priority = 101
+[reported.scores]
+math500 = 0.978
+aime24 = 0.846
+aime25 = 0.820

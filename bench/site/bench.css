@@ -49,3 +49,10 @@
 
 /* bench-v2: budget + cut-off under the model name */
 #bench-table th .bench-meta{display:block;font:10px/14px var(--mono);color:var(--muted);font-weight:400;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* reported (not run) rows — Jacob 2026-11-05 */
+#bench-table tr.reported th,#bench-table tr.reported td{font-style:italic;opacity:.92}
+#bench-table .bench-reported-badge{display:inline-block;margin-left:6px;padding:0 6px;border:1px solid var(--line);border-radius:3px;font:10px/16px var(--mono);font-style:normal;color:var(--muted);vertical-align:middle;letter-spacing:0}
+#bench-table td.reported{color:var(--muted)}
+#bench-table .bench-footnote{margin:8px 0 0;font:12px/18px Haffer,Arial,sans-serif;color:var(--muted)}
+#bench-table .bench-footnote a{color:var(--muted);text-decoration:underline}
