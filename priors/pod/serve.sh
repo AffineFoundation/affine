@@ -1,6 +1,6 @@
 #!/bin/bash
 # Prior-table pod: serve checkpoint CKPT on every GPU, one vLLM replica per GPU (ports 8100+gpu), loopback only.
-# Same vLLM flags as the live probe pod's serve.sh (bf16, max-model-len 16384, prefix caching, max-num-seqs 512, gmu 0.90, no mm).
+# Same vLLM flags as the live probe pod's serve.sh (bf16, max-model-len 36864, prefix caching, max-num-seqs 512, gmu 0.90, no mm).
 # usage: serve.sh CKPT_ID [GMU]      stop: serve.sh --stop      (kills only the exact PIDs recorded in /opt/prior/serve/*.pid)
 set -u
 D=/opt/prior; S=$D/serve; mkdir -p $S
@@ -14,7 +14,7 @@ if [ "${1:-}" = "--stop" ]; then stop; echo stopped; exit 0; fi
 CK=$1; GMU=${2:-0.90}; M=$D/ckpt/$CK
 # optional overrides (MAX_MODEL_LEN = caps.json max_model_len, written by tools/caps/caps_apply.py): /opt/prior/serve/serve.env
 [ -f $S/serve.env ] && . $S/serve.env
-MML=${MAX_MODEL_LEN:-16384}
+MML=${MAX_MODEL_LEN:-36864}
 [ -f $M/.verified ] || { echo "ckpt $CK not verified"; exit 3; }
 stop
 NG=$(nvidia-smi -L | wc -l)

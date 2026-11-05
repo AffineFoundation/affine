@@ -118,8 +118,8 @@ miner/
   with the head tokenizer. There's no system message, and the generation prompt is `<|im_start|>assistant\n`.
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
   `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 12,287 tokens, `<|im_end|>` is appended (it ended).
-  Exactly 12,288 tokens counts as capped (no EOS). More than 12,288 is invalid. Prompt + output can be at most 16,384 tokens.
-  **12,288 output tokens apply everywhere**: generation (sample with `max_tokens` 12,288; kit/sampler.py does),
+  Exactly 32,768 tokens counts as capped (no EOS). More than 32,768 is invalid. Prompt + output can be at most 36,864 tokens.
+  **32,768 output tokens apply everywhere**: generation (sample with `max_tokens` 32,768; kit/sampler.py does),
   batch files, training and the gate (see Sampling below). The one source of every cap number is
   [https://affine.io/caps.json](https://affine.io/caps.json) (repo `caps.json`); this README, llms.txt, mining.json, the kit,
   the batch validator, the trainer and the gate are checked against it by `tools/caps/caps_check.py`.
@@ -127,7 +127,7 @@ miner/
   a cap are dropped whole, in file order.
 - **reward.** Any finite number, used as given. Advantage = reward − the mean reward of that prompt's
   rollouts (no std normalisation), so **a prompt with one rollout gets advantage = its reward** (+1 for a correct
-  reward-1 rollout). The trainer adds an overlong penalty of −0.5·clip((len−10096)/(12288−10096), 0, 1) to the reward
+  reward-1 rollout). The trainer adds an overlong penalty of −0.5·clip((len−26923)/(32768−26923), 0, 1) to the reward
   (len incl. EOS; window = caps.json `overlong_soft_start`..`overlong_max_tokens`).
 - Check a file the way the validator does: `python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`
   (`affine_batch.py check` does the structural part without a tokenizer).
@@ -221,10 +221,10 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
   prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context, vLLM 0.32.0 on
+- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 32,768 output tokens (the task cap), 36,864 context, vLLM 0.32.0 on
   8×B200. A round's
   cap is `mining.json` → `training.promotion_gate.heldout.current_round.settings.max_tokens`, the same for head and candidates
-  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). One request per
+  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512`). One request per
   sample, seed = int(sha256(`<plan seed>:affine_gatepool:<probe index>:j`)[:12], 16); probe index = the math index, or
   7496 + j for `dapo:j`.
 - **Grader** (`kit/grade.py` = `probe_worker.grade`, the same for both envs, head and candidates): a capped reply is neutral

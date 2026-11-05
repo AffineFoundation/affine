@@ -31,7 +31,7 @@ Estimate (per turn): every drawn task is scored fresh: head h_i = c/n of the hea
   Request seeds: head block b uses plan_seed(seed, b); the candidate of epoch e uses cand_seed(seed, e) (independent seeds).
   GREEN iff Delta > 0 AND z > 1.00 (bar_z) AND candidate cap-hit < cap_max (CAP_HIT_MAX = 0.33) AND >= min_scored tasks scored.
   cap-hit (task-level, Jacob 2026-11-01 19:43 CR): the share of ALL the candidate's rollouts on the scored baseline tasks that hit
-  the token cap (the round's max_tokens = caps.json max_output_tokens, 12,288 tokens, https://affine.io/caps.json; no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike (affine_math and dapo), no env distinction.
+  the token cap (the round's max_tokens = caps.json max_output_tokens, 32,768 tokens, https://affine.io/caps.json; no EOS) = sum_i capped_i / sum_i rollouts_i, every scored task counted alike (affine_math and dapo), no env distinction.
   RED if >= 33% of the candidate's baseline answers hit the token cap. (Before E507: Hajek capped share on affine_math < 0.20.)
   The head's rate is computed the same way and recorded (h_cap_rate); per-env rates are diagnostics only (per_env).
   z bar: fixed at z > 1.00 (bar_z = 1.0) from E553 (Jacob 2026-11-02 08:20 CR); E513-E552 used a time-relaxed bar (the exact

@@ -10,7 +10,7 @@ set -euo pipefail
 KIT="$(cd "$(dirname "$0")" && pwd)"; W="${1:-./turn}"; mkdir -p "$W"
 : "${HOTKEY:?set HOTKEY to your registered ss58 hotkey}"
 TASKS="${TASKS:-0-7495}"; K="${K:-8}"; N_GATE="${N_GATE:-500}"; PORT_H="${PORT_H:-8000}"; PORT_C="${PORT_C:-8001}"; SELECT="${SELECT:-correct1}"
-SERVE=(--served-model-name m --dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512
+SERVE=(--served-model-name m --dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512
        --limit-mm-per-prompt '{"image":0,"video":0}')   # = validator/probe/serve.sh (text-only; without it vLLM fails to load the checkpoint)
 wait_up() { for _ in $(seq 600); do curl -sf "http://127.0.0.1:$1/v1/models" >/dev/null && return 0; sleep 2; done; echo "vLLM on :$1 did not start" >&2; exit 1; }
 

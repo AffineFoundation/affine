@@ -91,7 +91,7 @@ def _write_hint(obj):
         pass
 
 STATE = dict(world=1, ref=None, actor=None, actor_ckpt=None, initialized=False)
-BUDGET = 32768; MAX_ROWS = 256; LOGIT_CHUNK = 4096; NO_CKPT_LAYERS_RANK0 = 0; NO_CKPT_LAYERS_HELPER = 2
+BUDGET = 65536; MAX_ROWS = 256; LOGIT_CHUNK = 4096; NO_CKPT_LAYERS_RANK0 = 0; NO_CKPT_LAYERS_HELPER = 2
 
 
 def init(world, port):
@@ -182,7 +182,7 @@ def make_train_update(B, FK):
         return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
 
     def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
-                        reference_runtime=None, engine='packed', token_budget=16384, max_rows=64, logit_chunk=2048,
+                        reference_runtime=None, engine='packed', token_budget=36864, max_rows=64, logit_chunk=2048,
                         timings=None):
         # Run the ORIGINAL preamble checks by calling the original with an empty-groups probe? No: replicate exactly by
         # delegating the no-update path and all validation to the original function's own code below.
@@ -302,7 +302,7 @@ class PRE:
                 raise ValueError('native trusted TaskGroup required')
             group.validate(config.group_size, vocab_size=runtime.vocab_size, eos_token_ids=set(runtime.eos_token_ids),
                            unresolved_failures=config.cap_policy == TRAIN_UNRESOLVED)
-            if any(len(group.prompt) + len(r.tokens) > max(int(runtime.max_context_tokens), 16384) for r in group.trajectories):   # v8.3.3m = v8211_batched.context_limit
+            if any(len(group.prompt) + len(r.tokens) > max(int(runtime.max_context_tokens), 36864) for r in group.trajectories):   # v8.3.3m = v8211_batched.context_limit
                 raise ValueError('complete rollout exceeds qualified total context')
 
     @staticmethod

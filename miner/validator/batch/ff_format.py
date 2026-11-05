@@ -77,8 +77,8 @@ def knob_value(k, v):
 
 TRAIN_KEYS = ('lr', 'kl', 'step_mult') + tuple(KNOB_SPEC)
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_OUTPUT = 12288         # output tokens incl. the appended EOS = caps.json max_output_tokens
-MAX_CONTEXT = 16384        # prompt + output tokens = caps.json max_context_tokens
+MAX_OUTPUT = 32768         # output tokens incl. the appended EOS = caps.json max_output_tokens
+MAX_CONTEXT = 36864        # prompt + output tokens = caps.json max_context_tokens
 EOS = 248046               # <|im_end|>
 CONTROL = frozenset({248044, 248045, 248046})   # <|endoftext|> <|im_start|> <|im_end|>
 

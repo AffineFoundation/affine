@@ -59,9 +59,9 @@ from subnet.mimo_grpo.upstream import reference
 import numpy as np
 
 
-# v8.3.3m (RA/20261102-12k-everywhere, Jacob 2026-11-02 18:48 CR "12 k should be everywhere"): the 12,288-token output cap in training.
-TRAIN_MAX_CONTEXT = 16384          # prompt + output tokens (12,288 output + prompt; the gate serves 16,384)
-FF_OVERLONG = (10096, 12288)       # free-file overlong window (soft_start, max_tokens) = caps.json (https://affine.io/caps.json); None = the signed job settings
+# v8.3.3m (RA/20261102-12k-everywhere, Jacob 2026-11-02 18:48 CR "12 k should be everywhere"): the 32,768-token output cap in training (v8.3.3o).
+TRAIN_MAX_CONTEXT = 36864          # prompt + output tokens (32,768 output + 4,096 headroom; caps.json)
+FF_OVERLONG = (26923, 32768)       # free-file overlong window (soft_start, max_tokens) = caps.json (https://affine.io/caps.json); None = the signed job settings
 
 
 def context_limit(runtime):
@@ -72,7 +72,7 @@ def context_limit(runtime):
 def rollout_reward(config, rollout):
     """v8.3.3h: native rollouts -> config.reward (unchanged). Free-file rollouts carry the miner's reward; the same
     soft overlong penalty applies (config.reward of a non-correct outcome is exactly minus that penalty).
-    v8.3.3m: free-file rollouts use the FF_OVERLONG window (same penalty and formula, ramp ending at the 12,288 cap)."""
+    v8.3.3m: free-file rollouts use the FF_OVERLONG window (same penalty and formula, ramp ending at the 32,768 cap)."""
     reward = getattr(rollout, 'reward', None)
     if reward is None:
         return config.reward(rollout.outcome, len(rollout.tokens))
@@ -322,12 +322,19 @@ def batched_log_probs(runtime, items, *, gradients, engine, logit_chunk=2048, su
     if gradients and not runtime.trainable:
         raise ValueError('inference runtime cannot train')
     model, device = runtime.model, runtime.device
-    seqs = []
-    for prompt, output in items:
-        prompt, output = runtime._tokens(prompt), runtime._tokens(output)
-        if len(prompt) + len(output) > context_limit(runtime):
-            raise ValueError('response context limit')
-        seqs.append(prompt + output)
+    # v8.3.3p: runtime._tokens enforces the signed (shorter) max_context_tokens; training allows TRAIN_MAX_CONTEXT.
+    lim = context_limit(runtime)
+    old_ctx = runtime.max_context_tokens
+    runtime.max_context_tokens = lim
+    try:
+        seqs = []
+        for prompt, output in items:
+            prompt, output = runtime._tokens(prompt), runtime._tokens(output)
+            if len(prompt) + len(output) > lim:
+                raise ValueError('response context limit')
+            seqs.append(prompt + output)
+    finally:
+        runtime.max_context_tokens = old_ctx
     with torch.set_grad_enabled(gradients):
         if engine == 'padded':
             width = max(len(s) for s in seqs)
@@ -467,7 +474,7 @@ def _gradient_pass(runtime, rows, plan, config, agg_config, loss_scale, active_r
 
 def train_update_batched(runtime, optimizer, groups, binding, *, config, guard=lambda: None,
                          record=lambda row: None, reference_runtime=None, engine='padded',
-                         token_budget=16384, max_rows=64, logit_chunk=2048, timings=None):
+                         token_budget=36864, max_rows=64, logit_chunk=2048, timings=None):
     config.validate()
     binding.validate()
     agg_config, loss_scale, aggregation = loss_aggregation(config)   # v8.2.11: fail before any work

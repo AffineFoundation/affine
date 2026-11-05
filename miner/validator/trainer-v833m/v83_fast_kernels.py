@@ -148,12 +148,20 @@ def packed_log_probs(runtime, items, *, gradients, logit_chunk=4096, checkpoint_
     Same selected-token math as v8211_batched.batched_log_probs (bf16 lm_head -> fp32 logits -> gather - logsumexp)."""
     from torch.utils.checkpoint import checkpoint
     model, device = runtime.model, runtime.device
-    seqs = []
-    for prompt, output in items:
-        prompt, output = runtime._tokens(prompt), runtime._tokens(output)
-        if len(prompt) + len(output) > max(int(runtime.max_context_tokens), 16384):   # v8.3.3m = v8211_batched.context_limit
-            raise ValueError('response context limit')
-        seqs.append(prompt + output)
+    # v8.3.3q: DP path uses this (not v8211_batched.batched_log_probs). runtime._tokens enforces the signed
+    # (shorter) max_context_tokens; raise it to TRAIN_MAX_CONTEXT for the duration of tokenization.
+    lim = max(int(runtime.max_context_tokens), 36864)
+    old_ctx = runtime.max_context_tokens
+    runtime.max_context_tokens = lim
+    try:
+        seqs = []
+        for prompt, output in items:
+            prompt, output = runtime._tokens(prompt), runtime._tokens(output)
+            if len(prompt) + len(output) > lim:
+                raise ValueError('response context limit')
+            seqs.append(prompt + output)
+    finally:
+        runtime.max_context_tokens = old_ctx
     lens = [len(s) for s in seqs]
     with torch.set_grad_enabled(gradients):
         ids = torch.tensor([t for s in seqs for t in s], device=device)[None]

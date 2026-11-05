@@ -39,10 +39,10 @@
  },
  "free_file_overlong": {
   "from_epoch": 590,
-  "overlong_max_tokens": 12288,
+  "overlong_max_tokens": 32768,
   "overlong_penalty": 0.5,
-  "overlong_soft_start": 10096,
-  "rule": "reward -= 0.5 * clip((len - 10096) / (12288 - 10096), 0, 1), len = output tokens incl. EOS"
+  "overlong_soft_start": 26923,
+  "rule": "reward -= 0.5 * clip((len - 26923) / (32768 - 26923), 0, 1), len = output tokens incl. EOS"
  },
  "host_files_sha256": {
   "ff_trainer.py": "6903b31666aa6bf601bad1e2fa40ca87d2615c957f46d25460d27f2a3d8b05d6",

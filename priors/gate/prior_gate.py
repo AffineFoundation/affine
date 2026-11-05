@@ -145,7 +145,7 @@ RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks fro
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = the round\'s sigma_run_floor (settings.sigma_run_floor): 0 = no floor, SE = sqrt(sampling + rollout variance), in rounds opened after the 2026-11-03 change (0.003 before; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 12,288 tokens = caps.json max_output_tokens, https://affine.io/caps.json): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 32,768 tokens = caps.json max_output_tokens, https://affine.io/caps.json): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
@@ -203,7 +203,7 @@ def public_params(h: dict, cur) -> dict:
     keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'secret_commitment', 'target_block', 'draw', 'opened_at',
             'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand', 'bar_z', 'z_inclusive', 'settings', 'status', 'rule', 'weighting', 'irt')
     return dict(baseline='prior-v1', from_epoch=h.get('from_epoch'), settings_next_round=settings_public(pv),
-                pool=dict(url=pv['pool_url'], manifest=pv['pool_url'].replace('gate-pool-v1.jsonl', 'gate-pool-v1.manifest.json')),
+                pool=dict(url=pv['pool_url'], manifest=pv['pool_url'].replace('.jsonl', '.manifest.json')),
                 code=dict(baseline='https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py',
                           gate_hooks='https://github.com/AffineFoundation/affine/blob/main/priors/gate/prior_gate.py',
                           prior_sampler='https://github.com/AffineFoundation/affine/tree/main/priors'),
