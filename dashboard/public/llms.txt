@@ -1,13 +1,12 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-06 12:45 CR (UTC-6): E815 fail-closed -> no_decision; probe deadline from run_start (2400s); gate 64K / training caps 32K.
+Last updated: 2026-11-06 15:28 CR (UTC-6): universal 64K train+gate LIVE (host-v834d); E815 fail-closed -> no_decision; probe deadline from run_start (2400s).
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
-Token caps: https://affine.io/caps.json is the source for training / batch / free-file caps (repo: caps.json, loader caps.py). Today it says
-max_output_tokens 32,768 and max_context_tokens 36,864 (prompt + output), overlong window 26923..32768. The promotion gate
-samples at a separate task cap: prior_v1.max_tokens = 65,536 (context 69,632 = 65,536 + 4,096), matching the 64K bench, set
-2026-11-06 (Jacob). Each round freezes its cap into mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens.
-Training stays at 32,768 until caps.json moves. tools/caps/caps_check.py still checks training consumers against caps.json.
+Token caps: https://affine.io/caps.json is the ONE source (repo: caps.json, loader caps.py). Today it says
+max_output_tokens 65,536 and max_context_tokens 69,632 (prompt + output), overlong window 53846..65536. Every cap
+value (generation, batch files, training, gate, probe, prior sampler, miner kit) is derived from that file and
+checked by tools/caps/caps_check.py. Each round freezes its cap into mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
 Miner kit (the live trainer, gate, grader, task pool, simulator): https://github.com/AffineFoundation/affine/blob/main/miner/README.md
 Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
@@ -90,15 +89,14 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`. (`tr
 - output: the assistant text after that prompt (include `<think>...</think>` if you want it trained). It's tokenized with
   `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and `<|endoftext|>` (ids 248044-248046) must
   not appear in a prompt or an output.
-- EOS rule: an output of up to 32,767 tokens gets `<|im_end|>` appended (it ended). Exactly 32,768 tokens = cut at the cap
-  (no EOS; capped). More than 32,768 is invalid. Prompt + output can be at most 36,864 tokens. Every shorter output is an
+- EOS rule: an output of up to 65,535 tokens gets `<|im_end|>` appended (it ended). Exactly 65,536 tokens = cut at the cap
+  (no EOS; capped). More than 65,536 is invalid. Prompt + output can be at most 69,632 tokens. Every shorter output is an
   ordinary ended rollout (EOS appended), whatever its length.
-  32,768 output tokens apply to generation (sample with max_tokens 32,768), batch files and training
-  (https://affine.io/caps.json). The promotion gate (section 6) samples at 65,536 output / 69,632 context
-  (prior_v1.max_tokens; each round publishes its cap in mining.json).
+  65,536 output tokens apply everywhere: generation (sample with max_tokens 65,536), batch files, training,
+  the promotion gate and the probe (https://affine.io/caps.json). The overlong window is 53846..65536.
 - reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
   std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
-  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 26923) / (32768 - 26923), 0, 1) (len = output
+  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 53846) / (65536 - 53846), 0, 1) (len = output
   tokens incl. the EOS; window = caps.json overlong_soft_start..overlong_max_tokens).
 - Any number of rollouts per prompt (at least 1). Caps: 125 prompts and 1,000 rollouts (125 x 8; live value: mining.json
   `training.batch_cap`; a change applies at the next turn). Prompts beyond a cap are dropped whole, in file order.
@@ -143,8 +141,8 @@ structural check, and it needs no tokenizer.
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
 miner/validator/trainer-v834c (+ engine/) and the live settings are in miner/validator/trainer-v834c/trainer-config.public.json.
-v8.3.4 (host-v834c, LIVE since 2026-11-05) = v8.3.3r training caps (rollouts up to 36,864 tokens of prompt + output trained
-in full; free-file overlong window 26923..32768) + KL removed: train.kl still accepted/parsed in [0.005, 0.1] so old
+v8.3.4d (host-v834d, LIVE since 2026-11-06 15:28 CR) = universal 64K training caps (rollouts up to 69,632 tokens of prompt + output trained
+in full; free-file overlong window 53846..65536; BUDGET 69632, LOGIT_CHUNK 4096) + KL removed: train.kl still accepted/parsed in [0.005, 0.1] so old
 files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference model is loaded.
 
 - Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0. KL is off as of
@@ -226,12 +224,12 @@ files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference m
 - Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
   Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
   block and nothing after it." (Your batch prompt is a single user message, section 3.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 65,536 output tokens (the gate task cap), 69,632 context; each round's cap
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 65,536 output tokens (the task cap), 69,632 context (caps.json); each round's cap
   is in mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens. Head and candidates in a round always
   use the same cap. It runs on vLLM 0.32.0 on 8 x B200
   (`--dtype bfloat16 --max-model-len 69632 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
   On the probe the pool is one task list: probe index = math index (0-7495), or 7496 + j for dapo:j.
-- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (the round's max_tokens, currently 65,536; no EOS) is unresolved.
+- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (65,536 tokens, no EOS) is unresolved.
   Otherwise the final channel after exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is
   checked with math-verify 0.9.0 against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1
   (P1/P2 projection, E1-E7 answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).

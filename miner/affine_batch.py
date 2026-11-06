@@ -158,7 +158,7 @@ def link(hotkey, key):
 
 
 def check(raw, hotkey, caps):
-    """Local structural check (the validator also tokenizes: <= 32768 output tokens, <= 36864 prompt+output, no chat
+    """Local structural check (the validator also tokenizes: <= 65536 output tokens, <= 69632 prompt+output, no chat
     control tokens). Returns (ok, message)."""
     try:
         v = json.loads(raw.decode('utf-8'), parse_constant=lambda c: (_ for _ in ()).throw(ValueError('non-finite number')))

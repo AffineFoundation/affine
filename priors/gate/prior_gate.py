@@ -19,6 +19,7 @@ import hashlib, json, math, os, sys, time, urllib.request
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import baseline_v1 as BV
+import probe_error_guard as PEG
 import heldout as HO
 
 def _caps():   # THE token caps (caps.json next to caps.py in the validator repo; https://affine.io/caps.json)
@@ -145,7 +146,7 @@ RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks fro
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = the round\'s sigma_run_floor (settings.sigma_run_floor): 0 = no floor, SE = sqrt(sampling + rollout variance), in rounds opened after the 2026-11-03 change (0.003 before; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 65,536 tokens (gate prior_v1.max_tokens; training caps.json may differ), https://affine.io/caps.json): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 65,536 tokens = caps.json max_output_tokens, https://affine.io/caps.json): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')
@@ -219,7 +220,18 @@ def public_params(h: dict, cur) -> dict:
                             'https://github.com/AffineFoundation/affine/blob/main/priors/irt/') if pv.get('weighting') == 'irt-info' else None,
                 current_round=({k: cur.get(k) for k in keep} if isinstance(cur, dict) else None),
                 rounds='https://affine.io/gate/heldout/index.json', current='https://affine.io/gate/heldout/current.json', rule=rule_for(pv),
-                z_bar=z_bar_public())
+                z_bar=z_bar_public(),
+                # 20261106-e815-timeout (Jacob 12:36 CR)
+                fail_closed_s=int(h.get('fail_closed_s') or 2400),
+                fetch_fail_closed_s=int(h.get('fetch_fail_closed_s') or 900),
+                no_decision=dict(
+                    rule=('Infra failures that leave a candidate never judged (probe fail-closed after run_start, hung '
+                          'checkpoint fetch, or the held-out round closing before a decision) are recorded as no_decision: '
+                          'not a served turn, hotkey stays queued via K1 grant, no credit, no promotion. The candidate-probe '
+                          'deadline is timed from TIMELINE.run_start (fail_closed_s seconds); fetch time is excluded '
+                          '(fetch_fail_closed_s caps a hung fetch). decision field stays red for lifecycle compatibility; '
+                          'chart_status/no_decision flag marks it. A real scored RED/GREEN still consumes the turn.'),
+                    authorized='Jacob 2026-11-06 12:36 CR'))
 
 
 # ------------------------------------------------------------------ round open + draw
@@ -469,7 +481,7 @@ def process_epoch(S, e, s, f):
     d = S.EP / str(e); dp = d / 'DECISION.json'; c = HO.cfg(f); R = S.rounds(); rid = s['round_id']; r = R.get(rid); pv = r['cfg']
     cand = S.candidate_of(e); early = False
     if R.closed(rid):
-        if cand: return S.skip_red(e, s['head'], cand['id'], f, 'prior-v1 round %s closed before this candidate was decided' % rid, rid)
+        if cand: return S.skip_red(e, s['head'], cand['id'], f, 'prior-v1 round %s closed before this candidate was decided' % rid, rid, infra=True)
         return 'heldout-round-closed'
     tr = S.LIFE / 'epochs' / str(e) / 'TRAINING-RESULT.json'
     tr_t = S.REPLAY_T0.get(e) or (tr.stat().st_mtime if tr.exists() else None)
@@ -494,8 +506,10 @@ def process_epoch(S, e, s, f):
     if not early and 'result_mtime' not in tl: tl['result_seen'] = time.time(); tl['result_mtime'] = tr_t
     if not early and cand.get('input') and cand['input'] != H:
         return S.skip_red(e, H, C, f, 'candidate input %s != sampled head %s' % (cand['input'][:12], H[:12]))
-    if not early and tr_age is not None and tr_age > float(c['fail_closed_s']):
-        return S.heldout_fail_closed(e, s, cand, f, 'candidate probe not done %ds after TRAINING-RESULT' % int(tr_age))
+    if not early:
+        why = S.probe_deadline_fired(tl, c, tr_age=tr_age)
+        if why:
+            return S.heldout_fail_closed(e, s, cand, f, why)
     tl.setdefault('h_ready', time.time())
     S.busy(True, epoch=e, candidate=C)
     f2 = dict(f, env=pv['probe_env'])
@@ -511,6 +525,21 @@ def process_epoch(S, e, s, f):
     if early: S.wj(tlp, tl); S.busy(False); return 'staged-await-result'
     bfn = R.d(rid) / ('BASELINE%s.private.json' % (('-e%d' % e) if per_turn else ''))
     b = S.rj(bfn) or {}
+    # probe-error guard (20261105-e757-rejudge): never judge on a high-error head baseline
+    _hpt = (b.get('per_task') or {})
+    _hattempt = int(((S.rj(d / 'HELD.json') or {}).get('holds') or [{}])[-1].get('attempt') or 0) if (d / 'HELD.json').exists() else 0
+    _hok, _hsum = PEG.should_judge(_hpt, side='head-baseline', epoch_dir=d, attempt=_hattempt)
+    if not _hok:
+        S.log(event='probe_error_guard_hold', epoch=e, side='head-baseline', rate=_hsum.get('rate'), attempt=_hattempt)
+        if _hattempt < PEG.REPROBE_MAX:
+            # stale the baseline so ensure_baseline redoes it
+            if bfn.exists():
+                os.replace(bfn, R.d(rid) / ('BASELINE.errhold-%d.private.json' % int(time.time())))
+                tp = R.d(rid) / 'BASELINE-TIMELINE.json'
+                if tp.exists(): os.replace(tp, R.d(rid) / ('BASELINE-TIMELINE.errhold-%d.json' % int(time.time())))
+            PEG.hold_record(d, side='head-baseline', rate=_hsum['rate'], attempt=_hattempt + 1, detail=_hsum)
+            S.busy(False); return 'held-head-probe-errors(reprobe)'
+        S.busy(False); return 'held-head-probe-errors'
     if b and int(b.get('max_tokens') or 0) != _mt(pv):   # never mix task caps within a round (a baseline without a cap = re-baseline)
         os.replace(bfn, R.d(rid) / ('BASELINE.capmix-%d.private.json' % int(time.time())))
         S.log(event='prior_baseline_cap_mismatch', round=rid, epoch=e, baseline=b.get('max_tokens'), round_cap=_mt(pv)); return 'prior-baseline-cap-mismatch'
@@ -522,6 +551,15 @@ def process_epoch(S, e, s, f):
     tl['decide_at'] = time.time()
     cpt_i = {int(k): v for k, v in (((res.get('envs') or {}).get(pv['probe_env']) or {}).get('per_task') or {}).items()}
     cpt = _cells_by_task(cpt_i, pv)
+    # probe-error guard: never judge on a high-error candidate probe (errors are not wrong answers)
+    _cattempt = sum(1 for h in ((S.rj(d / 'HELD.json') or {}).get('holds') or []) if h.get('side') == 'candidate')
+    _cok, _csum = PEG.should_judge(cpt_i, side='candidate', epoch_dir=d, attempt=_cattempt)
+    if not _cok:
+        S.log(event='probe_error_guard_hold', epoch=e, side='candidate', rate=_csum.get('rate'), attempt=_cattempt)
+        if _cattempt < PEG.REPROBE_MAX:
+            tl.pop('run_done', None); tl.pop('run_start', None); S.wj(tlp, tl)
+            S.busy(False); return 'held-candidate-probe-errors(reprobe)'
+        S.busy(False); return 'held-candidate-probe-errors'
     PI = S.rj(R.d(rid) / 'PI.private.json')
     drawn = {t: dict(env=PI['env'][t], pi=PI['pi'][t]) for t in r['ids']}
     tau = float(pv['tau_run_same'] if per_turn else pv['tau_run_separate'])

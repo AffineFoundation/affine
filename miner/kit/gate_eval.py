@@ -34,7 +34,7 @@ GATE_POOL = kitpath.DATA / 'gate-pool-v2.jsonl'
 GATE_POOL_SHA256 = '8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc'
 
 
-GATE_MAX_TOKENS = 32768   # the gate's per-task generation cap = caps.json max_output_tokens: serve with --max-model-len 36864
+GATE_MAX_TOKENS = 65536   # the gate's per-task generation cap = caps.json max_output_tokens: serve with --max-model-len 69632
 
 
 def gate_pool():

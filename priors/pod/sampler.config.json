@@ -4,7 +4,7 @@
  "concurrency_per_replica": 384,
  "grade_workers": 96,
  "eos_ids": [248046, 248044],
- "harness": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "enable_thinking": true, "max_context_tokens": 36864, "max_output_tokens": 32768},
+ "harness": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "enable_thinking": true, "max_context_tokens": 69632, "max_output_tokens": 65536},
  "envs": {
   "affine_math": {"path": "/opt/prior/data/original-math7496.tasks.json", "sha256": "77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3"},
   "dapo": {"path": "/opt/prior/data/dapo_pool.jsonl", "sha256": "18d6951e47b85e824fe6f57b986c912d4f939b4c167374e98f4451d18b238a95"}

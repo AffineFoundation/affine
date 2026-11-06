@@ -1,11 +1,11 @@
 {
- "about": "Public copy of the live trainer v8.3.4 (host-v834c) settings (no secrets). As of 2026-11-05 the KL term is ignored: train.kl is still accepted/parsed in [0.005,0.1] so miner files validate, but kl_applied=0 and no Genesis/initial-checkpoint reference model is loaded. engine = the live host engine block (trainer_host_operator_config_sha256 in mining.json training.sources); trainer_config = the signed GRPO config document (turn.json training.config) \u2014 its settings.kl_coefficient / objective name still mention k3-kl-reference historically; the live host forces kl_coefficient=0 at update time. Live step = v8211_batched.train_update_batched (engine packed, 8-GPU data parallel, dp_token_budget 36864) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad) with v8.3.3l knobs; KL ignored.",
- "configuration_sha256": "e3079232b396e8d0d004ac2a66411655a70ad195427878562cbdc242a882e4d3",
+ "about": "Public copy of the live trainer v8.3.4d (host-v834d) settings (no secrets). Universal 64K training (Jacob 2026-11-06 ~14:42 CR t1358s5766): TRAIN_MAX_CONTEXT 69632, FF_OVERLONG 53846..65536, engine token_budget=dp_token_budget=69632, LOGIT_CHUNK 4096. KL term still ignored as of v8.3.4: train.kl accepted/parsed in [0.005,0.1] but kl_applied=0 and no Genesis ref loaded. engine = live host engine block; Live step = v8211_batched.train_update_batched (packed, 8-GPU DP) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad).",
+ "configuration_sha256": "b31640a15624cac23d4bccdf84b2f6fd88f87ac087d3d8040f17ff5235d41d75",
  "engine": {
   "batched_engine": "packed",
   "dp_max_rows": 256,
   "dp_port": 29583,
-  "dp_token_budget": 36864,
+  "dp_token_budget": 69632,
   "dp_world": 8,
   "drop_unresolved": false,
   "fast_stage": true,
@@ -29,7 +29,7 @@
    "top_k": 20,
    "top_p": 0.95
   },
-  "token_budget": 16384,
+  "token_budget": 69632,
   "training_kernels": {
    "causal-conv1d": null,
    "fla-core": "0.6.0",
@@ -38,30 +38,30 @@
   }
  },
  "free_file_overlong": {
-  "from_epoch": 590,
-  "overlong_max_tokens": 32768,
+  "from_epoch": 821,
+  "overlong_max_tokens": 65536,
   "overlong_penalty": 0.5,
-  "overlong_soft_start": 26923,
-  "rule": "reward -= 0.5 * clip((len - 26923) / (32768 - 26923), 0, 1), len = output tokens incl. EOS"
+  "overlong_soft_start": 53846,
+  "rule": "reward -= 0.5 * clip((len - 53846) / (65536 - 53846), 0, 1), len = output tokens incl. EOS"
  },
  "host_files_sha256": {
   "ff_trainer.py": "19485bf5ad0046980d4f48ecec8bcd13e0f93fa478bbb8421fc42bf926431c59",
   "math_levels.json": "c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50",
-  "mimo_host_trainer_v83.py": "b6c2ecccb71a705b9e08063a11a778e468cb2647ec4825e06b50ec23b3ac9b7c",
-  "v8210_optimizer_offpath.py": "8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad",
-  "v8211_batched.py": "ad7596e2ffe8e01f7554ccf78795b2c26038c03020cae2e90a5684e0b7622a60",
-  "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
-  "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
-  "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-  "v83_dp.py": "e0f1056bd04b4bb3e11534b421f9229d78322b4d4f9c313f3ba1cc36c247279c",
-  "v83_fast_kernels.py": "e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4",
-  "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2",
+  "mimo_host_trainer_v83.py": "7c8ccf718f96b75e3b9a44d9fb7ff89015aefc78e9e6b44169bf7badc7ad7a85",
   "patched/mimo_grpo.publication.py": "4432e51bce406dcc73dc04438e351497ec910087ad6a4a1152fa974a26cd9e44",
   "patched/mimo_grpo.service.py": "83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2",
   "patched/mimo_grpo.transaction.py": "f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217",
-  "patched/mimo_training_worker.py": "ef3f94b24e0cc6cbbf40fa7825cba3e114080ef10746587b365ffaeb941d92c8"
+  "patched/mimo_training_worker.py": "ef3f94b24e0cc6cbbf40fa7825cba3e114080ef10746587b365ffaeb941d92c8",
+  "v8210_optimizer_offpath.py": "8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad",
+  "v8211_batched.py": "63a29a322a2cd85a6328aad0f6331e339d0591ff1e2baa44face0785073a61e4",
+  "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
+  "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
+  "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
+  "v83_dp.py": "0e7515c1c2328423e8464d42860a9d904d45541242b43c31fee0fdbb4e71db92",
+  "v83_fast_kernels.py": "a022542538742a8014deb8938a540548830b371255cf2d417f0bc7b0c5450d52",
+  "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
  },
- "host_version": "affine-mimo-trainer-host-v834c",
+ "host_version": "host-v834d",
  "host_version_note": "v8.3.4 / host-v834c (LIVE since 2026-11-05 ~13:01 CR): KL ignored (kl_applied=0), no Genesis ref forward, dp_token_budget=36864. Built on v8.3.3r (32K training caps) + v834/v834b/v834c KL-removal. Repo directory: miner/validator/trainer-v834c. Training caps.json stays 32,768; promotion gate is 65,536.",
  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
  "runtime_versions": {
@@ -135,5 +135,16 @@
  "version": "sn120-miner-kit-trainer-config-v1",
  "kl_ignored": true,
  "kl_note": "train.kl accepted in [0.005,0.1] but ignored; loss uses kl_coefficient=0; reference_runtime=None; no 87de8304\u2026 Genesis forward.",
- "trainer_config_note": "Signed job document fields below (objective name, settings.kl_coefficient=0.02, kl_reference_checkpoint) are what turn.json training.config still publishes. The live host overrides: kl_coefficient forced to 0, kl_reference_checkpoint unused, no ref loaded. See training.train_params.kl_ignored on each turn."
+ "trainer_config_note": "Signed job document fields below (objective name, settings.kl_coefficient=0.02, kl_reference_checkpoint) are what turn.json training.config still publishes. The live host overrides: kl_coefficient forced to 0, kl_reference_checkpoint unused, no ref loaded. See training.train_params.kl_ignored on each turn.",
+ "caps": {
+  "dp_token_budget": 69632,
+  "logit_chunk": 4096,
+  "max_context_tokens": 69632,
+  "max_output_tokens": 65536,
+  "overlong_penalty": 0.5,
+  "overlong_window": [
+   53846,
+   65536
+  ]
+ }
 }
