@@ -17,7 +17,7 @@ from subnet.mimo_grpo.data import InputBinding, TaskGroup, Trajectory, digest, s
 VERSION = 'sn120-ff-dispatch-v1'
 # v8.3.3j (RA/20261031-ff-train-params, Jacob pt902u): optional selection key 'train' = {lr, kl, given, defaults} (lifecycle fills the
 # defaults for keys the file omitted). Same bounds as the lifecycle format check (ff_format.TRAIN_BOUNDS); checked again here.
-TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}
+TRAIN_BOUNDS = {'lr': (1.25e-07, 1e-06), 'kl': (0.005, 0.1)}  # v8.3.4: kl still parsed in-bounds; host forces kl_applied=0 (ignored)
 # v8.3.3k (RA/20261102-step-mult): optional 'step_mult' (int 1..8; absent = 1) in 'train' and in 'given'; defaults may carry step_mult 1.
 STEP_MULT_ALLOWED = (1, 2, 3, 4, 5, 6, 7, 8)
 DOCUMENT = 'sn120-ff-group-v1'

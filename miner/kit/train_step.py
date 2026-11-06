@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.3l).
+"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.4 / host-v834c).
 
 What runs here is the validator's own code, imported from miner/validator/ (verbatim copies, sha256 in
 miner/validator/MANIFEST.sha256):
   * format check + tokenization: batch/ff_format.validate (the lifecycle's check; affine-batch-v1 and v2)
   * groups: ff_trainer.RewardedTrajectory / FreeGroup / label (exactly as ff_trainer.prepare builds them)
   * loss + gradient: v8211_batched.train_update_batched (rewards + overlong penalty, GRPO advantage, derail mask,
-    support renorm top-20 / top-p 0.95, seq-mean-token-mean x 0.5635, k3 KL to the reference, fp32 accumulation, clip 1.0)
+    support renorm top-20 / top-p 0.95, seq-mean-token-mean x 0.5635, KL ignored (v8.3.4; no reference), fp32 accumulation, clip 1.0)
   * step: engine CPUAdamW.step routed to mimo_host_trainer_v83.sgd_step exactly as the host install() does
-    (fresh-adam, per-tensor cap 2e-5, global cap 1.0, fp32 master, direction normgrad) + the v8.3.3j lr multiplier / kl + the v8.3.3l step_mult and knobs.
+    (fresh-adam, per-tensor cap 2e-5, global cap 1.0, fp32 master, direction normgrad) + the v8.3.3j lr multiplier + the v8.3.3l step_mult and knobs; train.kl accepted but ignored.
 Kernels: on CUDA the step runs the live trainer's own training forward (engine 'packed': v83_fast_kernels.install on the
-actor and the KL reference = fla 0.6.0 causal_conv1d + chunk_gated_delta_rule varlen, torch gated RMSNorm, FlashAttention-2
+actor (KL reference no longer loaded as of v8.3.4) = fla 0.6.0 causal_conv1d + chunk_gated_delta_rule varlen, torch gated RMSNorm, FlashAttention-2
 varlen; packed log-probs as in v83_dp). Remaining differences from the live run: one process instead of 8 GPUs with an NCCL
 SUM, and the micro-batch grouping, so gradients differ at the bf16 rounding level (sum order, atomics), not bit-exactly.
 Check yours with grad_probe.py (README "Check your gradients").
@@ -28,7 +28,7 @@ never load it as model weights and the checkpoint id is unchanged).
 activations (torch.utils.checkpoint, use_reentrant=False). Same values (recompute), more compute, much less memory: use it when one
 GPU runs out of memory on a full batch file (e.g. 1x H200 with 1,000 rollouts).
 
-usage: train_step.py --head HEAD_DIR --ref REF_DIR --batch batch.json --hotkey SS58 --out CANDIDATE_DIR
+usage: train_step.py --head HEAD_DIR --batch batch.json --hotkey SS58 --out CANDIDATE_DIR [--ref REF_DIR (ignored)]
        [--master FP32_MASTER_DIR | --no-master] [--activation-checkpointing] [--device cuda|cpu] [--report report.json]
        [--engine packed|padded]   (default: packed on CUDA, padded on CPU)
        [--max-tasks 125 --max-rollouts 1000]
@@ -101,7 +101,7 @@ def enable_activation_checkpointing(model):
 
 def install_trainer_kernels(*models):
     """The live trainer's training forward (v83_dp._install_fast + fast_blp): v83_fast_kernels.install on every model
-    (actor and KL reference) and v8211_batched.batched_log_probs(engine='packed') -> v83_fast_kernels.packed_log_probs
+    (actor; KL reference no longer loaded as of v8.3.4) and v8211_batched.batched_log_probs(engine='packed') -> v83_fast_kernels.packed_log_probs
     with the trainer's logit chunk. Needs CUDA and flash-linear-attention / fla-core 0.6.0 (requirements-trainer.txt)."""
     import sys as _sys
     import v8211_batched as B, v83_fast_kernels as FK, v83_dp as DP, v83_kernels_policy as KP
@@ -112,7 +112,7 @@ def install_trainer_kernels(*models):
     if got != KP.DECLARED:
         print('warning: training kernel packages %r differ from the live trainer declaration %r' % (got, KP.DECLARED),
               file=_sys.stderr, flush=True)
-    counts = [FK.install(m) for m in models]
+    counts = [FK.install(m) for m in models if m is not None]
     if not getattr(B.batched_log_probs, '_kit_trainer_kernels', False):
         original = B.batched_log_probs
 
@@ -140,7 +140,7 @@ def find_master(head_dir, head_id):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--head', required=True); ap.add_argument('--ref', required=True); ap.add_argument('--batch', required=True)
+    ap.add_argument('--head', required=True); ap.add_argument('--ref', default=None, help='ignored as of v8.3.4 (KL off; kept so old scripts keep working)'); ap.add_argument('--batch', required=True)
     ap.add_argument('--hotkey', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--master', help='published fp32 master dir of the head (default: HEAD_DIR-fp32-master when verified)')
     ap.add_argument('--no-master', action='store_true', help='ignore any master; bootstrap M_H = fp32(bf16 head)')
@@ -185,9 +185,11 @@ def main(argv=None):
                                                        prompt_sha256=psha)), prompt=tuple(g['prompt_tokens']), trajectories=trajs,
                                    admission_sha256=digest(doc))
         groups.append(grp)
-    # 3. config: the signed GRPO config; the turn's kl replaces kl_coefficient (train_update_v833j)
+    # 3. config: the signed GRPO settings; v8.3.4 forces kl_coefficient=0 (train.kl recorded but ignored)
     base_cfg = TrainerConfig(**CFG['trainer_config']['settings']).validate()
-    config = base_cfg if kl == base_cfg.kl_coefficient else dataclasses.replace(base_cfg, kl_coefficient=kl).validate()
+    # v8.3.4: accept train.kl for reporting but force kl_coefficient=0 (matches live host-v834c; no Genesis ref)
+    config = base_cfg if (base_cfg.kl_coefficient == 0 and not getattr(base_cfg, 'kl_reference_checkpoint', None)) else dataclasses.replace(
+        base_cfg, kl_coefficient=0., kl_reference_checkpoint='').validate()
     m = 1.0 if lr == E['sgd_lr'] else lr / E['sgd_lr']
     # 4. the live engine settings
     B.DROP_UNRESOLVED = E['drop_unresolved']; B.LOSS_AGG_MODE = E['loss_agg_mode']; B.LOSS_SCALE = E['loss_scale']
@@ -211,13 +213,14 @@ def main(argv=None):
         if tag.exists() and json.loads(tag.read_text()).get('checkpoint') != head_id:
             raise SystemExit(f'{master} is the fp32 master of another head (FP32-MASTER.json), not {head_id}')
     print(json.dumps(dict(fp32_master=master or 'bootstrap fp32(bf16 head)')), flush=True)
-    ref = load_model(a.ref, dev, torch.bfloat16, False).eval()
+    if a.ref:
+        print(json.dumps(dict(note='--ref ignored as of v8.3.4 (KL off; no Genesis reference loaded)')), flush=True)
     if engine == 'packed':
-        print(json.dumps(dict(engine='packed', trainer_kernels=install_trainer_kernels(model, ref))), flush=True)
+        print(json.dumps(dict(engine='packed', trainer_kernels=install_trainer_kernels(model), kl_ignored=True)), flush=True)
     else:
-        print(json.dumps(dict(engine='padded')), flush=True)
+        print(json.dumps(dict(engine='padded', kl_ignored=True)), flush=True)
     runtime = Runtime(model, head_id, dev, True, eos, ff_format.MAX_CONTEXT)
-    ref_rt = Runtime(ref, config.kl_reference_checkpoint, dev, False, eos, ff_format.MAX_CONTEXT)
+    ref_rt = None  # v8.3.4: no KL reference
     for grp in groups:
         grp.validate(vocab_size=runtime.vocab_size, eos_token_ids=set(eos))
     # 5. optimizer: engine CPUAdamW with .step routed to the host's stateless step (as install() does)
@@ -250,7 +253,7 @@ def main(argv=None):
                                      token_budget=a.token_budget, max_rows=E['max_rows'])
     finally:
         H._PUBLISHED.set()
-    out['train_params'] = dict(lr=lr, kl=kl, step_mult=k_mult, knobs=kn, knobs_applied=dict(step=opt_on, loss=loss_on), lr_multiplier=m, kl_applied=float(config.kl_coefficient), given=s.get('train_given'),
+    out['train_params'] = dict(lr=lr, kl=kl, kl_requested=float(kl), step_mult=k_mult, knobs=kn, knobs_applied=dict(step=opt_on, loss=loss_on), lr_multiplier=m, kl_applied=0.0, kl_ignored=True, given=s.get('train_given'),
                                step=H.TURN['last'])
     if out.get('status') == 'updated':
         out['support_renorm'] = H.support_summary(out.get('trajectories') or [], B.SUPPORT_RENORM)

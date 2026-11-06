@@ -86,14 +86,14 @@ def main():
     r = sh(py, KIT / 'tests' / 'make_tiny.py', a.tokenizer, W / 'head', W / 'ref'); check('tiny head/ref built', r.returncode == 0)
     t = time.time()
     r = sh(py, KIT / 'train_step.py', '--head', W / 'head', '--ref', W / 'ref', '--batch', W / 'v2.json', '--hotkey', HK, '--out', W / 'cand', '--device', 'cpu', '--report', W / 'step.json')
-    check('train_step (v8.3.3l) dry run on CPU', r.returncode == 0, '%.1fs' % (time.time() - t))
+    check('train_step (v8.3.4) dry run on CPU', r.returncode == 0, '%.1fs' % (time.time() - t))
     if r.returncode == 0:
         rep = json.loads((W / 'step.json').read_text()); tr = rep['trajectories']
         adv = [(x['reward'], x['advantage']) for x in tr]
         check('single-rollout group: advantage = reward (+1)', adv[-1] == (1.0, 1.0), adv[-1])
         check('2-rollout groups: advantage = reward - group mean (+-0.5)', all(abs(v - (0.5 if rw == 1 else -0.5)) < 1e-9 for rw, v in adv[:-1]))
         tp = rep['report']['train_params']
-        check('v2 lr 1e-6 -> lr multiplier 2, kl 0.05 applied', tp['lr_multiplier'] == 2.0 and tp['kl_applied'] == 0.05, tp['step']['path'])
+        check('v2 lr 1e-6 -> lr multiplier 2; kl accepted but ignored (v8.3.4)', tp['lr_multiplier'] == 2.0 and tp.get('kl_applied') == 0.0 and tp.get('kl_ignored') is True, tp)
         ev = rep['sgd_events'][0]
         check('step = fresh-adam normgrad + fp32 master', ev['sgd_direction'] == 'normgrad' and ev['version'].startswith('v833i-normgrad-fp32-master'))
         check('support renorm ran (off-support tokens logged, file not rejected)', rep['report']['support_renorm']['rollouts'] == 7, rep['report']['support_renorm']['outside_fraction'])

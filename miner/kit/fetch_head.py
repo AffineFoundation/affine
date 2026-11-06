@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Download the current head checkpoint (and optionally the KL reference) and verify it byte-for-byte.
+"""Download the current head checkpoint (and optionally the legacy KL reference) and verify it byte-for-byte.
 
   python3 fetch_head.py --out ./head                 # current head, the model the next turn trains from
-  python3 fetch_head.py --out ./ref --reference      # the KL reference = initial checkpoint (Hugging Face base)
+  python3 fetch_head.py --out ./ref --reference      # legacy: Genesis/HF base; unused by trainer v8.3.4 (KL off)
 
 Chain of trust: https://affine.io/mining.json -> current_url (signed current.json) -> manifest_url (opening.json,
 checked against current.json manifest_sha256) -> payload.checkpoint {files: {name: sha256}, id, read_urls}.
 Every file is checked against its sha256 and the checkpoint id is recomputed as
 sha256(canonical JSON of {filename: sha256}) - the same descriptor id the validator, trainer and gate use.
 The links are short-lived presigned R2 GETs handed out publicly by mining.json; nothing here stores them.
-The reference has no R2 links: it is the public base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B, verified against
-opening.json payload.mimo_release_policy.payload.scope.initial_checkpoint.files (id 87de8304...).
+The --reference path has no R2 links: it is the public base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B, verified against
+opening.json payload.mimo_release_policy.payload.scope.initial_checkpoint.files (id 87de8304...). As of trainer
+v8.3.4 the live step does not load this reference (KL ignored); --reference remains for old scripts / inspection.
 """
 import argparse, hashlib, json, os, sys, urllib.request
 from pathlib import Path

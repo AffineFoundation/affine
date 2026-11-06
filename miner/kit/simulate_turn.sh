@@ -14,9 +14,9 @@ SERVE=(--served-model-name m --dtype bfloat16 --max-model-len 36864 --enable-pre
        --limit-mm-per-prompt '{"image":0,"video":0}')   # = validator/probe/serve.sh (text-only; without it vLLM fails to load the checkpoint)
 wait_up() { for _ in $(seq 600); do curl -sf "http://127.0.0.1:$1/v1/models" >/dev/null && return 0; sleep 2; done; echo "vLLM on :$1 did not start" >&2; exit 1; }
 
-echo "== 1. head + KL reference (sha256-verified)"
+echo "== 1. head (sha256-verified; KL reference unused as of v8.3.4)"
 python3 "$KIT/fetch_head.py" --out "$W/head"
-[ -f "$W/ref/CHECKPOINT.json" ] || python3 "$KIT/fetch_head.py" --out "$W/ref" --reference
+# --ref is ignored by train_step as of v8.3.4; skip downloading the Genesis reference
 # fp32 master of the head: its own directory next to the head (never inside it: vLLM would load the shards as weights)
 MASTER=(--no-master)
 if [ "${FP32_MASTER:-1}" = 1 ]; then
@@ -38,7 +38,7 @@ python3 "$KIT/check_batch.py" --hotkey "$HOTKEY" --tokenizer "$W/head" "$W/batch
 echo "== 4. one v8.3.3m step (live trainer code) -> candidate (its fp32 master: $W/cand/fp32-master/)"
 kill $VH; wait $VH 2>/dev/null || true
 STEP=("${MASTER[@]}"); [ "${ACT_CKPT:-0}" = 1 ] && STEP+=(--activation-checkpointing)
-python3 "$KIT/train_step.py" --head "$W/head" --ref "$W/ref" --batch "$W/batch.json" --hotkey "$HOTKEY" --out "$W/cand" --device cuda --report "$W/step.json" "${STEP[@]}"
+python3 "$KIT/train_step.py" --head "$W/head" --batch "$W/batch.json" --hotkey "$HOTKEY" --out "$W/cand" --device cuda --report "$W/step.json" "${STEP[@]}"
 
 echo "== 5. held-out gate: head vs candidate"
 vllm serve "$W/head" --port "$PORT_H" "${SERVE[@]}" > "$W/vllm-head.log" 2>&1 & VH=$!

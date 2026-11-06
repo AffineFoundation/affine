@@ -7,7 +7,8 @@ rewards/advantages, cap policy, loss_scale, clip, ONE CPUAdamW step on the worke
     with the 'packed' batched_log_probs replaced by fast_kernels.packed_log_probs (fla chunk_gated_delta_rule /
     causal_conv1d varlen, torch varlen flash attention; installed per layer instance, training forwards only);
   * the FP32 gradient accumulators are SUM-reduced to rank 0 (fp32), per-rollout details/losses gathered;
-  * helpers (ranks 1..W-1) hold the frozen KL reference and a bit-exact copy of the actor (rank-0 broadcast each job).
+  * helpers (ranks 1..W-1) hold a bit-exact copy of the actor (rank-0 broadcast each job); the frozen KL reference is
+    optional and omitted entirely in v8.3.4 when KL is ignored.
 Failure before the optimizer step on any rank -> every rank joins the ok-flag reduction and the update raises
 (transaction fails exactly as a single-GPU failure would; the in-memory actor/optimizer are untouched).
 """
@@ -208,19 +209,24 @@ def make_train_update(B, FK):
         record(dict(stage='unresolved-filter', **unresolved_filter))
         active = [i for i, row in enumerate(rows) if row['active']]
         assign, nbins, loads = _plan(rows, active, world)
-        _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0); _install_fast(B, FK, reference_runtime, 0)
+        _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0)
+        if reference_runtime is not None:                         # v8.3.4: skip when KL is off
+            _install_fast(B, FK, reference_runtime, 0)
         # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor)
         t = time.monotonic()
-        _bcast(dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
+        job = dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
                     actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
-                    ref_dir=str(reference_runtime._checkpoint_guard.directory), ref_desc=reference_runtime._checkpoint_guard.descriptor,
-                    spec=runtime.spec.to_dict(), assign=assign))
+                    ref_dir=(str(reference_runtime._checkpoint_guard.directory) if reference_runtime is not None else None),
+                    ref_desc=(reference_runtime._checkpoint_guard.descriptor if reference_runtime is not None else None),
+                    spec=runtime.spec.to_dict(), assign=assign)
+        _bcast(job)
         for _, p in runtime.model.named_parameters():
             dist.broadcast(p.data, src=0)
         timings['dp_sync_seconds'] = time.monotonic() - t
-        _write_hint(dict(spec=runtime.spec.to_dict(),
-                         actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
-                         ref_dir=str(reference_runtime._checkpoint_guard.directory), ref_desc=reference_runtime._checkpoint_guard.descriptor))
+        hint = dict(spec=runtime.spec.to_dict(),
+                    actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
+                    ref_dir=job['ref_dir'], ref_desc=job['ref_desc'])
+        _write_hint(hint)
         prep = time.monotonic()
         acc, details, losses, err = _passes(B, FK, runtime, reference_runtime, rows, assign[0], config, agg_config, loss_scale,
                                              len(active), versions, guard, record)
@@ -344,16 +350,20 @@ def helper_main(rank, world, port, host_dir, source_root):
     install_fast_hash()
     try:      # v8.3.3g preload (any failure -> lazy load at the first job, as before)
         hint = json.loads(open(PRELOAD_HINT).read())
-        STATE['ref'] = MimoRuntime.load(hint['ref_dir'], hint['ref_desc'], hint['spec'], device='cuda', trainable=False)
-        _install_fast(B, FK, STATE['ref'], 0)
+        # v8.3.4: skip KL reference when the hint has no ref (KL ignored)
+        if hint.get('ref_dir') and hint.get('ref_desc'):
+            STATE['ref'] = MimoRuntime.load(hint['ref_dir'], hint['ref_desc'], hint['spec'], device='cuda', trainable=False)
+            _install_fast(B, FK, STATE['ref'], 0)
+        else:
+            STATE['ref'] = None
         STATE['actor'] = MimoRuntime.load(hint['actor_dir'], hint['actor_desc'], hint['spec'], device='cuda', trainable=True)
         _install_fast(B, FK, STATE['actor'], NO_CKPT_LAYERS_HELPER)
-        print(json.dumps(dict(component='trainer-host-v833g', event='helper-preloaded', rank=rank)), flush=True)
+        print(json.dumps(dict(component='trainer-host-v834', event='helper-preloaded', rank=rank, ref=STATE['ref'] is not None)), flush=True)
     except Exception as x:
         STATE['actor'] = None
         if STATE['ref'] is not None and not isinstance(x, FileNotFoundError):
             pass
-        print(json.dumps(dict(component='trainer-host-v833g', event='helper-preload-skipped', rank=rank, error=repr(x)[:200])), flush=True)
+        print(json.dumps(dict(component='trainer-host-v834', event='helper-preload-skipped', rank=rank, error=repr(x)[:200])), flush=True)
         torch.cuda.empty_cache()
     while True:
         job = _bcast(None)
@@ -362,7 +372,13 @@ def helper_main(rank, world, port, host_dir, source_root):
         B.DROP_UNRESOLVED, B.LOSS_AGG_MODE, B.LOSS_SCALE = job['drop'], job['mode'], job['scale']
         B.SUPPORT_RENORM = job.get('support')
         B.KNOBS = job.get('knobs')                       # v8.3.3l
-        if STATE['ref'] is None or STATE['ref'].checkpoint_id != job['ref_desc']['id']:
+        if job.get('ref_desc') is None:                    # v8.3.4: KL off — drop any resident ref
+            if STATE['ref'] is not None:
+                try: STATE['ref'].close()
+                except Exception: pass
+                STATE['ref'] = None
+                torch.cuda.empty_cache()
+        elif STATE['ref'] is None or STATE['ref'].checkpoint_id != job['ref_desc']['id']:
             STATE['ref'] = MimoRuntime.load(job['ref_dir'], job['ref_desc'], job['spec'], device='cuda', trainable=False)
             _install_fast(B, FK, STATE['ref'], 0)
         if STATE['actor'] is None:

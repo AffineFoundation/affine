@@ -11,6 +11,10 @@ v8.3.3l = v8.3.3k + optional per-turn knobs from the dispatch's train.knobs (RA/
   per-group lr scales (attn, mlp, embed, lm_head, early / late layers), adam_eps, weight_decay, clamp_mode + global_norm_cap (step),
   loss_agg, adv_center, adv_clip (loss). Every knob defaults to today's value; a turn whose knobs are all default runs the exact
   v8.3.3k code path (TURN['opt'] is None and v8211_batched.KNOBS is None).
+v8.3.4b = v8.3.4 + install patched worker.execute (skip Genesis ref load) and force reference_runtime=None in the update.
+v8.3.4 = v8.3.3r + KL removed from the loss (Jacob 2026-11-05 12:05 CR pt1293u, RA/20261105-kl-removal): train.kl is still
+  accepted and parsed in free-file dispatches (bounds unchanged) but ignored; kl_coefficient is forced to 0 for the update,
+  the Genesis KL reference is never loaded, and helpers skip the ref forward. Engine dp_token_budget stays 40960 (correctness first).
 v8.3.3j = v8.3.3i + per-turn training params (lr, kl) from a free-file affine-batch-v2 dispatch (Jacob 2026-10-31 pt902u,
   RA/20261031-ff-train-params). No engine key; a dispatch without 'train' or with the defaults runs the exact v8.3.3i step.
 v8.3.3i = v8.3.3h + optional engine.sgd_direction normgrad + engine.support_renorm (Allan; Jacob 2026-10-31 07:00 CR).
@@ -1003,7 +1007,8 @@ def install(config, start_dp=False):
         verified=patched_def('mimo_grpo.publication.py', 'publication_verified'),
         validate_publication=patched_def('mimo_grpo.publication.py', 'validate_publication'),
         execute=patched_def('mimo_grpo.service.py', 'execute_transaction'),
-        validate_result=patched_def('mimo_training_worker.py', 'validate_result'))
+        validate_result=patched_def('mimo_training_worker.py', 'validate_result'),
+        worker_execute=patched_def('mimo_training_worker.py', 'execute'))  # v8.3.4b: install KL-skip execute
     for value in sources.values():
         compile(value, '<v824>', 'exec')
     # imported by the patched service as `v824_batched`; v8.2.5 module registered under that name
@@ -1033,6 +1038,7 @@ def install(config, start_dp=False):
     handover.validate_publication = define(publication, sources['validate_publication'], 'validate_publication')
     patched_execute = define(service, sources['execute'], 'execute_transaction')
     define(worker, sources['validate_result'], 'validate_result')
+    define(worker, sources['worker_execute'], 'execute')  # v8.3.4b: never load Genesis KL reference
 
     def execute_transaction(*args, **kwargs):
         kwargs.update(batched_engine=engine['batched_engine'], token_budget=engine['token_budget'],
@@ -1146,16 +1152,37 @@ def install(config, start_dp=False):
     import dataclasses as _dc
 
     def train_update_v833j(runtime, optimizer, groups, binding, *, config, **kwargs):
-        """v8.3.3j: apply the prepared free-file turn's lr / kl to this one update (defaults -> exact v8.3.3i)."""
+        """v8.3.4: apply turn lr/knobs; accept train.kl but force kl_coefficient=0 (KL ignored; no ref)."""
         tp = TURN_PARAMS['params']
         TURN['lr_multiplier'] = 1.0; TURN['step_mult'] = 1; TURN['opt'] = None; TURN['last'] = None; batched.KNOBS = None
+        # v8.3.4: always drop the KL term + clear the reference pin so validate() accepts kl=0.
+        cfg0 = config if (config.kl_coefficient == 0 and not config.kl_reference_checkpoint) else _dc.replace(
+            config, kl_coefficient=0., kl_reference_checkpoint='').validate()
+        kwargs = dict(kwargs); kwargs['reference_runtime'] = None  # v8.3.4b: drop any loaded ref
         if tp is None:
-            return train_update_v833i(runtime, optimizer, groups, binding, config=config, **kwargs)
+            if cfg0 is config:
+                return train_update_v833i(runtime, optimizer, groups, binding, config=config, **kwargs)
+            saved = optimizer.config
+            try:
+                optimizer.config = cfg0
+                out = train_update_v833i(runtime, optimizer, groups, binding, config=cfg0, **kwargs)
+            finally:
+                optimizer.config = saved
+            if isinstance(out, dict) and 'config' in out:
+                out['config'] = config.document()
+            if isinstance(out, dict) and out.get('status') == 'updated':
+                out['train_params'] = dict(
+                    version='v834-kl-ignored-v1', lr=sgd_lr, kl=float(config.kl_coefficient), given=[], defaults=dict(lr=sgd_lr, kl=float(config.kl_coefficient)),
+                    defaults_used=True, lr_multiplier=1.0, kl_applied=0.0, kl_ignored=True,
+                    step_mult=1, knobs=dict(KNOB_DEFAULTS), knobs_applied=dict(step=False, loss=False), step=TURN['last'],
+                    rule='v8.3.4: train.kl accepted when present but ignored; loss uses kl_coefficient=0 (no Genesis KL / no ref forward)')
+            TURN['last'] = None
+            return out
         if (binding.epoch, binding.checkpoint) != (tp['epoch'], tp['checkpoint']):
             raise ValueError('v8.3.3j: turn params belong to another job')
         if {k: v for k, v in tp['defaults'].items() if k != 'step_mult'} != dict(lr=sgd_lr, kl=float(config.kl_coefficient)) or tp['defaults'].get('step_mult', 1) != 1:
             raise ValueError('v8.3.3j: dispatch defaults %r != trainer defaults lr %r kl %r' % (tp['defaults'], sgd_lr, config.kl_coefficient))
-        lr, kl = tp['lr'], tp['kl']
+        lr, kl = tp['lr'], tp['kl']   # kl still parsed/accepted; ignored below
         m = 1.0 if lr == sgd_lr else lr / sgd_lr
         k_mult = tp.get('step_mult', 1)                     # v8.3.3k
         if type(k_mult) is not int or not 1 <= k_mult <= 8:
@@ -1177,7 +1204,7 @@ def install(config, start_dp=False):
             raise ValueError('v8.3.3l: step knobs need fresh-adam + fp32 master + normgrad + sgd_tensor_rel_cap')
         if loss_on and batched.DROP_UNRESOLVED:
             raise ValueError('v8.3.3l: loss knobs need drop_unresolved off')
-        cfg = config if kl == config.kl_coefficient else _dc.replace(config, kl_coefficient=kl).validate()
+        cfg = cfg0   # v8.3.4: ignore miner kl; always train with kl_coefficient=0
         saved = optimizer.config
         TURN['lr_multiplier'] = m; TURN['step_mult'] = k_mult
         TURN['opt'] = {x: kn[x] for x in OPT_KEYS} if opt_on else None
@@ -1193,11 +1220,13 @@ def install(config, start_dp=False):
                 out['config'] = config.document()           # the signed config document, unchanged (validate_result)
             if out.get('status') == 'updated':
                 out['train_params'] = dict(
-                    version='v833j-turn-train-params-v1', lr=lr, kl=kl, given=list(tp['given']), defaults=dict(tp['defaults']),
-                    defaults_used=(m == 1.0 and cfg is config and k_mult == 1 and not opt_on and not loss_on), lr_multiplier=m, kl_applied=float(cfg.kl_coefficient),
+                    version='v834-kl-ignored-v1', lr=lr, kl=kl, given=list(tp['given']), defaults=dict(tp['defaults']),
+                    defaults_used=(m == 1.0 and k_mult == 1 and not opt_on and not loss_on), lr_multiplier=m, kl_applied=0.0,
+                    kl_ignored=True, kl_requested=float(kl),
                     step_mult=k_mult, knobs=dict(kn), knobs_applied=dict(step=opt_on, loss=loss_on),
                     step=TURN['last'],
-                    rule=('kl replaces kl_coefficient in L = loss_scale * (1/N) * sum_i (1/K_i) * sum_t [pg + kl * k3]; '
+                    rule=('v8.3.4: train.kl is accepted and recorded but ignored; loss uses kl_coefficient=0 '
+                          '(no k3 term, no Genesis ref forward). '
                           'lr: m = lr / sgd_lr, n_t = min(m * r_t * ||d_t||, sgd_tensor_rel_cap * (1 - 1e-6) * ||M_H,t||), '
                           's = min(1, sgd_update_norm_cap / ||n||), Delta_t = s * n_t * g_t / ||g_t||; m = 1 -> the v8.3.3i step exactly; '
                           'step_mult k (v8.3.3k): n_t := k * n_t before the global cap (lr and per-tensor cap scaled together), k = 1 -> unchanged; '
@@ -1212,7 +1241,7 @@ def install(config, start_dp=False):
                 drop_policy=batched.DROP_POLICY, optimizer_persistence=engine['optimizer_persistence'],
                 drift_control=dict(drift_cap_rel=drift_cap, restart_lr_warm_steps=restart_warm, restart_lr_scale=restart_scale),
                 sgd=dict(sgd_lr=sgd_lr, sgd_update_norm_cap=sgd_cap, sgd_mode=sgd_mode, sgd_freeze=list(sgd_freeze), sgd_tensor_rel_cap=sgd_trc, fp32_master=sgd_fp32, direction=sgd_dir, on=sgd_lr is not None),
-                support_renorm=support, turn_train_params='v833l: free-file dispatch train {lr, kl, step_mult, knobs}',
+                support_renorm=support, turn_train_params='v834: free-file dispatch train {lr, kl, step_mult, knobs}; kl accepted but ignored (kl_applied=0)',
                 sites=sorted(SITES))
 
 
