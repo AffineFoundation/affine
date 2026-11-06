@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-06 17:43 CR (UTC-6): trainer v8.3.4 (host-v834c) — train.kl accepted but ignored, no Genesis ref; gate 65,536 / training caps.json 32,768 (Jacob pt1331u docs drift).
+Last updated: 2026-11-06 12:45 CR (UTC-6): E815 fail-closed -> no_decision; probe deadline from run_start (2400s); gate 64K / training caps 32K.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Token caps: https://affine.io/caps.json is the source for training / batch / free-file caps (repo: caps.json, loader caps.py). Today it says
@@ -280,6 +280,12 @@ files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference m
   token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
+- **no_decision (from 2026-11-06, Jacob):** if the validator never finishes judging a candidate for an infra reason
+  (probe fail-closed timeout, hung checkpoint fetch, or the held-out round closes before the candidate is decided),
+  the turn is recorded as no_decision: not a served turn, the hotkey stays queued (fresh turn via K1 grant), no credit,
+  no promotion. The candidate-probe deadline is timed from probe start (TIMELINE.run_start), not from TRAINING-RESULT,
+  so checkpoint fetch time does not count; default allowance 2400 s of probe run at 64K (fetch hung-cap 900 s).
+  A real scored RED or GREEN still consumes the turn as before.
 - Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
   priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).
 - Up to epoch 496 (decided 2026-11-01 17:14 CR) the gate used the ivw-v2 rule (uniform draw of 1000/2000 MATH tasks, selection block 0 with 0 < c < 4,

@@ -22,7 +22,9 @@
   "baseline_parallel": 3,
   "blocks": 4,
   "enabled": true,
-  "fail_closed_s": 3300,
+  "fail_closed_s": 2400,
+    "fetch_fail_closed_s": 900,
+    "deadline_note": "fail_closed_s counts from candidate probe run_start (excludes fetch); fetch_fail_closed_s caps hung fetch. Both -> no_decision + K1 grant (Jacob 2026-11-06).",
   "from_epoch": 271,
   "irt_history": [
    {

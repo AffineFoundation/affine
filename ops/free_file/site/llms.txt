@@ -1,8 +1,13 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-10-31 13:10 CR (UTC-6). Trainer v8.3.3j, gate heldout ivw-v2, batch format affine-batch-v1 / v2.
+Last updated: 2026-11-06 12:45 CR (UTC-6): E815 fail-closed -> no_decision; probe deadline from run_start (2400s); gate 64K / training caps 32K.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
+Token caps: https://affine.io/caps.json is the source for training / batch / free-file caps (repo: caps.json, loader caps.py). Today it says
+max_output_tokens 32,768 and max_context_tokens 36,864 (prompt + output), overlong window 26923..32768. The promotion gate
+samples at a separate task cap: prior_v1.max_tokens = 65,536 (context 69,632 = 65,536 + 4,096), matching the 64K bench, set
+2026-11-06 (Jacob). Each round freezes its cap into mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens.
+Training stays at 32,768 until caps.json moves. tools/caps/caps_check.py still checks training consumers against caps.json.
 Network: Bittensor Finney, subnet 120. Code: https://github.com/AffineFoundation/affine
 Miner kit (the live trainer, gate, grader, task pool, simulator): https://github.com/AffineFoundation/affine/blob/main/miner/README.md
 Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
@@ -12,7 +17,8 @@ Dashboard: https://affine.io/   Coordinator authority key: 3301134b38401196d006a
 You upload ONE JSON file per hotkey: prompts, your rollouts (model outputs) and your rewards. You don't run any mining
 software, and the validator uses your rewards exactly as given. When your queue turn comes, the validator copies your
 file, checks only its format, and trains ONE GRPO step from the published head on it. The held-out promotion gate then
-keeps the candidate only if it beats the head on a secret held-out sample of the task pool (GREEN). GREEN turns earn
+keeps the candidate only if it beats the head on a sample of the public gate pool that is drawn after the upload
+deadline from a committed secret and a future block hash (GREEN). GREEN turns earn
 weight. Improving the model is the only way to earn. Every piece of code involved is public in the miner kit, so you
 can reproduce a turn locally before you spend one.
 
@@ -36,7 +42,6 @@ can reproduce a turn locally before you spend one.
   takes the turn. If your file is **missing or broken** at that moment, you're **skipped**: you aren't charged and
   you keep your place. If nobody is ready, the epoch is a no-update epoch. There is one turn per epoch.
 - The next 8 in line are at https://affine.io/k1.json (`queue.next`, with `file_valid` per member) and
-  https://affine.io/training.json (`k1.queue_next`). Fresh-turn grants: `k1.queue_grants` (mining.json `batch_file.fresh_turns`).
   https://affine.io/training.json (`k1.queue_next`). Fresh-turn grants: `k1.queue_grants` (mining.json `batch_file.fresh_turns`).
 
 ## 2. Your private file: link, upload, overwrite
@@ -75,7 +80,7 @@ can reproduce a turn locally before you spend one.
 }
 ```
 
-A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
+A v1 file is the same without `train`, with `"version": "affine-batch-v1"`. (`train.kl` in the example is optional and ignored by trainer v8.3.4; you may omit it.)
 
 - The file is UTF-8 JSON, at most 64 MiB, with exactly these keys (v1: version, hotkey, groups; v2: the same plus an optional train).
   `hotkey` must be your hotkey.
@@ -85,27 +90,48 @@ A v1 file is the same without `train`, with `"version": "affine-batch-v1"`.
 - output: the assistant text after that prompt (include `<think>...</think>` if you want it trained). It's tokenized with
   `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and `<|endoftext|>` (ids 248044-248046) must
   not appear in a prompt or an output.
-- EOS rule: an output of up to 8191 tokens gets `<|im_end|>` appended (it ended). Exactly 8192 tokens = cut at the cap
-  (no EOS; capped). More than 8192 is invalid. Prompt + output can be at most 12,288 tokens.
-  (This is the batch-file submission limit and is unchanged. The gate evaluation cap is 12,288 output tokens, section 5.)
+- EOS rule: an output of up to 32,767 tokens gets `<|im_end|>` appended (it ended). Exactly 32,768 tokens = cut at the cap
+  (no EOS; capped). More than 32,768 is invalid. Prompt + output can be at most 36,864 tokens. Every shorter output is an
+  ordinary ended rollout (EOS appended), whatever its length.
+  32,768 output tokens apply to generation (sample with max_tokens 32,768), batch files and training
+  (https://affine.io/caps.json). The promotion gate (section 6) samples at 65,536 output / 69,632 context
+  (prior_v1.max_tokens; each round publishes its cap in mining.json).
 - reward: any finite number, used exactly as given. Advantage = reward - the mean reward of that prompt's rollouts (no
   std normalisation). **A prompt with one rollout gets advantage = its reward** (+1 for a correct rollout with reward 1).
-  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 6000) / (8192 - 6000), 0, 1).
+  The trainer adds an overlong penalty to the reward: -0.5 x clip((len - 26923) / (32768 - 26923), 0, 1) (len = output
+  tokens incl. the EOS; window = caps.json overlong_soft_start..overlong_max_tokens).
 - Any number of rollouts per prompt (at least 1). Caps: 125 prompts and 1,000 rollouts (125 x 8; live value: mining.json
   `training.batch_cap`; a change applies at the next turn). Prompts beyond a cap are dropped whole, in file order.
 - Any broken rule in the kept part makes the whole file invalid. You're skipped for that turn, not charged, and keep your place.
 
 <!-- ff-train-params-20261031 -->
-v2 `train` (optional; either field may be omitted and takes its default):
+v2 `train` (optional; every field may be omitted and takes its default; the defaults are exactly today's trainer):
 
 | field | default | allowed (inclusive) | what it does |
 | --- | --- | --- | --- |
 | `train.lr` | 5e-7 | 1.25e-7 .. 1e-6 | step size of your turn's one step (section 4) |
-| `train.kl` | 0.02 | 0.005 .. 0.1 | kl_coefficient of your turn's loss |
+| `train.kl` | 0.02 | 0.005 .. 0.1 | accepted but ignored as of trainer v8.3.4 (2026-11-05): still parsed in [0.005,0.1] so miner files validate; kl_applied=0, no Genesis ref |
+| `train.step_mult` | 1 | integer: 1, 2 | multiplies the whole one-step update: lr and the per-tensor cap scale together, one gradient, no extra trainer time |
+| `train.lr_scale_attn` | 1 | 0 .. 2 | multiplies the step of every attention tensor (self_attn.*, linear_attn.*); 0 freezes them |
+| `train.lr_scale_mlp` | 1 | 0 .. 2 | multiplies the step of every mlp.* tensor; 0 freezes them |
+| `train.lr_scale_embed` | 1 | 0 .. 2 | multiplies the step of embed_tokens; 0 freezes it |
+| `train.lr_scale_lm_head` | 1 | 0 .. 2 | multiplies the step of lm_head; 0 freezes it |
+| `train.lr_scale_early` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 0..15 (on top of the group scale); 0 freezes them |
+| `train.lr_scale_late` | 1 | 0 .. 2 | multiplies the step of every tensor in decoder layers 16..31 (on top of the group scale); 0 freezes them |
+| `train.adam_eps` | 1e-8 | 1e-10 .. 1e-3 | eps in the normalized-gradient term g / (abs(g) + eps); larger eps shrinks the per-tensor step of tensors with small gradients (the step direction stays g / norm(g)) |
+| `train.weight_decay` | 0.01 | 0 .. 0.05 | decoupled weight decay inside the per-tensor step norm (2-D non-bias tensors); it changes step sizes, not the direction |
+| `train.clamp_mode` | per_tensor | per_tensor, global_norm or both | per_tensor: each tensor's step is capped at c_t = 2e-5 x norm(W_t) (today). global_norm: no per-tensor cap; the whole step is scaled down to global_norm_cap if larger. both: per-tensor cap, then the global cap at global_norm_cap |
+| `train.global_norm_cap` | 1 | 0.005 .. 1 | the global step-norm cap used by clamp_mode global_norm / both (ignored with per_tensor, which keeps the fixed cap 1.0) |
+| `train.loss_agg` | seq_mean | seq_mean or token_mean | seq_mean: every rollout weighs the same (mean over its tokens, then over rollouts; today). token_mean: every token weighs the same (long rollouts weigh more) |
+| `train.adv_center` | mean | mean, none or group_norm | advantage of a rollout: mean = reward - mean reward of its prompt group (today); none = the raw reward; group_norm = (reward - mean) / (std + 1e-6) within the group |
+| `train.adv_clip` | none (no clip) | 0.1 .. 100 | if set, advantages are clipped to [-adv_clip, +adv_clip] after centering; omit it for no clip (today) |
 
-- Out of range, not a number (string, true/false, null), or any other key under `train` makes the whole file invalid.
+- New from epoch 575 (trainer v8.3.3l): step_mult and the knobs above. A file without them, or with every one at its default,
+  trains bit-identically to before. 0 in an lr_scale_* freezes that part of the model for your turn.
+- Out of range, not a number (string, true/false, null), a step_mult that is not an integer (2.0, "2"), a string that is
+  not one of the listed choices, or any other key under `train` makes the whole file invalid.
   Values are never clamped. `train` in a v1 file is invalid. v1 files train with the defaults.
-- Your effective lr / kl are published only with a GREEN turn (turn.json `training.train_params`, mining.json
+- Your effective lr / kl / step_mult / knobs are published only with a GREEN turn (turn.json `training.train_params`, mining.json
   `training.miner_train_params`). On RED they stay private, like the file.
 <!-- /ff-train-params-20261031 -->
 
@@ -113,102 +139,182 @@ Check a file exactly as the validator does (it tokenizes like the trainer): mine
 (`python3 kit/check_batch.py --hotkey <ss58> --tokenizer ./head batch.json`). `affine_batch.py check` is the
 structural check, and it needs no tokenizer.
 
-## 4. Training: the exact v8.3.3j step (one stateless step per turn)
+## 4. Training: the exact v8.3.4 step (one stateless step per turn)
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
-miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/validator/trainer-v833j/trainer-config.public.json.
+miner/validator/trainer-v834c (+ engine/) and the live settings are in miner/validator/trainer-v834c/trainer-config.public.json.
+v8.3.4 (host-v834c, LIVE since 2026-11-05) = v8.3.3r training caps (rollouts up to 36,864 tokens of prompt + output trained
+in full; free-file overlong window 26923..32768) + KL removed: train.kl still accepted/parsed in [0.005, 0.1] so old
+files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference model is loaded.
 
-- Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0, k3 (low-var) KL
-  to the reference = the initial checkpoint 87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae (the Hugging Face base
-  XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B), derail mask (window 32, threshold -3, tail 64), aggregation seq-mean-token-mean:
-  L = 0.5635 x (1/N) x sum_i (1/K_i) x sum_t [pg + kl x k3]. Every log-prob is recomputed from the head (temperature 1).
+- Loss (v8211_batched.train_update_batched): GRPO, one group per prompt, PPO clip 0.2, dual clip 3.0. KL is off as of
+  trainer v8.3.4 (2026-11-05). Previously this was a k3 (low-var) KL term to the initial checkpoint 87de8304... (Hugging Face
+  base XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B); that term is no longer computed. Derail mask (window 32, threshold -3, tail 64),
+  aggregation seq-mean-token-mean:
+  L = 0.5635 x (1/N) x sum_i (1/K_i) x sum_t [pg]  (no kl x k3). Every log-prob is recomputed from the head (temperature 1).
   Gradients are accumulated in fp32 and globally clipped at 1.0. The trainable tensors are model.language_model.* and lm_head.*.
 <!-- renorm-step-20261031 -->
 - Support renorm (from epoch 354): the PG term uses log q of your sampled token renormalized over the head's own
   top-20 then top-p 0.95 support (temperature 1.0, recomputed from the head's logits). **A sampled token outside that
-  support is dropped from the PG term only.** It still counts in the KL term and the derail mask, and it's only
-  logged. Files are never rejected for it. The per-turn fraction is in training.json `support_renorm.last_turn` and
+  support is dropped from the PG term only.** It still counts in the derail mask, and it's only logged — with KL off
+  there is no KL term for those tokens to contribute to, so out-of-support text contributes essentially no gradient.
+  Files are never rejected for it. The per-turn fraction is in training.json `support_renorm.last_turn` and
   turn.json `training.support_renorm` (e368: 0.14%). Rollouts sampled from the head with top_k 20 / top_p 0.95 /
-  temperature 1.0 stay inside the support. Text the head would not sample trains mostly KL.
+  temperature 1.0 stay inside the support. Text the head would not sample trains mostly nothing (KL term is off).
 - Step (fresh-adam, fp32 master, direction normgrad; from epoch 354). For each tensor t, with W_t = the fp32 master:
     d_t  = 5e-7 x ( g_t / (|g_t| + 1e-8) + 0.01 x W_t x [W_t >= 2-D and not a bias] )
     c_t  = 2e-5 x (1 - 1e-6) x ||W_t||                       per-tensor cap
     n0_t = min(||d_t||, c_t)                                  the default-lr step norm
     m    = lr / 5e-7 ;  n_t = min(m x n0_t, c_t)
+    k    = step_mult ;  n_t = k x n_t                     <!-- step-mult-20261102 --> (from epoch 575; the cap scales with k)
+    knobs (all at default = the two lines above): eps = adam_eps and 0.01 = weight_decay in d_t;
+         a_t = lr_scale of t's group (attn / mlp / embed / lm_head; norms 1) x lr_scale_early (layers 0..15) or lr_scale_late (16..31)
+         per_tensor, both: n_t = k x min(m x a_t x n0_t, c_t)    global_norm: n_t = k x m x a_t x ||d_t|| (no c_t)
+         s = min(1, G / ||n||), G = 1.0 (per_tensor) or min(1.0, global_norm_cap) (global_norm, both)
     s    = min(1, 1.0 / ||n||)                                global cap over all tensors
     Delta_t = s x n_t x g_t / ||g_t|| ;  M_C = M_H - Delta ;  candidate = bf16_rne(M_C)
   Below the default lr every tensor's step shrinks by exactly m. Above it, only the tensors still under their cap grow.
   At e368, 242 of 427 tensors were at the cap and carried 98.8% of the step norm, so lr 1e-6 barely moves the model more.
+  step_mult k (proposed in #120 by duongna) multiplies every tensor's step, the capped ones included: it is the same as
+  scaling lr and the per-tensor cap by k together. Still one gradient and one step from the head (no extra trainer time).
+  The default step norm is about 0.023, so the global cap (1.0) does not fire for any allowed k. k = 1 is exactly the old step.
+  The loss knobs change the advantages (adv_center, adv_clip) or the weighting (loss_agg token_mean: every token
+  counts the same instead of every rollout). The step direction is always g_t / ||g_t||.
   Recipe: https://affine.io/k1/spec/step-recipe.json. fp32 master manifests: https://affine.io/k1/fp32-master/<head>.json.
+<!-- fp32-master-download-20261104 -->
+- The fp32 master (public downloads from the e679 head, Jacob 2026-11-04): every GREEN publishes the head twice, the bf16 checkpoint and the
+  fp32 master M_C the trainer stepped (bf16 head = round-to-nearest-even(M_C)). The next turn steps that master, not
+  fp32(bf16 head). A local step from the bf16 upcast drifts from the gate's candidate, so use the master.
+  - Manifest: https://affine.io/k1/fp32-master/<head>.json (files {name: sha256, bytes}, tensor_sha256, master_digest,
+    and `download`: presigned R2 GET links, valid 7 days, re-signed when 3 days are left, for the newest 3 GREEN heads).
+    Current: https://affine.io/k1/fp32-master/current.json. All heads: https://affine.io/k1/fp32-master/index.json.
+  - Contents: 9 safetensors shards, 427 float32 tensors (model.language_model.*, lm_head.*), about 35.8 GB (the bf16
+    head is 18.8 GB). Weights only: the step is stateless (fresh zero Adam moments every turn), so there is no optimizer state.
+  - master_digest = sha256 of the canonical JSON {tensor name: sha256(little-endian fp32 bytes)} (sorted keys, separators , :).
+    It equals turn.json training.optimizer.sgd.fp32_master.output_master_digest of the GREEN turn.
+  - Fetch and verify (sha256 per file + master digest):
+      python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master            # current head (mining.json checkpoint)
+      python3 miner/kit/fetch_fp32_master.py --head <checkpoint> --out DIR       # a specific GREEN head
+    Keep it in its own directory, never inside the bf16 head directory (vLLM loads every *.safetensors there).
+    kit/train_step.py uses HEAD_DIR-fp32-master automatically when it was verified for that head (or pass --master DIR).
+  - Published by a sidecar after each GREEN, usually within ~10 minutes. Until current.json names the head in mining.json,
+    the master for that head is still uploading. A failed upload only raises an alert: it never delays or changes the gate,
+    the king or weights. Not published: masters of heads whose store entry was gone before the upload (e651 head 4df7fb61).
+<!-- /fp32-master-download-20261104 -->
 <!-- /renorm-step-20261031 -->
 
 ## 5. The task pool, prompt, sampling and grader
 
-- Pool: affine_math, 7,496 MATH train problems with a \boxed answer (task id = list index). Published byte-exact in the kit:
-  miner/data/original-math7496.tasks.json, sha256 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3.
-- Gate prompt: [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem. Reason step by step in
-  plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-  (Your batch prompt is a single user message, section 3. Every GREEN so far used MANDATE + "\n\n" + problem as the prompt.)
-- Sampling: temperature 1.0, top_p 0.95, top_k 20, 12,288 output tokens (the task cap), 16,384 context. The cap is 12,288
-  from the first gate round opened after 2026-11-02 10:41 CR (earlier rounds: 8,192 output / 12,288 context); each round's cap
+- Gate pool (prior-v1): **gate-pool-v2, 21,574 public tasks**, from the flag change of 2026-11-05 13:43 CR (epoch 767): the first round opened on the next new head
+  (before: gate-pool-v1, 19,305 tasks, from epoch 497 / 2026-11-01 17:14 CR; v2 = v1 byte-for-byte + the hard-v1 slice appended).
+  The pool is public; only each round's draw (which tasks, committed in advance) is secret until it is revealed. Two envs:
+  - affine_math: 7,492 MATH train problems (the 7,496-task pool minus 4 that are near-duplicates of the private
+    performance holdout, see below), id math:<index in original-math7496.tasks.json>;
+  - dapo: 11,813 DAPO-Math-17k problems with integer answers (BytedTsinghua-SIA/DAPO-Math-17k rev 65877096, de-duplicated and
+    decontaminated against public math benchmarks by priors/dapo/build_dapo.py), id dapo:0..dapo:11812, plus the hard-v1 slice,
+    2,269 harder problems (dapo:11813..dapo:14081, field slice = "hard-v1"): CrystalMath-rewritten (268) and INTELLECT-3-RL math (2,001),
+    de-duplicated against gate-pool-v1 and all of DAPO-Math-17k, decontaminated against AIME 2022-2026, AMC, MATH-500 / MATH test,
+    GSM8K, arXivMath, OlympiadBench, Omni-MATH and OlymMATH, and kept only if king 8389b90b (E761) solved 5-60% of its
+    4-12 rollouts at the 32,768-token cap with cap-hit < 1/3. Same prompt, sampling and grader as every other task.
+  Files in the kit, byte-exact: miner/data/gate-pool-v2.jsonl (one JSON object per line: id, env, problem, answer; slice rows
+  add slice, src, src_index, uid), sha256 8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc, with miner/data/gate-pool-v2.manifest.json
+  (sources, sha256s). gate-pool-v1.jsonl (sha256 9e05d47c...) stays in the kit unchanged for rounds before the switch.
+  The old affine_math file (miner/data/original-math7496.tasks.json, sha256 77a4524a...) is unchanged.
+- Holdout exclusion: a pool task is dropped if its problem matches a problem of the private performance holdout by
+  sha256 of the raw text, sha256 of the normalised text, or token-3-gram Jaccard >= 0.9. 0 matched by hash; 4 affine_math
+  tasks were dropped by the Jaccard rule (math:3322, math:6297, math:6512, math:6801: same template, different numbers).
+- Gate prompt (both envs): [system: MANDATE, user: problem], with enable_thinking=True, where MANDATE = "Solve the math problem.
+  Reason step by step in plain text, then end your response with the final answer in `\boxed{}`. Emit exactly one `\boxed{}`
+  block and nothing after it." (Your batch prompt is a single user message, section 3.)
+- Sampling: temperature 1.0, top_p 0.95, top_k 20, 65,536 output tokens (the gate task cap), 69,632 context; each round's cap
   is in mining.json -> training.promotion_gate.heldout.current_round.settings.max_tokens. Head and candidates in a round always
   use the same cap. It runs on vLLM 0.32.0 on 8 x B200
-  (`--dtype bfloat16 --max-model-len 16384 --enable-prefix-caching --max-num-seqs 512`). There's one request per sample,
-  with seed = int(sha256("P:affine_math:task:j")[:12], 16). Exact pins: miner/requirements-gate-vllm.txt.
-- Grader (probe_worker.grade): a capped reply (12,288 tokens, no EOS) is unresolved. Otherwise the final channel after
-  exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is checked with math-verify 0.9.0
-  against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1 (P1/P2 projection, E1-E7
-  answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
+  (`--dtype bfloat16 --max-model-len 69632 --enable-prefix-caching --max-num-seqs 512`). Exact pins: miner/requirements-gate-vllm.txt.
+  On the probe the pool is one task list: probe index = math index (0-7495), or 7496 + j for dapo:j.
+- Grader (probe_worker.grade, the same for both envs, head and candidates): a capped reply (the round's max_tokens, currently 65,536; no EOS) is unresolved.
+  Otherwise the final channel after exactly one `<think>...</think>` must hold exactly one balanced `\boxed{}`, which is
+  checked with math-verify 0.9.0 against `\boxed{gold}`. If that check doesn't pass, the lenient fixes allan-lenient-v1
+  (P1/P2 projection, E1-E7 answer equivalence) are tried. The source is in the kit (validator/probe/allan_src.py, kit/grade.py).
 
-## 6. The promotion gate (held-out, ivw-v2)
+## 6. The promotion gate (held-out, prior-v1, IRT information-weighted draw)
 
-- A round: the gate draws n task ids from the pool with gate_core.draw_sample(seed, 7496, n) from a secret os.urandom(32)
-  seed: n = 2000 in rounds opened after 2026-11-01 14:19 CR (1000 before). Only the commitment is published
-  (https://affine.io/gate/heldout/current.json): sha256(gate_version | seed | sorted ids). n, k_cand and sigma_run are fixed
-  when a round opens and published there (set_size, k_cand, sigma_run).
-- Block 0 = selection: the head runs 4 samples on all n tasks, and the **kept** tasks are those with 0 < c < 4 (about 13 %,
-  so about 270 at n = 2000). Blocks 1-3 = three more head runs (4 samples each) on the kept tasks (12 head samples per kept
-  task). Every candidate of the round runs k_cand = 8 samples per kept task (4 before 2026-11-01 14:19 CR); samples j = 0-3 use **the same
-  request seeds as block 1** (common random numbers), j = 4-7 follow the same seed rule. Head and candidate are graded by the
-  same grader on exactly the same kept tasks. The turn batch is NOT excluded.
-- Score (heldout.score_ivw): w_t = 1/(q(1-q)) with q = (c_sel + 1)/(4 + 2); d_t = candidate rate (k_cand samples) - head rate
-  (12 head samples); gain = sum w d / sum w; se_task = sqrt(sum w^2 d^2) / sum w; SE = sqrt(se_task^2 + sigma_run^2 x (1 + 1/3)).
-  sigma_run (rounds opened after 2026-11-01 14:19 CR) = the head's run-to-run spread POOLED over the last 20 finished rounds
-  (heldout.pooled_sigma_run: per round, the between-run variance of the 3 head blocks' weighted means minus their within-run
-  sampling variance; df-weighted mean over rounds, floored at 0), frozen when the round opens. At the switch it was 0.000
-  (20 rounds, 40 df, 95% upper bound 0.011). Before: each round's own 3-block estimate (heldout.run_sigma), floor 0 since E354
-  (E271-E353: floor 0.022). z = gain / SE.
-- **GREEN iff gain > 0 AND z > 1.00 (strict) AND estimated whole-set cap-hit < 0.20 AND >= 100 kept tasks.** At n = 2000 and
-  k_cand = 8 the bar (= SE) is expected near +1.3 points of weighted gain (it was about +1.9 to +3.4, median 2.3, before).
-- GREEN: the candidate becomes the next head (bf16 + fp32 master), and the turn is published. RED: the head is kept.
-- Settings history: n 2000 / k_cand 8 / pooled sigma_run also ran in rounds opened 2026-10-31 14:27 CR to 2026-11-01 13:31 CR.
-  After a probe stall on 2026-11-01 the gate fell back to n 1000 / k_cand 4 / per-round sigma_run for the round opened
-  2026-11-01 14:06 CR (r20261101T200634Z-deb95f24); the stalled round (e483) was closed unjudged and that hotkey got a fresh turn.
-- A round lasts until a GREEN, a head change, or 8 decided turns. Only a round that a GREEN closed is revealed, and only
-  the GREEN turn: its seed, task ids, the head baseline and the GREEN candidate's per-task grades
-  (https://affine.io/gate/heldout/<round>.json, /gate/reveal/<epoch>.json). RED turns and their probe results are never
-  published. While a round is open, the baseline and the per-task numbers stay private (they would leak the secret sample).
+- Rounds: one round per head. A round opens when a new head is promoted (or the previous round reached 8 decided turns) and
+  closes on a GREEN, a head change or 8 decided turns.
+- The prior: a separate sampler pod continuously samples the CURRENT head on the whole gate pool (k = 4 per task per pass) and
+  keeps, per task, s/n = solved/sampled counts (every count is multiplied by 0.5 when the head changes; a task without samples
+  starts at its env's average). The prior's code is public (priors/ in the repo); its table values (s, n per task) are private.
+  The gate reads a read-only snapshot of the table taken when the round opens; its sha256 is published with the round.
+- The draw (IRT information-weighted, live since 2026-11-02): inclusion probability pi_i proportional to sqrt(I_i),
+  I_i = a_i'^2 P_i (1 - P_i) = the Fisher information of task i at the head's ability theta_h under a 2PL item response
+  model P_i(theta) = 1 / (1 + exp(-a_i (theta - b_i))). a_i (discrimination) and b_i (difficulty) are fitted (MAP) on every
+  recorded checkpoint x gate-pool task pass/fail (first fit: 365 checkpoints, 3.06M rollouts; refit daily); theta_h is the
+  MAP of the head's own gate-pool rollouts (its winning candidate probe + its head runs), recomputed when each round opens.
+  a_i' = a_i shrunk halfway (log scale) toward the pool median and clipped to [0.5, 2] x median, so a weakly determined a_i
+  can't give a task extreme weight. Tasks the head almost always (or never) solves get little weight; tasks near the head's
+  ability that separate stronger from weaker checkpoints get the most. a_i, b_i, theta_h and pi_i are private (like the prior
+  table); the method and code are public (priors/baseline_v1.py irt_score / theta_map, priors/irt/). Before the switch
+  (prior-v1, E497 on): pi_i proportional to sqrt(E[p_i(1-p_i)]) under Beta(s_i+1, n_i-s_i+1) from the prior table.
+  Both: mixed with a 10 % uniform floor (every task can be drawn), capped at 0.10, scaled
+  so the expected size is N = 500; each task is drawn independently (Poisson sampling) with u_i < pi_i,
+  u_i = sha256(version|draw|seed|task id). The seed is commit-reveal:
+  - at open the gate publishes sha256(version|secret|<secret>) of a fresh 32-byte secret (/gate/heldout/current.json);
+  - after the round's first upload deadline it fixes and publishes a block number B = finalized head + 3 (a future block);
+  - once B is finalized: seed = sha256(version|seed|secret|B|hash of B), the draw is made and its size and
+    draw_commitment = sha256(version|seed|sorted ids) are published. The secret is revealed when the round closes.
+  So nobody (including the validator) can pick the sample after seeing the files, and miners can't predict it.
+- Scoring: the head is scored FRESH on every drawn task once per round (12 samples: 3 runs x 4); every candidate of the round
+  runs k_cand = 8 samples per drawn task with its own independent request seeds (plan seed = sha256(seed:prior-baseline:cand:
+  <epoch>)). Same grader, same tasks, same settings for head and candidates. The turn batch is NOT excluded.
+- Estimate: Delta = sum over envs of share_e x Hajek mean_e(candidate rate - head rate), where the Hajek mean weights each
+  drawn task by 1/pi_i (share_e = env size / pool size: affine_math 0.388, dapo 0.612). SE = sqrt(sampling variance of the
+  Hajek estimate + rollout variance (k_cand and 12 head samples per task)). No run-noise floor: sigma_run_floor = 0 in rounds
+  opened after the 2026-11-03 change (0.003 before; a head-vs-itself test on 2026-11-01 found no measurable run-to-run noise).
+  z = Delta / SE. The round's value: https://affine.io/mining.json heldout.current_round.settings.sigma_run_floor.
+  Formulas: priors/baseline_v1.py (module docstring + estimate()).
+- **GREEN iff Delta > 0 AND z > 1.00 (strict) AND cap-hit < 0.33 AND >= 100 drawn tasks scored (and >= 95 % of the draw).**
+  z bar: fixed at 1.00 from E553 (gate.json `z_bar`, /gate/zbar.json, mining.json heldout.z_bar). The exact bar each turn was
+  judged against: https://affine.io/gate.json entries[].thresholds.z_min. History: before E513 z > 1.00; E513 steps (0.50 from
+  6 h, 0.25 from 12 h since the last GREEN); E514-E552 a linear drop max(0.25, 1.0 - 0.75 h / 12). Both are removed.
+  Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks (affine_math and dapo alike) that hit the round's token
+  cap (currently 65,536), every task counted alike: RED if >= 33% of the candidate's baseline answers hit the
+  token cap (before E507: affine_math
+  cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
+- GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
+- **no_decision (from 2026-11-06, Jacob):** if the validator never finishes judging a candidate for an infra reason
+  (probe fail-closed timeout, hung checkpoint fetch, or the held-out round closes before the candidate is decided),
+  the turn is recorded as no_decision: not a served turn, the hotkey stays queued (fresh turn via K1 grant), no credit,
+  no promotion. The candidate-probe deadline is timed from probe start (TIMELINE.run_start), not from TRAINING-RESULT,
+  so checkpoint fetch time does not count; default allowance 2400 s of probe run at 64K (fetch hung-cap 900 s).
+  A real scored RED or GREEN still consumes the turn as before.
+- Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
+  priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).
+- Up to epoch 496 (decided 2026-11-01 17:14 CR) the gate used the ivw-v2 rule (uniform draw of 1000/2000 MATH tasks, selection block 0 with 0 < c < 4,
+  inverse-variance weights); its rounds and reveals stay published unchanged.
 
-## 7. What is published, and when <!-- green-publish-20261031 --> <!-- green-only-reveal-20261031 -->
+## 7. What is published, and when <!-- green-publish-20261031 --> <!-- prior-v1-publish -->
 
-- **While a round is open:** only the round commitment (/gate/heldout/current.json) and each turn's decision with z, gain and
-  cap rate (turn.json, gate.json). No seed, no task ids, no baseline and no per-task probe results.
-- **After each GREEN:** published automatically (the sidecar picks it up within a minute of the decision). It starts at
-  https://affine.io/k1/turns/<epoch>/green.json, which links and summarises:
-  - the decision math: z, gain, SE, se_task, sigma_run, kept, head and candidate pass, cap rates, and the recomputed decision;
-  - the baseline: the round seed, the commitment, selection block 0 and head blocks 1-3 per task, the kept tasks and the
-    frozen sampling settings (/gate/heldout/<round>.json);
-  - the probe results: head and candidate cells per task {n, c, w, u, b, x, tok, L} (/gate/reveal/<epoch>.json);
-  - the tasks: all sampled tasks of the round (1000; 2000 in rounds opened after 2026-11-01 14:19 CR) with id, prompt, answer, level and kept flag (/k1/turns/<epoch>/tasks.json);
-  - the winning file, byte-exact (/k1/turns/<epoch>/batch.json), and its lr / kl and trainer report (/k1/turns/<epoch>/turn.json).
-  /k1/turns/index.json marks each GREEN with a `green` link.
-- **RED turns:** only the decision, z / gain, the counts and the file's sha256. The file, its lr / kl, the per-rollout
-  trajectories and the RED candidate's probe results stay private. There's no green.json, tasks.json or /gate/reveal file
-  for a RED turn, ever, including RED turns inside a round that a GREEN later closed.
-- **When a round closes:** it closes on a GREEN, a head change, or 8 decided turns. Only a GREEN-closed round is revealed,
-  and only its GREEN turn (seed, task ids, head baseline, the GREEN candidate's per-task grades). A round that closes on a
-  head change or after 8 RED turns is never revealed. A new round always draws a fresh os.urandom(32) seed, so a revealed
-  round says nothing about the next sample.
+- **When a round opens:** the round's secret commitment, settings, pool sha256 and prior-table snapshot sha256
+  (/gate/heldout/current.json). After the upload deadline: the block number B. After B is finalized: the draw size and
+  draw_commitment. Never while the round is open: the seed, the secret, the task ids, any per-task number.
+- **Each turn:** the decision with z, Delta, SE and cap rate (gate.json, turn.json).
+- **When a round closes (every round, GREEN or not):** /gate/heldout/<round>.json reveals the secret, B and its hash, the seed,
+  the drawn task ids and tasks (id, env, problem, answer), every turn's decision numbers, and checks that the secret, seed and
+  draw match the commitments. For a GREEN-closed round it also has the GREEN turn's per-task head and candidate grades.
+  RED candidates' per-task grades are never published. The inclusion probabilities pi_i (computed from the private prior table)
+  are not published.
+- **After each GREEN:** the winning file, byte-exact (/k1/turns/<epoch>/batch.json), its lr / kl and trainer report
+  (/k1/turns/<epoch>/turn.json). gate.json lists every decision; the round file has the GREEN turn's grades.
+- **RED turns:** only the decision, z / Delta, the counts and the file's sha256. The file, its lr / kl and the per-rollout
+  trajectories stay private.
+- **What you can verify from a closed round, and what you can't:**
+  - CAN: that the secret matches the commitment published at open; that B was fixed before it existed and its hash is on chain;
+    that seed = sha256(version|seed|secret|B|hash(B)); that the drawn ids hash to the draw commitment; that every drawn task is in
+    the public pool (priors/gate/verify_round.py does all of this); the GREEN turn's per-task head and candidate grades;
+    the unweighted per-env head/candidate pass rates on the drawn tasks.
+  - CAN'T: recompute the exact Delta / SE / z, or check that each task's draw u_i < pi_i, because the inclusion probabilities pi_i
+    come from the private prior table and are not published (the table snapshot's sha256 is, so it can't be changed after the
+    round opens). The draw can't be steered by anyone: pi is fixed from a snapshot taken at open, before the block hash exists.
+- A new round always uses a fresh secret and a fresh block hash, so a revealed round says nothing about the next sample.
 
 ## 8. What winning means: weights
 
@@ -223,44 +329,35 @@ miner/validator/trainer-v833j (+ engine/) and the live settings are in miner/val
   problem, mostly MATH Level 4-5 (e368: 72 at Level 5, 33 at Level 4). Each rollout was the head's own sample with a `<think>` block and exactly one final `\boxed{}`.
 - That shape is common and not sufficient. The REDs e362-e367 and e370-e376 had the same public counts (125 x 1 correct),
   and several scored strongly negative (z -3 to -5.6). Which problems you pick and which samples you keep decide the sign.
-- Borderline difficulty: the gate only scores tasks the head sometimes solves (0 < c < 4). Correct samples on problems the
-  head usually fails or caps out on are where the signal is.
-- Fewer capped replies: on the full pool (performance.json), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
-  rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer 8,192-token caps, and the mean output went
-  from 2,043 to 1,769 tokens. Short correct rollouts (well under 6,000 tokens, where the overlong penalty starts) fit that.
+- Borderline difficulty: the draw favours tasks near the head's ability that discriminate (pi ~ sqrt of the task's IRT
+  information at the head), and every
+  drawn task counts with weight 1/pi, so the estimate covers the whole pool (affine_math + dapo). Correct samples on
+  problems the head usually fails or caps out on are where the signal is.
+- Fewer capped replies: on the full affine_math pool (the performance eval), pass went from 0.8448 (E0) to 0.9014 (E368) while the cap-hit
+  rate fell from 0.1175 to 0.0736. About 4.4 of the 5.7 points came from fewer capped replies, and the mean output went
+  from 2,043 to 1,769 tokens. Short correct rollouts (well under the overlong window, where the penalty starts) fit that.
 - Sample from the head at top_k 20 / top_p 0.95 / temperature 1 (off-support tokens are dropped from the PG term).
 - The 1,000-rollout mixed files (e339-e341, e343) went RED, under the older sign step. No GREEN has used v2 train values yet.
 - Simulate first: miner/kit/simulate_turn.sh runs head -> rollouts -> batch -> the live step -> the live gate math on your GPUs
   (gate_eval.py uses its own random seed and the live n / k_cand / sigma_run from gate-config.public.json; expect a few points
   of difference from the gate's hardware). A local z near 1 is a coin flip.
 
-<!-- perf-eval-20261031 -->
-## Performance over time (informational)
-
-- https://affine.io/performance.json: pass rate of every king (head) on two FIXED sets, scored on a separate machine:
-  the full public affine_math pool (all 7,496 tasks) and a private holdout (4,976 MATH test problems, minus any that
-  match a pool task; only its size and sha256 are published: 08d994bab2da775b807b23ebaf098c35db95d14a12af7ced2a46d6df4ab6c734).
-- Same prompt, sampling (temperature 1.0, top_p 0.95, top_k 20; 12,288 output tokens for kings promoted after the 12K
-  switch, 8,192 before; each row says its max_tokens) and grader as the gate probe; fixed
-  seeds; 1 sample per task; task-clustered SE. Shown at the top of https://affine.io/ (the Performance tile, one line per set).
-- Informational only: it never affects promotions, the gate, weights or training. The gate scores a few hundred
-  head-mixed tasks per round, so its pass rates aren't comparable across rounds. These are.
-<!-- /perf-eval-20261031 -->
-
 ## 10. The miner kit (local checker and simulator)
 
 https://github.com/AffineFoundation/affine/tree/main/miner, with miner/README.md as the entry point. The validator code
 in it is verbatim from the live services (sha256 + live source per file in validator/MANIFEST.sha256). The kit contains:
-- the trainer v8.3.3j host + engine;
+- the trainer v8.3.4 (host-v834c) host + engine;
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
-- the 7,496-task pool;
+- the 7,496-task affine_math file and the 21,574-task gate pool (miner/data/gate-pool-v2.jsonl + manifest; gate-pool-v1.jsonl kept);
 - exact pins (requirements-*.txt).
 
-Tools: kit/fetch_head.py (sha256-verified head / reference download), generate.py, make_batch.py, check_batch.py,
-train_step.py (one live step on your hardware), gate_eval.py (the gate procedure and math), simulate_turn.sh, and
-tests/test_kit_cpu.py (a CPU self-test, no GPU).
+Tools: kit/fetch_head.py (sha256-verified head download; `--reference` kept for old scripts but unused — KL is off), fetch_fp32_master.py (the head's fp32 master,
+sha256 + master digest verified), generate.py, make_batch.py, check_batch.py, train_step.py (one live step on your hardware;
+uses the fp32 master when present; --activation-checkpointing, off by default, fits a full file on one H200), gate_eval.py
+(the gate procedure and math), simulate_turn.sh (FP32_MASTER=1 default, ACT_CKPT=1 opt-in), and tests/test_kit_cpu.py
+(a CPU self-test, no GPU).
 
 ## 11. Public endpoints
 
@@ -270,8 +367,9 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
 - Your file's check: https://affine.io/ff/status.json   Your link: https://affine.io/ff/links/<hotkey>.json
 - Head: mining.json `checkpoint` + `current_url` (signed current.json -> manifest_url -> opening.json payload.checkpoint
   files/read_urls; id = sha256 of the canonical JSON {file: sha256}). Use miner/kit/fetch_head.py.
-- Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json, /k1/replay/README.md
-- Performance: https://affine.io/performance.json   This file: https://affine.io/llms.txt
+- Step recipe / fp32 masters / replay: https://affine.io/k1/spec/step-recipe.json, /k1/fp32-master/<head>.json (+ current.json,
+  index.json; download links in `download`, miner/kit/fetch_fp32_master.py), /k1/replay/README.md
+- This file: https://affine.io/llms.txt
 
 ## FAQ
 
@@ -285,7 +383,8 @@ tests/test_kit_cpu.py (a CPU self-test, no GPU).
   After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
-- What does the trainer run, exactly? miner/validator/trainer-v833j + engine/. kit/train_step.py imports exactly those files.
-- Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG.
-- Where's the fp32 master? Its manifest (sha256 per file) is at /k1/fp32-master/<head>.json. A public download isn't offered yet,
-  and kit/train_step.py bootstraps from the bf16 head without it.
+- What does the trainer run, exactly? miner/validator/trainer-v834c + engine/. kit/train_step.py imports exactly those files (KL ignored; `--ref` optional/unused).
+- Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG; with KL off they do not fall back to a KL term either.
+- Where's the fp32 master? https://affine.io/k1/fp32-master/<head>.json lists it (sha256 per file) with download links.
+  python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master fetches and verifies the current head's master (~36 GB).
+  Without it kit/train_step.py bootstraps fp32(bf16 head), which drifts from the gate's candidate.
