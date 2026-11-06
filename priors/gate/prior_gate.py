@@ -145,7 +145,7 @@ RULE_V1 = ('prior-v1 baseline: each round (one per head) draws about N tasks fro
         'k_cand rollouts per task (independent request seeds); Delta = sum over envs of env share x Hajek '
         '(inverse-probability weighted) mean of (candidate rate - head rate); SE = sqrt(sampling + rollout variance + sigma_run^2), sigma_run = the round\'s sigma_run_floor (settings.sigma_run_floor): 0 = no floor, SE = sqrt(sampling + rollout variance), in rounds opened after the 2026-11-03 change (0.003 before; head run-to-run noise measured ~0); '
         'GREEN iff Delta > 0 AND z = Delta/SE > 1.00 AND cap-hit < cap_max AND >= min_scored tasks scored; cap-hit (task-level, from E507; before: Hajek capped share on affine_math < 0.20) = '
-        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 32,768 tokens = caps.json max_output_tokens, https://affine.io/caps.json): RED if >= 33% '
+        'the share of all the candidate\'s rollouts on the scored baseline tasks (affine_math and dapo alike) that hit the token cap (the round\'s max_tokens: 65,536 tokens (gate prior_v1.max_tokens; training caps.json may differ), https://affine.io/caps.json): RED if >= 33% '
         'of the candidate\'s baseline answers hit the token cap (cap_max = 0.33). z_bar = 1.00, fixed: GREEN needs z > 1.00 (from E553; '
         'E513-E552 used a time-relaxed bar; the exact bar of every decision is in its entry, thresholds.z_min). '
         'The turn batch is not excluded. Code: https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py')

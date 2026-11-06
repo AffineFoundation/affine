@@ -120,9 +120,10 @@ miner/
   with the head tokenizer. There's no system message, and the generation prompt is `<|im_start|>assistant\n`.
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
   `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 12,287 tokens, `<|im_end|>` is appended (it ended).
-  Exactly 32,768 tokens counts as capped (no EOS). More than 32,768 is invalid. Prompt + output can be at most 36,864 tokens.
-  **32,768 output tokens apply everywhere**: generation (sample with `max_tokens` 32,768; kit/sampler.py does),
-  batch files, training and the gate (see Sampling below). The one source of every cap number is
+  Exactly 32,768 tokens counts as capped (no EOS) for training/batch. More than 32,768 is invalid in a batch file. Prompt + output can be at most 36,864 tokens for training.
+  **Training/batch = 32,768** (https://affine.io/caps.json). **Promotion gate = 65,536 output / 69,632 context**
+  (`prior_v1.max_tokens`, live 2026-11-06; each round publishes its cap). Generation for batches uses `max_tokens` 32,768; kit/sampler.py does.
+  The one source of training cap numbers is
   [https://affine.io/caps.json](https://affine.io/caps.json) (repo `caps.json`); this README, llms.txt, mining.json, the kit,
   the batch validator, the trainer and the gate are checked against it by `tools/caps/caps_check.py`.
 - **Caps.** At most 125 prompts and 1,000 rollouts (live value: mining.json `training.batch_cap`). Prompts past
@@ -226,10 +227,10 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
   prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 32,768 output tokens (the task cap), 36,864 context, vLLM 0.32.0 on
+- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 65,536 output tokens (the gate task cap), 69,632 context, vLLM 0.32.0 on
   8×B200. A round's
   cap is `mining.json` → `training.promotion_gate.heldout.current_round.settings.max_tokens`, the same for head and candidates
-  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512`). One request per
+  (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 69632 --enable-prefix-caching --max-num-seqs 512`). One request per
   sample, seed = int(sha256(`<plan seed>:affine_gatepool:<probe index>:j`)[:12], 16); probe index = the math index, or
   7496 + j for `dapo:j`.
 - **Grader** (`kit/grade.py` = `probe_worker.grade`, the same for both envs, head and candidates): a capped reply is neutral
@@ -254,7 +255,7 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
   (0.003 before; the 2026-11-01 head-vs-itself test found no measurable run-to-run noise). z = Δ/SE.
 - **GREEN iff** Δ > 0 **and** z > 1 (strict) **and** cap-hit < 0.33 **and** ≥ 100 drawn tasks scored (≥ 95 % of the draw).
   Cap-hit (task-level, from E507): the share of all the candidate's answers on the scored baseline tasks that hit the
-  12,288-token cap, every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
+  round's token cap (currently 65,536), every task counted alike: **RED if ≥ 33% of the candidate's baseline answers hit the token cap** (before
   E507: affine_math cap-hit < 0.20).
 - **z bar: fixed at 1.00** (https://affine.io/gate.json `z_bar`, mining.json `heldout.z_bar`). The bar each turn was judged
   against: `entries[].thresholds.z_min`. History: from E553 the bar is fixed at z > 1; E513–E552 used a time-relaxed bar.
