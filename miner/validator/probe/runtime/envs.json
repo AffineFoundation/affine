@@ -1,0 +1,352 @@
+{
+ "affine_math": {
+  "kind": "live-math",
+  "pool": 7496,
+  "spec": {
+   "adapter": "prime_v1",
+   "config": {
+    "dependency_versions": {
+     "native-math-grader-pinned-indeterminate-v1": "ec439ef1340343ac0cb6717ac52f7d1db2520c91c445546cf82d4b8840461517",
+     "verifiers": "0.3.1"
+    },
+    "legacy_root": "bundled",
+    "math_outcome_policy": "completed-boxed-math-outcome-v1",
+    "research_root": "bundled",
+    "task_snapshot": "assets/original-math7496.tasks.json"
+   },
+   "id": "affine_math",
+   "max_output_tokens": 8192,
+   "max_turns": 1,
+   "num_samples": 7496,
+   "source_hash": "6e938792b9288ba2d79be92fced8c83bedeec8b561f45115b84007987ab811d9",
+   "success_reward": 1.0,
+   "version": "prime-v1-2-completed-math"
+  },
+  "note": "exact live signed spec (7496-task snapshot)"
+ },
+ "affine_i3code": {
+  "kind": "text",
+  "pool": 2213,
+  "spec": {
+   "id": "affine_i3code",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_i3code.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 2213,
+   "success_reward": 1.0,
+   "source_hash": "5c7224cf3a031f73ee3ed0fcaa865353b16a7062530bc2a9e5dc31ce545586fa"
+  },
+  "note": "first 2213 tasks of the registry taskset"
+ },
+ "affine_i3math": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_i3math",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_i3math.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "a9ca4961273ff9b2782ff04a801bcb447d1282ab25a930967c15c2b643e60903"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_ifeval": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_ifeval",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_ifeval.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "4b22686f98a74069dbce0d51203e6df6f202a212edc760a8af54b4b1164aa405"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_logic": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_logic",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_logic.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "1a79e0e822efdaba56107776135984e54b403df262704b9a59993f23a13e5326"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_popqa_abstain": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_popqa_abstain",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_popqa_abstain.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "cb5814c04809043a49905e688721bb42be9c8d23fcda33cce1c1d85493f3834e"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_pydantic": {
+  "kind": "text",
+  "pool": 1971,
+  "spec": {
+   "id": "affine_pydantic",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_pydantic.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 1971,
+   "success_reward": 1.0,
+   "source_hash": "588508384bd0905a66b090989fea8cb447f2ae497c30d50615916a377fe047b3"
+  },
+  "note": "first 1971 tasks of the registry taskset"
+ },
+ "affine_scicomp": {
+  "kind": "text",
+  "pool": 387,
+  "spec": {
+   "id": "affine_scicomp",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_scicomp.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 387,
+   "success_reward": 1.0,
+   "source_hash": "7dd2e9f886f38ab328324869ef41006039d136e34494d5443b200ec683410c32"
+  },
+  "note": "first 387 tasks of the registry taskset"
+ },
+ "affine_science": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_science",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_science.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "91cb4637bf20e6f2dd877d616c28828ca8c52556b6793adc3dfff724678748b3"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_scitext": {
+  "kind": "text",
+  "pool": 1684,
+  "spec": {
+   "id": "affine_scitext",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_scitext.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 1684,
+   "success_reward": 1.0,
+   "source_hash": "4e48a6c2b8b3977daf014a3466e150960734d79d6f0b288d56490086ea2f6287"
+  },
+  "note": "first 1684 tasks of the registry taskset"
+ },
+ "affine_trivia": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_trivia",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_trivia.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "335ca2eb0b7c36b1c89b93379139fd7336cea760346241887cafeb002183b36d"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_trivia_abstain": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_trivia_abstain",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_trivia_abstain.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "3b9d0a7eb56557ddc82bc1c61f7f47ec57cd9889581ff34be105f5113e6482ec"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_unscramble": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_unscramble",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_unscramble.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "cbb0bb898fb8c18838b9a0e47bb82a56c3a8d5aa58517b75765e02e13a3a6221"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_verbatim": {
+  "kind": "text",
+  "pool": 4096,
+  "spec": {
+   "id": "affine_verbatim",
+   "version": "prime-v1-1",
+   "adapter": "prime_v1",
+   "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+     "verifiers": "0.3.1",
+     "faker": "40.43.0"
+    },
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_verbatim.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 4096,
+   "success_reward": 1.0,
+   "source_hash": "6ca36dd74b6776d4d4d63071ff5b79e9e56d897c13048a69e247964696ee14b0"
+  },
+  "note": "first 4096 tasks of the registry taskset"
+ },
+ "affine_gatepool": {
+  "kind": "live-math",
+  "pool": 21578,
+  "spec": {
+   "id": "affine_math",
+   "version": "prime-v1-2-completed-math",
+   "adapter": "prime_v1",
+   "config": {
+    "dependency_versions": {
+     "native-math-grader-pinned-indeterminate-v1": "ec439ef1340343ac0cb6717ac52f7d1db2520c91c445546cf82d4b8840461517",
+     "verifiers": "0.3.1"
+    },
+    "legacy_root": "bundled",
+    "math_outcome_policy": "completed-boxed-math-outcome-v1",
+    "research_root": "bundled",
+    "task_snapshot": "/root/affine-env-probe/envs/snap-affine_gatepool-v2.json"
+   },
+   "max_turns": 1,
+   "max_output_tokens": 8192,
+   "num_samples": 21578,
+   "success_reward": 1.0,
+   "source_hash": "72443a03f0dae09e5ddbbf3c1dd6c3778ce23545135122ca4f0fdc90c14f91bb"
+  },
+  "note": "SN120 gate pool v1 (prior-v1 baseline): affine_math 0..7495 + dapo 7496..; same adapter/grader as affine_math"
+ }
+}

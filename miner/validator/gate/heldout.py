@@ -21,9 +21,12 @@ from pathlib import Path
 
 SCHEMA = 'sn120-heldout-gate-v2'
 DEFAULTS = dict(enabled=False, from_epoch=None, n=1000, blocks=4, k_block=4, k_cand=4, bar_z=1.0, z_inclusive=False,
-                baseline_parallel=3, baseline_max_s=3000, fail_closed_s=2400, fetch_fail_closed_s=900, max_round_age_s=None, max_round_turns=8, min_cover=0.95,
+                baseline_parallel=3, baseline_max_s=3000, fail_closed_s=2400, fetch_fail_closed_s=900,
+                max_round_age_s=None, max_round_turns=8, min_cover=0.95,
                 min_kept=100, scoring='ivw-v2', sigma_run=0.022,
                 sigma_run_policy='per-round', sigma_pool_rounds=20, sigma_pool_min_rounds=5)
+# 20261106-e815-timeout (Jacob 12:36 CR): fail_closed_s = seconds of candidate PROBE RUN from TIMELINE.run_start
+# (excludes checkpoint fetch). fetch_fail_closed_s caps hung fetch/serve before run_start. Both -> no_decision.
 # variance levers (Jacob 2026-10-31 14:07 CR): sigma_run_policy 'pooled' = sigma_run of a round is the pooled run-level sd of the
 # last sigma_pool_rounds finished baselines (pooled_sigma_run), frozen in ROUND.private.json when the round opens (max with the
 # floor sigma_run); 'per-round' (old) = max(floor, this round's own 2-df estimate run_sigma). k_cand is also read from the round.

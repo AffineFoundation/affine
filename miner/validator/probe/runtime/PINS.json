@@ -1,0 +1,69 @@
+{
+ "estimator": {
+  "bar_z": 1.0,
+  "cap_max": 0.33,
+  "min_cover": 0.95,
+  "min_scored": 100,
+  "note": "Effective prior-v1 cfg in the running gate. Legacy top-level cap_max=.2/min_tasks=200 are not these estimator fields; no threshold change is included.",
+  "scoring": "prior-v1",
+  "z_inclusive": false
+ },
+ "files": {
+  "validator/probe/podctl.py": "511142f1d0ebe8c56b2ab6151c963ad02f3e585e82b1486147bbd19117c0e676",
+  "validator/probe/probe_worker.py": "3c42c35f0ecbbb31164a275d52e6af10a6b1bade20815368de0a7769854fca99",
+  "validator/probe/runtime/complete_group_harness.py": "5563d3eac2cbb91901e884ac0bef8a015a7502ac35f6222f2f6018cba118d000",
+  "validator/probe/runtime/environments.py": "658d4446808b5290b3d4dd3b59fceed9b22b6aa6e45c1b8930d0ef6fe1e80926",
+  "validator/probe/runtime/envs.json": "4af963e88e62ee57ccd956863f41113879938859a77f0b2826ac29cac8f7c74d",
+  "validator/probe/runtime/snap-affine_gatepool-v2.json.gz": "9d12de23ef512737f16fe960fa0029ef36dbfb9b78bccf39cd6f71c56c010687",
+  "validator/probe/serve.sh": "2ad5f8ca3380ac8b981eb07cf3f5f894880f4891caea778eee8036a679a24c41"
+ },
+ "limits": [
+  "No private draw/priors/baseline or credentials included.",
+  "File-level and CPU indexing verification are not a completed GPU replay.",
+  "Public sampler can run an independent draw; do not promise identical z without identical draw and baseline."
+ ],
+ "no_fp8": true,
+ "probe": {
+  "N": 500,
+  "draw": "Poisson; actual n varies by round",
+  "dtype": "bfloat16",
+  "head_rollouts": 12,
+  "k_cand": 8,
+  "max_model_len": 69632,
+  "max_num_seqs": 512,
+  "max_tokens": 65536
+ },
+ "runtime": {
+  "torch": "2.13.0",
+  "transformers": "5.19.0",
+  "vllm": "0.32.0"
+ },
+ "runtime_builds": {
+  "torch": "2.13.0+cu130"
+ },
+ "serve_args": "--dtype bfloat16 --max-model-len 69632 --gpu-memory-utilization 0.9 --enable-prefix-caching --limit-mm-per-prompt {image:0,video:0} --max-num-seqs 512",
+ "snapshot": {
+  "dapo_offset": 7496,
+  "eligible_per_env": {
+   "affine_math": 7492,
+   "dapo": 14082
+  },
+  "eligible_tasks": 21574,
+  "excluded_math_indices": [
+   3322,
+   6297,
+   6512,
+   6801
+  ],
+  "indexed_rows": 21578,
+  "path": "validator/probe/runtime/snap-affine_gatepool-v2.json.gz",
+  "uncompressed_sha256": "3bb8f028f7ca144abd9bd47a5382cbd986ecdd65513b09bdd4b2d2ba92eebe39"
+ },
+ "status": "parallel-eval-validation-not-live",
+ "verified_at_cr": "2026-11-06 16:51:24 CR",
+ "version": "sn120-eval-runtime-pins-v1",
+ "worker_runtime": {
+  "torch": "2.14.0",
+  "transformers": "5.14.1"
+ }
+}

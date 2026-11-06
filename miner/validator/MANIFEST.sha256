@@ -1,7 +1,7 @@
 # miner kit: sha256  path(relative to miner/)  status  live source on the validator host
 # status verbatim = byte-identical to the file the live service runs (checked against the validator host on 2026-10-31);
 # sanitized / public-config = see note. kit/tests/test_kit_cpu.py re-checks every sha256 below.
-9190eecd31b6dc2a40da28714432bb8d174a5dc0e747c2c5b00fccdd4e8c2cd7  validator/batch/ff_format.py  verbatim  <VALIDATOR_STATE>/root-audits/20261030-free-file/release/ff_format.py
+0876c8ba0cdd3a4ed82502dacd77816bae7a83659899b70289ed6702ef11a260  validator/batch/ff_format.py  verbatim  <VALIDATOR_STATE>/root-audits/20261030-free-file/release/ff_format.py
 e8b7cca299b210a5a283066139b4e803199dbe129238eb3ff702fa2de0e49ff8  validator/engine/subnet/mimo_grpo/__init__.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/subnet/mimo_grpo/__init__.py
 096e5492df1badf53446fe1958b12fc0e3f99131c3a93203c2ad89f9a912b015  validator/engine/subnet/mimo_grpo/config.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/subnet/mimo_grpo/config.py
 1eccb705625989038841c90220aec7ac580dd313dfa8545785ac545b4d979b34  validator/engine/subnet/mimo_grpo/data.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/subnet/mimo_grpo/data.py
@@ -24,16 +24,16 @@ cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  validator/engi
 7d36aec878a5086b55a5b425b08951d5c3cacd3d050ad922fe2277dad95b9a77  validator/engine/vendor/mimo_verl_pinned/verl/trainer/ppo/v1/trainer_base.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/vendor/mimo_verl_pinned/verl/trainer/ppo/v1/trainer_base.py
 c831c36b8686f46e8460dc4d76984259cb6edb99318a8444108bf00705d471ef  validator/engine/vendor/mimo_verl_pinned/verl/utils/megatron/optimizer.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/vendor/mimo_verl_pinned/verl/utils/megatron/optimizer.py
 cb37d045dec2161d637e2633032cc97c97334e5547cea62dace42630c9683259  validator/engine/vendor/mimo_verl_pinned/verl/utils/torch_functional.py  verbatim  <VALIDATOR_STATE>/root-audits/20261015-mimo-v8.2-release-succession/release-v822-signed/deployment-final-source-v822/vendor/mimo_verl_pinned/verl/utils/torch_functional.py
-3109aa3dd740b3486366ae50dd568776658eef53b7531795d15dc323b6bd09e1  validator/gate/gate-config.public.json  public-config: numbers from the live PROMOTION-GATE.json flag (no seeds, no task ids)
+157c7f52eb35301476969a0a8f37a90893525e8de902648586646e3f70c37463  validator/gate/gate-config.public.json  public-config: numbers from the live PROMOTION-GATE.json flag (no seeds, no task ids)
 ee866a68fbf79b4f98284c9f821210db12d50f57c9245a3e7cc7cae35bda236f  validator/gate/gate_core.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/gate_core.py
 ae88410b240d8cba602507860c516c7dbdd6da5cc4da26c8ff65ff6d2d5b5e7c  validator/gate/gate_service.py  sanitized: live gate service with the probe-pod SSH host/port/known_hosts and absolute validator paths replaced by placeholders (10 lines); logic unchanged
-b84ae49152821a28dcd9d4b44872227c8db93ac562f230238709148f40824d10  validator/gate/heldout.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/heldout.py
-eb3eae5c53f1ac6a6a53ba85456d31727d994586d8aca03bd787aa3e45f66f2e  validator/gate/baseline_v1.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/baseline_v1.py
-29029f8ae04c92f8a00b911f37461bd90ba30dc4122446488e0a04bfc91d6a6a  validator/gate/prior_gate.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/prior_gate.py
+4e281fcede794e098c597053f14faa53856a08c4a2bbfa44ef52f6405c1cf355  validator/gate/heldout.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/heldout.py
+949a18f05130d71172c961551367fb0152887ee46a1a5f62429434736916c0a8  validator/gate/baseline_v1.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/baseline_v1.py
+e7c6320858ab2582a4e5f2920080f30c8e2d11c9a89374bf7bc52313940c9681  validator/gate/prior_gate.py  verbatim  <VALIDATOR_STATE>/root-audits/20261026-promotion-gate/code/prior_gate.py
 6b58684ca85a3f750de793e4ba1aeca5a45d8b44fb8c00b403cf5e7372823057  validator/probe/allan_src.py  verbatim: = probe_worker.py _ALLAN_SRC = <VALIDATOR_STATE>/root-audits/20261031-performance-eval/code/allan_src.py
 511142f1d0ebe8c56b2ab6151c963ad02f3e585e82b1486147bbd19117c0e676  validator/probe/podctl.py  verbatim  <VALIDATOR_STATE>/root-audits/20261031-shadow-renorm-step/probe-runtime/podctl.py
 3c42c35f0ecbbb31164a275d52e6af10a6b1bade20815368de0a7769854fca99  validator/probe/probe_worker.py  verbatim  <VALIDATOR_STATE>/root-audits/20261101-baseline-switch (probe pod affine-env-probe/probe_worker.py: grade-stall fix 2026-11-01 + gatepool-v1 gold answers from the env snapshot)
-7c05d85dd3a69ebd97c17199c747738947f7102ab21b23feb2cd025c07e9f918  validator/probe/serve.sh  verbatim  <VALIDATOR_STATE>/root-audits/20261031-shadow-renorm-step/probe-runtime/serve.sh
+2ad5f8ca3380ac8b981eb07cf3f5f894880f4891caea778eee8036a679a24c41  validator/probe/serve.sh  verbatim  <LIVE_PROBE>/serve.sh (64K, max_model_len 69632, bf16, MAX_SEQS default512)
 19485bf5ad0046980d4f48ecec8bcd13e0f93fa478bbb8421fc42bf926431c59  validator/trainer-v834c/ff_trainer.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/ff_trainer.py
 c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50  validator/trainer-v834c/math_levels.json  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/math_levels.json
 b6c2ecccb71a705b9e08063a11a778e468cb2647ec4825e06b50ec23b3ac9b7c  validator/trainer-v834c/mimo_host_trainer_v83.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/mimo_host_trainer_v83.py
@@ -41,7 +41,7 @@ b6c2ecccb71a705b9e08063a11a778e468cb2647ec4825e06b50ec23b3ac9b7c  validator/trai
 83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2  validator/trainer-v834c/patched/mimo_grpo.service.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/patched/mimo_grpo.service.py
 f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217  validator/trainer-v834c/patched/mimo_grpo.transaction.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/patched/mimo_grpo.transaction.py
 ef3f94b24e0cc6cbbf40fa7825cba3e114080ef10746587b365ffaeb941d92c8  validator/trainer-v834c/patched/mimo_training_worker.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/patched/mimo_training_worker.py
-d986a8fbbfe8a75c564a6f6b6db78ae7651a1142b03118cd4e8c6369dbdbf4d5  validator/trainer-v834c/trainer-config.public.json  public-config: live v8.3.4 / host-v834c (KL ignored, dp_token_budget 36864, training caps 32K; gate 64K is separate)
+b88e9fb777a493099a8fe365455a4a453611af6df7ec45d69d31f4e84a9f969f  validator/trainer-v834c/trainer-config.public.json  public-config: live host-v834d (compatibility directory name retained), token budget69632, training+gate64K, KL ignored
 8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad  validator/trainer-v834c/v8210_optimizer_offpath.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/v8210_optimizer_offpath.py
 ad7596e2ffe8e01f7554ccf78795b2c26038c03020cae2e90a5684e0b7622a60  validator/trainer-v834c/v8211_batched.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/v8211_batched.py
 be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2  validator/trainer-v834c/v824_optimizer_fast.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/v824_optimizer_fast.py
@@ -52,3 +52,9 @@ e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4  validator/trai
 ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2  validator/trainer-v834c/v83_kernels_policy.py  verbatim  <VALIDATOR_STATE>/root-audits/20261105-kl-removal/stage/host-v834c/v83_kernels_policy.py
 7a629a533ca895706cd7e5e6e99b5ece9341931ff0b8dd6257940eb23281e274  requirements-gate-vllm.txt  verbatim  <VALIDATOR_STATE>/root-audits/20261030-heldout-gate/req-probe.txt
 77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3  data/original-math7496.tasks.json  verbatim  <VALIDATOR_REPO>/assets/original-math7496.tasks.json
+5563d3eac2cbb91901e884ac0bef8a015a7502ac35f6222f2f6018cba118d000  validator/probe/runtime/complete_group_harness.py  verbatim  <LIVE_PROBE_SOURCE>/subnet/complete_group_harness.py
+658d4446808b5290b3d4dd3b59fceed9b22b6aa6e45c1b8930d0ef6fe1e80926  validator/probe/runtime/environments.py  verbatim  <LIVE_PROBE_SOURCE>/subnet/environments.py
+4af963e88e62ee57ccd956863f41113879938859a77f0b2826ac29cac8f7c74d  validator/probe/runtime/envs.json  verbatim  <LIVE_PROBE>/envs.json
+9d12de23ef512737f16fe960fa0029ef36dbfb9b78bccf39cd6f71c56c010687  validator/probe/runtime/snap-affine_gatepool-v2.json.gz  public-config  deterministic gzip of live public snapshot; uncompressed sha256 in PINS.json
+d1dc70544d44545b52e02aa36d49f3cccc52367d0f20554e5f8fb53f875df7fb  validator/probe/runtime/PINS.json  public-config  observed live code/settings; validation not live
+3ca4c9806a8720533078967c2a3ca2dc96a0312727e08e81c080537393c52dde  kit/verify_eval_runtime.py  public-config  CPU file/index self-check; no private draw

@@ -57,11 +57,12 @@ def main():
     g5 = grade.grade(enc('<think>\nx\n</think>\n\nthe answer is %s' % t0['answer']), 'eos', t0['answer'], t0['prompt'])
     check('grader: correct / wrong / capped / no box', (g1[0], g2[0], g3[0], g5[0]) == ('positive', 'negative', 'neutral', 'neutral'), (g1, g2, g3, g5))
     check('grader: two identical boxes -> rescued by the lenient fix (P2)', g4 == ('positive', 'P2'), g4)
-    src = (MINER.parent / 'ops' / 'performance_eval' / 'perf_eval.py')
-    if src.exists():
-        pe = src.read_text().splitlines(); gk = (KIT / 'grade.py').read_text().splitlines()
-        i = gk.index('# ---- verbatim from ops/performance_eval/perf_eval.py lines 13-96 ----')
-        check('kit/grade.py body is verbatim perf_eval.py lines 13-96', gk[i + 1:] == pe[12:96])
+    # perf-eval is retired. Pin the actually published live probe, rather than
+    # comparing a grader substring to line offsets in an obsolete service.
+    pins = json.loads((MINER / 'validator/probe/runtime/PINS.json').read_text())
+    rel = 'validator/probe/probe_worker.py'
+    check('published live probe source matches runtime pin',
+          hashlib.sha256((MINER / rel).read_bytes()).hexdigest() == pins['files'][rel])
 
     # 3. batch checker
     M = prompts.batch_prompt
@@ -100,7 +101,7 @@ def main():
         check('candidate checkpoint written', (W / 'cand' / 'model.safetensors').exists() or any((W / 'cand').glob('*.safetensors')))
         r1 = sh(py, KIT / 'train_step.py', '--head', W / 'head', '--ref', W / 'ref', '--batch', W / 'v1.json', '--hotkey', HK, '--out', W / 'cand1', '--device', 'cpu', '--report', W / 'step1.json')
         s1 = json.loads((W / 'step1.json').read_text()) if r1.returncode == 0 else {}
-        check('v1 file -> defaults lr 5e-7 kl 0.02', r1.returncode == 0 and s1['report']['train_params']['lr_multiplier'] == 1.0 and s1['report']['train_params']['kl_applied'] == 0.02)
+        check('v1 file -> default lr 5e-7; legacy kl 0.02 ignored (v8.3.4)', r1.returncode == 0 and s1['report']['train_params']['lr_multiplier'] == 1.0 and s1['report']['train_params']['kl_requested'] == 0.02 and s1['report']['train_params']['kl_applied'] == 0.0 and s1['report']['train_params']['kl_ignored'] is True)
 
     # 5. gate math on hand-made cells
     import heldout, gate_core

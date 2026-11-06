@@ -386,3 +386,23 @@ uses the fp32 master when present; --activation-checkpointing, off by default, f
 - Where's the fp32 master? https://affine.io/k1/fp32-master/<head>.json lists it (sha256 per file) with download links.
   python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master fetches and verifies the current head's master (~36 GB).
   Without it kit/train_step.py bootstraps fp32(bf16 head), which drifts from the gate's candidate.
+
+## Parallel-eval runtime audit (validation; not live)
+
+The infrastructure cutover is still being validated; the original gate remains
+live. Probe/serving code and settings are pinned, with a CPU file/index audit:
+https://github.com/AffineFoundation/affine/blob/main/miner/validator/probe/runtime/MINER-REPRO.md
+Pins: miner/validator/probe/runtime/PINS.json. Check with
+`python3 miner/kit/verify_eval_runtime.py` before registering. bf16, 65536 output,
+69632 context, 512 sequences; H100/H200/B200/B300 live-eval class, no fp8/5090
+live eval. Full GPU replay of the published package is not yet certified.
+
+The 21578-row indexed snapshot and 21574 eligible task pool have identical indices
+for every eligible task (four excluded math entries leave deliberate holes).
+The reproduction note documents the actual prior-v1 estimator fields, rather
+than treating legacy top-level threshold fields as effective settings. No
+thresholds change in this publication. Private draws/priors/baselines are not
+published here; an independent local draw is not an exact ledger replay.
+
+Batch JSON `version` is a literal: exactly `affine-batch-v1` or
+`affine-batch-v2`, never the trainer/kit release number or just `v1`/`v2`.

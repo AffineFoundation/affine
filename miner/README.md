@@ -333,3 +333,12 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
   `requirements-trainer.txt` pins those, plus what the code imports.
 - **8-GPU reduction.** The local step runs the trainer's packed kernels in one process; the live run sums 8 GPUs
   with NCCL, so gradients match at the bf16 rounding level, not bit-exactly (`kit/grad_probe.py` measures it).
+
+## Audit the eval runtime before registering
+
+See [the pinned live-probe recipe](validator/probe/runtime/MINER-REPRO.md) and run
+`python3 miner/kit/verify_eval_runtime.py`. Parallel cutover is still in validation;
+this is a file/index audit, not a certified end-to-end GPU replay.
+
+The batch top-level `version` must be exactly `affine-batch-v1` or
+`affine-batch-v2` (not a trainer/kit release number).
