@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-06 18:05 CR (UTC-6): training reverted to 32K (host-v834c); gate remains 64K; E815 fail-closed -> no_decision; probe deadline from run_start (2400s).
+Last updated: 2026-11-07 08:00 CR (UTC-6): parallel evaluation live from epoch 843 (fresh GREENs applied; see section 6). Training 32K (host-v834c); gate 64K; probe deadline from run_start 4800s.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Training caps: https://affine.io/caps.json is the canonical training source (repo: caps.json, loader caps.py). Today it says
@@ -278,11 +278,22 @@ files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference m
   token cap (before E507: affine_math
   cap-hit < 0.20). With N = 500 and k_cand = 8 the bar (= SE) is expected near +0.8 to +1.2 points.
 - GREEN: the candidate becomes the next head (bf16 + fp32 master), the turn is published and the round closes. RED: the head is kept.
+- **Parallel evaluation (from epoch 843, 2026-11-07 08:00 CR, Jacob):** <!-- parallel-eval-20261107 --> the trainer no longer waits for the
+  gate. Each turn is trained from the current head as before, then its candidate is judged on its own eval node while the trainer
+  goes on to the next turn in the queue. Only the hardware changes: the same pinned public serve/probe code and config as the
+  gate probe (bf16, no fp8, --max-model-len 69632, --max-num-seqs 512, 65,536 output tokens), the epoch's own committed round draw,
+  the same candidate plan seed, k_cand 8, the same head baseline (once per round), estimator and thresholds (strict z > 1.00).
+  Eval nodes are 8-GPU H100/H200/B200/B300 (never RTX 5090), up to five at a time; if a node dies the same job is re-run on a
+  fresh node (up to 3 attempts), otherwise the turn is no_decision (not served, key stays queued).
+  GREENs are applied in the order they are decided. A GREEN whose candidate was trained on the current head becomes the head.
+  For now (phase 1) a GREEN whose training head was already replaced by an earlier GREEN ("stale") is credited and paid exactly
+  like any GREEN (gate.json decision green, K1 credit) but does not become the head; applying stale GREENs as an fp32 delta
+  (staleness <= 2) comes later. RED: discarded, head kept. A lifecycle timeout never promotes.
 - **no_decision (from 2026-11-06, Jacob):** if the validator never finishes judging a candidate for an infra reason
   (probe fail-closed timeout, hung checkpoint fetch, or the held-out round closes before the candidate is decided),
   the turn is recorded as no_decision: not a served turn, the hotkey stays queued (fresh turn via K1 grant), no credit,
   no promotion. The candidate-probe deadline is timed from probe start (TIMELINE.run_start), not from TRAINING-RESULT,
-  so checkpoint fetch time does not count; default allowance 2400 s of probe run at 64K (fetch hung-cap 900 s).
+  so checkpoint fetch time does not count; default allowance 4800 s of probe run at 64K (fetch hung-cap 900 s; raised 2026-11-06 23:57 CR after E828–830 completed in ~2926–3017s).
   A real scored RED or GREEN still consumes the turn as before.
 - Settings and their history: https://affine.io/mining.json (`heldout`), miner/validator/gate-config.public.json. The code:
   priors/baseline_v1.py (draw, seed, estimator, rule) and priors/gate/prior_gate.py (the gate's round logic).

@@ -337,8 +337,11 @@ python3 miner/kit/tests/test_kit_cpu.py --tokenizer /tmp/tok
 ## Audit the eval runtime before registering
 
 See [the pinned live-probe recipe](validator/probe/runtime/MINER-REPRO.md) and run
-`python3 miner/kit/verify_eval_runtime.py`. Parallel cutover is still in validation;
-this is a file/index audit, not a certified end-to-end GPU replay.
+`python3 miner/kit/verify_eval_runtime.py`. Parallel evaluation is live from epoch 843 (2026-11-07): each candidate is
+judged on its own 8-GPU eval node with exactly this pinned runtime and config (bf16, no fp8, max-model-len 69632,
+max-num-seqs 512) and the gate's own draw, seeds, estimator and thresholds; only the hardware differs. Phase 1 applies
+fresh GREENs only (see llms.txt section 6 and ops/parallel_eval/live/). The audit itself is a file/index check,
+not a certified end-to-end GPU replay.
 
 The batch top-level `version` must be exactly `affine-batch-v1` or
 `affine-batch-v2` (not a trainer/kit release number).
