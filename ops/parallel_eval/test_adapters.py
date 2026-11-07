@@ -209,6 +209,22 @@ class PublicationRecoveryTests(unittest.TestCase):
 
     def tearDown(self):self.tmp.cleanup()
 
+    def test_full_projection_is_not_repeated_when_recording_same_install(self):
+        from unittest.mock import patch
+        store=self.r.publisher.masters
+        with patch.object(store,'install',wraps=store.install) as install:
+            pub=self.r.publisher.publish(self.request)
+        self.assertEqual(install.call_count,1)
+        self.assertTrue(self.r.publisher.restore(pub,self.r.genesis))
+
+    def test_same_base_and_training_head_is_deep_verified_once(self):
+        from unittest.mock import patch
+        store=self.r.publisher.masters
+        entry=self.r.publisher.registry[self.r.genesis]['master_entry']
+        with patch.object(store,'verify',wraps=store.verify) as verify:
+            self.r.publisher.publish(self.request)
+        self.assertEqual(sum(c.args[0]==entry for c in verify.call_args_list),1)
+
     def test_signed_request_persisted_before_any_effect(self):
         def die(phase):raise SystemExit('request persisted')
         with self.assertRaises(SystemExit):self.r.publisher.publish(self.request,fault=die)

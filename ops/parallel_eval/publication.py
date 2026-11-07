@@ -94,6 +94,10 @@ class PrivatePublisher:
             raise ValueError('replay inputs must stay inside marked staging root')
         cp = checkpoint(model)
         entry, meta = self.masters.install(model, master, optimizer_step=optimizer_step, lineage=lineage or {}, generation_id=generation_id)
+        return self._remember_verified(cp, entry, meta, model)
+
+    def _remember_verified(self, cp, entry, meta, model):
+        """Record this call's fully verified install; never re-project the same bytes."""
         head = dict(version='pe-head-v1', checkpoint=cp['id'], master_digest=meta['master_digest'], generation_id=meta['generation_id'])
         row = dict(id=digest(head), head=head, generation_id=meta['generation_id'], checkpoint=cp, master_entry=entry, master_digest=meta['master_digest'], model=str(model))
         old = self.registry.get(row['id'])
@@ -165,13 +169,19 @@ class PrivatePublisher:
             if signed(out['receipt'], self.publisher.id)['request_sha256'] != digest(request):
                 raise ValueError('command-id/request replay conflict')
             return out
+        verified = set()
         for name in ('base', 'candidate', 'training'):
             row = payload[name]
-            if self.registry.get(row['id']) != row or checkpoint(row['model']) != row['checkpoint']:
+            if self.registry.get(row['id']) != row:
+                raise ValueError('authenticated merge input inventory')
+            if row['id'] in verified:
+                continue
+            if checkpoint(row['model']) != row['checkpoint']:
                 raise ValueError('authenticated merge input inventory')
             meta = self.masters.verify(row['master_entry'], row['model'])
             if meta['master_digest'] != row['master_digest']:
                 raise ValueError('authenticated master digest')
+            verified.add(row['id'])
         model, master = gd / 'model', gd / 'master'
         if base == payload['training']['id']:
             copy_immutable(payload['candidate']['model'], model)
@@ -186,7 +196,7 @@ class PrivatePublisher:
         entry, meta = self.masters.install(model, master, optimizer_step=payload['optimizer_step'],
             generation_id=cmd, lineage=dict(request_sha256=digest(request), base=base,
                          candidate=payload['candidate']['checkpoint']['id'], training=payload['training']['checkpoint']['id']))
-        row = self.register(model, master, optimizer_step=payload['optimizer_step'], lineage=meta['lineage'], generation_id=cmd)
+        row = self._remember_verified(cp, entry, meta, model)
         self.masters.pin(entry, 'generation:' + cmd)
         obj = self.stage.root / 'objects' / cp['id']
         copy_immutable(model, obj)
