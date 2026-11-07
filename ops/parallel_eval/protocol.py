@@ -134,6 +134,20 @@ class Protocol:
                 return copy.deepcopy(c)
         return None
 
+    def renew(self, command, now=None, ttl=120):
+        """Renew only an unexpired physical-effect lease, never steal one back."""
+        now = time.time() if now is None else now
+        if ttl <= 0:
+            raise ValueError('positive lease required')
+        with self.stage.locked():
+            s = self.stage.load()
+            c = s['commands'][command['id']]
+            if c['state'] != 'leased' or c['lease'] != command['lease'] or c['lease_until'] <= now:
+                raise ValueError('lost or expired lease cannot renew')
+            c['lease_until'] = now + ttl
+            self.stage.save(s)
+            return c['lease_until']
+
     def ack(self, command, receipt):
         # Verify outside state lock; an external readback must not stall lane watchdogs.
         if not self.verify(command['kind'], command['payload'], receipt):
