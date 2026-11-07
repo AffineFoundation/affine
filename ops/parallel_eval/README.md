@@ -1,3 +1,38 @@
+# Generation-aware PE staging (v4)
+
+Still NOT live, NOT activation-ready, and NOT a real GRPO/GPU replay.
+
+New in v4:
+- Master entries are `<fp32-master-digest>-<generation-id>`; signed head identity
+  binds checkpoint ID + fp32 master digest + generation ID. Equal bf16 weights
+  and even equal masters in distinct generations no longer alias.
+- `install_generation_hooks` is a staged native trainer restore/GC hook. It
+  selects an authenticated generation and reloads its residuals rather than
+  trusting the native bf16-only memory cache. Missing/corrupt selections fail
+  closed, never bootstrap-upcast. It is NOT installed on any live trainer.
+- `R2Objects` uses an existing host-provided native Bucket; writes only an
+  isolated private replay prefix. Both model-only shards and exact fp32 master
+  metadata/shards are uploaded, fully GET-read and SHA/length checked. No
+  credentials or presigned URLs are transported by this package.
+- Signed restore validates generation identity, original signed merge request,
+  projection and fresh-moments marker; verification needs public keys only.
+- 22 CPU tests pass, including actual native trainer digest/GC functions,
+  equal-bf16/different-master and equal-master/different-generation fixtures,
+  memory-cache invalidation, same-checkpoint GREEN head advance, R2 corruption,
+  and fresh/stale/CURRENT/K1 simulation cases.
+- Separate on-host evidence proves actual private R2 publication/readback and a
+  new-process public-key-only restore of a small nonpayable CPU fixture. This
+  is NOT a fresh historical GRPO or GPU probe, and simulated K1 is not a real
+  ledger/served join.
+
+Still required: actual legacy lifecycle/controller effect adapters, real gate
+ownership/draw/scorer composition, real K1/ledger/quiescence joins, admission of
+these hooks/generation type in a staged trainer release, isolated rented-node
+GRPO/GPU replay, and real drained activation qualification. Activation remains
+an explicitly nonqualifying simulator. Nothing below overrides that boundary.
+
+## Previous v3 implementation notes (historical)
+
 # Parallel eval transaction staging — NOT LIVE / NOT activation-ready
 
 This package is an isolated staging implementation. Every writer requires a

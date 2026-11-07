@@ -310,9 +310,11 @@ class Protocol:
             s = self.stage.load()
             if s['apply'] != a:
                 raise ValueError('apply changed during verification')
-            new_head = current['checkpoint']['id']
+            new_head = current['pe_head_id']
+            if current['pe_head'].get('version') != 'pe-head-v1' or digest(current['pe_head']) != new_head or current['pe_head']['checkpoint'] != current['checkpoint']['id']:
+                raise ValueError('generation-aware CURRENT head identity')
             if new_head in [s['genesis']] + [row['head'] for row in s['chain']]:
-                raise ValueError('ambiguous repeated checkpoint; generation-aware head adapter required')
+                raise ValueError('duplicate head generation; CURRENT adapter must bind master digest and generation id')
             if current['optimizer_step'] != s['optimizer_step'] + 1 or s['head'] != a['base_head']:
                 raise ValueError('head or optimizer changed under apply')
             j = s['jobs'][a['job']]

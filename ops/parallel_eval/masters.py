@@ -15,6 +15,7 @@ from .durable import Stage, atomic, digest, file_sha, fsync_dir, read
 
 VERSION = 'v833f-fp32-head-master-v1'
 HEX = re.compile('[0-9a-f]{64}')
+ENTRY = re.compile('[0-9a-f]{64}-[0-9a-f]{64}')
 
 
 def tensor_sha(tensor):
@@ -47,7 +48,7 @@ def load_tensor(mapping, name):
         return f.get_tensor(name)
 
 
-def metadata(model, master, *, optimizer_step, lineage):
+def metadata(model, master, *, optimizer_step, lineage, generation_id=None):
     """Digest scheme is exactly native _digest_map, NOT checkpoint file-map id."""
     import torch
     mm, fm = tensor_map(model), tensor_map(master)
@@ -64,7 +65,10 @@ def metadata(model, master, *, optimizer_step, lineage):
     if type(optimizer_step) is not int or optimizer_step < 0:
         raise ValueError('optimizer step')
     files = {p.name: dict(sha256=file_sha(p), bytes=p.stat().st_size) for p in sorted(set(fm.values()))}
-    return dict(version=VERSION, bf16_sha256=digest(bf), master_digest=digest(fp),
+    generation_id = generation_id or digest(dict(model_bf16=digest(bf), master=digest(fp), optimizer_step=optimizer_step, lineage=lineage))
+    if not isinstance(generation_id, str) or not HEX.fullmatch(generation_id):
+        raise ValueError('generation id')
+    return dict(version=VERSION, generation_id=generation_id, bf16_sha256=digest(bf), master_digest=digest(fp),
                 tensor_sha256=fp, files=files, tensor_file={k: v.name for k, v in fm.items()},
                 optimizer_step=optimizer_step, source='pe-fp32-delta', lineage=lineage,
                 shard_bytes=max(row['bytes'] for row in files.values()))
@@ -74,6 +78,8 @@ class MasterStore:
     def __init__(self, stage):
         self.stage = stage if isinstance(stage, Stage) else Stage(stage)
         self.root = self.stage.root / 'fp32-master'
+        if self.root.is_symlink():
+            raise ValueError('symlink master root')
         self.root.mkdir(exist_ok=True)
 
     @contextlib.contextmanager
@@ -84,25 +90,23 @@ class MasterStore:
 
     @staticmethod
     def entry_id(entry):
-        if type(entry) is not str or not HEX.fullmatch(entry):
-            raise ValueError('invalid native master entry id')
+        if type(entry) is not str or not ENTRY.fullmatch(entry):
+            raise ValueError('invalid generation master entry id')
         return entry
 
-    def install(self, model, master, *, optimizer_step, lineage):
+    def install(self, model, master, *, optimizer_step, lineage, generation_id=None):
         if any(not Path(p).resolve().is_relative_to(self.stage.root) for p in (model, master)):
             raise ValueError('master inputs must remain inside staging root')
-        meta = metadata(model, master, optimizer_step=optimizer_step, lineage=lineage)
-        entry = self.entry_id(meta['bf16_sha256'])
+        meta = metadata(model, master, optimizer_step=optimizer_step, lineage=lineage, generation_id=generation_id)
+        entry = self.entry_id(meta['master_digest'] + '-' + meta['generation_id'])
         with self.locked():
             dst = self.root / entry
             if dst.is_symlink():
                 raise ValueError('symlink master entry')
             if dst.exists():
                 old = read(dst / 'meta.json')
-                # Equal bf16 need not imply equal fp32 residuals. Never silently
-                # replace a native bf16-key collision with another master.
-                if old['master_digest'] != meta['master_digest'] or old['tensor_file'] != meta['tensor_file']:
-                    raise ValueError('native bf16-key/master collision')
+                if old != meta:
+                    raise ValueError('immutable generation/master collision')
                 self.verify(entry, model)
                 return entry, old
             tmp = Path(tempfile.mkdtemp(prefix='.pe-install-', dir=self.root))
@@ -123,12 +127,14 @@ class MasterStore:
 
     def verify(self, entry, model):
         p = self.root / self.entry_id(entry)
+        if p.is_symlink() or p.resolve().parent != self.root:
+            raise ValueError('master generation containment')
         meta = read(p / 'meta.json')
         for fn, row in meta['files'].items():
             if Path(fn).name != fn or (p / fn).is_symlink() or file_sha(p / fn) != row['sha256'] or (p / fn).stat().st_size != row['bytes']:
                 raise ValueError('native master shard integrity')
-        actual = metadata(model, p, optimizer_step=meta['optimizer_step'], lineage=meta['lineage'])
-        if actual != meta or meta['bf16_sha256'] != entry:
+        actual = metadata(model, p, optimizer_step=meta['optimizer_step'], lineage=meta['lineage'], generation_id=meta['generation_id'])
+        if actual != meta or meta['master_digest'] + '-' + meta['generation_id'] != entry:
             raise ValueError('native metadata integrity')
         return meta
 
@@ -179,3 +185,55 @@ def install_gc_guard(trainer, store):
             return original(set(protect) | pinned, emit)
     guarded._pe_durable = True
     trainer._fp32_gc = guarded
+
+
+def install_generation_hooks(trainer, store, selector):
+    """Admission-time hook for an ISOLATED native trainer module, not a live patch.
+
+    selector must validate the signed CURRENT/generation and return its registry
+    row. A bf16-only lookup, missing entry, or corrupt master is fatal: NEVER
+    bootstrap/upcast or reuse a residual merely because bf16 bytes agree.
+    The native finish/save path can remain unchanged; immutable PE capture must
+    complete before keep ACK permits a subsequent restore/update.
+    """
+    if Path(trainer.FP32_STORE).resolve() != store.root.resolve():
+        raise ValueError('restore hook/store mismatch')
+    if not callable(selector):
+        raise TypeError('authenticated generation selector required')
+    install_gc_guard(trainer, store)
+
+    def prepare(opt, live, emit):
+        import threading
+        import torch
+        started = time.monotonic()
+        lock = getattr(opt, '_v833f_lock', None)
+        if lock is None:
+            lock = opt._v833f_lock = threading.Lock()
+        with lock, store.locked():
+            row = selector(opt, live)
+            meta = store.verify(row['master_entry'], row['model'])
+            if row['master_digest'] != meta['master_digest'] or row['generation_id'] != meta['generation_id']:
+                raise ValueError('authenticated generation/master selection')
+            bf, _ = trainer._digest_map(list(opt.parameters))
+            if bf != meta['bf16_sha256'] or set(meta['tensor_file']) != {n for n, _ in opt.parameters}:
+                raise ValueError('selected master/live parameter inventory')
+            # Read each immutable tensor again even for identical bf16 weights.
+            # Never trust _v833f_bf16 or a previous generation's residual cache.
+            mapping = tensor_map(store.root / row['master_entry'])
+            with torch.no_grad():
+                for name, parameter in opt.parameters:
+                    value = load_tensor(mapping, name)
+                    if value.shape != opt.masters[name].shape or not torch.equal(value.to(parameter.device).to(parameter.dtype), parameter.detach()):
+                        raise ValueError('selected master/live projection')
+                    opt.masters[name].copy_(value)
+            fp, _ = trainer._digest_map([(n, opt.masters[n]) for n, _ in opt.parameters])
+            if fp != row['master_digest']:
+                raise ValueError('restored optimizer master digest')
+            opt._v833f_bf16, opt._v833g_dig = bf, fp
+            opt._pe_generation = meta['generation_id']
+            return dict(version=VERSION, source='pe-generation', input_bf16_sha256=bf,
+                        input_master_digest=fp, input_store_entry=row['master_entry'],
+                        generation_id=meta['generation_id'], fingerprint_seconds=0,
+                        prepare_seconds=time.monotonic() - started)
+
+    trainer._fp32_prepare = prepare

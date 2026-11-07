@@ -16,7 +16,7 @@ from subnet.storage import Identity
 from subnet.backend_jobs import signed
 from subnet.mimo_release_policy import ReleasePolicy, build_policy, sign
 from .durable import Stage, atomic, digest, read
-from .masters import MasterStore, install_gc_guard
+from .masters import MasterStore, install_gc_guard, install_generation_hooks
 from .publication import PrivatePublisher, checkpoint, copy_immutable
 from .protocol import Protocol
 from .inbox import Inbox
@@ -36,8 +36,10 @@ class Replay:
                         epoch='test-pe', start=1, deadline=2)
         policy = build_policy(self.operator, manifest, task_assets={'assets/fixture.json':dict(sha256=digest('tasks'), bytes=2)}, enabled=True)
         self.policy = ReleasePolicy(policy, self.operator.id)
-        self.publisher = PrivatePublisher(root, self.operator, self.worker, self.policy, lambda:read(self.stage.root/'CURRENT.json')['checkpoint']['id'])
-        self.publisher.register(*self.original)
+        self.publisher = PrivatePublisher(root, self.operator, self.worker, self.policy, lambda:read(self.stage.root/'CURRENT.json')['pe_head_id'])
+        row = self.publisher.register(*self.original)
+        self.genesis = row['id']
+        atomic(self.stage.root / 'CURRENT.json', dict(epoch_index=0, checkpoint=row['checkpoint'], optimizer_step=0, pe_head=row['head'], pe_head_id=row['id']))
         self.protocol = Protocol(root, self.verify)
         self.protocol.initialize(self.genesis, 0, self.round(self.genesis))
         self.dispatches = {}
@@ -76,7 +78,7 @@ class Replay:
                 expected={k:pub[k] for k in ('checkpoint','optimizer_step','checkpoint_authorization','publication_receipt_sha256')}
                 return (f['input_checkpoint']==binding['base_head'] and f['result']==expected
                         and actual['checkpoint']==pub['checkpoint'] and actual['optimizer_step']==pub['optimizer_step']
-                        and actual['epoch_index']==f['epoch_index']+1)
+                        and actual['epoch_index']==f['epoch_index']+1 and actual['pe_head']==pub['head'] and actual['pe_head_id']==pub['head_id'])
             identity = self.eval_worker if kind=='score' else self.worker
             r=signed(receipt,identity.id)
             if r['kind']!=kind or r['request_sha256']!=digest(binding):return False
@@ -117,8 +119,7 @@ class Replay:
         elif kind=='publish':
             request=self.publisher.request(command['id'],p['base_head'],p['candidate'],p['training_head'],p['optimizer_step'])
             value=self.publisher.publish(request)
-            gd=self.stage.root/'generations'/value['generation']
-            row=self.publisher.register(gd/'model',gd/'master',optimizer_step=value['optimizer_step'])
+            row=self.publisher.registry[value['head_id']]
             assert row['checkpoint']==value['checkpoint']
         elif kind in ('ledger','k1','offer'):
             d=self.stage.root/kind;d.mkdir(exist_ok=True);path=d/(command['key']+'.json')
@@ -144,7 +145,7 @@ class Replay:
         self.protocol.claim(epoch,head,digest(['fixture-turn',epoch]))
         model,master=self.weights('candidate-'+str(epoch),value)
         row=self.publisher.register(model,master,optimizer_step=self.stage.load()['optimizer_step']+1)
-        binding=dict(epoch=epoch,candidate=row['checkpoint']['id'],training_head=head)
+        binding=dict(epoch=epoch,candidate=row['id'],training_head=head)
         artifact=self.seal('trained',binding,dict(checkpoint=row['checkpoint'],master_digest=row['master_digest']))
         self.protocol.trained(**binding,artifact=artifact)
         return row
@@ -165,15 +166,15 @@ class Replay:
         finalized=sign(self.operator,final_payload)
         atomic(self.stage.root/'FINALIZED.json',finalized)
         if crash_test:
-            try:self.protocol.confirm_current(finalized,current,self.round(pub['checkpoint']['id']))
+            try:self.protocol.confirm_current(finalized,current,self.round(pub['head_id']))
             except ValueError:pass
             else:raise AssertionError('consumed before durable CURRENT')
-        new=dict(epoch_index=current['epoch_index']+1,checkpoint=pub['checkpoint'],optimizer_step=pub['optimizer_step'])
+        new=dict(epoch_index=current['epoch_index']+1,checkpoint=pub['checkpoint'],optimizer_step=pub['optimizer_step'],pe_head=pub['head'],pe_head_id=pub['head_id'])
         atomic(self.stage.root/'CURRENT.json',new)
         # Recreate controller after the simulated crash-after-CURRENT gap.
         self.protocol=Protocol(self.stage.root,self.verify)
-        assert self.protocol.confirm_current(finalized,new,self.round(pub['checkpoint']['id']))
-        assert not self.protocol.confirm_current(finalized,new,self.round(pub['checkpoint']['id']))
+        assert self.protocol.confirm_current(finalized,new,self.round(pub['head_id']))
+        assert not self.protocol.confirm_current(finalized,new,self.round(pub['head_id']))
         if drain_after:self.drain()
         return pub
 
@@ -222,7 +223,7 @@ class ProtocolTests(unittest.TestCase):
         self.r.train(24,1.02);self.r.drain();self.r.score(24,'green',1)
         pub=self.r.apply(drain_after=False)
         self.r.drain({'pin','pin-head','unpin-head','ledger','k1'})
-        head=pub['checkpoint']['id'];pin=self.r.publisher.masters.root/pub['master_entry']/'PE-PINS.json'
+        head=pub['head_id'];pin=self.r.publisher.masters.root/pub['master_entry']/'PE-PINS.json'
         self.assertIn('eval:round:'+head,read(pin)['owners'])
         self.assertEqual(self.r.stage.load()['rounds'][head]['state'],'preparing')
         self.r.drain({'baseline','unpin'})
@@ -236,7 +237,7 @@ class ProtocolTests(unittest.TestCase):
         old=self.r.publisher.masters.root/first['master_entry']/'PE-PINS.json'
         self.assertFalse(old.exists())
         new=read(self.r.publisher.masters.root/second['master_entry']/'PE-PINS.json')
-        self.assertIn('head:'+second['checkpoint']['id'],new['owners'])
+        self.assertIn('head:'+second['head_id'],new['owners'])
 
     def test_old_round_can_score_after_head_move(self):
         self.r.train(30,1.01);self.r.drain();self.r.train(31,1.02);self.r.drain()
@@ -321,6 +322,28 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.r.publisher.verify(p,a['base_head'])
 
 
+class ObjectStoreTests(unittest.TestCase):
+    def test_real_adapter_full_get_and_tamper_rejection(self):
+        import io
+        from .object_store import R2Objects
+        class S3:
+            def __init__(self): self.objects={}
+            def upload_file(self,path,bucket,key): self.objects[key]=Path(path).read_bytes()
+            def get_object(self,**kw): return {'Body':io.BytesIO(self.objects[kw['Key']])}
+        with tempfile.TemporaryDirectory() as td:
+            r=Replay(Path(td)/'r2')
+            client=S3()
+            store=R2Objects(r.stage.root,types.SimpleNamespace(client=client,name='private-test'))
+            r.publisher.object_store=store
+            r.train(93,1.0001);r.drain();r.score(93,'green');pub=r.apply()
+            self.assertEqual(len(client.objects),4)
+            r.publisher.restore(pub,r.genesis)
+            key=next(k for k in client.objects if '/models/' in k)
+            client.objects[key]+=b'tamper'
+            with self.assertRaisesRegex(ValueError,'full GET integrity'):r.publisher.restore(pub,r.genesis)
+            with self.assertRaises(ValueError):store._key('../live')
+
+
 class ActivationTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
@@ -371,8 +394,9 @@ class NativeMasterTests(unittest.TestCase):
             row=r.publisher.registry[r.genesis];entry=row['master_entry'];meta=read(store.root/entry/'meta.json')
             w=load_file(str(r.original[0]/'model.safetensors'))['w']
             opt=types.SimpleNamespace(parameters=[('w',w)],masters={'w':torch.zeros_like(w,dtype=torch.float32)})
-            self.assertEqual(mod._digest_map(opt.parameters)[0],entry)
-            self.assertEqual(mod._fp32_load(opt,None,entry,lambda x:None),meta)
+            self.assertEqual(mod._digest_map(opt.parameters)[0],meta['bf16_sha256'])
+            install_generation_hooks(mod,store,lambda opt,live:row)
+            self.assertEqual(mod._fp32_prepare(opt,None,lambda x:None)['input_master_digest'],meta['master_digest'])
             store.unpin(entry,'head:'+r.genesis)
             store.pin(entry,'eval:pending');(store.root/entry/'PIN').touch()
             os.utime(store.root/entry/'PIN',(time.time()-20000,)*2)
@@ -383,12 +407,56 @@ class NativeMasterTests(unittest.TestCase):
             store.unpin(entry,'eval:pending')
             self.assertFalse((store.root/entry/'PE-PINS.json').exists())
 
-    def test_same_bf16_different_master_collision_fails_closed(self):
+    def test_same_bf16_different_master_generations_remain_distinct(self):
         with tempfile.TemporaryDirectory() as td:
             r=Replay(Path(td)/'collision')
             model,master=r.weights('collision',1.0001)
             self.assertEqual(checkpoint(model),checkpoint(r.original[0]))
-            with self.assertRaisesRegex(ValueError,'collision'):r.publisher.register(model,master)
+            row=r.publisher.register(model,master)
+            original=r.publisher.registry[r.genesis]
+            self.assertNotEqual(row['master_entry'],original['master_entry'])
+            self.assertNotEqual(row['id'],original['id'])
+            for item in (row,original):
+                r.publisher.masters.verify(item['master_entry'],item['model'])
+            r.train(91,1.0002);r.drain();r.score(91,'green')
+            pub=r.apply()
+            self.assertEqual(pub['checkpoint'],original['checkpoint'])
+            self.assertNotEqual(pub['head_id'],r.genesis)
+            self.assertEqual(len(r.stage.load()['rounds']),2)
+
+    def test_equal_master_distinct_generation_ids_do_not_alias(self):
+        with tempfile.TemporaryDirectory() as td:
+            r=Replay(Path(td)/'same-master')
+            a=r.publisher.register(*r.original,generation_id=digest('generation-a'))
+            b=r.publisher.register(*r.original,generation_id=digest('generation-b'))
+            self.assertEqual(a['master_digest'],b['master_digest'])
+            self.assertEqual(a['checkpoint'],b['checkpoint'])
+            self.assertNotEqual(a['master_entry'],b['master_entry'])
+            self.assertNotEqual(a['id'],b['id'])
+
+    def test_generation_hook_invalidates_same_bf16_memory_cache(self):
+        with tempfile.TemporaryDirectory() as td:
+            r=Replay(Path(td)/'cache')
+            model,master=r.weights('residual',1.0001)
+            old=r.publisher.registry[r.genesis]
+            new=r.publisher.register(model,master)
+            chosen=[old]
+            def digest_map(items):
+                from .masters import tensor_sha
+                values={n:tensor_sha(v) for n,v in items}
+                return digest(values),values
+            native=types.SimpleNamespace(FP32_STORE=str(r.publisher.masters.root),_digest_map=digest_map,_fp32_gc=lambda protect,emit:None)
+            install_generation_hooks(native,r.publisher.masters,lambda opt,live:chosen[0])
+            w=load_file(str(model/'model.safetensors'))['w']
+            opt=types.SimpleNamespace(parameters=[('w',w)],masters={'w':torch.zeros_like(w,dtype=torch.float32)})
+            native._fp32_prepare(opt,None,lambda x:None)
+            chosen[0]=new
+            self.assertEqual(native._fp32_prepare(opt,None,lambda x:None)['input_master_digest'],new['master_digest'])
+            self.assertTrue(torch.equal(opt.masters['w'],load_file(str(master/'master.safetensors'))['w']))
+            self.assertEqual(opt._pe_generation,new['generation_id'])
+            chosen[0]=dict(new,master_digest='0'*64)
+            with self.assertRaisesRegex(ValueError,'selection'):native._fp32_prepare(opt,None,lambda x:None)
+
 
 
 if __name__=='__main__':unittest.main()
