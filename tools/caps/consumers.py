@@ -260,7 +260,7 @@ _GATE_64K_CONSUMERS = {
 _GATE_CAPS = {MAXOUT: 65536, CTX: 69632, MML: 69632}
 for _con in CONSUMERS:
     for _rule in _con["rules"]:
-        _gate_doc = _con["id"] == "llms_txt" and any(
+        _gate_doc = _con["id"] in ("llms_txt", "miner_readme") and not (_con["id"] == "miner_readme" and "--max-model-len" in (_rule.get("rx") or "")) and any(
             _part in (_rule.get("rx") or "") for _part in ("top_k 20", "the task cap", "--max-model-len", "a capped reply"))
         if (_con["id"] in _GATE_64K_CONSUMERS or _gate_doc) and _rule["key"] in _GATE_CAPS:
             _rule["value"] = _GATE_CAPS[_rule["key"]]

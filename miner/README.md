@@ -121,7 +121,7 @@ miner/
 - **output.** It's encoded with `encode(output, add_special_tokens=False)`. `<|im_start|>`, `<|im_end|>` and
   `<|endoftext|>` (ids 248044–248046) are forbidden. Up to 12,287 tokens, `<|im_end|>` is appended (it ended).
   Exactly 32,768 tokens counts as capped (no EOS) for training/batch. More than 32,768 is invalid in a batch file. Prompt + output can be at most 36,864 tokens for training.
-  **32,768 output tokens apply to training** (https://affine.io/caps.json): generation (sample with `max_tokens` 32,768), batch files, training, the promotion gate and the probe.
+  **32,768 output tokens apply to training** (https://affine.io/caps.json): generation (sample with `max_tokens` 32,768), batch files and training. The promotion gate/probe remain at 65,536 output / 69,632 context.
   The one source of training cap numbers is
   [https://affine.io/caps.json](https://affine.io/caps.json) (repo `caps.json`); this README, llms.txt, mining.json, the kit,
   the batch validator, the trainer and the gate are checked against it by `tools/caps/caps_check.py`.
@@ -226,7 +226,7 @@ Our 1×H200 numbers (24 rollouts, head 7214d10a, E745 file): kit vs trainer cosi
   prompt for both envs is `[system: MANDATE, user: problem]` with `enable_thinking=True`, where MANDATE =
   "Solve the math problem. Reason step by step in plain text, then end your response with the final answer in
   `\boxed{}`. Emit exactly one `\boxed{}` block and nothing after it."
-- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 32,768 output tokens (the task cap), 36,864 context, vLLM 0.32.0 on
+- **Sampling:** temperature 1.0, top_p 0.95, top_k 20, 65,536 output tokens (the task cap), 69,632 context, vLLM 0.32.0 on
   8×B200. A round's
   cap is `mining.json` → `training.promotion_gate.heldout.current_round.settings.max_tokens`, the same for head and candidates
   (`probe/serve.sh`: `--dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512`). One request per
