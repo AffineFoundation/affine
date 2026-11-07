@@ -100,7 +100,10 @@ def test_cap_change_roundtrip():
     for c, p in repo_cons():
         if c.get('render') not in (True, 'json', 'sign'): continue
         t = (ROOT / p).read_text(); t2 = L.render_text(c, t, C2)
-        assert t2 != t, '%s did not move with the cap' % c['id']
+        if c['id'] in CS._GATE_64K_CONSUMERS:
+            assert t2 == t, '%s changed with training caps' % c['id']
+        else:
+            assert t2 != t, '%s did not move with the cap' % c['id']
         assert all(r['ok'] for r in L.check_text(c, t2, C2)), (c['id'], [r for r in L.check_text(c, t2, C2) if not r['ok']])
         assert L.render_text(c, t2, C) == t, '%s: render back is not byte-identical' % c['id']
 

@@ -29,8 +29,8 @@ REPO = H + '/subnet120-rewrite'
 RA = REPO + '/state/root-audits'
 WEB = H + '/subnet120/affine/website'
 FF = RA + '/20261030-free-file/release'
-TRH = RA + '/20261105-cap-32k-scope/release-v833o-signed/trainer-host-v833o'   # trainer v8.3.3o = 32K caps + BUDGET 65536
-TRP = '/workspace/affine-mimo-trainer-prod/host-v833o'
+TRH = RA + '/20261106-train-cap-64k/revert-training32k-1805/trainer-host-v834c'
+TRP = '/workspace/affine-mimo-trainer-prod/host-v834c'
 EPOCHS = REPO + '/state/mimo-mainnet-v1/epochs'
 PG = RA + '/20261026-promotion-gate'
 RF0 = RA + '/20261103-run-floor-zero'
@@ -58,7 +58,7 @@ CLIP = [R(SOFT, r'clip\(\(len ?[-−] ?(\d+)\) ?/ ?\(\d+ ?[-−] ?\d+\)'), R(OLM
         R(SOFT, r'clip\(\(len ?[-−] ?\d+\) ?/ ?\(\d+ ?[-−] ?(\d+)\)')]
 LLMS = [R(EOS1, r'output of up to ([\d,]+) tokens gets', ','), R(MAXOUT, r'Exactly ([\d,]+) tokens = cut at the cap', ','),
         R(MAXOUT, r'More than ([\d,]+) is invalid', ','), R(CTX, r'Prompt \+ output can be at most ([\d,]+) tokens', ','),
-        R(MAXOUT, r'^\s*([\d,]+) output tokens apply everywhere', ','), R(MAXOUT, r'sample with max_tokens ([\d,]+)\)', ','),
+        R(MAXOUT, r'^\s*([\d,]+) output tokens apply to training', ','), R(MAXOUT, r'sample with max_tokens ([\d,]+)\)', ','),
         R(SOFT, r'-0\.5 x clip\(\(len - (\d+)\)'), R(OLMAX, r'-0\.5 x clip\(\(len - \d+\) / \((\d+) - '), R(SOFT, r'-0\.5 x clip\(\(len - \d+\) / \(\d+ - (\d+)\)'),
         R(SOFT, r'overlong window is (\d+)\.\.\d+'), R(OLMAX, r'overlong window is \d+\.\.(\d+)'),
         R(CTX, r'rollouts up to ([\d,]+) tokens of prompt \+ output', ','),
@@ -66,8 +66,8 @@ LLMS = [R(EOS1, r'output of up to ([\d,]+) tokens gets', ','), R(MAXOUT, r'Exact
         R(MML, r'--max-model-len (\d+)'), R(MAXOUT, r'a capped reply \(([\d,]+) tokens, no EOS\)', ','),
         R(MAXOUT, r'Today it says\s+max_output_tokens ([\d,]+)', ','), R(CTX, r'max_context_tokens ([\d,]+) \(prompt \+ output\)', ','),
         R(SOFT, r'overlong window (\d+)\.\.\d+\. Every cap'), R(OLMAX, r'overlong window \d+\.\.(\d+)\. Every cap'),
-        R(MAXOUT, r'^\s*([\d,]+) output tokens apply everywhere: generation', ','),
-        R(MAXOUT, r'top_k 20, ([\d,]+) output tokens \(the task cap\), [\d,]+ context \(caps\.json\)', ',')]
+        R(MAXOUT, r'^\s*([\d,]+) output tokens apply to training: generation', ','),
+        R(MAXOUT, r'top_k 20, ([\d,]+) output tokens \(the task cap\), [\d,]+ context \(gate caps; training caps\.json is separate\)', ',')]
 
 CONSUMERS = [
     # ---------------- the public copy of caps.json itself ----------------
@@ -100,14 +100,14 @@ CONSUMERS = [
     dict(id='kit_simulate_turn', cls='derived', render=True, repo='miner/kit/simulate_turn.sh', rules=[R(MML, r'--max-model-len (\d+)')]),
     # ---------------- training (trainer v8.3.3n: root-signed release; repo dir keeps the v833m name for kit imports) ----------------
     dict(id='trainer_v8211_batched', cls='live', render='sign',
-         repo='miner/validator/trainer-v833m/v8211_batched.py', host=TRH + '/v8211_batched.py', pod=('trainer', 'cat %s/v8211_batched.py' % TRP),
+         repo='miner/validator/trainer-v834c/v8211_batched.py', host=TRH + '/v8211_batched.py', pod=('trainer', 'cat %s/v8211_batched.py' % TRP),
          rules=[R(CTX, r'^TRAIN_MAX_CONTEXT = (\d+)'), R(SOFT, r'^FF_OVERLONG = \((\d+), \d+\)'), R(OLMAX, r'^FF_OVERLONG = \(\d+, (\d+)\)')]),
-    dict(id='trainer_v83_dp', cls='live', render='sign', repo='miner/validator/trainer-v833m/v83_dp.py', host=TRH + '/v83_dp.py',
+    dict(id='trainer_v83_dp', cls='live', render='sign', repo='miner/validator/trainer-v834c/v83_dp.py', host=TRH + '/v83_dp.py',
          pod=('trainer', 'cat %s/v83_dp.py' % TRP), rules=[R(CTX, r'max\(int\(runtime\.max_context_tokens\), (\d+)\)')]),
-    dict(id='trainer_v83_fast_kernels', cls='live', render='sign', repo='miner/validator/trainer-v833m/v83_fast_kernels.py',
+    dict(id='trainer_v83_fast_kernels', cls='live', render='sign', repo='miner/validator/trainer-v834c/v83_fast_kernels.py',
          host=TRH + '/v83_fast_kernels.py', pod=('trainer', 'cat %s/v83_fast_kernels.py' % TRP),
          rules=[R(CTX, r'max\(int\(runtime\.max_context_tokens\), (\d+)\)')]),
-    dict(id='trainer_config_public', cls='derived', render=True, repo='miner/validator/trainer-v833m/trainer-config.public.json',
+    dict(id='trainer_config_public', cls='derived', render=True, repo='miner/validator/trainer-v834c/trainer-config.public.json',
          rules=[J(SOFT, ['free_file_overlong', 'overlong_soft_start']), J(OLMAX, ['free_file_overlong', 'overlong_max_tokens']),
                 R(SOFT, r'clip\(\(len - (\d+)\)'), R(OLMAX, r'clip\(\(len - \d+\) / \((\d+) -'), R(SOFT, r'clip\(\(len - \d+\) / \(\d+ - (\d+)\)')]),
     # ---------------- gate / probe / perf ----------------
@@ -179,7 +179,7 @@ CONSUMERS = [
          url='https://affine.io/llms.txt', rules=LLMS),
     dict(id='miner_readme', cls='docs', render=True, repo='miner/README.md',
          rules=[R(MAXOUT, r'Exactly ([\d,]+) tokens counts as capped', ','), R(MAXOUT, r'More than ([\d,]+) is invalid', ','),
-                R(CTX, r'Prompt \+ output can be at most ([\d,]+) tokens', ','), R(MAXOUT, r'\*\*([\d,]+) output tokens apply everywhere', ','),
+                R(CTX, r'Prompt \+ output can be at most ([\d,]+) tokens', ','), R(MAXOUT, r'\*\*([\d,]+) output tokens apply to training', ','),
                 R(MAXOUT, r'sample with `max_tokens` ([\d,]+)', ','), R(MAXOUT, r'top_k 20, ([\d,]+) output tokens \(the task cap\)', ','),
                 R(CTX, r'output tokens \(the task cap\), ([\d,]+) context', ','), R(MML, r'--max-model-len (\d+)')] + CLIP),
     dict(id='site_metrics', cls='derived', render=False, host=WEB + '/site-metrics.json', after='caps-v1',
@@ -212,7 +212,7 @@ OLD_CAP_RX = [
 OLD_CAP_SCAN = dict(
     repo=['caps.json', 'caps.py', 'tools/caps/README.md', 'dashboard/public/llms.txt', 'miner/README.md', 'miner/affine_batch.py',
           'miner/kit/*.py', 'miner/kit/*.sh', 'miner/kit/*.md', 'miner/validator/batch/*.py', 'miner/validator/gate/*.py',
-          'miner/validator/gate/*.json', 'miner/validator/probe/*', 'miner/validator/trainer-v833m/trainer-config.public.json',
+          'miner/validator/gate/*.json', 'miner/validator/probe/*', 'miner/validator/trainer-v834c/trainer-config.public.json',
           'priors/*.py', 'priors/*.md', 'priors/gate/*.py', 'priors/gate/*.md', 'priors/pod/*', 'priors/irt/*.py',
           'bench/README.md', 'bench/config/*.toml',
           'subnet/complete_group_harness.py', 'subnet/mimo_parallel_mining.py', 'tests/test_mimo_parallel_mining.py'],
@@ -248,3 +248,19 @@ OLD_CAP_ALLOW = [
     ('*tests/test_mimo_parallel_mining.py', r"^\s*facade\.harness=\{.max_output_tokens.:%d\}$" % _O,
      'unit-test fixture of the signed MiMo parallel-mining bound (goes with the source release in SCOPE-mimo-removal.md)'),
 ]
+
+# Jacob 2026-11-06 18:05 CR: training is 32K; gate/probe/prior remain 64K.
+_GATE_64K_CONSUMERS = {
+    "kit_gate_eval", "kit_simulate_turn", "gate_flag", "gate_config_public",
+    "gate_cap_switch", "gate_baseline_doc", "gate_rule_text", "gate_baseline_record",
+    "probe_config", "probe_serve_repo", "probe_pod_serve", "probe_pod_manifest", "probe_pod_vllm",
+    "prior_sampler_config", "prior_serve_sh", "prior_readme", "prior_pod_sampler",
+    "prior_pod_serve_env", "prior_pod_serving", "prior_pod_vllm",
+}
+_GATE_CAPS = {MAXOUT: 65536, CTX: 69632, MML: 69632}
+for _con in CONSUMERS:
+    for _rule in _con["rules"]:
+        _gate_doc = _con["id"] == "llms_txt" and any(
+            _part in (_rule.get("rx") or "") for _part in ("top_k 20", "the task cap", "--max-model-len", "a capped reply"))
+        if (_con["id"] in _GATE_64K_CONSUMERS or _gate_doc) and _rule["key"] in _GATE_CAPS:
+            _rule["value"] = _GATE_CAPS[_rule["key"]]

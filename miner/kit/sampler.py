@@ -1,11 +1,11 @@
 """Minimal async vLLM /v1/completions client with the gate's request shape (same body and stop handling as
 validator/probe/probe_worker.py: one request per sample, n=1, its own seed, stop_token_ids = EOS, token ids returned).
 Start a server per GPU (or one with tensor parallel) using the gate's flags (validator/probe/serve.sh):
-  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 69632 --enable-prefix-caching --max-num-seqs 512   (36864 = the gate's 32,768 cap + prompt)
+  vllm serve ./head --served-model-name m --dtype bfloat16 --max-model-len 36864 --enable-prefix-caching --max-num-seqs 512   (36864 = the gate's 32,768 cap + prompt)
 """
 import asyncio, hashlib, random
 EOS = (248046, 248044)
-H = dict(temperature=1.0, top_p=0.95, top_k=20, max_output_tokens=65536, max_context_tokens=69632)   # = https://affine.io/caps.json (caps_check verifies)
+H = dict(temperature=1.0, top_p=0.95, top_k=20, max_output_tokens=32768, max_context_tokens=36864)   # = https://affine.io/caps.json (caps_check verifies)
 
 
 def request_seed(plan_seed, env, task, j):

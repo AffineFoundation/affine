@@ -20,7 +20,7 @@ def num(s):
 
 
 def expected(rule, C):
-    return C[rule['key']]
+    return rule.get('value', C[rule['key']])
 
 
 def stored(C):
