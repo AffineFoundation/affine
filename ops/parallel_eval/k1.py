@@ -85,6 +85,26 @@ class K1Join:
                 atomic(turn_path, public)
         return file_sha(turn_path)
 
+    def queue_rows(self, before_epoch=None):
+        """Unchanged native FIFO counts include unresolved reservations ONCE.
+
+        Terminal no-decision joins remove only their pending reservation; their
+        retry grant uses the existing native priority rule. Physical committed
+        rows never need editing/reversal to undo an infrastructure attempt.
+        """
+        with self.stage.locked():
+            rows = self._rows(); epochs = {r['epoch_index'] for r in rows}
+            for p in sorted(self.pending.glob('*.json')):
+                if p.name.endswith('-TURN.json'):
+                    continue
+                capture = read(p); row = capture['row']; epoch = row['epoch_index']
+                joined = self.joins / (str(epoch) + '.json')
+                if epoch in epochs or joined.exists():
+                    continue
+                rows.append(row); epochs.add(epoch)
+            return sorted((r for r in rows if before_epoch is None or r['epoch_index'] < before_epoch),
+                          key=lambda r: r['epoch_index'])
+
     def join(self, payload, *, fault=lambda phase: None):
         epoch = payload['epoch']; key = self._epoch(epoch)
         if payload['verdict'] not in {'green', 'red', 'no_decision'}:

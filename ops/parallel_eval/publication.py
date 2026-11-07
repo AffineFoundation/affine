@@ -6,6 +6,9 @@ Transaction. A production trainer needs an admitted PE-generation restore
 adapter and real object-store publisher; this filesystem adapter cannot go live.
 """
 import os
+import fcntl
+import tempfile
+import uuid
 import shutil
 from pathlib import Path
 from .durable import Stage, atomic, digest, file_sha, read
@@ -40,6 +43,35 @@ def copy_immutable(source, target):
         with p.open('rb') as f:
             os.fsync(f.fileno())
     os.rename(tmp, target)
+
+
+def copy_master_immutable(source, target):
+    """Resume only this generation's copy; incomplete bytes are never admitted."""
+    source, target = Path(source), Path(target)
+    files = read(source / 'meta.json')['files']
+    if any(Path(n).name != n for n in files):
+        raise ValueError('ordinary native master filenames')
+    if target.exists():
+        observed = list(target.iterdir())
+        if target.is_symlink() or any(p.is_symlink() or not p.is_file() or p.name not in files for p in observed):
+            raise ValueError('unsafe incomplete master inventory')
+        complete = {p.name for p in observed} == set(files) and all(
+            (target/n).stat().st_size == row['bytes'] and file_sha(target/n) == row['sha256']
+            for n,row in files.items())
+        if complete:
+            return
+        # Retain the incomplete evidence; never silently use it or remove an
+        # unrelated directory. Caller holds this generation's publication lock.
+        os.rename(target, target.with_name('.incomplete-master-' + uuid.uuid4().hex))
+    tmp = Path(tempfile.mkdtemp(prefix='.master-copy-', dir=target.parent))
+    for name,row in files.items():
+        with (source/name).open('rb') as src, (tmp/name).open('wb') as dst:
+            shutil.copyfileobj(src,dst,1 << 24);dst.flush();os.fsync(dst.fileno())
+        if (tmp/name).stat().st_size != row['bytes'] or file_sha(tmp/name) != row['sha256']:
+            raise ValueError('copied native master SHA/size')
+    os.rename(tmp,target)
+    from .durable import fsync_dir
+    fsync_dir(target.parent)
 
 
 class PrivatePublisher:
@@ -86,7 +118,31 @@ class PrivatePublisher:
                        base=self.registry[base], candidate=self.registry[candidate], training=self.registry[training])
         return sign(self.authority, payload)
 
-    def publish(self, request):
+    def publish(self, request, fault=lambda phase: None):
+        """Persist authorization BEFORE side effects; serialize one command id."""
+        from subnet.backend_jobs import signed
+        payload = signed(request, self.authority.id)
+        if payload['version'] != 'pe-merge-request-v1' or payload['policy_sha256'] != self.policy.policy_sha256:
+            raise ValueError('merge request policy')
+        cmd = payload['command_id']
+        if not isinstance(cmd,str) or len(cmd) != 64 or any(c not in '0123456789abcdef' for c in cmd):
+            raise ValueError('command id')
+        gd = self.stage.root / 'generations' / cmd
+        gd.mkdir(exist_ok=True)
+        if gd.resolve() != gd or (gd/'.publish.lock').is_symlink():
+            raise ValueError('generation publication containment')
+        with (gd/'.publish.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            p = gd/'REQUEST.json'
+            if p.exists():
+                if read(p) != request:
+                    raise ValueError('immutable signed publication request conflict')
+            else:
+                atomic(p,request)
+            fault('request-durable')
+            return self._publish(request,fault)
+
+    def _publish(self, request, fault):
         from subnet.backend_jobs import signed
         from subnet.mimo_release_policy import sign
         from .merge import merge
@@ -120,14 +176,12 @@ class PrivatePublisher:
         if base == payload['training']['id']:
             copy_immutable(payload['candidate']['model'], model)
             source = self.masters.root / payload['candidate']['master_entry']
-            if not master.exists():
-                master.mkdir()
-                for fn in read(source / 'meta.json')['files']:
-                    shutil.copyfile(source / fn, master / fn)
+            copy_master_immutable(source,master)
         else:
             args = [payload[n]['model'] for n in ('base', 'candidate', 'training')]
             args += [self.masters.root / payload[n]['master_entry'] for n in ('base', 'candidate', 'training')]
             merge(*args, model, master)
+        fault('model-and-master-durable')
         cp = checkpoint(model)
         entry, meta = self.masters.install(model, master, optimizer_step=payload['optimizer_step'],
             generation_id=cmd, lineage=dict(request_sha256=digest(request), base=base,
@@ -141,6 +195,7 @@ class PrivatePublisher:
         if self.current() != base:
             raise ValueError('actual current head changed during publication')
         remote = self.object_store.publish(cp, obj, entry, self.masters.root / entry) if self.object_store else None
+        fault('remote-readback-durable')
         receipt = sign(self.publisher, dict(version='pe-model-publication-v1', command_id=cmd,
             request_sha256=digest(request), input_head=base, input_checkpoint=base_checkpoint, descriptor=cp, head=row['head'], head_id=row['id'],
             optimizer_step=payload['optimizer_step'], model_full_get_verified=True, optimizer_state_uploaded=False, object_readback=remote))
@@ -157,6 +212,7 @@ class PrivatePublisher:
                   output_checkpoint=cp['id'], native_master_entry=entry,
                   marker_sha256=digest(marker), authority_committed=False, automatic_retraining=False)
         atomic(gd / 'TRANSACTION.json', tx)
+        fault('transaction-durable')
         out = dict(checkpoint=cp, head=row['head'], head_id=row['id'], optimizer_step=payload['optimizer_step'], checkpoint_authorization=authorization,
                    publication_receipt_sha256=digest(receipt), receipt=receipt, generation=cmd,
                    transaction_sha256=digest(tx), master_entry=entry)
