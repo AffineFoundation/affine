@@ -166,8 +166,7 @@ def packed_selected_loss(model, FK, items, logit_chunk: int, support: dict | Non
     try:
         import v835_dp as dp
         tokens = sum(len(p) + len(o) for p, o in items)
-        dp.STATE['offload_this_forward'] = bool(
-            dp.ACTIVATION_OFFLOAD and tokens >= dp.ACTIVATION_OFFLOAD_MIN_TOKENS)
+        dp.STATE['offload_this_forward'] = dp._offload_this_batch(True, tokens)
     except Exception:
         pass
     try:
@@ -386,7 +385,7 @@ def run_variant(variant, model, microbatches, logit_chunk, support, timings_out)
     return gathered
 
 
-def main():
+def build_arg_parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--variant', choices=('v834c', 'v835'), required=True)
     p.add_argument('--mode', choices=('singleton', 'packed'), default='singleton')
@@ -397,8 +396,51 @@ def main():
     p.add_argument('--group-count', type=int, default=125)
     p.add_argument('--group-size', type=int, default=8)
     p.add_argument('--token-budget', type=int, default=69632)
+    p.add_argument('--row-lens', type=str, default='',
+                   help='Comma-separated output token lengths for packed mode '
+                        '(e.g. 2048,8192,32768,65536). Empty = default mix.')
+    p.add_argument('--max-row-len', type=int, default=0,
+                   help='If >0, include this output length in the packed mix (e.g. 65536). '
+                        'With token-budget 69632, a 65536-output row is a singleton bin.')
+    p.add_argument('--activation-offload', type=str, default=None,
+                   help='0/1/auto (default: env ACTIVATION_OFFLOAD or auto). '
+                        'auto = only bins with >=65536 tokens.')
     p.add_argument('--json-out', required=True)
+    p.add_argument('--parse-only', action='store_true',
+                   help='Parse args, print JSON, exit (no GPU / no dist).')
+    return p
+
+
+def resolve_output_lens(args):
+    """Packed-mode output lengths: --row-lens, else default mix, optionally capped/extended by --max-row-len."""
+    if args.row_lens.strip():
+        lenses = [int(x.strip()) for x in args.row_lens.split(',') if x.strip()]
+    else:
+        lenses = [2048, 4096, 8192, 12288, 16384, 24576, 32768]
+    if args.max_row_len and args.max_row_len > 0:
+        if args.max_row_len not in lenses:
+            lenses.append(int(args.max_row_len))
+        # Drop anything above max_row_len when the flag is used as a ceiling for the default mix.
+        if not args.row_lens.strip():
+            lenses = [n for n in lenses if n <= args.max_row_len] or [int(args.max_row_len)]
+    if not lenses or any(n < 1 for n in lenses):
+        raise ValueError('packed output lengths must be positive integers')
+    # A row is prompt + output; keep total under token budget for planning sanity.
+    prompt_cap = min(args.prompt_len, 512) if args.mode == 'packed' else args.prompt_len
+    for n in lenses:
+        if prompt_cap + n > args.token_budget:
+            raise ValueError('prompt_len(%d)+row_len(%d) exceeds token-budget(%d)' %
+                             (prompt_cap, n, args.token_budget))
+    return lenses
+
+
+def main():
+    p = build_arg_parser()
     args = p.parse_args()
+    if args.parse_only:
+        lenses = resolve_output_lens(args) if args.mode == 'packed' else None
+        print(json.dumps(dict(parse_only=True, args=vars(args), packed_output_lens=lenses), sort_keys=True))
+        return
 
     # Fail fast on known-bad Triton before spending minutes on model init.
     try:
@@ -412,6 +454,9 @@ def main():
     except ImportError:
         pass
 
+    dp = _load('v835_dp', 'v835_dp.py')
+    offload_info = dp.configure_activation_offload(args.activation_offload)
+
     dist.init_process_group('nccl')
     local = int(os.environ.get('LOCAL_RANK', 0))
     torch.cuda.set_device(local)
@@ -422,7 +467,8 @@ def main():
     if rank == 0:
         print(json.dumps(dict(event='qual-start', variant=args.variant, mode=args.mode,
                               output_len=args.output_len, model=args.model,
-                              triton_cache=os.environ.get('TRITON_CACHE_DIR')), flush=True)
+                              activation_offload=offload_info,
+                              triton_cache=os.environ.get('TRITON_CACHE_DIR'))), flush=True)
 
     model = build_model(args.model, device)
     install_checkpoint(model)
@@ -435,11 +481,12 @@ def main():
         prompt, output = synthetic_batch(args.prompt_len, args.output_len, model.config.vocab_size)
         microbatches = [[(prompt, output)]]
     else:
-        # Mixed lengths so first-fit packing creates several micro-batches under the budget.
-        output_lens = [2048, 4096, 8192, 12288, 16384, 24576, 32768]
+        output_lens = resolve_output_lens(args)
+        prompt_len = min(args.prompt_len, 512)
         rows, local_bins, plan_meta = packed_plan(
-            args.group_count, args.group_size, min(args.prompt_len, 512), output_lens,
+            args.group_count, args.group_size, prompt_len, output_lens,
             model.config.vocab_size, args.token_budget, world, rank)
+        plan_meta = dict(plan_meta, output_lens=output_lens, prompt_len=prompt_len)
         microbatches = [[(rows[i]['prompt'], rows[i]['output']) for i in members] for members in local_bins]
         if not microbatches:
             microbatches = [[]]

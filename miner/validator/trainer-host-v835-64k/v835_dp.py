@@ -117,12 +117,60 @@ NO_CKPT_LAYERS_RANK0 = 0
 NO_CKPT_LAYERS_HELPER = 2
 # Any rollout at/above this total length is never packed with another row.
 SINGLETON_MIN_TOKENS = 65536
-# Master switch for thresholded activation offload (saved tensors → CPU during training forwards).
+# Activation offload mode: 'off' | 'on' | 'auto'.
+#   off  — never offload
+#   on   — offload every training forward (still via saved_tensors_hooks)
+#   auto — offload only when the packed micro-batch token count >= ACTIVATION_OFFLOAD_MIN_TOKENS
+# Default is auto. Override with configure_activation_offload() / env ACTIVATION_OFFLOAD.
+ACTIVATION_OFFLOAD_MODE = 'auto'
+# Back-compat boolean used by older call sites; True means mode != 'off'.
 ACTIVATION_OFFLOAD = True
-# Only offload when the packed micro-batch token count is at/above this (64K-class bins).
+# Threshold for mode 'auto' (64K-class bins).
 ACTIVATION_OFFLOAD_MIN_TOKENS = 65536
 # Bound async NCCL reduces in-flight during backward (see v835_sharded_accum).
 REDUCE_MAX_INFLIGHT = 4
+
+
+def configure_activation_offload(value=None, *, min_tokens=None):
+    """Set activation-offload policy from env/CLI/host config.
+
+    Accepted ``value`` forms: None (read env), True/False, or '0'/'1'/'off'/'on'/'auto'
+    / 'true'/'false'. Env key: ``ACTIVATION_OFFLOAD`` (default ``auto``).
+    """
+    global ACTIVATION_OFFLOAD, ACTIVATION_OFFLOAD_MODE, ACTIVATION_OFFLOAD_MIN_TOKENS
+    if min_tokens is not None:
+        ACTIVATION_OFFLOAD_MIN_TOKENS = int(min_tokens)
+    if value is None:
+        value = os.environ.get('ACTIVATION_OFFLOAD', 'auto')
+    if isinstance(value, bool):
+        mode = 'on' if value else 'off'
+    else:
+        key = str(value).strip().lower()
+        if key in ('0', 'false', 'off', 'no'):
+            mode = 'off'
+        elif key in ('1', 'true', 'on', 'yes'):
+            mode = 'on'
+        elif key in ('auto', ''):
+            mode = 'auto'
+        else:
+            raise ValueError('ACTIVATION_OFFLOAD must be 0/1/auto (or off/on/true/false); got %r' % (value,))
+    ACTIVATION_OFFLOAD_MODE = mode
+    ACTIVATION_OFFLOAD = mode != 'off'
+    return dict(mode=ACTIVATION_OFFLOAD_MODE, min_tokens=ACTIVATION_OFFLOAD_MIN_TOKENS,
+                enabled=ACTIVATION_OFFLOAD)
+
+
+def _offload_this_batch(gradients, tokens):
+    """Whether the current packed forward should stage saved tensors on CPU."""
+    if not gradients or ACTIVATION_OFFLOAD_MODE == 'off':
+        return False
+    if ACTIVATION_OFFLOAD_MODE == 'on':
+        return True
+    return tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS
+
+
+# Apply env default once at import (host/qual may call configure_activation_offload again).
+configure_activation_offload()
 
 
 def init(world, port):
@@ -166,7 +214,7 @@ def _install_activation_offload(runtime):
     Offload applies only when ``STATE['offload_this_forward']`` is true — set by the packed
     log-prob wrapper when the micro-batch token count is >= ``ACTIVATION_OFFLOAD_MIN_TOKENS``.
     """
-    if not ACTIVATION_OFFLOAD or not runtime.trainable:
+    if ACTIVATION_OFFLOAD_MODE == 'off' or not runtime.trainable:
         return
     if getattr(runtime.model, '_v835_act_offload', False):
         return
@@ -319,8 +367,7 @@ def make_train_update(B, FK):
         if engine != 'packed':
             raise ValueError('v8.3 DP engine is packed-only')
         tokens = sum(len(prompt) + len(output) for prompt, output in items)
-        STATE['offload_this_forward'] = bool(
-            ACTIVATION_OFFLOAD and gradients and tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS)
+        STATE['offload_this_forward'] = _offload_this_batch(gradients, tokens)
         try:
             return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
         finally:
@@ -409,6 +456,7 @@ def make_train_update(B, FK):
             microbatch=dict(engine='packed-dp-v835-zero2', token_budget=BUDGET, max_rows=MAX_ROWS, count=nbins,
                             world=world, rank_tokens=loads, singleton_min_tokens=SINGLETON_MIN_TOKENS,
                             activation_offload=ACTIVATION_OFFLOAD,
+                            activation_offload_mode=ACTIVATION_OFFLOAD_MODE,
                             activation_offload_min_tokens=ACTIVATION_OFFLOAD_MIN_TOKENS,
                             reduce_max_inflight=REDUCE_MAX_INFLIGHT),
             unresolved_filter=unresolved_filter,
@@ -494,8 +542,7 @@ def helper_main(rank, world, port, host_dir, source_root):
     STATE['world'] = world
     def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
         tokens = sum(len(prompt) + len(output) for prompt, output in items)
-        STATE['offload_this_forward'] = bool(
-            ACTIVATION_OFFLOAD and gradients and tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS)
+        STATE['offload_this_forward'] = _offload_this_batch(gradients, tokens)
         try:
             return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
         finally:

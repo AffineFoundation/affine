@@ -49,6 +49,11 @@ PROMPT_LEN="${PROMPT_LEN:-4096}"
 LOGIT_CHUNK="${LOGIT_CHUNK:-4096}"
 SKIP_V834C_64K="${SKIP_V834C_64K:-0}"
 SKIP_PACKED="${SKIP_PACKED:-0}"
+# Activation offload: 0 | 1 | auto (default auto = only bins with >=65536 tokens)
+ACTIVATION_OFFLOAD="${ACTIVATION_OFFLOAD:-auto}"
+export ACTIVATION_OFFLOAD
+# Packed-mode row lengths (comma-separated output token counts). Empty = qual_step default mix + 64K.
+PACKED_ROW_LENS="${PACKED_ROW_LENS:-2048,4096,8192,12288,16384,24576,32768,65536}"
 PYTHON="${PYTHON:-python}"
 export TRITON_CACHE_ROOT="${TRITON_CACHE_ROOT:-/tmp/triton-cache-v835}"
 
@@ -142,6 +147,7 @@ run_step() {
       --prompt-len "$PROMPT_LEN" \
       --model "$MODEL" \
       --logit-chunk "$LOGIT_CHUNK" \
+      --activation-offload "$ACTIVATION_OFFLOAD" \
       --json-out "$out_json"
   local rc=$?
   set -e
@@ -167,7 +173,8 @@ else
   set +e
   torchrun --standalone --nproc_per_node="$NPROC" \
     qual_step.py --variant v834c --mode singleton --output-len 65536 --prompt-len "$PROMPT_LEN" \
-    --model "$MODEL" --logit-chunk "$LOGIT_CHUNK" --json-out "$OUT_DIR/step_v834c_64k.json"
+    --model "$MODEL" --logit-chunk "$LOGIT_CHUNK" --activation-offload "$ACTIVATION_OFFLOAD" \
+    --json-out "$OUT_DIR/step_v834c_64k.json"
   set -e
   if [[ -f "$OUT_DIR/step_v834c_64k.json" ]]; then
     "$PYTHON" - "$OUT_DIR/step_v834c_64k.json" <<'PY'
@@ -192,7 +199,9 @@ else
   torchrun --standalone --nproc_per_node="$NPROC" \
     qual_step.py --variant v835 --mode packed --output-len 32768 --prompt-len 512 \
     --model "$MODEL" --logit-chunk "$LOGIT_CHUNK" --group-count 125 --group-size 8 \
-    --token-budget 69632 --json-out "$OUT_DIR/step_v835_packed125x8.json"
+    --token-budget 69632 --row-lens "$PACKED_ROW_LENS" \
+    --activation-offload "$ACTIVATION_OFFLOAD" \
+    --json-out "$OUT_DIR/step_v835_packed125x8.json"
   local_rc=$?
   set -e
   if [[ -f "$OUT_DIR/step_v835_packed125x8.json" ]]; then

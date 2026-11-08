@@ -75,19 +75,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--variant", required=True); ap.add_argument("--output-len", type=int, required=True)
     ap.add_argument("--prompt-len", type=int, default=4096); ap.add_argument("--gather", default="gpu")
-    ap.add_argument("--offload", action="store_true"); ap.add_argument("--steps", type=int, default=3)
+    ap.add_argument("--offload", action="store_true", help="shortcut for --activation-offload on")
+    ap.add_argument("--activation-offload", type=str, default=None,
+                    help="0/1/auto (default env ACTIVATION_OFFLOAD or auto)")
+    ap.add_argument("--steps", type=int, default=3)
     ap.add_argument("--logit-chunk", type=int, default=4096); ap.add_argument("--json-out", required=True)
+    ap.add_argument("--parse-only", action="store_true", help="Parse args and exit (no GPU)")
     a = ap.parse_args()
+    if a.parse_only:
+        print(json.dumps(dict(parse_only=True, args=vars(a)), sort_keys=True)); return
     dist.init_process_group("nccl"); local = int(os.environ["LOCAL_RANK"]); torch.cuda.set_device(local)
     dev = torch.device("cuda", local); rank = dist.get_rank(); world = dist.get_world_size()
     model = Q.build_model("random://qwen3_5_9b", dev); Q.install_checkpoint(model)
     for p in model.parameters(): dist.broadcast(p.data, src=0)
     FK = Q._load("v83_fast_kernels", "v83_fast_kernels.py"); FK.install(model)
-    if a.offload:
-        dp = Q._load("v835_dp", "v835_dp.py"); dp.ACTIVATION_OFFLOAD = True
+    dp = Q._load("v835_dp", "v835_dp.py")
+    offload_val = "on" if a.offload else a.activation_offload
+    dp.configure_activation_offload(offload_val)
+    if dp.ACTIVATION_OFFLOAD_MODE != "off":
         class R: pass
         rt = R(); rt.model = model; rt.trainable = True; dp._install_activation_offload(rt)
-    prompt, output = Q.synthetic_batch(a.prompt_len, a.output_len, model.config.vocab_size, dev)
+    prompt, output = Q.synthetic_batch(a.prompt_len, a.output_len, model.config.vocab_size)
     support = dict(temperature=1.0, top_k=20, top_p=0.95)
     named = list(model.named_parameters())
     steps = []
@@ -99,7 +107,7 @@ def main():
             if a.variant == "v834c":
                 from subnet.mimo_grpo.optimizer import FP32Accumulator
                 acc = FP32Accumulator(model.named_parameters())
-                loss = Q.packed_selected_loss(model, FK, prompt, output, a.logit_chunk, support); sync(); T["fwd"] = time.monotonic() - t0
+                loss = Q.packed_selected_loss(model, FK, [(prompt, output)], a.logit_chunk, support); sync(); T["fwd"] = time.monotonic() - t0
                 t = time.monotonic(); loss.backward(); acc.capture(); sync(); T["bwd"] = time.monotonic() - t
                 t = time.monotonic()
                 for n in sorted(acc.buffers): dist.reduce(acc.buffers[n], dst=0, op=dist.ReduceOp.SUM)
@@ -111,7 +119,7 @@ def main():
                     acc = ShardedFP32Accumulator(named, rank=rank, world=world, device=dev); acc.install_hooks()
                 else:
                     acc = GD(named, rank, world, dev); acc.install_hooks()
-                loss = Q.packed_selected_loss(model, FK, prompt, output, a.logit_chunk, support); sync(); T["fwd"] = time.monotonic() - t0
+                loss = Q.packed_selected_loss(model, FK, [(prompt, output)], a.logit_chunk, support); sync(); T["fwd"] = time.monotonic() - t0
                 t = time.monotonic(); loss.backward()
                 if a.variant == "v835": acc.capture()
                 sync(); T["bwd"] = time.monotonic() - t
