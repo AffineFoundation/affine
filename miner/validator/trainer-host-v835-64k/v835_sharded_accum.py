@@ -2,27 +2,23 @@
 
 Preserves the v834c accumulation math:
 
-  * each micro-batch contributes ``parameter.grad`` (BF16) added into an FP32 buffer
-  * after all local micro-batches, contributions are SUM-reduced across data-parallel ranks
-  * one global L2 clip, then the host optimizer sees the same full FP32 inventory
+  * each micro-batch contributes ``parameter.grad`` (BF16) summed in FP32 across ranks
+  * after all micro-batches, one global L2 clip
+  * rank 0 sees the full FP32 inventory for the host optimizer
 
-Memory changes only (not training math):
+Memory / speed (H200-measured prototype ported from ``bench_step.py``):
 
-  1. FP32 accumulator buffers are **partitioned across ranks** (each rank holds ~1/W of
-     trainable numel). This removes the replicated ~36 GB FP32 term on every GPU.
-  2. ``register_post_accumulate_grad_hook`` moves each BF16 ``param.grad`` into the local
-     contribution (owned shard stays on GPU; non-owned goes to pinned CPU) and frees the
-     BF16 grad immediately, so the full ~18 GB BF16 grad inventory never coexists with the
-     accumulator.
-  3. After local passes, ranks SUM-reduce each tensor onto its owner (one tensor at a time).
-     Rank 0 then gathers the owned shards into a full ``buffers`` dict for clip + optimizer,
-     matching v834c's rank-0-only step boundary.
-
-Optional activation offload lives in ``v835_dp`` (checkpoint input to CPU), not here.
+  1. FP32 accumulator buffers are partitioned across ranks (~1/W of trainable numel).
+  2. Post-accumulate hooks cast BF16→FP32 **on GPU** and ``dist.reduce`` (SUM, async) straight
+     to the owner on a side CUDA stream (bounded in-flight). No per-rank CPU contrib buffers
+     and no separate ``reduce_shards`` pass after backward.
+  3. Clip runs on owned GPU shards (all-reduce of sum-of-squares) before gather — identical to
+     the v834c global-norm clip.
+  4. Rank 0 gathers shards by send/recv into **pinned CPU** tensors (feeds CPU FP32 masters
+     without a pageable GPU→host copy of a full 36 GB dict).
 """
 from __future__ import annotations
 
-import math
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
@@ -56,10 +52,11 @@ def ownership_map(named_parameters: NamedParams, world: int) -> Dict[str, int]:
 
 
 class ShardedFP32Accumulator:
-    """FP32 gradient accumulator with ZeRO-2 ownership and post-accumulate disposal."""
+    """FP32 gradient accumulator with ZeRO-2 ownership and async GPU reduce-to-owner hooks."""
 
     def __init__(self, named_parameters: Iterable[Tuple[str, torch.nn.Parameter]], *,
-                 rank: int = 0, world: int = 1, device: Optional[torch.device] = None):
+                 rank: int = 0, world: int = 1, device: Optional[torch.device] = None,
+                 max_inflight: int = 4):
         params = tuple((name, p) for name, p in named_parameters if p.requires_grad)
         if not params or len({name for name, _ in params}) != len(params):
             raise ValueError('unique nonempty trainable parameter inventory')
@@ -70,74 +67,113 @@ class ShardedFP32Accumulator:
         self.world = int(world)
         if not (0 <= self.rank < self.world):
             raise ValueError('rank out of range')
+        if max_inflight < 1:
+            raise ValueError('max_inflight must be >= 1')
+        self.max_inflight = int(max_inflight)
         self.owners = ownership_map(params, self.world)
         self.owned_names = tuple(name for name, _ in params if self.owners[name] == self.rank)
         if device is None:
             device = params[0][1].device
         self.device = torch.device(device)
-        # Owned shard: resident FP32 on the parameter device (GPU in production).
         self.buffers: Dict[str, torch.Tensor] = {
             name: torch.zeros_like(p, dtype=torch.float32, device=self.device)
             for name, p in params if self.owners[name] == self.rank
-        }
-        # Non-owned local contributions: pinned CPU FP32 (not HBM).
-        pin = self.device.type == 'cuda'
-        self._cpu_contrib: Dict[str, torch.Tensor] = {
-            name: torch.zeros(p.shape, dtype=torch.float32, device='cpu', pin_memory=pin)
-            for name, p in params if self.owners[name] != self.rank
         }
         self.microsteps = 0
         self.clipped = False
         self._hooks = []
         self._by_id = {id(p): name for name, p in params}
-        self._param_by_name = {name: p for name, p in params}
         self._hook_mode = False
         self._seen = set()
+        self._pending = []  # (work, fp32_tensor, owner_name_or_None)
+        self._use_cuda_async = (
+            self.device.type == 'cuda' and self.world > 1 and dist.is_available() and dist.is_initialized()
+        )
+        self._stream = torch.cuda.Stream(device=self.device) if self._use_cuda_async else None
+        self.preclip_norm = None
 
     def install_hooks(self):
-        """Free BF16 ``param.grad`` into the sharded accumulator as soon as it is final."""
+        """Cast BF16 grads to FP32 and reduce-SUM to the owner as soon as each grad is final."""
         if self._hooks:
             return
         if not hasattr(torch.nn.Parameter, 'register_post_accumulate_grad_hook'):
             raise RuntimeError('torch Parameter.register_post_accumulate_grad_hook is required')
 
-        def make_hook(parameter: torch.nn.Parameter):
+        def make_hook(name: str):
             def hook(param: torch.nn.Parameter):
                 if self.clipped:
                     raise ValueError('gradient accumulator already clipped')
-                name = self._by_id[id(param)]
                 grad = param.grad
                 if grad is None or grad.is_sparse or grad.shape != param.shape:
                     raise ValueError('missing/dense gradient inventory: ' + name)
+                owner = self.owners[name]
                 with torch.no_grad():
-                    g = grad.detach()
-                    if self.owners[name] == self.rank:
-                        # Same cast path as v834c FP32Accumulator.capture: FP32.add_(BF16).
-                        self.buffers[name].add_(g)
+                    if self._use_cuda_async:
+                        cur = torch.cuda.current_stream(device=self.device)
+                        self._stream.wait_stream(cur)
+                        with torch.cuda.stream(self._stream):
+                            t = grad.detach().float().contiguous()
+                            work = dist.reduce(t, dst=owner, op=dist.ReduceOp.SUM, async_op=True)
+                            # Owner keeps ``t`` (post-reduce SUM) to add into the shard; others drop after wait.
+                            keep_name = name if owner == self.rank else None
+                            self._pending.append((work, t, keep_name))
+                        param.grad = None
+                        while len(self._pending) > self.max_inflight:
+                            self._drain_one()
                     else:
-                        self._cpu_contrib[name].add_(g.float())
-                    param.grad = None
+                        # world==1 or CPU/gloo: fold locally; optional sync reduce for multi-rank CPU tests.
+                        t = grad.detach().float() if grad.dtype != torch.float32 else grad.detach()
+                        if self.world > 1:
+                            if not dist.is_available() or not dist.is_initialized():
+                                raise RuntimeError('torch.distributed required for world>1')
+                            dist.reduce(t, dst=owner, op=dist.ReduceOp.SUM)
+                        if owner == self.rank:
+                            # Match v834c FP32.add_(BF16) when world==1 (no prior float()); else add FP32 SUM.
+                            if self.world == 1 and grad.dtype != torch.float32:
+                                self.buffers[name].add_(grad.detach())
+                            else:
+                                self.buffers[name].add_(t)
+                        param.grad = None
                 self._seen.add(name)
                 return None
             return hook
 
-        for _, parameter in self.parameters:
-            self._hooks.append(parameter.register_post_accumulate_grad_hook(make_hook(parameter)))
+        for name, parameter in self.parameters:
+            self._hooks.append(parameter.register_post_accumulate_grad_hook(make_hook(name)))
         self._hook_mode = True
 
+    def _drain_one(self):
+        work, tensor, name = self._pending.pop(0)
+        work.wait()
+        if name is not None:
+            with torch.cuda.stream(self._stream):
+                self.buffers[name].add_(tensor)
+        del tensor
+
+    def finish(self):
+        """Wait for in-flight async reduces and fold owner SUMs into shards."""
+        while self._pending:
+            self._drain_one()
+        if self._stream is not None:
+            torch.cuda.current_stream(device=self.device).wait_stream(self._stream)
+
     def remove_hooks(self):
+        self.finish()
         for handle in self._hooks:
             handle.remove()
         self._hooks.clear()
         self._hook_mode = False
 
     def capture(self):
-        """v834c-compatible capture when hooks are not installed (tests / fallback)."""
+        """End of one micro-batch: drain async reduces and advance the microstep counter.
+
+        With hooks installed, grads were already reduced during backward. Without hooks
+        (tests / fallback), fold ``param.grad`` with the same reduce-to-owner semantics.
+        """
         if self.clipped:
             raise ValueError('gradient accumulator already clipped')
         if self._hook_mode:
-            # Hooks already folded every finished grad; still require a complete inventory
-            # (no lingering BF16 grads) and advance the microstep counter.
+            self.finish()
             expected = {name for name, _ in self.parameters}
             if self._seen != expected:
                 missing = sorted(expected - self._seen)
@@ -154,59 +190,18 @@ class ShardedFP32Accumulator:
                 raise ValueError('missing/dense gradient inventory: ' + name)
         with torch.no_grad():
             for name, parameter in self.parameters:
+                owner = self.owners[name]
                 g = parameter.grad.detach()
-                if self.owners[name] == self.rank:
-                    self.buffers[name].add_(g)
-                else:
-                    self._cpu_contrib[name].add_(g.float())
+                t = g.float() if g.dtype != torch.float32 else g
+                if self.world > 1:
+                    dist.reduce(t, dst=owner, op=dist.ReduceOp.SUM)
+                if owner == self.rank:
+                    if self.world == 1 and g.dtype != torch.float32:
+                        self.buffers[name].add_(g)
+                    else:
+                        self.buffers[name].add_(t)
                 parameter.grad = None
         self.microsteps += 1
-
-    def reduce_shards(self, group=None):
-        """SUM-reduce each tensor onto its owner. All ranks must call in lockstep."""
-        if self.clipped or not self.microsteps:
-            raise ValueError('reduce after nonempty accumulation')
-        if self.world == 1:
-            return
-        if not dist.is_available() or not dist.is_initialized():
-            raise RuntimeError('torch.distributed is required for world>1 reduce_shards')
-        for name, parameter in self.parameters:
-            owner = self.owners[name]
-            if self.rank == owner:
-                dist.reduce(self.buffers[name], dst=owner, op=dist.ReduceOp.SUM, group=group)
-            else:
-                tmp = self._cpu_contrib[name].to(device=self.device, dtype=torch.float32, non_blocking=False)
-                dist.reduce(tmp, dst=owner, op=dist.ReduceOp.SUM, group=group)
-                del tmp
-                # Drop host contribution after a successful reduce (owner holds the SUM).
-                self._cpu_contrib[name].zero_()
-
-    def gather_full_buffers(self, dst: int = 0, group=None) -> Optional[Dict[str, torch.Tensor]]:
-        """Materialize the full FP32 inventory on ``dst`` (rank 0 for the host optimizer)."""
-        if self.world == 1:
-            # Single-process: owned buffers are already the full inventory; fold CPU if any.
-            full = {}
-            for name, parameter in self.parameters:
-                if name in self.buffers:
-                    full[name] = self.buffers[name]
-                else:
-                    full[name] = self._cpu_contrib[name].to(device=self.device)
-            return full if self.rank == dst else None
-        if not dist.is_available() or not dist.is_initialized():
-            raise RuntimeError('torch.distributed is required for world>1 gather_full_buffers')
-        full: Dict[str, torch.Tensor] = {}
-        for name, parameter in self.parameters:
-            owner = self.owners[name]
-            if self.rank == owner:
-                tensor = self.buffers[name]
-            else:
-                tensor = torch.empty(parameter.shape, dtype=torch.float32, device=self.device)
-            dist.broadcast(tensor, src=owner, group=group)
-            if self.rank == dst:
-                full[name] = tensor
-            elif self.rank != owner:
-                del tensor
-        return full if self.rank == dst else None
 
     def local_sqnorm(self) -> torch.Tensor:
         """Sum of squared L2 norms over tensors owned by this rank (FP32)."""
@@ -217,43 +212,100 @@ class ShardedFP32Accumulator:
             total = total + torch.linalg.vector_norm(gradient, dtype=torch.float32).square()
         return total
 
-    def clip(self, maximum: float, *, buffers: Optional[Dict[str, torch.Tensor]] = None) -> float:
-        """Clip either the gathered full inventory (rank 0) or owned shards (with all-reduce)."""
+    def clip_shards(self, maximum: float) -> float:
+        """Global-norm clip on owned GPU shards (all-reduce sum-of-squares). Same math as v834c clip."""
         if self.clipped or not self.microsteps:
             raise ValueError('one clip after nonempty accumulation')
-        target = buffers if buffers is not None else self.buffers
-        if buffers is not None:
-            norms = [torch.linalg.vector_norm(g, dtype=torch.float32) for g in target.values()]
-            total = torch.linalg.vector_norm(torch.stack(norms), dtype=torch.float32)
-        else:
-            local = self.local_sqnorm()
-            if self.world > 1:
-                dist.all_reduce(local, op=dist.ReduceOp.SUM)
-            total = torch.sqrt(local)
+        self.finish()
+        local = self.local_sqnorm()
+        if self.world > 1:
+            if not dist.is_available() or not dist.is_initialized():
+                raise RuntimeError('torch.distributed required for world>1 clip_shards')
+            dist.all_reduce(local, op=dist.ReduceOp.SUM)
+        total = torch.sqrt(local)
         if not torch.isfinite(total):
             raise ValueError('nonfinite accumulated gradient norm')
         scale = torch.clamp(maximum / (total + 1e-6), max=1.)
         with torch.no_grad():
-            for gradient in target.values():
+            for gradient in self.buffers.values():
                 gradient.mul_(scale)
-            if buffers is None:
-                pass
-            elif self.rank == 0:
-                # Keep owned shard views consistent when full dict aliases owned tensors.
-                for name, gradient in self.buffers.items():
-                    if name in target and target[name] is not gradient:
-                        gradient.copy_(target[name])
         self.clipped = True
-        return float(total)
+        self.preclip_norm = float(total)
+        return self.preclip_norm
+
+    def clip(self, maximum: float, *, buffers: Optional[Dict[str, torch.Tensor]] = None) -> float:
+        """Compatibility wrapper: shard clip when ``buffers`` is None; else clip a gathered dict."""
+        if buffers is None:
+            return self.clip_shards(maximum)
+        if self.clipped or not self.microsteps:
+            raise ValueError('one clip after nonempty accumulation')
+        norms = [torch.linalg.vector_norm(g, dtype=torch.float32) for g in buffers.values()]
+        # Gathered CPU tensors: stack on CPU.
+        total = torch.linalg.vector_norm(torch.stack([n.cpu() if n.device.type != 'cpu' else n for n in norms]),
+                                         dtype=torch.float32)
+        if not torch.isfinite(total):
+            raise ValueError('nonfinite accumulated gradient norm')
+        scale = torch.clamp(maximum / (total + 1e-6), max=1.)
+        with torch.no_grad():
+            for gradient in buffers.values():
+                gradient.mul_(scale.to(device=gradient.device))
+        self.clipped = True
+        self.preclip_norm = float(total)
+        return self.preclip_norm
+
+    def gather_to_cpu(self, dst: int = 0, group=None) -> Optional[Dict[str, torch.Tensor]]:
+        """Materialize the full FP32 inventory on ``dst`` as pinned CPU tensors (send/recv)."""
+        self.finish()
+        pin = torch.cuda.is_available()
+        if self.world == 1:
+            full = {}
+            for name, parameter in self.parameters:
+                src = self.buffers[name]
+                host = torch.empty(parameter.shape, dtype=torch.float32, device='cpu', pin_memory=pin)
+                host.copy_(src, non_blocking=False)
+                full[name] = host
+            return full if self.rank == dst else None
+        if not dist.is_available() or not dist.is_initialized():
+            raise RuntimeError('torch.distributed is required for world>1 gather_to_cpu')
+        full: Dict[str, torch.Tensor] = {}
+        for name, parameter in self.parameters:
+            owner = self.owners[name]
+            if self.rank == owner:
+                tensor = self.buffers[name]
+            else:
+                tensor = torch.empty(parameter.shape, dtype=torch.float32, device=self.device)
+            if owner != dst:
+                if self.rank == owner:
+                    dist.send(tensor, dst=dst, group=group)
+                elif self.rank == dst:
+                    dist.recv(tensor, src=owner, group=group)
+            if self.rank == dst:
+                host = torch.empty(parameter.shape, dtype=torch.float32, device='cpu', pin_memory=pin)
+                host.copy_(tensor, non_blocking=False)
+                full[name] = host
+            if self.rank != owner and self.rank != dst:
+                del tensor
+            elif self.rank == dst and owner != dst:
+                del tensor
+        return full if self.rank == dst else None
+
+    # Back-compat alias used by older qual scripts / tests.
+    def gather_full_buffers(self, dst: int = 0, group=None) -> Optional[Dict[str, torch.Tensor]]:
+        return self.gather_to_cpu(dst=dst, group=group)
+
+    def reduce_shards(self, group=None):
+        """No-op: reduce already happened in post-accumulate hooks. Kept for call-site compatibility."""
+        self.finish()
 
     def clear(self):
         self.remove_hooks()
         self.buffers.clear()
-        self._cpu_contrib.clear()
+        self._pending.clear()
         self.microsteps = 0
+        self.preclip_norm = None
 
 
-def estimate_bytes(named_parameters: NamedParams, world: int = 8) -> dict:
+def estimate_bytes(named_parameters: NamedParams, world: int = 8, max_inflight: int = 4) -> dict:
     """Static per-rank bytes for the v834c vs v835 layouts (excludes activations/workspaces)."""
     params = [(n, p) for n, p in named_parameters if p.requires_grad]
     total_numel = sum(p.numel() for _, p in params)
@@ -274,14 +326,16 @@ def estimate_bytes(named_parameters: NamedParams, world: int = 8) -> dict:
         v835=dict(
             bf16_weights_bytes=bf16_w,
             fp32_accumulator_shard_bytes=max(shard_numel) * 4 if shard_numel else 0,
-            bf16_param_grad_peak_bytes=peak_param * 2,  # one tensor in flight under hooks
-            reduce_scratch_bytes=peak_param * 4,
-            resident_grad_related_bytes=(max(shard_numel) * 4 if shard_numel else 0) + peak_param * 2,
+            # One BF16 grad in flight + up to max_inflight FP32 reduce temps.
+            bf16_param_grad_peak_bytes=peak_param * 2,
+            reduce_scratch_bytes=peak_param * 4 * max_inflight,
+            resident_grad_related_bytes=(max(shard_numel) * 4 if shard_numel else 0)
+            + peak_param * 2 + peak_param * 4 * max_inflight,
         ),
         shard_numel=shard_numel,
         largest_tensor_numel=peak_param,
         saved_vs_v834c_bytes=(total_numel * 4 + bf16_w) - (
-            (max(shard_numel) * 4 if shard_numel else 0) + peak_param * 2
+            (max(shard_numel) * 4 if shard_numel else 0) + peak_param * 2 + peak_param * 4 * max_inflight
         ),
     )
 

@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Compare v834c FP32Accumulator+SUM-reduce vs v835 ShardedFP32Accumulator.
+"""Compare v834c FP32Accumulator+SUM-reduce vs v835 async reduce-to-owner + shard clip.
 
 Runs on CPU by default (no GPU, no flash-attn, no fla). Optionally ``torchrun``
 with 1–2 processes and ``--device cuda`` when GPUs are present.
 
 Checks (within fp32 tolerance):
 
-  1. Accumulated FP32 gradients match after an identical synthetic backward.
-  2. Global clip scale / pre-clip norm match.
-  3. A stateless fresh-adam-like update (W -= lr * g / ||g|| style normgrad) matches
-     on the resulting parameters.
-  4. Selected-token logprob + top-k/top-p support-renorm helpers match the v834c
-     kernel copy (pure torch, no model forward).
+  1. Accumulated FP32 gradients match after identical synthetic backwards
+     (including **multiple micro-batches** per step).
+  2. Shard clip (all-reduce sum-of-squares) matches full-inventory global-norm clip.
+  3. A stateless fresh-adam-like normgrad update matches on the resulting parameters.
+  4. Selected-token logprob + top-k/top-p support-renorm helpers match.
 
 Exit code 0 on success, 1 on mismatch.
 """
@@ -64,7 +63,7 @@ class TinyActor(nn.Module):
     def forward(self, ids):
         h = self.embed(ids)
         for block in self.blocks:
-            h = torch.nn.functional.gelu(block(h))
+            h = F.gelu(block(h))
         return self.lm_head(h)
 
 
@@ -97,14 +96,12 @@ class LegacyFP32Accumulator:
 
 
 def _fresh_normgrad_step(params, gradients, lr, cap):
-    """Rank-local stand-in for host fresh-adam normgrad (direction g/||g||, norm from delta)."""
+    """Rank-local stand-in for host fresh-adam normgrad (direction g/||g||)."""
     live = list(params)
     qd, gn2 = {}, {}
     with torch.no_grad():
         for name, p in live:
             g = gradients[name].detach().to(device=p.device, dtype=torch.float32)
-            # fresh-adam delta ≈ lr * g / (|g| + eps) with eps=1e-8, no wd on 1d/bias — simplified:
-            # for equivalence we use d = lr * g (plain) then normgrad direction.
             d = g * lr
             qd[name] = float(d.double().pow(2).sum())
             gn2[name] = float(g.double().pow(2).sum())
@@ -121,8 +118,10 @@ def _fresh_normgrad_step(params, gradients, lr, cap):
 def _allclose(a, b, rtol=1e-5, atol=1e-5):
     if a.shape != b.shape:
         return False, f'shape {tuple(a.shape)} vs {tuple(b.shape)}'
-    if not torch.allclose(a.float().cpu(), b.float().cpu(), rtol=rtol, atol=atol, equal_nan=False):
-        diff = (a.float().cpu() - b.float().cpu()).abs().max().item()
+    aa = a.float().cpu()
+    bb = b.float().cpu()
+    if not torch.allclose(aa, bb, rtol=rtol, atol=atol, equal_nan=False):
+        diff = (aa - bb).abs().max().item()
         return False, f'max_abs_diff={diff}'
     return True, 'ok'
 
@@ -133,12 +132,6 @@ def run_support_renorm_check():
     targets = torch.randint(0, 97, (16,))
     log_p = selected_logp(logits, targets)
     log_q, inside = support_logq(logits / 1.0, targets, top_k=20, top_p=0.95)
-    # Import the live kernel copy and compare.
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('v83_fast_kernels', HERE / 'v83_fast_kernels.py')
-    mod = importlib.util.module_from_spec(spec)
-    # Avoid importing fla/transformers at module level — only need support_logq.
-    # Load source and exec just the function by reusing our local copy equality.
     log_q2, inside2 = support_logq(logits, targets, 20, 0.95)
     ok1, m1 = _allclose(log_q, log_q2)
     ok2 = bool(torch.equal(inside, inside2))
@@ -151,7 +144,6 @@ def run_single_process(device: str, rtol: float, atol: float) -> dict:
     model_a = TinyActor().to(device)
     model_b = TinyActor().to(device)
     model_b.load_state_dict(model_a.state_dict())
-    # BF16 params like production actor projection.
     model_a.to(dtype=torch.bfloat16)
     model_b.to(dtype=torch.bfloat16)
     model_a.to(device)
@@ -167,13 +159,12 @@ def run_single_process(device: str, rtol: float, atol: float) -> dict:
         targets = ids
         log_p = selected_logp(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
         log_q, inside = support_logq(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), 16, 0.9)
-        # GRPO-like: policy gradient uses support log_q where inside, else 0 contribution.
         pg = torch.where(inside, log_q, torch.zeros_like(log_q))
         return -(pg.mean() + 0.01 * log_p.mean())
 
-    batches = [make_ids(100 + i) for i in range(2)]
+    # Three micro-batches to exercise multi-micro-batch accumulation.
+    batches = [make_ids(100 + i) for i in range(3)]
 
-    # --- legacy path ---
     legacy = LegacyFP32Accumulator(model_a.named_parameters())
     for ids in batches:
         model_a.zero_grad(set_to_none=True)
@@ -181,15 +172,15 @@ def run_single_process(device: str, rtol: float, atol: float) -> dict:
         legacy.capture()
     norm_a = legacy.clip(1.0)
 
-    # --- sharded path (world=1) ---
     sharded = ShardedFP32Accumulator(model_b.named_parameters(), rank=0, world=1, device=device)
     sharded.install_hooks()
     for ids in batches:
         model_b.zero_grad(set_to_none=True)
         loss_fn(model_b, ids).backward()
         sharded.capture()
-    full_b = sharded.gather_full_buffers(dst=0)
-    norm_b = sharded.clip(1.0, buffers=full_b)
+    # Production order: clip on shards, then gather to CPU.
+    norm_b = sharded.clip_shards(1.0)
+    full_b = sharded.gather_to_cpu(dst=0)
 
     grad_reports = {}
     all_ok = True
@@ -198,7 +189,6 @@ def run_single_process(device: str, rtol: float, atol: float) -> dict:
         grad_reports[name] = dict(ok=ok, detail=msg)
         all_ok = all_ok and ok
 
-    # Optimizer-style update on both models from matched grads.
     params_a = list(model_a.named_parameters())
     params_b = list(model_b.named_parameters())
     info_a = _fresh_normgrad_step(params_a, legacy.buffers, lr=1e-3, cap=1.0)
@@ -209,16 +199,44 @@ def run_single_process(device: str, rtol: float, atol: float) -> dict:
         param_reports[n1] = dict(ok=ok, detail=msg)
         all_ok = all_ok and ok
 
+    # Dedicated shard-clip identity: rebuild unclipped grads and compare clip scales.
+    model_c = TinyActor().to(device=device, dtype=torch.bfloat16)
+    model_c.load_state_dict({k: v.detach().cpu() for k, v in model_a.state_dict().items()})
+    model_c.to(device)
+    # Re-init from pre-update model_b weights is awkward; instead compare norms only on a fresh pair.
+    model_d = TinyActor().to(device)
+    model_e = TinyActor().to(device)
+    model_e.load_state_dict(model_d.state_dict())
+    model_d.to(dtype=torch.bfloat16); model_e.to(dtype=torch.bfloat16)
+    model_d.to(device); model_e.to(device)
+    leg2 = LegacyFP32Accumulator(model_d.named_parameters())
+    sh2 = ShardedFP32Accumulator(model_e.named_parameters(), rank=0, world=1, device=device)
+    sh2.install_hooks()
+    for ids in batches[:2]:
+        model_d.zero_grad(set_to_none=True); loss_fn(model_d, ids).backward(); leg2.capture()
+        model_e.zero_grad(set_to_none=True); loss_fn(model_e, ids).backward(); sh2.capture()
+    # Pre-clip shard vs full norms must match before either clip.
+    full_pre = {n: sh2.buffers[n].detach().clone() for n in sh2.buffers}
+    leg_norm_pre = math.sqrt(sum(float(torch.linalg.vector_norm(g, dtype=torch.float32).square())
+                                 for g in leg2.buffers.values()))
+    sh_norm_pre = math.sqrt(sum(float(torch.linalg.vector_norm(g, dtype=torch.float32).square())
+                                for g in full_pre.values()))
+    n_leg = leg2.clip(0.5)
+    n_sh = sh2.clip_shards(0.5)
+    shard_clip_ok = abs(n_leg - n_sh) <= max(1e-5, 1e-5 * abs(n_leg)) and abs(leg_norm_pre - sh_norm_pre) <= 1e-5
+
     support = run_support_renorm_check()
-    all_ok = all_ok and support['support_match'] and support['selected_finite']
+    all_ok = all_ok and support['support_match'] and support['selected_finite'] and shard_clip_ok
 
     return dict(
         mode='single-process',
         device=device,
         world=1,
+        microbatches=len(batches),
         preclip_norm_legacy=norm_a,
         preclip_norm_sharded=norm_b,
         norms_match=abs(norm_a - norm_b) <= max(1e-5, 1e-5 * abs(norm_a)),
+        shard_clip=dict(ok=shard_clip_ok, legacy=n_leg, sharded=n_sh),
         grad_reports=grad_reports,
         param_reports=param_reports,
         optimizer_info=dict(legacy=info_a, sharded=info_b),
@@ -235,9 +253,8 @@ def run_distributed(device: str, rtol: float, atol: float) -> dict:
         torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', rank)))
         device = f'cuda:{int(os.environ.get("LOCAL_RANK", rank))}'
     dist.init_process_group(backend)
-    torch.manual_seed(11)  # identical init on every rank before broadcast
+    torch.manual_seed(11)
     model = TinyActor().to(device=device, dtype=torch.bfloat16)
-    # Rank 0 owns the reference weights; broadcast for bit-exact match.
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
 
@@ -254,9 +271,9 @@ def run_distributed(device: str, rtol: float, atol: float) -> dict:
         pg = torch.where(inside, log_q, torch.zeros_like(log_q))
         return -(pg.mean() + 0.01 * log_p.mean())
 
-    # Legacy: full FP32 on every rank, then SUM-reduce to 0.
+    n_micro = 3
     legacy = LegacyFP32Accumulator(model.named_parameters())
-    for micro in range(2):
+    for micro in range(n_micro):
         model.zero_grad(set_to_none=True)
         one_loss(micro + 3).backward()
         legacy.capture()
@@ -268,28 +285,25 @@ def run_distributed(device: str, rtol: float, atol: float) -> dict:
     else:
         norm_legacy, grads_legacy = None, None
 
-    # Reset grads; rebuild identical weights for sharded path.
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
     model.zero_grad(set_to_none=True)
 
     sharded = ShardedFP32Accumulator(model.named_parameters(), rank=rank, world=world, device=device)
     sharded.install_hooks()
-    for micro in range(2):
+    for micro in range(n_micro):
         model.zero_grad(set_to_none=True)
         one_loss(micro + 3).backward()
         sharded.capture()
-    sharded.reduce_shards()
-    full = sharded.gather_full_buffers(dst=0)
+    norm_sharded = sharded.clip_shards(1.0)
+    full = sharded.gather_to_cpu(dst=0)
     if rank == 0:
-        norm_sharded = sharded.clip(1.0, buffers=full)
         reports = {}
         ok = abs(norm_legacy - norm_sharded) <= max(1e-5, 1e-5 * abs(norm_legacy))
         for name in sorted(grads_legacy):
             matched, detail = _allclose(grads_legacy[name], full[name], rtol=rtol, atol=atol)
             reports[name] = dict(ok=matched, detail=detail)
             ok = ok and matched
-        # Partition sanity: every name owned exactly once.
         parts = partition_names(list(model.named_parameters()), world)
         owned_counts = {n: sum(n in names for names in parts) for n, _ in model.named_parameters()}
         partition_ok = all(v == 1 for v in owned_counts.values())
@@ -297,16 +311,17 @@ def run_distributed(device: str, rtol: float, atol: float) -> dict:
             mode='distributed',
             device=device,
             world=world,
+            microbatches=n_micro,
             preclip_norm_legacy=norm_legacy,
             preclip_norm_sharded=norm_sharded,
             grad_reports=reports,
             partition_ok=partition_ok,
+            shard_clip_ok=ok,
             ok=ok and partition_ok,
         )
     else:
         result = dict(mode='distributed', rank=rank, ok=True)
 
-    # Publish rank-0 verdict.
     blob = [result if rank == 0 else None]
     dist.broadcast_object_list(blob, src=0)
     dist.destroy_process_group()

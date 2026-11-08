@@ -117,8 +117,12 @@ NO_CKPT_LAYERS_RANK0 = 0
 NO_CKPT_LAYERS_HELPER = 2
 # Any rollout at/above this total length is never packed with another row.
 SINGLETON_MIN_TOKENS = 65536
-# Optional: checkpoint block inputs land on CPU (set True from host/qual when needed).
-ACTIVATION_OFFLOAD = False
+# Master switch for thresholded activation offload (saved tensors → CPU during training forwards).
+ACTIVATION_OFFLOAD = True
+# Only offload when the packed micro-batch token count is at/above this (64K-class bins).
+ACTIVATION_OFFLOAD_MIN_TOKENS = 65536
+# Bound async NCCL reduces in-flight during backward (see v835_sharded_accum).
+REDUCE_MAX_INFLIGHT = 4
 
 
 def init(world, port):
@@ -157,11 +161,10 @@ def _bcast(obj):
 
 
 def _install_activation_offload(runtime):
-    """Stage autograd-saved tensors on CPU during training forwards (same math, less HBM).
+    """Conditional CPU staging of autograd-saved tensors (same math, less HBM on long bins).
 
-    Uses ``torch.autograd.graph.saved_tensors_hooks`` so checkpointed block inputs and other
-    saved activations leave GPU memory until backward recomputes/reloads them. Disabled by
-    default; enable with ``ACTIVATION_OFFLOAD=True`` when the 64K static budget still OOMs.
+    Offload applies only when ``STATE['offload_this_forward']`` is true — set by the packed
+    log-prob wrapper when the micro-batch token count is >= ``ACTIVATION_OFFLOAD_MIN_TOKENS``.
     """
     if not ACTIVATION_OFFLOAD or not runtime.trainable:
         return
@@ -179,14 +182,13 @@ def _install_activation_offload(runtime):
             return cpu.to(device=device, non_blocking=False)
         return obj
 
-    # Re-wrap each trainable layer forward so the hooks only apply under grad.
     layers = runtime.model.model.language_model.layers
     for layer in layers:
         original = layer.forward
 
         def make_forward(original):
             def forward(*args, **kwargs):
-                if not torch.is_grad_enabled():
+                if not torch.is_grad_enabled() or not STATE.get('offload_this_forward'):
                     return original(*args, **kwargs)
                 with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
                     return original(*args, **kwargs)
@@ -206,8 +208,23 @@ def _install_fast(B, FK, runtime, no_ckpt):
     _install_activation_offload(runtime)
 
 
+def _dummy_touch_backward(actor):
+    """Backward that touches every trainable param so lockstep NCCL hooks stay matched."""
+    loss = None
+    for _, p in actor.model.named_parameters():
+        if p.requires_grad:
+            loss = p.float().sum() * 0.0 if loss is None else loss + p.float().sum() * 0.0
+    if loss is None:
+        raise ValueError('no trainable parameters for dummy backward')
+    loss.backward()
+
+
 def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, active_rollouts, versions, guard, record):
-    """One rank's share. Returns (accumulator|None, details, losses, err)."""
+    """One rank's share. Returns (accumulator|None, details, losses, err).
+
+    Micro-batches are lock-stepped across ranks: shorter plans are padded with a dummy
+    backward so async reduce-to-owner hooks never deadlock on NCCL.
+    """
     accumulator, details, losses, err = None, {}, {}, None
     try:
         B._reference_pass(rows, plan, config, ref, engine='packed', logit_chunk=LOGIT_CHUNK, guard=guard)
@@ -217,11 +234,33 @@ def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, activ
             p.grad = None
         rank = dist.get_rank() if dist.is_initialized() else 0
         world = STATE['world']
+        # Pad to the max local micro-batch count so every rank issues the same reduce sequence.
+        my_n = len(plan)
+        if world > 1 and dist.is_initialized():
+            counts = [None] * world
+            dist.all_gather_object(counts, my_n)
+            max_n = max(counts)
+        else:
+            max_n = my_n
+        padded = list(plan) + [None] * (max_n - my_n)
         accumulator = ShardedFP32Accumulator(actor.model.named_parameters(), rank=rank, world=world,
-                                             device=actor.device)
+                                             device=actor.device, max_inflight=REDUCE_MAX_INFLIGHT)
         accumulator.install_hooks()
-        B._gradient_pass(actor, rows, plan, config, agg_config, loss_scale, active_rollouts, accumulator, versions,
-                         details, losses, engine='packed', logit_chunk=LOGIT_CHUNK, guard=guard, record=record)
+        # One micro-batch index at a time across all ranks (real or dummy) so async
+        # reduce-to-owner hooks stay collective-safe.
+        for batch in padded:
+            if batch is not None:
+                B._gradient_pass(actor, rows, [batch], config, agg_config, loss_scale, active_rollouts,
+                                 accumulator, versions, details, losses, engine='packed',
+                                 logit_chunk=LOGIT_CHUNK, guard=guard, record=record)
+            else:
+                guard()
+                for p in actor.model.parameters():
+                    p.grad = None
+                with torch.enable_grad():
+                    _dummy_touch_backward(actor)
+                accumulator.capture()
+        accumulator.finish()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
     except BaseException as e:   # every rank must reach the ok-flag reduction
@@ -234,8 +273,11 @@ def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, activ
     return accumulator, details, losses, err
 
 
-def _reduce(B, rows, accumulator, details, losses, err, rank):
-    """Ok-flag + ZeRO-2 shard reduce + gather full FP32 inventory to rank 0."""
+def _reduce(B, rows, accumulator, details, losses, err, rank, clip_max):
+    """Ok-flag + shard clip + pinned-CPU gather of full FP32 inventory to rank 0.
+
+    Reduce-to-owner already ran inside post-accumulate hooks during backward.
+    """
     world = STATE['world']
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     ok = torch.tensor([0.0 if err else 1.0], device=device)
@@ -246,16 +288,17 @@ def _reduce(B, rows, accumulator, details, losses, err, rank):
         if accumulator is not None:
             accumulator.clear()
         return None, [e for e in errs if e]
-    # SUM each tensor onto its owner, then materialize the v834c-shaped full dict on rank 0.
-    accumulator.reduce_shards()
-    full = accumulator.gather_full_buffers(dst=0)
+    accumulator.finish()
+    norm = accumulator.clip_shards(clip_max)
+    full = accumulator.gather_to_cpu(dst=0)
     gathered = [None] * world
     dist.all_gather_object(gathered, (details, losses, {i: (rows[i]['keep'], rows[i]['derail_index']) for i in details}))
     if rank != 0:
         accumulator.clear()
         return None, []
-    # Rank 0: replace shard map with the gathered full inventory for clip + optimizer.
+    # Rank 0: CPU pinned inventory for the host optimizer (fresh-adam / CPUAdamW).
     accumulator.buffers = full
+    accumulator.preclip_norm = norm
     accumulator.remove_hooks()
     all_d, all_l = {}, {}
     for d, l, keep in gathered:
@@ -275,7 +318,13 @@ def make_train_update(B, FK):
             raise ValueError('inference runtime cannot train')
         if engine != 'packed':
             raise ValueError('v8.3 DP engine is packed-only')
-        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        tokens = sum(len(prompt) + len(output) for prompt, output in items)
+        STATE['offload_this_forward'] = bool(
+            ACTIVATION_OFFLOAD and gradients and tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS)
+        try:
+            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        finally:
+            STATE['offload_this_forward'] = False
 
     def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
                         reference_runtime=None, engine='packed', token_budget=36864, max_rows=64, logit_chunk=2048,
@@ -325,14 +374,15 @@ def make_train_update(B, FK):
         prep = time.monotonic()
         acc, details, losses, err = _passes(B, FK, runtime, reference_runtime, rows, assign[0], config, agg_config, loss_scale,
                                              len(active), versions, guard, record)
-        gathered, errs = _reduce(B, rows, acc, details, losses, err, 0)
+        gathered, errs = _reduce(B, rows, acc, details, losses, err, 0, config.max_gradient_norm)
         if gathered is None:
             raise RuntimeError('v8.3 DP update failed before the optimizer step: ' + '; '.join(errs))
         all_d, all_l = gathered
         for i in sorted(all_d):     # trajectory-loss events for helper-owned rollouts (rank-0 ones were recorded live)
             if i not in details: record(dict(stage='trajectory-loss', **all_d[i]))
         timings['gradient_seconds'] = time.monotonic() - prep
-        norm = acc.clip(config.max_gradient_norm)
+        # Clip already applied on GPU shards inside _reduce; buffers are pinned CPU grads.
+        norm = acc.preclip_norm
         guard()
         if B._versions(runtime.model) != versions:
             raise ValueError('actor changed before optimizer step')
@@ -358,7 +408,9 @@ def make_train_update(B, FK):
             update_seconds=time.monotonic() - started,
             microbatch=dict(engine='packed-dp-v835-zero2', token_budget=BUDGET, max_rows=MAX_ROWS, count=nbins,
                             world=world, rank_tokens=loads, singleton_min_tokens=SINGLETON_MIN_TOKENS,
-                            activation_offload=ACTIVATION_OFFLOAD),
+                            activation_offload=ACTIVATION_OFFLOAD,
+                            activation_offload_min_tokens=ACTIVATION_OFFLOAD_MIN_TOKENS,
+                            reduce_max_inflight=REDUCE_MAX_INFLIGHT),
             unresolved_filter=unresolved_filter,
             data_sha256=digest([__import__('dataclasses').asdict(group) for group in groups]),
             loss_aggregation=aggregation,
@@ -441,7 +493,13 @@ def helper_main(rank, world, port, host_dir, source_root):
     from subnet.mimo_runtime import MimoRuntime
     STATE['world'] = world
     def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
-        return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        tokens = sum(len(prompt) + len(output) for prompt, output in items)
+        STATE['offload_this_forward'] = bool(
+            ACTIVATION_OFFLOAD and gradients and tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS)
+        try:
+            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        finally:
+            STATE['offload_this_forward'] = False
     B.batched_log_probs = fast_blp
     install_fast_hash()
     try:      # v8.3.3g preload (any failure -> lazy load at the first job, as before)
@@ -490,7 +548,7 @@ def helper_main(rank, world, port, host_dir, source_root):
         actor.model.eval(); versions = B._versions(actor.model)
         acc, details, losses, err = _passes(B, FK, actor, STATE['ref'], rows, job['assign'][rank], config, agg_config, loss_scale,
                                              len(active), versions, lambda: None, lambda row: None)
-        _reduce(B, rows, acc, details, losses, err, rank)
+        _reduce(B, rows, acc, details, losses, err, rank, config.max_gradient_norm)
         for p in actor.model.parameters(): p.grad = None
         torch.cuda.empty_cache()
     dist.destroy_process_group()

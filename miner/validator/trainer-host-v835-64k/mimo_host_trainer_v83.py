@@ -1127,8 +1127,9 @@ def install(config, start_dp=False):
     # v8.3.5: ZeRO-2 sharded FP32 accumulation (v835_dp). v83_dp remains in-tree for A/B qual.
     dp = load('v835_dp', 'v835_dp.py')
     dp.BUDGET, dp.MAX_ROWS = engine['dp_token_budget'], engine['dp_max_rows']
-    if engine.get('activation_offload') is True:
-        dp.ACTIVATION_OFFLOAD = True
+    # Default on with a 64K-bin threshold inside v835_dp; engine.activation_offload=false disables.
+    if 'activation_offload' in engine:
+        dp.ACTIVATION_OFFLOAD = bool(engine.get('activation_offload'))
     dp.install_fast_hash()     # v8.3.3g
     helpers = []
     if start_dp:
