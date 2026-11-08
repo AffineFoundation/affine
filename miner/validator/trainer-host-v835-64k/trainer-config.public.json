@@ -1,0 +1,65 @@
+{
+  "about": "Public description of trainer-host-v835-64k (NOT a ROOT-signed admission). Derived from live host-v834c/v834d. Adds ZeRO-2-style sharded FP32 gradient accumulation + post-accumulate BF16 grad disposal so a single 65536-output / 69632-context rollout can train on 8xH200 without changing GRPO/support-renorm/fresh-adam-normgrad math.",
+  "host_version": "host-v835-64k",
+  "parent_host": "host-v834c / host-v834d",
+  "repo_directory": "miner/validator/trainer-host-v835-64k",
+  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration (hybrid GDN + full attention, vocab 248320)",
+  "trainable": "model.language_model.* and lm_head.* (vision tower and MTP heads frozen)",
+  "memory_fix": {
+    "v834c_problem": "full actor replica + eager FP32 accumulator (~36 GB) + BF16 param grads (~18 GB) per GPU; 64K activations push past ~140 GiB H200",
+    "v835_change": "shard FP32 accumulators across ranks (reduce-to-owner); free BF16 grads via register_post_accumulate_grad_hook; singleton bins for >=65536-token rollouts; optional activation_offload",
+    "expected_static_64k_gib_per_gpu": "~40 GiB before attention/FLA/NCCL workspaces (see memory_estimate.py); ample vs 139.8 GiB H200 allocator"
+  },
+  "engine": {
+    "batched_engine": "packed",
+    "dp_max_rows": 256,
+    "dp_port": 29583,
+    "dp_token_budget": 69632,
+    "dp_world": 8,
+    "drop_unresolved": false,
+    "fast_stage": true,
+    "loss_agg_mode": "seq-mean-token-mean",
+    "loss_scale": 0.5635,
+    "max_rows": 64,
+    "optimizer_persistence": "none",
+    "optimizer_step_threads": 14,
+    "activation_offload": false,
+    "sgd_direction": "normgrad",
+    "sgd_fp32_master": true,
+    "sgd_freeze": [],
+    "sgd_lr": 5e-07,
+    "sgd_mode": "fresh-adam",
+    "sgd_tensor_rel_cap": 2e-05,
+    "sgd_update_norm_cap": 1.0,
+    "support_renorm": {
+      "temperature": 1.0,
+      "top_k": 20,
+      "top_p": 0.95
+    },
+    "token_budget": 69632,
+    "training_kernels": {
+      "fla-core": "0.6.0",
+      "flash-linear-attention": "0.6.0"
+    }
+  },
+  "caps": {
+    "dp_token_budget": 69632,
+    "logit_chunk": 4096,
+    "max_context_tokens": 69632,
+    "max_output_tokens": 65536,
+    "singleton_min_tokens": 65536
+  },
+  "qualification": {
+    "script": "run_64k_qual.sh",
+    "equivalence": "numerical_equivalence_test.py",
+    "estimator": "memory_estimate.py",
+    "step_harness": "qual_step.py",
+    "note": "Unsigned experimental host. Do not deploy live until 8xH200 qual JSON is green and ROOT re-admits a signed bundle."
+  },
+  "kl_ignored": true,
+  "runtime_versions_expected": {
+    "torch": "2.14+",
+    "transformers": "5.14.x",
+    "flash-linear-attention": "0.6.x"
+  }
+}
