@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.4 / host-v834c).
+"""Apply ONE SN120 turn step to a batch file locally, with the live trainer code (v8.3.4e / host-v834e).
 
 What runs here is the validator's own code, imported from miner/validator/ (verbatim copies, sha256 in
 miner/validator/MANIFEST.sha256):
@@ -187,7 +187,7 @@ def main(argv=None):
         groups.append(grp)
     # 3. config: the signed GRPO settings; v8.3.4 forces kl_coefficient=0 (train.kl recorded but ignored)
     base_cfg = TrainerConfig(**CFG['trainer_config']['settings']).validate()
-    # v8.3.4: accept train.kl for reporting but force kl_coefficient=0 (matches live host-v834c; no Genesis ref)
+    # v8.3.4: accept train.kl for reporting but force kl_coefficient=0 (matches live host-v834e; no Genesis ref)
     config = base_cfg if (base_cfg.kl_coefficient == 0 and not getattr(base_cfg, 'kl_reference_checkpoint', None)) else dataclasses.replace(
         base_cfg, kl_coefficient=0., kl_reference_checkpoint='').validate()
     m = 1.0 if lr == E['sgd_lr'] else lr / E['sgd_lr']

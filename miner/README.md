@@ -4,7 +4,7 @@ Everything a miner needs to build a batch file, train the exact step the validat
 the exact held-out gate math, before you spend a turn. Start here. The plain-text version of this guide is
 https://affine.io/llms.txt. The live contract is https://affine.io/mining.json, and it wins if the two disagree.
 
-**What's published here.** The code below is the code the validator runs today (trainer **v8.3.4** / host-v834c, gate `prior-v1`,
+**What's published here.** The code below is the code the validator runs today (trainer **v8.3.4e** / host-v834e, gate `prior-v1`,
 free-file `affine-batch-v1/v2`). Every file's sha256 and its live source are in
 [`validator/MANIFEST.sha256`](validator/MANIFEST.sha256). Only one file is changed from the live copy:
 `gate_service.py`, which has the probe-pod SSH host and absolute paths replaced by placeholders. The task
@@ -28,8 +28,9 @@ miner/
     prompts.py / grade.py / sampler.py / kitpath.py   shared helpers (pool, prompt renderings, grader, vLLM client, imports)
     tests/test_kit_cpu.py       CPU self-test of the whole chain (tiny model + fake vLLM; no GPU)
   validator/                    the live code (verbatim; MANIFEST.sha256)
-    trainer-v834c/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step), v8211_batched.py (loss), v83_*.py, patched/ (KL ignored)
+    trainer-v834e/              ff_trainer.py, mimo_host_trainer_v83.py (sgd_step, fail-closed fp32 master), v8211_batched.py (loss), v83_*.py, patched/ (KL ignored)
                                 trainer-config.public.json = the live engine block + TrainerConfig + runtime versions
+    trainer-v834c/              prior release kept verbatim (pre fail-closed fp32 master)
     engine/                     subnet/mimo_grpo (the engine the host trainer drives) + vendor/mimo_verl_pinned (GRPO advantage)
     batch/ff_format.py          the batch-file parser / checker / tokenizer the lifecycle uses
     gate/                       baseline_v1.py (prior-v1 draw + estimate), prior_gate.py (round logic), gate_service.py, heldout.py, gate_core.py, gate-config.public.json
@@ -136,7 +137,7 @@ miner/
 
 ## 3. The training step (v8.3.4): what `kit/train_step.py` runs
 
-This is one stateless step from the published head. All the code is in `validator/trainer-v834c` and `validator/engine`.
+This is one stateless step from the published head. All the code is in `validator/trainer-v834e` and `validator/engine`.
 The live settings are in `trainer-config.public.json`.
 
 - **Loss** (`v8211_batched.train_update_batched`): GRPO with one group per prompt, PPO clip 0.2, dual clip 3.0.
@@ -164,10 +165,10 @@ The live settings are in `trainer-config.public.json`.
   by the tensor's group scale (lr_scale_attn / mlp / embed / lm_head; norms 1) × lr_scale_early (layers 0–15) or lr_scale_late
   (16–31); clamp_mode global_norm drops c_t and caps the whole step at global_norm_cap (both: c_t and then global_norm_cap);
   adv_center / adv_clip set the GRPO advantages; loss_agg token_mean weighs tokens instead of rollouts. The direction is
-  always g_t/‖g_t‖. Code: `validator/trainer-v834c/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
+  always g_t/‖g_t‖. Code: `validator/trainer-v834e/mimo_host_trainer_v83.py` (`knob_scale`, `_fresh_adam_step`) and
   `v8211_batched.py` (`_apply_knobs`); `kit/train_step.py` applies them exactly like the live wrapper.
 - **Kernels.** On a GPU `train_step.py` runs the live trainer's own training forward: engine `packed` with the trainer's
-  kernels installed on the actor (KL reference no longer loaded as of v8.3.4) (`validator/trainer-v834c/v83_fast_kernels.py`: fla 0.6.0
+  kernels installed on the actor (KL reference no longer loaded as of v8.3.4) (`validator/trainer-v834e/v83_fast_kernels.py`: fla 0.6.0
   `causal_conv1d` + `chunk_gated_delta_rule` varlen, torch gated RMSNorm, FlashAttention-2 varlen; packed log-probs as in
   `v83_dp.py`). What still differs from the live run: one process instead of 8 GPUs with an NCCL sum, and the micro-batch
   grouping, so the gradient differs at the bf16 rounding level (sum order, atomics), not bit-exactly.
@@ -208,7 +209,7 @@ python3 kit/grad_probe.py run --head head --batch batch.json --hotkey <ss58> --m
 python3 kit/grad_probe.py compare g_kit.safetensors g_trainer.safetensors
 ```
 
-`kit` is what `train_step.py` runs; `trainer` is the live trainer's forward set up directly from `validator/trainer-v834c`;
+`kit` is what `train_step.py` runs; `trainer` is the live trainer's forward set up directly from `validator/trainer-v834e`;
 `legacy` is the old `padded` path; `fp32ref` is a slow fp32 pure-torch reference. Kit vs trainer should give a cosine of at
 least 0.99 and a norm ratio near 1.0 in every block, layers 0–7 included. Much lower means your environment (package
 versions, kernels, edited files) does not compute the gate trainer's gradient.

@@ -1,6 +1,6 @@
 # Affine (Bittensor SN120): how mining works and how to win
 
-Last updated: 2026-11-06 18:05 CR (UTC-6): training reverted to 32K (host-v834c); gate remains 64K; E815 fail-closed -> no_decision; probe deadline from run_start (2400s).
+Last updated: 2026-11-08: trainer-v834e fail-closed fp32 master (no silent bf16 upcast; ROOT override only; durable PIN GC). Prior: 2026-11-06 18:05 CR training reverted to 32K (host-v834c); gate 64K; E815 fail-closed -> no_decision.
 
 The live contract is https://affine.io/mining.json (`batch_file`, `training`). If this text and mining.json disagree, mining.json wins.
 Training caps: https://affine.io/caps.json is the canonical training source (repo: caps.json, loader caps.py). Today it says
@@ -140,7 +140,11 @@ structural check, and it needs no tokenizer.
 ## 4. Training: the exact v8.3.4 step (one stateless step per turn)
 
 Every turn starts from the published head and its fp32 master, with no continuous training. The code is
-miner/validator/trainer-v834c (+ engine/) and the live settings are in miner/validator/trainer-v834c/trainer-config.public.json.
+miner/validator/trainer-v834e (+ engine/; prior release kept at trainer-v834c) and the live settings are in
+miner/validator/trainer-v834e/trainer-config.public.json.
+v8.3.4e (host-v834e) = v8.3.4c + fail-closed fp32 master: abort if the matching master cannot be loaded from memory or the
+local store; never silently upcast bf16->fp32 (ROOT-signed bootstrap override only); PIN files never expire; GC also keeps
+the current input head and previous admitted head; training results emit fp32_master_source and fp32_master_hash_in/out.
 v8.3.4c (host-v834c, restored 2026-11-06 18:05 CR) = 32K training caps (rollouts up to 36,864 tokens of prompt + output trained
 in full; free-file overlong window 53846..65536; BUDGET 65536, LOGIT_CHUNK 4096) + KL removed: train.kl still accepted/parsed in [0.005, 0.1] so old
 files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference model is loaded.
@@ -344,7 +348,7 @@ files validate, but kl_applied=0 and no Genesis / initial-checkpoint reference m
 
 https://github.com/AffineFoundation/affine/tree/main/miner, with miner/README.md as the entry point. The validator code
 in it is verbatim from the live services (sha256 + live source per file in validator/MANIFEST.sha256). The kit contains:
-- the trainer v8.3.4 (host-v834c) host + engine;
+- the trainer v8.3.4e (host-v834e) host + engine (fail-closed fp32 master); prior trainer-v834c kept verbatim;
 - ff_format (the batch checker);
 - heldout.py / gate_core.py / gate_service.py (the gate; probe host and paths replaced by placeholders);
 - probe serve.sh / probe_worker.py (sampling and grading);
@@ -381,7 +385,7 @@ uses the fp32 master when present; --activation-checkpointing, off by default, f
   After a GREEN, everything is in /k1/turns/<epoch>/green.json: tasks, baseline, probe results, decision math, file and lr / kl.
 - Does the turn batch count in the gate? Yes. The candidate is scored on all kept tasks, including any that are in your file.
 - What does the gate run, exactly? miner/validator/gate/heldout.py (score_ivw) and gate_core.py, with the settings in gate-config.public.json.
-- What does the trainer run, exactly? miner/validator/trainer-v834c + engine/. kit/train_step.py imports exactly those files (KL ignored; `--ref` optional/unused).
+- What does the trainer run, exactly? miner/validator/trainer-v834e + engine/. kit/train_step.py imports exactly those files (KL ignored; `--ref` optional/unused).
 - Why are my off-support tokens not trained? Support renorm: only tokens inside the head's top-20 / top-p 0.95 support carry PG; with KL off they do not fall back to a KL term either.
 - Where's the fp32 master? https://affine.io/k1/fp32-master/<head>.json lists it (sha256 per file) with download links.
   python3 miner/kit/fetch_fp32_master.py --out ./head-fp32-master fetches and verifies the current head's master (~36 GB).
