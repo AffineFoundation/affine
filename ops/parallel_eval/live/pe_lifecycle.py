@@ -15,9 +15,11 @@ Lifecycle never holds dispatch waiting for a PIT decision and never hands the jo
 to the standing trainer (WARM-OFF). Cutover STILL runs ff/v829 selection so
 K1-TURN + TRAIN-DISPATCH-FF + signed TRAINING-JOB are written, then marks the
 epoch ``PIT-DISPATCHED.json`` and returns no-update. queue_ingest picks up
-PIT-DISPATCHED epochs even after FINALIZED. Lifecycle also (a) offers a ready
-PIT GREEN apply when base head matches. k1/weights read PIT DECISION.json /
-HEAD-CHAIN / PIT-RESULT for miner credit.
+PIT-DISPATCHED epochs even after FINALIZED (and even when CURRENT has advanced
+past them). Backpressure: when ``PIT-DISPATCHED`` without ``PIT-RESULT`` count
+>= ``pit.max_pending`` (default ``pit.max_boxes``), cutover returns None (idle
+retry; no error). Lifecycle also (a) offers a ready PIT GREEN apply when base
+head matches. k1/weights read PIT DECISION.json / HEAD-CHAIN / PIT-RESULT.
 """
 import json, os, time
 from pathlib import Path
@@ -106,7 +108,8 @@ def pit_cutover():
     Jacob 2026-11-09: PIT owns the batch queue (cap N boxes) independent of the
     one-open-epoch lifecycle. This wrapper only (a) offers a ready PIT GREEN apply
     when base head matches, or (b) returns no-update so weight nonces keep moving.
-    Never returns None waiting for a per-epoch PIT DECISION.
+    Never returns None waiting for a per-epoch PIT DECISION. May return None for
+    PIT backlog backpressure (``max_pending``) — idle/retry, not an error.
     """
     _sync_paths()
     pe = (_rj(flag_path(), {}) or {}).get("parallel_eval") or {}
@@ -119,6 +122,35 @@ def pit_cutover():
         and pit.get("mode") == "live"
         and pit.get("cutover") is True
     )
+
+
+def _pit_max_pending() -> int:
+    """Bound on PIT-DISPATCHED epochs without PIT-RESULT (default: pit.max_boxes)."""
+    _sync_paths()
+    pe = (_rj(flag_path(), {}) or {}).get("parallel_eval") or {}
+    pit = pe.get("pit") or {}
+    raw = pit.get("max_pending")
+    if raw is None:
+        raw = pit.get("max_boxes")
+    try:
+        n = int(raw if raw is not None else 5)
+    except (TypeError, ValueError):
+        n = 5
+    return max(1, n)
+
+
+def _pit_inflight_count(epochs_root: Path) -> int:
+    """Count epochs with PIT-DISPATCHED and no PIT-RESULT under the epochs root."""
+    root = Path(epochs_root)
+    if not root.is_dir():
+        return 0
+    n = 0
+    for d in root.iterdir():
+        if not d.is_dir() or not d.name.isdigit():
+            continue
+        if (d / "PIT-DISPATCHED.json").is_file() and not (d / "PIT-RESULT.json").is_file():
+            n += 1
+    return n
 
 
 def closure_var(fn, name):
@@ -223,6 +255,15 @@ def install_pe(Lifecycle):
                             **({"publication_receipt_sha256": a["publication_receipt_sha256"]} if a.get("publication_receipt_sha256") else {}))
             marker = d / "PIT-DISPATCHED.json"
             if not marker.exists():
+                # Backpressure: lifecycle drains K1 ~50/h; PIT at cap N does ~N/h.
+                # Do not open/dispatch a new epoch while inflight PIT-DISPATCHED
+                # (no PIT-RESULT) >= pit.max_pending (default pit.max_boxes). Idle
+                # and retry — no error, no RECOVERY-REQUIRED. Next dispatch trains
+                # from whatever HEAD is current then.
+                max_pending = _pit_max_pending()
+                inflight = _pit_inflight_count(d.parent)
+                if inflight >= max_pending:
+                    return None
                 # Drive ff selection / job write. Standing trainer is WARM-OFF, so
                 # a returned None (waiting for TRAINING-RESULT) is expected — we
                 # do NOT wait and do NOT apply an "updated" standing-trainer result.

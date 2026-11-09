@@ -277,6 +277,46 @@ class TestQueueIngest(unittest.TestCase):
         self.assertTrue(out.get('master_missing'))
         self.assertIsNone(ctl.current_head)
 
+    def test_pit_dispatched_below_floor_ingests_unmarked_backlog_skipped(self):
+        """Cutover advances CURRENT past just-dispatched epochs; PIT-DISPATCHED
+        still enqueues until PIT-RESULT. Unmarked old epochs stay out.
+        """
+        # CURRENT advanced past the just-dispatched epoch (live ~1.2 min cadence).
+        (self.life / 'CURRENT.json').write_text(json.dumps({
+            'epoch_index': 1050,
+            'checkpoint': {'id': HEAD},
+        }))
+        (self.pe_state / 'CURRENT.json').write_text(json.dumps({
+            'epoch_index': 1050,
+            'checkpoint': {'id': HEAD},
+        }))
+        # Below floor, cutover-dispatched — must enqueue.
+        self._write_epoch(1048, with_finalized=True, with_pit_dispatched=True)
+        # Below floor, no marker — pre-cutover backlog, must not enqueue.
+        self._write_epoch(1040)
+        # Below floor, already finished — skip.
+        self._write_epoch(
+            1047, with_finalized=True, with_pit_dispatched=True, with_pit_result=True,
+        )
+        # At floor — still eligible.
+        self._write_epoch(1050)
+
+        ctl = self._ctl()
+        out = sync(ctl, store=DurableStore(root=self.pe_state / 'pit'))
+        self.assertEqual(out['current_epoch_floor'], 1050)
+        self.assertEqual(sorted(out['enqueued']), [1048, 1050])
+        self.assertNotIn(1040, out['enqueued'])
+        self.assertNotIn(1047, out['enqueued'])
+
+        # Inbox ticket below floor with PIT-DISPATCHED epoch dir also enqueues.
+        inbox = self.pe_state / 'pit' / 'inbox'
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / 'e1049.json').write_text(json.dumps({'epoch': 1049, 'uid': 9}))
+        self._write_epoch(1049, with_finalized=True, with_pit_dispatched=True)
+        ctl2 = self._ctl()
+        out2 = sync(ctl2, store=DurableStore(root=self.pe_state / 'pit'))
+        self.assertIn(1049, out2['enqueued'])
+
     def test_life_root_not_pe_life_state_floor_fail_closed(self):
         """PE_LIFE_STATE without CURRENT must not set floor=0 / enqueue backlog.
 

@@ -70,6 +70,10 @@ def _v829i(Lifecycle):
 class TestPitLifecycleDecoupled(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Re-export after earlier suite modules may have popped these.
+        os.environ['PE_LIFE_STATE'] = str(_LIFE)
+        os.environ['PE_GATE_EP'] = str(_EP)
+        os.environ['PE_FLAG'] = str(_FLAG)
         _flag()
         _v829i(Life)
         PL.install_pe(Life)
@@ -113,7 +117,9 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
         # Must never write lifecycle PIT-CLAIM wait tokens.
         self.assertFalse(any(_LIFE.glob('PIT-CLAIM-e*.json')))
 
-    def test_successive_epochs_never_hold_none(self):
+    def test_successive_epochs_never_hold_none_under_cap(self):
+        """Under max_pending, cutover still finalizes (never waits on trainer)."""
+        _flag(max_pending=10, max_boxes=2)
         for e in (1, 2, 3, 4, 5, 6):
             ep = self._ep(e)
             r = Life()._training(ep, None, None, self._cur(), time.time())
@@ -122,6 +128,33 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
             self.assertIn('pit-decoupled', r['reason'])
             self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
         self.assertEqual(_TRAINER_CALLS, ['1', '2', '3', '4', '5', '6'])
+
+    def test_cutover_backpressure_idles_at_max_pending_resumes_on_pit_result(self):
+        """Do not dispatch when PIT-DISPATCHED-without-RESULT >= max_pending."""
+        _flag(max_pending=2, max_boxes=2)
+        ep1 = self._ep(1)
+        ep2 = self._ep(2)
+        ep3 = self._ep(3)
+        r1 = Life()._training(ep1, None, None, self._cur(), time.time())
+        r2 = Life()._training(ep2, None, None, self._cur(), time.time())
+        self.assertEqual(r1['status'], 'no-update')
+        self.assertEqual(r2['status'], 'no-update')
+        self.assertTrue((ep1 / 'PIT-DISPATCHED.json').is_file())
+        self.assertTrue((ep2 / 'PIT-DISPATCHED.json').is_file())
+        # At cap: idle — None, no error, no marker, no trainer call for e3.
+        r3 = Life()._training(ep3, None, None, self._cur(), time.time())
+        self.assertIsNone(r3)
+        self.assertFalse((ep3 / 'PIT-DISPATCHED.json').exists())
+        self.assertEqual(_TRAINER_CALLS, ['1', '2'])
+        # Free a slot with PIT-RESULT → resume dispatch for e3.
+        (ep1 / 'PIT-RESULT.json').write_text(json.dumps({
+            'status': 'pit-result', 'decision': 'green_fresh',
+        }))
+        r3b = Life()._training(ep3, None, None, self._cur(), time.time())
+        self.assertIsNotNone(r3b)
+        self.assertEqual(r3b['status'], 'no-update')
+        self.assertTrue((ep3 / 'PIT-DISPATCHED.json').is_file())
+        self.assertEqual(_TRAINER_CALLS, ['1', '2', '3'])
 
     def test_ready_fresh_green_offers_apply(self):
         head = 'H' * 64

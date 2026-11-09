@@ -9,10 +9,11 @@ Sources (idempotent):
 Real K1-TURN.json has ``epoch`` as a run-id string
 (e.g. ``affine-mimo9b-grpo-20261013-e001050``); the integer is ``epoch_index``.
 
-Do **not** enqueue the backlog: only ``epoch_index >= CURRENT.epoch_index``,
-require TRAINING-JOB + TRAIN-DISPATCH-FF (or K1), skip TRAINING-RESULT /
-PIT-RESULT; FINALIZED epochs remain ingestible only when PIT-DISPATCHED.
-``registration_index = epoch_index`` (not queue_position).
+Do **not** enqueue the pre-cutover backlog: ``epoch_index >= CURRENT.epoch_index``
+unless the epoch has ``PIT-DISPATCHED.json`` and no ``PIT-RESULT.json`` (cutover
+finalizes and advances CURRENT within ~1s, so just-dispatched epochs sit below
+the floor until PIT finishes). Require TRAINING-JOB + TRAIN-DISPATCH-FF (or K1);
+skip TRAINING-RESULT / PIT-RESULT. ``registration_index = epoch_index``.
 
 Head is refreshed from HEAD-CHAIN / CURRENT so each spawn binds the live head.
 Lifecycle never feeds work by claiming epochs.
@@ -191,6 +192,26 @@ def _current_epoch_floor() -> int:
         'CURRENT.json missing/unreadable under LIFE_ROOT/PE_LIFE (and PE_STATE); '
         'refusing enqueue (never floor=0): %s' % '; '.join(errors[:4])
     )
+
+
+def _pit_dispatched_open(epoch_dir: Optional[Path]) -> bool:
+    """True when cutover marked PIT-DISPATCHED and PIT has not finished yet."""
+    if epoch_dir is None:
+        return False
+    d = Path(epoch_dir)
+    if not d.is_dir():
+        return False
+    return (
+        (d / 'PIT-DISPATCHED.json').is_file()
+        and not (d / 'PIT-RESULT.json').is_file()
+    )
+
+
+def _above_floor_or_pit_open(epoch: int, floor: int, epoch_dir: Optional[Path]) -> bool:
+    """Floor gate: PIT-DISPATCHED-without-RESULT always eligible; else epoch >= floor."""
+    if int(epoch) >= int(floor):
+        return True
+    return _pit_dispatched_open(epoch_dir)
 
 
 def _epoch_dir_ready(epoch_dir: Path) -> bool:
@@ -424,6 +445,7 @@ def _master_for_head(head: str) -> Optional[str]:
 def _inbox_batches(*, floor: int) -> List[Dict[str, Any]]:
     """Host PIT inbox: one JSON ticket per queued batch."""
     rows: List[Dict[str, Any]] = []
+    life = _life_root()
     for inbox in (_pit_state_root() / 'inbox', _pe_state_root() / 'pit' / 'inbox'):
         if not inbox.is_dir():
             continue
@@ -432,7 +454,10 @@ def _inbox_batches(*, floor: int) -> List[Dict[str, Any]]:
             if not isinstance(doc, Mapping):
                 continue
             epoch = _epoch_index_of(doc)
-            if epoch is None or epoch < floor:
+            if epoch is None:
+                continue
+            ed = (life / 'epochs' / str(epoch)) if life is not None else None
+            if not _above_floor_or_pit_open(epoch, floor, ed):
                 continue
             batch_path = (
                 doc.get('batch_path') or doc.get('batch') or doc.get('batch_file')
@@ -471,7 +496,7 @@ def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
             epoch = _epoch_index_of(turn, dir_name=d.name)
             if epoch is None:
                 continue
-            if epoch < floor:
+            if not _above_floor_or_pit_open(epoch, floor, d):
                 continue
             if not _epoch_dir_ready(d):
                 continue
@@ -500,9 +525,11 @@ def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
             if not isinstance(turn, Mapping):
                 continue
             epoch = _epoch_index_of(turn)
-            if epoch is None or epoch < floor:
+            if epoch is None:
                 continue
             ed = life / 'epochs' / str(epoch)
+            if not _above_floor_or_pit_open(epoch, floor, ed if ed.is_dir() else None):
+                continue
             if ed.is_dir() and not _epoch_dir_ready(ed):
                 continue
             rows.append(dict(
@@ -537,9 +564,11 @@ def _legacy_pending_rows(*, floor: int) -> List[Dict[str, Any]]:
             continue
         stem = path.stem.lstrip('e')
         epoch = _epoch_index_of(doc, dir_name=stem if stem.isdigit() else None)
-        if epoch is None or epoch < floor:
+        if epoch is None:
             continue
         ed = life / 'epochs' / str(epoch)
+        if not _above_floor_or_pit_open(epoch, floor, ed if ed.is_dir() else None):
+            continue
         if ed.is_dir() and not _epoch_dir_ready(ed):
             continue
         rows.append(dict(
@@ -599,9 +628,11 @@ def _sync_inner(
 
     enqueued: List[int] = []
     skipped_backlog = 0
+    life = _require_life_root()
     for row in ordered:
         epoch = int(row['epoch'])
-        if epoch < floor:
+        ed = life / 'epochs' / str(epoch)
+        if not _above_floor_or_pit_open(epoch, floor, ed if ed.is_dir() else None):
             skipped_backlog += 1
             continue
         if epoch in known_epochs:
@@ -618,7 +649,7 @@ def _sync_inner(
             ingest_source=row.get('source'),
             batch_path=batch_path,
             ticket_path=row.get('path'),
-            epoch_dir=str(_require_life_root() / 'epochs' / str(epoch)),
+            epoch_dir=str(ed),
         )
         known_epochs.add(epoch)
         enqueued.append(epoch)

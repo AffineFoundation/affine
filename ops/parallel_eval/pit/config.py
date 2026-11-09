@@ -39,6 +39,9 @@ class PitConfig:
     enabled: bool = False
     mode: str = 'shadow'
     max_boxes: int = MAX_BOXES_SHADOW
+    # Lifecycle cutover backpressure: max PIT-DISPATCHED without PIT-RESULT.
+    # None ⇒ same as max_boxes (pe_lifecycle reads the flag directly).
+    max_pending: Optional[int] = None
     master_upload: str = MASTER_UPLOAD_AFTER_GREEN
     baseline: str = BASELINE_OPTION_A
     gpu_order: tuple = GPU_PINNED
@@ -121,7 +124,8 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
             raise ValueError('PIT rents on demand only; %r is refused' % banned)
 
     known = {
-        'enabled', 'mode', 'max_boxes', 'box_cap', 'master_upload', 'baseline',
+        'enabled', 'mode', 'max_boxes', 'box_cap', 'max_pending', 'master_upload',
+        'baseline',
         'gpu_order', 'max_attempts', 'decision_timeout_seconds', 'price_ceiling_usd_h',
         'k_cand', 'head_rollouts', 'n_drawn', 'max_output_tokens', 'train_output_tokens',
         'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'cutover', 'revert',
@@ -163,6 +167,8 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         raise ValueError('revert and cutover cannot both be true')
     if cfg.max_boxes < 1:
         raise ValueError('max_boxes must be >= 1')
+    if cfg.max_pending is not None and int(cfg.max_pending) < 1:
+        raise ValueError('max_pending must be >= 1')
     if cfg.mode == 'live' and cfg.max_boxes > MAX_BOXES_LIVE:
         raise ValueError('live max_boxes cannot exceed %d' % MAX_BOXES_LIVE)
     if float(cfg.price_ceiling_usd_h) > PRICE_CEILING_USD_H + 1e-9:
