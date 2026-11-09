@@ -75,9 +75,11 @@ class TestQueueIngest(unittest.TestCase):
         self.assertEqual(out2['enqueued'], [])
 
     def test_inbox_batch_preferred_over_pending(self):
-        inbox = self.td / 'pit' / 'inbox'
+        # PIT_STATE must equal PE_STATE/pit (shared fail-closed source of truth).
+        pit_root = self.pe_state / 'pit'
+        inbox = pit_root / 'inbox'
         inbox.mkdir(parents=True)
-        os.environ['PIT_STATE'] = str(self.td / 'pit')
+        os.environ['PIT_STATE'] = str(pit_root)
         (inbox / 'batch-55.json').write_text(json.dumps({
             'epoch': 55,
             'uid': 9,
@@ -91,7 +93,7 @@ class TestQueueIngest(unittest.TestCase):
             'pit_claimed': False,
         }))
         ctl = self._ctl()
-        out = sync(ctl, store=DurableStore(root=self.td / 'pit'))
+        out = sync(ctl, store=DurableStore(root=pit_root))
         self.assertEqual(out['enqueued'], [55])
         self.assertEqual(ctl.items[0].uid, 9)
         self.assertEqual(ctl.items[0].meta.get('ingest_source'), 'inbox')

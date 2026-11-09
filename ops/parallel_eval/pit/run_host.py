@@ -67,13 +67,15 @@ def build_controller(
     allow_unwired: bool = False,
 ) -> Controller:
     cfg = load_pit_config(parallel_eval)
-    if cfg.is_shadow() and allow_unwired:
+    if allow_unwired and cfg.is_shadow():
         ctl = Controller.from_flag(dict(parallel_eval))
         for item in store.list_items():
             ctl.items.append(item)
         return ctl
 
-    if cfg.is_live() and cfg.enabled:
+    # Real wiring for BOTH live and shadow: real pe_rent/pe_lane/pe_box/pe_score.
+    # Shadow writes only to PIT_STATE (gate_writer.shadow=True); never live DECISION/HEAD.
+    if cfg.enabled and (cfg.is_live() or cfg.is_shadow()):
         try:
             bundle = build_live_host_bundle(
                 parallel_eval if 'pit' in parallel_eval else {'pit': (parallel_eval.get('pit') or cfg.as_dict())},
@@ -81,14 +83,16 @@ def build_controller(
             )
         except LiveWiringError as exc:
             raise RuntimeError(str(exc)) from exc
-        applicator = LiveApplicator(
-            config=cfg,
-            verify_uploads=bundle.verify_uploads,
-            accept_pit_decision=bundle.pe_apply_accept,
-            destroy_state=bundle.destroy_box_state_fn,
-            upload_master=bundle.upload_master,
-            upload_candidate=bundle.upload_candidate,
-        )
+        applicator = None
+        if cfg.is_live():
+            applicator = LiveApplicator(
+                config=cfg,
+                verify_uploads=bundle.verify_uploads,
+                accept_pit_decision=bundle.pe_apply_accept,
+                destroy_state=bundle.destroy_box_state_fn,
+                upload_master=bundle.upload_master,
+                upload_candidate=bundle.upload_candidate,
+            )
         ctl = Controller(
             config=cfg,
             rent=bundle.rent,
@@ -100,6 +104,7 @@ def build_controller(
             indices_fn=bundle.indices_fn,
             live_applicator=applicator,
             destroy_box_state_fn=bundle.destroy_box_state_fn,
+            durable_save_fn=store.save_item,
         )
         ledger = store.root / 'rent-ledger.json'
         ctl.rent.ledger_path = str(ledger)

@@ -66,6 +66,38 @@ cutover_ops.write_warm_off(Path(sys.argv[1]))
 print("cutover_enable: wrote WARM-OFF under", sys.argv[1])
 PY
 
+
+stop_pe_controller_process() {
+  # Stop live pe_controller even when it runs as a bare process (not only systemd).
+  local pidfile="${PE_CONTROLLER_PIDFILE:-${PE_STATE}/pe-controller.pid}"
+  local pid=""
+  if [[ -f "$pidfile" ]]; then
+    pid="$(tr -d "[:space:]" < "$pidfile" || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      local cmd
+      cmd="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+      if echo "$cmd" | grep -Eq "pe_controller|pe-controller"; then
+        echo "cutover_enable: stopping pe_controller pid=$pid ($cmd)"
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+        return 0
+      fi
+      echo "cutover_enable: pidfile $pidfile pid=$pid cmdline mismatch; not killing" >&2
+    fi
+  fi
+  # Cmdline match fallback (exact pe_controller module).
+  while read -r pid cmd; do
+    [[ -z "$pid" ]] && continue
+    if echo "$cmd" | grep -Eq "(^|[[:space:]])pe_controller(\.py)?|[[:space:]]-m[[:space:]]+.*pe_controller"; then
+      echo "cutover_enable: stopping pe_controller pid=$pid via cmdline match"
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+  done < <(ps -eo pid=,args= 2>/dev/null | grep -E "pe_controller" | grep -v grep || true)
+}
+
 if [[ -n "$PE_CONTROLLER_UNIT" ]] && command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop "$PE_CONTROLLER_UNIT" 2>/dev/null || true
   echo "cutover_enable: stopped $PE_CONTROLLER_UNIT (best-effort)"
@@ -73,6 +105,7 @@ elif [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/pe-controller.service
   systemctl --user stop pe-controller.service 2>/dev/null || true
   echo "cutover_enable: stopped pe-controller.service (best-effort)"
 fi
+stop_pe_controller_process || true
 
 echo "cutover_enable: next step -> systemctl --user start affine-pit-host"
 echo "cutover_enable: install unit template ops/parallel_eval/pit/scripts/affine-pit-host.service (placeholders)"

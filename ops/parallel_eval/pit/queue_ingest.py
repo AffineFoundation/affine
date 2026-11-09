@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, TYPE_CHECKING
 
+from .durable import pit_state_root
 from .expected_master import lookup_expected_master
 
 if TYPE_CHECKING:
@@ -40,10 +41,8 @@ def _pe_state_root() -> Path:
 
 
 def _pit_state_root() -> Path:
-    env = os.environ.get('PIT_STATE')
-    if env:
-        return Path(env)
-    return _pe_state_root() / 'pit'
+    # Shared fail-closed source of truth with run_host / pe_live claim checks.
+    return pit_state_root()
 
 
 def _life_root() -> Path:

@@ -256,10 +256,10 @@ def _pit_cutover():
 
 
 def dispatch_tick(submit):
-    # When PIT is enabled, stop creating single-trainer / PE-lane dispatches.
-    # apply_tick / reconcile_tick stay active. Revert flag restores dispatch.
-    if _pit_enabled():
-        return {"pit": "dispatch_noop", "cutover": _pit_cutover()}
+    # Stop live PE dispatch ONLY when pit.enabled AND pit.cutover are both true.
+    # Shadow must never affect live dispatch.
+    if _pit_cutover():
+        return {"pit": "dispatch_noop", "cutover": True}
     out = {}
     for p in sorted(PENDING.glob("e*.json")):
         pend = rj(p) or {}
@@ -267,7 +267,14 @@ def dispatch_tick(submit):
         if (JOBS / ("live-e%d" % e) / "JOB.json").exists() or (EP / str(e) / "DECISION.json").exists():
             continue
         # PIT host owns this batch (skip marker); never PE-lane double-dispatch.
-        if (LST / ("PIT-CLAIM-e%d.json" % e)).exists() or (Path(os.environ.get("PIT_STATE") or (ST / "pit")) / ("PIT-CLAIM-e%d.json" % e)).exists():
+        from pathlib import Path as _P
+        _pit = os.environ.get("PIT_STATE")
+        _pe = os.environ.get("PE_STATE") or str(ST)
+        _pe_pit = str(_P(_pe) / "pit")
+        if _pit and _P(_pit).resolve() != _P(_pe_pit).resolve():
+            raise RuntimeError("PIT_STATE=%s disagrees with PE_STATE/pit=%s" % (_pit, _pe_pit))
+        _claim_roots = [LST, _P(_pit or _pe_pit), _P(_pit or _pe_pit) / "claims"]
+        if any((_r / ("PIT-CLAIM-e%d.json" % e)).exists() for _r in _claim_roots):
             out[e] = "pit-claimed"; continue
         spec, why = live_spec(e, pend)
         if spec is None:

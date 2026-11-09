@@ -105,6 +105,19 @@ class TestCutoverOps(unittest.TestCase):
             text=True,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        enable = (SCRIPTS / 'cutover_enable.sh').read_text()
+        self.assertIn('stop_pe_controller_process', enable)
+        self.assertIn('PE_CONTROLLER_PIDFILE', enable)
+        self.assertIn('cmdline', enable)
+        revert = (SCRIPTS / 'cutover_revert.sh').read_text()
+        self.assertIn('start_pe_controller_process', revert)
+        self.assertIn('PE_CONTROLLER_START_CMD', revert)
+        proc2 = subprocess.run(
+            ['bash', '-n', str(SCRIPTS / 'cutover_revert.sh')],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
 
 
 class TestCutoverRestore(unittest.TestCase):

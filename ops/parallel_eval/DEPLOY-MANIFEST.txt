@@ -67,6 +67,12 @@ ops/parallel_eval/live/pe_round_seed.py
 docs/PIT.md
 ops/parallel_eval/DEPLOY-MANIFEST.txt
 
+# --- Shared durable + serverless job lifecycle (controller imports from release) ---
+ops/parallel_eval/durable.py
+ops/jobs/__init__.py
+ops/jobs/kinds.py
+ops/jobs/runner.py
+
 # Deploy notes:
 # 1. Prefer additive-patch of live pe_apply.py for accept_pit_decision only if
 #    replacing the whole file would drop _sync_expected_hash_after_head_apply.

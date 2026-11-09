@@ -82,7 +82,7 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                     name = str(p)
                 if name in warm_names or name.startswith('affine-warm-'):
                     continue
-                if name.startswith('affine-pit-'):
+                if name.startswith('affine-pe-pit-') or name.startswith('affine-pit-'):
                     continue
                 n += 1
             return n
@@ -155,10 +155,11 @@ def build_live_host_bundle(
 ) -> LiveHostBundle:
     """Wire all live host seams. Raises ``LiveWiringError`` if anything is missing."""
     cfg = load_pit_config(parallel_eval)
-    if not cfg.is_live() or not cfg.enabled:
-        raise LiveWiringError('build_live_host_bundle requires enabled live pit config')
-    if cfg.root_mode != LIVE_ROOT_MODE:
+    if not cfg.enabled or not (cfg.is_live() or cfg.is_shadow()):
+        raise LiveWiringError('build_live_host_bundle requires enabled live or shadow pit config')
+    if cfg.is_live() and cfg.root_mode != LIVE_ROOT_MODE:
         raise LiveWiringError('live ROOT path is delegated_host only')
+    # Shadow may use fixture signer; live still requires delegated_host.
 
     extra = dict(cfg.extra or {})
     rent_mod = _import_module(
@@ -252,10 +253,14 @@ def build_live_host_bundle(
             raise LiveWiringError('ScriptedBoxIO refused in live mode')
         return io
 
+    root_signer = None
     try:
         root_signer = load_delegated_host_signer()
     except Exception as exc:
-        raise LiveWiringError('delegated root signer required: %s' % exc) from exc
+        if cfg.is_live():
+            raise LiveWiringError('delegated root signer required: %s' % exc) from exc
+        # Shadow: real boxes still preferred; admission may use fixture later.
+        root_signer = None
 
     ledger_path = extra.get('rent_ledger_path') or os.environ.get('PIT_RENT_LEDGER')
     rent = RentService(
@@ -271,12 +276,40 @@ def build_live_host_bundle(
         ledger_path=ledger_path,
     )
     _bind_shared_cap_counters(rent, rent_mod)
+    from .pe_rent import _bind_offer_precheck
+    _bind_offer_precheck(rent, rent_mod)
+
+    def _pod_of(handle):
+        if handle is None:
+            raise LiveWiringError('pod handle required')
+        if hasattr(handle, 'run'):
+            return handle
+        if isinstance(handle, Mapping):
+            pod_of = getattr(lane_mod, 'pod_of', None) or getattr(rent_mod, 'pod_of', None)
+            if not callable(pod_of):
+                try:
+                    import pe_common as _pc
+                    pod_of = _pc.pod_of
+                except Exception:
+                    from ops.parallel_eval.live import pe_common as _pc
+                    pod_of = _pc.pod_of
+            return pod_of(handle)
+        raise LiveWiringError('pod handle must be Pod or rent dict')
+
+    def _boot(pod, **kw):
+        return host_boot(_pod_of(pod), **kw)
+
+    def _serve(pod, cid, gmu='0.9', max_num_seqs=512, **kw):
+        return host_serve(_pod_of(pod), cid, gmu=gmu, max_num_seqs=max_num_seqs, **kw)
+
+    def _run_probe(pod, cid, indices, plan_seed, **kw):
+        return host_run_probe(_pod_of(pod), cid, indices, plan_seed, **kw)
 
     lane = LaneService(
         require_host=True,
-        host_boot=host_boot,
-        host_serve=host_serve,
-        host_run_probe=host_run_probe,
+        host_boot=_boot,
+        host_serve=_serve,
+        host_run_probe=_run_probe,
         host_release=getattr(lane_mod, 'release', None),
     )
 
@@ -291,7 +324,7 @@ def build_live_host_bundle(
 
     gate_writer = HostGateWriter(
         epochs_root=gate_epochs_root(extra.get('gate_epochs_root')),
-        shadow=False,
+        shadow=bool(cfg.is_shadow()),
     )
 
     pe_apply_accept = None

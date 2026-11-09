@@ -82,3 +82,29 @@ fi
 
 echo "cutover_revert: pit.revert=true, enabled=false; pe_live.dispatch_tick / warm may resume"
 echo "cutover_revert: re-rent standing pods with replace_pod.py if they were released"
+
+start_pe_controller_process() {
+  local pidfile="${PE_CONTROLLER_PIDFILE:-${PE_STATE}/pe-controller.pid}"
+  local start_cmd="${PE_CONTROLLER_START_CMD:-}"
+  if [[ -n "$PE_CONTROLLER_UNIT" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user start "$PE_CONTROLLER_UNIT" 2>/dev/null || true
+    echo "cutover_revert: started $PE_CONTROLLER_UNIT (best-effort)"
+    return 0
+  fi
+  if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/pe-controller.service" ]]; then
+    systemctl --user start pe-controller.service 2>/dev/null || true
+    echo "cutover_revert: started pe-controller.service (best-effort)"
+    return 0
+  fi
+  if [[ -n "$start_cmd" ]]; then
+    echo "cutover_revert: starting pe_controller via PE_CONTROLLER_START_CMD"
+    # shellcheck disable=SC2086
+    nohup $start_cmd >/dev/null 2>&1 &
+    echo $! > "$pidfile"
+    echo "cutover_revert: wrote pidfile $pidfile"
+  else
+    echo "cutover_revert: no PE_CONTROLLER_UNIT/START_CMD; operator must restart pe_controller" >&2
+  fi
+}
+
+start_pe_controller_process || true

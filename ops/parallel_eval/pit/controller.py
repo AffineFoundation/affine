@@ -12,6 +12,7 @@ after SEALED (SPEC D3). Lifecycle never waits on these decisions.
 """
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -73,6 +74,10 @@ class Controller:
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
     plan_seed_fn: Optional[Callable[[int], str]] = None
     indices_fn: Optional[Callable[[int], Any]] = None  # epoch → secret-draw indices (host-private)
+    durable_save_fn: Optional[Callable[[ItemRecord], None]] = None
+    _workers: Dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
+    _worker_out: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _worker_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.shadow = self.shadow or ShadowGuard(self.config)
@@ -265,7 +270,10 @@ class Controller:
                 ), 'provision'
             return self._rent_on_demand(item)
         if item.state is ItemState.PROVISIONING:
-            return self._run_box(item)
+            return self._run_box_async(item)
+        if item.state in (ItemState.TRAINING, ItemState.SEALED, ItemState.SERVING, ItemState.PROBING):
+            # Worker in flight or re-adopted after restart — wait / resume.
+            return self._poll_box_worker(item)
         if item.state is ItemState.RESULT:
             return apply_transition(item, ItemState.SCORED, reason='result-stored', updates={'result_stored': True}), 'scored'
         if item.state is ItemState.SCORED:
@@ -301,7 +309,15 @@ class Controller:
             renting = item
         else:
             raise TransitionError('rent requires BOUND or RENTING-without-box')
-        out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
+        try:
+            out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
+        except (RentError, AssertionError, RuntimeError, ValueError, TypeError) as exc:
+            # Per-item catch: a bad rent name/cap/offer must not crash the tick loop.
+            failed = apply_transition(
+                renting, ItemState.FAILED, reason='rent-error',
+                updates={'last_error': 'rent:%s' % str(exc)[:240]},
+            )
+            return failed, 'rent-error'
         if not out.get('auto_backup_disabled', True) and self.config.disable_lium_auto_backup:
             raise RentError('lium auto-backup must be disabled')
         meta = dict(renting.meta or {})
@@ -309,6 +325,14 @@ class Controller:
         if gpu:
             meta['train_gpu'] = str(gpu)
             meta['eval_gpu'] = str(gpu)  # same box trains then probes
+        # Persist the full pe_rent dict so pe_lane.serve/run_probe get a real pod handle.
+        meta['pod'] = {
+            k: out.get(k) for k in (
+                'id', 'box_id', 'name', 'ip', 'port', 'huid', 'gpu', 'price_h',
+                'price_usd_h', 'price_per_hour', 'ssh_command', 'executor',
+            ) if out.get(k) is not None
+        }
+        meta['pod']['id'] = meta['pod'].get('id') or out.get('box_id')
         provisioned = apply_transition(
             renting, ItemState.PROVISIONING, reason='rented',
             updates={
@@ -318,6 +342,91 @@ class Controller:
             },
         )
         return provisioned, 'rented'
+
+
+    def _persist(self, item: ItemRecord) -> None:
+        if self.durable_save_fn is not None:
+            try:
+                self.durable_save_fn(item)
+            except Exception:
+                pass
+
+    def _run_box_async(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        """Start one worker thread per item (up to cap); durable so restarts re-adopt.
+
+        Scripted / non-host lanes stay synchronous so unit tests remain deterministic.
+        """
+        if not self.lane.require_host and self.lane.host_run_probe is None:
+            return self._run_box(item)
+        with self._worker_lock:
+            existing = self._workers.get(item.item_id)
+            if existing is not None and existing.is_alive():
+                return item, 'box-worker-running'
+            done = self._worker_out.pop(item.item_id, None)
+        if done is not None:
+            return self._apply_worker_result(item, done)
+        # Snapshot stays PROVISIONING for BoxRunner; controller view moves to TRAINING.
+        snapshot = item
+        working = apply_transition(item, ItemState.TRAINING, reason='box-worker-start')
+        working.meta = dict(working.meta or {}, worker_started_at=self.now_fn(), worker_box_id=working.box_id)
+        self._persist(working)
+
+        def _target(snap: ItemRecord) -> None:
+            try:
+                # BoxRunner requires PROVISIONING at entry.
+                if snap.state is not ItemState.PROVISIONING:
+                    snap = apply_transition(snap, ItemState.PROVISIONING, reason='worker-entry')
+                updated, note = self._run_box(snap)
+                payload = dict(ok=True, item=updated, note=note)
+            except Exception as exc:
+                payload = dict(ok=False, error=str(exc)[:400], item_id=snap.item_id)
+            with self._worker_lock:
+                self._worker_out[snap.item_id] = payload
+                self._workers.pop(snap.item_id, None)
+
+        thr = threading.Thread(
+            target=_target, args=(snapshot,),
+            name='pit-box-%s' % working.item_id[:12], daemon=True,
+        )
+        with self._worker_lock:
+            self._workers[working.item_id] = thr
+        thr.start()
+        return working, 'box-worker-started'
+
+    def _poll_box_worker(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        with self._worker_lock:
+            thr = self._workers.get(item.item_id)
+            done = self._worker_out.pop(item.item_id, None)
+        if done is not None:
+            return self._apply_worker_result(item, done)
+        if thr is not None and thr.is_alive():
+            return item, 'box-worker-running'
+        # No live worker after restart: re-adopt the box and re-run train+probe.
+        if item.box_id and (item.meta or {}).get('pod'):
+            meta = dict(item.meta or {})
+            meta.pop('probe_bundle', None)
+            item.meta = meta
+            item.sealed = False
+            item.result_stored = False
+            item.candidate_id = None
+            if item.state is not ItemState.PROVISIONING:
+                try:
+                    item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-worker')
+                except TransitionError:
+                    # Force via snapshot fields when mid-pipeline state can't step back.
+                    item.state = ItemState.PROVISIONING
+            return self._run_box_async(item)
+        return item, 'box-worker-wait'
+
+    def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
+        if not done.get('ok'):
+            return self._fail_and_release(item, 'box-worker:%s' % (done.get('error') or 'failed')), 'box-worker-fail'
+        updated = done.get('item')
+        if not isinstance(updated, ItemRecord):
+            return self._fail_and_release(item, 'box-worker:bad-result'), 'box-worker-fail'
+        self._persist(updated)
+        return updated, str(done.get('note') or 'box-complete')
+
 
     def _run_box(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         runner = BoxRunner(config=self.config, io=self.box_io_factory(), lane=self.lane)

@@ -11,7 +11,9 @@ Live defaults (SPEC): max_boxes=5, B300 pinned (no GPU fallback), price ceiling
 $56/h, masters upload only on GREEN_FRESH, REDs earn nothing under the
 last-10-GREEN rule.
 """
-PREFIX = 'affine-pit-'
+# Live pe_rent asserts name.startswith("affine-pe-"). PIT boxes use this
+# sub-prefix so they share the PE rental path without colliding with lanes.
+PREFIX = 'affine-pe-pit-'
 MAX_BOXES_SHADOW = 2
 MAX_BOXES_LIVE = 5
 MAX_BOXES_DEFAULT = MAX_BOXES_SHADOW  # disabled/shadow default; live overrides to 5

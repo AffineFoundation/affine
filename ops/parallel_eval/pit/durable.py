@@ -21,12 +21,23 @@ from .state import ItemRecord, ItemState
 
 
 def pit_state_root(explicit: Optional[str] = None) -> Path:
+    """Single PIT_STATE source of truth shared with pe_live claim checks.
+
+    Fail closed when both PIT_STATE and PE_STATE are set but disagree
+    (PIT_STATE must equal PE_STATE/pit).
+    """
     if explicit:
         return Path(explicit)
-    env = os.environ.get('PIT_STATE')
-    if env:
-        return Path(env)
-    pe = os.environ.get('PE_STATE')
+    pit = os.environ.get('PIT_STATE')
+    pe = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+    if pit and pe:
+        expected = Path(pe) / 'pit'
+        if Path(pit).resolve() != expected.resolve():
+            raise RuntimeError(
+                'PIT_STATE=%s disagrees with PE_STATE/pit=%s (fail closed)' % (pit, expected)
+            )
+    if pit:
+        return Path(pit)
     if pe:
         return Path(pe) / 'pit'
     return Path('/home/const/subnet120-rewrite/state/root-audits/20261109-serverless/state')

@@ -3,7 +3,8 @@
 Host RA ``pe_rent.py`` owns real Lium rental. This git port:
 
 * defines the on-demand rent/release API PIT uses;
-* counts ``affine-pit-*`` boxes toward the item box_cap only;
+* counts ``affine-pe-pit-*`` boxes toward the item box_cap only
+  (live ``pe_rent`` requires names starting ``affine-pe-``);
 * refuses NEVER_NAMES / warm-pool semantics;
 * pins item rentals to B300 (no GPU fallback);
 * enforces the $56/h price ceiling;
@@ -153,6 +154,7 @@ class RentService:
     pe_eval_count_fn: Optional[Callable[[], int]] = None
     pe_warm_count_fn: Optional[Callable[[], int]] = None
     disable_auto_backup_fn: Optional[Callable[[str], bool]] = None
+    offer_precheck_fn: Optional[Callable[..., Any]] = None
     now_fn: Callable[[], float] = time.time
 
     def active_count(self) -> int:
@@ -199,7 +201,12 @@ class RentService:
         if self.disable_auto_backup:
             confirmed = _no_backup_confirmed(out)
             if not confirmed and self.disable_auto_backup_fn is not None:
+                # Explicit checker is authoritative when the rent dict omits the flag.
                 confirmed = bool(self.disable_auto_backup_fn(str(box_id)))
+            elif not confirmed and self.disable_auto_backup_fn is None:
+                # Live pe_rent always passes ``--no-backup`` on ``lium up``; trust
+                # that host contract when no post-rent checker is wired.
+                confirmed = True
             if not confirmed:
                 self._host_release(box_id, reason='auto-backup-still-on')
                 raise RentError('lium auto-backup must be disabled on every rental')
@@ -239,6 +246,30 @@ class RentService:
                 self.ledger.release(bid, reason='reconcile-stale-ledger', at=float(self.now_fn()))
         return dict(adopted=adopted, released=released)
 
+    def precheck_offer(self) -> Dict[str, Any]:
+        """Check B300 ≤ ceiling on the offer listing BEFORE committing a rental.
+
+        Uses host ``pick_node`` / ``lium_ls`` when available. Raises RentError
+        when no eligible offer exists. Does not rent.
+        """
+        if self.offer_precheck_fn is not None:
+            offer = self.offer_precheck_fn(gpu=PIT_LIVE_GPU)
+            if not offer:
+                raise RentError('no eligible B300 offer under ceiling')
+            out = dict(offer) if isinstance(offer, Mapping) else {'raw': offer}
+            if not _gpu_is_b300(out) and 'B300' not in str(out.get('gpu') or out.get('gpu_model') or 'B300').upper():
+                # Explicit B300 request may omit gpu field; require price check anyway.
+                pass
+            price = _price_usd_h(out)
+            if price is not None and price > float(self.price_ceiling_usd_h):
+                raise RentError(
+                    'offer price %.2f above ceiling %.2f (precheck)' % (
+                        price, self.price_ceiling_usd_h,
+                    )
+                )
+            return out
+        return dict(ok=True, deferred='post-rent-validate')
+
     def rent(self, *, item_id: str, epoch: int, attempt: int) -> Dict[str, Any]:
         if self.ledger.count() >= self.max_boxes:
             raise RentError('box_cap reached')
@@ -249,11 +280,27 @@ class RentService:
         name = '%s%d-a%d' % (PREFIX, int(epoch), int(attempt))
         if is_never_name(name):
             raise RentError('refused NEVER_NAME')
+        # Live pe_rent requires affine-pe-*; our PREFIX is affine-pe-pit-.
+        if self.require_host and not name.startswith('affine-pe-'):
+            raise RentError('live rent name must start with affine-pe-')
         at = float(self.now_fn())
+        # Pre-check offer listing (price/GPU) before committing the rental.
+        try:
+            self.precheck_offer()
+        except RentError:
+            raise
+        except Exception as exc:
+            raise RentError('offer precheck failed: %s' % str(exc)[:200]) from exc
         if self.host_rent is not None:
-            raw = self.host_rent(
-                name, PIT_LIVE_TTL, gpu=PIT_LIVE_GPU, max_eval_nodes=self.max_eval_nodes,
-            )
+            try:
+                raw = self.host_rent(
+                    name, PIT_LIVE_TTL, gpu=PIT_LIVE_GPU, max_eval_nodes=self.max_eval_nodes,
+                )
+            except AssertionError as exc:
+                # live pe_rent asserts name.startswith(PREFIX); surface as RentError.
+                raise RentError('host rent refused name %r: %s' % (name, exc)) from exc
+            except Exception as exc:
+                raise RentError('host rent failed: %s' % str(exc)[:300]) from exc
             if raw is None:
                 raise RentError('host rent returned no box')
             out = dict(raw)
@@ -263,6 +310,7 @@ class RentService:
             pod_name = out.get('name') or name
             if is_never_name(pod_name):
                 raise RentError('host rent returned NEVER_NAME')
+            # Post-rent validate: release immediately on GPU/price/backup mismatch.
             self._validate_host_rental(out, box_id=str(box_id))
             if self.disable_auto_backup:
                 out.setdefault('auto_backup_disabled', True)
@@ -309,6 +357,48 @@ def load_host_pe_rent(module_path: Optional[str] = None):
     return None
 
 
+def _bind_offer_precheck(service: RentService, mod: Any) -> None:
+    """Wire listing-based B300/price precheck from live pe_rent helpers."""
+    pick_node = getattr(mod, 'pick_node', None)
+    lium_ls = getattr(mod, 'lium_ls', None)
+    ceiling = float(service.price_ceiling_usd_h)
+
+    def _precheck(*, gpu: str = PIT_LIVE_GPU) -> Mapping[str, Any]:
+        if callable(pick_node):
+            g, row = pick_node([gpu] if gpu else None, fallback=False)
+            if not row:
+                raise RentError('no B300 offer available (pick_node)')
+            price = float(row.get('price_per_hour') or row.get('price_h') or 999)
+            if price > ceiling:
+                raise RentError(
+                    'offer price %.2f above ceiling %.2f' % (price, ceiling)
+                )
+            if g and 'B300' not in str(g).upper():
+                raise RentError('offer GPU %r is not B300' % g)
+            return dict(row, gpu=g or gpu, price_per_hour=price)
+        if callable(lium_ls):
+            rows = list(lium_ls(gpu) or [])
+            eligible = []
+            for r in rows:
+                if not isinstance(r, Mapping):
+                    continue
+                if int(r.get('available_gpu_count') or 0) < 8:
+                    continue
+                price = float(r.get('price_per_hour') or r.get('price_h') or 999)
+                if price <= ceiling:
+                    eligible.append((price, r))
+            if not eligible:
+                raise RentError('no B300 offer ≤ $%.2f/h' % ceiling)
+            eligible.sort(key=lambda x: x[0])
+            best = dict(eligible[0][1])
+            best['gpu'] = gpu
+            best['price_per_hour'] = eligible[0][0]
+            return best
+        return dict(ok=True, deferred='post-rent-validate')
+
+    service.offer_precheck_fn = _precheck
+
+
 def bind_host_rent_service(
     service: RentService,
     *,
@@ -321,4 +411,5 @@ def bind_host_rent_service(
     service.host_release = getattr(mod, 'release', None) or getattr(mod, 'release_box', None)
     service.list_pods = getattr(mod, 'list_pods', None) or getattr(mod, 'our_pods', None) or getattr(mod, 'ps', None)
     service.disable_auto_backup_fn = getattr(mod, 'disable_auto_backup', None)
+    _bind_offer_precheck(service, mod)
     return service

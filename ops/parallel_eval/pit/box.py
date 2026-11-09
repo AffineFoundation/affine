@@ -109,6 +109,9 @@ class BoxRunner:
 
         record = apply_transition(record, ItemState.TRAINING, reason='provisioned')
         train_gpu = gpu_type_of(train_gpu) or gpu_type_of((record.meta or {}).get('train_gpu'))
+        pod = (record.meta or {}).get('pod')
+        if pod is None and (self.lane and (self.lane.require_host or self.lane.host_run_probe is not None)):
+            raise TransitionError('pod handle required for host box train/probe')
 
         train_receipt = dict(self.io.train_v834e(
             head_path=head_path,
@@ -118,6 +121,7 @@ class BoxRunner:
             item_id=record.item_id,
             hotkey=record.hotkey_prefix or None,
             train_gpu=train_gpu,
+            pod=pod,
         ))
         if train_receipt.get('used_fp32_bootstrap_override'):
             raise Fp32MasterError('bootstrap-override-refused-by-pit')
@@ -159,7 +163,11 @@ class BoxRunner:
         record = apply_transition(record, ItemState.SERVING, reason='serve-start')
 
         lane = self.lane or LaneService()
-        lane.serve(record.box_id or 'box', candidate_id, max_num_seqs=self.config.max_num_seqs)
+        # Live pe_lane.serve/run_probe need the pod handle (object/dict), not a box-id string.
+        pod_handle = pod or record.box_id or 'box'
+        if lane.require_host or lane.host_boot is not None:
+            lane.boot(pod_handle)
+        lane.serve(pod_handle, candidate_id, max_num_seqs=self.config.max_num_seqs)
         record = apply_transition(record, ItemState.PROBING, reason='probe-start')
 
         master_upload = {}
@@ -175,7 +183,7 @@ class BoxRunner:
             if idx_list is None:
                 raise TransitionError('indices list required for host run_probe')
             probe_result = lane.run_probe(
-                record.box_id or 'box',
+                pod_handle,
                 candidate_id,
                 indices=idx_list,
                 plan_seed=plan_handle,
@@ -185,7 +193,7 @@ class BoxRunner:
         else:
             probe_fixture = dict(self.io.probe_result_fixture())
             probe_result = lane.run_probe(
-                record.box_id or 'box',
+                pod_handle,
                 candidate_id,
                 indices=idx_list,
                 indices_count=indices_count if idx_list is None else None,
@@ -284,6 +292,8 @@ class ScriptedBoxIO:
             'gradient_norm': 1.0,
             'engine': 'packed',
         })
+        # Scripted path ignores pod; real HostBoxIO requires it.
+        out.setdefault('pod_id', (kwargs.get('pod') or {}).get('id') if isinstance(kwargs.get('pod'), Mapping) else None)
         return out
 
     def upload_candidate(self, **kwargs: Any) -> Mapping[str, Any]:

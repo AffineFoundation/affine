@@ -182,7 +182,7 @@ def clear_pit_claims(roots: List[Path]) -> List[str]:
 
 
 def release_affine_pit_boxes() -> Dict[str, Any]:
-    """Best-effort release of affine-pit-* rentals via host pe_rent when importable."""
+    """Best-effort release of affine-pe-pit-* rentals via host pe_rent when importable."""
     out: Dict[str, Any] = dict(released=[], warnings=[])
     listings: List[Mapping[str, Any]] = []
     release_fn = None

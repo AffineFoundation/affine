@@ -54,18 +54,21 @@ ALLOWED: Dict[ItemState, FrozenSet[ItemState]] = {
         ItemState.ABORTED, ItemState.NO_DECISION,
     }),
     ItemState.TRAINING: frozenset({
-        ItemState.SEALED, ItemState.RETRY_WAIT, ItemState.FAILED,
+        ItemState.SEALED, ItemState.PROVISIONING,  # PROVISIONING: restart re-adopts worker
+        ItemState.RETRY_WAIT, ItemState.FAILED,
         ItemState.ABORTED, ItemState.NO_DECISION,
     }),
     ItemState.SEALED: frozenset({
-        ItemState.SERVING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+        ItemState.SERVING, ItemState.PROVISIONING, ItemState.RETRY_WAIT,
+        ItemState.FAILED, ItemState.ABORTED,
     }),
     ItemState.SERVING: frozenset({
-        ItemState.PROBING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+        ItemState.PROBING, ItemState.PROVISIONING, ItemState.RETRY_WAIT,
+        ItemState.FAILED, ItemState.ABORTED,
     }),
     ItemState.PROBING: frozenset({
-        ItemState.RESULT, ItemState.RETRY_WAIT, ItemState.FAILED,
-        ItemState.ABORTED, ItemState.NO_DECISION,
+        ItemState.RESULT, ItemState.PROVISIONING, ItemState.RETRY_WAIT,
+        ItemState.FAILED, ItemState.ABORTED, ItemState.NO_DECISION,
     }),
     ItemState.RESULT: frozenset({
         ItemState.SCORED, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
