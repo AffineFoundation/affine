@@ -2,12 +2,48 @@
 """score_epoch_shadow must record the box candidate, not the live epoch candidate."""
 import unittest
 
-from .pe_score import ScoreError, score, score_epoch_shadow
+from .gate_writer import HELDOUT_REQUIRED_KEYS, validate_heldout
+from .pe_score import ScoreError, nest_heldout_fields, score, score_epoch_shadow
 
 
 BOX_C = 'b' * 64
 LIVE_C = 'l' * 64
 HEAD = 'a' * 64
+
+
+def _real_live_pe_score_return(rid='round-xyz'):
+    """Shape of live ``pe_score.score`` after BV.estimate + flat update.
+
+    ``sigma_run_floor`` lives only under ``evaluated`` — never top-level.
+    ``baseline`` / ``scoring_mode`` are also absent (gate hook stamps them).
+    """
+    return {
+        'decision': 'green',
+        'reasons': [],
+        'evaluated': {
+            'z': 1.4,
+            'n': 100,
+            'gain': 0.01,
+            'tau_run': 0.0,
+            'sigma_run_floor': 0.0,
+            'scoring': 'sn120-prior-baseline-v1',
+        },
+        'z_min': 1.0,
+        'z_inclusive': False,
+        'scoring': 'sn120-prior-baseline-v1',
+        'z_bar': {'value': 1.0},
+        'round_id': rid,
+        'baseline_done_at_cr': '2026-11-09 00:00:00 CR',
+        'head_rollouts': 12,
+        'settings_hash': 'f' * 64,
+        'max_tokens': 65536,
+        'k_cand': 8,
+        'set_size': 1000,
+        'plan_seed': 'p' * 64,
+        'tau_run': 0.0,
+        'cand_tasks': 100,
+        'guard_summary': {'n': 100, 'rate': 0.0},
+    }
 
 
 class TestPeScore(unittest.TestCase):
@@ -93,26 +129,11 @@ class TestPeScore(unittest.TestCase):
         self.assertEqual(out['candidate'], BOX_C)
 
     def test_live_positional_score_nests_heldout(self):
-        """Live pe_score.score(epoch, rid, result) — positional, flat fields."""
+        """Live pe_score.score(epoch, rid, result) — positional, real flat shape."""
         def live_score(epoch, rid, result, flag=None):
             self.assertEqual(epoch, 42)
             self.assertEqual(rid, 'round-xyz')
-            return {
-                'decision': 'green',
-                'evaluated': {'z': 1.4, 'n': 100},
-                'reasons': [],
-                'set_size': 1000,
-                'k_cand': 8,
-                'head_rollouts': 12,
-                'scoring': 'sn120-prior-baseline-v1',
-                'settings_hash': 'f' * 64,
-                'max_tokens': 65536,
-                'tau_run': 0.0,
-                'sigma_run_floor': 0.0,
-                'baseline_done_at_cr': '2026-11-09 00:00:00 CR',
-                'z_bar': {'value': 1.0},
-                'round_id': rid,
-            }
+            return _real_live_pe_score_return(rid)
 
         out = score(
             epoch=42, round_id='round-xyz', result={'ok': True},
@@ -123,7 +144,45 @@ class TestPeScore(unittest.TestCase):
         self.assertEqual(out['heldout']['bar_z'], 1.0)
         self.assertEqual(out['heldout']['round_id'], 'round-xyz')
         self.assertEqual(out['heldout']['baseline'], 'prior-v1')
+        self.assertEqual(out['heldout']['sigma_run_floor'], 0.0)
         self.assertEqual(out['z'], 1.4)
+        # No top-level sigma on the live return — only nested under evaluated.
+        self.assertNotIn('sigma_run_floor', _real_live_pe_score_return())
+        validate_heldout(out['heldout'])
+
+    def test_nest_heldout_sigma_from_evaluated_when_absent_top_level(self):
+        """Round-3 blocker: real live return has sigma only under evaluated."""
+        raw = _real_live_pe_score_return('r-live')
+        self.assertNotIn('sigma_run_floor', raw)
+        self.assertEqual(raw['evaluated']['sigma_run_floor'], 0.0)
+        nested = nest_heldout_fields(raw, round_id='r-live')
+        heldout = nested['heldout']
+        self.assertEqual(heldout['sigma_run_floor'], 0.0)
+        self.assertEqual(heldout['tau_run'], 0.0)
+        self.assertEqual(heldout['baseline'], 'prior-v1')
+        self.assertEqual(heldout['scoring_mode'], 'separate')
+        self.assertEqual(heldout['bar_z'], 1.0)
+        self.assertEqual(heldout['scoring'], 'sn120-prior-baseline-v1')
+        for key in HELDOUT_REQUIRED_KEYS:
+            self.assertIsNotNone(heldout.get(key), 'heldout.%s missing' % key)
+        validate_heldout(heldout)
+
+    def test_nest_heldout_sigma_prefers_top_level_then_evaluated_then_zero(self):
+        # Top-level wins.
+        top = nest_heldout_fields(
+            {'evaluated': {'sigma_run_floor': 0.5}, 'sigma_run_floor': 0.25},
+            round_id='r',
+        )
+        self.assertEqual(top['heldout']['sigma_run_floor'], 0.25)
+        # Evaluated when top-level absent.
+        mid = nest_heldout_fields(
+            {'evaluated': {'sigma_run_floor': 0.5}},
+            round_id='r',
+        )
+        self.assertEqual(mid['heldout']['sigma_run_floor'], 0.5)
+        # Default 0.0 when neither present.
+        bot = nest_heldout_fields({'evaluated': {'z': 1.0}}, round_id='r')
+        self.assertEqual(bot['heldout']['sigma_run_floor'], 0.0)
 
     def test_live_decision_none_maps_to_no_decision(self):
         def live_score(epoch, rid, result, flag=None):

@@ -30,6 +30,8 @@ ops/parallel_eval/pit/host_wiring.py
 ops/parallel_eval/pit/pe_lane.py
 ops/parallel_eval/pit/pe_rent.py
 ops/parallel_eval/pit/pe_score.py
+#   ↑ nest_heldout_fields: sigma_run_floor from top-level → evaluated → 0.0
+#     (real live pe_score has no top-level sigma; gate emit needs heldout filled)
 ops/parallel_eval/pit/prior_job.py
 ops/parallel_eval/pit/queue_ingest.py
 ops/parallel_eval/pit/run_host.py

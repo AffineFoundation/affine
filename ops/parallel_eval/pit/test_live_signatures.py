@@ -97,9 +97,12 @@ class TestLiveScoreSignature(unittest.TestCase):
 
         # Replace body with a live-shaped function that returns flat fields.
         def live_score(epoch, rid, result, flag=None):
+            # Real live shape: sigma_run_floor only under evaluated (not top-level).
             return {
                 'decision': 'green',
-                'evaluated': {'z': 1.2, 'n': 10},
+                'evaluated': {
+                    'z': 1.2, 'n': 10, 'tau_run': 0.0, 'sigma_run_floor': 0.0,
+                },
                 'reasons': [],
                 'set_size': 1000,
                 'k_cand': 8,
@@ -108,7 +111,6 @@ class TestLiveScoreSignature(unittest.TestCase):
                 'settings_hash': 's' * 64,
                 'max_tokens': 65536,
                 'tau_run': 0.0,
-                'sigma_run_floor': 0.0,
                 'baseline_done_at_cr': 'now',
                 'z_bar': {'value': 1.0},
                 'round_id': rid,
@@ -134,12 +136,16 @@ class TestLiveScoreSignature(unittest.TestCase):
         self.assertEqual(adapted['heldout']['set_size'], 1000)
         self.assertEqual(adapted['heldout']['bar_z'], 1.0)
         self.assertEqual(adapted['heldout']['round_id'], 'r1')
+        # sigma_run_floor absent top-level on live return; nest pulls from evaluated.
+        self.assertNotIn('sigma_run_floor', out)
+        self.assertEqual(adapted['heldout']['sigma_run_floor'], 0.0)
         boxed = pit_score(
             epoch=1, round_id='r1', result={'ok': True},
             candidate_id='b' * 64, head_id='a' * 64,
             host_score=mod.score,
         )
         self.assertEqual(boxed['heldout']['set_size'], 1000)
+        self.assertEqual(boxed['heldout']['sigma_run_floor'], 0.0)
         self.assertEqual(boxed['candidate'], 'b' * 64)
 
 

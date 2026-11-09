@@ -65,42 +65,97 @@ def load_host_pe_score(module_path: Optional[str] = None):
     return None
 
 
+def _evaluated_of(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    ev = raw.get('evaluated')
+    return ev if isinstance(ev, Mapping) else {}
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def nest_heldout_fields(raw: Mapping[str, Any], *, round_id: str) -> Dict[str, Any]:
-    """Copy live flat score fields into ``heldout`` for gate DECISION emit."""
+    """Copy live score fields into ``heldout`` for gate DECISION emit.
+
+    Real live ``pe_score.score`` (BV.estimate + flat update) shape:
+      top-level: decision, reasons, evaluated, z_bar, round_id, set_size,
+      k_cand, head_rollouts, scoring, settings_hash, max_tokens, tau_run,
+      baseline_done_at_cr, plan_seed, …
+      evaluated: z, n, tau_run, sigma_run_floor, scoring, …
+    ``sigma_run_floor`` is **not** top-level — only under ``evaluated``.
+    ``baseline`` / ``scoring_mode`` are also absent at top-level (gate hook
+    stamps them when writing DECISION; PIT must fill them here).
+    """
     out = dict(raw)
     heldout = dict(out.get('heldout') or {})
+    evaluated = _evaluated_of(out)
+
     for key in _HELDOUT_FLAT_KEYS:
         if key in heldout and heldout[key] is not None:
             continue
+
         if key == 'round_id':
-            heldout[key] = round_id or out.get('round_id') or heldout.get('round_id')
+            heldout[key] = _first_present(
+                round_id or None, out.get('round_id'), heldout.get('round_id'),
+            )
             continue
+
         if key == 'bar_z':
-            if out.get('bar_z') is not None:
-                heldout[key] = out.get('bar_z')
-            else:
-                zb = out.get('z_bar')
-                if isinstance(zb, Mapping) and zb.get('value') is not None:
-                    heldout[key] = zb['value']
-                elif zb is not None and not isinstance(zb, Mapping):
-                    heldout[key] = zb
+            zb = out.get('z_bar')
+            zb_value = zb.get('value') if isinstance(zb, Mapping) else (
+                zb if zb is not None and not isinstance(zb, Mapping) else None
+            )
+            heldout[key] = _first_present(
+                out.get('bar_z'), zb_value, out.get('z_min'),
+            )
             continue
+
         if key == 'baseline':
-            heldout[key] = out.get('baseline') or 'prior-v1'
+            # Live pe_score never stamps this; gate hook hardcodes prior-v1.
+            heldout[key] = _first_present(out.get('baseline'), 'prior-v1')
             continue
+
         if key == 'scoring_mode':
-            # Live pe_score does not always stamp this flat; default separate-run.
+            # Live pe_score omits this; PE refuses same-run so default separate.
             sm = out.get('scoring_mode')
             if sm is None and isinstance(out.get('probe'), Mapping):
                 sm = out['probe'].get('scoring_mode')
-            heldout[key] = sm or 'separate'
+            heldout[key] = _first_present(sm, 'separate')
             continue
+
         if key == 'sigma_run_floor':
-            if out.get('sigma_run_floor') is not None:
-                heldout[key] = out.get('sigma_run_floor')
+            # Real live return: only under evaluated (not top-level).
+            heldout[key] = _first_present(
+                out.get('sigma_run_floor'),
+                evaluated.get('sigma_run_floor'),
+                0.0,
+            )
             continue
-        if out.get(key) is not None:
-            heldout[key] = out.get(key)
+
+        if key == 'tau_run':
+            # Top-level from pe_score.update; also mirrored under evaluated.
+            heldout[key] = _first_present(
+                out.get('tau_run'),
+                evaluated.get('tau_run'),
+                0.0,
+            )
+            continue
+
+        if key == 'scoring':
+            heldout[key] = _first_present(
+                out.get('scoring'),
+                evaluated.get('scoring'),
+            )
+            continue
+
+        # Remaining flat keys (set_size, k_cand, head_rollouts, settings_hash,
+        # max_tokens, baseline_done_at_cr) are top-level on the live return.
+        # Fall back to evaluated only if a future live shape moves them.
+        heldout[key] = _first_present(out.get(key), evaluated.get(key))
+
     if round_id and not heldout.get('round_id'):
         heldout['round_id'] = round_id
     out['heldout'] = heldout
