@@ -752,8 +752,8 @@ def run_train_pit(P: Any, *, expected_master: str) -> Mapping[str, Any]:
     return dict(events=events, checkpoint=events['done']['checkpoint'], log_tail=out[-4000:])
 
 
-def place_and_pull(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[str, Any]:
-    """drive_item.place_cand + scp file return of descriptor/report/candidate."""
+def place_cand(P: Any, *, candidate_id: str) -> Mapping[str, Any]:
+    """drive_item.place_cand — keep the ~18.8 GB candidate ON THE BOX (no scp)."""
     out = P.run(
         r"""set -e; cd {O}; f=$(find . -name 'model-00001-of-*.safetensors' | head -1); M={O}/$(dirname $f); echo $M
 python3 - {O}/descriptor.json $M <<'PY'
@@ -773,9 +773,32 @@ mkdir -p {K}/{c}; for f in $(ls $M); do ln -f $M/$f {K}/{c}/$f 2>/dev/null || cp
     )
     if 'BAD 0' not in out:
         raise BoxIOError('place_cand sha mismatch: %s' % out[-400:])
+    return dict(place_tail=out.strip()[-200:], box_candidate_dir=KDIR + '/' + candidate_id)
 
+
+def free_gpus(P: Any) -> Mapping[str, Any]:
+    """drive_item stage 6 — kill leftover train_pit/v83_dp; require <2 GiB/GPU before serve."""
+    pids_raw = P.run("pgrep -f 'train_pit.py|v83_dp.py' || true", check=False, timeout=60)
+    pids = [p for p in str(pids_raw).split() if p.isdigit()]
+    for p in pids:
+        P.run('kill %s 2>/dev/null || true' % p, check=False, timeout=30)
+    time.sleep(2 if os.environ.get('PIT_FAST_FREE_GPUS') else 10)
+    used_raw = P.run(
+        'nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits',
+        timeout=60,
+    )
+    used = [u for u in str(used_raw).split() if u.strip().isdigit() or u.strip().replace('.', '', 1).isdigit()]
+    used_mib = [int(float(u)) for u in used]
+    if not used_mib:
+        raise BoxIOError('free_gpus: nvidia-smi returned no memory.used rows')
+    if any(u >= 2000 for u in used_mib):
+        raise BoxIOError('GPUs not free after train: %s MiB' % used_mib)
+    return dict(killed=pids, used_mib=used_mib)
+
+
+def pull_report_only(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[str, Any]:
+    """Scp only the small report + descriptor — never the full ~18.8 GB candidate."""
     host_out.mkdir(parents=True, exist_ok=True)
-    # Report as a file (JSON). Prefer report.private.json (train_pit); fall back to report.json.
     remote_report = None
     for cand in (PST + '/out/report.private.json', PST + '/out/report.json', PST + '/report.private.json'):
         marker = P.run('test -f %s && echo YES || echo NO' % cand, timeout=30, check=False)
@@ -792,33 +815,17 @@ mkdir -p {K}/{c}; for f in $(ls $M); do ln -f $M/$f {K}/{c}/$f 2>/dev/null || cp
         raise BoxIOError('training report sha mismatch after scp')
     rep = json.loads(report.read_text())
 
-    # Candidate tree via tar+scp (never binary over ssh stdout).
-    remote_cand_tar = PST + '/candidate.tar'
-    P.run(
-        "set -e; cd %s/out; f=$(find . -name 'model-00001-of-*.safetensors' | head -1); "
-        "M=$(dirname $f); tar -C %s/out/$M -cf %s .; "
-        "cp %s/out/descriptor.json %s/out/descriptor.json.export; echo CAND_TAR_OK" % (
-            PST, PST, remote_cand_tar, PST, PST,
-        ),
-        timeout=3600,
-    )
-    cand_tar = host_out / 'candidate.tar'
-    _scp_from(P, remote_cand_tar, cand_tar, timeout=7200)
-    remote_tar_sha = P.run('sha256sum %s | cut -d" " -f1' % remote_cand_tar, timeout=60).strip().split()[0]
-    if remote_tar_sha != _sha256_file(cand_tar):
-        raise BoxIOError('candidate.tar sha mismatch after scp')
-    cand_dir = host_out / 'candidate'
-    cand_dir.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(cand_tar, 'r') as tar:
-        tar.extractall(cand_dir)
-    _scp_from(P, PST + '/out/descriptor.json', host_out / 'descriptor.json', timeout=120)
-
+    remote_desc = KDIR + '/' + candidate_id + '.descriptor.json'
+    alt_desc = PST + '/out/descriptor.json'
+    marker = P.run('test -f %s && echo YES || echo NO' % remote_desc, timeout=30, check=False)
+    if 'YES' not in str(marker):
+        remote_desc = alt_desc
+    _scp_from(P, remote_desc, host_out / 'descriptor.json', timeout=120)
     desc = json.loads((host_out / 'descriptor.json').read_text())
     cid = str(desc.get('id') or candidate_id)
     if len(cid) != 64:
         raise BoxIOError('descriptor.id missing')
 
-    # Master digest from report (computed by trainer) — never invent one.
     fp = ((rep.get('optimizer') or {}).get('sgd') or {}).get('fp32_master') or rep.get('fp32') or {}
     master_dig = str(
         fp.get('output_master_digest')
@@ -828,21 +835,193 @@ mkdir -p {K}/{c}; for f in $(ls $M); do ln -f $M/$f {K}/{c}/$f 2>/dev/null || cp
     )
     master_out = host_out / 'fp32-master'
     master_out.mkdir(parents=True, exist_ok=True)
-    if len(master_dig) == 64:
-        (master_out / 'master_digest.txt').write_text(master_dig + '\n')
-    else:
-        # Trainer always emits output_master_digest on success; fail closed if absent.
+    if len(master_dig) != 64:
         raise BoxIOError('candidate master digest missing from training report')
+    (master_out / 'master_digest.txt').write_text(master_dig + '\n')
 
+    # Box-side path marker — host must NOT treat this as a local tree to scp.
+    box_path = 'box:%s/%s' % (KDIR, cid)
     return dict(
         candidate_id=cid,
-        candidate_path=str(cand_dir),
+        candidate_path=box_path,
+        candidate_on_box=True,
+        box_candidate_dir=KDIR + '/' + cid,
+        candidate_files=dict(desc.get('files') or {}),
         candidate_master_path=str(master_out),
         candidate_master_digest=master_dig,
         report=str(report),
         report_doc=rep,
-        place_tail=out.strip()[-200:],
+        descriptor=desc,
+        defer_candidate_upload=True,
     )
+
+
+def place_and_pull(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[str, Any]:
+    """place_cand + free_gpus + report-only pull (no full candidate scp)."""
+    placed = place_cand(P, candidate_id=candidate_id)
+    gpus = free_gpus(P)
+    pulled = pull_report_only(P, candidate_id=candidate_id, host_out=host_out)
+    pulled['place_tail'] = placed.get('place_tail')
+    pulled['gpus_after_train'] = gpus
+    return pulled
+
+
+def _r2_local_mirror() -> Optional[Path]:
+    return _env_path('PIT_R2_LOCAL_MIRROR')
+
+
+def _ckpt_r2_prefix(candidate_id: str) -> str:
+    prefix = os.environ.get('PIT_R2_CKPT_PREFIX') or (
+        'mimo/affine-mimo9b-grpo-20261013/checkpoints'
+    )
+    return '%s/%s/model' % (prefix.rstrip('/'), candidate_id)
+
+
+def presign_put_urls(candidate_id: str, files: Mapping[str, str]) -> Mapping[str, str]:
+    """Scoped presigned PUT URLs for GREEN candidate upload (box → R2)."""
+    inj = _env_path('PIT_PRESIGN_PUT_JSON')
+    if inj is not None and inj.is_file():
+        doc = json.loads(inj.read_text())
+        urls = doc.get('urls') if isinstance(doc, Mapping) else None
+        if isinstance(urls, Mapping):
+            return {n: str(urls[n]) for n in files if n in urls}
+    mirror = _r2_local_mirror()
+    if mirror is not None:
+        # Test / dry-run: file:// URLs under a local R2 mirror (host verifies sha from disk).
+        out: dict[str, str] = {}
+        base = mirror / candidate_id
+        base.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            dest = base / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            out[name] = 'file://' + str(dest)
+        return out
+    # Live: Bucket.presign put_object via host helper / storage.
+    # Live: Bucket.presign put_object (requires PIT_LIFE_CFG with bucket credentials).
+    try:
+        from subnet.storage import Bucket  # type: ignore
+        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
+        if life_cfg is None or not life_cfg.is_file():
+            raise BoxIOError(
+                'PIT_LIFE_CFG required for live R2 put_object presign '
+                '(or set PIT_PRESIGN_PUT_JSON / PIT_R2_LOCAL_MIRROR)'
+            )
+        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        prefix = _ckpt_r2_prefix(candidate_id)
+        return {
+            n: bucket.presign('%s/%s' % (prefix, n), 'put_object', 7200)
+            for n in sorted(files)
+        }
+    except BoxIOError:
+        raise
+    except Exception as exc:
+        raise BoxIOError('presign put_object failed: %s' % str(exc)[:300]) from exc
+
+
+def upload_candidate_from_box(
+    P: Any,
+    *,
+    candidate_id: str,
+    files: Mapping[str, str],
+    box_candidate_dir: Optional[str] = None,
+) -> Mapping[str, Any]:
+    """GREEN only: box PUTs files to scoped R2 URLs; host verifies sha256 from R2/mirror."""
+    if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+        raise BoxIOError('candidate_id must be hex64')
+    if not files:
+        raise BoxIOError('candidate files missing for R2 upload')
+    box_dir = box_candidate_dir or (KDIR + '/' + candidate_id)
+    urls = presign_put_urls(candidate_id, files)
+    missing = [n for n in files if n not in urls]
+    if missing:
+        raise BoxIOError('presign PUT missing urls for %s' % missing[:5])
+
+    # Push URLs to the box (private, deleted after).
+    url_doc = json.dumps(dict(urls=urls, headers={'Content-Type': 'application/octet-stream'}))
+    remote_urls = '/tmp/pit-put-%s.urls.private.json' % candidate_id[:12]
+    put(P, remote_urls, url_doc.encode(), '600')
+    # Box-side PUT (curl for https; cp for file:// mirror).
+    script = r"""
+set -e
+python3 - <<'PY'
+import json, os, subprocess, sys, urllib.request
+doc = json.load(open(%r))
+urls = doc['urls']; headers = doc.get('headers') or {}
+box = %r
+bad = []
+for name, url in urls.items():
+    src = os.path.join(box, name)
+    if not os.path.isfile(src):
+        bad.append(('missing', name)); continue
+    if url.startswith('file://'):
+        dest = url[7:]
+        os.makedirs(os.path.dirname(dest) or '.', exist_ok=True)
+        subprocess.check_call(['cp', '-f', src, dest])
+    else:
+        req = urllib.request.Request(url, data=open(src, 'rb').read(), method='PUT')
+        for k, v in headers.items():
+            req.add_header(k, v)
+        with urllib.request.urlopen(req, timeout=3600) as resp:
+            if getattr(resp, 'status', 200) not in (200, 201):
+                bad.append(('http', name, getattr(resp, 'status', None)))
+print('PUT_OK', len(urls), 'BAD', len(bad))
+if bad:
+    sys.exit(1)
+PY
+rm -f %s
+""".strip() % (remote_urls, box_dir, remote_urls)
+    out = P.run(script, timeout=7200)
+    if 'PUT_OK' not in out:
+        raise BoxIOError('box R2 PUT failed: %s' % out[-400:])
+
+    # Host verifies sha256 from R2 / local mirror (never trust the box alone).
+    verified: dict[str, str] = {}
+    mirror = _r2_local_mirror()
+    for name, expected in files.items():
+        if mirror is not None:
+            path = mirror / candidate_id / name
+            if not path.is_file():
+                raise BoxIOError('R2 mirror missing after PUT: %s' % name)
+            got = _sha256_file(path)
+        else:
+            # Live: GET the object via a short-lived GET presign and hash.
+            get_urls = None
+            try:
+                get_urls = ckpt_urls(candidate_id, {name: expected})
+            except Exception:
+                get_urls = None
+            if not get_urls or name not in get_urls:
+                raise BoxIOError('cannot GET %s from R2 for sha verify' % name)
+            data = urllib.request.urlopen(
+                urllib.request.Request(
+                    get_urls[name],
+                    headers={'User-Agent': 'affine-pit-pe-box/1'},
+                ),
+                timeout=3600,
+            ).read()
+            got = hashlib.sha256(data).hexdigest()
+        if got != expected:
+            raise BoxIOError('R2 sha mismatch for %s: got %s want %s' % (name, got[:12], expected[:12]))
+        verified[name] = got
+
+    # Local receipt so pe_verify can confirm without re-fetching 18 GB.
+    dst = _upload_root() / candidate_id
+    dst.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        'id': candidate_id,
+        'sha256': candidate_id,
+        'files': dict(files),
+        'verified_files': verified,
+        'uploaded_at': time.time(),
+        'source': 'pit-box-r2-put',
+        'transport': 'presigned-put',
+    }
+    (dst / 'UPLOAD.json').write_text(json.dumps(receipt, indent=1, sort_keys=True) + '\n')
+    (dst / 'CHECKPOINT.json').write_text(json.dumps({
+        'id': candidate_id, 'files': dict(files),
+    }, indent=1, sort_keys=True) + '\n')
+    os.chmod(dst / 'UPLOAD.json', 0o600)
+    return dict(ok=True, path=str(dst), verified=len(verified), transport='presigned-put')
 
 
 # ---------------------------------------------------------------------------
@@ -937,8 +1116,10 @@ class HostBoxIO:
         if len(str(candidate_id)) != 64:
             raise BoxIOError('train done.checkpoint missing')
 
+        # drive_item: place_cand → free_gpus → keep ~18.8 GB on box until GREEN.
         host_out = _upload_root() / ('train-%s-%d' % (str(item_id)[:16], int(time.time())))
         pulled = place_and_pull(P, candidate_id=str(candidate_id), host_out=host_out)
+        info['gpus-after-train'] = pulled.get('gpus_after_train')
         rep = pulled['report_doc']
         if rep.get('used_fp32_bootstrap_override') or (
             (rep.get('fp32_master') or {}).get('source') == 'bootstrap-upcast'
@@ -960,9 +1141,13 @@ class HostBoxIO:
         return dict(
             candidate_id=pulled['candidate_id'],
             candidate_path=pulled['candidate_path'],
+            candidate_on_box=True,
+            box_candidate_dir=pulled.get('box_candidate_dir'),
+            candidate_files=dict(pulled.get('candidate_files') or {}),
             candidate_master_path=pulled['candidate_master_path'],
             candidate_master_digest=pulled['candidate_master_digest'],
             candidate_sha256=pulled['candidate_id'],
+            defer_candidate_upload=True,
             used_fp32_bootstrap_override=False,
             fp32_master_source=fp.get('source') or 'disk',
             report=pulled['report'],
@@ -970,26 +1155,63 @@ class HostBoxIO:
             training_report=rep,
             train_gpu=train_gpu,
             pod_id=getattr(P, 'id', None),
+            pod=pod,
             box_work=PST,
             fetch='r2-box-side',
-            artifact_transport='scp',
+            artifact_transport='on-box-until-green',
             info=info,
             venv=BOX_VENV,
         )
 
-    def upload_candidate(self, *, candidate_id: str, candidate_path: str) -> Mapping[str, Any]:
-        src = Path(candidate_path)
-        if not src.exists():
-            raise BoxIOError('candidate_path missing for upload')
+    def upload_candidate(
+        self,
+        *,
+        candidate_id: str,
+        candidate_path: str = '',
+        path: str = '',
+        pod: Any = None,
+        files: Optional[Mapping[str, str]] = None,
+        box_candidate_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Mapping[str, Any]:
+        """GREEN path: box → R2 presigned PUT. RED must not call this.
+
+        ``candidate_path`` / ``path`` may be a ``box:…`` marker (deferred upload).
+        Local host trees are still accepted for Scripted / fixture paths.
+        """
+        src = str(candidate_path or path or '')
+        file_map = dict(files or kwargs.get('candidate_files') or {})
+        on_box = (
+            src.startswith('box:')
+            or bool(kwargs.get('candidate_on_box'))
+            or bool(kwargs.get('defer_candidate_upload'))
+        )
+        if on_box:
+            P = _as_pod(pod or kwargs.get('pod'))
+            box_dir = box_candidate_dir or kwargs.get('box_candidate_dir')
+            if not box_dir and src.startswith('box:'):
+                box_dir = src[4:]
+            if not file_map:
+                raise BoxIOError('GREEN R2 upload requires candidate file digests')
+            return upload_candidate_from_box(
+                P,
+                candidate_id=candidate_id,
+                files=file_map,
+                box_candidate_dir=box_dir,
+            )
+        # Local host path (tests / already-fetched).
+        local = Path(src)
+        if not local.exists():
+            raise BoxIOError('candidate_path missing for upload: %s' % src)
         dst = _upload_root() / candidate_id
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists():
             shutil.rmtree(dst)
-        if src.is_dir():
-            shutil.copytree(src, dst)
+        if local.is_dir():
+            shutil.copytree(local, dst)
         else:
             dst.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst / src.name)
+            shutil.copy2(local, dst / local.name)
         man = {
             'id': candidate_id,
             'sha256': candidate_id,
@@ -1031,8 +1253,10 @@ def upload_master(*, candidate_id: str, path: str) -> Mapping[str, Any]:
     return dict(ok=True, path=str(dst), candidate_id=candidate_id)
 
 
-def upload_candidate(*, candidate_id: str, path: str) -> Mapping[str, Any]:
-    return HostBoxIO().upload_candidate(candidate_id=candidate_id, candidate_path=path)
+def upload_candidate(*, candidate_id: str, path: str = '', **kwargs: Any) -> Mapping[str, Any]:
+    return HostBoxIO().upload_candidate(
+        candidate_id=candidate_id, candidate_path=path, path=path, **kwargs,
+    )
 
 
 BoxIO = HostBoxIO

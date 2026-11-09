@@ -87,17 +87,37 @@ def verify_green_uploads(
     candidate_id: str,
     candidate_sha256: str,
     master_digest: str,
+    candidate_path: Optional[str] = None,
+    master_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    out = dict(verify_fn(
+    kwargs: Dict[str, Any] = dict(
         candidate_id=candidate_id,
         candidate_sha256=candidate_sha256,
         master_digest=master_digest,
-    ))
+    )
+    if candidate_path:
+        kwargs['candidate_path'] = candidate_path
+    if master_path:
+        kwargs['master_path'] = master_path
+    out = dict(verify_fn(**kwargs))
     if not out.get('candidate_ok'):
         raise ApplyLiveError('bf16 candidate hash verify failed (fail closed)')
     if not out.get('master_ok'):
         raise ApplyLiveError('fp32 master hash verify failed (fail closed)')
     return out
+
+
+def _upload_receipt_dir(candidate_id: str) -> Optional[Path]:
+    pe = os.environ.get('PIT_UPLOAD_ROOT') or os.environ.get('PE_STATE')
+    if not pe:
+        return None
+    root = Path(pe)
+    # PIT_UPLOAD_ROOT points at uploads/; PE_STATE needs /pit/uploads/.
+    if root.name == 'uploads':
+        cand = root / candidate_id
+    else:
+        cand = root / 'pit' / 'uploads' / candidate_id
+    return cand if cand.exists() else None
 
 
 def _write_pending_json(path: Path, doc: Mapping[str, Any]) -> str:
@@ -160,24 +180,43 @@ class LiveApplicator:
         # FAIL CLOSED: verify_uploads is mandatory in live (CUTOVER-PLAN blocker 5).
         if self.verify_uploads is None:
             raise ApplyLiveError('live apply refused: verify_uploads is required (fail closed)')
+        meta = item.meta or {}
+        # GREEN only: transfer candidate (prefer box → R2 scoped presigned PUT).
+        # RED / stale paths never call upload — box is released without the 18 GB scp.
         if self.upload_candidate is not None:
-            self.upload_candidate(candidate_id=cand, path=(item.meta or {}).get('candidate_path'))
+            self.upload_candidate(
+                candidate_id=cand,
+                path=meta.get('candidate_path'),
+                candidate_path=meta.get('candidate_path'),
+                pod=meta.get('pod'),
+                files=meta.get('candidate_files') or meta.get('files'),
+                box_candidate_dir=meta.get('box_candidate_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+            )
         if self.upload_master is not None:
-            self.upload_master(candidate_id=cand, path=(item.meta or {}).get('candidate_master_path'))
-        master_digest = (item.meta or {}).get('candidate_master_digest') or (item.meta or {}).get('master_digest')
-        cand_sha = (item.meta or {}).get('candidate_sha256')
+            self.upload_master(candidate_id=cand, path=meta.get('candidate_master_path'))
+        master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
+        cand_sha = meta.get('candidate_sha256')
         if not master_digest or len(str(master_digest)) != 64:
             raise ApplyLiveError('missing/invalid master digest for GREEN verify (fail closed)')
         if not cand_sha or len(str(cand_sha)) != 64:
             raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
+        receipt = _upload_receipt_dir(cand)
+        cand_path = str(receipt) if receipt is not None else None
+        # Never pass a box: marker into local verify — only host receipts / trees.
+        raw_path = meta.get('candidate_path')
+        if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
+            cand_path = raw_path
         verified = verify_green_uploads(
             self.verify_uploads,
             candidate_id=cand,
             candidate_sha256=str(cand_sha),
             master_digest=str(master_digest),
+            candidate_path=cand_path,
+            master_path=str(meta.get('candidate_master_path') or '') or None,
         )
-        meta = item.meta or {}
-        files = meta.get('files') or (meta.get('checkpoint') or {}).get('files')
+        files = meta.get('candidate_files') or meta.get('files') or (meta.get('checkpoint') or {}).get('files')
         ckpt = dict(id=cand)
         if files:
             ckpt['files'] = dict(files)

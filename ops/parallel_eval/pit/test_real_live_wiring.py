@@ -9,7 +9,8 @@ Asserts the drive_item / run5090 on-box path:
 * train_pit.py under fetched runtime-exact/venv (fail closed if missing)
 * signed TRAINING-JOB + TRAIN-DISPATCH-FF + docs inputs (not a lone batch file)
 * SIGNED-MANIFEST.sha256 verified without ``; true``
-* file-based artifact return via scp with sha checks
+* report/descriptor scp only (candidate stays on box until GREEN)
+* free_gpus after train (kill train_pit/v83_dp; <2 GiB/GPU)
 * shadow prefix does not share the live PE cap
 """
 from __future__ import annotations
@@ -237,9 +238,12 @@ class TestRealLiveWiring(unittest.TestCase):
             'PIT_PRESIGN_PAYLOAD_JSON': str(self.presign_ckpt),
             'PIT_MASTER_PRESIGN_JSON': str(self.master_presign),
             'PIT_UPLOAD_ROOT': str(self.root / 'uploads'),
+            'PIT_R2_LOCAL_MIRROR': str(self.root / 'r2-mirror'),
+            'PIT_FAST_FREE_GPUS': '1',
             'PYTHONPATH': '%s:%s' % (LIVE, PODS),
             'AFFINE_REPO': str(self.root / 'repo'),
         }
+        (self.root / 'r2-mirror').mkdir()
         (self.root / 'repo').mkdir()
 
         pod = {
@@ -441,6 +445,16 @@ class TestRealLiveWiring(unittest.TestCase):
 
                 if "nvidia-smi" in cmd and "query-gpu=name" in cmd:
                     print("NVIDIA B300"); sys.exit(0)
+                if (
+                    "nvidia-smi" in cmd
+                    and "memory.used" in cmd
+                    and "noheader,nounits" in cmd
+                    and "-lms" not in cmd
+                ):
+                    # free_gpus only (not the train-time nvidia-smi -lms monitor).
+                    print("\\n".join(["100"] * 8)); sys.exit(0)
+                if "pgrep" in cmd and "train_pit" in cmd:
+                    print(""); sys.exit(0)
                 if "podctl.py serve" in cmd:
                     print('{{"ok": true}}'); sys.exit(0)
                 if "podctl.py status" in cmd:
@@ -617,15 +631,22 @@ class TestRealLiveWiring(unittest.TestCase):
                         epoch_dir=str(self.epoch_dir),
                     )
             self.assertEqual(out.get('fetch'), 'r2-box-side')
-            self.assertEqual(out.get('artifact_transport'), 'scp')
+            self.assertEqual(out.get('artifact_transport'), 'on-box-until-green')
+            self.assertTrue(out.get('defer_candidate_upload'))
+            self.assertTrue(out.get('candidate_on_box'))
             self.assertEqual(out['candidate_id'], self.cand)
+            self.assertTrue(str(out['candidate_path']).startswith('box:'))
             self.assertEqual(out.get('venv'), pe_box.BOX_VENV)
             self.assertTrue(Path(out['report']).is_file())
-            self.assertTrue(Path(out['candidate_path']).is_dir())
+            # Full candidate stays on the box — host only has report/descriptor.
+            self.assertFalse((Path(out['report']).parent / 'candidate.tar').exists())
             rep = json.loads(Path(out['report']).read_text())
             fp = rep['optimizer']['sgd']['fp32_master']
             self.assertEqual(fp['input_master_digest'], self.master)
             self.assertEqual(fp['source'], 'disk')
+            gpus = (out.get('info') or {}).get('gpus-after-train')
+            self.assertIsNotNone(gpus)
+            self.assertTrue(all(u < 2000 for u in gpus['used_mib']))
 
             # pe_lane.boot then push_bundle (drive_item order).
             self.assertEqual(markers, ['boot', 'push_bundle'])
@@ -643,19 +664,24 @@ class TestRealLiveWiring(unittest.TestCase):
                 'train_pit.py',
                 'AFFINE_FP32_EXPECTED_MASTER_HASH=',
                 'runtime-exact/venv/bin/python',
-                'scp ',
+                "pgrep -f 'train_pit.py|v83_dp.py'",
+                'memory.used',
+                'scp ',  # report/descriptor only
             ):
                 self.assertIn(needle, log, msg='missing %r in cmds' % needle)
-            # Order: boot before GRADER_FIX before push_bundle before bundle_fetch before train.
+            self.assertNotIn('candidate.tar', log)
+            # Order: boot before GRADER_FIX before push_bundle before bundle_fetch before train
+            # before free_gpus.
             i_boot = log.find('boot-ok')
             i_fix = log.find('affine-grader-uv')
             i_push = log.find('PUSH_BUNDLE_OK')
             i_bun = log.find('bundle_fetch.py trainer')
             i_train = log.find('train_pit.py')
+            i_free = log.find("pgrep -f 'train_pit.py|v83_dp.py'")
             self.assertTrue(
-                0 <= i_boot < i_fix < i_push < i_bun < i_train,
-                msg='order boot < GRADER_FIX < push_bundle < bundle_fetch < train: %s' % (
-                    (i_boot, i_fix, i_push, i_bun, i_train),
+                0 <= i_boot < i_fix < i_push < i_bun < i_train < i_free,
+                msg='order boot < GRADER_FIX < push_bundle < bundle_fetch < train < free_gpus: %s' % (
+                    (i_boot, i_fix, i_push, i_bun, i_train, i_free),
                 ),
             )
             # put_tar must NOT wipe dest (common5090); only BOX_HOST is cleaned.

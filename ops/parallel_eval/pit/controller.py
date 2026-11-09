@@ -29,6 +29,7 @@ from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentError, RentService, bind_host_rent_service
 from .pe_score import score as pit_score
 from .pe_score import score_epoch_shadow
+from .queue_ingest import training_job_checkpoint
 from .shadow import ShadowGuard, ShadowWriteError
 from .signer import (
     RootSigner,
@@ -305,6 +306,21 @@ class Controller:
 
     def _rent_on_demand(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         if item.state is ItemState.BOUND:
+            # Stale-head: TRAINING-JOB checkpoint must equal current head — else
+            # skip with no rental (item trained against an obsolete head).
+            if self.current_head:
+                job_ck = training_job_checkpoint(int(item.epoch))
+                if job_ck and job_ck != self.current_head:
+                    meta = dict(item.meta or {}, stale_head_skip=True,
+                                job_checkpoint=job_ck, current_head=self.current_head)
+                    skipped = apply_transition(
+                        item, ItemState.NO_DECISION, reason='stale-head-skip',
+                        updates={
+                            'decision': 'no_decision', 'paid': False,
+                            'result_stored': False, 'meta': meta,
+                        },
+                    )
+                    return skipped, 'stale-head-skip'
             if not self.rent.can_rent(queued_bound_waiting=1):
                 return item, 'cap-wait'
             renting = apply_transition(item, ItemState.RENTING, reason='rent-start')
@@ -487,10 +503,15 @@ class Controller:
             'eval_gpu': bundle.eval_gpu,
             'admission_digest': env.digest(),
         }
-        meta['candidate_path'] = (bundle.train_receipt or {}).get('candidate_path')
-        meta['candidate_master_path'] = (bundle.train_receipt or {}).get('candidate_master_path')
-        meta['candidate_master_digest'] = (bundle.train_receipt or {}).get('candidate_master_digest')
-        meta['candidate_sha256'] = (bundle.train_receipt or {}).get('candidate_sha256') or bundle.candidate_id
+        receipt = bundle.train_receipt or {}
+        meta['candidate_path'] = receipt.get('candidate_path')
+        meta['candidate_on_box'] = bool(receipt.get('candidate_on_box') or receipt.get('defer_candidate_upload'))
+        meta['box_candidate_dir'] = receipt.get('box_candidate_dir')
+        meta['candidate_files'] = dict(receipt.get('candidate_files') or {})
+        meta['defer_candidate_upload'] = bool(receipt.get('defer_candidate_upload'))
+        meta['candidate_master_path'] = receipt.get('candidate_master_path')
+        meta['candidate_master_digest'] = receipt.get('candidate_master_digest')
+        meta['candidate_sha256'] = receipt.get('candidate_sha256') or bundle.candidate_id
         # Persist training report + GPUs on the item before any release path.
         meta['training_report'] = dict(bundle.training_report or {})
         meta['train_gpu'] = bundle.train_gpu

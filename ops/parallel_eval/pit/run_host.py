@@ -34,7 +34,13 @@ from .decision_emit import emit_decision, gate_epochs_root
 from .durable import DurableStore, pit_state_root
 from .gate_writer import HostGateWriter
 from .host_wiring import LiveWiringError, build_live_host_bundle
-from .queue_ingest import sync as queue_ingest_sync
+from .queue_ingest import (
+    IngestError,
+    sync as queue_ingest_sync,
+    write_ingest_alert,
+)
+
+
 def _rj(path: Path, default=None):
     try:
         return json.loads(path.read_text())
@@ -125,7 +131,25 @@ def tick_once(
     dry_run: bool = False,
 ) -> dict:
     plan = plan_cutover(ctl.config)
-    ingest = queue_ingest_sync(ctl, store=store)
+    try:
+        ingest = queue_ingest_sync(ctl, store=store)
+    except Exception as exc:
+        # Never silently swallow ingest failures — a dead ingest must be visible.
+        alert = write_ingest_alert(exc, root=store.root)
+        print(
+            json.dumps({
+                'component': 'pit-run-host',
+                'level': 'error',
+                'event': 'ingest_failed',
+                'error': str(exc)[:400],
+                'alert': str(alert),
+            }),
+            file=sys.stderr,
+            flush=True,
+        )
+        if isinstance(exc, IngestError):
+            raise
+        raise IngestError('tick_once ingest failed: %s' % str(exc)[:400]) from exc
     for item in list(ctl.items):
         store.save_item(item)
         if item.bound_head and item.candidate_id and item.state.value not in ('released', 'aborted'):

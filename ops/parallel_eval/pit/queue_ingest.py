@@ -6,6 +6,13 @@ Sources (idempotent):
   2. K1 turns under lifecycle epochs (uid/hotkey/reg) not yet queued
   3. Optional legacy ``life/pending/e*.json`` (ignored when ``pit_claimed``)
 
+Real K1-TURN.json has ``epoch`` as a run-id string
+(e.g. ``affine-mimo9b-grpo-20261013-e001050``); the integer is ``epoch_index``.
+
+Do **not** enqueue the backlog: only ``epoch_index >= CURRENT.epoch_index``,
+require TRAINING-JOB + TRAIN-DISPATCH-FF, skip TRAINING-RESULT / FINALIZED.
+``registration_index = epoch_index`` (not queue_position).
+
 Head is refreshed from HEAD-CHAIN / CURRENT so each spawn binds the live head.
 Lifecycle never feeds work by claiming epochs.
 """
@@ -13,6 +20,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, TYPE_CHECKING
 
@@ -22,6 +32,10 @@ from .expected_master import lookup_expected_master
 if TYPE_CHECKING:
     from .controller import Controller
     from .durable import DurableStore
+
+
+class IngestError(RuntimeError):
+    """Loud, fail-visible ingest failure (never silently swallowed)."""
 
 
 def _rj(path: Path, default=None):
@@ -75,6 +89,148 @@ def _k1_turns_path() -> Path:
     )
 
 
+def _epoch_index_of(obj: Mapping[str, Any], *, dir_name: Optional[str] = None) -> Optional[int]:
+    """Real K1-TURN: integer is ``epoch_index``; ``epoch`` is a run-id string.
+
+    Fall back to a digit directory name. Never ``int(epoch)`` on a run-id.
+    """
+    raw = obj.get('epoch_index')
+    if raw is None and dir_name and str(dir_name).isdigit():
+        raw = dir_name
+    if raw is None:
+        # Inbox / pending tickets may still use integer ``epoch``.
+        cand = obj.get('epoch')
+        if isinstance(cand, int) or (isinstance(cand, str) and cand.isdigit()):
+            raw = cand
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def _current_epoch_floor() -> int:
+    """CURRENT.json epoch_index — backlog below this must not enqueue."""
+    for cur_path in (
+        _life_root() / 'CURRENT.json',
+        _pe_state_root() / 'CURRENT.json',
+    ):
+        cur = _rj(cur_path, {}) or {}
+        if isinstance(cur, Mapping) and cur.get('epoch_index') is not None:
+            try:
+                return int(cur['epoch_index'])
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
+def _epoch_dir_ready(epoch_dir: Path) -> bool:
+    """Require JOB+DISPATCH; skip completed (RESULT/FINALIZED) epochs."""
+    if not (epoch_dir / 'TRAINING-JOB.json').is_file():
+        return False
+    if not (epoch_dir / 'TRAIN-DISPATCH-FF.json').is_file():
+        return False
+    if (epoch_dir / 'TRAINING-RESULT.json').is_file():
+        return False
+    if (epoch_dir / 'FINALIZED.json').is_file():
+        return False
+    return True
+
+
+def training_job_checkpoint(epoch: int) -> Optional[str]:
+    """TRAINING-JOB checkpoint.id for stale-head checks before rent."""
+    ed = _life_root() / 'epochs' / str(int(epoch))
+    job = _rj(ed / 'TRAINING-JOB.json')
+    if not isinstance(job, Mapping):
+        return None
+    payload = job.get('payload') if isinstance(job.get('payload'), Mapping) else job
+    if not isinstance(payload, Mapping):
+        return None
+    man = payload.get('manifest')
+    if isinstance(man, Mapping):
+        inner = man.get('payload') if isinstance(man.get('payload'), Mapping) else man
+        ck = (inner or {}).get('checkpoint') if isinstance(inner, Mapping) else None
+        if isinstance(ck, Mapping):
+            cid = ck.get('id')
+            if isinstance(cid, str) and len(cid) == 64:
+                return cid
+    ck2 = payload.get('checkpoint')
+    if isinstance(ck2, Mapping):
+        cid = ck2.get('id')
+        if isinstance(cid, str) and len(cid) == 64:
+            return cid
+    return None
+
+
+def write_ingest_alert(exc: BaseException, *, root: Optional[Path] = None) -> Path:
+    """Persist a loud ingest failure so a dead ingest is visible (health/alert)."""
+    doc = {
+        'ok': False,
+        'at_unix': time.time(),
+        'error': str(exc)[:800],
+        'error_type': type(exc).__name__,
+        'traceback': traceback.format_exc()[-4000:],
+    }
+    alert = Path('/tmp/pit-INGEST-ALERT.json')
+    try:
+        pit = root or _pit_state_root()
+        pit.mkdir(parents=True, exist_ok=True)
+        alert = pit / 'INGEST-ALERT.json'
+        health = pit / 'INGEST-HEALTH.json'
+        tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n')
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, alert)
+        health.write_text(json.dumps({
+            'ok': False, 'at_unix': doc['at_unix'], 'last_error': doc['error'],
+        }, indent=1, sort_keys=True) + '\n')
+    except OSError as write_exc:
+        print(
+            json.dumps({
+                'component': 'pit-queue-ingest',
+                'level': 'error',
+                'event': 'ingest_alert_write_failed',
+                'error': str(write_exc)[:200],
+            }),
+            file=sys.stderr,
+            flush=True,
+        )
+    print(
+        json.dumps({
+            'component': 'pit-queue-ingest',
+            'level': 'error',
+            'event': 'ingest_failed',
+            'error': doc['error'],
+            'alert': str(alert),
+        }),
+        file=sys.stderr,
+        flush=True,
+    )
+    return alert
+
+
+def write_ingest_ok(*, root: Optional[Path] = None, summary: Optional[Mapping[str, Any]] = None) -> None:
+    doc = {
+        'ok': True,
+        'at_unix': time.time(),
+        'summary': dict(summary or {}),
+    }
+    try:
+        pit = root or _pit_state_root()
+        pit.mkdir(parents=True, exist_ok=True)
+        health = pit / 'INGEST-HEALTH.json'
+        alert = pit / 'INGEST-ALERT.json'
+        health.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+        if alert.is_file():
+            try:
+                alert.unlink()
+            except OSError:
+                pass
+    except OSError:
+        # Health file is best-effort; never fail the ingest itself on path/perms.
+        pass
+
+
 def _head_chain_tip() -> tuple[Optional[str], int]:
     st = _pe_state_root()
     chain = _rj(st / 'HEAD-CHAIN.json', {}) or {}
@@ -112,7 +268,7 @@ def _master_for_head(head: str) -> Optional[str]:
     return lookup_expected_master(head, index=index if isinstance(index, Mapping) else None)
 
 
-def _inbox_batches() -> List[Dict[str, Any]]:
+def _inbox_batches(*, floor: int) -> List[Dict[str, Any]]:
     """Host PIT inbox: one JSON ticket per queued batch."""
     rows: List[Dict[str, Any]] = []
     for inbox in (_pit_state_root() / 'inbox', _pe_state_root() / 'pit' / 'inbox'):
@@ -122,8 +278,8 @@ def _inbox_batches() -> List[Dict[str, Any]]:
             doc = _rj(path)
             if not isinstance(doc, Mapping):
                 continue
-            epoch = int(doc.get('epoch') or doc.get('batch_epoch') or -1)
-            if epoch < 0:
+            epoch = _epoch_index_of(doc)
+            if epoch is None or epoch < floor:
                 continue
             batch_path = (
                 doc.get('batch_path') or doc.get('batch') or doc.get('batch_file')
@@ -131,7 +287,7 @@ def _inbox_batches() -> List[Dict[str, Any]]:
             )
             rows.append(dict(
                 epoch=epoch,
-                registration_index=int(doc.get('registration_index') or doc.get('queue_position') or epoch),
+                registration_index=epoch,
                 uid=int(doc.get('uid') or 0),
                 hotkey_prefix=str(doc.get('hotkey_prefix') or doc.get('hotkey') or '')[:16],
                 path=str(path),
@@ -142,40 +298,38 @@ def _inbox_batches() -> List[Dict[str, Any]]:
     return rows
 
 
-def _k1_batch_rows() -> List[Dict[str, Any]]:
-    """Recent K1 turns as batch tickets (uid/hotkey/epoch)."""
+def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
+    """Recent K1 turns as batch tickets — real-shaped epoch_index, no backlog."""
     rows: List[Dict[str, Any]] = []
-    # Per-epoch K1-TURN.json under life epochs.
     life_epochs = _life_root() / 'epochs'
     if life_epochs.is_dir():
-        for d in sorted(life_epochs.iterdir(), key=lambda p: int(p.name) if p.name.isdigit() else -1):
+        for d in sorted(
+            life_epochs.iterdir(),
+            key=lambda p: int(p.name) if p.name.isdigit() else -1,
+        ):
             if not d.name.isdigit():
                 continue
             turn = _rj(d / 'K1-TURN.json')
-            if not turn:
+            if not isinstance(turn, Mapping):
                 continue
-            epoch = int(turn.get('epoch') or d.name)
-            batch_path = (
-                turn.get('batch_path') or turn.get('batch') or turn.get('batch_file')
-                or turn.get('path')
-            )
-            # Common layout: life/epochs/<e>/batch.json next to K1-TURN.json.
-            if not batch_path:
-                for cand in (d / 'batch.json', d / 'BATCH.json', d / 'turn.batch.json'):
-                    if cand.is_file():
-                        batch_path = str(cand)
-                        break
+            epoch = _epoch_index_of(turn, dir_name=d.name)
+            if epoch is None:
+                continue
+            if epoch < floor:
+                continue
+            if not _epoch_dir_ready(d):
+                continue
             rows.append(dict(
                 epoch=epoch,
-                registration_index=int(turn.get('registration_index') or turn.get('queue_position') or epoch),
+                registration_index=epoch,
                 uid=int(turn.get('uid') or 0),
                 hotkey_prefix=str(turn.get('hotkey') or turn.get('hotkey_prefix') or '')[:16],
                 path=str(d / 'K1-TURN.json'),
-                batch_path=batch_path,
+                batch_path=str(d),
                 source='k1-turn',
                 raw=dict(turn),
             ))
-    # Append-only turns log (best-effort tail).
+    # Append-only turns log (best-effort tail) — still require epoch_index.
     turns = _k1_turns_path()
     if turns.is_file():
         try:
@@ -187,22 +341,28 @@ def _k1_batch_rows() -> List[Dict[str, Any]]:
                 turn = json.loads(line)
             except Exception:
                 continue
-            epoch = int(turn.get('epoch') or -1)
-            if epoch < 0:
+            if not isinstance(turn, Mapping):
+                continue
+            epoch = _epoch_index_of(turn)
+            if epoch is None or epoch < floor:
+                continue
+            ed = _life_root() / 'epochs' / str(epoch)
+            if ed.is_dir() and not _epoch_dir_ready(ed):
                 continue
             rows.append(dict(
                 epoch=epoch,
-                registration_index=int(turn.get('registration_index') or turn.get('queue_position') or epoch),
+                registration_index=epoch,
                 uid=int(turn.get('uid') or 0),
                 hotkey_prefix=str(turn.get('hotkey') or turn.get('hotkey_prefix') or '')[:16],
                 path=str(turns),
+                batch_path=str(ed) if ed.is_dir() else None,
                 source='k1-turns-jsonl',
                 raw=dict(turn),
             ))
     return rows
 
 
-def _legacy_pending_rows() -> List[Dict[str, Any]]:
+def _legacy_pending_rows(*, floor: int) -> List[Dict[str, Any]]:
     """Ignore lifecycle pe_lifecycle claim stubs (pit_claimed); keep real trainer pending."""
     pending_dir = _life_root() / 'pending'
     if not pending_dir.is_dir():
@@ -214,15 +374,22 @@ def _legacy_pending_rows() -> List[Dict[str, Any]]:
         doc = _rj(path)
         if not doc or doc.get('pit_claimed'):
             continue
-        epoch = int(doc.get('epoch') or path.stem.lstrip('e') or -1)
-        if epoch < 0:
+        if not isinstance(doc, Mapping):
+            continue
+        stem = path.stem.lstrip('e')
+        epoch = _epoch_index_of(doc, dir_name=stem if stem.isdigit() else None)
+        if epoch is None or epoch < floor:
+            continue
+        ed = _life_root() / 'epochs' / str(epoch)
+        if ed.is_dir() and not _epoch_dir_ready(ed):
             continue
         rows.append(dict(
             epoch=epoch,
-            registration_index=int(doc.get('registration_index') or epoch),
+            registration_index=epoch,
             uid=int(doc.get('uid') or 0),
             hotkey_prefix=str(doc.get('hotkey_prefix') or '')[:16],
             path=str(path),
+            batch_path=str(ed) if ed.is_dir() else None,
             source='pending',
             raw=dict(doc),
         ))
@@ -233,15 +400,32 @@ def sync(
     controller: 'Controller',
     store: Optional['DurableStore'] = None,
 ) -> Dict[str, Any]:
-    """Enqueue new batches and refresh controller head from durable state."""
+    """Enqueue new batches and refresh controller head from durable state.
+
+    Raises ``IngestError`` on unexpected failure — callers must log loudly
+    (see ``run_host.tick_once``) and write INGEST-ALERT / INGEST-HEALTH.
+    """
+    try:
+        return _sync_inner(controller, store=store)
+    except IngestError:
+        raise
+    except Exception as exc:
+        raise IngestError('queue_ingest.sync failed: %s' % str(exc)[:400]) from exc
+
+
+def _sync_inner(
+    controller: 'Controller',
+    store: Optional['DurableStore'] = None,
+) -> Dict[str, Any]:
     known_epochs: Set[int] = {int(i.epoch) for i in controller.items}
     if store is not None:
         known_epochs |= {int(i.epoch) for i in store.list_items()}
 
+    floor = _current_epoch_floor()
     tickets: List[Dict[str, Any]] = []
-    tickets.extend(_inbox_batches())
-    tickets.extend(_k1_batch_rows())
-    tickets.extend(_legacy_pending_rows())
+    tickets.extend(_inbox_batches(floor=floor))
+    tickets.extend(_k1_batch_rows(floor=floor))
+    tickets.extend(_legacy_pending_rows(floor=floor))
     # Prefer inbox over duplicates of the same epoch.
     seen: Set[int] = set()
     ordered: List[Dict[str, Any]] = []
@@ -251,11 +435,16 @@ def sync(
             continue
         seen.add(e)
         ordered.append(row)
+    # Order by epoch_index (= registration_index), never queue_position.
     ordered.sort(key=lambda r: (int(r['registration_index']), int(r['epoch'])))
 
     enqueued: List[int] = []
+    skipped_backlog = 0
     for row in ordered:
         epoch = int(row['epoch'])
+        if epoch < floor:
+            skipped_backlog += 1
+            continue
         if epoch in known_epochs:
             continue
         item = controller.enqueue(
@@ -264,11 +453,13 @@ def sync(
             uid=int(row.get('uid') or 0),
             hotkey_prefix=str(row.get('hotkey_prefix') or ''),
         )
+        batch_path = row.get('batch_path') or row.get('path')
         item.meta = dict(
             item.meta or {},
             ingest_source=row.get('source'),
-            batch_path=row.get('batch_path') or row.get('path'),
+            batch_path=batch_path,
             ticket_path=row.get('path'),
+            epoch_dir=str(_life_root() / 'epochs' / str(epoch)),
         )
         known_epochs.add(epoch)
         enqueued.append(epoch)
@@ -286,10 +477,15 @@ def sync(
             controller.set_head(head, epoch=head_epoch, master_digest=master, round_id=round_id)
             head_set = True
 
-    return dict(
+    out = dict(
         enqueued=enqueued,
         head=head,
         head_epoch=head_epoch,
         head_set=head_set,
+        current_epoch_floor=floor,
+        skipped_backlog=skipped_backlog,
         sources=['inbox', 'k1', 'pending'],
     )
+    health_root = store.root if store is not None else None
+    write_ingest_ok(root=health_root, summary=out)
+    return out

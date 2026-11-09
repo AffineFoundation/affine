@@ -45,7 +45,9 @@ TERMINAL = frozenset({
 
 ALLOWED: Dict[ItemState, FrozenSet[ItemState]] = {
     ItemState.QUEUED: frozenset({ItemState.BOUND, ItemState.ABORTED}),
-    ItemState.BOUND: frozenset({ItemState.RENTING, ItemState.ABORTED}),
+    ItemState.BOUND: frozenset({
+        ItemState.RENTING, ItemState.ABORTED, ItemState.NO_DECISION,
+    }),
     ItemState.RENTING: frozenset({
         ItemState.PROVISIONING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
     }),

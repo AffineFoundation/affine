@@ -156,8 +156,10 @@ class BoxRunner:
             else:
                 raise
 
-        # seal
-        self.io.upload_candidate(candidate_id=candidate_id, candidate_path=candidate_path)
+        # Keep ~18.8 GB candidate on the box until GREEN. Only upload on
+        # green_fresh apply (presigned PUT); RED releases without transfer.
+        if not train_receipt.get('defer_candidate_upload'):
+            self.io.upload_candidate(candidate_id=candidate_id, candidate_path=candidate_path)
         record = apply_transition(
             record, ItemState.SEALED, reason='sealed',
             updates={'candidate_id': candidate_id, 'sealed': True},
