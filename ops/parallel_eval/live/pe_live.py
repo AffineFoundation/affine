@@ -310,7 +310,11 @@ def apply_tick():
         if not item:
             break
         kind, s = PA.decide_apply(item)
-        pend = rj(item["pending"]) or {}
+        pend_path = item.get("pending")
+        if not pend_path:
+            PA.mark(item["candidate"], state="unrestorable", staleness=s, why="missing pending path on GREEN row")
+            ev(event="green_unrestorable", epoch=item["epoch"], why="no-pending"); continue
+        pend = rj(pend_path) or {}
         if kind == "fresh":
             if pend.get("pe_keep") is False:
                 PA.mark(item["candidate"], state="unrestorable", staleness=s, why="pe-keep failed; applying would strand the trainer")

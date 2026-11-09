@@ -10,9 +10,14 @@ fp32-master / bf16 hash check raises ApplyLiveError (never treats as verified).
 """
 from __future__ import annotations
 
+import json
+import os
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
 
+from .checkpoint_auth import build_checkpoint_auth_payload, sign_checkpoint_authorization
 from .config import PitConfig
 from .state import ItemRecord
 
@@ -92,6 +97,25 @@ def verify_green_uploads(
     return out
 
 
+def _write_pending_json(path: Path, doc: Mapping[str, Any]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return str(path)
+
+
+def _pending_life_dir() -> Path:
+    life = os.environ.get('PE_LIFE_STATE')
+    if life:
+        return Path(life) / 'pending'
+    pe = os.environ.get('PE_STATE')
+    if pe:
+        return Path(pe) / 'pending'
+    return Path('/tmp/pit-pending')
+
+
 @dataclass
 class LiveApplicator:
     config: PitConfig
@@ -100,6 +124,7 @@ class LiveApplicator:
     destroy_state: Optional[Callable[..., Mapping[str, Any]]] = None
     upload_master: Optional[Callable[..., Mapping[str, Any]]] = None
     upload_candidate: Optional[Callable[..., Mapping[str, Any]]] = None
+    checkpoint_signer: Optional[Any] = None
 
     def apply(self, item: ItemRecord, *, scored: Mapping[str, Any]) -> LiveApplyResult:
         if not self.config.may_write_live_artifacts():
@@ -146,6 +171,34 @@ class LiveApplicator:
             candidate_sha256=str(cand_sha),
             master_digest=str(master_digest),
         )
+        meta = item.meta or {}
+        files = meta.get('files') or (meta.get('checkpoint') or {}).get('files')
+        ckpt = dict(id=cand)
+        if files:
+            ckpt['files'] = dict(files)
+        optimizer_step = int(meta.get('optimizer_step') or scored.get('optimizer_step') or 0)
+        auth_payload = build_checkpoint_auth_payload(
+            checkpoint_id=cand,
+            input_head=item.bound_head or '',
+            optimizer_step=optimizer_step,
+            files=ckpt.get('files'),
+            publication_receipt_sha256=meta.get('publication_receipt_sha256'),
+        )
+        authorization = sign_checkpoint_authorization(auth_payload, signer=self.checkpoint_signer)
+        pending_dir = _pending_life_dir()
+        pending_path = pending_dir / ('e%d-%s.json' % (item.epoch, cand[:16]))
+        pend_doc = dict(
+            epoch=item.epoch,
+            candidate=cand,
+            training_head=item.bound_head,
+            checkpoint=ckpt,
+            optimizer_step=optimizer_step,
+            checkpoint_authorization=authorization,
+            pe_keep=True,
+            source='pit',
+            at=time.time(),
+        )
+        pending_abs = _write_pending_json(pending_path, pend_doc)
         pe_ok = False
         if self.accept_pit_decision is not None:
             payload = {
@@ -153,10 +206,11 @@ class LiveApplicator:
                 'epoch': item.epoch,
                 'candidate': cand,
                 'training_head': item.bound_head,
-                'green_at': (item.meta or {}).get('decided_at_mono'),
+                'green_at': meta.get('decided_at_mono'),
                 'decision': 'green_fresh',
                 'merge_blocked': False,
-                'files': (item.meta or {}).get('files'),
+                'files': files,
+                'pending': pending_abs,
             }
             self.accept_pit_decision(payload)
             pe_ok = True

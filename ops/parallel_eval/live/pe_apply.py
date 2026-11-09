@@ -117,14 +117,17 @@ def accept_pit_decision(item, *, shadow=False):
         raise RuntimeError("pe_apply.accept_pit_decision refuses shadow writes")
     if (item or {}).get("source") != "pit":
         raise ValueError("source must be pit")
+    extra = dict(
+        source="pit",
+        decision=item.get("decision"),
+        merge_blocked=bool(item.get("merge_blocked")),
+    )
+    if item.get("pending"):
+        extra["pending"] = item["pending"]
     return add_green(
         item["epoch"], item["candidate"], item["training_head"], item.get("green_at") or time.time(),
         files=item.get("files"),
-        extra=dict(
-            source="pit",
-            decision=item.get("decision"),
-            merge_blocked=bool(item.get("merge_blocked")),
-        ),
+        extra=extra,
     )
 
 
