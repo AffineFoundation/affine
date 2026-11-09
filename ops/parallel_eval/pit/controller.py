@@ -103,12 +103,12 @@ class Controller:
         if cfg.is_live():
             rent.require_host = True
             lane.require_host = True
-            if rent.host_rent is None:
-                raise ValueError('live mode requires host pe_rent (bind failed)')
             if box_io_factory is None:
                 raise ValueError('live mode requires explicit box_io_factory (refuse ScriptedBoxIO default)')
             if box_io_factory is ScriptedBoxIO:
                 raise ValueError('live mode refuses ScriptedBoxIO')
+            if rent.host_rent is None:
+                raise ValueError('live mode requires host pe_rent (bind failed)')
         else:
             box_io_factory = box_io_factory or ScriptedBoxIO
         return cls(
@@ -380,7 +380,7 @@ class Controller:
         for rec in self.items:
             if rec.decision != 'green_fresh' or not rec.candidate_id:
                 continue
-            if rec.state not in (ItemState.DECIDED, ItemState.RELEASED):
+            if rec.state is not ItemState.DECIDED:
                 continue
             gat = (rec.meta or {}).get('decided_at_mono')
             if gat is None:
@@ -489,14 +489,17 @@ class Controller:
             try:
                 result = self.live_applicator.apply(item, scored=scored)
             except ApplyLiveError as exc:
-                nd = apply_transition(
-                    item,
-                    ItemState.NO_DECISION,
-                    reason='apply-failed:%s' % str(exc)[:120],
-                    updates={'decision': 'no_decision', 'paid': False, 'fresh': None, 'merge_blocked': False},
-                )
                 item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300])
-                return self._destroy_and_release(nd, reason='apply-failed')
+                released = apply_transition(
+                    item,
+                    ItemState.RELEASED,
+                    reason='apply-failed:%s' % str(exc)[:120],
+                    updates={
+                        'decision': 'no_decision', 'paid': False, 'fresh': None,
+                        'merge_blocked': False, 'box_id': None, 'box_name': None,
+                    },
+                )
+                return released, 'apply-failed'
             item.meta['live_apply'] = result.as_dict()
             if result.head_advanced and item.candidate_id:
                 self.current_head = item.candidate_id
@@ -541,6 +544,9 @@ class Controller:
         return item, 'release-noop'
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
+        if item.state is ItemState.DECIDED:
+            item.last_error = reason
+            return self._destroy_and_release(item, reason=reason)
         next_attempt = item.attempt + 1
         if item.box_id:
             try:

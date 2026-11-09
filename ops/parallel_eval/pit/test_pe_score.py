@@ -55,6 +55,16 @@ class TestPeScore(unittest.TestCase):
         )
         self.assertEqual(out['candidate'], BOX_C)
 
+    def test_require_host_refuses_embedded_score(self):
+        with self.assertRaises(ScoreError) as cm:
+            score(
+                epoch=1, round_id='r',
+                result={'score': {'decision': 'green', 'z': 1.0}},
+                candidate_id=BOX_C, head_id=HEAD,
+                require_host=True,
+            )
+        self.assertIn('embedded', str(cm.exception).lower())
+
     def test_rejects_bad_candidate(self):
         with self.assertRaises(ScoreError):
             score(

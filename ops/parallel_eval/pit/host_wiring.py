@@ -16,7 +16,6 @@ from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentService, bind_host_rent_service
-from .pe_score import score as pit_score_fn
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
 
 
@@ -174,9 +173,6 @@ def build_live_host_bundle(
     def score_fn(**kwargs: Any) -> Mapping[str, Any]:
         return dict(host_score(**kwargs))
 
-    def wrapped_pit_score(**kwargs: Any) -> Mapping[str, Any]:
-        return pit_score_fn(host_score=score_fn, require_host=True, **kwargs)
-
     gate_writer = HostGateWriter(
         epochs_root=gate_epochs_root(extra.get('gate_epochs_root')),
         shadow=False,
@@ -197,7 +193,7 @@ def build_live_host_bundle(
         rent=rent,
         lane=lane,
         box_io_factory=_box_io_factory,
-        score_fn=wrapped_pit_score,
+        score_fn=score_fn,
         verify_uploads=verify_uploads,
         gate_writer=gate_writer,
         root_signer=root_signer,
