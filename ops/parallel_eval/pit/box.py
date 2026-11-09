@@ -122,6 +122,8 @@ class BoxRunner:
             hotkey=record.hotkey_prefix or None,
             train_gpu=train_gpu,
             pod=pod,
+            epoch=int(record.epoch),
+            epoch_dir=(record.meta or {}).get('epoch_dir'),
         ))
         if train_receipt.get('used_fp32_bootstrap_override'):
             raise Fp32MasterError('bootstrap-override-refused-by-pit')

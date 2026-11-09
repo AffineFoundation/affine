@@ -62,6 +62,14 @@ ops/parallel_eval/live/pe_box.py
 ops/parallel_eval/live/pe_verify.py
 ops/parallel_eval/live/pe_upload_verify.py
 ops/parallel_eval/live/pe_round_seed.py
+# Vendored shadow-driver helpers (drive_item / run5090 on-box path):
+ops/parallel_eval/live/train_pit.py
+ops/parallel_eval/live/gate_fetch.py
+ops/parallel_eval/live/bundle_fetch.py
+# Host-only (NOT committed): BUNDLE.json trainer {key,sha256,bytes},
+# trainer-host-v834e/ (incl. ROOT-ADMITTED private config), published
+# k1/fp32-master/<H>.json. Point via PIT_BUNDLE_JSON / PIT_V834E_RELEASE /
+# PIT_TRAINER_HOST / PIT_FP32_MASTER_INDEX (never /home/const in git).
 
 # --- Docs / operator ---
 docs/PIT.md
