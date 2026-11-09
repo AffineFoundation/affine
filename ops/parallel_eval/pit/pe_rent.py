@@ -1,10 +1,13 @@
-"""PIT rental seam (BRIEF §1.3 / §1.9).
+"""PIT rental seam (BRIEF §1.3 / §1.9, SPEC §4).
 
 Host RA ``pe_rent.py`` owns real Lium rental. This git port:
 
 * defines the on-demand rent/release API PIT uses;
-* counts ``affine-pit-*`` boxes toward the eval-node cap;
+* counts ``affine-pit-*`` boxes toward the item box_cap only;
 * refuses NEVER_NAMES / warm-pool semantics;
+* pins item rentals to B300 (no GPU fallback);
+* enforces the $56/h price ceiling;
+* disables Lium auto-backup on every rental;
 * loads the host module when present.
 
 Hard rule: rent only when the controller has a bound item ready. No warm pool.
@@ -14,20 +17,19 @@ from __future__ import annotations
 import importlib
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from . import GPU_ORDER, PREFIX
+from . import GPU_PINNED, PREFIX, PRICE_CEILING_USD_H
 
 
-# Names the code must never rent or reclaim (DESIGN §7). Redacted host names
-# are matched by prefix patterns only — no private hostnames embedded here.
 NEVER_NAME_PREFIXES = (
     'affine-trainer-',
     'affine-probe-',
     'affine-evaluator-',
     'affine-bench-',
     'affine-prior-',
-    'affine-warm-',  # pe_warm must never be claimed as PIT
+    'affine-warm-',
+    'affine-baseline-',  # baseline jobs use their own prefix; never claim as PIT
 )
 
 
@@ -60,15 +62,12 @@ def eval_nodes_with_pit(
     pe_eval_count: int,
     pit_listings: List[Mapping[str, Any]],
 ) -> int:
-    """PE eval nodes + PIT boxes share the eval-node cap (BRIEF §1.9)."""
     return int(pe_eval_count) + count_pit_boxes(pit_listings)
 
 
 @dataclass
 class RentalLedger:
-    """In-memory view of PIT rentals. Empty queue ⇒ zero active rentals."""
-
-    active: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # box_id -> meta
+    active: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     history: List[Dict[str, Any]] = field(default_factory=list)
 
     def count(self) -> int:
@@ -90,27 +89,23 @@ class RentalLedger:
 
 @dataclass
 class RentService:
-    """On-demand rent/release. Inject host pe_rent callables when available."""
-
     max_boxes: int = 2
     max_eval_nodes: int = 5
-    gpu_order: tuple = GPU_ORDER
+    gpu_order: tuple = GPU_PINNED
+    price_ceiling_usd_h: float = PRICE_CEILING_USD_H
+    disable_auto_backup: bool = True
     ledger: RentalLedger = field(default_factory=RentalLedger)
     host_rent: Optional[Callable[..., Mapping[str, Any]]] = None
     host_release: Optional[Callable[..., Mapping[str, Any]]] = None
     list_pods: Optional[Callable[[], List[Mapping[str, Any]]]] = None
     pe_eval_count_fn: Optional[Callable[[], int]] = None
+    disable_auto_backup_fn: Optional[Callable[[str], bool]] = None
     now_fn: Callable[[], float] = time.time
 
     def active_count(self) -> int:
         return self.ledger.count()
 
     def can_rent(self, *, queued_bound_waiting: int) -> bool:
-        """True only when there is demand and room under the cap.
-
-        ``queued_bound_waiting`` = items that need a box (BOUND ready to rent).
-        Empty demand ⇒ False even if cap is free (no warm pool).
-        """
         if queued_bound_waiting <= 0:
             return False
         if self.ledger.count() >= self.max_boxes:
@@ -124,6 +119,8 @@ class RentService:
     def rent(self, *, item_id: str, epoch: int, attempt: int) -> Dict[str, Any]:
         if self.ledger.count() >= self.max_boxes:
             raise RentError('box_cap reached')
+        if tuple(self.gpu_order) != GPU_PINNED:
+            raise RentError('item rentals are pinned to B300')
         name = '%s%d-a%d' % (PREFIX, int(epoch), int(attempt))
         if is_never_name(name):
             raise RentError('refused NEVER_NAME')
@@ -132,6 +129,8 @@ class RentService:
             out = dict(self.host_rent(
                 name=name, item_id=item_id, epoch=epoch, attempt=attempt,
                 gpu_order=list(self.gpu_order), prefix=PREFIX, ttl_h=4,
+                price_ceiling_usd_h=self.price_ceiling_usd_h,
+                disable_auto_backup=self.disable_auto_backup,
             ))
             box_id = out.get('box_id') or out.get('id')
             if not box_id:
@@ -139,11 +138,31 @@ class RentService:
             pod_name = out.get('name') or name
             if is_never_name(pod_name):
                 raise RentError('host rent returned NEVER_NAME')
+            price = out.get('price_usd_h')
+            if price is not None and float(price) > float(self.price_ceiling_usd_h):
+                raise RentError('price %.2f above ceiling %.2f' % (float(price), self.price_ceiling_usd_h))
         else:
-            # Deterministic synthetic box for unit/shadow without host rental.
             box_id = 'pit-box-%s-%d' % (item_id[:12], attempt)
             pod_name = name
-            out = dict(box_id=box_id, name=pod_name, synthetic=True, gpu=self.gpu_order[0])
+            out = dict(
+                box_id=box_id, name=pod_name, synthetic=True,
+                gpu=self.gpu_order[0], price_usd_h=min(35.0, self.price_ceiling_usd_h),
+            )
+        # Disable Lium auto-backup (SPEC §8).
+        disabled = True
+        if self.disable_auto_backup:
+            if self.disable_auto_backup_fn is not None:
+                disabled = bool(self.disable_auto_backup_fn(str(box_id)))
+            out['auto_backup_disabled'] = disabled
+            if not disabled:
+                if self.host_release is not None:
+                    try:
+                        self.host_release(box_id=box_id, reason='auto-backup-still-on')
+                    except Exception:
+                        pass
+                raise RentError('lium auto-backup must be disabled on every rental')
+        else:
+            out['auto_backup_disabled'] = False
         self.ledger.register(str(box_id), item_id=item_id, name=pod_name, at=at)
         out.update(box_id=str(box_id), name=pod_name, rented_at=at)
         return out
@@ -154,8 +173,6 @@ class RentService:
             try:
                 self.host_release(box_id=box_id, reason=reason)
             except Exception as exc:
-                # Still drop from ledger so we do not keep a zombie rental slot;
-                # controller retries release confirmation separately.
                 self.ledger.release(box_id, reason='release-error:%s' % str(exc)[:80], at=at)
                 raise
         self.ledger.release(box_id, reason=reason, at=at)
@@ -184,4 +201,5 @@ def bind_host_rent_service(
     service.host_rent = getattr(mod, 'rent', None) or getattr(mod, 'rent_box', None)
     service.host_release = getattr(mod, 'release', None) or getattr(mod, 'release_box', None)
     service.list_pods = getattr(mod, 'list_pods', None) or getattr(mod, 'ps', None)
+    service.disable_auto_backup_fn = getattr(mod, 'disable_auto_backup', None)
     return service

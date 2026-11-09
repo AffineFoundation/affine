@@ -106,8 +106,9 @@ def accept_pit_decision(item, *, shadow=False):
     """Accept a PIT decision row into the GREEN queue.
 
     Shadow mode must not call this for durable HEAD-CHAIN mutation; the PIT
-    controller keeps shadow applies memory-only. Live PIT passes shadow=False
-    after the operator enables non-shadow mode (not this PR).
+    controller keeps shadow applies memory-only. Live PIT (mode=live, cutover)
+    passes shadow=False so the first fresh GREEN advances the head via the
+    existing apply / HEAD-CHAIN path. Stale GREENs arrive merge_blocked.
     """
     if shadow:
         raise RuntimeError("pe_apply.accept_pit_decision refuses shadow writes")

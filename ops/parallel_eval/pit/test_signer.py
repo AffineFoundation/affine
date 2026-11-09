@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
+import os
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from .signer import (
-    PLACEHOLDER_ROOT_PUBKEY_HEX, FixtureRootSigner, build_admission_envelope,
-    generate_ephemeral_box_key, request_real_root_signature, sign_training_result,
-    verify_admission_cert, verify_training_result,
+    PLACEHOLDER_ROOT_PUBKEY_HEX, AdmissionCert, FixtureRootSigner, HostRootSigner,
+    build_admission_envelope, generate_ephemeral_box_key, request_real_root_signature,
+    sign_training_result, verify_admission_cert, verify_training_result,
 )
 
 
@@ -44,6 +47,54 @@ class TestSigner(unittest.TestCase):
         )
         self.assertTrue(out['ok'])
 
+    def test_host_root_signer_from_identity(self):
+        from nacl.signing import SigningKey
+
+        class _Id:
+            def __init__(self):
+                self.key = SigningKey.generate()
+                self.id = bytes(self.key.verify_key).hex()
+
+        root = HostRootSigner(identity=_Id())
+        self.assertTrue(root.ready())
+        key = generate_ephemeral_box_key()
+        now = time.time()
+        env = build_admission_envelope(
+            key, pod_id='pod', epoch=2, binding_H=H0, master_digest=M0, now=now,
+        )
+        cert = request_real_root_signature(env, signer=root, issued_at_unix=now)
+        out = verify_admission_cert(
+            cert, expected_root_pubkey_hex=root.public_key_hex(), now=now + 1,
+            pubkey=key.public_key_hex, epoch=2, binding_H=H0,
+        )
+        self.assertTrue(out['ok'])
+
+    def test_host_root_signer_from_seed_file(self):
+        seed = os.urandom(32)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'root.seed'
+            path.write_bytes(seed)
+            os.chmod(path, 0o600)
+            root = HostRootSigner(seed_file=str(path))
+            self.assertTrue(root.ready())
+            key = generate_ephemeral_box_key()
+            now = time.time()
+            env = build_admission_envelope(
+                key, pod_id='pod', epoch=3, binding_H=H0, master_digest=M0, now=now,
+            )
+            cert = root.sign_admission(env, issued_at_unix=now)
+            verify_admission_cert(
+                cert, expected_root_pubkey_hex=root.public_key_hex(), now=now + 1,
+            )
+
+    def test_host_root_signer_refuses_world_readable_seed(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'root.seed'
+            path.write_bytes(b'\x00' * 32)
+            os.chmod(path, 0o644)
+            with self.assertRaises(PermissionError):
+                HostRootSigner(seed_file=str(path))
+
     def test_tampered_payload_rejected(self):
         root = FixtureRootSigner()
         key = generate_ephemeral_box_key()
@@ -75,7 +126,7 @@ class TestSigner(unittest.TestCase):
     def test_placeholder_refused(self):
         with self.assertRaises(ValueError):
             verify_admission_cert(
-                __import__('ops.parallel_eval.pit.signer', fromlist=['AdmissionCert']).AdmissionCert(
+                AdmissionCert(
                     version='pit-admission-cert-v1',
                     admission={'version': 'pit-box-admission-v1', 'pubkey': 'ab' * 32,
                                'pod_id': 'p', 'epoch': 1, 'binding_H': H0, 'master_digest': M0,
@@ -87,9 +138,18 @@ class TestSigner(unittest.TestCase):
                 expected_root_pubkey_hex=PLACEHOLDER_ROOT_PUBKEY_HEX,
             )
 
-    def test_real_root_request_refused(self):
-        with self.assertRaises(RuntimeError):
-            request_real_root_signature()
+    def test_real_root_without_config_refused(self):
+        key = generate_ephemeral_box_key()
+        env = build_admission_envelope(
+            key, pod_id='pod', epoch=1, binding_H=H0, master_digest=M0, now=time.time(),
+        )
+        old = os.environ.pop('AFFINE_PIT_ROOT_SEED_FILE', None)
+        try:
+            with self.assertRaises(RuntimeError):
+                request_real_root_signature(env)
+        finally:
+            if old is not None:
+                os.environ['AFFINE_PIT_ROOT_SEED_FILE'] = old
 
 
 if __name__ == '__main__':

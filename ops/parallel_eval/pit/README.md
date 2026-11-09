@@ -1,13 +1,15 @@
-# PIT — per-item train+eval (shadow)
+# PIT — per-item train+eval (serverless)
 
-See `docs/PIT.md` for operator steps and DESIGN rules.
+See `docs/PIT.md` for operator cutover / revert steps and DESIGN rules.
 
-**On-demand rent only** (hard rule): empty queue ⇒ 0 boxes; B queued with
+**On-demand rent only** (hard rule): empty queue ⇒ 0 item boxes; B queued with
 `max_boxes` N ⇒ ≤ min(B, N) rentals; release as soon as result is stored or the
-item fails. No warm pool.
+item fails. No warm pool. Baseline / bench / prior sit outside the item cap.
+Live: `mode=live`, box_cap 5, B300 pin, $56/h ceiling, masters after GREEN,
+REDs earn nothing.
 
 ```bash
-PYTHONPATH=. python -m unittest \
+PYTHONPATH=. python3 -m unittest \
   ops.parallel_eval.pit.test_state_machine \
   ops.parallel_eval.pit.test_binding \
   ops.parallel_eval.pit.test_decisions \
@@ -16,5 +18,8 @@ PYTHONPATH=. python -m unittest \
   ops.parallel_eval.pit.test_ondemand_rent \
   ops.parallel_eval.pit.test_pe_score \
   ops.parallel_eval.pit.test_shadow_controller \
-  ops.parallel_eval.pit.test_box_fake
+  ops.parallel_eval.pit.test_box_fake \
+  ops.parallel_eval.pit.test_live_controller \
+  ops.parallel_eval.pit.test_cutover \
+  ops.parallel_eval.pit.test_jobs
 ```

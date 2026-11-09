@@ -1,6 +1,7 @@
-"""PIT configuration. Defaults match DESIGN §12 / BRIEF §1.8.
+"""PIT configuration. Defaults match DESIGN §12 / BRIEF §1.8 / SPEC §3–§4.
 
-On-demand rental is a hard rule, not a config option.
+On-demand rental is a hard rule, not a config option. Live mode is authorized
+with box_cap default 5, B300 pin, $56/h ceiling, masters after GREEN only.
 """
 from __future__ import annotations
 
@@ -12,27 +13,34 @@ from . import (
     GATE_K_CAND,
     GATE_MAX_TOKENS,
     GATE_N_DRAWN,
+    GPU_PINNED,
     MAX_ATTEMPTS,
-    MAX_BOXES_DEFAULT,
+    MAX_BOXES_LIVE,
+    MAX_BOXES_SHADOW,
     MAX_SEQS,
+    PRICE_CEILING_USD_H,
     TRAIN_OUTPUT_TOKENS,
+    TRAINER_FALLBACK_HOURS,
 )
 
 BASELINE_OPTION_A = 'one_secret_draw_per_head_epoch'
-MASTER_UPLOAD_DURING_PROBE = 'during_probe'
+# SPEC §3.1: masters upload only on GREEN (during_probe dropped).
+MASTER_UPLOAD_AFTER_GREEN = 'after_green'
 GATE_DTYPE = 'bfloat16'
+AUTHORIZED_MODES = frozenset({'shadow', 'live'})
 
 
 @dataclass(frozen=True)
 class PitConfig:
     enabled: bool = False
-    mode: str = 'shadow'  # only shadow authorized in this PR while enabled
-    max_boxes: int = MAX_BOXES_DEFAULT
-    master_upload: str = MASTER_UPLOAD_DURING_PROBE
+    mode: str = 'shadow'
+    max_boxes: int = MAX_BOXES_SHADOW
+    master_upload: str = MASTER_UPLOAD_AFTER_GREEN
     baseline: str = BASELINE_OPTION_A
-    gpu_order: tuple = ('B300', 'B200', 'H200')
+    gpu_order: tuple = GPU_PINNED
     max_attempts: int = MAX_ATTEMPTS
     decision_timeout_seconds: int = 21000
+    price_ceiling_usd_h: float = PRICE_CEILING_USD_H
     # Gate replica — frozen.
     k_cand: int = GATE_K_CAND
     head_rollouts: int = GATE_HEAD_ROLLOUTS
@@ -43,31 +51,51 @@ class PitConfig:
     dtype: str = GATE_DTYPE
     z_strict_gt: bool = True
     no_fp8: bool = True
-    trainer_fallback: str = 'trainer_pod'
+    # Cutover (SPEC §7 step 6): trainer stays 24h as hot fallback; lanes/warm off.
+    cutover: bool = False
+    revert: bool = False
+    trainer_fallback_hours: int = TRAINER_FALLBACK_HOURS
+    disable_warm_pool: bool = True
+    disable_standing_lanes: bool = True
+    disable_trainer_dequeue: bool = True
+    disable_lium_auto_backup: bool = True
+    full_redo_after_sealed: bool = True  # SPEC D3
+    reds_earn: bool = False  # last-10-GREEN rule: REDs earn nothing
     pe_rent_module: Optional[str] = None
     pe_lane_module: Optional[str] = None
     pe_score_module: Optional[str] = None
+    root_signer_module: Optional[str] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def box_cap(self) -> int:
-        """Alias used by older call sites / docs."""
         return self.max_boxes
 
     def is_shadow(self) -> bool:
         return self.mode == 'shadow'
 
+    def is_live(self) -> bool:
+        return self.mode == 'live'
+
     def may_run(self) -> bool:
-        return self.enabled is True and self.mode == 'shadow'
+        return self.enabled is True and self.mode in AUTHORIZED_MODES
 
     def may_write_live_artifacts(self) -> bool:
-        return False  # this PR never authorizes live artifact writes
+        return self.enabled is True and self.mode == 'live' and not self.revert
+
+    def cutover_active(self) -> bool:
+        """Trainer dequeue / warm / standing lanes off when live cutover is on."""
+        if self.revert:
+            return False
+        return self.enabled and self.mode == 'live' and self.cutover
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d['gpu_order'] = list(self.gpu_order)
         d['extra'] = dict(self.extra)
-        d['on_demand_rent_only'] = True  # hard rule, not configurable
+        d['on_demand_rent_only'] = True
+        d['non_item_jobs_outside_cap'] = True
+        d['gpu_pinned'] = list(self.gpu_order)
         return d
 
 
@@ -82,17 +110,19 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
     if not isinstance(raw, Mapping):
         raise TypeError('parallel_eval.pit must be a mapping')
 
-    # Reject any attempt to enable a warm pool via config.
     for banned in ('warm_pool', 'warm_boxes', 'pre_rent', 'idle_pool', 'keep_warm'):
         if raw.get(banned):
             raise ValueError('PIT rents on demand only; %r is refused' % banned)
 
     known = {
         'enabled', 'mode', 'max_boxes', 'box_cap', 'master_upload', 'baseline',
-        'gpu_order', 'max_attempts', 'decision_timeout_seconds', 'k_cand',
-        'head_rollouts', 'n_drawn', 'max_output_tokens', 'train_output_tokens',
-        'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'trainer_fallback',
-        'pe_rent_module', 'pe_lane_module', 'pe_score_module', 'shadow',
+        'gpu_order', 'max_attempts', 'decision_timeout_seconds', 'price_ceiling_usd_h',
+        'k_cand', 'head_rollouts', 'n_drawn', 'max_output_tokens', 'train_output_tokens',
+        'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'cutover', 'revert',
+        'trainer_fallback_hours', 'disable_warm_pool', 'disable_standing_lanes',
+        'disable_trainer_dequeue', 'disable_lium_auto_backup', 'full_redo_after_sealed',
+        'reds_earn', 'pe_rent_module', 'pe_lane_module', 'pe_score_module',
+        'root_signer_module', 'shadow', 'trainer_fallback',
     }
     kwargs: dict[str, Any] = {}
     extra: dict[str, Any] = {}
@@ -100,12 +130,12 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         if key == 'box_cap':
             kwargs['max_boxes'] = value
         elif key == 'shadow' and 'mode' not in raw:
-            # Accept legacy {enabled, shadow:true} → mode=shadow
-            if value is True and raw.get('enabled') is True:
+            if value is True:
                 kwargs['mode'] = 'shadow'
-            elif value is True and not raw.get('enabled'):
-                kwargs.setdefault('mode', 'shadow')
-        elif key in known and key not in ('box_cap', 'shadow'):
+        elif key == 'trainer_fallback':
+            # Accept legacy string; live cutover uses trainer_fallback_hours.
+            extra[key] = value
+        elif key in known and key not in ('box_cap', 'shadow', 'trainer_fallback'):
             kwargs[key] = value
         elif key not in known:
             extra[key] = value
@@ -114,12 +144,27 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
     if 'gpu_order' in kwargs and not isinstance(kwargs['gpu_order'], tuple):
         kwargs['gpu_order'] = tuple(kwargs['gpu_order'])
 
+    # Mode-aware max_boxes default: live → 5 unless explicitly set.
+    if 'max_boxes' not in kwargs:
+        mode = kwargs.get('mode', 'shadow')
+        kwargs['max_boxes'] = MAX_BOXES_LIVE if mode == 'live' else MAX_BOXES_SHADOW
+
     cfg = PitConfig(**kwargs)
 
-    if cfg.enabled and cfg.mode != 'shadow':
-        raise ValueError('only mode=shadow is authorized in this PR; refuse mode=%r' % (cfg.mode,))
+    if cfg.enabled and cfg.mode not in AUTHORIZED_MODES:
+        raise ValueError('mode must be shadow|live; refuse mode=%r' % (cfg.mode,))
+    if cfg.revert and cfg.cutover:
+        raise ValueError('revert and cutover cannot both be true')
     if cfg.max_boxes < 1:
         raise ValueError('max_boxes must be >= 1')
+    if cfg.mode == 'live' and cfg.max_boxes > MAX_BOXES_LIVE:
+        raise ValueError('live max_boxes cannot exceed %d' % MAX_BOXES_LIVE)
+    if float(cfg.price_ceiling_usd_h) > PRICE_CEILING_USD_H + 1e-9:
+        raise ValueError('price_ceiling_usd_h cannot exceed %.1f' % PRICE_CEILING_USD_H)
+    if float(cfg.price_ceiling_usd_h) <= 0:
+        raise ValueError('price_ceiling_usd_h must be > 0')
+    if tuple(cfg.gpu_order) != GPU_PINNED:
+        raise ValueError('item/baseline GPU pin is B300 only; refuse gpu_order=%r' % (cfg.gpu_order,))
     if cfg.k_cand != GATE_K_CAND:
         raise ValueError('refuse gate math change: k_cand')
     if cfg.head_rollouts != GATE_HEAD_ROLLOUTS:
@@ -133,7 +178,13 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
     if cfg.z_strict_gt is not True or cfg.no_fp8 is not True:
         raise ValueError('refuse gate math change: z/fp8')
     if cfg.baseline != BASELINE_OPTION_A:
-        raise ValueError('this PR only ships baseline option A')
-    if cfg.master_upload not in ('during_probe', 'after_green'):
-        raise ValueError('master_upload must be during_probe|after_green')
+        raise ValueError('baseline must be option A (secret draw job per head/round)')
+    if cfg.master_upload not in ('after_green', 'during_probe'):
+        raise ValueError('master_upload must be after_green|during_probe')
+    if cfg.mode == 'live' and cfg.master_upload != MASTER_UPLOAD_AFTER_GREEN:
+        raise ValueError('live mode requires master_upload=after_green (SPEC §3.1)')
+    if cfg.reds_earn is not False:
+        raise ValueError('REDs earn nothing under the last-10-GREEN rule')
+    if cfg.disable_lium_auto_backup is not True:
+        raise ValueError('Lium auto-backup must stay disabled on every rental')
     return cfg

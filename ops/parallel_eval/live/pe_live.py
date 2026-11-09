@@ -227,25 +227,39 @@ def live_spec(e, pend):
                 files=(pend.get("checkpoint") or {}).get("files"), max_num_seqs=512), None
 
 
-def _pit_enabled():
-    """When parallel_eval.pit.enabled, PIT owns dequeue/train; single-trainer dispatch stops."""
+def _pit_flag():
+    """Load parallel_eval.pit from the PE flag JSON (best-effort)."""
     try:
         flag = Path(os.environ.get("PE_FLAG") or "")
         if not flag or not flag.exists():
-            # Fall back to pe_gate_hook flag path when PE_FLAG unset.
             flag = Path(os.environ.get("PE_FLAG") or "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json")
         pe = (json.loads(flag.read_text()).get("parallel_eval") or {})
-        pit = pe.get("pit") or {}
-        return pit.get("enabled") is True
+        return pe.get("pit") or {}
     except Exception:
+        return {}
+
+
+def _pit_enabled():
+    """When parallel_eval.pit.enabled (and not revert), PIT owns dequeue/train."""
+    pit = _pit_flag()
+    if pit.get("revert") is True:
         return False
+    return pit.get("enabled") is True
+
+
+def _pit_cutover():
+    """Live cutover: trainer dequeue / warm / standing lanes off (SPEC §7)."""
+    pit = _pit_flag()
+    if pit.get("revert") is True:
+        return False
+    return pit.get("enabled") is True and pit.get("mode") == "live" and pit.get("cutover") is True
 
 
 def dispatch_tick(submit):
-    # BRIEF §1.9: when PIT is enabled, stop creating single-trainer dispatches.
-    # apply_tick / reconcile_tick stay active. Shadow-only PIT (enabled=false) does not hit this.
+    # BRIEF §1.9 / SPEC §7: when PIT is enabled, stop creating single-trainer dispatches.
+    # apply_tick / reconcile_tick stay active. Revert flag restores dispatch.
     if _pit_enabled():
-        return {"pit": "dispatch_noop"}
+        return {"pit": "dispatch_noop", "cutover": _pit_cutover()}
     out = {}
     for p in sorted(PENDING.glob("e*.json")):
         pend = rj(p) or {}

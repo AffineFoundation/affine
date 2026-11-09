@@ -1,8 +1,12 @@
-"""PIT host controller (BRIEF §1.8).
+"""PIT host controller (BRIEF §1.8, SPEC §3–§4).
 
-On-demand rent only (hard rule): rent when a BOUND item needs a box; release as
-soon as the result is stored or the item fails. Empty queue ⇒ zero rentals.
-B queued with max_boxes N ⇒ at most min(B, N) concurrent rentals.
+On-demand rent only: rent when a BOUND item needs a box; release as soon as the
+result is stored or the item fails. Empty queue ⇒ zero item rentals.
+B queued with max_boxes N ⇒ at most min(B, N) concurrent item rentals.
+
+Live mode: GREEN_FRESH uploads C+M(C) and applies via pe_apply; GREEN_STALE paid
++ merge_blocked; RED earns nothing; non-GREEN destroys box state. Full redo with
+the same binding if a box is lost after SEALED (SPEC D3).
 """
 from __future__ import annotations
 
@@ -11,9 +15,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from .apply_live import LiveApplicator, PromoteRefused
 from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
 from .box import BoxIO, BoxRunner, Fp32MasterError, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
+from .cutover import plan_cutover
 from .decisions import DecisionLog
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentError, RentService, bind_host_rent_service
@@ -21,6 +27,7 @@ from .pe_score import score as pit_score
 from .pe_score import score_epoch_shadow
 from .shadow import ShadowGuard, ShadowWriteError
 from .signer import (
+    RootSigner,
     build_admission_envelope,
     generate_ephemeral_box_key,
     request_real_root_signature,
@@ -57,14 +64,23 @@ class Controller:
     now_fn: Callable[[], float] = time.time
     score_fn: Optional[Callable[..., Mapping[str, Any]]] = None
     live_decision_lookup: Optional[Callable[[int], Optional[Mapping[str, Any]]]] = None
-    apply_hook: Optional[Callable[[ItemRecord], Any]] = None  # pe_apply seam; shadow refuses writes
+    apply_hook: Optional[Callable[[ItemRecord], Any]] = None
+    live_applicator: Optional[LiveApplicator] = None
+    root_signer: Optional[RootSigner] = None
+    on_green_fresh: Optional[Callable[[ItemRecord], Any]] = None  # bench/prior/baseline hooks
+    destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
 
     def __post_init__(self) -> None:
         self.shadow = self.shadow or ShadowGuard(self.config)
         if self.config.enabled and not self.config.may_run():
-            raise ValueError('PIT enabled but mode is not runnable in this PR')
+            raise ValueError('PIT enabled but mode is not runnable')
+        if self.config.is_live() and self.live_applicator is None:
+            self.live_applicator = LiveApplicator(
+                config=self.config,
+                accept_pit_decision=None,
+                destroy_state=self.destroy_box_state_fn,
+            )
 
-    # ------------------------------------------------------------------ factories
     @classmethod
     def from_flag(
         cls,
@@ -74,7 +90,12 @@ class Controller:
         **kwargs: Any,
     ) -> 'Controller':
         cfg = load_pit_config(parallel_eval)
-        rent = RentService(max_boxes=cfg.max_boxes, gpu_order=tuple(cfg.gpu_order))
+        rent = RentService(
+            max_boxes=cfg.max_boxes,
+            gpu_order=tuple(cfg.gpu_order),
+            price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
+            disable_auto_backup=bool(cfg.disable_lium_auto_backup),
+        )
         bind_host_rent_service(rent, module_path=cfg.pe_rent_module)
         lane = LaneService()
         bind_host_lane_service(lane, module_path=cfg.pe_lane_module)
@@ -86,7 +107,6 @@ class Controller:
             **kwargs,
         )
 
-    # ------------------------------------------------------------------ queue
     def enqueue(
         self,
         *,
@@ -120,20 +140,16 @@ class Controller:
         return self.rent.active_count()
 
     def demand_for_rent(self) -> int:
-        """Items that still need a box (BOUND not yet rented)."""
         return sum(1 for i in self.items if i.state is ItemState.BOUND and not i.box_id)
 
     def queued_count(self) -> int:
         return sum(1 for i in self.items if i.state is ItemState.QUEUED)
 
     def expected_rentals(self) -> int:
-        """Hard-rule expectation: min(queued + in-flight-bound demand path, max_boxes) once drained.
+        return sum(1 for i in self.items if i.state in RENTED_STATES)
 
-        More precisely after a tick converges: active rentals == number of items
-        currently in RENTED_STATES (≤ max_boxes). Empty queue and no in-flight ⇒ 0.
-        """
-        in_flight = sum(1 for i in self.items if i.state in RENTED_STATES)
-        return in_flight
+    def cutover_plan(self) -> dict:
+        return plan_cutover(self.config).as_dict()
 
     def _replace(self, record: ItemRecord) -> None:
         for i, old in enumerate(self.items):
@@ -142,16 +158,17 @@ class Controller:
                 return
         raise KeyError(record.item_id)
 
-    # ------------------------------------------------------------------ tick
     def tick(self) -> Dict[str, Any]:
-        self.shadow.assert_shadow()
-        if not self.config.enabled:
-            return {'ok': True, 'enabled': False, 'rentals': self.rented_count(), 'actions': []}
+        if self.config.is_shadow():
+            self.shadow.assert_shadow()
+        if not self.config.enabled or self.config.revert:
+            return {
+                'ok': True, 'enabled': False, 'rentals': self.rented_count(),
+                'actions': [], 'cutover': self.cutover_plan(),
+            }
 
         actions: List[dict] = []
 
-        # 1) Dequeue under cap (bind only; rent happens in advance step).
-        # Occupancy = items that already hold or will hold a box (BOUND + RENTED_STATES).
         while True:
             occupied = sum(
                 1 for i in self.items
@@ -182,7 +199,6 @@ class Controller:
             self._replace(bound)
             actions.append({'op': 'bound', 'item_id': bound.item_id, 'head': bound.bound_head[:12]})
 
-        # 2) Advance items.
         for item in list(self.items):
             if item.state is ItemState.RELEASED:
                 continue
@@ -195,6 +211,10 @@ class Controller:
                         'to': advanced.state.value, 'note': note,
                         'box_id': advanced.box_id,
                     })
+            except PromoteRefused as exc:
+                failed = self._fail_and_release(item, 'promote-refused:%s' % str(exc)[:200])
+                self._replace(failed)
+                actions.append({'op': 'no_decision', 'item_id': item.item_id, 'error': str(exc)[:200]})
             except (Fp32MasterError, RentError, ShadowWriteError, TransitionError, ValueError, RuntimeError) as exc:
                 failed = self._fail_and_release(item, str(exc)[:300])
                 self._replace(failed)
@@ -204,11 +224,15 @@ class Controller:
             'ok': True,
             'enabled': True,
             'mode': self.config.mode,
-            'shadow': True,
+            'shadow': self.config.is_shadow(),
+            'live': self.config.is_live(),
             'rentals': self.rented_count(),
             'queued': self.queued_count(),
             'max_boxes': self.config.max_boxes,
             'on_demand_rent_only': True,
+            'price_ceiling_usd_h': self.config.price_ceiling_usd_h,
+            'gpu_pinned': list(self.config.gpu_order),
+            'cutover': self.cutover_plan(),
             'actions': actions,
         }
 
@@ -228,22 +252,26 @@ class Controller:
         if item.state is ItemState.SCORED:
             return self._decide(item)
         if item.state is ItemState.DECIDED:
-            return self._release(item, reason='decided')
+            return self._finish_decision(item)
         if item.state is ItemState.NO_DECISION:
-            return self._release(item, reason='no_decision')
+            return self._destroy_and_release(item, reason='no_decision')
         if item.state is ItemState.RETRY_WAIT:
+            # Full redo keeps binding after SEALED (SPEC D3); rebind only if unsealed.
+            if item.sealed and self.config.full_redo_after_sealed:
+                item.meta = dict(item.meta or {}, full_redo=True)
             return apply_transition(item, ItemState.RENTING, reason='retry'), 'retry'
         if item.state is ItemState.FAILED:
             if item.attempt > self.config.max_attempts:
-                return self._release(apply_transition(item, ItemState.ABORTED, reason='exhausted'), reason='exhausted')
+                return self._destroy_and_release(
+                    apply_transition(item, ItemState.ABORTED, reason='exhausted'),
+                    reason='exhausted',
+                )
             return apply_transition(item, ItemState.RETRY_WAIT, reason=item.last_error or 'retry'), 'retry-wait'
         if item.state is ItemState.ABORTED:
-            return self._release(item, reason='aborted')
-        # TRAINING/SEALED/SERVING/PROBING are driven inside _run_box in one tick for shadow unit tests.
+            return self._destroy_and_release(item, reason='aborted')
         return item, 'noop'
 
     def _rent_on_demand(self, item: ItemRecord) -> tuple[ItemRecord, str]:
-        """Hard rule: rent only for this bound/renting item; never pre-rent."""
         if item.state is ItemState.BOUND:
             if not self.rent.can_rent(queued_bound_waiting=1):
                 return item, 'cap-wait'
@@ -255,6 +283,8 @@ class Controller:
         else:
             raise TransitionError('rent requires BOUND or RENTING-without-box')
         out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
+        if not out.get('auto_backup_disabled', True) and self.config.disable_lium_auto_backup:
+            raise RentError('lium auto-backup must be disabled')
         provisioned = apply_transition(
             renting, ItemState.PROVISIONING, reason='rented',
             updates={'box_id': str(out['box_id']), 'box_name': out.get('name')},
@@ -272,7 +302,10 @@ class Controller:
             master_digest=item.bound_master_digest or '',
             now=self.now_fn(),
         )
-        _ = request_real_root_signature  # documented refusal retained
+        if self.root_signer is not None:
+            cert = request_real_root_signature(env, signer=self.root_signer, issued_at_unix=self.now_fn())
+            runner.root_pubkey_hex = self.root_signer.public_key_hex()
+            runner.admit(box_key, cert, now=self.now_fn())
         updated, bundle = runner.run(
             item,
             batch_handle='batch-handle:%s' % item.item_id,
@@ -287,11 +320,14 @@ class Controller:
             'box_public_key_hex': bundle.box_public_key_hex,
         }
         meta['_bundle'] = bundle
+        meta['candidate_path'] = (bundle.train_receipt or {}).get('candidate_path')
+        meta['candidate_master_path'] = (bundle.train_receipt or {}).get('candidate_master_path')
+        meta['candidate_master_digest'] = (bundle.train_receipt or {}).get('candidate_master_digest')
+        meta['candidate_sha256'] = (bundle.train_receipt or {}).get('candidate_sha256') or bundle.candidate_id
         updated.meta = meta
         updated.candidate_id = bundle.candidate_id
         updated.sealed = True
         updated.result_stored = True
-        # runner leaves item in RESULT
         return updated, 'box-complete'
 
     def _decide(self, item: ItemRecord) -> tuple[ItemRecord, str]:
@@ -300,6 +336,14 @@ class Controller:
             raise TransitionError('missing probe bundle')
         if self.current_head is None:
             raise TransitionError('no current_head')
+
+        probe = bundle.probe_result or {}
+        if probe.get('partial') or probe.get('timeout') or probe.get('incomplete'):
+            updated = apply_transition(
+                item, ItemState.NO_DECISION, reason='incomplete-probe',
+                updates={'decision': 'no_decision', 'result_stored': True, 'paid': False},
+            )
+            return updated, 'no_decision-incomplete'
 
         if self.config.is_shadow() and self.live_decision_lookup is not None:
             live = self.live_decision_lookup(item.epoch)
@@ -314,7 +358,6 @@ class Controller:
             )
             scored = shadow_out['scored']
             item.meta['shadow_comparison'] = shadow_out['comparison']
-            # Guarantee recorded candidate is the box's.
             if shadow_out['candidate'] != bundle.candidate_id:
                 raise TransitionError('shadow scorer returned wrong candidate')
         else:
@@ -349,6 +392,10 @@ class Controller:
             z=scored.get('z'),
             candidate_id=bundle.candidate_id,
         )
+        # Hard rule: REDs earn nothing.
+        if updated.decision == 'red' and updated.paid:
+            raise TransitionError('RED must not be paid (last-10-GREEN rule)')
+
         self.decisions.append(
             epoch=updated.epoch,
             uid=updated.uid,
@@ -362,24 +409,56 @@ class Controller:
             merge_blocked=updated.merge_blocked,
             paid=updated.paid,
             decided_at=decided_at,
-            shadow=True,
+            shadow=self.config.is_shadow(),
         )
-        self._shadow_refuse_live_writes(updated)
-        if updated.decision == 'green_fresh':
-            # Memory-only head advance in shadow; no HEAD-CHAIN / R2 / DECISION.json.
+        if self.config.is_shadow():
+            self._shadow_refuse_live_writes(updated)
+            if updated.decision == 'green_fresh':
+                self.current_head = updated.candidate_id
+                self.current_head_epoch = int(updated.meta.get('binding', {}).get('head_epoch') or self.current_head_epoch) + 1
+                if self.apply_hook is not None:
+                    self.apply_hook(updated)
+        elif updated.decision == 'green_fresh':
+            # Advance the in-memory head immediately so later decisions in this
+            # epoch window classify as stale; durable pe_apply runs in finish.
             self.current_head = updated.candidate_id
-            self.current_head_epoch = int(updated.meta.get('binding', {}).get('head_epoch') or self.current_head_epoch) + 1
-            if self.apply_hook is not None:
-                # pe_apply seam — shadow guard must refuse durable writes inside.
-                self.apply_hook(updated)
+            self.current_head_epoch = self.current_head_epoch + 1
         return updated, updated.decision or 'decided'
+
+    def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        if self.config.is_live() and self.live_applicator is not None:
+            scored = {'decision': item.decision}
+            result = self.live_applicator.apply(item, scored=scored)
+            item.meta['live_apply'] = result.as_dict()
+            if result.head_advanced and item.candidate_id:
+                # current_head already advanced at decide-time for staleness;
+                # durable apply + sibling jobs fire here.
+                if self.on_green_fresh is not None:
+                    self.on_green_fresh(item)
+            if result.destroyed_box_state or item.decision != 'green_fresh':
+                return self._destroy_and_release(item, reason=item.decision or 'decided')
+            # GREEN_FRESH: release after verified upload (destroy not required).
+            return self._release(item, reason='green_fresh-applied')
+        # Shadow: just release; state already destroyed conceptually.
+        if item.decision and item.decision != 'green_fresh':
+            return self._destroy_and_release(item, reason=item.decision)
+        return self._release(item, reason='decided')
+
+    def _destroy_and_release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
+        if self.destroy_box_state_fn is not None and item.box_id:
+            try:
+                self.destroy_box_state_fn(
+                    box_id=item.box_id, candidate_id=item.candidate_id, reason=reason,
+                )
+            except Exception as exc:
+                item.meta = dict(item.meta or {}, destroy_error=str(exc)[:200])
+        return self._release(item, reason=reason)
 
     def _release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
         if item.box_id and holds_rental(item) or item.box_id:
             try:
                 self.rent.release(item.box_id, reason=reason)
             except Exception:
-                # Drop local ledger slot even if host release flaps; retry is ops-side.
                 if item.box_id in self.rent.ledger.active:
                     self.rent.ledger.release(item.box_id, reason='force-%s' % reason, at=self.now_fn())
         if item.state is ItemState.RELEASED:
@@ -390,14 +469,12 @@ class Controller:
                 updates={'box_id': None, 'box_name': None},
             )
             return released, 'released'
-        # ABORTED / NO_DECISION / DECIDED already handled via can_transition.
         if item.state is ItemState.ABORTED and can_transition(item, ItemState.RELEASED):
             return apply_transition(item, ItemState.RELEASED, reason=reason), 'released'
         return item, 'release-noop'
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
         next_attempt = item.attempt + 1
-        # Always release the box on failure (hard rule).
         if item.box_id:
             try:
                 self.rent.release(item.box_id, reason='fail:%s' % reason[:60])
@@ -405,8 +482,7 @@ class Controller:
                 if item.box_id in self.rent.ledger.active:
                     self.rent.ledger.release(item.box_id, reason='fail-force', at=self.now_fn())
         updates = {'attempt': next_attempt, 'last_error': reason, 'box_id': None, 'box_name': None}
-        # Trainer fail-closed → NO_DECISION, no auto-retry (DESIGN §8).
-        if 'expected-master' in reason or 'fp32-master' in reason or 'Fp32MasterError' in reason:
+        if 'expected-master' in reason or 'fp32-master' in reason or 'Fp32MasterError' in reason or 'promote-refused' in reason:
             if can_transition(item, ItemState.NO_DECISION):
                 nd = apply_transition(item, ItemState.NO_DECISION, reason=reason, updates={**updates, 'decision': 'no_decision'})
                 return apply_transition(nd, ItemState.RELEASED, reason='no_decision-release')
@@ -443,5 +519,4 @@ class Controller:
                 pass
 
 
-# Back-compat alias
 HostController = Controller
