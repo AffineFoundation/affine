@@ -38,6 +38,7 @@ from .queue_ingest import (
     IngestError,
     sync as queue_ingest_sync,
     write_ingest_alert,
+    write_pit_result,
 )
 
 
@@ -108,6 +109,7 @@ def build_controller(
             score_fn=bundle.score_fn,
             plan_seed_fn=bundle.plan_seed_fn,
             indices_fn=bundle.indices_fn,
+            round_id_fn=bundle.round_id_fn,
             live_applicator=applicator,
             destroy_box_state_fn=bundle.destroy_box_state_fn,
             durable_save_fn=store.save_item,
@@ -193,6 +195,15 @@ def tick_once(
         path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
         if path:
             summary['advanced'].append({'epoch': item.epoch, 'decision': str(path)})
+        # Miner-credit marker: queue_ingest skips once PIT-RESULT exists.
+        epoch_dir = (item.meta or {}).get('epoch_dir')
+        if epoch_dir:
+            write_pit_result(
+                Path(epoch_dir),
+                decision=str(item.decision or 'no_decision'),
+                item_id=item.item_id,
+                extra={'paid': bool(item.paid), 'z': item.z},
+            )
         store.decisions.append(
             epoch=item.epoch,
             uid=item.uid,

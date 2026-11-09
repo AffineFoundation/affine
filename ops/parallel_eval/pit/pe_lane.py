@@ -53,6 +53,15 @@ def assert_complete_probe(result: Mapping[str, Any], *, planned_samples: int) ->
 PodHandle = Union[str, Mapping[str, Any], Any]
 
 
+def _as_host_dict(raw: Any, *, default: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Live pe_lane helpers often return None (side-effect only). Never ``dict(None)``."""
+    if raw is None:
+        return dict(default or {'ok': True})
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    raise LaneError('host lane returned non-mapping: %r' % type(raw).__name__)
+
+
 @dataclass
 class LaneService:
     require_host: bool = False
@@ -67,7 +76,8 @@ class LaneService:
         if self.host_boot is None:
             box_id = pod if isinstance(pod, str) else str((pod or {}).get('id') or pod)
             return dict(ok=True, box_id=box_id, synthetic=True)
-        return dict(self.host_boot(pod, **kwargs))
+        # live pe_lane.boot returns None — coerce.
+        return _as_host_dict(self.host_boot(pod, **kwargs), default={'ok': True})
 
     def serve(
         self,
@@ -93,7 +103,10 @@ class LaneService:
                 ok=True, box_id=box_id, candidate_id=candidate_id,
                 flags=flags, synthetic=True,
             )
-        return dict(self.host_serve(pod, candidate_id, gmu=gmu, max_num_seqs=max_num_seqs))
+        return _as_host_dict(
+            self.host_serve(pod, candidate_id, gmu=gmu, max_num_seqs=max_num_seqs),
+            default={'ok': True, 'candidate_id': candidate_id, 'flags': flags},
+        )
 
     def run_probe(
         self,
@@ -123,10 +136,14 @@ class LaneService:
             if idx_list is None:
                 raise LaneError('indices list required for host run_probe')
             planned = len(idx_list) * int(k)
-            out = dict(self.host_run_probe(
+            raw = self.host_run_probe(
                 pod, candidate_id, idx_list, seed,
                 k=k, max_tokens=max_tokens, env_id=env_id,
-            ))
+            )
+            # run_probe must return a real probe mapping; None is a hard fail.
+            if raw is None:
+                raise LaneError('host run_probe returned None')
+            out = _as_host_dict(raw)
         else:
             if idx_list is None:
                 if indices_count is None:

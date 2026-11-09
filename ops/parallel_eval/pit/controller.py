@@ -63,8 +63,10 @@ class Controller:
     current_head: Optional[str] = None
     current_head_epoch: int = 0
     current_master_digest: Optional[str] = None
-    current_round_id: str = 'round-fixture'
-    round_seed_commitment: str = 'seed-commitment-fixture'
+    # Prod: never default to a fixture round_id. Bind from SAMPLE.private.json
+    # via round_id_fn (host-side only; never sent to the box).
+    current_round_id: str = ''
+    round_seed_commitment: str = ''
     shadow: Optional[ShadowGuard] = None
     now_fn: Callable[[], float] = time.time
     score_fn: Optional[Callable[..., Mapping[str, Any]]] = None
@@ -76,6 +78,7 @@ class Controller:
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
     plan_seed_fn: Optional[Callable[[int], str]] = None
     indices_fn: Optional[Callable[[int], Any]] = None  # epoch → secret-draw indices (host-private)
+    round_id_fn: Optional[Callable[[int], str]] = None  # epoch → SAMPLE.private.json round_id
     durable_save_fn: Optional[Callable[[ItemRecord], None]] = None
     _workers: Dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
     _worker_out: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
@@ -162,6 +165,29 @@ class Controller:
         if round_id:
             self.current_round_id = round_id
 
+    def _round_id_for_item(self, item: ItemRecord) -> str:
+        """Host-side SAMPLE.private.json round_id for the item's epoch.
+
+        Never invent a fixture. Never send the raw SAMPLE/ROUND to the box —
+        only the round_id string is bound onto the item for pe_score.
+        """
+        rid = ''
+        if self.round_id_fn is not None:
+            try:
+                rid = str(self.round_id_fn(int(item.epoch)) or '')
+            except Exception as exc:
+                raise ValueError(
+                    'round_id_fn failed for epoch %s: %s' % (item.epoch, str(exc)[:200])
+                ) from exc
+        if not rid:
+            rid = str(self.current_round_id or '')
+        if not rid or rid in ('round-fixture', 'fixture', 'seed-commitment-fixture'):
+            raise ValueError(
+                'refuse bind: SAMPLE.private.json round_id missing for epoch %s '
+                '(no fixture default on prod paths)' % item.epoch
+            )
+        return rid
+
     def rented_count(self) -> int:
         return self.rent.active_count()
 
@@ -210,12 +236,24 @@ class Controller:
             if not self.current_head or not self.current_master_digest:
                 actions.append({'op': 'wait-head', 'item_id': nxt.item_id})
                 break
+            try:
+                round_id = self._round_id_for_item(nxt)
+            except ValueError as exc:
+                actions.append({
+                    'op': 'refuse-bind-round-id',
+                    'item_id': nxt.item_id,
+                    'epoch': nxt.epoch,
+                    'error': str(exc)[:200],
+                })
+                break
             bound = dequeue_and_bind(
                 nxt,
                 head=self.current_head,
                 head_epoch=self.current_head_epoch,
-                round_id=self.current_round_id,
-                round_seed_commitment=self.round_seed_commitment if self.plan_seed_fn is None else None,
+                round_id=round_id,
+                round_seed_commitment=(
+                    self.round_seed_commitment if self.plan_seed_fn is None else None
+                ),
                 plan_seed_fn=self.plan_seed_fn,
                 master_digest=self.current_master_digest,
                 dequeued_at_mono=self.now_fn(),
@@ -224,7 +262,12 @@ class Controller:
                 actions.append({'op': 'pause-unpublished-master', 'item_id': nxt.item_id})
                 break
             self._replace(bound)
-            actions.append({'op': 'bound', 'item_id': bound.item_id, 'head': bound.bound_head[:12]})
+            actions.append({
+                'op': 'bound',
+                'item_id': bound.item_id,
+                'head': bound.bound_head[:12],
+                'round_id': bound.bound_round_id,
+            })
 
         for item in list(self.items):
             if item.state is ItemState.RELEASED:

@@ -39,6 +39,9 @@ class TestOnDemandRent(unittest.TestCase):
             box_io_factory=lambda: ScriptedBoxIO(on_train=train),
             now_fn=now,
             score_fn=score or (lambda **k: {'decision': 'green', 'z': 1.5}),
+            # Hermetic: SAMPLE.private.json round_id (no fixture default).
+            round_id_fn=lambda e: 'r-e%d' % int(e),
+            plan_seed_fn=lambda e: ('p' * 64),
         )
 
     def test_empty_queue_zero_rentals(self):

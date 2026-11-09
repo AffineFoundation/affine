@@ -97,6 +97,8 @@ class TestShadowController(unittest.TestCase):
             now_fn=now,
             score_fn=lambda **k: {'decision': 'green', 'z': 1.5},
             live_decision_lookup=lambda e: live_decisions.get(e),
+            round_id_fn=lambda e: 'r-e%d' % int(e),
+            plan_seed_fn=lambda e: ('p' * 64),
         )
         ctl.set_head(H0, epoch=5, master_digest=M0)
         ctl.enqueue(epoch=10, registration_index=1, hotkey_prefix='5One')

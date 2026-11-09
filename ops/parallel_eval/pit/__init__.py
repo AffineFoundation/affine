@@ -11,13 +11,14 @@ Live defaults (SPEC): max_boxes=5, B300 pinned (no GPU fallback), price ceiling
 $56/h, masters upload only on GREEN_FRESH, REDs earn nothing under the
 last-10-GREEN rule.
 """
-# Live pe_rent asserts name.startswith("affine-pe-"). Live PIT boxes use this
-# sub-prefix so they share the PE rental path + global eval-node cap.
+# Live pe_rent asserts name.startswith("affine-pe-") for BOTH rent and release.
+# Live PIT boxes use this sub-prefix so they share the PE rental path + global
+# eval-node cap. Shadow must ALSO satisfy affine-pe-* or pe_rent.release refuses
+# the name and the box keeps billing while the ledger says released.
 PREFIX = 'affine-pe-pit-'
 PREFIX_LIVE = PREFIX
-# Shadow boxes use a separate prefix and do NOT count against the live PE
-# 5-node cap (pe_common.our_pods only lists affine-pe-*).
-PREFIX_SHADOW = 'affine-pit-shadow-'
+# Shadow: affine-pe-pit-shadow-* (own cap; still releaseable via live pe_rent).
+PREFIX_SHADOW = 'affine-pe-pit-shadow-'
 MAX_BOXES_SHADOW = 2
 MAX_BOXES_LIVE = 5
 MAX_BOXES_DEFAULT = MAX_BOXES_SHADOW  # disabled/shadow default; live overrides to 5

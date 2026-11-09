@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Jacob 2026-11-09: PIT cutover must not couple to one-open-epoch or hold dispatch."""
+"""Jacob 2026-11-09 / Gate B: PIT cutover writes JOB for ingest but never waits on trainer."""
 import json
 import os
 import sys
@@ -32,10 +32,30 @@ def _flag(**pit_kw):
     _FLAG.write_text(json.dumps(doc))
 
 
+_TRAINER_CALLS = []
+
+
 class Life:
     def _training(self, directory, opening, dispatch, current, now):
-        # Trainer must never be reached under pit_cutover.
-        raise AssertionError('trainer must not run under PIT cutover')
+        # ff/v829 stand-in: write JOB+DISPATCH+K1 then return None (standing-trainer wait).
+        # Cutover must call this for the write, then mark PIT-DISPATCHED and finalize
+        # no-update — never wait on / apply a standing-trainer result.
+        _TRAINER_CALLS.append(Path(directory).name)
+        d = Path(directory)
+        if not (d / 'TRAINING-JOB.json').exists():
+            (d / 'TRAINING-JOB.json').write_text('{"payload":{"training":{}}}')
+            (d / 'TRAIN-DISPATCH-FF.json').write_text('{"signature":"s","payload":{}}')
+            (d / 'K1-TURN.json').write_text(json.dumps({
+                'status': 'turn', 'epoch_index': int(d.name), 'uid': 1,
+            }))
+            return None
+        # Would be trainer completion — cutover must not apply this as HEAD.
+        return dict(
+            status='updated',
+            checkpoint=dict(id='T' * 64),
+            optimizer_step=current['optimizer_step'] + 1,
+            checkpoint_authorization=dict(input=current['checkpoint']['id'], id='T' * 64),
+        )
 
 
 def _v829i(Lifecycle):
@@ -59,6 +79,7 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
         os.environ['PE_GATE_EP'] = str(_EP)
         os.environ['PE_FLAG'] = str(_FLAG)
         _flag()
+        _TRAINER_CALLS.clear()
         for p in _LIFE.glob('**/*'):
             if p.is_file():
                 p.unlink()
@@ -77,25 +98,36 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
         return d
 
     def test_no_ready_green_returns_decoupled_no_update(self):
-        r = Life()._training(self._ep(1), None, None, self._cur(), time.time())
+        ep = self._ep(1)
+        r = Life()._training(ep, None, None, self._cur(), time.time())
         self.assertIsNotNone(r)
         self.assertEqual(r['status'], 'no-update')
         self.assertTrue(str(r['reason']).startswith('pit-decoupled-e1-kept-'))
+        # ff path ran once to write JOB; standing-trainer result not applied.
+        self.assertEqual(_TRAINER_CALLS, ['1'])
+        self.assertTrue((ep / 'TRAINING-JOB.json').is_file())
+        self.assertTrue((ep / 'TRAIN-DISPATCH-FF.json').is_file())
+        self.assertTrue((ep / 'K1-TURN.json').is_file())
+        self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
+        self.assertNotEqual(r.get('checkpoint', {}).get('id'), 'T' * 64)
         # Must never write lifecycle PIT-CLAIM wait tokens.
         self.assertFalse(any(_LIFE.glob('PIT-CLAIM-e*.json')))
 
     def test_successive_epochs_never_hold_none(self):
         for e in (1, 2, 3, 4, 5, 6):
-            r = Life()._training(self._ep(e), None, None, self._cur(), time.time())
+            ep = self._ep(e)
+            r = Life()._training(ep, None, None, self._cur(), time.time())
             self.assertIsNotNone(r, msg='epoch %s held' % e)
             self.assertEqual(r['status'], 'no-update')
             self.assertIn('pit-decoupled', r['reason'])
+            self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
+        self.assertEqual(_TRAINER_CALLS, ['1', '2', '3', '4', '5', '6'])
 
     def test_ready_fresh_green_offers_apply(self):
         head = 'H' * 64
         cand = 'C' * 64
         auth = dict(input=head, id=cand)
-        ( _LIFE / 'apply' / 'C.json').write_text(json.dumps(dict(
+        (_LIFE / 'apply' / 'C.json').write_text(json.dumps(dict(
             state='ready',
             base_head=head,
             green_at=1.0,
@@ -110,12 +142,13 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
         offered = json.loads((_LIFE / 'apply' / 'C.json').read_text())
         self.assertEqual(offered['state'], 'offered')
         self.assertEqual(offered['offered_epoch'], 10)
+        # ready_apply short-circuits before ff/job write.
+        self.assertEqual(_TRAINER_CALLS, [])
 
     def test_stranded_merge_blocked_row_ignored_by_ready_apply(self):
         """Stale/stranded GREENS land as merge_blocked and must never be offered."""
         head = 'H' * 64
-        # No ready apply → decoupled no-update even if a merge_blocked artifact exists elsewhere.
-        ( _LIFE / 'apply' / 'stale.json').write_text(json.dumps(dict(
+        (_LIFE / 'apply' / 'stale.json').write_text(json.dumps(dict(
             state='merge_blocked',
             base_head=head,
             green_at=1.0,
@@ -125,10 +158,12 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
             merge_blocked=True,
             stranded=True,
         )))
-        r = Life()._training(self._ep(11), None, None, self._cur(head), time.time())
+        ep = self._ep(11)
+        r = Life()._training(ep, None, None, self._cur(head), time.time())
         self.assertEqual(r['status'], 'no-update')
         self.assertIn('pit-decoupled', r['reason'])
         self.assertEqual(r['checkpoint']['id'], head)
+        self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
 
 
 if __name__ == '__main__':

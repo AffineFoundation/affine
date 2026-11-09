@@ -84,6 +84,8 @@ class TestQueueIngest(unittest.TestCase):
         with_dispatch: bool = True,
         with_result: bool = False,
         with_finalized: bool = False,
+        with_pit_dispatched: bool = False,
+        with_pit_result: bool = False,
         k1: bool = True,
         run_id: Optional[str] = None,
         uid: int = 7,
@@ -119,6 +121,14 @@ class TestQueueIngest(unittest.TestCase):
             (ed / 'TRAINING-RESULT.json').write_text('{}')
         if with_finalized:
             (ed / 'FINALIZED.json').write_text('{}')
+        if with_pit_dispatched:
+            (ed / 'PIT-DISPATCHED.json').write_text(json.dumps({
+                'epoch': epoch_index, 'status': 'pit-dispatched',
+            }))
+        if with_pit_result:
+            (ed / 'PIT-RESULT.json').write_text(json.dumps({
+                'status': 'pit-result', 'decision': 'green_fresh',
+            }))
         return ed
 
     def test_real_k1_turn_epoch_index_not_string_epoch(self):
@@ -132,16 +142,22 @@ class TestQueueIngest(unittest.TestCase):
         # Completed epochs skipped.
         self._write_epoch(1053, with_result=True)
         self._write_epoch(1054, with_finalized=True)
+        # Cutover: FINALIZED + PIT-DISPATCHED remains ingestible.
+        self._write_epoch(1055, with_finalized=True, with_pit_dispatched=True)
+        # PIT already finished — skip.
+        self._write_epoch(
+            1056, with_finalized=True, with_pit_dispatched=True, with_pit_result=True,
+        )
 
         ctl = self._ctl()
         store = DurableStore(root=self.pe_state / 'pit')
         out = sync(ctl, store=store)
         self.assertEqual(out['current_epoch_floor'], 1050)
-        self.assertEqual(sorted(out['enqueued']), [1050, 1051])
+        self.assertEqual(sorted(out['enqueued']), [1050, 1051, 1055])
         self.assertTrue(out['head_set'])
         self.assertEqual(ctl.current_head, HEAD)
         epochs = sorted(i.epoch for i in ctl.items)
-        self.assertEqual(epochs, [1050, 1051])
+        self.assertEqual(epochs, [1050, 1051, 1055])
         for item in ctl.items:
             # registration_index = epoch_index, not queue_position=999
             self.assertEqual(item.registration_index, item.epoch)

@@ -64,55 +64,24 @@ def _pe_state_root() -> Path:
 
 
 def _make_shadow_rent(rent_mod: Any, host_rent: Any) -> Callable[..., Mapping[str, Any]]:
-    """Rent affine-pit-shadow-* without live pe_rent's affine-pe-* assert.
+    """Rent ``affine-pe-pit-shadow-*`` via live pe_rent (prefix satisfies affine-pe-*).
 
-    Reuses pick_node / lium up / --no-backup from the live module when present.
+    Shadow must use the live rent/release path so ``pe_rent.release``'s
+    ``affine-pe-`` assert succeeds — otherwise pods keep billing after the
+    ledger says released. Does not pass ``max_eval_nodes`` (own cap).
     """
-    pick_node = getattr(rent_mod, 'pick_node', None)
-    lium = getattr(rent_mod, 'lium', None)
-    our_pods = getattr(rent_mod, 'our_pods', None)
-    from_ps = getattr(rent_mod, '_from_ps', None)
-
     def _rent(name: str, ttl: str = '4h', *, gpu: str = 'B300', **_kw: Any) -> Mapping[str, Any]:
-        if not str(name).startswith('affine-pit-shadow-'):
-            raise LiveWiringError('shadow rent name must start with affine-pit-shadow-')
-        if callable(host_rent) and str(name).startswith('affine-pe-'):
-            return host_rent(name, ttl, gpu=gpu)
-        if not callable(pick_node) or not callable(lium):
-            if callable(host_rent):
-                # Last resort: only works if host_rent tolerates the shadow prefix.
-                return host_rent(name, ttl, gpu=gpu)
-            raise LiveWiringError('shadow rent requires pe_rent.pick_node + lium')
-        g, row = pick_node([gpu] if gpu else None, fallback=False)
-        if not row:
-            raise LiveWiringError('no B300 offer for shadow rent')
-        huid = row['huid']
-        rc, o, e = lium(
-            'up', huid, '-c', '8', '--name', name, '--verify-gpus', '--strict-gpus',
-            '--no-volume-encryption', '--no-backup', '-y', '--json', '--timeout', '900',
-            '--ttl', ttl, timeout=1000,
-        )
-        if rc != 0:
-            raise LiveWiringError('shadow lium up failed: %s' % (e or o)[-300:])
-        try:
-            raw = json.loads(o)
-            info = raw.get('pod') if isinstance(raw, dict) and 'pod' in raw else raw
-        except Exception:
-            info = None
-        if not info and callable(our_pods):
-            for p in our_pods() or []:
-                if (p or {}).get('name') == name:
-                    info = p
-                    break
-        if not info:
-            raise LiveWiringError('shadow rent returned no pod')
-        if callable(from_ps):
-            d = from_ps(info, gpu=g or gpu, price=row.get('price_per_hour'), rented_at=time.time())
-        else:
-            d = dict(info)
-            d.setdefault('gpu', g or gpu)
-            d.setdefault('price_h', row.get('price_per_hour'))
-            d.setdefault('name', name)
+        if not str(name).startswith(PREFIX_SHADOW):
+            raise LiveWiringError(
+                'shadow rent name must start with %s' % PREFIX_SHADOW
+            )
+        if not callable(host_rent):
+            raise LiveWiringError('shadow rent requires live pe_rent.rent')
+        # Drop max_eval_nodes — shadow has its own cap (share_pe_cap=False).
+        out = host_rent(name, ttl, gpu=gpu)
+        if out is None:
+            raise LiveWiringError('shadow host rent returned no box')
+        d = dict(out)
         d['auto_backup_disabled'] = True
         d['shadow'] = True
         return d
@@ -144,9 +113,10 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                     name = str(p)
                 if name in warm_names or name.startswith('affine-warm-'):
                     continue
-                # Exclude both live PIT and any legacy/shadow PIT names.
+                # Exclude live + shadow PIT (and legacy shadow prefix).
                 if (
-                    name.startswith('affine-pe-pit-')
+                    name.startswith(PREFIX_LIVE)
+                    or name.startswith(PREFIX_SHADOW)
                     or name.startswith('affine-pit-shadow-')
                     or name.startswith('affine-pit-')
                 ):
@@ -209,6 +179,7 @@ class LiveHostBundle:
     root_signer: Any
     plan_seed_fn: Callable[[int], str]
     indices_fn: Callable[[int], Sequence[int]]
+    round_id_fn: Optional[Callable[[int], str]] = None
     require_host: bool = True
     pe_apply_accept: Optional[Callable[..., Any]] = None
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
@@ -318,6 +289,13 @@ def build_live_host_bundle(
     if not callable(indices_fn):
         raise LiveWiringError('round seed provider must expose indices_for_epoch (fail closed)')
 
+    round_id_fn = getattr(seed_mod, 'round_id_for_epoch', None)
+    if not callable(round_id_fn):
+        raise LiveWiringError(
+            'round seed provider must expose round_id_for_epoch '
+            '(SAMPLE.private.json round_id; fail closed)'
+        )
+
     box_io_cls = getattr(box_mod, 'BoxIO', None) or getattr(box_mod, 'HostBoxIO', None)
     box_factory = getattr(box_mod, 'box_io_factory', None)
     if box_factory is None and box_io_cls is not None:
@@ -390,13 +368,15 @@ def build_live_host_bundle(
 
     def _boot(pod, **kw):
         # drive_item: pe_lane.boot then push_bundle (podctl + vLLM env).
+        # live pe_lane.boot returns None — coerce to a mapping for LaneService.
         P = _pod_of(pod)
         out = host_boot(P, **kw)
         host_push_bundle(P)
-        return out
+        return out if isinstance(out, Mapping) else dict(ok=True)
 
     def _serve(pod, cid, gmu='0.9', max_num_seqs=512, **kw):
-        return host_serve(_pod_of(pod), cid, gmu=gmu, max_num_seqs=max_num_seqs, **kw)
+        out = host_serve(_pod_of(pod), cid, gmu=gmu, max_num_seqs=max_num_seqs, **kw)
+        return out if isinstance(out, Mapping) else dict(ok=True, candidate_id=cid)
 
     def _run_probe(pod, cid, indices, plan_seed, **kw):
         P = _pod_of(pod)
@@ -456,6 +436,7 @@ def build_live_host_bundle(
         root_signer=root_signer,
         plan_seed_fn=plan_seed_fn,
         indices_fn=indices_fn,
+        round_id_fn=round_id_fn,
         require_host=True,
         pe_apply_accept=pe_apply_accept,
         destroy_box_state_fn=destroy_fn if callable(destroy_fn) else None,

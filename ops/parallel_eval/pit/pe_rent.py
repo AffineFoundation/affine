@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,12 +50,17 @@ class RentError(RuntimeError):
     pass
 
 
-def is_live_pit_name(name: str) -> bool:
-    return isinstance(name, str) and name.startswith(PREFIX_LIVE)
-
-
 def is_shadow_pit_name(name: str) -> bool:
     return isinstance(name, str) and name.startswith(PREFIX_SHADOW)
+
+
+def is_live_pit_name(name: str) -> bool:
+    # PREFIX_SHADOW is a longer sub-prefix of PREFIX_LIVE — exclude it.
+    return (
+        isinstance(name, str)
+        and name.startswith(PREFIX_LIVE)
+        and not is_shadow_pit_name(name)
+    )
 
 
 def is_pit_name(name: str) -> bool:
@@ -308,10 +314,10 @@ class RentService:
         name = '%s%d-a%d' % (prefix, int(epoch), int(attempt))
         if is_never_name(name):
             raise RentError('refused NEVER_NAME')
-        # Live pe_rent requires affine-pe-*; live PIT uses affine-pe-pit-.
-        # Shadow uses affine-pit-shadow-* and a rent path that does not share PE cap.
-        if self.require_host and self.share_pe_cap and not name.startswith('affine-pe-'):
-            raise RentError('live rent name must start with affine-pe-')
+        # Live pe_rent requires affine-pe-* for rent AND release. Live + shadow
+        # PIT both use affine-pe-pit-* (shadow: affine-pe-pit-shadow-*).
+        if self.require_host and not name.startswith('affine-pe-'):
+            raise RentError('live/shadow rent name must start with affine-pe-')
         at = float(self.now_fn())
         # Pre-check offer listing (price/GPU) before committing the rental.
         try:
@@ -371,16 +377,80 @@ class RentService:
 
     def release(self, box_id: str, *, reason: str = 'done') -> Dict[str, Any]:
         at = float(self.now_fn())
+        name_hint = ''
+        if box_id in self.ledger.active:
+            name_hint = str(self.ledger.active[box_id].get('name') or '')
         if self.host_release is not None:
             try:
                 self._host_release(box_id, reason=reason)
             except Exception as exc:
                 self.ledger.release(box_id, reason='release-error:%s' % str(exc)[:80], at=at)
                 raise
+        # Verify the pod is actually gone (lium ps). Alert loudly if still billing.
+        still = self._verify_released(box_id, name=name_hint)
+        if still:
+            print(
+                json.dumps({
+                    'component': 'pit-pe-rent',
+                    'level': 'error',
+                    'event': 'release_verify_failed',
+                    'box_id': box_id,
+                    'name': name_hint or still.get('name'),
+                    'reason': reason,
+                    'note': 'ledger released but pod still visible in lium ps — billing continues',
+                    'still': dict(still),
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
+            self.ledger.release(
+                box_id,
+                reason='release-verify-failed:%s' % reason[:60],
+                at=at,
+            )
+            if self.ledger_path:
+                self.save_ledger()
+            raise RentError(
+                'release verify failed: pod %s still in lium ps after release' % (
+                    name_hint or box_id,
+                )
+            )
         self.ledger.release(box_id, reason=reason, at=at)
         if self.ledger_path:
             self.save_ledger()
         return dict(ok=True, box_id=box_id, reason=reason, released_at=at)
+
+    def _verify_released(self, box_id: str, *, name: str = '') -> Optional[Mapping[str, Any]]:
+        """Return the still-live pod row if release did not remove it; else None."""
+        if self.list_pods is None:
+            return None
+        try:
+            rows = list(self.list_pods() or [])
+        except Exception as exc:
+            print(
+                json.dumps({
+                    'component': 'pit-pe-rent',
+                    'level': 'error',
+                    'event': 'release_verify_ps_failed',
+                    'box_id': box_id,
+                    'error': str(exc)[:200],
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
+            return None
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            rid = str(row.get('id') or row.get('box_id') or '')
+            rname = str(row.get('name') or row.get('pod_name') or '')
+            if rid and rid == str(box_id):
+                return row
+            if name and rname == name:
+                return row
+            if rname and rname == str(box_id):
+                return row
+        return None
 
 
 def load_host_pe_rent(module_path: Optional[str] = None):

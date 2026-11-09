@@ -59,6 +59,8 @@ class TestLiveController(unittest.TestCase):
             score_fn=lambda **k: {'decision': 'green', 'z': 1.5},
             live_applicator=applicator,
             destroy_box_state_fn=lambda **k: destroyed.append(dict(k)) or {'ok': True},
+            round_id_fn=lambda e: 'r-e%d' % int(e),
+            plan_seed_fn=lambda e: 'p' * 64,
         )
         ctl._test_applied = applied
         ctl._test_destroyed = destroyed

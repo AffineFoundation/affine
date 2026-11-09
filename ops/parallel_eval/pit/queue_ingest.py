@@ -10,7 +10,8 @@ Real K1-TURN.json has ``epoch`` as a run-id string
 (e.g. ``affine-mimo9b-grpo-20261013-e001050``); the integer is ``epoch_index``.
 
 Do **not** enqueue the backlog: only ``epoch_index >= CURRENT.epoch_index``,
-require TRAINING-JOB + TRAIN-DISPATCH-FF, skip TRAINING-RESULT / FINALIZED.
+require TRAINING-JOB + TRAIN-DISPATCH-FF (or K1), skip TRAINING-RESULT /
+PIT-RESULT; FINALIZED epochs remain ingestible only when PIT-DISPATCHED.
 ``registration_index = epoch_index`` (not queue_position).
 
 Head is refreshed from HEAD-CHAIN / CURRENT so each spawn binds the live head.
@@ -72,11 +73,40 @@ def _life_root() -> Path:
 def _gate_epochs_root() -> Path:
     env = os.environ.get('PE_GATE_EP')
     if env:
-        return Path(env)
+        p = Path(env)
+        return p if p.name == 'epochs' else p / 'epochs'
     return Path(
         '/home/const/subnet120-rewrite/state/root-audits/'
         '20261026-promotion-gate/state/epochs'
     )
+
+
+def _sample_round_id(epoch: int) -> Optional[str]:
+    """Host-side SAMPLE.private.json['round_id'] for epoch (never sent to the box)."""
+    sm = _rj(_gate_epochs_root() / str(int(epoch)) / 'SAMPLE.private.json')
+    if isinstance(sm, Mapping):
+        rid = sm.get('round_id')
+        if isinstance(rid, str) and rid and rid not in ('round-fixture', 'fixture'):
+            return rid
+    return None
+
+
+def write_pit_result(epoch_dir: Path, *, decision: str, item_id: str = '', extra: Optional[Mapping[str, Any]] = None) -> Path:
+    """Durable PIT-RESULT marker — queue_ingest skips the epoch once present."""
+    doc = dict(
+        status='pit-result',
+        decision=decision,
+        item_id=item_id,
+        at=time.time(),
+    )
+    if extra:
+        doc.update(dict(extra))
+    path = Path(epoch_dir) / 'PIT-RESULT.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name('.%s.tmp' % path.name)
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n')
+    tmp.replace(path)
+    return path
 
 
 def _k1_turns_path() -> Path:
@@ -125,15 +155,27 @@ def _current_epoch_floor() -> int:
 
 
 def _epoch_dir_ready(epoch_dir: Path) -> bool:
-    """Require JOB+DISPATCH; skip completed (RESULT/FINALIZED) epochs."""
+    """Require JOB+DISPATCH; skip once a PIT/standing RESULT exists.
+
+    Cutover finalizes epochs as no-update AFTER writing TRAINING-JOB + marking
+    ``PIT-DISPATCHED.json``. Those FINALIZED epochs must still be ingestible
+    until PIT finishes (``PIT-RESULT.json``). Non-PIT FINALIZED epochs stay skipped.
+    """
     if not (epoch_dir / 'TRAINING-JOB.json').is_file():
         return False
-    if not (epoch_dir / 'TRAIN-DISPATCH-FF.json').is_file():
+    if not (
+        (epoch_dir / 'TRAIN-DISPATCH-FF.json').is_file()
+        or (epoch_dir / 'TRAIN-DISPATCH-K1.json').is_file()
+    ):
         return False
     if (epoch_dir / 'TRAINING-RESULT.json').is_file():
         return False
-    if (epoch_dir / 'FINALIZED.json').is_file():
+    if (epoch_dir / 'PIT-RESULT.json').is_file():
         return False
+    if (epoch_dir / 'FINALIZED.json').is_file():
+        # After lifecycle finalize: only PIT-DISPATCHED epochs remain for PIT.
+        if not (epoch_dir / 'PIT-DISPATCHED.json').is_file():
+            return False
     return True
 
 
@@ -538,9 +580,15 @@ def _sync_inner(
     if head:
         master = _master_for_head(head)
         if master:
-            cur = _rj(_life_root() / 'CURRENT.json', {}) or {}
-            round_id = str(cur.get('round_id') or controller.current_round_id)
-            controller.set_head(head, epoch=head_epoch, master_digest=master, round_id=round_id)
+            # Prefer SAMPLE.private.json round_id for the head epoch (same source
+            # live pe_score uses). Never invent a fixture; binding refuses if missing.
+            round_id = _sample_round_id(head_epoch) or ''
+            controller.set_head(
+                head,
+                epoch=head_epoch,
+                master_digest=master,
+                round_id=round_id or None,
+            )
             head_set = True
         else:
             master_missing = True

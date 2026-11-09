@@ -152,12 +152,12 @@
  },
 
  "pit-box": {
-  "what": "PIT per-item train+eval box (ops/parallel_eval/pit). Live name glob affine-pe-pit-* (shares PE cap); shadow glob affine-pit-shadow-* (own cap). Rented on demand only — no warm pool. B300 pinned (no GPU fallback). Lium auto-backup off. Price ceiling $56/h. Alert-only guardian; TTL 4h.",
+  "what": "PIT per-item train+eval box (ops/parallel_eval/pit). Live name glob affine-pe-pit-* (shares PE cap); shadow glob affine-pe-pit-shadow-* (own cap; still affine-pe-* so pe_rent.release works). Rented on demand only — no warm pool. B300 pinned (no GPU fallback). Lium auto-backup off. Price ceiling $56/h. Alert-only guardian; TTL 4h.",
   "name": "affine-pe-pit-",
   "names": [],
   "name_glob": "affine-pe-pit-*",
-  "shadow_name": "affine-pit-shadow-",
-  "shadow_name_glob": "affine-pit-shadow-*",
+  "shadow_name": "affine-pe-pit-shadow-",
+  "shadow_name_glob": "affine-pe-pit-shadow-*",
   "gpu_specs": [
     {"gpu": "B300", "count": 8, "whole_node": true}
   ],

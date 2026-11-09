@@ -10,10 +10,14 @@ PE live per epoch e (head H = current checkpoint):
      'updated' -> that checkpoint (fresh: the candidate's own signed authorization, input_checkpoint == H).
      fresh-only phase 1 (Jacob 2026-11-07 07:27 CR): stale GREENs are merge_blocked by the controller (credited, never offered).
 
-PIT cutover (Jacob 2026-11-09): **decoupled from the one-open-epoch model**. Lifecycle never holds
-dispatch waiting for PIT. Batches go straight to the host PIT queue (cap N boxes). Lifecycle only
-(a) offers a ready PIT GREEN apply when base head matches, or (b) returns no-update so weights continue.
-k1/weights read PIT DECISION.json / HEAD-CHAIN independently.
+PIT cutover (Jacob 2026-11-09 / Gate B): **decoupled from the one-open-epoch model**.
+Lifecycle never holds dispatch waiting for a PIT decision and never hands the job
+to the standing trainer (WARM-OFF). Cutover STILL runs ff/v829 selection so
+K1-TURN + TRAIN-DISPATCH-FF + signed TRAINING-JOB are written, then marks the
+epoch ``PIT-DISPATCHED.json`` and returns no-update. queue_ingest picks up
+PIT-DISPATCHED epochs even after FINALIZED. Lifecycle also (a) offers a ready
+PIT GREEN apply when base head matches. k1/weights read PIT DECISION.json /
+HEAD-CHAIN / PIT-RESULT for miner credit.
 """
 import json, os, time
 from pathlib import Path
@@ -148,7 +152,10 @@ def install_pe(Lifecycle):
             return outer(self, directory, opening, dispatch, current, now)
 
         # ---- PIT live cutover: decoupled from epoch dispatch (Jacob 2026-11-09) ----
-        # Never call the trainer. Never hold returning None for a PIT decision.
+        # Never hold returning None for a PIT decision. Never hand the job to the
+        # standing trainer (WARM-OFF at cutover). Still run ff/v829 so K1-TURN +
+        # TRAIN-DISPATCH-FF + signed TRAINING-JOB land for queue_ingest. Mark
+        # PIT-DISPATCHED, then finalize no-update so weight nonces keep moving.
         # Head advances only via ready_apply when a verified fresh PIT GREEN is ready.
         if pit_cutover():
             ap, a = ready_apply(H, e)
@@ -157,8 +164,31 @@ def install_pe(Lifecycle):
                 return dict(status="updated", checkpoint=a["checkpoint"], optimizer_step=a["optimizer_step"],
                             checkpoint_authorization=a["checkpoint_authorization"],
                             **({"publication_receipt_sha256": a["publication_receipt_sha256"]} if a.get("publication_receipt_sha256") else {}))
-            # Finalize immediately so the serial lifecycle can open the next epoch for
-            # weight submission. PIT queue/scheduler owns batches independently.
+            marker = d / "PIT-DISPATCHED.json"
+            if not marker.exists():
+                # Drive ff selection / job write. Standing trainer is WARM-OFF, so
+                # a returned None (waiting for TRAINING-RESULT) is expected — we
+                # do NOT wait and do NOT apply an "updated" standing-trainer result.
+                res = inner(self, directory, opening, dispatch, current, now)
+                if isinstance(res, dict) and res.get("status") == "no-update" and not (d / "TRAINING-JOB.json").exists():
+                    # k1-skip / no eligible tasks — no PIT work for this epoch.
+                    return res
+                if not (d / "TRAINING-JOB.json").exists():
+                    # Inner did not write a job yet (signing / restore). Retry next tick;
+                    # do not finalize an empty epoch forever.
+                    return None
+                _wj(marker, dict(
+                    epoch=e,
+                    head=H,
+                    at=time.time(),
+                    status="pit-dispatched",
+                    has_dispatch_ff=(d / "TRAIN-DISPATCH-FF.json").exists(),
+                    has_dispatch_k1=(d / "TRAIN-DISPATCH-K1.json").exists(),
+                    has_k1_turn=(d / "K1-TURN.json").exists(),
+                    note="standing trainer not invoked; PIT queue owns the batch",
+                ))
+            # Finalize so the serial lifecycle can open the next epoch. PIT
+            # queue_ingest still accepts this epoch via PIT-DISPATCHED.
             return _no_update(current, "pit-decoupled-e%d-kept-%s" % (e, H[:8]))
 
         if not (d / "TRAINING-JOB.json").exists():

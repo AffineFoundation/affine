@@ -50,6 +50,8 @@ class TestNoEarlyHead(unittest.TestCase):
             score_fn=lambda **k: {'decision': 'green', 'z': 1.5},
             live_applicator=applicator,
             now_fn=now,
+            round_id_fn=lambda e: 'r-e%d' % int(e),
+            plan_seed_fn=lambda e: 'p' * 64,
         ), clock
 
     def test_head_unchanged_at_decide_advances_after_apply(self):

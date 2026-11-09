@@ -72,6 +72,8 @@ class TestPitsimBlockers(unittest.TestCase):
                 'heldout': _heldout(),
             },
             live_applicator=applicator,
+            round_id_fn=lambda e: 'r-e%d' % int(e),
+            plan_seed_fn=lambda e: 'p' * 64,
         )
         ctl.set_head(H0, epoch=1, master_digest=M0)
         ctl.enqueue(epoch=42, registration_index=1)
