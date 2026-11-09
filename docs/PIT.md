@@ -147,12 +147,41 @@ Script: `ops/parallel_eval/pit/ceremony_sign_host_key.py`.
 `pe_score.score_epoch_shadow` always records the **box** candidate hash, never
 the live epoch's `candidate`.
 
+## Shadow note: E1041 candidate mismatch (36aabc9a vs 57033dce)
+
+On E1041 the box training produced candidate `36aabc9a…` while the live trainer
+produced `57033dce…` from the same head and batch (z −0.48 vs +0.64). Likely
+divergence points in the box path vs live **trainer-v834e / host-v834e**:
+
+1. **Batch handle** — controller previously passed a synthetic
+   `batch-handle:<item_id>` instead of the real K1 batch file. Live `pe_box`
+   now **refuses** that placeholder; ingest must stamp `meta.batch_path`.
+2. **fp32 master vs bf16 upcast** — live v834e steps the published fp32 master
+   (`AFFINE_FP32_EXPECTED_MASTER_HASH`, no bootstrap override). Training from
+   bf16-upcast master drifts the candidate id even with the same batch.
+3. **Trainer binary / hyperparams** — must be `miner/validator/trainer-v834e`
+   (or kit `train_step.py` wired to it), same public config (batch 125×8,
+   packed engine, KL ignored). A v834c / padded / single-process kit run is
+   not bit-identical to the 8-GPU host DP sum order.
+4. **Data order / seed** — batch file bytes and trajectory order must match
+   the live turn; reshuffling or a different format revision changes the step.
+
+Owner is diagnosing E1041 separately; PIT must keep (1)–(3) fail-closed so a
+shadow box cannot silently train a different object.
+
 ## Deploy file placement (RA snapshot; never `git checkout` live)
 
 Services do **not** run from the git branch. Deploy by copying reviewed files into
 an RA release snapshot (example: `RA/20261109-serverless/release/`), then point a
 systemd user unit / drop-in at that snapshot. Keep `~/subnet120-rewrite/.venv` as
 the interpreter.
+
+**Authoritative file list:** `ops/parallel_eval/DEPLOY-MANIFEST.txt` — copy every
+path listed there. The bundle **must** include PR `live/pe_apply.py`,
+`pe_lifecycle.py`, `pe_warm.py`, `pe_controller.py` **and** the new host seams
+`pe_box.py`, `pe_verify.py` / `pe_upload_verify.py`, `pe_round_seed.py` alongside
+`ops/parallel_eval/pit/**`. Host `code/` copies without these hooks are not
+cutover-ready.
 
 | Repo path | Live destination | Notes |
 |-----------|------------------|-------|

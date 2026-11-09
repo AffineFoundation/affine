@@ -97,6 +97,7 @@ def build_controller(
             root_signer=bundle.root_signer,
             score_fn=bundle.score_fn,
             plan_seed_fn=bundle.plan_seed_fn,
+            indices_fn=bundle.indices_fn,
             live_applicator=applicator,
             destroy_box_state_fn=bundle.destroy_box_state_fn,
         )

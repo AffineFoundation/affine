@@ -72,6 +72,7 @@ class Controller:
     on_green_fresh: Optional[Callable[[ItemRecord], Any]] = None  # bench/prior/baseline hooks
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
     plan_seed_fn: Optional[Callable[[int], str]] = None
+    indices_fn: Optional[Callable[[int], Any]] = None  # epoch → secret-draw indices (host-private)
 
     def __post_init__(self) -> None:
         self.shadow = self.shadow or ShadowGuard(self.config)
@@ -324,12 +325,27 @@ class Controller:
             cert = request_real_root_signature(env, signer=self.root_signer, issued_at_unix=self.now_fn())
             runner.root_pubkey_hex = self.root_signer.public_key_hex()
             runner.admit(box_key, cert, now=self.now_fn())
+        meta0 = item.meta or {}
+        # Prefer real K1 batch path from ingest. Synthetic batch-handle is only for
+        # ScriptedBoxIO tests; live HostBoxIO.train_v834e refuses it (fail closed).
+        batch_handle = (
+            meta0.get('batch_path')
+            or meta0.get('batch_handle')
+            or meta0.get('batch')
+            or ('batch-handle:%s' % item.item_id)
+        )
+        indices = None
+        if self.indices_fn is not None:
+            indices = list(self.indices_fn(int(item.epoch)))
+        elif self.lane.require_host or self.lane.host_run_probe is not None:
+            raise TransitionError('host run_probe requires indices_fn (pe_round_seed)')
         updated, bundle = runner.run(
             item,
-            batch_handle='batch-handle:%s' % item.item_id,
+            batch_handle=str(batch_handle),
             plan_handle=item.bound_plan_seed or 'plan-handle',
             box_key=box_key,
             now=self.now_fn(),
+            indices=indices,
         )
         meta = dict(updated.meta)
         meta['probe_bundle'] = {

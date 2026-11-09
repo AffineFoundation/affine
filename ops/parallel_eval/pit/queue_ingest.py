@@ -126,12 +126,17 @@ def _inbox_batches() -> List[Dict[str, Any]]:
             epoch = int(doc.get('epoch') or doc.get('batch_epoch') or -1)
             if epoch < 0:
                 continue
+            batch_path = (
+                doc.get('batch_path') or doc.get('batch') or doc.get('batch_file')
+                or doc.get('turn_path')
+            )
             rows.append(dict(
                 epoch=epoch,
                 registration_index=int(doc.get('registration_index') or doc.get('queue_position') or epoch),
                 uid=int(doc.get('uid') or 0),
                 hotkey_prefix=str(doc.get('hotkey_prefix') or doc.get('hotkey') or '')[:16],
                 path=str(path),
+                batch_path=batch_path,
                 source='inbox',
                 raw=dict(doc),
             ))
@@ -151,12 +156,23 @@ def _k1_batch_rows() -> List[Dict[str, Any]]:
             if not turn:
                 continue
             epoch = int(turn.get('epoch') or d.name)
+            batch_path = (
+                turn.get('batch_path') or turn.get('batch') or turn.get('batch_file')
+                or turn.get('path')
+            )
+            # Common layout: life/epochs/<e>/batch.json next to K1-TURN.json.
+            if not batch_path:
+                for cand in (d / 'batch.json', d / 'BATCH.json', d / 'turn.batch.json'):
+                    if cand.is_file():
+                        batch_path = str(cand)
+                        break
             rows.append(dict(
                 epoch=epoch,
                 registration_index=int(turn.get('registration_index') or turn.get('queue_position') or epoch),
                 uid=int(turn.get('uid') or 0),
                 hotkey_prefix=str(turn.get('hotkey') or turn.get('hotkey_prefix') or '')[:16],
                 path=str(d / 'K1-TURN.json'),
+                batch_path=batch_path,
                 source='k1-turn',
                 raw=dict(turn),
             ))
@@ -252,7 +268,8 @@ def sync(
         item.meta = dict(
             item.meta or {},
             ingest_source=row.get('source'),
-            batch_path=row.get('path'),
+            batch_path=row.get('batch_path') or row.get('path'),
+            ticket_path=row.get('path'),
         )
         known_epochs.add(epoch)
         enqueued.append(epoch)

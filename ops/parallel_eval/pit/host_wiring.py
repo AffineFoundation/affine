@@ -1,14 +1,20 @@
-"""Live host wiring (PR #96 blocker 1).
+"""Live host wiring (PR #96 blocker 1 + review-2).
 
 ``build_live_host_bundle`` imports and binds every live seam. Missing any required
 host module raises ``LiveWiringError`` (fail closed).
+
+Also binds ``pe_eval_count_fn`` / ``pe_warm_count_fn`` so PIT and PE share one
+global eval-node cap, and adapts live ``pe_score.score(epoch, rid, result)``
+(positional) into a heldout-nested score_fn.
 """
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Optional
+from pathlib import Path
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .box import BoxIO, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
@@ -16,6 +22,7 @@ from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentService, bind_host_rent_service
+from .pe_score import call_live_host_score
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
 
 
@@ -44,6 +51,84 @@ def _require_attr(mod: Any, names: tuple[str, ...], label: str) -> Callable[...,
     raise LiveWiringError('%s: module %r missing any of %s' % (label, mod.__name__, names))
 
 
+def _pe_state_root() -> Path:
+    env = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+    if env:
+        return Path(env)
+    return Path(
+        '/home/const/subnet120-rewrite/state/root-audits/'
+        '20261106-parallel-cutover/state'
+    )
+
+
+def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
+    """PIT + PE share one global eval-node cap (review-2 blocker 4)."""
+    eval_nodes = getattr(rent_mod, 'eval_nodes', None)
+    our_pods = getattr(rent_mod, 'our_pods', None) or getattr(rent_mod, 'list_pods', None)
+
+    def _pe_eval_count() -> int:
+        if callable(eval_nodes):
+            try:
+                nodes = list(eval_nodes())
+            except TypeError:
+                nodes = list(eval_nodes(None))
+            warm_names = _warm_pod_names()
+            n = 0
+            for p in nodes:
+                name = ''
+                if isinstance(p, Mapping):
+                    name = str(p.get('name') or p.get('pod_name') or '')
+                else:
+                    name = str(p)
+                if name in warm_names or name.startswith('affine-warm-'):
+                    continue
+                if name.startswith('affine-pit-'):
+                    continue
+                n += 1
+            return n
+        if callable(our_pods):
+            rows = list(our_pods() or [])
+            return sum(
+                1 for p in rows
+                if str((p or {}).get('name') or '').startswith('affine-pe-')
+            )
+        return 0
+
+    def _pe_warm_count() -> int:
+        return len(_warm_active_pods())
+
+    rent.pe_eval_count_fn = _pe_eval_count
+    rent.pe_warm_count_fn = _pe_warm_count
+
+
+def _warm_pod_names() -> set[str]:
+    warm = _pe_state_root() / 'WARM.json'
+    try:
+        doc = json.loads(warm.read_text()) if warm.is_file() else {}
+    except Exception:
+        doc = {}
+    pods = (doc or {}).get('pods') or {}
+    return set(pods.keys()) if isinstance(pods, Mapping) else set()
+
+
+def _warm_active_pods() -> list[str]:
+    warm = _pe_state_root() / 'WARM.json'
+    try:
+        doc = json.loads(warm.read_text()) if warm.is_file() else {}
+    except Exception:
+        doc = {}
+    pods = (doc or {}).get('pods') or {}
+    active = (
+        'renting', 'booting', 'ready', 'prefetching', 'served', 'claimed',
+    )
+    out = []
+    if isinstance(pods, Mapping):
+        for name, entry in pods.items():
+            if isinstance(entry, Mapping) and entry.get('state') in active:
+                out.append(str(name))
+    return out
+
+
 @dataclass
 class LiveHostBundle:
     config: PitConfig
@@ -55,6 +140,7 @@ class LiveHostBundle:
     gate_writer: HostGateWriter
     root_signer: Any
     plan_seed_fn: Callable[[int], str]
+    indices_fn: Callable[[int], Sequence[int]]
     require_host: bool = True
     pe_apply_accept: Optional[Callable[..., Any]] = None
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
@@ -76,27 +162,47 @@ def build_live_host_bundle(
 
     extra = dict(cfg.extra or {})
     rent_mod = _import_module(
-        [cfg.pe_rent_module, extra.get('pe_rent_module'), 'pe_rent'],
+        [
+            cfg.pe_rent_module, extra.get('pe_rent_module'),
+            'pe_rent', 'ops.parallel_eval.live.pe_rent',
+        ],
         'pe_rent',
     )
     lane_mod = _import_module(
-        [cfg.pe_lane_module, extra.get('pe_lane_module'), 'pe_lane'],
+        [
+            cfg.pe_lane_module, extra.get('pe_lane_module'),
+            'pe_lane', 'ops.parallel_eval.live.pe_lane',
+        ],
         'pe_lane',
     )
     score_mod = _import_module(
-        [cfg.pe_score_module, extra.get('pe_score_module'), 'pe_score'],
+        [
+            cfg.pe_score_module, extra.get('pe_score_module'),
+            'pe_score', 'ops.parallel_eval.live.pe_score',
+        ],
         'pe_score',
     )
     box_mod = _import_module(
-        [extra.get('box_io_module'), extra.get('pe_box_module'), 'pe_box', 'ops.parallel_eval.live.pe_box'],
+        [
+            extra.get('box_io_module'), extra.get('pe_box_module'),
+            'pe_box', 'ops.parallel_eval.live.pe_box',
+        ],
         'box_io',
     )
     verify_mod = _import_module(
-        [extra.get('verify_uploads_module'), 'pe_verify', 'pe_upload_verify'],
+        [
+            extra.get('verify_uploads_module'),
+            'pe_verify', 'pe_upload_verify',
+            'ops.parallel_eval.live.pe_verify',
+            'ops.parallel_eval.live.pe_upload_verify',
+        ],
         'verify_uploads',
     )
     seed_mod = _import_module(
-        [extra.get('round_seed_module'), extra.get('plan_seed_module'), 'pe_round_seed'],
+        [
+            extra.get('round_seed_module'), extra.get('plan_seed_module'),
+            'pe_round_seed', 'ops.parallel_eval.live.pe_round_seed',
+        ],
         'round_seed',
     )
 
@@ -126,6 +232,10 @@ def build_live_host_bundle(
     if not callable(plan_seed_fn):
         raise LiveWiringError('round seed provider must expose plan_seed_for_epoch / plan_seed_fn')
 
+    indices_fn = getattr(seed_mod, 'indices_for_epoch', None)
+    if not callable(indices_fn):
+        raise LiveWiringError('round seed provider must expose indices_for_epoch (fail closed)')
+
     box_io_cls = getattr(box_mod, 'BoxIO', None) or getattr(box_mod, 'HostBoxIO', None)
     box_factory = getattr(box_mod, 'box_io_factory', None)
     if box_factory is None and box_io_cls is not None:
@@ -150,6 +260,7 @@ def build_live_host_bundle(
     ledger_path = extra.get('rent_ledger_path') or os.environ.get('PIT_RENT_LEDGER')
     rent = RentService(
         max_boxes=cfg.max_boxes,
+        max_eval_nodes=int(extra.get('max_eval_nodes') or cfg.max_boxes or 5),
         gpu_order=tuple(cfg.gpu_order),
         price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
         disable_auto_backup=bool(cfg.disable_lium_auto_backup),
@@ -159,6 +270,7 @@ def build_live_host_bundle(
         list_pods=list_pods,
         ledger_path=ledger_path,
     )
+    _bind_shared_cap_counters(rent, rent_mod)
 
     lane = LaneService(
         require_host=True,
@@ -169,7 +281,13 @@ def build_live_host_bundle(
     )
 
     def score_fn(**kwargs: Any) -> Mapping[str, Any]:
-        return dict(host_score(**kwargs))
+        # Always call live score(epoch, rid, result) positionally via adapter.
+        return call_live_host_score(
+            host_score,
+            epoch=int(kwargs['epoch']),
+            round_id=str(kwargs.get('round_id') or kwargs.get('rid') or ''),
+            result=kwargs.get('result') or {},
+        )
 
     gate_writer = HostGateWriter(
         epochs_root=gate_epochs_root(extra.get('gate_epochs_root')),
@@ -180,11 +298,17 @@ def build_live_host_bundle(
     destroy_fn = getattr(box_mod, 'destroy_box_state', None)
     upload_master = getattr(box_mod, 'upload_master', None)
     upload_candidate = getattr(box_mod, 'upload_candidate', None)
-    try:
-        pe_apply = importlib.import_module('pe_apply')
-        pe_apply_accept = getattr(pe_apply, 'accept_pit_decision', None)
-    except ImportError:
-        pass
+    for apply_name in (
+        'pe_apply',
+        'ops.parallel_eval.live.pe_apply',
+    ):
+        try:
+            pe_apply = importlib.import_module(apply_name)
+            pe_apply_accept = getattr(pe_apply, 'accept_pit_decision', None)
+            if callable(pe_apply_accept):
+                break
+        except ImportError:
+            continue
 
     bundle = LiveHostBundle(
         config=cfg,
@@ -196,6 +320,7 @@ def build_live_host_bundle(
         gate_writer=gate_writer,
         root_signer=root_signer,
         plan_seed_fn=plan_seed_fn,
+        indices_fn=indices_fn,
         require_host=True,
         pe_apply_accept=pe_apply_accept,
         destroy_box_state_fn=destroy_fn if callable(destroy_fn) else None,

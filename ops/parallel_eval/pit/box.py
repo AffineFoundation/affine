@@ -72,6 +72,7 @@ class BoxRunner:
         admission_cert: Optional[AdmissionCert] = None,
         now: Optional[float] = None,
         indices_count: int = GATE_N_DRAWN,
+        indices: Optional[Any] = None,
     ) -> tuple[ItemRecord, ProbeBundle]:
         if record.state is not ItemState.PROVISIONING:
             raise TransitionError('box.run requires PROVISIONING, got %s' % record.state.value)
@@ -103,6 +104,7 @@ class BoxRunner:
             expected_master_digest=record.bound_master_digest,
             batch_handle=batch_handle,
             item_id=record.item_id,
+            hotkey=record.hotkey_prefix or None,
         ))
         if train_receipt.get('used_fp32_bootstrap_override'):
             raise Fp32MasterError('bootstrap-override-refused-by-pit')
@@ -132,16 +134,32 @@ class BoxRunner:
                 candidate_id=candidate_id, master_path=candidate_master_path,
             ))
 
-        probe_fixture = dict(self.io.probe_result_fixture())
-        probe_result = lane.run_probe(
-            record.box_id or 'box',
-            candidate_id,
-            indices_count=indices_count,
-            plan_seed_handle=plan_handle,
-            k=self.config.k_cand,
-            max_tokens=self.config.max_output_tokens,
-            result=probe_fixture,
-        )
+        idx_list = list(indices) if indices is not None else None
+        # Live / require_host lanes need the secret draw's task indices. Never
+        # fabricate them here — host pe_round_seed.indices_for_epoch supplies them.
+        if lane.require_host or lane.host_run_probe is not None:
+            if idx_list is None:
+                raise TransitionError('indices list required for host run_probe')
+            probe_result = lane.run_probe(
+                record.box_id or 'box',
+                candidate_id,
+                indices=idx_list,
+                plan_seed=plan_handle,
+                k=self.config.k_cand,
+                max_tokens=self.config.max_output_tokens,
+            )
+        else:
+            probe_fixture = dict(self.io.probe_result_fixture())
+            probe_result = lane.run_probe(
+                record.box_id or 'box',
+                candidate_id,
+                indices=idx_list,
+                indices_count=indices_count if idx_list is None else None,
+                plan_seed_handle=plan_handle,
+                k=self.config.k_cand,
+                max_tokens=self.config.max_output_tokens,
+                result=probe_fixture,
+            )
         record = apply_transition(record, ItemState.RESULT, reason='probe-complete', updates={'result_stored': True})
         bundle = ProbeBundle(
             item_id=record.item_id,

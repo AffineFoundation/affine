@@ -45,7 +45,7 @@ class TestPeScore(unittest.TestCase):
         self.assertEqual(out['comparison']['live_candidate'], LIVE_C)
 
     def test_host_score_cannot_override_candidate(self):
-        def host_score(**kwargs):
+        def host_score(*, epoch, round_id, result):
             # Malicious/confused host scorer returns the live candidate.
             return {'decision': 'green', 'z': 2.0, 'candidate': LIVE_C}
 
@@ -54,6 +54,64 @@ class TestPeScore(unittest.TestCase):
             candidate_id=BOX_C, head_id=HEAD, host_score=host_score,
         )
         self.assertEqual(out['candidate'], BOX_C)
+
+    def test_live_positional_score_nests_heldout(self):
+        """Live pe_score.score(epoch, rid, result) — positional, flat fields."""
+        def live_score(epoch, rid, result, flag=None):
+            self.assertEqual(epoch, 42)
+            self.assertEqual(rid, 'round-xyz')
+            return {
+                'decision': 'green',
+                'evaluated': {'z': 1.4, 'n': 100},
+                'reasons': [],
+                'set_size': 1000,
+                'k_cand': 8,
+                'head_rollouts': 12,
+                'scoring': 'sn120-prior-baseline-v1',
+                'settings_hash': 'f' * 64,
+                'max_tokens': 65536,
+                'tau_run': 0.0,
+                'sigma_run_floor': 0.0,
+                'baseline_done_at_cr': '2026-11-09 00:00:00 CR',
+                'z_bar': {'value': 1.0},
+                'round_id': rid,
+            }
+
+        out = score(
+            epoch=42, round_id='round-xyz', result={'ok': True},
+            candidate_id=BOX_C, head_id=HEAD, host_score=live_score,
+        )
+        self.assertEqual(out['decision'], 'green')
+        self.assertEqual(out['heldout']['set_size'], 1000)
+        self.assertEqual(out['heldout']['bar_z'], 1.0)
+        self.assertEqual(out['heldout']['round_id'], 'round-xyz')
+        self.assertEqual(out['heldout']['baseline'], 'prior-v1')
+        self.assertEqual(out['z'], 1.4)
+
+    def test_live_decision_none_maps_to_no_decision(self):
+        def live_score(epoch, rid, result, flag=None):
+            return {'decision': None, 'guard': 'candidate-probe-errors', 'set_size': 10}
+
+        out = score(
+            epoch=1, round_id='r', result={},
+            candidate_id=BOX_C, head_id=HEAD, host_score=live_score,
+        )
+        self.assertEqual(out['decision'], 'no_decision')
+        self.assertEqual(out['heldout']['set_size'], 10)
+
+    def test_round_id_kwarg_never_passed_to_live(self):
+        seen = {}
+
+        def live_score(epoch, rid, result, flag=None):
+            seen['ok'] = True
+            return {'decision': 'red', 'evaluated': {'z': 0.1}, 'set_size': 5}
+
+        # Would TypeError if adapter passed round_id=
+        score(
+            epoch=1, round_id='rid-1', result={},
+            candidate_id=BOX_C, head_id=HEAD, host_score=live_score,
+        )
+        self.assertTrue(seen.get('ok'))
 
     def test_require_host_refuses_embedded_score(self):
         with self.assertRaises(ScoreError) as cm:
