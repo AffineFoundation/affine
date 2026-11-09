@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, MAX_SEQS
 
@@ -50,19 +50,34 @@ def assert_complete_probe(result: Mapping[str, Any], *, planned_samples: int) ->
         raise LaneError('incomplete result: samples %r != planned %d' % (samples, planned_samples))
 
 
+PodHandle = Union[str, Mapping[str, Any], Any]
+
+
 @dataclass
 class LaneService:
+    require_host: bool = False
     host_boot: Optional[Callable[..., Mapping[str, Any]]] = None
     host_serve: Optional[Callable[..., Mapping[str, Any]]] = None
     host_run_probe: Optional[Callable[..., Mapping[str, Any]]] = None
     host_release: Optional[Callable[..., Mapping[str, Any]]] = None
 
-    def boot(self, box_id: str, **kwargs: Any) -> Dict[str, Any]:
+    def boot(self, pod: PodHandle, **kwargs: Any) -> Dict[str, Any]:
+        if self.require_host and self.host_boot is None:
+            raise LaneError('live lane boot requires host pe_lane module')
         if self.host_boot is None:
+            box_id = pod if isinstance(pod, str) else str((pod or {}).get('id') or pod)
             return dict(ok=True, box_id=box_id, synthetic=True)
-        return dict(self.host_boot(box_id=box_id, **kwargs))
+        return dict(self.host_boot(pod, **kwargs))
 
-    def serve(self, box_id: str, candidate_id: str, *, max_num_seqs: int = MAX_SEQS, flags: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    def serve(
+        self,
+        pod: PodHandle,
+        candidate_id: str,
+        *,
+        max_num_seqs: int = MAX_SEQS,
+        gmu: str = '0.9',
+        flags: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
         flags = dict(flags or {
             'dtype': 'bfloat16',
             'max_model_len': 69632,
@@ -70,17 +85,25 @@ class LaneService:
             'fp8': False,
         })
         verify_serve_flags(flags)
+        if self.require_host and self.host_serve is None:
+            raise LaneError('live lane serve requires host pe_lane module')
         if self.host_serve is None:
-            return dict(ok=True, box_id=box_id, candidate_id=candidate_id, flags=flags, synthetic=True)
-        return dict(self.host_serve(box_id=box_id, candidate_id=candidate_id, max_num_seqs=max_num_seqs, flags=flags))
+            box_id = pod if isinstance(pod, str) else str((pod or {}).get('id') or pod)
+            return dict(
+                ok=True, box_id=box_id, candidate_id=candidate_id,
+                flags=flags, synthetic=True,
+            )
+        return dict(self.host_serve(pod, candidate_id, gmu=gmu, max_num_seqs=max_num_seqs))
 
     def run_probe(
         self,
-        box_id: str,
+        pod: PodHandle,
         candidate_id: str,
         *,
-        indices_count: int,
-        plan_seed_handle: str,
+        indices: Optional[Sequence[int]] = None,
+        plan_seed: Optional[str] = None,
+        indices_count: Optional[int] = None,
+        plan_seed_handle: Optional[str] = None,
         k: int = GATE_K_CAND,
         max_tokens: int = GATE_MAX_TOKENS,
         env_id: str = 'affine_gatepool',
@@ -88,15 +111,29 @@ class LaneService:
     ) -> Dict[str, Any]:
         if k != GATE_K_CAND or max_tokens != GATE_MAX_TOKENS:
             raise LaneError('refuse non-live gate probe settings')
-        if not plan_seed_handle:
+        seed = plan_seed or plan_seed_handle
+        if not seed:
             raise LaneError('plan_seed handle required')
-        planned = int(indices_count) * int(k)
-        if self.host_run_probe is not None:
+        idx_list: Optional[List[int]] = None
+        if indices is not None:
+            idx_list = list(indices)
+        if self.host_run_probe is not None or self.require_host:
+            if self.require_host and self.host_run_probe is None:
+                raise LaneError('live lane run_probe requires host pe_lane module')
+            if idx_list is None:
+                raise LaneError('indices list required for host run_probe')
+            planned = len(idx_list) * int(k)
             out = dict(self.host_run_probe(
-                box_id=box_id, candidate_id=candidate_id,
-                plan_seed=plan_seed_handle, k=k, max_tokens=max_tokens, env_id=env_id,
+                pod, candidate_id, idx_list, seed,
+                k=k, max_tokens=max_tokens, env_id=env_id,
             ))
         else:
+            if idx_list is None:
+                if indices_count is None:
+                    raise LaneError('indices list or indices_count required')
+                planned = int(indices_count) * int(k)
+            else:
+                planned = len(idx_list) * int(k)
             if result is None:
                 raise LaneError('synthetic lane requires injected result')
             out = dict(result)
