@@ -237,9 +237,10 @@ Lium runway ≥ 24 h; ROOT ceremony done; `verify_uploads` wired fail-closed.
 
 ```bash
 export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
-export PE_LIFE_STATE=/path/to/lifecycle-root   # CURRENT / epochs (required; no host default)
-export PE_STATE=/path/to/parallel-cutover/state   # WARM-OFF + optional cutover.lock
-export LIFE_ROOT=/path/to/lifecycle-root          # usually same as PE_LIFE_STATE
+export LIFE_ROOT=/path/to/training-lifecycle-root  # CURRENT.json + epochs/ (required)
+export PE_LIFE=$LIFE_ROOT                          # alias accepted by queue_ingest
+export PE_LIFE_STATE=/path/to/pe-life-state        # pending/ + apply/ (distinct; required)
+export PE_STATE=/path/to/parallel-cutover/state    # WARM-OFF + GREENS/HEAD-CHAIN
 # pe_apply hash-sync after HEAD apply (required at cutover; unset ⇒ hook no-op in tests only):
 export PE_SYNC_EXPECTED_HASH=/path/to/sync_expected_hash.py
 # optional: PE_SYNC_EXPECTED_HASH_PYTHON / PE_SYNC_EXPECTED_HASH_LOG / PE_SYNC_EXPECTED_HASH_ALERT
@@ -256,9 +257,9 @@ export PE_CONTROLLER_PIDFILE=/path/to/pe-controller.pid
 # PYTHONPATH must resolve `subnet` AND the release `ops/` — do not shadow ops/:
 export PYTHONPATH=/path/to/release:/path/to/subnet120-rewrite
 bash ops/parallel_eval/pit/scripts/cutover_enable.sh
-# Preflight: PE_FLAG + PE_LIFE_STATE + PE_SYNC_EXPECTED_HASH*; import subnet + ops;
-# refuse mid-probe lanes; copies $PE_FLAG -> bak; writes PE_STATE/WARM-OFF ({});
-# stops pe_controller by exact PIDFILE only.
+# Preflight: PE_FLAG + LIFE_ROOT + PE_LIFE_STATE + PE_STATE + PE_SYNC_EXPECTED_HASH*;
+# import subnet + ops; refuse mid-probe lanes; copies $PE_FLAG -> bak;
+# writes PE_STATE/WARM-OFF ({}); stops pe_controller by exact PIDFILE only.
 # then install scripts/affine-pit-host.service (fill REPLACE_ME) and start the unit.
 ```
 
@@ -267,7 +268,8 @@ bash ops/parallel_eval/pit/scripts/cutover_enable.sh
 | Variable | Purpose |
 |----------|---------|
 | `PE_FLAG` | promotion / PE flag JSON (lifecycle + cutover) |
-| `PE_LIFE_STATE` | lifecycle root (CURRENT / epochs / pending / apply); **required** — no host default |
+| `LIFE_ROOT` / `PE_LIFE` | training lifecycle root (`CURRENT.json` + `epochs/`); **required** — queue_ingest floor; never `PE_LIFE_STATE` |
+| `PE_LIFE_STATE` | PE life-state dir (`pending/` + `apply/`); **required** — distinct from `LIFE_ROOT` |
 | `PE_STATE` | PE state (GREENS / HEAD-CHAIN / pit uploads); **required** — no host default |
 | `PE_SYNC_EXPECTED_HASH` | `sync_expected_hash.py` for pe_apply head-apply hook (+ optional `*_PYTHON` / `*_LOG` / `*_ALERT`) |
 | `PIT_BUNDLE_JSON` | train-cap-64k `BUNDLE5090.json` with `trainer` entry |

@@ -42,6 +42,7 @@ class TestCutoverApplyReconcile(unittest.TestCase):
         }))
         self.env = {
             'PE_LIFE_STATE': str(self.life),
+            'LIFE_ROOT': str(self.life),
             'PE_LIFE': str(self.life),
             'PE_STATE': str(self.pe),
             'PE_FLAG': str(self.flag),
@@ -54,6 +55,10 @@ class TestCutoverApplyReconcile(unittest.TestCase):
         live = Path(__file__).resolve().parents[1] / 'live'
         if str(live) not in sys.path:
             sys.path.insert(0, str(live))
+        self._live_mod_names = (
+            'replace_pod', 'pe_common', 'pe_apply', 'pe_live', 'pe_lifecycle',
+        )
+        self._prev_mods = {n: sys.modules.get(n) for n in self._live_mod_names}
 
     def tearDown(self):
         for k, v in self._prev.items():
@@ -61,136 +66,141 @@ class TestCutoverApplyReconcile(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        # Restore sys.modules so a stub replace_pod cannot leak into later suites.
+        for name, prev in self._prev_mods.items():
+            if prev is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
 
     def test_pit_green_reaches_record_applied_under_cutover(self):
-        # Stub host-only deps before importing live pe_*.
+        # Stub host-only deps before importing live pe_* (scoped; tearDown restores).
         rp = types.ModuleType('replace_pod')
 
         class _Pod:
             pass
 
         rp.Pod = _Pod
-        sys.modules['replace_pod'] = rp
-        # Re-import live modules so PE_* env paths bind to this tempdir.
-        for name in ('pe_common', 'pe_apply', 'pe_live', 'pe_lifecycle'):
-            sys.modules.pop(name, None)
-        import pe_apply as PA  # type: ignore
-        import pe_live as PL  # type: ignore
-        import pe_lifecycle as Life  # type: ignore
-        import pe_common as PC  # type: ignore
+        with mock.patch.dict(sys.modules, {'replace_pod': rp}):
+            for name in ('pe_common', 'pe_apply', 'pe_live', 'pe_lifecycle'):
+                sys.modules.pop(name, None)
+            import pe_apply as PA  # type: ignore
+            import pe_live as PL  # type: ignore
+            import pe_lifecycle as Life  # type: ignore
+            import pe_common as PC  # type: ignore
 
-        # Point gate epochs + lifecycle CURRENT at our temp trees.
-        PL.EP = self.gate
-        PC.LIFE = self.life
-        PL.LIFE = self.life
+            # Point gate epochs + lifecycle CURRENT at our temp trees.
+            PL.EP = self.gate
+            PC.LIFE = self.life
+            PL.LIFE = self.life
 
-        recorded = []
-        real_record = PA.record_applied
+            recorded = []
+            real_record = PA.record_applied
 
-        def _spy(item, kind, s, new_head, base_head, merge_info=None):
-            recorded.append(dict(candidate=item['candidate'], new_head=new_head, base_head=base_head))
-            return real_record(item, kind, s, new_head, base_head, merge_info=merge_info)
+            def _spy(item, kind, s, new_head, base_head, merge_info=None):
+                recorded.append(dict(candidate=item['candidate'], new_head=new_head, base_head=base_head))
+                return real_record(item, kind, s, new_head, base_head, merge_info=merge_info)
 
-        # 1) PIT GREEN → pending JSON + GREENS row (accept_pit_decision).
-        pend = self.life / 'pending' / 'e51-test.json'
-        pend.write_text(json.dumps({
-            'epoch': 51,
-            'candidate': CAND,
-            'training_head': HEAD,
-            'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
-            'optimizer_step': 2,
-            'checkpoint_authorization': AUTH,
-            'pe_keep': True,
-            'source': 'pit',
-        }))
-        self.assertTrue(PA.accept_pit_decision({
-            'source': 'pit',
-            'epoch': 51,
-            'candidate': CAND,
-            'training_head': HEAD,
-            'green_at': time.time(),
-            'decision': 'green_fresh',
-            'pending': str(pend),
-        }))
+            # 1) PIT GREEN → pending JSON + GREENS row (accept_pit_decision).
+            pend = self.life / 'pending' / 'e51-test.json'
+            pend.write_text(json.dumps({
+                'epoch': 51,
+                'candidate': CAND,
+                'training_head': HEAD,
+                'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
+                'optimizer_step': 2,
+                'checkpoint_authorization': AUTH,
+                'pe_keep': True,
+                'source': 'pit',
+            }))
+            self.assertTrue(PA.accept_pit_decision({
+                'source': 'pit',
+                'epoch': 51,
+                'candidate': CAND,
+                'training_head': HEAD,
+                'green_at': time.time(),
+                'decision': 'green_fresh',
+                'pending': str(pend),
+            }))
 
-        # 2) Gate DECISION so apply_tick can match (and for k1 last-10 shape).
-        (self.gate / '51').mkdir(parents=True)
-        (self.gate / '51' / 'DECISION.json').write_text(json.dumps({
-            'decision': 'green',
-            'candidate': CAND,
-            'source': 'pit',
-            'evaluated': {'z': 2.0, 'n': 100},
-            'decided_at': time.time(),
-        }))
+            # 2) Gate DECISION so apply_tick can match (and for k1 last-10 shape).
+            (self.gate / '51').mkdir(parents=True)
+            (self.gate / '51' / 'DECISION.json').write_text(json.dumps({
+                'decision': 'green',
+                'candidate': CAND,
+                'source': 'pit',
+                'evaluated': {'z': 2.0, 'n': 100},
+                'decided_at': time.time(),
+            }))
 
-        # 3) Under cutover skip_dispatch=True — apply still runs → ready.
-        out = PL.tick(lambda *a, **k: None, skip_dispatch=True)
-        self.assertEqual(out.get('dispatch'), dict(skipped='warm-off-or-pit-cutover'))
-        ready = self.life / 'apply' / 'e51.json'
-        self.assertTrue(ready.is_file(), msg='apply_tick must write ready under cutover: %s' % out)
-        self.assertEqual(json.loads(ready.read_text())['state'], 'ready')
+            # 3) Under cutover skip_dispatch=True — apply still runs → ready.
+            out = PL.tick(lambda *a, **k: None, skip_dispatch=True)
+            self.assertEqual(out.get('dispatch'), dict(skipped='warm-off-or-pit-cutover'))
+            ready = self.life / 'apply' / 'e51.json'
+            self.assertTrue(ready.is_file(), msg='apply_tick must write ready under cutover: %s' % out)
+            self.assertEqual(json.loads(ready.read_text())['state'], 'ready')
 
-        # 4) Lifecycle consumes ready → offered → updated.
-        class LC:
-            def _training(self, directory, opening, dispatch, current, now):
-                return None
+            # 4) Lifecycle consumes ready → offered → updated.
+            class LC:
+                def _training(self, directory, opening, dispatch, current, now):
+                    return None
 
-        def v829i(Lifecycle):
-            prior = Lifecycle._training
+            def v829i(Lifecycle):
+                prior = Lifecycle._training
 
-            def _training(self, *a):
-                return prior(self, *a)
+                def _training(self, *a):
+                    return prior(self, *a)
 
-            Lifecycle._training = _training
+                Lifecycle._training = _training
 
-        v829i(LC)
-        Life.install_pe(LC)
-        ep = self.life / 'epochs' / '51'
-        ep.mkdir(parents=True)
-        cur = json.loads((self.life / 'CURRENT.json').read_text())
-        r = LC()._training(ep, None, None, cur, 0)
-        self.assertEqual(r['status'], 'updated')
-        self.assertEqual(r['checkpoint']['id'], CAND)
-        offered = json.loads(ready.read_text())
-        self.assertEqual(offered['state'], 'offered')
+            v829i(LC)
+            Life.install_pe(LC)
+            ep = self.life / 'epochs' / '51'
+            ep.mkdir(parents=True)
+            cur = json.loads((self.life / 'CURRENT.json').read_text())
+            r = LC()._training(ep, None, None, cur, 0)
+            self.assertEqual(r['status'], 'updated')
+            self.assertEqual(r['checkpoint']['id'], CAND)
+            offered = json.loads(ready.read_text())
+            self.assertEqual(offered['state'], 'offered')
 
-        # 5) Durable CURRENT + FINALIZED so confirm_applied → consumed.
-        # confirm_applied requires CURRENT.epoch_index > offered_epoch.
-        ckpt = {'id': CAND, 'files': {'x': '1' * 64}}
-        (self.life / 'CURRENT.json').write_text(json.dumps({
-            'epoch_index': 52,
-            'checkpoint': ckpt,
-            'optimizer_step': 2,
-            'checkpoint_authorization': AUTH,
-        }))
-        (ep / 'FINALIZED.json').write_text(json.dumps({
-            'payload': {
-                'input_checkpoint': HEAD,
-                'result': {
-                    'status': 'updated',
-                    'checkpoint': ckpt,
-                    'optimizer_step': 2,
-                    'checkpoint_authorization': AUTH,
+            # 5) Durable CURRENT + FINALIZED so confirm_applied → consumed.
+            # confirm_applied requires CURRENT.epoch_index > offered_epoch.
+            ckpt = {'id': CAND, 'files': {'x': '1' * 64}}
+            (self.life / 'CURRENT.json').write_text(json.dumps({
+                'epoch_index': 52,
+                'checkpoint': ckpt,
+                'optimizer_step': 2,
+                'checkpoint_authorization': AUTH,
+            }))
+            (ep / 'FINALIZED.json').write_text(json.dumps({
+                'payload': {
+                    'input_checkpoint': HEAD,
+                    'result': {
+                        'status': 'updated',
+                        'checkpoint': ckpt,
+                        'optimizer_step': 2,
+                        'checkpoint_authorization': AUTH,
+                    },
                 },
-            },
-        }))
-        # Offered apply row must carry the same checkpoint object the FINALIZED used.
-        offered = json.loads(ready.read_text())
-        offered['checkpoint'] = ckpt
-        offered['checkpoint_authorization'] = AUTH
-        ready.write_text(json.dumps(offered))
-        confirmed = Life.confirm_applied(self.life, json.loads((self.life / 'CURRENT.json').read_text()))
-        self.assertTrue(confirmed, msg='confirm_applied must consume offered apply')
-        self.assertEqual(json.loads(ready.read_text())['state'], 'consumed')
+            }))
+            # Offered apply row must carry the same checkpoint object the FINALIZED used.
+            offered = json.loads(ready.read_text())
+            offered['checkpoint'] = ckpt
+            offered['checkpoint_authorization'] = AUTH
+            ready.write_text(json.dumps(offered))
+            confirmed = Life.confirm_applied(self.life, json.loads((self.life / 'CURRENT.json').read_text()))
+            self.assertTrue(confirmed, msg='confirm_applied must consume offered apply')
+            self.assertEqual(json.loads(ready.read_text())['state'], 'consumed')
 
-        # 6) reconcile_tick → record_applied (HEAD-CHAIN + hash-sync hook).
-        with mock.patch.object(PA, 'record_applied', side_effect=_spy):
-            rec = PL.reconcile_tick()
-        self.assertIn(51, rec)
-        self.assertEqual(recorded[0]['new_head'], CAND)
-        self.assertEqual(recorded[0]['base_head'], HEAD)
-        chain = json.loads((self.pe / 'HEAD-CHAIN.json').read_text())
-        self.assertTrue(any(a.get('new_head') == CAND for a in chain.get('applied') or []))
+            # 6) reconcile_tick → record_applied (HEAD-CHAIN + hash-sync hook).
+            with mock.patch.object(PA, 'record_applied', side_effect=_spy):
+                rec = PL.reconcile_tick()
+            self.assertIn(51, rec)
+            self.assertEqual(recorded[0]['new_head'], CAND)
+            self.assertEqual(recorded[0]['base_head'], HEAD)
+            chain = json.loads((self.pe / 'HEAD-CHAIN.json').read_text())
+            self.assertTrue(any(a.get('new_head') == CAND for a in chain.get('applied') or []))
 
 
 class TestPitGreenLast10Credit(unittest.TestCase):

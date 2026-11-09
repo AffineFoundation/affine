@@ -3,10 +3,12 @@
 See `docs/PIT.md` for operator cutover / revert steps, ROOT ceremony, and
 deploy file placement.
 
-**Lifecycle env (fail closed):** before cutover restart the lifecycle service
-must export `PE_FLAG`, `PE_LIFE_STATE`, `PE_STATE`, and `PE_SYNC_EXPECTED_HASH*`
-(optional `PE_SYNC_EXPECTED_HASH_PYTHON` / `_LOG` / `_ALERT`). Pending/apply
-live under `PE_LIFE_STATE`; GREENS/HEAD-CHAIN under `PE_STATE`. No host-path
+**Lifecycle env (fail closed):** before cutover restart export `PE_FLAG`,
+`LIFE_ROOT` (or `PE_LIFE`), `PE_LIFE_STATE`, `PE_STATE`, and
+`PE_SYNC_EXPECTED_HASH*` (optional `*_PYTHON` / `_LOG` / `_ALERT`). Distinct
+roots: `LIFE_ROOT`/`PE_LIFE` = training lifecycle (`CURRENT.json` + `epochs/`);
+`PE_LIFE_STATE` = PE life-state (`pending/` + `apply/`); `PE_STATE` =
+GREENS/HEAD-CHAIN. Never point ingest at `PE_LIFE_STATE`. No host-path
 defaults — unset vars raise. `cutover_enable.sh` checks these up front.
 
 **On-demand rent only** (hard rule): empty queue ⇒ 0 item boxes; B queued with

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reproduce /tmp/pitsim review blockers: no fabricated GREEN DECISION; no early emit."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,26 +95,55 @@ class TestPitsimBlockers(unittest.TestCase):
     def test_tick_once_skips_emit_without_verified_apply(self):
         cfg = load_pit_config({'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 1}})
         with tempfile.TemporaryDirectory() as td:
-            store = DurableStore(root=Path(td))
-            ctl = Controller(
-                config=cfg,
-                rent=RentService(max_boxes=1),
-                lane=LaneService(),
-                box_io_factory=lambda: ScriptedBoxIO(),
-                score_fn=lambda **k: {'decision': 'green', 'z': 1.5, 'heldout': _heldout()},
-            )
-            ctl.set_head(H0, epoch=1, master_digest=M0)
-            item = ctl.enqueue(epoch=7, registration_index=0)
-            item.decision = 'green_fresh'
-            item.paid = True
-            item.candidate_id = 'c' * 64
-            item.bound_head = H0
-            item.meta = {'scored': {'decision': 'green', 'heldout': _heldout(), 'evaluated': {'z': 1.5}}}
-            # No live_apply → must not emit.
-            self.assertFalse(_gate_emit_ready(item))
-            out = tick_once(ctl, store, dry_run=False)
-            self.assertEqual(out.get('advanced') or [], [])
-            self.assertFalse((Path(td) / 'items').joinpath('%s.json' % item.item_id).read_text().count('decision_emitted'))
+            root = Path(td)
+            life = root / 'life'
+            life.mkdir()
+            (life / 'CURRENT.json').write_text(json.dumps({
+                'epoch_index': 7, 'checkpoint': {'id': H0},
+            }))
+            pe = root / 'pe'
+            pe.mkdir()
+            (pe / 'CURRENT.json').write_text(json.dumps({
+                'epoch_index': 7, 'checkpoint': {'id': H0},
+            }))
+            (pe / 'HEAD-CHAIN.json').write_text(json.dumps({'genesis': H0, 'applied': []}))
+            pit = pe / 'pit'
+            pit.mkdir()
+            env = {
+                'LIFE_ROOT': str(life),
+                'PE_LIFE': str(life),
+                'PE_STATE': str(pe),
+                'PIT_STATE': str(pit),
+            }
+            prev = {k: os.environ.get(k) for k in env}
+            os.environ.update(env)
+            try:
+                store = DurableStore(root=pit)
+                ctl = Controller(
+                    config=cfg,
+                    rent=RentService(max_boxes=1),
+                    lane=LaneService(),
+                    box_io_factory=lambda: ScriptedBoxIO(),
+                    score_fn=lambda **k: {'decision': 'green', 'z': 1.5, 'heldout': _heldout()},
+                )
+                ctl.set_head(H0, epoch=1, master_digest=M0)
+                item = ctl.enqueue(epoch=7, registration_index=0)
+                item.decision = 'green_fresh'
+                item.paid = True
+                item.candidate_id = 'c' * 64
+                item.bound_head = H0
+                item.meta = {'scored': {'decision': 'green', 'heldout': _heldout(), 'evaluated': {'z': 1.5}}}
+                # No live_apply → must not emit.
+                self.assertFalse(_gate_emit_ready(item))
+                out = tick_once(ctl, store, dry_run=False)
+                self.assertEqual(out.get('advanced') or [], [])
+                self.assertFalse(pit.joinpath('items', '%s.json' % item.item_id).read_text().count('decision_emitted'))
+            finally:
+                for k, v in prev.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
 
 if __name__ == '__main__':

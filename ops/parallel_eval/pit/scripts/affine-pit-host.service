@@ -4,7 +4,10 @@ Description=SN120 PIT live host
 [Service]
 Type=simple
 Environment=PE_FLAG=%h/REPLACE_ME/PROMOTION-GATE.json
-Environment=PE_LIFE_STATE=%h/REPLACE_ME/lifecycle-root
+# LIFE_ROOT / PE_LIFE = training lifecycle (CURRENT.json + epochs/); PE_LIFE_STATE = PE pending/apply.
+Environment=LIFE_ROOT=%h/REPLACE_ME/training-lifecycle-root
+Environment=PE_LIFE=%h/REPLACE_ME/training-lifecycle-root
+Environment=PE_LIFE_STATE=%h/REPLACE_ME/pe-life-state
 Environment=PE_STATE=%h/REPLACE_ME/parallel-cutover/state
 Environment=PE_SYNC_EXPECTED_HASH=%h/REPLACE_ME/sync_expected_hash.py
 Environment=AFFINE_PIT_HOST_KEY_FILE=%h/REPLACE_ME/pit-host.key

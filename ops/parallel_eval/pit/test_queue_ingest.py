@@ -38,9 +38,13 @@ class TestQueueIngest(unittest.TestCase):
         self.k1_turns.write_text('')
         self.fp32_idx = self.td / 'fp32-master'
         self.fp32_idx.mkdir()
+        self.pe_life_state = self.td / 'pe-life-state'
+        (self.pe_life_state / 'pending').mkdir(parents=True)
         os.environ['PE_STATE'] = str(self.pe_state)
-        os.environ['PE_LIFE_STATE'] = str(self.life)
+        # Distinct roots: LIFE_ROOT = training lifecycle; PE_LIFE_STATE = PE pending/apply.
+        os.environ['LIFE_ROOT'] = str(self.life)
         os.environ['PE_LIFE'] = str(self.life)
+        os.environ['PE_LIFE_STATE'] = str(self.pe_life_state)
         os.environ['PIT_STATE'] = str(self.pe_state / 'pit')
         os.environ['K1_TURNS'] = str(self.k1_turns)
         os.environ['PIT_FP32_MASTER_INDEX'] = str(self.fp32_idx)
@@ -62,8 +66,8 @@ class TestQueueIngest(unittest.TestCase):
 
     def tearDown(self):
         for k in (
-            'PE_STATE', 'PE_LIFE_STATE', 'PE_LIFE', 'PIT_STATE', 'K1_TURNS',
-            'PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX',
+            'PE_STATE', 'PE_LIFE_STATE', 'PE_LIFE', 'LIFE_ROOT', 'PIT_STATE',
+            'K1_TURNS', 'PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX',
         ):
             os.environ.pop(k, None)
 
@@ -272,6 +276,39 @@ class TestQueueIngest(unittest.TestCase):
         self.assertFalse(out['head_set'])
         self.assertTrue(out.get('master_missing'))
         self.assertIsNone(ctl.current_head)
+
+    def test_life_root_not_pe_life_state_floor_fail_closed(self):
+        """PE_LIFE_STATE without CURRENT must not set floor=0 / enqueue backlog.
+
+        Floor comes from LIFE_ROOT. Missing LIFE_ROOT ⇒ IngestError, nothing queued.
+        """
+        # Old backlog under LIFE_ROOT must stay below floor.
+        self._write_epoch(751)
+        self._write_epoch(800)
+        self._write_epoch(1050)
+        # PE_LIFE_STATE is a different tree with no CURRENT (as on the live host).
+        self.assertFalse((self.pe_life_state / 'CURRENT.json').exists())
+        os.environ['PE_LIFE_STATE'] = str(self.pe_life_state)
+        os.environ['LIFE_ROOT'] = str(self.life)
+        os.environ.pop('PE_LIFE', None)
+
+        ctl = self._ctl()
+        store = DurableStore(root=self.pe_state / 'pit')
+        out = sync(ctl, store=store)
+        self.assertEqual(out['current_epoch_floor'], 1050)
+        self.assertEqual(out['enqueued'], [1050])
+        self.assertNotIn(751, out['enqueued'])
+        self.assertNotIn(800, out['enqueued'])
+
+        # LIFE_ROOT gone too → fail closed, enqueue nothing.
+        os.environ.pop('LIFE_ROOT', None)
+        os.environ.pop('PE_LIFE', None)
+        (self.pe_state / 'CURRENT.json').unlink()
+        ctl2 = self._ctl()
+        with self.assertRaises(IngestError) as cm:
+            sync(ctl2, store=store)
+        self.assertIn('LIFE_ROOT', str(cm.exception))
+        self.assertEqual(ctl2.items, [])
 
 
 if __name__ == '__main__':

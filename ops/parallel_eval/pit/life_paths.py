@@ -1,8 +1,14 @@
-"""Shared lifecycle path resolution (fail closed; no host-path defaults).
+"""Shared PE life-state path resolution (fail closed; no host-path defaults).
 
-``PE_LIFE_STATE`` owns pending/ + apply/. ``PE_STATE`` owns GREENS / HEAD-CHAIN.
-Both are required for live cutover; ``PE_SYNC_EXPECTED_HASH*`` is checked by
-cutover preflight separately.
+Two distinct roots (do not conflate):
+
+* ``PE_LIFE_STATE`` — PE life-state dir: ``pending/`` + ``apply/`` (pe_live /
+  apply_live). Not the training lifecycle tree.
+* ``LIFE_ROOT`` / ``PE_LIFE`` — training lifecycle root: ``CURRENT.json`` +
+  ``epochs/`` (queue_ingest floor). Never read via this module.
+* ``PE_STATE`` — GREENS / HEAD-CHAIN / pit uploads.
+
+``PE_SYNC_EXPECTED_HASH*`` is checked by cutover preflight separately.
 """
 from __future__ import annotations
 
@@ -14,8 +20,9 @@ def pe_life_state_root() -> Path:
     env = os.environ.get('PE_LIFE_STATE')
     if not env:
         raise RuntimeError(
-            'PE_LIFE_STATE is unset (required with PE_FLAG / PE_STATE / '
-            'PE_SYNC_EXPECTED_HASH* before cutover restart; no host-path defaults)'
+            'PE_LIFE_STATE is unset (PE pending/apply dir; required with PE_FLAG / '
+            'PE_STATE / LIFE_ROOT / PE_SYNC_EXPECTED_HASH* before cutover restart; '
+            'no host-path defaults)'
         )
     return Path(env)
 
@@ -25,7 +32,8 @@ def pe_state_root() -> Path:
     if not env:
         raise RuntimeError(
             'PE_STATE is unset (required with PE_FLAG / PE_LIFE_STATE / '
-            'PE_SYNC_EXPECTED_HASH* before cutover restart; no host-path defaults)'
+            'LIFE_ROOT / PE_SYNC_EXPECTED_HASH* before cutover restart; '
+            'no host-path defaults)'
         )
     return Path(env)
 

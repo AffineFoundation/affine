@@ -60,14 +60,29 @@ def _pit_state_root() -> Path:
     return pit_state_root()
 
 
-def _life_root() -> Path:
-    env = os.environ.get('PE_LIFE_STATE')
-    if env:
-        return Path(env)
-    pe_life = os.environ.get('PE_LIFE')
-    if pe_life:
-        return Path(pe_life)
-    return Path('/home/const/subnet120-rewrite/state/mimo-mainnet-v1')
+def _life_root() -> Optional[Path]:
+    """Training lifecycle root (CURRENT.json + epochs/), or None if unset.
+
+    Uses ``LIFE_ROOT``, then ``PE_LIFE``. Never ``PE_LIFE_STATE`` — that env
+    is the PE life-state dir (pending/ + apply/) shared with pe_live /
+    ``life_paths`` in the same host process. Confusing the two queued the
+    backlog when PE_LIFE_STATE had no CURRENT.json.
+    """
+    for key in ('LIFE_ROOT', 'PE_LIFE'):
+        env = os.environ.get(key)
+        if env:
+            return Path(env)
+    return None
+
+
+def _require_life_root() -> Path:
+    root = _life_root()
+    if root is None:
+        raise IngestError(
+            'LIFE_ROOT (or PE_LIFE) unset: training lifecycle root with CURRENT.json '
+            'required; PE_LIFE_STATE is the PE pending/apply dir and must not be used here'
+        )
+    return root
 
 
 def _gate_epochs_root() -> Path:
@@ -140,18 +155,42 @@ def _epoch_index_of(obj: Mapping[str, Any], *, dir_name: Optional[str] = None) -
 
 
 def _current_epoch_floor() -> int:
-    """CURRENT.json epoch_index — backlog below this must not enqueue."""
+    """CURRENT.json epoch_index — backlog below this must not enqueue.
+
+    Fail closed: missing LIFE_ROOT/PE_LIFE or missing/unreadable CURRENT ⇒
+    ``IngestError`` (never floor=0).
+    """
+    errors: List[str] = []
+    life = _life_root()
+    if life is None:
+        raise IngestError(
+            'LIFE_ROOT (or PE_LIFE) unset: cannot read CURRENT.json floor; '
+            'refusing enqueue (never floor=0). PE_LIFE_STATE is the PE '
+            'pending/apply dir and must not be used here'
+        )
     for cur_path in (
-        _life_root() / 'CURRENT.json',
+        life / 'CURRENT.json',
         _pe_state_root() / 'CURRENT.json',
     ):
-        cur = _rj(cur_path, {}) or {}
-        if isinstance(cur, Mapping) and cur.get('epoch_index') is not None:
-            try:
-                return int(cur['epoch_index'])
-            except (TypeError, ValueError):
-                continue
-    return 0
+        if not cur_path.is_file():
+            errors.append('%s missing' % cur_path)
+            continue
+        cur = _rj(cur_path, None)
+        if not isinstance(cur, Mapping):
+            errors.append('%s unreadable' % cur_path)
+            continue
+        if cur.get('epoch_index') is None:
+            errors.append('%s missing epoch_index' % cur_path)
+            continue
+        try:
+            return int(cur['epoch_index'])
+        except (TypeError, ValueError):
+            errors.append('%s bad epoch_index' % cur_path)
+            continue
+    raise IngestError(
+        'CURRENT.json missing/unreadable under LIFE_ROOT/PE_LIFE (and PE_STATE); '
+        'refusing enqueue (never floor=0): %s' % '; '.join(errors[:4])
+    )
 
 
 def _epoch_dir_ready(epoch_dir: Path) -> bool:
@@ -180,8 +219,15 @@ def _epoch_dir_ready(epoch_dir: Path) -> bool:
 
 
 def training_job_checkpoint(epoch: int) -> Optional[str]:
-    """TRAINING-JOB checkpoint.id for stale-head checks before rent."""
-    ed = _life_root() / 'epochs' / str(int(epoch))
+    """TRAINING-JOB checkpoint.id for stale-head checks before rent.
+
+    Returns None when LIFE_ROOT/PE_LIFE is unset or the job file is absent
+    (hermetic unit tests); never consults PE_LIFE_STATE.
+    """
+    life = _life_root()
+    if life is None:
+        return None
+    ed = life / 'epochs' / str(int(epoch))
     job = _rj(ed / 'TRAINING-JOB.json')
     if not isinstance(job, Mapping):
         return None
@@ -287,12 +333,13 @@ def _head_chain_tip() -> tuple[Optional[str], int]:
         cur = _rj(st / 'CURRENT.json', {}) or {}
         epoch = int(cur.get('epoch_index') or 0)
         return genesis, epoch
-    # Lifecycle CURRENT is the live head under PIT cutover.
-    for cur_path in (
-        _life_root() / 'CURRENT.json',
-        Path('/home/const/subnet120-rewrite/state/mimo-mainnet-v1/CURRENT.json'),
-        st / 'CURRENT.json',
-    ):
+    # Lifecycle CURRENT is the live head under PIT cutover (LIFE_ROOT / PE_LIFE).
+    cur_paths = []
+    life = _life_root()
+    if life is not None:
+        cur_paths.append(life / 'CURRENT.json')
+    cur_paths.append(st / 'CURRENT.json')
+    for cur_path in cur_paths:
         cur = _rj(cur_path, {}) or {}
         head = (cur.get('checkpoint') or {}).get('id')
         if isinstance(head, str) and len(head) == 64:
@@ -407,7 +454,10 @@ def _inbox_batches(*, floor: int) -> List[Dict[str, Any]]:
 def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
     """Recent K1 turns as batch tickets — real-shaped epoch_index, no backlog."""
     rows: List[Dict[str, Any]] = []
-    life_epochs = _life_root() / 'epochs'
+    life = _life_root()
+    if life is None:
+        return rows
+    life_epochs = life / 'epochs'
     if life_epochs.is_dir():
         for d in sorted(
             life_epochs.iterdir(),
@@ -452,7 +502,7 @@ def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
             epoch = _epoch_index_of(turn)
             if epoch is None or epoch < floor:
                 continue
-            ed = _life_root() / 'epochs' / str(epoch)
+            ed = life / 'epochs' / str(epoch)
             if ed.is_dir() and not _epoch_dir_ready(ed):
                 continue
             rows.append(dict(
@@ -470,10 +520,13 @@ def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
 
 def _legacy_pending_rows(*, floor: int) -> List[Dict[str, Any]]:
     """Ignore lifecycle pe_lifecycle claim stubs (pit_claimed); keep real trainer pending."""
-    pending_dir = _life_root() / 'pending'
+    life = _life_root()
+    rows: List[Dict[str, Any]] = []
+    if life is None:
+        return rows
+    pending_dir = life / 'pending'
     if not pending_dir.is_dir():
         pending_dir = _pe_state_root() / 'life' / 'pending'
-    rows: List[Dict[str, Any]] = []
     if not pending_dir.is_dir():
         return rows
     for path in sorted(pending_dir.glob('e*.json')):
@@ -486,7 +539,7 @@ def _legacy_pending_rows(*, floor: int) -> List[Dict[str, Any]]:
         epoch = _epoch_index_of(doc, dir_name=stem if stem.isdigit() else None)
         if epoch is None or epoch < floor:
             continue
-        ed = _life_root() / 'epochs' / str(epoch)
+        ed = life / 'epochs' / str(epoch)
         if ed.is_dir() and not _epoch_dir_ready(ed):
             continue
         rows.append(dict(
@@ -565,7 +618,7 @@ def _sync_inner(
             ingest_source=row.get('source'),
             batch_path=batch_path,
             ticket_path=row.get('path'),
-            epoch_dir=str(_life_root() / 'epochs' / str(epoch)),
+            epoch_dir=str(_require_life_root() / 'epochs' / str(epoch)),
         )
         known_epochs.add(epoch)
         enqueued.append(epoch)
