@@ -40,6 +40,14 @@ class TestBootNoneCoerce(unittest.TestCase):
         self.assertEqual(_as_host_dict(None, default={'ok': True}), {'ok': True})
         self.assertEqual(_as_host_dict({'a': 1}), {'a': 1})
 
+    def test_as_host_dict_unwraps_run_probe_tuple(self):
+        """Live pe_lane.run_probe returns (res, meta); unwrap mapping payload."""
+        res = {'partial': False, 'samples': 8456, 'k': 8, 'dtype': 'bfloat16'}
+        meta = {'run_name': 'r', 'wall_s': 1.0, 'plan_seed': 'p' * 64, 'k': 8, 'n': 1057}
+        self.assertEqual(_as_host_dict((res, meta)), res)
+        with self.assertRaises(Exception):
+            _as_host_dict(('not-a-mapping', meta))
+
     def test_lane_boot_tolerates_live_none(self):
         """Real live pe_lane.boot returns None (side-effect only)."""
         live_path = Path(__file__).resolve().parents[1] / 'live'
@@ -64,6 +72,44 @@ class TestBootNoneCoerce(unittest.TestCase):
         lane.host_serve = lambda *a, **k: None
         out2 = lane.serve({'id': 'box-1'}, CAND)
         self.assertEqual(out2.get('ok'), True)
+
+    def test_lane_run_probe_unwraps_live_tuple(self):
+        """Fake host run_probe returns live (res, meta); RESULT shape matches e1053."""
+        planned = 8456
+
+        def host_run_probe(P, cid, indices, plan_seed, k=8, max_tokens=65536, env_id='affine_gatepool', **kw):
+            # Live shape: (result_mapping, meta_dict). samples == len(indices)*k.
+            n = len(indices) * int(k)
+            self.assertEqual(n, planned)
+            res = {
+                'partial': False,  # bool
+                'samples': n,      # int
+                'k': k,
+                'dtype': 'bfloat16',
+                'planned_samples': n,
+            }
+            meta = {
+                'run_name': 'probe-e1053',
+                'wall_s': 12.0,
+                'plan_seed': plan_seed,
+                'k': k,
+                'n': len(indices),
+            }
+            return res, meta
+
+        lane = LaneService(require_host=True, host_run_probe=host_run_probe)
+        # 1057 indices * k=8 = 8456 (live RESULT after full e1053 rollouts).
+        indices = list(range(1057))
+        out = lane.run_probe(
+            {'id': 'box-1'}, CAND,
+            indices=indices,
+            plan_seed='p' * 64,
+            k=8,
+        )
+        self.assertIs(out.get('partial'), False)
+        self.assertEqual(out.get('samples'), 8456)
+        self.assertIsInstance(out.get('partial'), bool)
+        self.assertIsInstance(out.get('samples'), int)
 
 
 class TestRoundIdFromSample(unittest.TestCase):
@@ -210,7 +256,12 @@ class TestShadowReleasePrefix(unittest.TestCase):
 
 
 class TestCutoverLifecycleIngestE2E(unittest.TestCase):
-    """lifecycle tick (cutover) → queue_ingest → fake box → decision/credit → next epoch."""
+    """lifecycle tick (cutover) → queue_ingest → fake box → decision/credit → next epoch.
+
+    Isolation: pe_lifecycle.flag_path()/pe_state_path() re-read PE_FLAG /
+    PE_LIFE_STATE on every call so a prior suite import cannot freeze stale
+    temp paths (the full-suite flake vs alone).
+    """
 
     def setUp(self):
         self.td = Path(tempfile.mkdtemp())
@@ -234,7 +285,12 @@ class TestCutoverLifecycleIngestE2E(unittest.TestCase):
             'PE_GATE_EP': str(self.gate_ep),
             'PIT_FP32_MASTER_INDEX': str(self.fp32),
             'K1_TURNS': str(self.td / 'K1-TURNS.jsonl'),
+            # Hash-sync hook: hermetic fake (never a host script).
+            'PE_SYNC_EXPECTED_HASH': str(self.td / 'fake_sync_expected_hash.py'),
+            'PE_SYNC_EXPECTED_HASH_PYTHON': sys.executable,
+            'PE_SYNC_EXPECTED_HASH_LOG': str(self.td / 'hook-sync.log'),
         }
+        (self.td / 'fake_sync_expected_hash.py').write_text('import sys\n')
         (self.td / 'K1-TURNS.jsonl').write_text('')
         self._prev = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
@@ -456,6 +512,71 @@ class TestCutoverLifecycleIngestE2E(unittest.TestCase):
         self.assertIn(201, out3['enqueued'])
         # Inner was invoked for both epochs (job write), never waited on trainer.
         self.assertEqual(calls, ['200', '201'])
+
+
+class TestSyncExpectedHashInjectable(unittest.TestCase):
+    """pe_apply hash-sync hook must never hardcode a host script path."""
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.pe = self.td / 'pe'
+        self.pe.mkdir()
+        self.prev = {
+            k: os.environ.get(k)
+            for k in (
+                'PE_STATE',
+                'PE_SYNC_EXPECTED_HASH',
+                'PE_SYNC_EXPECTED_HASH_PYTHON',
+                'PE_SYNC_EXPECTED_HASH_LOG',
+                'PE_SYNC_EXPECTED_HASH_ALERT',
+            )
+        }
+        os.environ['PE_STATE'] = str(self.pe)
+        # Point at a hermetic fake — never the live host script.
+        self.fake = self.td / 'fake_sync_expected_hash.py'
+        self.log = self.td / 'hook-sync.log'
+        self.fake.write_text(
+            'import sys\n'
+            'open(%r, "a").write(" ".join(sys.argv) + "\\n")\n'
+            % str(self.log)
+        )
+        os.environ['PE_SYNC_EXPECTED_HASH'] = str(self.fake)
+        os.environ['PE_SYNC_EXPECTED_HASH_PYTHON'] = sys.executable
+        os.environ['PE_SYNC_EXPECTED_HASH_LOG'] = str(self.td / 'sync.log')
+        live_dir = Path(__file__).resolve().parents[1] / 'live'
+        if str(live_dir) not in sys.path:
+            sys.path.insert(0, str(live_dir))
+
+    def tearDown(self):
+        for k, v in self.prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_record_applied_invokes_env_script_not_host_default(self):
+        import pe_apply as PA  # type: ignore
+
+        src = Path(PA.__file__).read_text()
+        self.assertNotIn('/home/', src)
+        self.assertIn('PE_SYNC_EXPECTED_HASH', src)
+        cfg = PA._sync_expected_hash_config()
+        self.assertEqual(cfg['sync'], str(self.fake))
+
+        PA.set_genesis(HEAD)
+        PA.add_green(1, CAND, HEAD, green_at=1.0)
+        it = PA.next_green()
+        PA.record_applied(it, 'fresh', 0, CAND, HEAD)
+        self.assertTrue(self.log.is_file(), 'fake sync script must have been executed')
+        self.assertIn('--head=%s' % CAND, self.log.read_text())
+
+    def test_unset_sync_env_is_noop(self):
+        import pe_apply as PA  # type: ignore
+
+        os.environ.pop('PE_SYNC_EXPECTED_HASH', None)
+        os.environ.pop('PIT_SYNC_EXPECTED_HASH', None)
+        self.assertIsNone(PA._sync_expected_hash_config())
+        self.assertIsNone(PA._sync_expected_hash_after_head_apply(CAND))
 
 
 if __name__ == '__main__':

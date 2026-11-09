@@ -54,9 +54,21 @@ PodHandle = Union[str, Mapping[str, Any], Any]
 
 
 def _as_host_dict(raw: Any, *, default: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """Live pe_lane helpers often return None (side-effect only). Never ``dict(None)``."""
+    """Normalize live pe_lane return shapes into a mapping.
+
+    Live helpers often return None (side-effect only). Live ``run_probe`` returns
+    ``(res, meta)`` where ``res`` is the probe mapping — unwrap that 2-tuple.
+    Never ``dict(None)``.
+    """
     if raw is None:
         return dict(default or {'ok': True})
+    # live/pe_lane.run_probe → (res, meta); accept the mapping payload.
+    if (
+        isinstance(raw, tuple)
+        and len(raw) == 2
+        and isinstance(raw[0], Mapping)
+    ):
+        raw = raw[0]
     if isinstance(raw, Mapping):
         return dict(raw)
     raise LaneError('host lane returned non-mapping: %r' % type(raw).__name__)

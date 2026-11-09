@@ -14,6 +14,12 @@ _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO))
 _PE_LIVE = Path(__file__).resolve().parents[1] / 'live'
 sys.path.insert(0, str(_PE_LIVE))
+# Hermetic: pe_apply.record_applied must never reach a host sync_expected_hash.py.
+_FAKE_SYNC = _TD / 'fake_sync_expected_hash.py'
+_FAKE_SYNC.write_text('import sys\n')
+os.environ['PE_SYNC_EXPECTED_HASH'] = str(_FAKE_SYNC)
+os.environ['PE_SYNC_EXPECTED_HASH_PYTHON'] = sys.executable
+os.environ['PE_SYNC_EXPECTED_HASH_LOG'] = str(_TD / 'hook-sync.log')
 import pe_apply as PA  # noqa: E402
 from ops.parallel_eval.pit.checkpoint_auth import (  # noqa: E402
     build_checkpoint_auth_payload,

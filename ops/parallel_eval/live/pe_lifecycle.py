@@ -22,9 +22,51 @@ HEAD-CHAIN / PIT-RESULT for miner credit.
 import json, os, time
 from pathlib import Path
 
-PE_STATE = Path(os.environ.get("PE_LIFE_STATE", "/home/const/subnet120-rewrite/state/root-audits/20261106-parallel-cutover/state/life"))
-FLAG = Path(os.environ.get("PE_FLAG", "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json"))
+# Defaults only when env is unset (operator must set PE_FLAG / PE_LIFE_STATE in
+# real deploys). Read via flag_path()/pe_state_path() on every call so suite
+# order cannot freeze a prior test's temp paths into module globals.
+_FLAG_DEFAULT = os.environ.get(
+    "PE_FLAG_DEFAULT",
+    "",
+)
+_PE_STATE_DEFAULT = os.environ.get(
+    "PE_LIFE_STATE_DEFAULT",
+    "",
+)
 RESTORE_WAIT_S = 1200
+
+
+def flag_path() -> Path:
+    """Current promotion-gate flag path (env PE_FLAG; re-read every call)."""
+    env = os.environ.get("PE_FLAG")
+    if env:
+        return Path(env)
+    if _FLAG_DEFAULT:
+        return Path(_FLAG_DEFAULT)
+    raise RuntimeError("PE_FLAG is unset (no import-time host default)")
+
+
+def pe_state_path() -> Path:
+    """Current PE life-state root (env PE_LIFE_STATE; re-read every call)."""
+    env = os.environ.get("PE_LIFE_STATE")
+    if env:
+        return Path(env)
+    if _PE_STATE_DEFAULT:
+        return Path(_PE_STATE_DEFAULT)
+    raise RuntimeError("PE_LIFE_STATE is unset (no import-time host default)")
+
+
+# Back-compat aliases for callers that still read module attributes. Prefer
+# flag_path()/pe_state_path() — these aliases are refreshed by _sync_paths().
+FLAG = Path(_FLAG_DEFAULT) if _FLAG_DEFAULT else Path("/tmp/pe-flag-unset")
+PE_STATE = Path(_PE_STATE_DEFAULT) if _PE_STATE_DEFAULT else Path("/tmp/pe-life-unset")
+
+
+def _sync_paths() -> None:
+    """Refresh FLAG/PE_STATE aliases from the current process environment."""
+    global FLAG, PE_STATE
+    FLAG = flag_path()
+    PE_STATE = pe_state_path()
 
 
 def _rj(p, d=None):
@@ -40,11 +82,13 @@ def _wj(p, o):
 
 
 def pe_live():
-    return ((_rj(FLAG, {}) or {}).get("parallel_eval") or {}).get("enabled") is True
+    _sync_paths()
+    return ((_rj(flag_path(), {}) or {}).get("parallel_eval") or {}).get("enabled") is True
 
 
 def from_epoch():
-    v = ((_rj(FLAG, {}) or {}).get("parallel_eval") or {}).get("from_epoch")
+    _sync_paths()
+    v = ((_rj(flag_path(), {}) or {}).get("parallel_eval") or {}).get("from_epoch")
     return v if type(v) is int else None
 
 
@@ -56,7 +100,8 @@ def pit_cutover():
     when base head matches, or (b) returns no-update so weight nonces keep moving.
     Never returns None waiting for a per-epoch PIT DECISION.
     """
-    pe = (_rj(FLAG, {}) or {}).get("parallel_eval") or {}
+    _sync_paths()
+    pe = (_rj(flag_path(), {}) or {}).get("parallel_eval") or {}
     pit = pe.get("pit") or {}
     if pit.get("revert") is True:
         return False
@@ -86,8 +131,9 @@ def ready_apply(H, epoch=None):
     Offering is not consumption: lifecycle FINALIZED and CURRENT must both be
     durable before confirm_applied can acknowledge it.
     """
+    _sync_paths()
     rows = []
-    for p in sorted((PE_STATE / "apply").glob("*.json")):
+    for p in sorted((pe_state_path() / "apply").glob("*.json")):
         a = _rj(p) or {}
         eligible = a.get("state") == "ready" or (
             a.get("state") == "offered" and a.get("offered_epoch") == epoch)
@@ -108,8 +154,9 @@ def confirm_applied(root, current):
     but before acknowledgment: a later tick reconciles it. No journal/head-chain
     append is made here; the apply consumer must idempotently reconcile this ACK.
     """
+    _sync_paths()
     confirmed = []
-    for p in sorted((PE_STATE / "apply").glob("*.json")):
+    for p in sorted((pe_state_path() / "apply").glob("*.json")):
         a = _rj(p) or {}
         if a.get("state") != "offered":
             continue
@@ -132,8 +179,9 @@ def confirm_applied(root, current):
 
 
 def install_pe(Lifecycle):
+    _sync_paths()
     if getattr(Lifecycle._training, "_pe", False):
-        return dict(pe=True, already=True, flag=str(FLAG), live_now=pe_live())
+        return dict(pe=True, already=True, flag=str(flag_path()), live_now=pe_live())
     outer = Lifecycle._training
     try:
         inner = closure_var(outer, "prior")   # v829i's wrapped function (training without the gate hold)
@@ -150,6 +198,7 @@ def install_pe(Lifecycle):
         if fe is not None and e < fe:
             # 2026-11-07 handover: an epoch opened before the cutover is finished by the serial gate path (ntp: never promotes on timeout)
             return outer(self, directory, opening, dispatch, current, now)
+        state = pe_state_path()
 
         # ---- PIT live cutover: decoupled from epoch dispatch (Jacob 2026-11-09) ----
         # Never hold returning None for a PIT decision. Never hand the job to the
@@ -192,9 +241,9 @@ def install_pe(Lifecycle):
             return _no_update(current, "pit-decoupled-e%d-kept-%s" % (e, H[:8]))
 
         if not (d / "TRAINING-JOB.json").exists():
-            at = (_rj(PE_STATE / "TRAINER-AT.json") or {}).get("head")
+            at = (_rj(state / "TRAINER-AT.json") or {}).get("head")
             if at != H:
-                req = PE_STATE / ("RESTORE-REQUEST-e%d.json" % e)
+                req = state / ("RESTORE-REQUEST-e%d.json" % e)
                 r = _rj(req) or dict(epoch=e, head=H, requested_at=time.time())
                 _wj(req, r)
                 if time.time() - r["requested_at"] < RESTORE_WAIT_S:
@@ -204,12 +253,12 @@ def install_pe(Lifecycle):
         if res is None:
             return None
         if res.get("status") == "updated":
-            pp = PE_STATE / "pending" / ("e%d.json" % e)
+            pp = state / "pending" / ("e%d.json" % e)
             if not pp.exists():
                 _wj(pp, dict(epoch=e, candidate=res["checkpoint"]["id"], training_head=H, checkpoint=res["checkpoint"],
                              optimizer_step=res["optimizer_step"], checkpoint_authorization=res["checkpoint_authorization"],
                              publication_receipt_sha256=res.get("publication_receipt_sha256"), at=time.time()))
-            _wj(PE_STATE / "TRAINER-AT.json", dict(head=res["checkpoint"]["id"], epoch=e, why="trained", at=time.time()))
+            _wj(state / "TRAINER-AT.json", dict(head=res["checkpoint"]["id"], epoch=e, why="trained", at=time.time()))
         ap, a = ready_apply(H, e)
         if a:
             a["state"] = "offered"; a["offered_epoch"] = e; a["offered_at"] = a.get("offered_at", time.time()); _wj(ap, a)
@@ -237,4 +286,4 @@ def install_pe(Lifecycle):
         tick.__qualname__, tick.__module__ = prior_tick.__qualname__, prior_tick.__module__
         tick._pe = True
         Lifecycle.tick = tick
-    return dict(pe=True, flag=str(FLAG), live_now=pe_live())
+    return dict(pe=True, flag=str(flag_path()), live_now=pe_live())

@@ -14,11 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 STALENESS_MAX = 2        # merge window Jacob ruled (stale <= 2 would be applied as an fp32 delta once the signed merge exists)
 APPLY_STALENESS_MAX = 0  # FRESH-ONLY phase 1 (Jacob 2026-11-07 07:27 CR, Option B): only staleness 0 is applied; staleness 1-2
                          # -> merge_blocked (GREEN credited + paid via K1, head unchanged) until the trainer-signed merge is built
-_ST_DEFAULT = Path("/home/const/subnet120-rewrite/state/root-audits/20261106-parallel-cutover/state")
-
-
 def _st():
-    return Path(os.environ.get("PE_STATE") or _ST_DEFAULT)
+    """PE_STATE root — required via env (no host-path default)."""
+    env = os.environ.get("PE_STATE") or os.environ.get("PE_ST")
+    if not env:
+        raise RuntimeError("PE_STATE is unset (no host-path default)")
+    return Path(env)
 
 
 def cr(t=None):
@@ -189,37 +190,74 @@ def record_applied(item, kind, s, new_head, base_head, merge_info=None):
         wj(_st() / "HEAD-CHAIN.json", c)
         _mark(item["candidate"], state="applied", kind=kind, staleness=s, new_head=new_head, applied_at_cr=cr())
     # Ops hook (2026-11-09 CR, Jacob option A): sync fp32 expected-master hash after GREEN head-apply.
-    # Host-side only; sync_expected_hash.py keeps fail-closed + refuses when a JOB has no RESULT.
+    # Paths are env-injected (PE_SYNC_EXPECTED_HASH*); no host defaults. Unset ⇒ no-op.
+    # sync_expected_hash.py keeps fail-closed + refuses when a JOB has no RESULT.
     try:
         _sync_expected_hash_after_head_apply(new_head)
     except Exception as ex:
         try:
-            from pathlib import Path as _P
-            import json as _json
-            _alert = _P("/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/state/HOOK-SYNC-ALERT.json")
-            _alert.write_text(_json.dumps({"at_cr": cr(), "new_head": new_head, "err": str(ex)[:300]}, indent=2) + "\n")
+            alert = os.environ.get("PE_SYNC_EXPECTED_HASH_ALERT") or os.environ.get(
+                "PIT_SYNC_EXPECTED_HASH_ALERT"
+            )
+            if alert:
+                Path(alert).parent.mkdir(parents=True, exist_ok=True)
+                Path(alert).write_text(
+                    json.dumps({"at_cr": cr(), "new_head": new_head, "err": str(ex)[:300]}, indent=2) + "\n"
+                )
         except Exception:
             pass
     return c
 
 
+def _sync_expected_hash_config():
+    """Resolve injectable sync script / python / log paths from env (no host defaults)."""
+    sync = (
+        os.environ.get("PE_SYNC_EXPECTED_HASH")
+        or os.environ.get("PIT_SYNC_EXPECTED_HASH")
+        or ""
+    ).strip()
+    if not sync:
+        return None
+    py = (
+        os.environ.get("PE_SYNC_EXPECTED_HASH_PYTHON")
+        or os.environ.get("PIT_SYNC_EXPECTED_HASH_PYTHON")
+        or sys.executable
+    )
+    logp = (
+        os.environ.get("PE_SYNC_EXPECTED_HASH_LOG")
+        or os.environ.get("PIT_SYNC_EXPECTED_HASH_LOG")
+        or ""
+    ).strip() or None
+    return dict(sync=sync, python=py, log=logp)
+
+
 def _sync_expected_hash_after_head_apply(new_head):
-    """Best-effort: run sync_expected_hash.py --head=<new_head>. Refuses unfinished JOB (exit 3)."""
+    """Best-effort: run sync_expected_hash.py --head=<new_head>. Refuses unfinished JOB (exit 3).
+
+    Script path must be provided via PE_SYNC_EXPECTED_HASH (or PIT_SYNC_EXPECTED_HASH).
+    When unset the hook is a no-op so tests never reach a host install path.
+    """
     import subprocess
-    sync = "/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/sync_expected_hash.py"
-    py = "/home/const/subnet120-rewrite/.venv/bin/python"
-    logp = "/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/state/HOOK-SYNC.log"
-    p = subprocess.run([py, "-B", sync, "--head=%s" % new_head], capture_output=True, text=True, timeout=180)
+    cfg = _sync_expected_hash_config()
+    if cfg is None:
+        return None
+    sync, py, logp = cfg["sync"], cfg["python"], cfg["log"]
+    p = subprocess.run(
+        [py, "-B", sync, "--head=%s" % new_head],
+        capture_output=True, text=True, timeout=180,
+    )
     line = "%s head=%s rc=%s stdout=%s stderr=%s\n" % (
         cr(), str(new_head)[:16], p.returncode,
         (p.stdout or "").replace("\n", " ")[:500],
         (p.stderr or "").replace("\n", " ")[:300],
     )
-    try:
-        with open(logp, "a") as f:
-            f.write(line)
-    except Exception:
-        pass
+    if logp:
+        try:
+            Path(logp).parent.mkdir(parents=True, exist_ok=True)
+            with open(logp, "a") as f:
+                f.write(line)
+        except Exception:
+            pass
     return p.returncode
 
 
