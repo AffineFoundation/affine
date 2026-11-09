@@ -19,6 +19,17 @@ die() { echo "cutover_enable: $*" >&2; exit 2; }
 [[ -n "${AFFINE_PIT_HOST_KEY_FILE:-}" && -f "${AFFINE_PIT_HOST_KEY_FILE}" ]] || die "AFFINE_PIT_HOST_KEY_FILE required (0600)"
 [[ -n "${AFFINE_PIT_HOST_CERT_FILE:-}" && -f "${AFFINE_PIT_HOST_CERT_FILE}" ]] || die "AFFINE_PIT_HOST_CERT_FILE required"
 [[ -n "${AFFINE_PIT_ROOT_PUBKEY_HEX:-}" ]] || die "AFFINE_PIT_ROOT_PUBKEY_HEX required"
+# On-box train (drive_item / run5090): required host-local paths — never defaulted in git.
+[[ -n "${PIT_BUNDLE_JSON:-}" && -f "${PIT_BUNDLE_JSON}" ]] || die "PIT_BUNDLE_JSON required (train-cap-64k BUNDLE5090.json with trainer entry)"
+[[ -n "${PIT_FP32_MASTER_INDEX:-}" && -d "${PIT_FP32_MASTER_INDEX}" ]] || die "PIT_FP32_MASTER_INDEX required (public k1/fp32-master index dir)"
+# Fail closed if BUNDLE lacks trainer (PE_STATE/BUNDLE.json is probe-only).
+export PIT_BUNDLE_JSON PIT_FP32_MASTER_INDEX
+python3 - <<'PY' || die "PIT_BUNDLE_JSON missing trainer {key,sha256,bytes}"
+import json, os, sys
+b = json.load(open(os.environ["PIT_BUNDLE_JSON"]))
+t = b.get("trainer") or {}
+sys.exit(0 if t.get("key") and t.get("sha256") and "bytes" in t else 1)
+PY
 
 if [[ -z "$PE_STATE" ]]; then
   PE_STATE="$(dirname "$PE_FLAG")/state"

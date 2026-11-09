@@ -56,6 +56,12 @@ BOX_SOURCE = TW + '/source-final-v823u'
 BOX_HOST = TW + '/host-v834e'
 BOX_ROOT = '/root/affine-env-probe'
 
+# drive_item.GRADER_FIX — stale grader uv symlinks from the probe bundle (zero-sample fix).
+GRADER_FIX = (
+    'find /opt/plain/probe/.cache/uv/environments-v2 -maxdepth 4 -type l '
+    '-lname "/opt/affine-grader-uv/*" -delete 2>/dev/null; true'
+)
+
 
 class BoxIOError(RuntimeError):
     """Fail-closed host box I/O error."""
@@ -115,19 +121,25 @@ def _trainer_host_dir() -> Path:
 
 
 def _fp32_master_index() -> Path:
-    """Published M(H) index dir (public website k1/fp32-master/<H>.json)."""
-    return _env_path(
-        'PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX',
-        default=_repo() / 'website' / 'k1' / 'fp32-master',
-    )  # type: ignore[arg-type]
+    """Published M(H) index dir — required (host sets website k1/fp32-master). No default."""
+    p = _env_path('PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX')
+    if p is None:
+        raise BoxIOError(
+            'PIT_FP32_MASTER_INDEX required (host path to public k1/fp32-master index dir); '
+            'no default — refuse PE_STATE guess'
+        )
+    return p
 
 
 def _bundle_json() -> Path:
-    """BUNDLE.json (or BUNDLE5090.json) with trainer {key,sha256,bytes}."""
-    return _env_path(
-        'PIT_BUNDLE_JSON', 'AFFINE_BUNDLE_JSON',
-        default=_pe_state() / 'BUNDLE.json',
-    )  # type: ignore[arg-type]
+    """BUNDLE5090.json with trainer {key,sha256,bytes} — required. No PE_STATE/BUNDLE.json default."""
+    p = _env_path('PIT_BUNDLE_JSON', 'AFFINE_BUNDLE_JSON')
+    if p is None:
+        raise BoxIOError(
+            'PIT_BUNDLE_JSON required (host path to train-cap-64k BUNDLE5090.json with trainer entry); '
+            'no default — PE_STATE/BUNDLE.json has no trainer'
+        )
+    return p
 
 
 def _pst_code() -> Path:
@@ -270,7 +282,12 @@ def put(P: Any, dest: str, data: bytes, mode: str = '644') -> None:
 
 
 def put_tar(P: Any, local_dir: Path, remote_dir: str) -> None:
-    """run5090.put_tar — directory ship via scp of a tar (binary-safe)."""
+    """common5090.put_tar semantics — never ``rm -rf`` the dest (preserves in/actor/<H>).
+
+    Binary ship via scp of a tar (safer than ssh stdin for large trees). Remote:
+    ``mkdir -p D && tar --no-same-owner -C D -xf T && rm -f T``.
+    Callers that need a clean dir (host-v834e) must ``rm -rf`` that path first.
+    """
     local_dir = Path(local_dir)
     if not local_dir.is_dir():
         raise BoxIOError('put_tar missing local dir: %s' % local_dir)
@@ -282,8 +299,8 @@ def put_tar(P: Any, local_dir: Path, remote_dir: str) -> None:
         remote_tar = '/tmp/pit-put-%d.tar' % os.getpid()
         _scp_to(P, tar_path, remote_tar, timeout=7200)
         P.run(
-            "rm -rf %s && mkdir -p %s && tar --no-same-owner -C %s -xf %s && rm -f %s && echo PUT_TAR_OK" % (
-                remote_dir, remote_dir, remote_dir, remote_tar, remote_tar,
+            "mkdir -p %s && tar --no-same-owner -C %s -xf %s && rm -f %s && echo PUT_TAR_OK" % (
+                remote_dir, remote_dir, remote_tar, remote_tar,
             ),
             timeout=1800,
         )
@@ -423,10 +440,14 @@ def _published_master(head: str) -> Mapping[str, Any]:
     if idx.is_file():
         m = json.loads(idx.read_text())
         return m
-    # Public HTTPS fallback (no secrets).
+    # Public HTTPS fallback (no secrets). Send User-Agent — bare urllib gets 403.
     try:
         url = os.environ.get('PIT_FP32_MASTER_URL_TMPL') or 'https://affine.io/k1/fp32-master/%s.json'
-        with urllib.request.urlopen(url % head, timeout=30) as resp:
+        req = urllib.request.Request(
+            url % head,
+            headers={'User-Agent': 'affine-pit-pe-box/1'},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except Exception as exc:
         raise BoxIOError('M(H) unpublished for %s -> fail closed: %s' % (head[:12], exc)) from exc
@@ -520,8 +541,31 @@ def _detect_box_gpu(P: Any) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # drive_item stages (boot / bundle_trainer / head / master / inputs / train)
 # ---------------------------------------------------------------------------
+def _pe_lane():
+    try:
+        import pe_lane as L
+        return L
+    except ImportError:
+        from ops.parallel_eval.live import pe_lane as L
+        return L
+
+
+def grader_fix(P: Any) -> None:
+    """drive_item GRADER_FIX (boot + before run_probe)."""
+    P.run(GRADER_FIX, check=False, timeout=120)
+
+
 def boot_helpers(P: Any) -> None:
-    """drive_item.boot / run5090.boot — push gate_fetch + bundle_fetch; mkdir layout."""
+    """drive_item.boot: pe_lane.boot FIRST, then helpers + GRADER_FIX.
+
+    pe_lane.boot symlinks ``/workspace`` → ``/opt/plain/workspace`` and
+    ``/root/affine-env-probe``. Creating real ``/workspace/pst`` or
+    ``/workspace/affine-mimo-trainer-prod`` *before* that breaks the venv
+    check (TW lands on the wrong mount).
+    """
+    L = _pe_lane()
+    L.boot(P)
+    # Now mkdir under the symlink targets (never create real /workspace first).
     P.run(
         "mkdir -p %s/in %s %s %s %s/ckpt %s/runs; "
         "command -v zstd >/dev/null || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive "
@@ -532,6 +576,12 @@ def boot_helpers(P: Any) -> None:
     )
     for fname in ('gate_fetch.py', 'bundle_fetch.py'):
         put(P, PST + '/' + fname, _helper_src(fname).read_bytes(), '700')
+    grader_fix(P)
+
+
+def push_probe_bundle(P: Any) -> None:
+    """drive_item.bundle_probe — pe_lane.push_bundle (podctl.py + vLLM env)."""
+    _pe_lane().push_bundle(P)
 
 
 def bundle_trainer(P: Any) -> Mapping[str, Any]:
@@ -573,9 +623,11 @@ def bundle_trainer(P: Any) -> Mapping[str, Any]:
         info['bundle-trainer'] = dict(present=True)
 
     # Ship trainer-host-v834e (drive_item: put_tar REL/trainer-host-v834e → TW/host-v834e).
+    # Clean only BOX_HOST — put_tar itself must not wipe (preserves pst/in/actor/<H>).
     host_src = _trainer_host_dir()
     if not host_src.is_dir():
         raise BoxIOError('trainer-host-v834e missing on host (%s); set PIT_TRAINER_HOST / PIT_V834E_RELEASE' % host_src)
+    P.run('rm -rf %s' % BOX_HOST, timeout=120)
     put_tar(P, host_src, BOX_HOST)
     man = subprocess.run(
         'cd %s && find . -type f -print0 | sort -z | xargs -0 sha256sum' % host_src,
@@ -588,14 +640,15 @@ def bundle_trainer(P: Any) -> Mapping[str, Any]:
     if 'SHA_OK' not in chk:
         raise BoxIOError('host-v834e sha256sum -c failed')
 
-    # Optional release-level SIGNED-MANIFEST.sha256 (fail closed; never `; true`).
+    # SIGNED-MANIFEST paths are trainer-host-v834e/...; files ship to TW/host-v834e.
+    # Symlink then fail-closed check (never `; true`).
     rel = _v834e_release()
     man_sha = rel / 'SIGNED-MANIFEST.sha256'
     if man_sha.is_file():
         put(P, TW + '/SIGNED-MANIFEST.sha256', man_sha.read_bytes(), '644')
-        # Manifest paths are relative to the release root; verify against shipped trees when present.
         P.run(
-            'set -e; cd %s && sha256sum --quiet -c SIGNED-MANIFEST.sha256 && echo MANIFEST_OK' % TW,
+            'set -e; cd %s && ln -sfn host-v834e trainer-host-v834e && '
+            'sha256sum --quiet -c SIGNED-MANIFEST.sha256 && echo MANIFEST_OK' % TW,
             timeout=300,
         )
 
@@ -861,7 +914,10 @@ class HostBoxIO:
         P = _as_pod(pod)
         info: dict = {}
 
+        # drive_item order: boot (+ GRADER_FIX) → push_bundle → bundle_trainer →
+        # head → master → inputs (no wipe) → train → place_cand.
         boot_helpers(P)
+        push_probe_bundle(P)
         info.update(bundle_trainer(P))
         info['fetch-head'] = fetch_head_on_box(P, head=head, files=files)
         info['fetch-master'] = fetch_master_on_box(

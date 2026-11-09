@@ -7,6 +7,11 @@ Environment=PE_FLAG=%h/REPLACE_ME/PROMOTION-GATE.json
 Environment=AFFINE_PIT_HOST_KEY_FILE=%h/REPLACE_ME/pit-host.key
 Environment=AFFINE_PIT_HOST_CERT_FILE=%h/REPLACE_ME/pit-host.cert.json
 Environment=AFFINE_PIT_ROOT_PUBKEY_HEX=REPLACE_ME
+# Required for on-box train (drive_item / run5090). Host fills real paths; never commit them.
+Environment=PIT_BUNDLE_JSON=%h/REPLACE_ME/BUNDLE5090.json
+Environment=PIT_FP32_MASTER_INDEX=%h/REPLACE_ME/k1/fp32-master
+Environment=PIT_V834E_RELEASE=%h/REPLACE_ME/release-v834e-signed
+Environment=PIT_TRAINER_HOST=%h/REPLACE_ME/release-v834e-signed/trainer-host-v834e
 ExecStart=%h/subnet120-rewrite/.venv/bin/python -m ops.parallel_eval.pit.run_host --flag ${PE_FLAG}
 Restart=on-failure
 

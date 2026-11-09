@@ -282,8 +282,21 @@ def build_live_host_bundle(
         raise LiveWiringError('pe_rent: list_pods/ps required for live reconcile')
 
     host_boot = _require_attr(lane_mod, ('boot',), 'pe_lane boot')
+    host_push_bundle = _require_attr(lane_mod, ('push_bundle',), 'pe_lane push_bundle')
     host_serve = _require_attr(lane_mod, ('serve',), 'pe_lane serve')
     host_run_probe = _require_attr(lane_mod, ('run_probe',), 'pe_lane run_probe')
+    # drive_item GRADER_FIX before probe (zero-sample stale grader uv symlinks).
+    try:
+        from ops.parallel_eval.live.pe_box import GRADER_FIX as _GRADER_FIX
+    except Exception:
+        try:
+            import pe_box as _pe_box
+            _GRADER_FIX = _pe_box.GRADER_FIX
+        except Exception:
+            _GRADER_FIX = (
+                'find /opt/plain/probe/.cache/uv/environments-v2 -maxdepth 4 -type l '
+                '-lname "/opt/affine-grader-uv/*" -delete 2>/dev/null; true'
+            )
 
     host_score = getattr(score_mod, 'score', None)
     if not callable(host_score):
@@ -376,13 +389,23 @@ def build_live_host_bundle(
         raise LiveWiringError('pod handle must be Pod or rent dict')
 
     def _boot(pod, **kw):
-        return host_boot(_pod_of(pod), **kw)
+        # drive_item: pe_lane.boot then push_bundle (podctl + vLLM env).
+        P = _pod_of(pod)
+        out = host_boot(P, **kw)
+        host_push_bundle(P)
+        return out
 
     def _serve(pod, cid, gmu='0.9', max_num_seqs=512, **kw):
         return host_serve(_pod_of(pod), cid, gmu=gmu, max_num_seqs=max_num_seqs, **kw)
 
     def _run_probe(pod, cid, indices, plan_seed, **kw):
-        return host_run_probe(_pod_of(pod), cid, indices, plan_seed, **kw)
+        P = _pod_of(pod)
+        # drive_item.probe: GRADER_FIX immediately before run_probe.
+        try:
+            P.run(_GRADER_FIX, check=False, timeout=120)
+        except Exception:
+            pass
+        return host_run_probe(P, cid, indices, plan_seed, **kw)
 
     lane = LaneService(
         require_host=True,

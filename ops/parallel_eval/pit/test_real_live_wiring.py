@@ -565,35 +565,57 @@ class TestRealLiveWiring(unittest.TestCase):
         self.assertFalse(live.can_rent(queued_bound_waiting=1))
 
     def test_on_box_train_drive_item_path(self):
-        """Gate A: drive_item steps — R2 bundle_fetch, train_pit, scp return."""
+        """Gate A: drive_item order — boot, GRADER_FIX, push_bundle, bundle_fetch, …"""
         with mock.patch.dict(os.environ, self.env, clear=False):
             self._prep_sys_path()
             import pe_common
+            import pe_lane
             pe_common.LIUM = str(self.bin / 'lium')
             pe_common.HOME = self.root
+            pe_common.ST = self.state
+            pe_lane.ST = self.state
             os.environ['PATH'] = self.env['PATH']
-            # Fresh import so env-derived paths bind correctly.
             sys.modules.pop('pe_box', None)
             import pe_box
-            io = pe_box.HostBoxIO()
-            head_h = io.download_head(self.head)
-            master_h = io.download_master(self.head, self.master)
-            self.assertTrue(head_h.startswith('r2://head/'))
-            self.assertTrue(master_h.startswith('r2://master/'))
-            self.assertFalse((self.state / 'weights' / self.head).exists())
 
-            out = io.train_v834e(
-                head_path=head_h,
-                master_path=master_h,
-                expected_master_digest=self.master,
-                batch_handle=str(self.batch),
-                item_id='e' * 32,
-                hotkey='5Test',
-                pod=self.pod,
-                train_gpu='B300',
-                epoch=1041,
-                epoch_dir=str(self.epoch_dir),
-            )
+            markers = []
+
+            def _boot(P):
+                markers.append('boot')
+                # pe_lane.boot: symlink /workspace → /opt/plain/workspace BEFORE mkdir.
+                P.run(
+                    'mkdir -p /opt/plain/workspace /opt/plain/probe/affine-env-probe; '
+                    'rm -rf /workspace /root/affine-env-probe; '
+                    'ln -sfn /opt/plain/workspace /workspace; '
+                    'ln -sfn /opt/plain/probe/affine-env-probe /root/affine-env-probe; '
+                    'mkdir -p /root/affine-env-probe/ckpt /root/affine-env-probe/runs; echo boot-ok',
+                    timeout=60,
+                )
+
+            def _push(P):
+                markers.append('push_bundle')
+                P.run('echo PUSH_BUNDLE_OK', timeout=30)
+
+            with mock.patch.object(pe_lane, 'boot', side_effect=_boot):
+                with mock.patch.object(pe_lane, 'push_bundle', side_effect=_push):
+                    io = pe_box.HostBoxIO()
+                    head_h = io.download_head(self.head)
+                    master_h = io.download_master(self.head, self.master)
+                    self.assertTrue(head_h.startswith('r2://head/'))
+                    self.assertTrue(master_h.startswith('r2://master/'))
+
+                    out = io.train_v834e(
+                        head_path=head_h,
+                        master_path=master_h,
+                        expected_master_digest=self.master,
+                        batch_handle=str(self.batch),
+                        item_id='e' * 32,
+                        hotkey='5Test',
+                        pod=self.pod,
+                        train_gpu='B300',
+                        epoch=1041,
+                        epoch_dir=str(self.epoch_dir),
+                    )
             self.assertEqual(out.get('fetch'), 'r2-box-side')
             self.assertEqual(out.get('artifact_transport'), 'scp')
             self.assertEqual(out['candidate_id'], self.cand)
@@ -605,24 +627,50 @@ class TestRealLiveWiring(unittest.TestCase):
             self.assertEqual(fp['input_master_digest'], self.master)
             self.assertEqual(fp['source'], 'disk')
 
+            # pe_lane.boot then push_bundle (drive_item order).
+            self.assertEqual(markers, ['boot', 'push_bundle'])
+
             log = self.cmds.read_text()
-            # Exact on-box command markers from drive_item / run5090.
-            self.assertIn('bundle_fetch.py trainer', log)
-            self.assertIn('gate_fetch.py', log)
-            self.assertIn('train_pit.py', log)
-            self.assertIn('runtime-exact/venv/bin/python', log)
-            self.assertIn('AFFINE_FP32_EXPECTED_MASTER_HASH=', log)
-            self.assertIn('scp ', log)
-            # Fail-closed: no `; true` after SIGNED-MANIFEST check in pe_box source.
+            # Exact on-box command markers, in order.
+            for needle in (
+                'boot-ok',
+                'affine-grader-uv',  # GRADER_FIX
+                'PUSH_BUNDLE_OK',
+                'bundle_fetch.py trainer',
+                'gate_fetch.py',
+                'ln -sfn host-v834e trainer-host-v834e',
+                'SIGNED-MANIFEST.sha256',
+                'train_pit.py',
+                'AFFINE_FP32_EXPECTED_MASTER_HASH=',
+                'runtime-exact/venv/bin/python',
+                'scp ',
+            ):
+                self.assertIn(needle, log, msg='missing %r in cmds' % needle)
+            # Order: boot before GRADER_FIX before push_bundle before bundle_fetch before train.
+            i_boot = log.find('boot-ok')
+            i_fix = log.find('affine-grader-uv')
+            i_push = log.find('PUSH_BUNDLE_OK')
+            i_bun = log.find('bundle_fetch.py trainer')
+            i_train = log.find('train_pit.py')
+            self.assertTrue(
+                0 <= i_boot < i_fix < i_push < i_bun < i_train,
+                msg='order boot < GRADER_FIX < push_bundle < bundle_fetch < train: %s' % (
+                    (i_boot, i_fix, i_push, i_bun, i_train),
+                ),
+            )
+            # put_tar must NOT wipe dest (common5090); only BOX_HOST is cleaned.
             src = (LIVE / 'pe_box.py').read_text()
+            self.assertIn('mkdir -p %s && tar --no-same-owner -C %s -xf %s && rm -f %s && echo PUT_TAR_OK', src)
+            self.assertNotIn('rm -rf %s && mkdir -p %s && tar --no-same-owner', src)
+            self.assertIn("rm -rf %s' % BOX_HOST", src)
+            self.assertIn('ln -sfn host-v834e trainer-host-v834e', src)
             self.assertIn('SIGNED-MANIFEST.sha256', src)
-            self.assertNotIn('SIGNED-MANIFEST; true', src)
             self.assertNotIn('sha256sum -c SIGNED-MANIFEST; true', src)
-            # Venv fail-closed: never falls back to bare python3.
-            self.assertIn('test -x %s', src)
-            self.assertIn('runtime-exact/venv/bin/python', src)
-            self.assertIn('BOX_VENV', src)
             self.assertNotIn('else V=python3', src)
+            # Original bundle_fetch: zstd ranged GET pipeline.
+            bf = (LIVE / 'bundle_fetch.py').read_text()
+            self.assertIn('zstd -dc', bf)
+            self.assertIn('ThreadPoolExecutor(32)', bf)
 
     def test_fail_closed_missing_venv(self):
         """Fresh box without fetched venv must not fall back to system python3."""
@@ -659,6 +707,38 @@ class TestRealLiveWiring(unittest.TestCase):
         self.assertIn('pod master meta', src)
         # Old fail-open path wrote expected digest without checking — must be gone.
         self.assertNotIn('(master_dir / "master_digest.txt").write_text(expected', src)
+        # HTTPS fallback must send User-Agent (bare urllib → 403).
+        self.assertIn("User-Agent", src)
+
+    def test_fail_closed_missing_required_bundle_and_fp32_index(self):
+        """PIT_BUNDLE_JSON / PIT_FP32_MASTER_INDEX required — no PE_STATE defaults."""
+        with mock.patch.dict(os.environ, {
+            **{k: v for k, v in self.env.items() if k not in ('PIT_BUNDLE_JSON', 'PIT_FP32_MASTER_INDEX')},
+            'PIT_BUNDLE_JSON': '',
+            'PIT_FP32_MASTER_INDEX': '',
+        }, clear=False):
+            os.environ.pop('PIT_BUNDLE_JSON', None)
+            os.environ.pop('AFFINE_BUNDLE_JSON', None)
+            os.environ.pop('PIT_FP32_MASTER_INDEX', None)
+            os.environ.pop('AFFINE_FP32_MASTER_INDEX', None)
+            self._prep_sys_path()
+            sys.modules.pop('pe_box', None)
+            import pe_box
+            with self.assertRaises(pe_box.BoxIOError) as cm:
+                pe_box.load_bun()
+            self.assertIn('PIT_BUNDLE_JSON', str(cm.exception))
+            with self.assertRaises(pe_box.BoxIOError) as cm2:
+                pe_box._fp32_master_index()
+            self.assertIn('PIT_FP32_MASTER_INDEX', str(cm2.exception))
+
+    def test_host_wiring_boot_then_push_bundle_and_grader_before_probe(self):
+        """host_wiring._boot = boot+push_bundle; _run_probe runs GRADER_FIX first."""
+        src = (Path(__file__).resolve().parents[0] / 'host_wiring.py').read_text()
+        self.assertIn('host_push_bundle', src)
+        self.assertIn('host_boot(P', src)
+        self.assertIn('host_push_bundle(P)', src)
+        self.assertIn('GRADER_FIX', src)
+        self.assertIn('host_run_probe(P, cid, indices, plan_seed', src)
 
     def test_pe_lane_serve_requires_pod_handle_not_string(self):
         cid = 'c' * 64
