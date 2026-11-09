@@ -1,7 +1,10 @@
-"""PIT item state machine.
+"""PIT item state machine (DESIGN §2).
 
-One registration = one item = one box lifecycle. Transitions are explicit and
-exhaustive; unknown edges raise TransitionError.
+QUEUED → BOUND → RENTING → PROVISIONING → TRAINING → SEALED → SERVING →
+PROBING → RESULT → SCORED → DECIDED → RELEASED
+
+Boxes are rented only while an item is in RENTING…DECIDED. RELEASED (or
+ABORTED→RELEASED) always frees the box. No warm pool.
 """
 from __future__ import annotations
 
@@ -14,109 +17,131 @@ class ItemState(str, Enum):
     QUEUED = 'queued'
     BOUND = 'bound'
     RENTING = 'renting'
-    DOWNLOADING = 'downloading'
+    PROVISIONING = 'provisioning'
     TRAINING = 'training'
+    SEALED = 'sealed'
+    SERVING = 'serving'
     PROBING = 'probing'
-    SCORING = 'scoring'
-    GREEN = 'green'
-    RED = 'red'
-    MERGE_BLOCKED = 'merge_blocked'
-    APPLIED = 'applied'
-    FAILED = 'failed'
-    RETRY_WAIT = 'retry_wait'
+    RESULT = 'result'
+    SCORED = 'scored'
+    DECIDED = 'decided'
     RELEASED = 'released'
+    RETRY_WAIT = 'retry_wait'
+    FAILED = 'failed'
     ABORTED = 'aborted'
+    NO_DECISION = 'no_decision'
 
 
-# Terminal outcomes that still release the box.
-TERMINAL = frozenset({
-    ItemState.APPLIED,
-    ItemState.MERGE_BLOCKED,
-    ItemState.RED,
-    ItemState.ABORTED,
-    ItemState.RELEASED,
+# States that may hold a live rental. Empty queue ⇒ zero of these.
+RENTED_STATES: FrozenSet[ItemState] = frozenset({
+    ItemState.RENTING, ItemState.PROVISIONING, ItemState.TRAINING,
+    ItemState.SEALED, ItemState.SERVING, ItemState.PROBING,
+    ItemState.RESULT, ItemState.SCORED, ItemState.DECIDED,
 })
 
-# Edges: from -> frozenset(to)
+TERMINAL = frozenset({
+    ItemState.RELEASED, ItemState.ABORTED, ItemState.NO_DECISION,
+})
+
 ALLOWED: Dict[ItemState, FrozenSet[ItemState]] = {
     ItemState.QUEUED: frozenset({ItemState.BOUND, ItemState.ABORTED}),
     ItemState.BOUND: frozenset({ItemState.RENTING, ItemState.ABORTED}),
     ItemState.RENTING: frozenset({
-        ItemState.DOWNLOADING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+        ItemState.PROVISIONING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
     }),
-    ItemState.DOWNLOADING: frozenset({
-        ItemState.TRAINING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+    ItemState.PROVISIONING: frozenset({
+        ItemState.TRAINING, ItemState.RETRY_WAIT, ItemState.FAILED,
+        ItemState.ABORTED, ItemState.NO_DECISION,
     }),
     ItemState.TRAINING: frozenset({
+        ItemState.SEALED, ItemState.RETRY_WAIT, ItemState.FAILED,
+        ItemState.ABORTED, ItemState.NO_DECISION,
+    }),
+    ItemState.SEALED: frozenset({
+        ItemState.SERVING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+    }),
+    ItemState.SERVING: frozenset({
         ItemState.PROBING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
     }),
     ItemState.PROBING: frozenset({
-        ItemState.SCORING, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+        ItemState.RESULT, ItemState.RETRY_WAIT, ItemState.FAILED,
+        ItemState.ABORTED, ItemState.NO_DECISION,
     }),
-    ItemState.SCORING: frozenset({
-        ItemState.GREEN, ItemState.RED, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
+    ItemState.RESULT: frozenset({
+        ItemState.SCORED, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
     }),
-    ItemState.GREEN: frozenset({
-        ItemState.APPLIED, ItemState.MERGE_BLOCKED, ItemState.RELEASED,
-    }),
-    ItemState.RED: frozenset({ItemState.RELEASED}),
-    ItemState.MERGE_BLOCKED: frozenset({ItemState.RELEASED}),
-    ItemState.APPLIED: frozenset({ItemState.RELEASED}),
+    ItemState.SCORED: frozenset({ItemState.DECIDED, ItemState.ABORTED}),
+    ItemState.DECIDED: frozenset({ItemState.RELEASED}),
+    ItemState.NO_DECISION: frozenset({ItemState.RELEASED}),
     ItemState.FAILED: frozenset({ItemState.RETRY_WAIT, ItemState.ABORTED, ItemState.RELEASED}),
     ItemState.RETRY_WAIT: frozenset({ItemState.RENTING, ItemState.ABORTED}),
-    ItemState.RELEASED: frozenset(),
     ItemState.ABORTED: frozenset({ItemState.RELEASED}),
+    ItemState.RELEASED: frozenset(),
 }
 
 
 class TransitionError(ValueError):
-    """Raised when a state transition is not in ALLOWED."""
+    """Illegal state transition."""
 
 
 @dataclass
 class ItemRecord:
-    """Durable-ish in-memory record for one queue item.
-
-    Secrets, seeds, presigned URLs and private keys must never be stored here.
-    Use opaque handle placeholders only.
-    """
+    """One queue item. Never stores secrets, seeds, or presigned URLs."""
 
     item_id: str
     registration_index: int
-    miner_hotkey_prefix: str  # truncated public id only (no secrets)
+    epoch: int
+    uid: int = 0
+    hotkey_prefix: str = ''
     state: ItemState = ItemState.QUEUED
     bound_head: Optional[str] = None
-    bound_head_epoch: Optional[int] = None
     bound_master_digest: Optional[str] = None
+    bound_round_id: Optional[str] = None
+    bound_plan_seed: Optional[str] = None  # cand_seed digest handle only; never raw seed
     candidate_id: Optional[str] = None
     box_id: Optional[str] = None
+    box_name: Optional[str] = None
     attempt: int = 0
-    last_error: Optional[str] = None
-    decision: Optional[str] = None  # 'green' | 'red' | None
+    sealed: bool = False
+    decision: Optional[str] = None  # green_fresh | green_stale | red | no_decision
     z: Optional[float] = None
+    fresh: Optional[bool] = None
     merge_blocked: bool = False
     paid: bool = False
+    result_stored: bool = False
     shadow: bool = True
+    last_error: Optional[str] = None
     meta: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def miner_hotkey_prefix(self) -> str:
+        return self.hotkey_prefix
 
     def snapshot(self) -> dict:
         return {
             'item_id': self.item_id,
             'registration_index': self.registration_index,
-            'miner_hotkey_prefix': self.miner_hotkey_prefix,
+            'epoch': self.epoch,
+            'uid': self.uid,
+            'hotkey_prefix': self.hotkey_prefix,
             'state': self.state.value,
             'bound_head': self.bound_head,
-            'bound_head_epoch': self.bound_head_epoch,
             'bound_master_digest': self.bound_master_digest,
+            'bound_round_id': self.bound_round_id,
+            'bound_plan_seed': self.bound_plan_seed,
             'candidate_id': self.candidate_id,
             'box_id': self.box_id,
+            'box_name': self.box_name,
             'attempt': self.attempt,
-            'last_error': self.last_error,
+            'sealed': self.sealed,
             'decision': self.decision,
             'z': self.z,
+            'fresh': self.fresh,
             'merge_blocked': self.merge_blocked,
             'paid': self.paid,
+            'result_stored': self.result_stored,
             'shadow': self.shadow,
+            'last_error': self.last_error,
             'meta': dict(self.meta),
         }
 
@@ -128,7 +153,6 @@ def apply_transition(
     reason: Optional[str] = None,
     updates: Optional[Mapping[str, Any]] = None,
 ) -> ItemRecord:
-    """Return a new ItemRecord after a validated transition."""
     allowed = ALLOWED.get(record.state, frozenset())
     if to not in allowed:
         raise TransitionError(
@@ -136,9 +160,8 @@ def apply_transition(
         )
     kwargs: Dict[str, Any] = {'state': to}
     if reason is not None:
-        kwargs['last_error'] = reason if to in {
-            ItemState.FAILED, ItemState.RETRY_WAIT, ItemState.ABORTED,
-        } else record.last_error
+        if to in {ItemState.FAILED, ItemState.RETRY_WAIT, ItemState.ABORTED, ItemState.NO_DECISION}:
+            kwargs['last_error'] = reason
         meta = dict(record.meta)
         meta['last_transition_reason'] = reason
         kwargs['meta'] = meta
@@ -158,3 +181,7 @@ def can_transition(record: ItemRecord, to: ItemState) -> bool:
 
 def next_states(record: ItemRecord) -> Tuple[ItemState, ...]:
     return tuple(sorted(ALLOWED.get(record.state, frozenset()), key=lambda s: s.value))
+
+
+def holds_rental(record: ItemRecord) -> bool:
+    return record.state in RENTED_STATES and bool(record.box_id)

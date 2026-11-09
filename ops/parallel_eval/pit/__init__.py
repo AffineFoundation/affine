@@ -1,51 +1,46 @@
 """Per-item train+eval (PIT) — shadow-first, disabled by default.
 
-Each queued registration rents its own GPU box. The box downloads the bound
-head and fp32 master, trains with trainer-v834e, then runs the live-gate probe
-on the same box. The host scores the probe and records incentives. The first
-GREEN for a head becomes the new head; later GREENs bound to an older head are
-paid but merge_blocked and never applied.
+DESIGN: uploads/DESIGN.public.md. BRIEF: uploads/IMPLEMENTATION-BRIEF.public.md.
 
-Everything ships behind ``parallel_eval.pit.enabled=false``. The only enabled
-mode in this PR is ``mode=shadow``, which never writes DECISION.json, weights,
-HEAD-CHAIN, or R2 head pointers.
+Hard rule (owner): boxes are rented **only on demand** for a bound queue item.
+No warm pool, no idle/pre-rented machines. A box is released as soon as its
+item's result is stored or the item fails.
 """
+PREFIX = 'affine-pit-'
+MAX_BOXES_DEFAULT = 2
+GPU_ORDER = ('B300', 'B200', 'H200')
+TRAIN_OUTPUT_TOKENS = 32768
+GATE_MAX_TOKENS = 65536
+GATE_K_CAND = 8
+GATE_HEAD_ROLLOUTS = 12
+GATE_N_DRAWN = 1000
+MAX_SEQS = 512
+MAX_ATTEMPTS = 3
+ADMISSION_VERSION = 'pit-box-admission-v1'
+DECISION_LOG_VERSION = 'pit-decision-log-v1'
+
+# Per-phase stall timeouts (seconds). Watchdog uses these; not knobs for gate math.
+STALL = {
+    'renting': 600,
+    'provisioning': 1800,
+    'training': 3600,
+    'sealed': 900,
+    'serving': 1200,
+    'probing': 4500,
+    'result': 300,
+    'scored': 600,
+    'decided': 300,
+}
+
 from .config import PitConfig, load_pit_config, DEFAULT_PIT
 from .state import ItemState, ItemRecord, TransitionError, apply_transition, ALLOWED
-from .dequeue import Binding, bind_item, is_stale_green, order_greens
-from .decision_log import DecisionLog, DecisionEntry
 from .shadow import ShadowGuard, ShadowWriteError, FORBIDDEN_SHADOW_WRITES
-from .admission import (
-    AdmissionCert,
-    AdmissionRequest,
-    EphemeralBoxKey,
-    verify_admission_cert,
-    build_admission_request,
-    PLACEHOLDER_ROOT_PUBKEY_HEX,
-)
 
 __all__ = [
-    'PitConfig',
-    'load_pit_config',
-    'DEFAULT_PIT',
-    'ItemState',
-    'ItemRecord',
-    'TransitionError',
-    'apply_transition',
-    'ALLOWED',
-    'Binding',
-    'bind_item',
-    'is_stale_green',
-    'order_greens',
-    'DecisionLog',
-    'DecisionEntry',
-    'ShadowGuard',
-    'ShadowWriteError',
-    'FORBIDDEN_SHADOW_WRITES',
-    'AdmissionCert',
-    'AdmissionRequest',
-    'EphemeralBoxKey',
-    'verify_admission_cert',
-    'build_admission_request',
-    'PLACEHOLDER_ROOT_PUBKEY_HEX',
+    'PREFIX', 'MAX_BOXES_DEFAULT', 'GPU_ORDER', 'TRAIN_OUTPUT_TOKENS',
+    'GATE_MAX_TOKENS', 'GATE_K_CAND', 'GATE_HEAD_ROLLOUTS', 'GATE_N_DRAWN',
+    'MAX_SEQS', 'MAX_ATTEMPTS', 'ADMISSION_VERSION', 'DECISION_LOG_VERSION', 'STALL',
+    'PitConfig', 'load_pit_config', 'DEFAULT_PIT',
+    'ItemState', 'ItemRecord', 'TransitionError', 'apply_transition', 'ALLOWED',
+    'ShadowGuard', 'ShadowWriteError', 'FORBIDDEN_SHADOW_WRITES',
 ]

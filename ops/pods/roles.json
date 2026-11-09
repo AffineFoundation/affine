@@ -151,6 +151,27 @@
   }
  },
 
+ "pit-box": {
+  "what": "PIT per-item train+eval box (ops/parallel_eval/pit). Name glob affine-pit-*. Rented on demand only — no warm pool. Alert-only guardian; TTL 4h.",
+  "name": "affine-pit-",
+  "names": [],
+  "name_glob": "affine-pit-*",
+  "gpu_specs": [
+    {"gpu": "B300", "count": 8, "whole_node": true},
+    {"gpu": "B200", "count": 8, "whole_node": true},
+    {"gpu": "H200", "count": 8, "whole_node": true}
+  ],
+  "max_price_h": 80,
+  "min_disk_gb": 800,
+  "tiers": ["spot", "secure"],
+  "max_rents_24h": 8,
+  "ttl_h": 4,
+  "auto": false,
+  "optional": true,
+  "guardian": "alert-only",
+  "root": "/opt/plain/pit"
+ },
+
  "evaluator": {
   "what": "MiMo public evaluator pod (affine-mimo-evaluator-supervised + -tunnel). Holds evaluator.seed by design: public runtime only, private staging is a ROOT step.",
   "name": "affine-evaluator-1", "names": ["affine-evaluator-1"],

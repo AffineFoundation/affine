@@ -91,11 +91,33 @@ def add_green(epoch, candidate, training_head, green_at, files=None, extra=None)
         q = rj(_st() / "GREENS.json", []) or []
         if any(x["candidate"] == candidate for x in q):
             return False
-        q.append(dict(epoch=epoch, candidate=candidate, training_head=training_head, green_at=float(green_at),
-                      green_at_cr=cr(green_at), files=files, state="pending", **(extra or {})))
+        row = dict(epoch=epoch, candidate=candidate, training_head=training_head, green_at=float(green_at),
+                   green_at_cr=cr(green_at), files=files, state="pending", **(extra or {}))
+        # BRIEF §1.9: PIT decisions may carry source='pit'; fresh/stale still via decide_apply.
+        if row.get("source") not in (None, "pe", "pit"):
+            raise ValueError("green source must be pe|pit")
+        q.append(row)
         q.sort(key=lambda x: (x["green_at"], x["epoch"]))
         wj(_st() / "GREENS.json", q)
         return True
+
+
+def accept_pit_decision(item, *, shadow=False):
+    """Accept a PIT decision row into the GREEN queue.
+
+    Shadow mode must not call this for durable HEAD-CHAIN mutation; the PIT
+    controller keeps shadow applies memory-only. Live PIT passes shadow=False
+    after the operator enables non-shadow mode (not this PR).
+    """
+    if shadow:
+        raise RuntimeError("pe_apply.accept_pit_decision refuses shadow writes")
+    if (item or {}).get("source") != "pit":
+        raise ValueError("source must be pit")
+    return add_green(
+        item["epoch"], item["candidate"], item["training_head"], item.get("green_at") or time.time(),
+        files=item.get("files"), extra=dict(source="pit", decision=item.get("decision"),
+                                            merge_blocked=bool(item.get("merge_blocked"))),
+    )
 
 
 def greens():

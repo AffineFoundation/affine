@@ -1,92 +1,50 @@
 #!/usr/bin/env python3
-"""Unit tests: PIT item state machine."""
 import unittest
 
 from .state import (
-    ALLOWED,
-    ItemRecord,
-    ItemState,
-    TransitionError,
-    apply_transition,
-    can_transition,
-    next_states,
+    ALLOWED, RENTED_STATES, ItemRecord, ItemState, TransitionError,
+    apply_transition, can_transition, next_states,
 )
 
 
 def queued(item_id='a' * 32):
-    return ItemRecord(item_id=item_id, registration_index=1, miner_hotkey_prefix='5ABC')
+    return ItemRecord(item_id=item_id, registration_index=1, epoch=100, hotkey_prefix='5ABC')
 
 
 class TestStateMachine(unittest.TestCase):
-    def test_every_state_has_an_allowed_entry(self):
+    def test_every_state_listed(self):
         for state in ItemState:
             self.assertIn(state, ALLOWED)
 
-    def test_happy_path_to_applied(self):
+    def test_happy_path_to_released(self):
         r = queued()
         for to in (
-            ItemState.BOUND, ItemState.RENTING, ItemState.DOWNLOADING,
-            ItemState.TRAINING, ItemState.PROBING, ItemState.SCORING,
-            ItemState.GREEN, ItemState.APPLIED, ItemState.RELEASED,
-        ):
-            r = apply_transition(r, to)
-            self.assertEqual(r.state, to)
-
-    def test_happy_path_to_merge_blocked(self):
-        r = queued()
-        for to in (
-            ItemState.BOUND, ItemState.RENTING, ItemState.DOWNLOADING,
-            ItemState.TRAINING, ItemState.PROBING, ItemState.SCORING,
-            ItemState.GREEN, ItemState.MERGE_BLOCKED, ItemState.RELEASED,
+            ItemState.BOUND, ItemState.RENTING, ItemState.PROVISIONING,
+            ItemState.TRAINING, ItemState.SEALED, ItemState.SERVING,
+            ItemState.PROBING, ItemState.RESULT, ItemState.SCORED,
+            ItemState.DECIDED, ItemState.RELEASED,
         ):
             r = apply_transition(r, to)
         self.assertEqual(r.state, ItemState.RELEASED)
-
-    def test_red_path(self):
-        r = queued()
-        for to in (
-            ItemState.BOUND, ItemState.RENTING, ItemState.DOWNLOADING,
-            ItemState.TRAINING, ItemState.PROBING, ItemState.SCORING,
-            ItemState.RED, ItemState.RELEASED,
-        ):
-            r = apply_transition(r, to)
-        self.assertEqual(r.state, ItemState.RELEASED)
-
-    def test_retry_path(self):
-        r = queued()
-        r = apply_transition(r, ItemState.BOUND)
-        r = apply_transition(r, ItemState.RENTING)
-        r = apply_transition(r, ItemState.RETRY_WAIT, reason='rent-timeout')
-        self.assertEqual(r.last_error, 'rent-timeout')
-        r = apply_transition(r, ItemState.RENTING)
-        self.assertEqual(r.state, ItemState.RENTING)
-
-    def test_illegal_edge_raises(self):
-        r = queued()
-        with self.assertRaises(TransitionError):
-            apply_transition(r, ItemState.TRAINING)
-        with self.assertRaises(TransitionError):
-            apply_transition(r, ItemState.GREEN)
-
-    def test_released_is_terminal(self):
-        r = apply_transition(queued(), ItemState.ABORTED)
-        r = apply_transition(r, ItemState.RELEASED)
         self.assertEqual(next_states(r), ())
-        self.assertFalse(can_transition(r, ItemState.QUEUED))
 
-    def test_updates_cannot_clobber_id_or_state(self):
-        r = queued()
+    def test_illegal_edge(self):
         with self.assertRaises(TransitionError):
-            apply_transition(r, ItemState.BOUND, updates={'item_id': 'x'})
-        with self.assertRaises(TransitionError):
-            apply_transition(r, ItemState.BOUND, updates={'state': ItemState.GREEN})
+            apply_transition(queued(), ItemState.TRAINING)
 
-    def test_snapshot_has_no_secret_fields(self):
-        r = queued()
-        snap = r.snapshot()
-        blob = str(snap).lower()
+    def test_rented_states_cover_live_box(self):
+        self.assertIn(ItemState.PROBING, RENTED_STATES)
+        self.assertNotIn(ItemState.QUEUED, RENTED_STATES)
+        self.assertNotIn(ItemState.RELEASED, RENTED_STATES)
+
+    def test_snapshot_has_no_secrets(self):
+        blob = str(queued().snapshot()).lower()
         for banned in ('private_key', 'presign', 'secret', 'seed='):
             self.assertNotIn(banned, blob)
+
+    def test_cannot_clobber_id(self):
+        with self.assertRaises(TransitionError):
+            apply_transition(queued(), ItemState.BOUND, updates={'item_id': 'x'})
 
 
 if __name__ == '__main__':

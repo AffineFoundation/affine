@@ -227,7 +227,25 @@ def live_spec(e, pend):
                 files=(pend.get("checkpoint") or {}).get("files"), max_num_seqs=512), None
 
 
+def _pit_enabled():
+    """When parallel_eval.pit.enabled, PIT owns dequeue/train; single-trainer dispatch stops."""
+    try:
+        flag = Path(os.environ.get("PE_FLAG") or "")
+        if not flag or not flag.exists():
+            # Fall back to pe_gate_hook flag path when PE_FLAG unset.
+            flag = Path(os.environ.get("PE_FLAG") or "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json")
+        pe = (json.loads(flag.read_text()).get("parallel_eval") or {})
+        pit = pe.get("pit") or {}
+        return pit.get("enabled") is True
+    except Exception:
+        return False
+
+
 def dispatch_tick(submit):
+    # BRIEF §1.9: when PIT is enabled, stop creating single-trainer dispatches.
+    # apply_tick / reconcile_tick stay active. Shadow-only PIT (enabled=false) does not hit this.
+    if _pit_enabled():
+        return {"pit": "dispatch_noop"}
     out = {}
     for p in sorted(PENDING.glob("e*.json")):
         pend = rj(p) or {}
