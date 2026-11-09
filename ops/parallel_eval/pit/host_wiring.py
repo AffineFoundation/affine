@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
-from .box import BoxIO
+from .box import BoxIO, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter
@@ -132,8 +132,6 @@ def build_live_host_bundle(
         box_factory = box_io_cls
     if not callable(box_factory):
         raise LiveWiringError('box_io factory/class required (not ScriptedBoxIO)')
-
-    from .box import ScriptedBoxIO  # noqa: WPS433 — intentional live guard
 
     if box_factory is ScriptedBoxIO:
         raise LiveWiringError('ScriptedBoxIO refused in live mode')

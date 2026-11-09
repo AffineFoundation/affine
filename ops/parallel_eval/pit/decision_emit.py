@@ -14,16 +14,31 @@ import os
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Mapping, Optional, TYPE_CHECKING
+from typing import Any, Mapping, Optional, Protocol
 
 from .config import PitConfig
 from .state import ItemRecord
 
-if TYPE_CHECKING:
-    from .gate_writer import GateWriter
-
 
 GATE_VERSION = 'sn120-promotion-gate-v1'
+
+
+class GateWriter(Protocol):
+    def write_decision(
+        self,
+        *,
+        epoch: int,
+        head: str,
+        candidate: str,
+        decision: str,
+        evaluated: Mapping[str, Any],
+        reasons: Any,
+        heldout: Mapping[str, Any],
+        plan_seed: str,
+        parallel_eval_meta: Mapping[str, Any],
+        no_decision: bool = False,
+        merge_blocked: bool = False,
+    ) -> Path: ...
 
 
 def gate_epochs_root(explicit: Optional[str] = None) -> Path:
@@ -116,7 +131,7 @@ def emit_decision(
     item: ItemRecord,
     *,
     scored: Mapping[str, Any],
-    gate_writer: 'GateWriter',
+    gate_writer: GateWriter,
     config: PitConfig,
     epochs_root: Optional[Path] = None,
     decided_at: Optional[float] = None,
@@ -133,10 +148,9 @@ def emit_decision(
         )
     if config.is_shadow() or not config.may_write_live_artifacts():
         return None
-    from .gate_writer import validate_heldout
 
     heldout = dict(scored.get('heldout') or {})
-    validate_heldout(heldout)
+    # GateWriter.write_decision validates the full heldout block (single writer).
     doc = build_decision_doc(
         item, scored=scored, mode=config.mode, decided_at=decided_at,
     )

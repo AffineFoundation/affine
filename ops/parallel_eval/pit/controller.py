@@ -459,33 +459,60 @@ class Controller:
         if updated.decision == 'red' and updated.paid:
             raise TransitionError('RED must not be paid (last-10-GREEN rule)')
 
-        self.decisions.append(
-            epoch=updated.epoch,
-            uid=updated.uid,
-            hotkey_prefix=updated.hotkey_prefix,
-            binding_H=updated.bound_head or '',
-            binding_round_id=updated.bound_round_id or '',
-            candidate=updated.candidate_id or '',
-            decision=updated.decision or 'red',
-            z=updated.z,
-            fresh=updated.fresh,
-            merge_blocked=updated.merge_blocked,
-            paid=updated.paid,
-            decided_at=decided_at,
-            shadow=self.config.is_shadow(),
-        )
+        # Keep host score (incl. heldout) for gate emit after verify.
+        updated.meta = dict(updated.meta or {}, scored=dict(scored))
+        # Live: defer DecisionLog until finish/verify so green-time order stays
+        # consistent and unpaid greens never land in the sealed log.
+        # Shadow seals immediately (no upload verify gate).
         if self.config.is_shadow():
+            self.decisions.append(
+                epoch=updated.epoch,
+                uid=updated.uid,
+                hotkey_prefix=updated.hotkey_prefix,
+                binding_H=updated.bound_head or '',
+                binding_round_id=updated.bound_round_id or '',
+                candidate=updated.candidate_id or '',
+                decision=updated.decision or 'red',
+                z=updated.z,
+                fresh=updated.fresh,
+                merge_blocked=updated.merge_blocked,
+                paid=updated.paid,
+                decided_at=decided_at,
+                shadow=True,
+            )
             self._shadow_refuse_live_writes(updated)
             if updated.decision == 'green_fresh':
                 self.current_head = updated.candidate_id
                 self.current_head_epoch = int(updated.meta.get('binding', {}).get('head_epoch') or self.current_head_epoch) + 1
                 if self.apply_hook is not None:
                     self.apply_hook(updated)
+        else:
+            updated.meta['decision_log_pending'] = True
         return updated, updated.decision or 'decided'
+
+    def _seal_decision_log(self, item: ItemRecord) -> None:
+        if not (item.meta or {}).get('decision_log_pending'):
+            return
+        self.decisions.append(
+            epoch=item.epoch,
+            uid=item.uid,
+            hotkey_prefix=item.hotkey_prefix,
+            binding_H=item.bound_head or '',
+            binding_round_id=item.bound_round_id or '',
+            candidate=item.candidate_id or '',
+            decision=item.decision or 'red',
+            z=item.z,
+            fresh=item.fresh,
+            merge_blocked=item.merge_blocked,
+            paid=item.paid,
+            decided_at=float((item.meta or {}).get('decided_at_mono') or self.now_fn()),
+            shadow=False,
+        )
+        item.meta = dict(item.meta or {}, decision_log_pending=False)
 
     def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         if self.config.is_live() and self.live_applicator is not None:
-            scored = {'decision': item.decision}
+            scored = dict((item.meta or {}).get('scored') or {'decision': item.decision})
             try:
                 result = self.live_applicator.apply(item, scored=scored)
             except ApplyLiveError as exc:
@@ -499,8 +526,13 @@ class Controller:
                         'merge_blocked': False, 'box_id': None, 'box_name': None,
                     },
                 )
+                # Seal as no_decision only after verify failed — never a paid GREEN.
+                released.meta = dict(released.meta or {}, decision_log_pending=True, gate_emit_ready=True)
+                self._seal_decision_log(released)
                 return released, 'apply-failed'
             item.meta['live_apply'] = result.as_dict()
+            item.meta['gate_emit_ready'] = True
+            self._seal_decision_log(item)
             if result.head_advanced and item.candidate_id:
                 self.current_head = item.candidate_id
                 self.current_head_epoch = int(self.current_head_epoch) + 1

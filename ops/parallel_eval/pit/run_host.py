@@ -136,38 +136,66 @@ def tick_once(
         ctl.rent.save_ledger()
     for item in list(ctl.items):
         store.save_item(item)
-        if item.decision and ctl.config.may_write_live_artifacts():
-            if item.meta.get('decision_emitted'):
-                continue
-            scored = dict(item.meta.get('scored') or {})
-            if not scored and item.z is not None:
-                scored = {'decision': item.decision, 'evaluated': {'z': item.z}}
-            gw = HostGateWriter(
-                epochs_root=gate_epochs_root(),
-                shadow=ctl.config.is_shadow(),
-            )
-            path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
-            if path:
-                summary['advanced'].append({'epoch': item.epoch, 'decision': path.name})
-            store.decisions.append(
-                epoch=item.epoch,
-                uid=item.uid,
-                hotkey_prefix=item.hotkey_prefix,
-                binding_H=item.bound_head or '',
-                binding_round_id=item.bound_round_id or '',
-                candidate=item.candidate_id or '',
-                decision=item.decision,
-                z=item.z,
-                fresh=item.fresh,
-                merge_blocked=item.merge_blocked,
-                paid=item.paid,
-                shadow=False,
-                extra={'item_id': item.item_id},
-            )
-            store.persist_decisions()
-            item.meta['decision_emitted'] = True
-            store.save_item(item)
+        if not ctl.config.may_write_live_artifacts():
+            continue
+        if item.meta.get('decision_emitted'):
+            continue
+        # GREEN DECISION.json only after verify/apply (gate_emit_ready). Never emit a
+        # paid green for a candidate that failed upload verification.
+        if not _gate_emit_ready(item):
+            continue
+        scored = dict(item.meta.get('scored') or {})
+        if not scored and item.z is not None:
+            scored = {'decision': item.decision, 'evaluated': {'z': item.z}}
+        # HostGateWriter requires a complete heldout block; refuse incomplete.
+        if not (scored.get('heldout') or {}).get('set_size'):
+            summary.setdefault('emit_deferred', []).append({
+                'epoch': item.epoch, 'why': 'heldout-incomplete',
+            })
+            continue
+        gw = HostGateWriter(
+            epochs_root=gate_epochs_root(),
+            shadow=ctl.config.is_shadow(),
+        )
+        path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
+        if path:
+            summary['advanced'].append({'epoch': item.epoch, 'decision': str(path)})
+        store.decisions.append(
+            epoch=item.epoch,
+            uid=item.uid,
+            hotkey_prefix=item.hotkey_prefix,
+            binding_H=item.bound_head or '',
+            binding_round_id=item.bound_round_id or '',
+            candidate=item.candidate_id or '',
+            decision=item.decision or 'no_decision',
+            z=item.z,
+            fresh=item.fresh,
+            merge_blocked=item.merge_blocked,
+            paid=item.paid,
+            shadow=False,
+            extra={'item_id': item.item_id},
+        )
+        store.persist_decisions()
+        item.meta['decision_emitted'] = True
+        store.save_item(item)
     return summary
+
+
+def _gate_emit_ready(item) -> bool:
+    """True when it is safe to write DECISION.json for this item."""
+    d = item.decision
+    if not d:
+        return False
+    meta = item.meta or {}
+    if d == 'green_fresh':
+        apply = meta.get('live_apply') or {}
+        return bool(apply.get('applied') and apply.get('master_verified') and apply.get('candidate_verified'))
+    if d in ('green_stale', 'red', 'no_decision'):
+        # Terminal or post-finish; green_stale/red may emit from DECIDED after finish started.
+        return bool(meta.get('gate_emit_ready')) or item.state.value in (
+            'released', 'no_decision', 'decided',
+        )
+    return False
 
 
 def main(argv=None) -> int:
