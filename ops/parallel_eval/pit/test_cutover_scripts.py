@@ -114,6 +114,9 @@ class TestCutoverOps(unittest.TestCase):
         self.assertIn('PIT_LIFE_CFG', enable)
         self.assertIn('import subnet', enable)
         self.assertIn('mid-probe-check', enable)
+        # Lifecycle unit env checked up front (no host-path defaults in pe_lifecycle).
+        self.assertIn('PE_LIFE_STATE', enable)
+        self.assertIn('PE_SYNC_EXPECTED_HASH', enable)
         # SAFETY: no cmdline pattern kill fallback.
         self.assertNotIn('via cmdline match', enable)
         self.assertNotIn('ps -eo pid=,args=', enable)

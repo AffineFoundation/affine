@@ -43,7 +43,11 @@ def flag_path() -> Path:
         return Path(env)
     if _FLAG_DEFAULT:
         return Path(_FLAG_DEFAULT)
-    raise RuntimeError("PE_FLAG is unset (no import-time host default)")
+    raise RuntimeError(
+        "PE_FLAG is unset (also require PE_LIFE_STATE; lifecycle must export "
+        "PE_FLAG, PE_LIFE_STATE, and PE_SYNC_EXPECTED_HASH* before cutover restart; "
+        "no host-path defaults)"
+    )
 
 
 def pe_state_path() -> Path:
@@ -53,7 +57,11 @@ def pe_state_path() -> Path:
         return Path(env)
     if _PE_STATE_DEFAULT:
         return Path(_PE_STATE_DEFAULT)
-    raise RuntimeError("PE_LIFE_STATE is unset (no import-time host default)")
+    raise RuntimeError(
+        "PE_LIFE_STATE is unset (also require PE_FLAG; lifecycle must export "
+        "PE_FLAG, PE_LIFE_STATE, and PE_SYNC_EXPECTED_HASH* before cutover restart; "
+        "no host-path defaults)"
+    )
 
 
 # Back-compat aliases for callers that still read module attributes. Prefer
@@ -218,7 +226,18 @@ def install_pe(Lifecycle):
                 # Drive ff selection / job write. Standing trainer is WARM-OFF, so
                 # a returned None (waiting for TRAINING-RESULT) is expected — we
                 # do NOT wait and do NOT apply an "updated" standing-trainer result.
-                res = inner(self, directory, opening, dispatch, current, now)
+                # TrainingRecoveryRequired: standing-trainer row failed after JOB
+                # write — still mark PIT-DISPATCHED so the epoch does not stall.
+                try:
+                    res = inner(self, directory, opening, dispatch, current, now)
+                except Exception as ex:
+                    if (
+                        type(ex).__name__ == "TrainingRecoveryRequired"
+                        and (d / "TRAINING-JOB.json").exists()
+                    ):
+                        res = None
+                    else:
+                        raise
                 if isinstance(res, dict) and res.get("status") == "no-update" and not (d / "TRAINING-JOB.json").exists():
                     # k1-skip / no eligible tasks — no PIT work for this epoch.
                     return res

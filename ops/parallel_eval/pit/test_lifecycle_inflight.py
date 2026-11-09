@@ -165,6 +165,48 @@ class TestPitLifecycleDecoupled(unittest.TestCase):
         self.assertEqual(r['checkpoint']['id'], head)
         self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
 
+    def test_training_recovery_required_with_job_writes_pit_dispatched(self):
+        """Standing-trainer TrainingRecoveryRequired after JOB → PIT-DISPATCHED + no-update."""
+
+        class TrainingRecoveryRequired(Exception):
+            pass
+
+        class LifeTR:
+            def _training(self, directory, opening, dispatch, current, now):
+                d = Path(directory)
+                (d / 'TRAINING-JOB.json').write_text('{"payload":{"training":{}}}')
+                (d / 'TRAIN-DISPATCH-FF.json').write_text('{"signature":"s","payload":{}}')
+                (d / 'K1-TURN.json').write_text(json.dumps({
+                    'status': 'turn', 'epoch_index': int(d.name), 'uid': 1,
+                }))
+                raise TrainingRecoveryRequired('standing trainer row failed')
+
+        _v829i(LifeTR)
+        PL.install_pe(LifeTR)
+        ep = self._ep(20)
+        r = LifeTR()._training(ep, None, None, self._cur(), time.time())
+        self.assertEqual(r['status'], 'no-update')
+        self.assertIn('pit-decoupled', r['reason'])
+        self.assertTrue((ep / 'TRAINING-JOB.json').is_file())
+        self.assertTrue((ep / 'PIT-DISPATCHED.json').is_file())
+
+    def test_training_recovery_required_without_job_reraises(self):
+        """TrainingRecoveryRequired with no JOB must not be swallowed."""
+
+        class TrainingRecoveryRequired(Exception):
+            pass
+
+        class LifeTRNoJob:
+            def _training(self, directory, opening, dispatch, current, now):
+                raise TrainingRecoveryRequired('failed before JOB')
+
+        _v829i(LifeTRNoJob)
+        PL.install_pe(LifeTRNoJob)
+        ep = self._ep(21)
+        with self.assertRaises(TrainingRecoveryRequired):
+            LifeTRNoJob()._training(ep, None, None, self._cur(), time.time())
+        self.assertFalse((ep / 'PIT-DISPATCHED.json').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

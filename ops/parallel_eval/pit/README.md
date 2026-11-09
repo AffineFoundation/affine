@@ -3,6 +3,12 @@
 See `docs/PIT.md` for operator cutover / revert steps, ROOT ceremony, and
 deploy file placement.
 
+**Lifecycle env (fail closed):** before cutover restart the lifecycle service
+must export `PE_FLAG`, `PE_LIFE_STATE`, and `PE_SYNC_EXPECTED_HASH*` (optional
+`PE_SYNC_EXPECTED_HASH_PYTHON` / `_LOG` / `_ALERT`). `pe_lifecycle` /
+`pe_apply` have no host-path defaults; unset vars raise. `cutover_enable.sh`
+checks these up front.
+
 **On-demand rent only** (hard rule): empty queue ⇒ 0 item boxes; B queued with
 `max_boxes` N ⇒ ≤ min(B, N) rentals; release as soon as result is stored or the
 item fails. No warm pool. Baseline / bench / prior sit outside the item cap.
