@@ -15,6 +15,8 @@ import importlib
 import inspect
 from typing import Any, Callable, Dict, Mapping, Optional
 
+from .shadow_compare import evaluate_shadow_pass
+
 # Flat fields live pe_score.score puts on the decision; gate emit needs them
 # nested under heldout (PR96-REVIEW-2 blocker 1 / residual blocker 8).
 _HELDOUT_FLAT_KEYS = (
@@ -204,12 +206,23 @@ def score_epoch_shadow(
     live_decision: Optional[Mapping[str, Any]] = None,
     estimate_fn: Optional[Callable[..., Mapping[str, Any]]] = None,
     host_score: Optional[Callable[..., Mapping[str, Any]]] = None,
+    box_report: Optional[Mapping[str, Any]] = None,
+    live_report: Optional[Mapping[str, Any]] = None,
+    box_meta: Optional[Mapping[str, Any]] = None,
+    live_meta: Optional[Mapping[str, Any]] = None,
+    train_gpu: Optional[str] = None,
+    eval_gpu: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Shadow compare: score the **box** candidate and diff against live.
 
     Critical fix: the scored/recorded candidate hash is ``box_candidate_id``,
     not ``live_decision['candidate']``. Using the live epoch candidate here
     would attribute the wrong model to the PIT shadow run.
+
+    Pass criterion (E1041 noise-tolerant): equal input hashes, exact rollouts/
+    tokens, update size within 1e-3 rel, grad norm within 5%, same draw/seed/
+    head baseline, disagreement ratio in [0.8, 1.25], |Δz| < 2.0. Equal
+    candidate hashes / equal z are **not** required.
     """
     box_candidate_id = _hex64(box_candidate_id, 'box_candidate_id')
     scored = score(
@@ -226,6 +239,46 @@ def score_epoch_shadow(
 
     live = dict(live_decision or {})
     live_cand = live.get('candidate') or live.get('candidate_id')
+    box_z = scored.get('z')
+    live_z = live.get('z') or (live.get('evaluated') or {}).get('z')
+    train_gpu = train_gpu or (box_result or {}).get('train_gpu') or (box_meta or {}).get('train_gpu')
+    eval_gpu = eval_gpu or (box_result or {}).get('eval_gpu') or (box_meta or {}).get('eval_gpu')
+    live_train_gpu = (live_meta or {}).get('train_gpu') or live.get('train_gpu')
+    live_eval_gpu = (live_meta or {}).get('eval_gpu') or live.get('eval_gpu')
+
+    box_pt = ((box_result.get('envs') or {}).get('affine_gatepool') or {}).get('per_task')
+    if box_pt is None and isinstance(box_result.get('per_task'), Mapping):
+        box_pt = box_result.get('per_task')
+    live_pt = live.get('per_task') or ((live.get('probe') or {}).get('per_task') if isinstance(live.get('probe'), Mapping) else None)
+    if live_pt is None and isinstance(live.get('envs'), Mapping):
+        live_pt = ((live.get('envs') or {}).get('affine_gatepool') or {}).get('per_task')
+
+    b_meta = dict(box_meta or {})
+    b_meta.setdefault('round_id', round_id)
+    if scored.get('heldout'):
+        b_meta.setdefault('heldout', scored.get('heldout'))
+        b_meta.setdefault('plan_seed', (scored.get('heldout') or {}).get('plan_seed') or scored.get('plan_seed'))
+    l_meta = dict(live_meta or {})
+    if live.get('heldout'):
+        l_meta.setdefault('heldout', live.get('heldout'))
+        l_meta.setdefault('round_id', (live.get('heldout') or {}).get('round_id') or live.get('round_id'))
+        l_meta.setdefault('plan_seed', live.get('plan_seed') or (live.get('heldout') or {}).get('plan_seed'))
+
+    verdict = evaluate_shadow_pass(
+        box_report=box_report or (box_meta or {}).get('training_report') or {},
+        live_report=live_report or live.get('training_report') or {},
+        box_meta=b_meta,
+        live_meta=l_meta,
+        box_per_task=box_pt if isinstance(box_pt, Mapping) else {},
+        live_per_task=live_pt if isinstance(live_pt, Mapping) else {},
+        box_z=box_z,
+        live_z=live_z,
+        train_gpu=train_gpu,
+        eval_gpu=eval_gpu,
+        live_train_gpu=live_train_gpu,
+        live_eval_gpu=live_eval_gpu,
+    )
+
     comparison = {
         'epoch': epoch,
         'box_candidate': box_candidate_id,
@@ -233,24 +286,30 @@ def score_epoch_shadow(
         'candidates_differ': bool(live_cand) and live_cand != box_candidate_id,
         'box_decision': scored.get('decision'),
         'live_decision': live.get('decision'),
-        'box_z': scored.get('z'),
-        'live_z': live.get('z') or (live.get('evaluated') or {}).get('z'),
-        'agreement': None,
+        'box_z': box_z,
+        'live_z': live_z,
+        'delta_z': (
+            float(box_z) - float(live_z)
+            if box_z is not None and live_z is not None else None
+        ),
+        'train_gpu': train_gpu,
+        'eval_gpu': eval_gpu,
+        'live_train_gpu': live_train_gpu,
+        'live_eval_gpu': live_eval_gpu,
+        'agreement': verdict.get('passed'),
+        'shadow_pass': verdict,
     }
     if live.get('decision') and scored.get('decision') in ('green', 'red'):
         live_dec = str(live.get('decision')).lower()
         box_dec = str(scored.get('decision')).lower()
-        comparison['agreement'] = (live_dec == box_dec) or (
+        comparison['decision_label_match'] = (live_dec == box_dec) or (
             live_dec == 'green' and box_dec == 'green'
         )
-        bz = comparison['box_z']
-        lz = comparison['live_z']
-        if bz is not None and lz is not None:
-            comparison['delta_z'] = float(bz) - float(lz)
 
     return {
         'shadow': True,
         'scored': scored,
         'comparison': comparison,
         'candidate': box_candidate_id,
+        'shadow_pass': verdict,
     }

@@ -34,9 +34,11 @@ ops/parallel_eval/pit/prior_job.py
 ops/parallel_eval/pit/queue_ingest.py
 ops/parallel_eval/pit/run_host.py
 ops/parallel_eval/pit/shadow.py
+ops/parallel_eval/pit/shadow_compare.py
 ops/parallel_eval/pit/signer.py
 ops/parallel_eval/pit/state.py
 ops/parallel_eval/pit/train_box.py
+ops/parallel_eval/pit/training_report.py
 ops/parallel_eval/pit/scripts/affine-pit-host.service
 ops/parallel_eval/pit/scripts/cutover_enable.sh
 ops/parallel_eval/pit/scripts/cutover_revert.sh

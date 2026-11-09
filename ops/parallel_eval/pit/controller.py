@@ -304,9 +304,18 @@ class Controller:
         out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
         if not out.get('auto_backup_disabled', True) and self.config.disable_lium_auto_backup:
             raise RentError('lium auto-backup must be disabled')
+        meta = dict(renting.meta or {})
+        gpu = out.get('gpu') or out.get('gpu_model') or out.get('gpu_name')
+        if gpu:
+            meta['train_gpu'] = str(gpu)
+            meta['eval_gpu'] = str(gpu)  # same box trains then probes
         provisioned = apply_transition(
             renting, ItemState.PROVISIONING, reason='rented',
-            updates={'box_id': str(out['box_id']), 'box_name': out.get('name')},
+            updates={
+                'box_id': str(out['box_id']),
+                'box_name': out.get('name'),
+                'meta': meta,
+            },
         )
         return provisioned, 'rented'
 
@@ -346,6 +355,8 @@ class Controller:
             box_key=box_key,
             now=self.now_fn(),
             indices=indices,
+            train_gpu=(item.meta or {}).get('train_gpu'),
+            eval_gpu=(item.meta or {}).get('eval_gpu'),
         )
         meta = dict(updated.meta)
         meta['probe_bundle'] = {
@@ -357,12 +368,19 @@ class Controller:
             'master_upload': dict(bundle.master_upload),
             'train_receipt': dict(bundle.train_receipt),
             'box_public_key_hex': bundle.box_public_key_hex,
+            'training_report': dict(bundle.training_report or {}),
+            'train_gpu': bundle.train_gpu,
+            'eval_gpu': bundle.eval_gpu,
             'admission_digest': env.digest(),
         }
         meta['candidate_path'] = (bundle.train_receipt or {}).get('candidate_path')
         meta['candidate_master_path'] = (bundle.train_receipt or {}).get('candidate_master_path')
         meta['candidate_master_digest'] = (bundle.train_receipt or {}).get('candidate_master_digest')
         meta['candidate_sha256'] = (bundle.train_receipt or {}).get('candidate_sha256') or bundle.candidate_id
+        # Persist training report + GPUs on the item before any release path.
+        meta['training_report'] = dict(bundle.training_report or {})
+        meta['train_gpu'] = bundle.train_gpu
+        meta['eval_gpu'] = bundle.eval_gpu
         updated.meta = meta
         updated.candidate_id = bundle.candidate_id
         updated.sealed = True
@@ -386,6 +404,9 @@ class Controller:
             master_upload=dict(snap.get('master_upload') or {}),
             train_receipt=dict(snap.get('train_receipt') or {}),
             box_public_key_hex=str(snap.get('box_public_key_hex') or ''),
+            training_report=dict(snap.get('training_report') or meta.get('training_report') or {}),
+            train_gpu=snap.get('train_gpu') or meta.get('train_gpu'),
+            eval_gpu=snap.get('eval_gpu') or meta.get('eval_gpu'),
             meta=dict(snap),
         )
 
@@ -432,9 +453,22 @@ class Controller:
                 box_head_id=item.bound_head or self.current_head,
                 live_decision=live,
                 host_score=self.score_fn,
+                box_report=bundle.training_report or (item.meta or {}).get('training_report'),
+                live_report=(live or {}).get('training_report') if isinstance(live, Mapping) else None,
+                box_meta={
+                    'round_id': item.bound_round_id or self.current_round_id,
+                    'plan_seed': item.bound_plan_seed,
+                    'train_gpu': bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                    'eval_gpu': bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
+                    'training_report': bundle.training_report,
+                },
+                live_meta=dict(live or {}) if isinstance(live, Mapping) else None,
+                train_gpu=bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                eval_gpu=bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
             )
             scored = shadow_out['scored']
             item.meta['shadow_comparison'] = shadow_out['comparison']
+            item.meta['shadow_pass'] = shadow_out.get('shadow_pass')
             if shadow_out['candidate'] != bundle.candidate_id:
                 raise TransitionError('shadow scorer returned wrong candidate')
         else:

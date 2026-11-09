@@ -147,27 +147,35 @@ Script: `ops/parallel_eval/pit/ceremony_sign_host_key.py`.
 `pe_score.score_epoch_shadow` always records the **box** candidate hash, never
 the live epoch's `candidate`.
 
-## Shadow note: E1041 candidate mismatch (36aabc9a vs 57033dce)
+## Shadow note: E1041 (H200 vs B300; noise-tolerant pass)
 
-On E1041 the box training produced candidate `36aabc9a…` while the live trainer
-produced `57033dce…` from the same head and batch (z −0.48 vs +0.64). Likely
-divergence points in the box path vs live **trainer-v834e / host-v834e**:
+On E1041 the box produced candidate `36aabc9a…` while live produced
+`57033dce…` (z −0.48 vs +0.64). All inputs matched (dispatch, job, config,
+fp32 master start, lr, v834e checksums, torch). The remaining difference is
+**GPU**: live trains on H200, PIT boxes on B300, with nondeterministic
+all-reduce. The z gap sits inside same-model eval noise (per-task
+disagreement ratio ≈ 0.94).
 
-1. **Batch handle** — controller previously passed a synthetic
-   `batch-handle:<item_id>` instead of the real K1 batch file. Live `pe_box`
-   now **refuses** that placeholder; ingest must stamp `meta.batch_path`.
-2. **fp32 master vs bf16 upcast** — live v834e steps the published fp32 master
-   (`AFFINE_FP32_EXPECTED_MASTER_HASH`, no bootstrap override). Training from
-   bf16-upcast master drifts the candidate id even with the same batch.
-3. **Trainer binary / hyperparams** — must be `miner/validator/trainer-v834e`
-   (or kit `train_step.py` wired to it), same public config (batch 125×8,
-   packed engine, KL ignored). A v834c / padded / single-process kit run is
-   not bit-identical to the 8-GPU host DP sum order.
-4. **Data order / seed** — batch file bytes and trajectory order must match
-   the live turn; reshuffling or a different format revision changes the step.
+Fail-closed wiring still required so a box cannot silently train a different
+object:
 
-Owner is diagnosing E1041 separately; PIT must keep (1)–(3) fail-closed so a
-shadow box cannot silently train a different object.
+1. **Batch handle** — live `pe_box` refuses synthetic `batch-handle:<item_id>`;
+   ingest must stamp `meta.batch_path`.
+2. **fp32 master vs bf16 upcast** — no `--fp32-bootstrap-override`; expected
+   master hash must match the bound head.
+3. **Trainer binary / hyperparams** — `trainer-v834e`, same public config.
+4. **Training report copy-back** — before release the box returns its report
+   (source file hashes, batching, tokens, update size, gradient norm); the
+   host stores it on the item (`meta.training_report`) and under
+   `PE_STATE/pit/training-reports/`.
+5. **GPU stamps** — box result and SCORE-vs-live record `train_gpu` /
+   `eval_gpu` (and live counterparts).
+
+**Shadow pass criterion** (`ops.parallel_eval.pit.shadow_compare`, also used
+by live `pe_score.score_epoch_shadow`): equal input hashes; exact rollouts and
+tokens; update size within 1e-3 relative; gradient norm within 5%; same draw,
+seed and head baseline; per-task disagreement ratio in [0.8, 1.25];
+`|Δz| < 2.0`. Equal candidate hashes / equal z are **not** required.
 
 ## Deploy file placement (RA snapshot; never `git checkout` live)
 

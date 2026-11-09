@@ -12,6 +12,13 @@ sys.path.insert(0, str(GATE_CODE))
 import baseline_v1 as BV
 import prior_gate as PG
 import probe_error_guard as PEG
+try:
+    from ops.parallel_eval.pit.shadow_compare import evaluate_shadow_pass
+except ImportError:  # script-mode / RA code dir without package layout
+    _REPO = Path(__file__).resolve().parents[3]
+    if str(_REPO) not in sys.path:
+        sys.path.insert(0, str(_REPO))
+    from ops.parallel_eval.pit.shadow_compare import evaluate_shadow_pass
 
 
 class Pending(Exception):
@@ -58,7 +65,12 @@ def score(epoch, rid, result, flag=None):
     return dec
 
 
-def score_epoch_shadow(epoch, result_path, out_path=None):
+def score_epoch_shadow(epoch, result_path, out_path=None, report_path=None, live_report_path=None):
+    """SCORE-vs-live. Pass criterion is E1041 noise-tolerant (not equal hashes/z).
+
+    Equal candidate hashes / equal z are NOT required. See
+    ``ops.parallel_eval.pit.shadow_compare.evaluate_shadow_pass``.
+    """
     e = int(epoch)
     d = EP / str(e)
     live = rj(d / 'DECISION.json') or {}
@@ -75,9 +87,42 @@ def score_epoch_shadow(epoch, result_path, out_path=None):
                live_n=lev.get('n'), pe_n=ev_.get('n'), live_cap=lev.get('c_cap_rate'), pe_cap=ev_.get('c_cap_rate'),
                live_c_pass=lev.get('c_pass'), pe_c_pass=ev_.get('c_pass'),
                partial=bool(res.get('partial')), samples=res.get('samples'), planned_samples=res.get('planned_samples'),
-               plan_seed=dec.get('plan_seed'), scored_at_cr=cr())
+               plan_seed=dec.get('plan_seed'), scored_at_cr=cr(),
+               train_gpu=res.get('train_gpu'), eval_gpu=res.get('eval_gpu'),
+               live_train_gpu=live.get('train_gpu'), live_eval_gpu=live.get('eval_gpu'))
     out['z_delta'] = (out['pe_z'] - out['live_z']) if (out['pe_z'] is not None and out['live_z'] is not None) else None
-    out['agree'] = out['pe_decision'] == out['live_decision']
+    # Legacy label match (kept for charts); pass/fail uses shadow_pass below.
+    out['decision_label_match'] = out['pe_decision'] == out['live_decision']
+
+    box_report = rj(report_path) if report_path else (res.get('training_report') or {})
+    live_report = rj(live_report_path) if live_report_path else (live.get('training_report') or {})
+    box_pt = (((res.get('envs') or {}).get(dec.get('probe_env') or 'affine_gatepool') or {}).get('per_task')) or {}
+    live_pt = live.get('per_task') or {}
+    try:
+        verdict = evaluate_shadow_pass(
+            box_report=box_report or {},
+            live_report=live_report or {},
+            box_meta=dict(round_id=rid, plan_seed=dec.get('plan_seed'), heldout=dict(
+                round_id=rid, settings_hash=dec.get('settings_hash'),
+            )),
+            live_meta=dict(
+                round_id=rid,
+                plan_seed=live.get('plan_seed') or (live.get('heldout') or {}).get('plan_seed'),
+                heldout=live.get('heldout') or {},
+            ),
+            box_per_task=box_pt if isinstance(box_pt, dict) else {},
+            live_per_task=live_pt if isinstance(live_pt, dict) else {},
+            box_z=out['pe_z'],
+            live_z=out['live_z'],
+            train_gpu=out.get('train_gpu'),
+            eval_gpu=out.get('eval_gpu'),
+            live_train_gpu=out.get('live_train_gpu'),
+            live_eval_gpu=out.get('live_eval_gpu'),
+        )
+    except Exception as exc:
+        verdict = dict(passed=False, error=str(exc)[:200], pass_criterion='e1041-noise-tolerant-v1')
+    out['shadow_pass'] = verdict
+    out['agree'] = bool(verdict.get('passed'))  # noise-tolerant pass, not equal hashes/z
     if out_path:
         wj(out_path, out)
     return out

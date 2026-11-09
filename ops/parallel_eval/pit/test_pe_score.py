@@ -28,14 +28,44 @@ class TestPeScore(unittest.TestCase):
             'candidate': LIVE_C,
             'z': 1.1,
             'evaluated': {'z': 1.1},
+            'train_gpu': 'H200',
+            'eval_gpu': 'H200',
+            'training_report': {
+                'source_file_hashes': {'batch': 'b' * 64},
+                'batching': {'tasks': 125, 'rollouts': 1000},
+                'tokens': {'loss_tokens': 10},
+                'update_size': 1.0,
+                'gradient_norm': 1.0,
+            },
+            'heldout': {'round_id': 'r1', 'plan_seed': 'ps'},
+            'plan_seed': 'ps',
+            'per_task': {
+                't0': {'c': 1, 'n': 2},
+                't1': {'c': 2, 'n': 2},
+            },
+        }
+        box_result = {
+            'score': {'decision': 'green', 'z': 1.3},
+            'train_gpu': 'B300',
+            'eval_gpu': 'B300',
+            'envs': {'affine_gatepool': {'per_task': {
+                't0': {'c': 2, 'n': 2},
+                't1': {'c': 1, 'n': 2},
+            }}},
         }
         out = score_epoch_shadow(
             epoch=10,
             round_id='r1',
-            box_result={'score': {'decision': 'green', 'z': 1.3}},
+            box_result=box_result,
             box_candidate_id=BOX_C,
             box_head_id=HEAD,
             live_decision=live,
+            box_report=live['training_report'],
+            live_report=live['training_report'],
+            box_meta={'round_id': 'r1', 'plan_seed': 'ps'},
+            live_meta={'round_id': 'r1', 'plan_seed': 'ps', 'train_gpu': 'H200'},
+            train_gpu='B300',
+            eval_gpu='B300',
         )
         self.assertEqual(out['candidate'], BOX_C)
         self.assertEqual(out['scored']['candidate'], BOX_C)
@@ -43,6 +73,13 @@ class TestPeScore(unittest.TestCase):
         self.assertTrue(out['comparison']['candidates_differ'])
         self.assertEqual(out['comparison']['box_candidate'], BOX_C)
         self.assertEqual(out['comparison']['live_candidate'], LIVE_C)
+        self.assertEqual(out['comparison']['train_gpu'], 'B300')
+        self.assertEqual(out['comparison']['live_train_gpu'], 'H200')
+        self.assertIn('shadow_pass', out)
+        self.assertEqual(out['shadow_pass']['pass_criterion'], 'e1041-noise-tolerant-v1')
+        self.assertFalse(out['shadow_pass']['require_equal_candidate_hashes'])
+        # agreement tracks noise-tolerant pass, not equal candidate hashes
+        self.assertEqual(out['comparison']['agreement'], out['shadow_pass']['passed'])
 
     def test_host_score_cannot_override_candidate(self):
         def host_score(*, epoch, round_id, result):

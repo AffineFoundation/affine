@@ -13,6 +13,12 @@ from .config import GATE_DTYPE, PitConfig
 from .pe_lane import LaneService
 from .signer import AdmissionCert, EphemeralBoxKey, generate_ephemeral_box_key, verify_admission_cert
 from .state import ItemRecord, ItemState, TransitionError, apply_transition
+from .training_report import (
+    TrainingReportError,
+    copy_training_report_to_host,
+    extract_report_summary,
+    gpu_type_of,
+)
 
 
 class Fp32MasterError(RuntimeError):
@@ -41,6 +47,9 @@ class ProbeBundle:
     master_upload: Dict[str, Any]
     train_receipt: Dict[str, Any]
     box_public_key_hex: str
+    training_report: Dict[str, Any] = field(default_factory=dict)
+    train_gpu: Optional[str] = None
+    eval_gpu: Optional[str] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,6 +82,8 @@ class BoxRunner:
         now: Optional[float] = None,
         indices_count: int = GATE_N_DRAWN,
         indices: Optional[Any] = None,
+        train_gpu: Optional[str] = None,
+        eval_gpu: Optional[str] = None,
     ) -> tuple[ItemRecord, ProbeBundle]:
         if record.state is not ItemState.PROVISIONING:
             raise TransitionError('box.run requires PROVISIONING, got %s' % record.state.value)
@@ -97,6 +108,7 @@ class BoxRunner:
             raise
 
         record = apply_transition(record, ItemState.TRAINING, reason='provisioned')
+        train_gpu = gpu_type_of(train_gpu) or gpu_type_of((record.meta or {}).get('train_gpu'))
 
         train_receipt = dict(self.io.train_v834e(
             head_path=head_path,
@@ -105,6 +117,7 @@ class BoxRunner:
             batch_handle=batch_handle,
             item_id=record.item_id,
             hotkey=record.hotkey_prefix or None,
+            train_gpu=train_gpu,
         ))
         if train_receipt.get('used_fp32_bootstrap_override'):
             raise Fp32MasterError('bootstrap-override-refused-by-pit')
@@ -115,6 +128,27 @@ class BoxRunner:
             raise ValueError('trainer must return candidate_id hex64')
         if not candidate_path or not candidate_master_path:
             raise ValueError('trainer must return candidate paths')
+        train_gpu = gpu_type_of(train_receipt.get('train_gpu')) or train_gpu
+
+        # Copy training report to host BEFORE seal/release (Jacob 2026-11-09).
+        report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
+        report_path = train_receipt.get('report') if isinstance(train_receipt.get('report'), str) else None
+        try:
+            training_report = copy_training_report_to_host(
+                report_path=report_path,
+                item_id=record.item_id,
+                epoch=int(record.epoch),
+                candidate_id=candidate_id,
+                report_doc=report_doc if isinstance(report_doc, Mapping) else None,
+            )
+        except TrainingReportError:
+            # Scripted/synthetic trainers may embed a minimal summary directly.
+            if isinstance(report_doc, Mapping):
+                training_report = extract_report_summary(report_doc)
+            elif isinstance(train_receipt.get('training_report_summary'), Mapping):
+                training_report = dict(train_receipt['training_report_summary'])
+            else:
+                raise
 
         # seal
         self.io.upload_candidate(candidate_id=candidate_id, candidate_path=candidate_path)
@@ -160,7 +194,23 @@ class BoxRunner:
                 max_tokens=self.config.max_output_tokens,
                 result=probe_fixture,
             )
+        eval_gpu = (
+            gpu_type_of(eval_gpu)
+            or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
+            or gpu_type_of((record.meta or {}).get('eval_gpu'))
+            or train_gpu
+        )
+        probe_result = dict(probe_result)
+        probe_result['train_gpu'] = train_gpu
+        probe_result['eval_gpu'] = eval_gpu
+
         record = apply_transition(record, ItemState.RESULT, reason='probe-complete', updates={'result_stored': True})
+        safe_receipt = {
+            k: v for k, v in train_receipt.items()
+            if k not in ('seed', 'presigned_url', 'private_key', 'secret', 'report_doc', 'training_report')
+        }
+        safe_receipt['train_gpu'] = train_gpu
+        safe_receipt['training_report_summary'] = dict(training_report)
         bundle = ProbeBundle(
             item_id=record.item_id,
             bound_head=record.bound_head,
@@ -168,9 +218,12 @@ class BoxRunner:
             candidate_id=candidate_id,
             probe_result=probe_result,
             master_upload=master_upload,
-            train_receipt={k: v for k, v in train_receipt.items() if k not in ('seed', 'presigned_url', 'private_key', 'secret')},
+            train_receipt=safe_receipt,
             box_public_key_hex=box_key.public_key_hex,
-            meta={'shadow': record.shadow},
+            training_report=dict(training_report),
+            train_gpu=train_gpu,
+            eval_gpu=eval_gpu,
+            meta={'shadow': record.shadow, 'train_gpu': train_gpu, 'eval_gpu': eval_gpu},
         )
         return record, bundle
 
@@ -184,6 +237,15 @@ class ScriptedBoxIO:
         'candidate_path': '/tmp/pit-fixture/cand',
         'candidate_master_path': '/tmp/pit-fixture/cand-master',
         'used_fp32_bootstrap_override': False,
+        'train_gpu': 'B300',
+        'training_report': {
+            'source_file_hashes': {'trainer': 'a' * 64, 'batch': 'b' * 64},
+            'batching': {'tasks': 125, 'rollouts': 1000},
+            'tokens': {'prompt_tokens': 100, 'output_tokens': 200, 'loss_tokens': 150},
+            'update_size': 1.0,
+            'gradient_norm': 1.0,
+            'engine': 'packed',
+        },
     })
     probe_result: Dict[str, Any] = field(default_factory=lambda: {
         'k': GATE_K_CAND,
@@ -192,6 +254,7 @@ class ScriptedBoxIO:
         'samples': GATE_N_DRAWN * GATE_K_CAND,
         'planned_samples': GATE_N_DRAWN * GATE_K_CAND,
         'score': {'decision': 'green', 'z': 1.5},
+        'eval_gpu': 'B300',
     })
     upload_result: Dict[str, Any] = field(default_factory=lambda: {'ok': True, 'receipt': 'mc-upload-fixture'})
     fail_master_digest: bool = False
@@ -209,8 +272,19 @@ class ScriptedBoxIO:
         if kwargs.get('fp32_bootstrap_override') or kwargs.get('bootstrap_override'):
             raise Fp32MasterError('bootstrap-override-refused-by-pit')
         if self.on_train:
-            return self.on_train(**kwargs)
-        return dict(self.train_result)
+            out = dict(self.on_train(**kwargs))
+        else:
+            out = dict(self.train_result)
+        out.setdefault('train_gpu', kwargs.get('train_gpu') or 'B300')
+        out.setdefault('training_report', {
+            'source_file_hashes': {'trainer': 'a' * 64, 'batch': 'b' * 64},
+            'batching': {'tasks': 125, 'rollouts': 1000},
+            'tokens': {'prompt_tokens': 100, 'output_tokens': 200, 'loss_tokens': 150},
+            'update_size': 1.0,
+            'gradient_norm': 1.0,
+            'engine': 'packed',
+        })
+        return out
 
     def upload_candidate(self, **kwargs: Any) -> Mapping[str, Any]:
         return {'ok': True}

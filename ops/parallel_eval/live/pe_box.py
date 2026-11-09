@@ -29,6 +29,25 @@ class BoxIOError(RuntimeError):
     """Fail-closed host box I/O error."""
 
 
+def _detect_local_gpu() -> Optional[str]:
+    """Best-effort GPU class for train/eval stamps on the box result."""
+    try:
+        smi = subprocess.run(
+            ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if smi.returncode != 0 or not smi.stdout.strip():
+        return None
+    name = smi.stdout.strip().splitlines()[0]
+    upper = name.upper()
+    for tag in ('B300', 'B200', 'H200', 'H100', 'A100'):
+        if tag in upper:
+            return tag
+    return name
+
+
 def _rj(path: Path, default=None):
     try:
         return json.loads(path.read_text())
@@ -250,10 +269,14 @@ class HostBoxIO:
                 raise BoxIOError('candidate master digest missing')
 
         rep = _rj(report) or {}
+        if not isinstance(rep, dict) or not rep:
+            raise BoxIOError('training report missing after train (required before release)')
         if rep.get('used_fp32_bootstrap_override') or (
             (rep.get('fp32_master') or {}).get('source') == 'bootstrap-upcast'
         ):
             raise BoxIOError('bootstrap-override-refused-by-pit')
+
+        train_gpu = kwargs.get('train_gpu') or _detect_local_gpu()
 
         return dict(
             candidate_id=candidate_id,
@@ -264,6 +287,9 @@ class HostBoxIO:
             used_fp32_bootstrap_override=False,
             fp32_master_source=(rep.get('fp32_master') or {}).get('source') or 'disk',
             report=str(report),
+            report_doc=rep,
+            training_report=rep,
+            train_gpu=train_gpu,
         )
 
     def upload_candidate(self, *, candidate_id: str, candidate_path: str) -> Mapping[str, Any]:
