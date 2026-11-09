@@ -27,6 +27,7 @@ are also short rent-per-job boxes (SPEC).
 | Lium auto-backup | **disabled** on every rental |
 | Trainer fallback | kept **24 h** after live cutover, then release with Jacob OK |
 | REDs | **earn nothing** (last-10-GREEN rule) |
+| ROOT path | **delegated host key only** (`root_mode=delegated_host`) |
 
 ## Rules (short)
 
@@ -42,6 +43,54 @@ are also short rent-per-job boxes (SPEC).
 
 k_cand 8, head rollouts 12, strict z>1, max output 65536, bf16, no fp8, N=1000.
 fp32 master checks stay fail-closed. PIT never passes `--fp32-bootstrap-override`.
+
+## ROOT: delegated host key (only live path)
+
+Owner decision (2026-11-09): ROOT signs a **host admission key once**. The host
+issues short-lived per-box certs signed by that host key. Verifier chain:
+
+`box payload → host pubkey (admission) → host-key cert → ROOT`
+
+`root_mode=per_round` is kept in code as an **unused alternative** and is
+**refused** when `mode=live`. There is **no bootstrap override**.
+
+Never commit or embed ROOT seeds, host private keys, or cert private material.
+Operator files stay mode `0600` on the host / air-gapped ROOT machine.
+
+### One-time ceremony (operator)
+
+1. On the validator host, generate a host key (once):
+
+```bash
+python3 - <<'PY'
+from nacl.signing import SigningKey
+from pathlib import Path
+sk = SigningKey.generate()
+p = Path('/secure/pit-host.key')  # operator-chosen path; never in git
+p.write_bytes(bytes(sk)); p.chmod(0o600)
+print(bytes(sk.verify_key).hex())
+PY
+```
+
+2. On the ROOT machine (ROOT seed out-of-band only):
+
+```bash
+AFFINE_PIT_ROOT_SEED_FILE=/secure/root.seed \
+  PYTHONPATH=/path/to/repo python3 -m ops.parallel_eval.pit.ceremony_sign_host_key \
+    --host-pubkey-hex <hex from step 1> \
+    --out /secure/pit-host.cert.json \
+    --ttl-days 365
+```
+
+3. Install on the validator (cert is public; host key stays `0600`):
+
+```bash
+export AFFINE_PIT_HOST_KEY_FILE=/secure/pit-host.key
+export AFFINE_PIT_HOST_CERT_FILE=/secure/pit-host.cert.json
+export AFFINE_PIT_ROOT_PUBKEY_HEX=<root verify key hex>
+```
+
+Script: `ops/parallel_eval/pit/ceremony_sign_host_key.py`.
 
 ## Sibling jobs
 
@@ -59,16 +108,47 @@ fp32 master checks stay fail-closed. PIT never passes `--fp32-bootstrap-override
 | `expected_master.py` | Chain override → manifest → index → TRAINING-RESULT |
 | `box.py` / `train_box.py` | Box phases + on-box train asserts |
 | `controller.py` | On-demand rent, live/shadow decide+apply |
-| `apply_live.py` | GREEN_FRESH → verify uploads → pe_apply; destroy otherwise |
+| `run_host.py` | Live host daemon: durable state, PIT-CLAIM, DECISION.json |
+| `durable.py` | Item + DecisionLog persistence under `PIT_STATE` |
+| `decision_emit.py` | Gate-schema `DECISION.json` for k1 / ff_launcher / lifecycle |
+| `apply_live.py` | GREEN_FRESH → verify uploads (fail closed) → pe_apply; destroy otherwise |
 | `cutover.py` | Live cutover / revert plan (trainer, warm, lanes) |
+| `scripts/cutover_enable.sh` | Epoch-boundary enable (trainer idle check) |
+| `scripts/cutover_revert.sh` | One-command revert + stop `affine-pit-host` |
+| `ceremony_sign_host_key.py` | One-time ROOT→host-key ceremony (no embedded keys) |
 | `baseline_job.py` / `bench_job.py` / `prior_job.py` | Sibling rent-per-job services |
 | `decisions.py` | Hash-chained decision log |
-| `signer.py` | Ephemeral key + `HostRootSigner` / `FixtureRootSigner` |
+| `signer.py` | Ephemeral key + `DelegatedHostSigner` (live) / `FixtureRootSigner` |
 | `pe_rent.py` / `pe_lane.py` / `pe_score.py` | Git ports; host RA modules when present |
-| `ops/jobs/` | Shared job runner (price ceiling, auto-backup off, caps) |
+| `ops/parallel_eval/live/*` | Deploy SOT for live pe_* (hash-sync + early_baseline + PIT hooks) |
 
 `pe_score.score_epoch_shadow` always records the **box** candidate hash, never
 the live epoch's `candidate`.
+
+## Deploy file placement (RA snapshot; never `git checkout` live)
+
+Services do **not** run from the git branch. Deploy by copying reviewed files into
+an RA release snapshot (example: `RA/20261109-serverless/release/`), then point a
+systemd user unit / drop-in at that snapshot. Keep `~/subnet120-rewrite/.venv` as
+the interpreter.
+
+| Repo path | Live destination | Notes |
+|-----------|------------------|-------|
+| `ops/parallel_eval/live/pe_apply.py` | Prefer **additive** `accept_pit_decision` onto the live RA `pe_apply.py` (backup first). Do **not** replace the live file blindly — it must keep `_sync_expected_hash_after_head_apply`. | E1028 fix |
+| `ops/parallel_eval/live/pe_gate_hook.py` | RA PE code dir (must keep `early_baseline`) | throughput-v4 |
+| `ops/parallel_eval/live/pe_live.py` | RA PE code dir | PIT dispatch noop + PIT-CLAIM skip |
+| `ops/parallel_eval/live/pe_lifecycle.py` | RA PE code dir | `pit_cutover()` skips trainer; RED/no_decision → no-update |
+| `ops/parallel_eval/pit/**` | `RA/20261109-serverless/release/ops/parallel_eval/pit/` | host library + daemon |
+| `docs/PIT.md` | same snapshot `docs/PIT.md` | operator runbook |
+
+Do **not** commit systemd units with host IPs / `known_hosts`. Template units with
+placeholders are OK. Do **not** commit key material.
+
+Shared state (do not migrate):
+
+- `PE_STATE` (`RA/20261106-parallel-cutover/state`) — `GREENS.json`, `HEAD-CHAIN.json`, `apply.lock`
+- Gate epochs — `RA/20261026-promotion-gate/state/epochs/<e>/DECISION.json` (PIT emits gate schema)
+- `PIT_STATE` — default `$PE_STATE/pit` (items, claims, DECISIONS.json)
 
 ## Operator: shadow mode
 
@@ -87,40 +167,50 @@ head writes; rentals drop to 0 when the queue is empty.
 
 ## Operator: live cutover
 
+Preconditions: trainer **idle** (no `TRAINING-JOB` without `TRAINING-RESULT`);
+Lium runway ≥ 24 h; ROOT ceremony done; `verify_uploads` wired fail-closed.
+
 1. Shadow pass criteria met (DESIGN §10 / SPEC §7 step 0).
-2. ROOT admission: configure `AFFINE_PIT_ROOT_SEED_FILE` (mode 0600) or inject
-   the host ROOT Identity into `HostRootSigner`. Never a bootstrap override.
-3. Flip:
+2. ROOT ceremony complete; env vars `AFFINE_PIT_HOST_KEY_FILE`,
+   `AFFINE_PIT_HOST_CERT_FILE`, `AFFINE_PIT_ROOT_PUBKEY_HEX` set on the host.
+3. Enable at an epoch boundary:
+
+```bash
+export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
+bash ops/parallel_eval/pit/scripts/cutover_enable.sh
+# then start affine-pit-host (systemd --user) → run_host.py
+```
+
+Equivalent flag:
 
 ```json
 "parallel_eval": {
+  "enabled": true,
   "pit": {
     "enabled": true,
     "mode": "live",
     "cutover": true,
     "max_boxes": 5,
-    "master_upload": "after_green"
+    "master_upload": "after_green",
+    "root_mode": "delegated_host"
   }
 }
 ```
 
 4. Effect: trainer dequeue **off** (pod kept 24 h as hot fallback); warm pool
    **off**; standing PE lanes **off**; PIT owns the queue; first fresh GREEN
-   uploads and applies; REDs earn nothing.
+   uploads and applies; REDs earn nothing; per-epoch `DECISION.json` emitted for
+   k1 / website / lifecycle finalize.
 5. After 24 h of healthy live: release the trainer pod with Jacob OK.
 
-## Operator: revert
+## Operator: revert (one command)
 
-```json
-"parallel_eval": {
-  "pit": {
-    "enabled": false,
-    "mode": "live",
-    "revert": true
-  }
-}
+```bash
+export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
+bash ops/parallel_eval/pit/scripts/cutover_revert.sh
 ```
 
+Sets `pit.revert=true`, `enabled=false`, stops `affine-pit-host` if present.
 Restores trainer dequeue, warm pool and standing lanes. Re-rent standing pods
 with `replace_pod.py` if they were released (≤ $35/h or prior price + 10%).
 
@@ -132,12 +222,16 @@ PYTHONPATH=. python3 -m unittest \
   ops.parallel_eval.pit.test_binding \
   ops.parallel_eval.pit.test_decisions \
   ops.parallel_eval.pit.test_signer \
+  ops.parallel_eval.pit.test_ceremony \
+  ops.parallel_eval.pit.test_decision_emit \
+  ops.parallel_eval.pit.test_durable \
   ops.parallel_eval.pit.test_expected_master \
   ops.parallel_eval.pit.test_ondemand_rent \
   ops.parallel_eval.pit.test_pe_score \
   ops.parallel_eval.pit.test_shadow_controller \
   ops.parallel_eval.pit.test_box_fake \
   ops.parallel_eval.pit.test_live_controller \
+  ops.parallel_eval.pit.test_apply_live \
   ops.parallel_eval.pit.test_cutover \
   ops.parallel_eval.pit.test_jobs
 ```

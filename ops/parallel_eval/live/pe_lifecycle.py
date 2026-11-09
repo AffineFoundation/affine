@@ -39,6 +39,39 @@ def from_epoch():
     return v if type(v) is int else None
 
 
+def pit_cutover():
+    """PIT live cutover: skip trainer dequeue; finalize via PIT DECISION / ready_apply.
+
+    Confirmed against live ff_launcher_ntp + mimo_v829_train_gate_launcher: without a
+    TRAINING-RESULT the serial gate path stalls. Under cutover we must not call the
+    trainer ``inner``; instead wait for PIT DECISION.json / GREENS apply, then
+    no-update (RED/no_decision) or offer the GREEN apply so CURRENT/weights advance.
+    Nonces stay with the weight transaction path (untouched). Never all-zero weights:
+    last-10-GREEN set remains non-empty as long as HEAD-CHAIN has GREENs.
+    """
+    pe = (_rj(FLAG, {}) or {}).get("parallel_eval") or {}
+    pit = pe.get("pit") or {}
+    if pit.get("revert") is True:
+        return False
+    return (
+        pe.get("enabled") is True
+        and pit.get("enabled") is True
+        and pit.get("mode") == "live"
+        and pit.get("cutover") is True
+    )
+
+
+def _gate_ep():
+    return Path(os.environ.get(
+        "PE_GATE_EP",
+        "/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/epochs",
+    ))
+
+
+def _pit_decision(epoch):
+    return _rj(_gate_ep() / str(epoch) / "DECISION.json") or {}
+
+
 def closure_var(fn, name):
     for n, c in zip(fn.__code__.co_freevars, fn.__closure__ or ()):
         if n == name:
@@ -121,6 +154,33 @@ def install_pe(Lifecycle):
         if fe is not None and e < fe:
             # 2026-11-07 handover: an epoch opened before the cutover is finished by the serial gate path (ntp: never promotes on timeout)
             return outer(self, directory, opening, dispatch, current, now)
+
+        # ---- PIT live cutover: never call the trainer; keep weights flowing ----
+        if pit_cutover():
+            ap, a = ready_apply(H, e)
+            if a:
+                a["state"] = "offered"; a["offered_epoch"] = e; a["offered_at"] = a.get("offered_at", time.time()); _wj(ap, a)
+                return dict(status="updated", checkpoint=a["checkpoint"], optimizer_step=a["optimizer_step"],
+                            checkpoint_authorization=a["checkpoint_authorization"],
+                            **({"publication_receipt_sha256": a["publication_receipt_sha256"]} if a.get("publication_receipt_sha256") else {}))
+            dec = _pit_decision(e)
+            decision = dec.get("decision")
+            # GREEN without ready_apply yet: hold (PIT accept_pit_decision → apply_tick still in flight).
+            if decision == "green" and not dec.get("no_decision") and not dec.get("merge_blocked"):
+                return None
+            if decision in ("red",) or dec.get("no_decision") or dec.get("chart_status") == "no_decision":
+                # Finalize on current head so weight submission keeps nonces / last-10-GREEN.
+                marker = dict(
+                    version="sn120-promotion-gate-pit", epoch_index=e, head=H,
+                    candidate=dec.get("candidate"), decision=decision or "no_decision",
+                    no_decision=bool(dec.get("no_decision")), red_credit=dec.get("red_credit", "zero"),
+                    source="pit", reason="pit-%s" % (decision or "no_decision"),
+                )
+                _wj(d / "PROMOTION-GATE.json", marker)
+                return _no_update(current, "pit-%s-e%d-kept-%s" % (decision or "no_decision", e, H[:8]))
+            # No PIT decision yet: hold the epoch (do not invent TRAINING-RESULT / JOB).
+            return None
+
         if not (d / "TRAINING-JOB.json").exists():
             at = (_rj(PE_STATE / "TRAINER-AT.json") or {}).get("head")
             if at != H:

@@ -54,6 +54,21 @@ class TestCutover(unittest.TestCase):
         self.assertTrue(plan.cutover)
         self.assertIn('trainer-dequeue-off', plan.notes)
 
+    def test_live_refuses_per_round_root_mode(self):
+        with self.assertRaises(ValueError):
+            load_pit_config({
+                'pit': {
+                    'enabled': True, 'mode': 'live', 'cutover': True,
+                    'max_boxes': 5, 'root_mode': 'per_round',
+                },
+            })
+
+    def test_live_defaults_to_delegated_host(self):
+        cfg = load_pit_config({
+            'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 5},
+        })
+        self.assertEqual(cfg.root_mode, 'delegated_host')
+
 
 if __name__ == '__main__':
     unittest.main()

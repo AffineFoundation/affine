@@ -106,7 +106,52 @@ def gate_side(S, e, f):
         r = "pe-waiting"
     if any(str(v).startswith("prior-baseline") for v in res.values()):
         return r if str(r).startswith("prior-baseline") else "pe-baseline"   # probe pod busy with the head baseline
+    try:   # throughput-v4: start the CURRENT round's head baseline as soon as its draw is frozen (overlaps training)
+        eb = early_baseline(S, e, f)
+    except Exception as ex:
+        eb = None; S.log(event="pe_early_baseline_error", epoch=e, error=str(ex)[:300])
+    if eb:
+        return "pe-baseline"
     return "decided" if r == "decided" else "skip"
+
+
+GATE_HELDOUT = Path("/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/heldout")
+LIFE_CURRENT = Path("/home/const/subnet120-rewrite/state/mimo-mainnet-v1/CURRENT.json")
+
+
+def early_baseline_target(S):
+    """-> (round, why) : the committed CURRENT round iff it is a frozen prior-v1 (separate scoring) round on the live head whose
+    baseline is not done yet, else (None, why). Same round/draw/config the first candidate on this head will use."""
+    import prior_gate as PG
+    if _cfg().get("early_baseline") is not True:
+        return None, "flag off"
+    rid = (_rj(GATE_HELDOUT / "CURRENT.private.json") or {}).get("id")
+    if not rid:
+        return None, "no current round"
+    R = S.rounds(); r = R.get(rid)
+    if not r or not PG.is_prior(r):
+        return None, "not prior-v1"
+    if not r.get("indices") or r.get("seed") is None:
+        return None, "draw not frozen"
+    if (r.get("cfg") or {}).get("scoring_mode") == "same-run":
+        return None, "same-run"
+    head = ((_rj(LIFE_CURRENT) or {}).get("checkpoint") or {}).get("id")
+    if r.get("head") != head:
+        return None, "round head != live head"
+    if R.closed(rid) or R.baseline(rid):
+        return None, "closed or baseline done"
+    return r, "ok"
+
+
+def early_baseline(S, e, f):
+    """Drive the UNCHANGED native prior_gate.ensure_baseline for the current round (same function/blocks/seeds/pod/busy marker the
+    first PE candidate would trigger later). -> stage string while running, None when nothing to do / done."""
+    import prior_gate as PG
+    r, why = early_baseline_target(S)
+    if r is None:
+        return None
+    bl = PG.ensure_baseline(S, e, r, f, False)
+    return None if isinstance(bl, dict) else "prior-" + str(bl)
 
 
 def decide_one(S, e, pend, f):

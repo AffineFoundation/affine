@@ -256,7 +256,7 @@ def _pit_cutover():
 
 
 def dispatch_tick(submit):
-    # BRIEF §1.9 / SPEC §7: when PIT is enabled, stop creating single-trainer dispatches.
+    # When PIT is enabled, stop creating single-trainer / PE-lane dispatches.
     # apply_tick / reconcile_tick stay active. Revert flag restores dispatch.
     if _pit_enabled():
         return {"pit": "dispatch_noop", "cutover": _pit_cutover()}
@@ -266,6 +266,9 @@ def dispatch_tick(submit):
         e = int(pend.get("epoch", -1))
         if (JOBS / ("live-e%d" % e) / "JOB.json").exists() or (EP / str(e) / "DECISION.json").exists():
             continue
+        # PIT claim: pe_controller must not treat this epoch as a PE-lane job.
+        if (LST / ("PIT-CLAIM-e%d.json" % e)).exists() or (Path(os.environ.get("PIT_STATE") or (ST / "pit")) / ("PIT-CLAIM-e%d.json" % e)).exists():
+            out[e] = "pit-claimed"; continue
         spec, why = live_spec(e, pend)
         if spec is None:
             if pend.get("dispatch_wait") != why:

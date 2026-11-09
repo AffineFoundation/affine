@@ -93,9 +93,13 @@ def add_green(epoch, candidate, training_head, green_at, files=None, extra=None)
             return False
         row = dict(epoch=epoch, candidate=candidate, training_head=training_head, green_at=float(green_at),
                    green_at_cr=cr(green_at), files=files, state="pending", **(extra or {}))
-        # BRIEF §1.9: PIT decisions may carry source='pit'; fresh/stale still via decide_apply.
+        # PIT may stamp source='pit' + merge_blocked; refuse unknown sources.
         if row.get("source") not in (None, "pe", "pit"):
             raise ValueError("green source must be pe|pit")
+        # Option B: PIT stale rows arrive already merge_blocked — mark resolved so next_green skips them.
+        if row.get("merge_blocked") is True:
+            row["state"] = "merge_blocked"
+            row["resolved_at_cr"] = cr()
         q.append(row)
         q.sort(key=lambda x: (x["green_at"], x["epoch"]))
         wj(_st() / "GREENS.json", q)
@@ -103,12 +107,11 @@ def add_green(epoch, candidate, training_head, green_at, files=None, extra=None)
 
 
 def accept_pit_decision(item, *, shadow=False):
-    """Accept a PIT decision row into the GREEN queue.
+    """Additive PIT entry point (PR #96). Live hot-fix hash-sync is preserved.
 
-    Shadow mode must not call this for durable HEAD-CHAIN mutation; the PIT
-    controller keeps shadow applies memory-only. Live PIT (mode=live, cutover)
-    passes shadow=False so the first fresh GREEN advances the head via the
-    existing apply / HEAD-CHAIN path. Stale GREENs arrive merge_blocked.
+    Shadow mode must not call this for durable HEAD-CHAIN mutation. Live PIT
+    passes shadow=False after cutover. Stale GREENs set merge_blocked=True and
+    are never selected by next_green / decide_apply.
     """
     if shadow:
         raise RuntimeError("pe_apply.accept_pit_decision refuses shadow writes")
@@ -116,8 +119,12 @@ def accept_pit_decision(item, *, shadow=False):
         raise ValueError("source must be pit")
     return add_green(
         item["epoch"], item["candidate"], item["training_head"], item.get("green_at") or time.time(),
-        files=item.get("files"), extra=dict(source="pit", decision=item.get("decision"),
-                                            merge_blocked=bool(item.get("merge_blocked"))),
+        files=item.get("files"),
+        extra=dict(
+            source="pit",
+            decision=item.get("decision"),
+            merge_blocked=bool(item.get("merge_blocked")),
+        ),
     )
 
 
@@ -127,7 +134,7 @@ def greens():
 
 def next_green():
     for x in sorted(greens(), key=lambda x: (x["green_at"], x["epoch"])):
-        if x["state"] == "pending":
+        if x["state"] == "pending" and not x.get("merge_blocked"):
             return x
     return None
 
@@ -173,7 +180,39 @@ def record_applied(item, kind, s, new_head, base_head, merge_info=None):
                                  green_at=item["green_at"], applied_at=time.time(), applied_at_cr=cr(), merge=merge_info))
         wj(_st() / "HEAD-CHAIN.json", c)
         _mark(item["candidate"], state="applied", kind=kind, staleness=s, new_head=new_head, applied_at_cr=cr())
-        return c
+    # Ops hook (2026-11-09 CR, Jacob option A): sync fp32 expected-master hash after GREEN head-apply.
+    # Host-side only; sync_expected_hash.py keeps fail-closed + refuses when a JOB has no RESULT.
+    try:
+        _sync_expected_hash_after_head_apply(new_head)
+    except Exception as ex:
+        try:
+            from pathlib import Path as _P
+            import json as _json
+            _alert = _P("/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/state/HOOK-SYNC-ALERT.json")
+            _alert.write_text(_json.dumps({"at_cr": cr(), "new_head": new_head, "err": str(ex)[:300]}, indent=2) + "\n")
+        except Exception:
+            pass
+    return c
+
+
+def _sync_expected_hash_after_head_apply(new_head):
+    """Best-effort: run sync_expected_hash.py --head=<new_head>. Refuses unfinished JOB (exit 3)."""
+    import subprocess
+    sync = "/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/sync_expected_hash.py"
+    py = "/home/const/subnet120-rewrite/.venv/bin/python"
+    logp = "/home/const/subnet120-rewrite/state/root-audits/20261108-no-improvement-audit/fix-v2/expected-hash-dynamic/state/HOOK-SYNC.log"
+    p = subprocess.run([py, "-B", sync, "--head=%s" % new_head], capture_output=True, text=True, timeout=180)
+    line = "%s head=%s rc=%s stdout=%s stderr=%s\n" % (
+        cr(), str(new_head)[:16], p.returncode,
+        (p.stdout or "").replace("\n", " ")[:500],
+        (p.stderr or "").replace("\n", " ")[:300],
+    )
+    try:
+        with open(logp, "a") as f:
+            f.write(line)
+    except Exception:
+        pass
+    return p.returncode
 
 
 def record_stale(item, s):

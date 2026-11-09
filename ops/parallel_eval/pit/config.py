@@ -2,6 +2,9 @@
 
 On-demand rental is a hard rule, not a config option. Live mode is authorized
 with box_cap default 5, B300 pin, $56/h ceiling, masters after GREEN only.
+
+Live ROOT path (owner 2026-11-09): ``root_mode=delegated_host`` only.
+``per_round`` remains an unused alternative and is refused in live.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from . import (
     TRAIN_OUTPUT_TOKENS,
     TRAINER_FALLBACK_HOURS,
 )
+from .signer import ALT_ROOT_MODE, LIVE_ROOT_MODE
 
 BASELINE_OPTION_A = 'one_secret_draw_per_head_epoch'
 # SPEC §3.1: masters upload only on GREEN (during_probe dropped).
@@ -61,6 +65,8 @@ class PitConfig:
     disable_lium_auto_backup: bool = True
     full_redo_after_sealed: bool = True  # SPEC D3
     reds_earn: bool = False  # last-10-GREEN rule: REDs earn nothing
+    # Live default: delegated host key (ROOT signs host key once).
+    root_mode: str = LIVE_ROOT_MODE
     pe_rent_module: Optional[str] = None
     pe_lane_module: Optional[str] = None
     pe_score_module: Optional[str] = None
@@ -121,7 +127,7 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'cutover', 'revert',
         'trainer_fallback_hours', 'disable_warm_pool', 'disable_standing_lanes',
         'disable_trainer_dequeue', 'disable_lium_auto_backup', 'full_redo_after_sealed',
-        'reds_earn', 'pe_rent_module', 'pe_lane_module', 'pe_score_module',
+        'reds_earn', 'root_mode', 'pe_rent_module', 'pe_lane_module', 'pe_score_module',
         'root_signer_module', 'shadow', 'trainer_fallback',
     }
     kwargs: dict[str, Any] = {}
@@ -187,4 +193,12 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         raise ValueError('REDs earn nothing under the last-10-GREEN rule')
     if cfg.disable_lium_auto_backup is not True:
         raise ValueError('Lium auto-backup must stay disabled on every rental')
+    # Live ROOT: delegated host key is the only live path (owner 2026-11-09).
+    if cfg.mode == 'live' and cfg.enabled and cfg.root_mode != LIVE_ROOT_MODE:
+        raise ValueError(
+            'live ROOT path is %r only; refused root_mode=%r (unused alternative %r)'
+            % (LIVE_ROOT_MODE, cfg.root_mode, ALT_ROOT_MODE)
+        )
+    if cfg.root_mode not in (LIVE_ROOT_MODE, ALT_ROOT_MODE):
+        raise ValueError('root_mode must be delegated_host|per_round; got %r' % (cfg.root_mode,))
     return cfg

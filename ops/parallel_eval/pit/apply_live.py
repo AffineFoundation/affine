@@ -1,9 +1,12 @@
-"""Live GREEN_FRESH apply path (SPEC §3.1, BRIEF §1.9).
+"""Live GREEN_FRESH apply path (SPEC §3.1, BRIEF §1.9, CUTOVER-PLAN blocker 5).
 
-GREEN_FRESH: verify bf16 C + M(C) uploads, then hand to pe_apply / HEAD-CHAIN.
+GREEN_FRESH: verify bf16 C + M(C) uploads (**fail closed**), then hand to pe_apply.
 GREEN_STALE: paid, merge_blocked, destroy box state — never applied.
 RED / NO_DECISION: destroy box state; RED earns nothing (last-10-GREEN rule).
 Never promote on timeout or fail-closed error.
+
+``verify_uploads`` is **mandatory** in live. Missing verifier or a failed
+fp32-master / bf16 hash check raises ApplyLiveError (never treats as verified).
 """
 from __future__ import annotations
 
@@ -51,7 +54,6 @@ class LiveApplyResult:
 
 
 def refuse_if_unpromotable(scored: Mapping[str, Any]) -> None:
-    """Never promote on timeout, partial probe, or fail-closed."""
     decision = str(scored.get('decision') or '').lower()
     if scored.get('partial') or scored.get('timeout') or scored.get('incomplete'):
         raise PromoteRefused('never promote on partial/timeout/incomplete')
@@ -83,8 +85,10 @@ def verify_green_uploads(
         candidate_sha256=candidate_sha256,
         master_digest=master_digest,
     ))
-    if not out.get('candidate_ok') or not out.get('master_ok'):
-        raise ApplyLiveError('GREEN upload sha verify failed')
+    if not out.get('candidate_ok'):
+        raise ApplyLiveError('bf16 candidate hash verify failed (fail closed)')
+    if not out.get('master_ok'):
+        raise ApplyLiveError('fp32 master hash verify failed (fail closed)')
     return out
 
 
@@ -109,7 +113,6 @@ class LiveApplicator:
         if decision == 'green_stale':
             return self._stale_or_red(item, decision='green_stale', paid=True, merge_blocked=True)
         if decision == 'red':
-            # Last-10-GREEN rule: REDs earn nothing.
             if item.paid:
                 raise ApplyLiveError('RED must not be paid')
             return self._stale_or_red(item, decision='red', paid=False, merge_blocked=False)
@@ -124,23 +127,25 @@ class LiveApplicator:
         cand = item.candidate_id
         if not cand or len(cand) != 64:
             raise ApplyLiveError('missing candidate_id')
-        # Upload masters only on GREEN (SPEC §3.1).
+        # FAIL CLOSED: verify_uploads is mandatory in live (CUTOVER-PLAN blocker 5).
+        if self.verify_uploads is None:
+            raise ApplyLiveError('live apply refused: verify_uploads is required (fail closed)')
         if self.upload_candidate is not None:
             self.upload_candidate(candidate_id=cand, path=(item.meta or {}).get('candidate_path'))
         if self.upload_master is not None:
             self.upload_master(candidate_id=cand, path=(item.meta or {}).get('candidate_master_path'))
         master_digest = (item.meta or {}).get('candidate_master_digest') or (item.meta or {}).get('master_digest')
-        cand_sha = (item.meta or {}).get('candidate_sha256') or cand
-        verified = {'candidate_ok': True, 'master_ok': True}
-        if self.verify_uploads is not None:
-            if not master_digest:
-                raise ApplyLiveError('missing master digest for GREEN verify')
-            verified = verify_green_uploads(
-                self.verify_uploads,
-                candidate_id=cand,
-                candidate_sha256=str(cand_sha),
-                master_digest=str(master_digest),
-            )
+        cand_sha = (item.meta or {}).get('candidate_sha256')
+        if not master_digest or len(str(master_digest)) != 64:
+            raise ApplyLiveError('missing/invalid master digest for GREEN verify (fail closed)')
+        if not cand_sha or len(str(cand_sha)) != 64:
+            raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
+        verified = verify_green_uploads(
+            self.verify_uploads,
+            candidate_id=cand,
+            candidate_sha256=str(cand_sha),
+            master_digest=str(master_digest),
+        )
         pe_ok = False
         if self.accept_pit_decision is not None:
             payload = {
