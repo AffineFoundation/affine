@@ -1,13 +1,13 @@
 # Per-model native sampling for affine-bench-v2 (Jacob 2026-11-05).
 # Global ceiling: max_tokens <= 65536. max_model_len = max_tokens + prompt_headroom, never past native context.
-# Kings / Genesis inherit profile "qwen3.5-family" (Affine kings are Qwen3.5-9B fine-tunes).
+# Kings use "qwen3.5-family-pp0" (presence_penalty 0; Jacob 2026-11-09). Genesis / Qwen3.5 refs stay on "qwen3.5-family".
 # Citations point at the HF model card / tech report that justified each row (see REPORT.md).
 
 prompt_headroom = 4096
 global_max_tokens_ceiling = 65536
 
 default_profile = "qwen3.5-family"
-king_profile = "qwen3.5-family"
+king_profile = "qwen3.5-family-pp0"
 
 [profiles."qwen3.5-family"]
 # Qwen/Qwen3.5-9B Best Practices: thinking general + math/competition length (capped at 64K ceiling; card says 81920).
@@ -23,6 +23,21 @@ presence_penalty = 1.5
 repetition_penalty = 1.0
 enable_thinking = true
 source = "https://huggingface.co/Qwen/Qwen3.5-9B (Best Practices: thinking general + 81920 for math contests; Affine caps at 65536)"
+
+[profiles."qwen3.5-family-pp0"]
+# Published default for Affine kings (Jacob 2026-11-09): same as qwen3.5-family except presence_penalty 0.
+# Affine kings are not trained with a presence penalty, so benching them at 1.5 is wrong.
+# Comparison models (Genesis, Qwen3.5-9B) stay on qwen3.5-family (presence_penalty 1.5).
+max_tokens = 65536
+native_context = 262144
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "Affine kings published default (Jacob 2026-11-09): qwen3.5-family sampling with presence_penalty 0; model is not trained with a presence penalty"
 
 [profiles.qwen3]
 # Qwen3-8B/4B/14B: thinking temp 0.6 top_p 0.95 top_k 20; math contests max_out 38912.
@@ -260,4 +275,4 @@ genesis = "qwen3.5-family"
 "phi-4-mini-reasoning" = "phi4-mini"
 "gpt-oss-20b" = "gpt-oss"
 
-# Kings (Affine-*-9B Qwen3.5 fine-tunes) and any unknown model_id fall back to top-level default_profile / king_profile.
+# Kings (Affine-*-9B Qwen3.5 fine-tunes) use king_profile (qwen3.5-family-pp0). Unknown model_id falls back to default_profile.
