@@ -81,8 +81,10 @@ def build_decision_doc(
     if 'z' not in evaluated and item.z is not None:
         evaluated['z'] = item.z
     reasons = list(scored.get('reasons') or [])
-    if item.merge_blocked and 'merge_blocked' not in reasons:
+    if (item.merge_blocked or getattr(item, 'stranded', False)) and 'merge_blocked' not in reasons:
         reasons.append('merge_blocked')
+    if getattr(item, 'stranded', False) and 'stranded' not in reasons:
+        reasons.append('stranded')
     heldout = dict(scored.get('heldout') or {})
     if item.bound_round_id and 'round_id' not in heldout:
         heldout['round_id'] = item.bound_round_id
@@ -107,7 +109,8 @@ def build_decision_doc(
         early_staged=False,
         delta_rc=None,
         source='pit',
-        merge_blocked=bool(item.merge_blocked),
+        merge_blocked=bool(item.merge_blocked or getattr(item, 'stranded', False)),
+        stranded=bool(getattr(item, 'stranded', False) or item.merge_blocked),
         fresh=item.fresh,
         paid=bool(item.paid),
         no_decision=(gate_decision == 'no_decision'),
@@ -120,7 +123,8 @@ def build_decision_doc(
             box_id=item.box_id,
             attempt=item.attempt,
             pit_decision=item.decision,
-            merge_blocked=bool(item.merge_blocked),
+            merge_blocked=bool(item.merge_blocked or getattr(item, 'stranded', False)),
+            stranded=bool(getattr(item, 'stranded', False) or item.merge_blocked),
             fresh=item.fresh,
         ),
     )

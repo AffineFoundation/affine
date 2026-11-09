@@ -1,7 +1,8 @@
 """Live GREEN_FRESH apply path (SPEC §3.1, BRIEF §1.9, CUTOVER-PLAN blocker 5).
 
-GREEN_FRESH: verify bf16 C + M(C) uploads (**fail closed**), then hand to pe_apply.
-GREEN_STALE: paid, merge_blocked, destroy box state — never applied.
+GREEN_FRESH: verify bf16 C + M(C) uploads (**fail closed**), then hand to pe_apply
+(first GREEN from a given head becomes HEAD).
+GREEN_STALE / stranded: paid + merge_blocked, never becomes HEAD; destroy box state.
 RED / NO_DECISION: destroy box state; RED earns nothing (last-10-GREEN rule).
 Never promote on timeout or fail-closed error.
 
@@ -41,6 +42,7 @@ class LiveApplyResult:
     pe_apply_accepted: bool = False
     master_verified: bool = False
     candidate_verified: bool = False
+    stranded: bool = False
     detail: Dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict:
@@ -48,6 +50,7 @@ class LiveApplyResult:
             'applied': self.applied,
             'decision': self.decision,
             'merge_blocked': self.merge_blocked,
+            'stranded': self.stranded or self.merge_blocked,
             'paid': self.paid,
             'destroyed_box_state': self.destroyed_box_state,
             'head_advanced': self.head_advanced,
@@ -136,7 +139,9 @@ class LiveApplicator:
         if decision == 'green_fresh':
             return self._apply_fresh(item, scored=scored)
         if decision == 'green_stale':
-            return self._stale_or_red(item, decision='green_stale', paid=True, merge_blocked=True)
+            return self._stale_or_red(
+                item, decision='green_stale', paid=True, merge_blocked=True, stranded=True,
+            )
         if decision == 'red':
             if item.paid:
                 raise ApplyLiveError('RED must not be paid')
@@ -218,6 +223,7 @@ class LiveApplicator:
             applied=True,
             decision='green_fresh',
             merge_blocked=False,
+            stranded=False,
             paid=True,
             destroyed_box_state=False,
             head_advanced=True,
@@ -234,6 +240,7 @@ class LiveApplicator:
         decision: str,
         paid: bool,
         merge_blocked: bool,
+        stranded: bool = False,
     ) -> LiveApplyResult:
         destroyed = False
         if self.destroy_state is not None:
@@ -248,6 +255,7 @@ class LiveApplicator:
             applied=False,
             decision=decision,
             merge_blocked=merge_blocked,
+            stranded=bool(stranded or merge_blocked),
             paid=paid,
             destroyed_box_state=destroyed,
             head_advanced=False,

@@ -4,7 +4,7 @@ Files under PIT_STATE (default env, else PE_STATE/pit):
   items/<item_id>.json   — ItemRecord snapshots (0600)
   DECISIONS.json         — hash-chained DecisionLog
   queue.json             — registration order
-  claims/PIT-CLAIM-e<N>.json — claim so pe_live skips the epoch
+  claims/PIT-CLAIM-e<N>.json — skip marker so pe_live avoids PE-lane double-dispatch
 """
 from __future__ import annotations
 
@@ -76,7 +76,8 @@ def item_from_dict(raw: dict) -> ItemRecord:
         decision=raw.get('decision'),
         z=raw.get('z'),
         fresh=raw.get('fresh'),
-        merge_blocked=bool(raw.get('merge_blocked')),
+        merge_blocked=bool(raw.get('merge_blocked') or raw.get('stranded')),
+        stranded=bool(raw.get('stranded') or raw.get('merge_blocked')),
         paid=bool(raw.get('paid')),
         result_stored=bool(raw.get('result_stored')),
         shadow=bool(raw.get('shadow', True)),

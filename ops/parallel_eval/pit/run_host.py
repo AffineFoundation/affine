@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""PIT live host daemon (CUTOVER-PLAN blocker 1).
+"""PIT live host daemon (Jacob 2026-11-09 decoupled dispatch).
 
-Owns the item queue under PIT_STATE, writes PIT-CLAIM-eN so pe_live skips the
-epoch, drives Controller ticks, emits gate-schema DECISION.json, and applies
-GREEN_FRESH via pe_apply.accept_pit_decision.
+Owns the batch queue under PIT_STATE (cap N boxes). Incoming batches go straight
+here — lifecycle never holds waiting for PIT. Each box binds current head at
+spawn; first fresh GREEN becomes HEAD; later old-head GREEN is paid+stranded;
+everything else is destroyed. Writes PIT-CLAIM-eN so pe_live skips PE-lane
+double-dispatch, emits gate-schema DECISION.json, applies GREEN_FRESH via
+pe_apply.accept_pit_decision. k1/weights read those decisions.
 
 ROOT path: delegated host key only (see ceremony_sign_host_key.py / docs/PIT.md).
 Live config refuses root_mode=per_round. Never embeds key material.

@@ -224,12 +224,14 @@ def mark_scored_decision(
         raise ValueError('decision must be green|red')
     stale = is_stale_green(record, current_head)
     if stale:
+        # Jacob: later GREEN from an old head uploads, is paid, stranded/merge_blocked;
+        # it never becomes HEAD.
         return apply_transition(
-            record, ItemState.DECIDED, reason='green-stale',
+            record, ItemState.DECIDED, reason='green-stale-stranded',
             updates={
                 'decision': 'green_stale', 'z': float(z if z is not None else 0.0),
                 'candidate_id': candidate_id, 'paid': True, 'fresh': False,
-                'merge_blocked': True, 'result_stored': True,
+                'merge_blocked': True, 'stranded': True, 'result_stored': True,
             },
         )
     return apply_transition(
@@ -237,7 +239,7 @@ def mark_scored_decision(
         updates={
             'decision': 'green_fresh', 'z': float(z if z is not None else 0.0),
             'candidate_id': candidate_id, 'paid': True, 'fresh': True,
-            'merge_blocked': False, 'result_stored': True,
+            'merge_blocked': False, 'stranded': False, 'result_stored': True,
         },
     )
 

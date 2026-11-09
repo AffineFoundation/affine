@@ -106,7 +106,8 @@ class ItemRecord:
     decision: Optional[str] = None  # green_fresh | green_stale | red | no_decision
     z: Optional[float] = None
     fresh: Optional[bool] = None
-    merge_blocked: bool = False
+    merge_blocked: bool = False  # Option B / Jacob "stranded": paid, never HEAD
+    stranded: bool = False  # alias of merge_blocked for stale GREEN from old head
     paid: bool = False
     result_stored: bool = False
     shadow: bool = True
@@ -138,6 +139,7 @@ class ItemRecord:
             'z': self.z,
             'fresh': self.fresh,
             'merge_blocked': self.merge_blocked,
+            'stranded': self.stranded or self.merge_blocked,
             'paid': self.paid,
             'result_stored': self.result_stored,
             'shadow': self.shadow,

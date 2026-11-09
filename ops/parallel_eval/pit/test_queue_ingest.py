@@ -36,6 +36,7 @@ class TestQueueIngest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop('PE_STATE', None)
         os.environ.pop('PE_LIFE_STATE', None)
+        os.environ.pop('PIT_STATE', None)
 
     def _ctl(self):
         return Controller(
@@ -72,6 +73,38 @@ class TestQueueIngest(unittest.TestCase):
 
         out2 = sync(ctl, store=store)
         self.assertEqual(out2['enqueued'], [])
+
+    def test_inbox_batch_preferred_over_pending(self):
+        inbox = self.td / 'pit' / 'inbox'
+        inbox.mkdir(parents=True)
+        os.environ['PIT_STATE'] = str(self.td / 'pit')
+        (inbox / 'batch-55.json').write_text(json.dumps({
+            'epoch': 55,
+            'uid': 9,
+            'hotkey_prefix': '5InboxHotkeyxx',
+            'registration_index': 1,
+        }))
+        (self.pending / 'e55.json').write_text(json.dumps({
+            'epoch': 55,
+            'uid': 1,
+            'hotkey_prefix': '5PendingHotkey',
+            'pit_claimed': False,
+        }))
+        ctl = self._ctl()
+        out = sync(ctl, store=DurableStore(root=self.td / 'pit'))
+        self.assertEqual(out['enqueued'], [55])
+        self.assertEqual(ctl.items[0].uid, 9)
+        self.assertEqual(ctl.items[0].meta.get('ingest_source'), 'inbox')
+
+    def test_ignores_pit_claimed_pending_stubs(self):
+        (self.pending / 'e77.json').write_text(json.dumps({
+            'epoch': 77,
+            'pit_claimed': True,
+            'uid': 3,
+        }))
+        ctl = self._ctl()
+        out = sync(ctl, store=DurableStore(root=self.td / 'pit'))
+        self.assertEqual(out['enqueued'], [])
 
 
 if __name__ == '__main__':

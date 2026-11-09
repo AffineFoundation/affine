@@ -4,9 +4,11 @@ On-demand rent only: rent when a BOUND item needs a box; release as soon as the
 result is stored or the item fails. Empty queue ⇒ zero item rentals.
 B queued with max_boxes N ⇒ at most min(B, N) concurrent item rentals.
 
-Live mode: GREEN_FRESH uploads C+M(C) and applies via pe_apply; GREEN_STALE paid
-+ merge_blocked; RED earns nothing; non-GREEN destroys box state. Full redo with
-the same binding if a box is lost after SEALED (SPEC D3).
+Live mode (Jacob 2026-11-09): batches dispatch from the host PIT queue (cap N);
+each box binds current head at spawn. First GREEN_FRESH uploads C+M(C) and becomes
+HEAD; later old-head GREEN is paid + stranded/merge_blocked; RED earns nothing;
+non-GREEN destroys box state. Full redo with the same binding if a box is lost
+after SEALED (SPEC D3). Lifecycle never waits on these decisions.
 """
 from __future__ import annotations
 

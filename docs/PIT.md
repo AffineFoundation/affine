@@ -29,15 +29,34 @@ are also short rent-per-job boxes (SPEC).
 | REDs | **earn nothing** (last-10-GREEN rule) |
 | ROOT path | **delegated host key only** (`root_mode=delegated_host`) |
 
+## Dispatch model (Jacob 2026-11-09)
+
+PIT is **decoupled from the lifecycle one-open-epoch model**. Do not hold
+lifecycle / controller dispatch waiting for PIT decisions.
+
+- Queued batches go **straight to the host PIT queue** (global box cap N; **5** live).
+- Each box downloads the **current head** from the host at spawn, trains the
+  batch, and runs the full equivalent eval.
+- The **first GREEN** from a given head uploads the new head and becomes **HEAD**;
+  boxes spawned after that use it.
+- A later GREEN from the old head still uploads, is **paid**, and is marked
+  **`stranded` / `merge_blocked`**. It never becomes HEAD.
+- Everything else (RED / no_decision / fail-closed) **wipes and is destroyed**.
+- Lifecycle only offers a ready verified fresh GREEN via `ready_apply`, or
+  returns immediate `no-update` (`pit-decoupled-eN-kept-H`) so weight nonces keep
+  moving. k1 / weights **read PIT DECISION.json / HEAD-CHAIN** independently.
+- Fail-closed apply, gate math, and draw secrecy are unchanged.
+
 ## Rules (short)
 
-1. On dequeue, bind the item to the **current head** (and its expected fp32 master digest).
+1. On dequeue/spawn, bind the item to the **current head** (and its expected fp32 master digest).
 2. If `M(H)` is unpublished, dequeue **pauses**.
-3. The **first fresh GREEN** to reach a decision becomes the new head (uploads bf16 `C` + `M(C)`, host applies via `pe_apply` / HEAD-CHAIN).
-4. Later GREENs bound to an older head are **paid** but **`merge_blocked`** (Option B). Non-GREEN boxes destroy their state.
+3. The **first fresh GREEN** from a head becomes the new head (uploads bf16 `C` + `M(C)`, host applies via `pe_apply` / HEAD-CHAIN).
+4. Later GREENs bound to an older head are **paid** but **`stranded` / `merge_blocked`**. Non-GREEN boxes destroy their state.
 5. Shadow mode never writes `DECISION.json`, weights, `HEAD-CHAIN`, or R2 head pointers.
 6. Never promote on a timeout, partial probe, or fail-closed error.
 7. Box lost after SEALED ⇒ **full redo** with the same binding (SPEC D3).
+8. Lifecycle must **not** claim/wait on per-epoch PIT decisions.
 
 ## Gate math (unchanged)
 
@@ -108,10 +127,11 @@ Script: `ops/parallel_eval/pit/ceremony_sign_host_key.py`.
 | `expected_master.py` | Chain override → manifest → index → TRAINING-RESULT |
 | `box.py` / `train_box.py` | Box phases + on-box train asserts |
 | `controller.py` | On-demand rent, live/shadow decide+apply |
-| `run_host.py` | Live host daemon: durable state, PIT-CLAIM, DECISION.json |
+| `run_host.py` | Live host daemon: batch queue + scheduler, PIT-CLAIM skip marker, DECISION.json |
+| `queue_ingest.py` | Inbox / K1 / pending → enqueue; refresh head from HEAD-CHAIN |
 | `durable.py` | Item + DecisionLog persistence under `PIT_STATE` |
 | `decision_emit.py` | Gate-schema `DECISION.json` for k1 / ff_launcher / lifecycle |
-| `apply_live.py` | GREEN_FRESH → verify uploads (fail closed) → pe_apply; destroy otherwise |
+| `apply_live.py` | GREEN_FRESH → verify uploads (fail closed) → pe_apply; stranded paid; else destroy |
 | `cutover.py` | Live cutover / revert plan (trainer, warm, lanes) |
 | `scripts/cutover_enable.sh` | Flocked enable; TOCTOU trainer-idle; `WARM-OFF`; flag backup |
 | `scripts/cutover_revert.sh` | Flocked revert; clear `PIT-CLAIM-e*`; release `affine-pit-*`; restore bak |
@@ -138,8 +158,8 @@ the interpreter.
 |-----------|------------------|-------|
 | `ops/parallel_eval/live/pe_apply.py` | Prefer **additive** `accept_pit_decision` onto the live RA `pe_apply.py` (backup first). Do **not** replace the live file blindly — it must keep `_sync_expected_hash_after_head_apply`. | E1028 fix |
 | `ops/parallel_eval/live/pe_gate_hook.py` | RA PE code dir (must keep `early_baseline`) | throughput-v4 |
-| `ops/parallel_eval/live/pe_live.py` | RA PE code dir | PIT dispatch noop + PIT-CLAIM skip |
-| `ops/parallel_eval/live/pe_lifecycle.py` | RA PE code dir | `pit_cutover()` skips trainer; RED/no_decision → no-update |
+| `ops/parallel_eval/live/pe_live.py` | RA PE code dir | PIT dispatch noop + PIT-CLAIM skip (no PE-lane double-dispatch) |
+| `ops/parallel_eval/live/pe_lifecycle.py` | RA PE code dir | `pit_cutover()`: never holds; ready_apply or immediate `pit-decoupled` no-update |
 | `ops/parallel_eval/pit/**` | `RA/20261109-serverless/release/ops/parallel_eval/pit/` | host library + daemon |
 | `docs/PIT.md` | same snapshot `docs/PIT.md` | operator runbook |
 
@@ -209,9 +229,10 @@ Equivalent flag:
 
 4. Effect: trainer dequeue **off** (pod kept 24 h as hot fallback); warm pool
    **off** (`WARM-OFF` + `pe_warm` / `pe_controller` no-op during PIT cutover);
-   standing PE lanes **off**; PIT owns the queue; first fresh GREEN
-   uploads and applies; REDs earn nothing; per-epoch `DECISION.json` emitted for
-   k1 / website / lifecycle finalize.
+   standing PE lanes **off**; host PIT queue/scheduler owns batches (cap 5);
+   lifecycle never waits on PIT; first fresh GREEN uploads and becomes HEAD;
+   later old-head GREEN paid+stranded; REDs earn nothing; `DECISION.json`
+   emitted for k1 / website / weights.
 5. After 24 h of healthy live: release the trainer pod with Jacob OK.
 
 ## Operator: revert (one command)
@@ -252,5 +273,7 @@ PYTHONPATH=. python3 -m unittest \
   ops.parallel_eval.pit.test_cutover \
   ops.parallel_eval.pit.test_cutover_scripts \
   ops.parallel_eval.pit.test_baseline_job \
-  ops.parallel_eval.pit.test_jobs
+  ops.parallel_eval.pit.test_jobs \
+  ops.parallel_eval.pit.test_lifecycle_inflight \
+  ops.parallel_eval.pit.test_queue_ingest
 ```

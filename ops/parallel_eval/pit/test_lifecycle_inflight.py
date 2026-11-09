@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR #96: PIT cutover lifecycle must not stall the serial gate."""
+"""Jacob 2026-11-09: PIT cutover must not couple to one-open-epoch or hold dispatch."""
 import json
 import os
 import sys
@@ -13,7 +13,6 @@ _LIFE = _TD / 'life'
 _EP = _TD / 'epochs'
 os.environ['PE_LIFE_STATE'] = str(_LIFE)
 os.environ['PE_GATE_EP'] = str(_EP)
-os.environ['PIT_DECISION_TIMEOUT_S'] = '2'
 _FLAG = _TD / 'flag.json'
 os.environ['PE_FLAG'] = str(_FLAG)
 _LIFE.mkdir(parents=True)
@@ -35,17 +34,20 @@ def _flag(**pit_kw):
 
 class Life:
     def _training(self, directory, opening, dispatch, current, now):
-        return None
+        # Trainer must never be reached under pit_cutover.
+        raise AssertionError('trainer must not run under PIT cutover')
 
 
 def _v829i(Lifecycle):
     prior = Lifecycle._training
+
     def _training(self, *a, **k):
         return prior(self, *a, **k)
+
     Lifecycle._training = _training
 
 
-class TestPitLifecycleInflight(unittest.TestCase):
+class TestPitLifecycleDecoupled(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         _flag()
@@ -56,7 +58,6 @@ class TestPitLifecycleInflight(unittest.TestCase):
         os.environ['PE_LIFE_STATE'] = str(_LIFE)
         os.environ['PE_GATE_EP'] = str(_EP)
         os.environ['PE_FLAG'] = str(_FLAG)
-        os.environ['PIT_DECISION_TIMEOUT_S'] = '2'
         _flag()
         for p in _LIFE.glob('**/*'):
             if p.is_file():
@@ -64,6 +65,7 @@ class TestPitLifecycleInflight(unittest.TestCase):
         for p in _EP.glob('**/*'):
             if p.is_file():
                 p.unlink()
+        (_LIFE / 'apply').mkdir(parents=True, exist_ok=True)
         _EP.mkdir(parents=True, exist_ok=True)
 
     def _cur(self, head='H' * 64):
@@ -74,43 +76,59 @@ class TestPitLifecycleInflight(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def test_claim_returns_no_update_not_none(self):
+    def test_no_ready_green_returns_decoupled_no_update(self):
         r = Life()._training(self._ep(1), None, None, self._cur(), time.time())
         self.assertIsNotNone(r)
         self.assertEqual(r['status'], 'no-update')
-        self.assertTrue(str(r['reason']).startswith('pit-claimed-e1'))
-        self.assertTrue((_LIFE / 'PIT-CLAIM-e1.json').is_file())
+        self.assertTrue(str(r['reason']).startswith('pit-decoupled-e1-kept-'))
+        # Must never write lifecycle PIT-CLAIM wait tokens.
+        self.assertFalse(any(_LIFE.glob('PIT-CLAIM-e*.json')))
 
-    def test_second_epoch_proceeds_after_claim(self):
-        Life()._training(self._ep(1), None, None, self._cur(), time.time())
-        r2 = Life()._training(self._ep(2), None, None, self._cur(), time.time())
-        self.assertIsNotNone(r2)
-        self.assertEqual(r2['status'], 'no-update')
-        self.assertTrue(str(r2['reason']).startswith('pit-claimed-e2'))
+    def test_successive_epochs_never_hold_none(self):
+        for e in (1, 2, 3, 4, 5, 6):
+            r = Life()._training(self._ep(e), None, None, self._cur(), time.time())
+            self.assertIsNotNone(r, msg='epoch %s held' % e)
+            self.assertEqual(r['status'], 'no-update')
+            self.assertIn('pit-decoupled', r['reason'])
 
-    def test_merge_blocked_no_update(self):
-        e = 3
-        d = self._ep(e)
-        (_LIFE / ('PIT-CLAIM-e%d.json' % e)).write_text(json.dumps(dict(epoch=e, at=time.time())))
-        dec = dict(decision='green', merge_blocked=True, candidate='C' * 64)
-        (d / 'DECISION.json').write_text(json.dumps(dec))
-        r = Life()._training(d, None, None, self._cur(), time.time())
+    def test_ready_fresh_green_offers_apply(self):
+        head = 'H' * 64
+        cand = 'C' * 64
+        auth = dict(input=head, id=cand)
+        ( _LIFE / 'apply' / 'C.json').write_text(json.dumps(dict(
+            state='ready',
+            base_head=head,
+            green_at=1.0,
+            checkpoint=dict(id=cand),
+            optimizer_step=11,
+            checkpoint_authorization=auth,
+        )))
+        r = Life()._training(self._ep(10), None, None, self._cur(head), time.time())
+        self.assertEqual(r['status'], 'updated')
+        self.assertEqual(r['checkpoint']['id'], cand)
+        self.assertEqual(r['checkpoint_authorization'], auth)
+        offered = json.loads((_LIFE / 'apply' / 'C.json').read_text())
+        self.assertEqual(offered['state'], 'offered')
+        self.assertEqual(offered['offered_epoch'], 10)
+
+    def test_stranded_merge_blocked_row_ignored_by_ready_apply(self):
+        """Stale/stranded GREENS land as merge_blocked and must never be offered."""
+        head = 'H' * 64
+        # No ready apply → decoupled no-update even if a merge_blocked artifact exists elsewhere.
+        ( _LIFE / 'apply' / 'stale.json').write_text(json.dumps(dict(
+            state='merge_blocked',
+            base_head=head,
+            green_at=1.0,
+            checkpoint=dict(id='S' * 64),
+            optimizer_step=1,
+            checkpoint_authorization={},
+            merge_blocked=True,
+            stranded=True,
+        )))
+        r = Life()._training(self._ep(11), None, None, self._cur(head), time.time())
         self.assertEqual(r['status'], 'no-update')
-        self.assertIn('pit-merge-blocked', r['reason'])
-        self.assertTrue((d / 'PROMOTION-GATE.json').is_file())
-
-    def test_timeout_no_decision_never_promote(self):
-        e = 4
-        d = self._ep(e)
-        (_LIFE / ('PIT-CLAIM-e%d.json' % e)).write_text(
-            json.dumps(dict(epoch=e, at=time.time() - 10))
-        )
-        r = Life()._training(d, None, None, self._cur(), time.time())
-        self.assertEqual(r['status'], 'no-update')
-        self.assertIn('no-decision', r['reason'])
-        self.assertEqual(r['checkpoint']['id'], self._cur()['checkpoint']['id'])
-        marker = json.loads((d / 'PROMOTION-GATE.json').read_text())
-        self.assertTrue(marker.get('no_decision'))
+        self.assertIn('pit-decoupled', r['reason'])
+        self.assertEqual(r['checkpoint']['id'], head)
 
 
 if __name__ == '__main__':

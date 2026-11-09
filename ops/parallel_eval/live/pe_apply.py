@@ -96,9 +96,12 @@ def add_green(epoch, candidate, training_head, green_at, files=None, extra=None)
         # PIT may stamp source='pit' + merge_blocked; refuse unknown sources.
         if row.get("source") not in (None, "pe", "pit"):
             raise ValueError("green source must be pe|pit")
-        # Option B: PIT stale rows arrive already merge_blocked — mark resolved so next_green skips them.
-        if row.get("merge_blocked") is True:
+        # Option B / Jacob stranded: stale rows arrive merge_blocked/stranded —
+        # mark resolved so next_green skips them (never HEAD).
+        if row.get("merge_blocked") is True or row.get("stranded") is True:
             row["state"] = "merge_blocked"
+            row["merge_blocked"] = True
+            row["stranded"] = True
             row["resolved_at_cr"] = cr()
         q.append(row)
         q.sort(key=lambda x: (x["green_at"], x["epoch"]))
@@ -110,17 +113,19 @@ def accept_pit_decision(item, *, shadow=False):
     """Additive PIT entry point (PR #96). Live hot-fix hash-sync is preserved.
 
     Shadow mode must not call this for durable HEAD-CHAIN mutation. Live PIT
-    passes shadow=False after cutover. Stale GREENs set merge_blocked=True and
-    are never selected by next_green / decide_apply.
+    passes shadow=False after cutover. Stale/stranded GREENs set merge_blocked=True
+    and are never selected by next_green / decide_apply.
     """
     if shadow:
         raise RuntimeError("pe_apply.accept_pit_decision refuses shadow writes")
     if (item or {}).get("source") != "pit":
         raise ValueError("source must be pit")
+    stranded = bool(item.get("stranded") or item.get("merge_blocked"))
     extra = dict(
         source="pit",
         decision=item.get("decision"),
-        merge_blocked=bool(item.get("merge_blocked")),
+        merge_blocked=stranded,
+        stranded=stranded,
     )
     if item.get("pending"):
         extra["pending"] = item["pending"]

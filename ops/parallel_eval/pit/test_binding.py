@@ -66,6 +66,7 @@ class TestBinding(unittest.TestCase):
         out = mark_scored_decision(r, current_head=H1, decision='green', z=2.0, candidate_id=C2)
         self.assertEqual(out.decision, 'green_stale')
         self.assertTrue(out.merge_blocked)
+        self.assertTrue(out.stranded)
         self.assertTrue(out.paid)
         self.assertTrue(is_stale_green(out, H1))
 

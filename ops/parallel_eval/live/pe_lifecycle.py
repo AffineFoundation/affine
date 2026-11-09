@@ -9,6 +9,11 @@ PE live per epoch e (head H = current checkpoint):
   3. a GREEN ready to apply on base H (APPLY-READY, green-time order, staleness<=2) replaces this epoch's result:
      'updated' -> that checkpoint (fresh: the candidate's own signed authorization, input_checkpoint == H).
      fresh-only phase 1 (Jacob 2026-11-07 07:27 CR): stale GREENs are merge_blocked by the controller (credited, never offered).
+
+PIT cutover (Jacob 2026-11-09): **decoupled from the one-open-epoch model**. Lifecycle never holds
+dispatch waiting for PIT. Batches go straight to the host PIT queue (cap N boxes). Lifecycle only
+(a) offers a ready PIT GREEN apply when base head matches, or (b) returns no-update so weights continue.
+k1/weights read PIT DECISION.json / HEAD-CHAIN independently.
 """
 import json, os, time
 from pathlib import Path
@@ -16,8 +21,6 @@ from pathlib import Path
 PE_STATE = Path(os.environ.get("PE_LIFE_STATE", "/home/const/subnet120-rewrite/state/root-audits/20261106-parallel-cutover/state/life"))
 FLAG = Path(os.environ.get("PE_FLAG", "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json"))
 RESTORE_WAIT_S = 1200
-PIT_MAX_INFLIGHT = 5
-PIT_DECISION_TIMEOUT_S = int(os.environ.get("PIT_DECISION_TIMEOUT_S", "21000"))
 
 
 def _rj(p, d=None):
@@ -42,14 +45,12 @@ def from_epoch():
 
 
 def pit_cutover():
-    """PIT live cutover: skip trainer dequeue; finalize via PIT DECISION / ready_apply.
+    """PIT live cutover: trainer off; lifecycle never waits on PIT decisions.
 
-    Confirmed against live ff_launcher_ntp + mimo_v829_train_gate_launcher: without a
-    TRAINING-RESULT the serial gate path stalls. Under cutover we must not call the
-    trainer ``inner``; instead wait for PIT DECISION.json / GREENS apply, then
-    no-update (RED/no_decision) or offer the GREEN apply so CURRENT/weights advance.
-    Nonces stay with the weight transaction path (untouched). Never all-zero weights:
-    last-10-GREEN set remains non-empty as long as HEAD-CHAIN has GREENs.
+    Jacob 2026-11-09: PIT owns the batch queue (cap N boxes) independent of the
+    one-open-epoch lifecycle. This wrapper only (a) offers a ready PIT GREEN apply
+    when base head matches, or (b) returns no-update so weight nonces keep moving.
+    Never returns None waiting for a per-epoch PIT DECISION.
     """
     pe = (_rj(FLAG, {}) or {}).get("parallel_eval") or {}
     pit = pe.get("pit") or {}
@@ -61,97 +62,6 @@ def pit_cutover():
         and pit.get("mode") == "live"
         and pit.get("cutover") is True
     )
-
-
-def _gate_ep():
-    return Path(os.environ.get(
-        "PE_GATE_EP",
-        "/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/epochs",
-    ))
-
-
-def _pit_decision(epoch):
-    return _rj(_gate_ep() / str(epoch) / "DECISION.json") or {}
-
-
-def _pit_roots():
-    roots = []
-    for env in ("PE_LIFE_STATE", "PE_STATE", "PIT_STATE"):
-        v = os.environ.get(env)
-        if v:
-            roots.append(Path(v))
-    return roots
-
-
-def _pit_claim(epoch, directory=None):
-    name = "PIT-CLAIM-e%d.json" % int(epoch)
-    if directory is not None:
-        p = Path(directory) / name
-        if p.exists():
-            return _rj(p)
-    for root in _pit_roots():
-        p = root / name
-        if p.exists():
-            return _rj(p)
-    return None
-
-
-def _pit_inflight_count():
-    """Open PIT claims: written claim, no terminal DECISION yet."""
-    open_epochs = []
-    dedup = set()
-    for root in _pit_roots():
-        for p in root.glob("PIT-CLAIM-e*.json"):
-            try:
-                e = int(p.stem.split("-")[-1][1:])
-            except Exception:
-                continue
-            if e in dedup:
-                continue
-            dedup.add(e)
-            dec = _pit_decision(e)
-            if dec.get("decision") or dec.get("no_decision") or dec.get("chart_status") == "no_decision":
-                continue
-            open_epochs.append(e)
-    return len(open_epochs)
-
-
-def _write_pit_claim(epoch, H, directory):
-    doc = dict(epoch=int(epoch), training_head=H, source="pit", at=time.time())
-    name = "PIT-CLAIM-e%d.json" % int(epoch)
-    d = Path(directory)
-    _wj(d / name, doc)
-    life = Path(os.environ.get("PE_LIFE_STATE", str(PE_STATE)))
-    life.mkdir(parents=True, exist_ok=True)
-    _wj(life / name, doc)
-    pe = os.environ.get("PE_STATE")
-    if pe:
-        _wj(Path(pe) / name, doc)
-    pit = os.environ.get("PIT_STATE")
-    if pit:
-        _wj(Path(pit) / name, doc)
-    pp = life / "pending" / ("e%d.json" % int(epoch))
-    if not pp.exists():
-        _wj(pp, dict(epoch=int(epoch), training_head=H, source="pit", pit_claimed=True, at=doc["at"]))
-
-
-def _pit_promotion_marker(e, H, dec, *, reason):
-    return dict(
-        version="sn120-promotion-gate-pit", epoch_index=e, head=H,
-        candidate=dec.get("candidate"), decision=dec.get("decision") or "no_decision",
-        no_decision=bool(dec.get("no_decision")), red_credit=dec.get("red_credit", "zero"),
-        merge_blocked=bool(dec.get("merge_blocked")), source="pit", reason=reason,
-    )
-
-
-def _pit_epoch_finalized(directory):
-    env = _rj(Path(directory) / "FINALIZED.json")
-    if not env:
-        return False
-    final = env.get("payload") or env
-    res = final.get("result") or {}
-    reason = str(res.get("reason") or "")
-    return res.get("status") in ("no-update", "updated") and reason.startswith("pit-")
 
 
 def closure_var(fn, name):
@@ -237,52 +147,19 @@ def install_pe(Lifecycle):
             # 2026-11-07 handover: an epoch opened before the cutover is finished by the serial gate path (ntp: never promotes on timeout)
             return outer(self, directory, opening, dispatch, current, now)
 
-        # ---- PIT live cutover: never call the trainer; keep weights flowing ----
+        # ---- PIT live cutover: decoupled from epoch dispatch (Jacob 2026-11-09) ----
+        # Never call the trainer. Never hold returning None for a PIT decision.
+        # Head advances only via ready_apply when a verified fresh PIT GREEN is ready.
         if pit_cutover():
-            finalized = _pit_epoch_finalized(d)
             ap, a = ready_apply(H, e)
             if a:
                 a["state"] = "offered"; a["offered_epoch"] = e; a["offered_at"] = a.get("offered_at", time.time()); _wj(ap, a)
                 return dict(status="updated", checkpoint=a["checkpoint"], optimizer_step=a["optimizer_step"],
                             checkpoint_authorization=a["checkpoint_authorization"],
                             **({"publication_receipt_sha256": a["publication_receipt_sha256"]} if a.get("publication_receipt_sha256") else {}))
-            dec = _pit_decision(e)
-            decision = dec.get("decision")
-            claim = _pit_claim(e, d)
-
-            if finalized and not a:
-                # Claim→no-update already closed this epoch; async GREEN apply is a later tick.
-                return None
-
-            if decision == "green" and dec.get("merge_blocked"):
-                marker = _pit_promotion_marker(e, H, dec, reason="pit-merge-blocked")
-                _wj(d / "PROMOTION-GATE.json", marker)
-                return _no_update(current, "pit-merge-blocked-e%d-kept-%s" % (e, H[:8]))
-
-            if claim and not decision and not dec.get("no_decision"):
-                age = time.time() - float(claim.get("at") or claim.get("claimed_at") or 0)
-                if age > PIT_DECISION_TIMEOUT_S:
-                    dec_timeout = dict(dec, no_decision=True, chart_status="no_decision", decision=None)
-                    _wj(d / "PROMOTION-GATE.json", _pit_promotion_marker(e, H, dec_timeout, reason="pit-no-decision-timeout"))
-                    return _no_update(current, "pit-no-decision-e%d-kept-%s" % (e, H[:8]))
-
-            if decision == "green" and not dec.get("no_decision") and not dec.get("merge_blocked"):
-                # GREEN credited; head advances only when ready_apply matches (possibly a later epoch).
-                return _no_update(current, "pit-green-pending-apply-e%d-kept-%s" % (e, H[:8]))
-
-            if decision in ("red",) or dec.get("no_decision") or dec.get("chart_status") == "no_decision":
-                marker = _pit_promotion_marker(e, H, dec, reason="pit-%s" % (decision or "no_decision"))
-                _wj(d / "PROMOTION-GATE.json", marker)
-                return _no_update(current, "pit-%s-e%d-kept-%s" % (decision or "no_decision", e, H[:8]))
-
-            if not claim:
-                if _pit_inflight_count() >= PIT_MAX_INFLIGHT:
-                    return None
-                _write_pit_claim(e, H, d)
-                return _no_update(current, "pit-claimed-e%d" % e)
-
-            # Claimed, decision not ready: do not stall the serial gate (next epoch may open).
-            return _no_update(current, "pit-claimed-e%d" % e)
+            # Finalize immediately so the serial lifecycle can open the next epoch for
+            # weight submission. PIT queue/scheduler owns batches independently.
+            return _no_update(current, "pit-decoupled-e%d-kept-%s" % (e, H[:8]))
 
         if not (d / "TRAINING-JOB.json").exists():
             at = (_rj(PE_STATE / "TRAINER-AT.json") or {}).get("head")

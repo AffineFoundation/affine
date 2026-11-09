@@ -266,7 +266,7 @@ def dispatch_tick(submit):
         e = int(pend.get("epoch", -1))
         if (JOBS / ("live-e%d" % e) / "JOB.json").exists() or (EP / str(e) / "DECISION.json").exists():
             continue
-        # PIT claim: pe_controller must not treat this epoch as a PE-lane job.
+        # PIT host owns this batch (skip marker); never PE-lane double-dispatch.
         if (LST / ("PIT-CLAIM-e%d.json" % e)).exists() or (Path(os.environ.get("PIT_STATE") or (ST / "pit")) / ("PIT-CLAIM-e%d.json" % e)).exists():
             out[e] = "pit-claimed"; continue
         spec, why = live_spec(e, pend)
