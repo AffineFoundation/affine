@@ -151,7 +151,20 @@ def nest_heldout_fields(raw: Mapping[str, Any], *, round_id: str) -> Dict[str, A
             )
             continue
 
-        # Remaining flat keys (set_size, k_cand, head_rollouts, settings_hash,
+        if key == 'set_size':
+            # Live pe_score stamps top-level set_size=r['n']; also accept
+            # evaluated.n / probe.n so DECISION emit never silently skips.
+            probe = out.get('probe') if isinstance(out.get('probe'), Mapping) else {}
+            heldout[key] = _first_present(
+                out.get('set_size'),
+                evaluated.get('set_size'),
+                evaluated.get('n'),
+                out.get('n'),
+                probe.get('n') if isinstance(probe, Mapping) else None,
+            )
+            continue
+
+        # Remaining flat keys (k_cand, head_rollouts, settings_hash,
         # max_tokens, baseline_done_at_cr) are top-level on the live return.
         # Fall back to evaluated only if a future live shape moves them.
         heldout[key] = _first_present(out.get(key), evaluated.get(key))

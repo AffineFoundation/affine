@@ -1237,9 +1237,65 @@ def destroy_box_state(*, box_id: str, reason: str = 'done') -> Mapping[str, Any]
     return dict(ok=True, box_id=box_id, reason=reason)
 
 
-def upload_master(*, candidate_id: str, path: str) -> Mapping[str, Any]:
-    src = Path(path)
-    if not src.exists():
+def _publish_fp32_master_objects(
+    candidate_id: str,
+    local_dir: Path,
+    files_meta: Mapping[str, Mapping[str, str]],
+) -> None:
+    """Upload fp32 master shards to R2 (or local mirror) under r2_key paths."""
+    mirror = _r2_local_mirror()
+    if mirror is not None:
+        for name, meta in files_meta.items():
+            src = local_dir / name
+            if not src.is_file():
+                raise BoxIOError('master shard missing for publish: %s' % name)
+            dest = mirror / str(meta['r2_key'])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        return
+    try:
+        from subnet.storage import Bucket  # type: ignore
+        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
+        if life_cfg is None or not life_cfg.is_file():
+            raise BoxIOError(
+                'PIT_LIFE_CFG required to publish fp32 master to R2 '
+                '(or set PIT_R2_LOCAL_MIRROR for hermetic tests)'
+            )
+        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        for name, meta in files_meta.items():
+            src = local_dir / name
+            if not src.is_file():
+                raise BoxIOError('master shard missing for publish: %s' % name)
+            url = bucket.presign(str(meta['r2_key']), 'put_object', 7200)
+            data = src.read_bytes()
+            req = urllib.request.Request(url, data=data, method='PUT')
+            req.add_header('Content-Type', 'application/octet-stream')
+            with urllib.request.urlopen(req, timeout=3600) as resp:
+                if getattr(resp, 'status', 200) not in (200, 201):
+                    raise BoxIOError('master R2 PUT failed for %s' % name)
+    except BoxIOError:
+        raise
+    except Exception as exc:
+        raise BoxIOError('fp32 master R2 publish failed: %s' % str(exc)[:300]) from exc
+
+
+def upload_master(
+    *,
+    candidate_id: str,
+    path: str,
+    master_digest: str = '',
+    bf16_sha256: str = '',
+    **kwargs: Any,
+) -> Mapping[str, Any]:
+    """Stage master locally, upload to R2, write PIT_FP32_MASTER_INDEX/<cand>.json.
+
+    ``queue_ingest._master_for_head`` reads that index after the first PIT GREEN;
+    without it the network stalls one GREEN later (master_unpublished).
+    """
+    if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+        raise BoxIOError('candidate_id must be hex64')
+    src = Path(path) if path else None
+    if src is None or not src.exists():
         raise BoxIOError('master path missing')
     dst = _upload_root() / candidate_id / 'fp32-master'
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1250,7 +1306,63 @@ def upload_master(*, candidate_id: str, path: str) -> Mapping[str, Any]:
     else:
         dst.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst / src.name)
-    return dict(ok=True, path=str(dst), candidate_id=candidate_id)
+
+    digest = str(master_digest or kwargs.get('master_digest') or '').strip()
+    if not digest or len(digest) != 64:
+        # Prefer meta.json digest when present; else hash concatenated shard digests.
+        meta_p = dst / 'meta.json'
+        if meta_p.is_file():
+            try:
+                digest = str((json.loads(meta_p.read_text()) or {}).get('master_digest') or '')
+            except Exception:
+                digest = ''
+        if not digest or len(digest) != 64:
+            h = hashlib.sha256()
+            for f in sorted(p for p in dst.rglob('*') if p.is_file()):
+                h.update(_sha256_file(f).encode())
+            digest = h.hexdigest()
+
+    bf16 = str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id)
+    files_meta: dict[str, dict[str, str]] = {}
+    for f in sorted(p for p in dst.rglob('*') if p.is_file()):
+        rel = f.relative_to(dst).as_posix()
+        files_meta[rel] = {
+            'sha256': _sha256_file(f),
+            'r2_key': 'fp32-master/%s/%s' % (candidate_id, rel),
+        }
+    if not files_meta:
+        raise BoxIOError('fp32 master publish refused: empty master tree')
+
+    _publish_fp32_master_objects(candidate_id, dst, files_meta)
+
+    idx_dir = _fp32_master_index()
+    idx_dir.mkdir(parents=True, exist_ok=True)
+    idx_path = idx_dir / ('%s.json' % candidate_id)
+    idx_doc = {
+        'bf16_sha256': bf16,
+        'master_digest': digest,
+        'files': files_meta,
+        'meta_json': {
+            'version': 'pit-fp32-master-v1',
+            'bf16_sha256': bf16,
+            'master_digest': digest,
+            'source': 'pit',
+        },
+        'source': 'pit',
+        'at': time.time(),
+    }
+    tmp = idx_path.with_name('.%s.%d.tmp' % (idx_path.name, os.getpid()))
+    tmp.write_text(json.dumps(idx_doc, indent=1, sort_keys=True) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, idx_path)
+    return dict(
+        ok=True,
+        path=str(dst),
+        candidate_id=candidate_id,
+        master_digest=digest,
+        index=str(idx_path),
+        published=True,
+    )
 
 
 def upload_candidate(*, candidate_id: str, path: str = '', **kwargs: Any) -> Mapping[str, Any]:

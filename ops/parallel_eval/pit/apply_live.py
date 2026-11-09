@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from .checkpoint_auth import build_checkpoint_auth_payload, sign_checkpoint_authorization
 from .config import PitConfig
+from .life_paths import pending_dir
 from .state import ItemRecord
 
 
@@ -129,16 +130,6 @@ def _write_pending_json(path: Path, doc: Mapping[str, Any]) -> str:
     return str(path)
 
 
-def _pending_life_dir() -> Path:
-    life = os.environ.get('PE_LIFE_STATE')
-    if life:
-        return Path(life) / 'pending'
-    pe = os.environ.get('PE_STATE')
-    if pe:
-        return Path(pe) / 'pending'
-    return Path('/tmp/pit-pending')
-
-
 @dataclass
 class LiveApplicator:
     config: PitConfig
@@ -194,14 +185,21 @@ class LiveApplicator:
                 candidate_on_box=meta.get('candidate_on_box'),
                 defer_candidate_upload=meta.get('defer_candidate_upload'),
             )
-        if self.upload_master is not None:
-            self.upload_master(candidate_id=cand, path=meta.get('candidate_master_path'))
         master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
         cand_sha = meta.get('candidate_sha256')
         if not master_digest or len(str(master_digest)) != 64:
             raise ApplyLiveError('missing/invalid master digest for GREEN verify (fail closed)')
         if not cand_sha or len(str(cand_sha)) != 64:
             raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
+        # Publish real fp32 master to R2 + PIT_FP32_MASTER_INDEX/<cand>.json before
+        # head advance / verify (queue_ingest._master_for_head reads that index).
+        if self.upload_master is not None:
+            self.upload_master(
+                candidate_id=cand,
+                path=meta.get('candidate_master_path'),
+                master_digest=str(master_digest),
+                bf16_sha256=cand,
+            )
         receipt = _upload_receipt_dir(cand)
         cand_path = str(receipt) if receipt is not None else None
         # Never pass a box: marker into local verify — only host receipts / trees.
@@ -221,6 +219,12 @@ class LiveApplicator:
         if files:
             ckpt['files'] = dict(files)
         optimizer_step = int(meta.get('optimizer_step') or scored.get('optimizer_step') or 0)
+        # Live: delegated host signer only — FixtureRootSigner is test-only.
+        if self.checkpoint_signer is None:
+            raise ApplyLiveError(
+                'live apply refused: checkpoint_signer (delegated host key+cert) required; '
+                'FixtureRootSigner is test-only'
+            )
         auth_payload = build_checkpoint_auth_payload(
             checkpoint_id=cand,
             input_head=item.bound_head or '',
@@ -229,8 +233,7 @@ class LiveApplicator:
             publication_receipt_sha256=meta.get('publication_receipt_sha256'),
         )
         authorization = sign_checkpoint_authorization(auth_payload, signer=self.checkpoint_signer)
-        pending_dir = _pending_life_dir()
-        pending_path = pending_dir / ('e%d-%s.json' % (item.epoch, cand[:16]))
+        pending_path = pending_dir() / ('e%d-%s.json' % (item.epoch, cand[:16]))
         pend_doc = dict(
             epoch=item.epoch,
             candidate=cand,

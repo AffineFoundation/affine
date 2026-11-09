@@ -34,6 +34,7 @@ from .decision_emit import emit_decision, gate_epochs_root
 from .durable import DurableStore, pit_state_root
 from .gate_writer import HostGateWriter
 from .host_wiring import LiveWiringError, build_live_host_bundle
+from .pe_score import nest_heldout_fields
 from .queue_ingest import (
     IngestError,
     sync as queue_ingest_sync,
@@ -92,6 +93,12 @@ def build_controller(
             raise RuntimeError(str(exc)) from exc
         applicator = None
         if cfg.is_live():
+            if bundle.root_signer is None:
+                raise RuntimeError(
+                    'live cutover refused: delegated host signer required '
+                    '(AFFINE_PIT_HOST_KEY_FILE + AFFINE_PIT_HOST_CERT_FILE + AFFINE_PIT_ROOT_PUBKEY_HEX); '
+                    'FixtureRootSigner is test-only'
+                )
             applicator = LiveApplicator(
                 config=cfg,
                 verify_uploads=bundle.verify_uploads,
@@ -99,6 +106,7 @@ def build_controller(
                 destroy_state=bundle.destroy_box_state_fn,
                 upload_master=bundle.upload_master,
                 upload_candidate=bundle.upload_candidate,
+                checkpoint_signer=bundle.root_signer,
             )
         ctl = Controller(
             config=cfg,
@@ -182,12 +190,18 @@ def tick_once(
         scored = dict(item.meta.get('scored') or {})
         if not scored and item.z is not None:
             scored = {'decision': item.decision, 'evaluated': {'z': item.z}}
-        # HostGateWriter requires a complete heldout block; refuse incomplete.
+        # Fill heldout from the live score shape (set_size / evaluated.n / …).
+        scored = nest_heldout_fields(
+            scored, round_id=str(item.bound_round_id or scored.get('round_id') or ''),
+        )
+        item.meta['scored'] = scored
+        # HostGateWriter requires a complete heldout block — never silently skip.
         if not (scored.get('heldout') or {}).get('set_size'):
-            summary.setdefault('emit_deferred', []).append({
-                'epoch': item.epoch, 'why': 'heldout-incomplete',
-            })
-            continue
+            raise RuntimeError(
+                'heldout.set_size missing after nest_heldout_fields '
+                '(epoch=%s decision=%s); refuse silent DECISION skip'
+                % (item.epoch, item.decision)
+            )
         gw = HostGateWriter(
             epochs_root=gate_epochs_root(),
             shadow=ctl.config.is_shadow(),

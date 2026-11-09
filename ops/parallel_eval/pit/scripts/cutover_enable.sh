@@ -26,8 +26,9 @@ PE_CONTROLLER_PIDFILE="${PE_CONTROLLER_PIDFILE:-}"
 die() { echo "cutover_enable: $*" >&2; exit 2; }
 
 [[ -n "$PE_FLAG" && -f "$PE_FLAG" ]] || die "set PE_FLAG to the live PROMOTION-GATE / PE flag JSON"
-# Lifecycle unit env (fail closed; pe_lifecycle has no host-path defaults).
-[[ -n "${PE_LIFE_STATE:-}" ]] || die "PE_LIFE_STATE required (lifecycle service must export PE_FLAG + PE_LIFE_STATE before cutover restart)"
+# Lifecycle unit env (fail closed; pe_lifecycle / pe_apply have no host-path defaults).
+[[ -n "${PE_LIFE_STATE:-}" ]] || die "PE_LIFE_STATE required (lifecycle service must export PE_FLAG + PE_LIFE_STATE + PE_STATE before cutover restart)"
+[[ -n "${PE_STATE:-}" ]] || die "PE_STATE required (GREENS/HEAD-CHAIN + pit uploads; export with PE_LIFE_STATE before cutover restart)"
 [[ -n "${PE_SYNC_EXPECTED_HASH:-}" ]] || die "PE_SYNC_EXPECTED_HASH required (lifecycle/pe_apply hash-sync; also export PE_SYNC_EXPECTED_HASH_PYTHON/LOG/ALERT as needed)"
 [[ -f "${PE_SYNC_EXPECTED_HASH}" ]] || die "PE_SYNC_EXPECTED_HASH not found: ${PE_SYNC_EXPECTED_HASH}"
 [[ -n "${AFFINE_PIT_HOST_KEY_FILE:-}" && -f "${AFFINE_PIT_HOST_KEY_FILE}" ]] || die "AFFINE_PIT_HOST_KEY_FILE required (0600)"
@@ -68,15 +69,13 @@ except Exception as ex:
 print("cutover_enable: preflight ok (subnet + ops + PIT_LIFE_CFG)")
 PY
 
-if [[ -z "$PE_STATE" ]]; then
-  PE_STATE="$(dirname "$PE_FLAG")/state"
-fi
+# PE_STATE already required above (no silent dirname default).
 if [[ -z "$LIFE_ROOT" ]]; then
   LIFE_ROOT="${PE_LIFE:-${PE_LIFE_STATE:-}}"
 fi
 [[ -n "$LIFE_ROOT" ]] || die "set LIFE_ROOT or PE_LIFE / PE_LIFE_STATE (lifecycle root; never hard-code host paths in git)"
 # Keep lifecycle aliases exported for the restarted unit.
-export PE_FLAG PE_LIFE_STATE PE_SYNC_EXPECTED_HASH
+export PE_FLAG PE_LIFE_STATE PE_STATE PE_SYNC_EXPECTED_HASH
 export PE_SYNC_EXPECTED_HASH_PYTHON="${PE_SYNC_EXPECTED_HASH_PYTHON:-}"
 export PE_SYNC_EXPECTED_HASH_LOG="${PE_SYNC_EXPECTED_HASH_LOG:-}"
 export PE_SYNC_EXPECTED_HASH_ALERT="${PE_SYNC_EXPECTED_HASH_ALERT:-}"

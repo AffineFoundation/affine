@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """apply_live fail-closed (CUTOVER-PLAN blocker 5)."""
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from .apply_live import ApplyLiveError, LiveApplicator, PromoteRefused
 from .config import load_pit_config
+from .signer import FixtureRootSigner
 from .state import ItemRecord, ItemState
 
 
@@ -52,15 +57,34 @@ class TestApplyLive(unittest.TestCase):
 
     def test_fresh_green_ok(self):
         accepted = []
-        app = LiveApplicator(
-            config=_live_cfg(),
-            verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
-            accept_pit_decision=lambda p: accepted.append(p) or True,
-        )
-        out = app.apply(_fresh_item(), scored={'decision': 'green', 'evaluated': {'z': 2}})
-        self.assertTrue(out.applied)
-        self.assertTrue(out.master_verified)
-        self.assertEqual(accepted[0]['source'], 'pit')
+        with tempfile.TemporaryDirectory() as td:
+            life = Path(td) / 'life'
+            (life / 'pending').mkdir(parents=True)
+            with mock.patch.dict(os.environ, {'PE_LIFE_STATE': str(life)}):
+                app = LiveApplicator(
+                    config=_live_cfg(),
+                    verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
+                    accept_pit_decision=lambda p: accepted.append(p) or True,
+                    checkpoint_signer=FixtureRootSigner(),
+                    upload_master=lambda **k: {'ok': True, 'published': True},
+                )
+                out = app.apply(_fresh_item(), scored={'decision': 'green', 'evaluated': {'z': 2}})
+                self.assertTrue(out.applied)
+                self.assertTrue(out.master_verified)
+                self.assertEqual(accepted[0]['source'], 'pit')
+                self.assertTrue(list((life / 'pending').glob('e*.json')))
+
+    def test_fresh_green_refuses_missing_signer(self):
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {'PE_LIFE_STATE': td}):
+                app = LiveApplicator(
+                    config=_live_cfg(),
+                    verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
+                    upload_master=lambda **k: {'ok': True},
+                )
+                with self.assertRaises(ApplyLiveError) as cm:
+                    app.apply(_fresh_item(), scored={'decision': 'green', 'evaluated': {'z': 2}})
+                self.assertIn('checkpoint_signer', str(cm.exception))
 
 
 if __name__ == '__main__':

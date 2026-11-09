@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Live mode: GREEN_FRESH applies; stale paid+merge_blocked; RED unpaid; no promote on timeout."""
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from .apply_live import LiveApplicator, PromoteRefused, refuse_if_unpromotable
 from .box import ScriptedBoxIO
@@ -8,6 +11,7 @@ from .config import PitConfig, load_pit_config
 from .controller import Controller
 from .pe_lane import LaneService
 from .pe_rent import RentService
+from .signer import FixtureRootSigner
 from .state import ItemState
 
 
@@ -15,6 +19,19 @@ H0, M0 = 'a' * 64, 'b' * 64
 
 
 class TestLiveController(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.mkdtemp()
+        life = Path(self._td) / 'life'
+        (life / 'pending').mkdir(parents=True)
+        self._prev_life = os.environ.get('PE_LIFE_STATE')
+        os.environ['PE_LIFE_STATE'] = str(life)
+
+    def tearDown(self):
+        if self._prev_life is None:
+            os.environ.pop('PE_LIFE_STATE', None)
+        else:
+            os.environ['PE_LIFE_STATE'] = self._prev_life
+
     def _ctl(self, **cfg_kw):
         clock = {'t': 100.0}
 
@@ -49,6 +66,7 @@ class TestLiveController(unittest.TestCase):
             destroy_state=lambda **k: destroyed.append(dict(k)) or {'ok': True},
             upload_master=lambda **k: {'ok': True},
             upload_candidate=lambda **k: {'ok': True},
+            checkpoint_signer=FixtureRootSigner(),
         )
         ctl = Controller(
             config=cfg,

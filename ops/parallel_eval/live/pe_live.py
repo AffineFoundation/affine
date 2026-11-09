@@ -26,16 +26,42 @@ from pe_common import *
 import pe_apply as PA
 import pe_gate_hook as HOOK
 
+def _life_state_root() -> Path:
+    """PE_LIFE_STATE when set (required for PIT cutover); else legacy ST/life."""
+    env = os.environ.get("PE_LIFE_STATE")
+    if env:
+        return Path(env)
+    return ST / "life"
+
+
+def _pending_dir() -> Path:
+    return _life_state_root() / "pending"
+
+
+def _apply_dir() -> Path:
+    return _life_state_root() / "apply"
+
+
+# Back-compat aliases (refreshed by _sync_life_paths). Prefer _pending_dir/_apply_dir.
 LST = Path(os.environ.get("PE_LIFE_STATE") or (ST / "life"))
 PENDING = LST / "pending"
 APPLY = LST / "apply"
 RESTORE_SH = Path(os.environ.get("PE_RESTORE_SH") or (GATE_CODE / "trainer_restore.sh"))
-RSSH = "/home/const/subnet120-rewrite/state/root-audits/20261026-rollback-189de412/scripts/rssh.sh"
-POD_KEEP = "/workspace/affine-mimo-trainer-prod/private/promotion-gate/pe_trainer_keep.py"
+RSSH = os.environ.get("PE_RSSH") or "rssh"
+POD_KEEP = os.environ.get("PE_POD_KEEP") or (
+    "/workspace/affine-mimo-trainer-prod/private/promotion-gate/pe_trainer_keep.py"
+)
 FAKE = os.environ.get("PE_FAKE_TRAINER")
 RESTORE_MAX_ATTEMPTS = 5
 RESTORE_BACKOFF_S = 60
 RESTORE_TIMEOUT_S = 2400
+
+
+def _sync_life_paths() -> None:
+    global LST, PENDING, APPLY
+    LST = _life_state_root()
+    PENDING = _pending_dir()
+    APPLY = _apply_dir()
 
 
 def _cur():
@@ -357,11 +383,20 @@ def reconcile_tick():
     return out
 
 
-def tick(submit):
+def tick(submit, *, skip_dispatch: bool = False):
+    """Controller tick. Under PIT cutover set skip_dispatch=True so legacy
+    PE-lane job submit is skipped while apply_tick + reconcile_tick still run.
+    """
+    _sync_life_paths()
     LST.mkdir(parents=True, exist_ok=True)
+    PENDING.mkdir(parents=True, exist_ok=True)
+    APPLY.mkdir(parents=True, exist_ok=True)
     res = {}
     for name, fn in (("restore", restore_tick), ("dispatch", lambda: dispatch_tick(submit)), ("reconcile", reconcile_tick),
                      ("apply", apply_tick)):
+        if skip_dispatch and name == "dispatch":
+            res[name] = dict(skipped="warm-off-or-pit-cutover")
+            continue
         try:
             res[name] = fn()
         except Exception as ex:

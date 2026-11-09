@@ -267,7 +267,8 @@ bash ops/parallel_eval/pit/scripts/cutover_enable.sh
 | Variable | Purpose |
 |----------|---------|
 | `PE_FLAG` | promotion / PE flag JSON (lifecycle + cutover) |
-| `PE_LIFE_STATE` | lifecycle root (CURRENT / epochs); **required** — no host default |
+| `PE_LIFE_STATE` | lifecycle root (CURRENT / epochs / pending / apply); **required** — no host default |
+| `PE_STATE` | PE state (GREENS / HEAD-CHAIN / pit uploads); **required** — no host default |
 | `PE_SYNC_EXPECTED_HASH` | `sync_expected_hash.py` for pe_apply head-apply hook (+ optional `*_PYTHON` / `*_LOG` / `*_ALERT`) |
 | `PIT_BUNDLE_JSON` | train-cap-64k `BUNDLE5090.json` with `trainer` entry |
 | `PIT_FP32_MASTER_INDEX` | public `k1/fp32-master/<head>.json` (queue_ingest `head_set`) |

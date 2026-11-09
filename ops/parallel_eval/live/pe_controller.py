@@ -275,14 +275,18 @@ def main():
     while True:
         if (ST / "KILL").exists() or (ST / "STOP").exists():
             ev(event="controller_stop"); break
-        if mode() == "live" and not _legacy_pe_dispatch_off():
+        if mode() == "live":
+            # Cutover / WARM-OFF: skip legacy PE-lane dispatch + warm pool only.
+            # apply_tick + reconcile_tick must keep running so PIT GREENs reach
+            # ready_apply → CURRENT/HEAD → HEAD-CHAIN + hash-sync.
             try:
                 import pe_live
-                S["live"] = pe_live.tick(submit_live)
+                S["live"] = pe_live.tick(
+                    submit_live,
+                    skip_dispatch=_legacy_pe_dispatch_off(),
+                )
             except Exception as ex:
                 ev(event="pe_live_tick_error", err=str(ex)[:300]); traceback.print_exc()
-        elif _legacy_pe_dispatch_off():
-            S["live"] = dict(skipped="warm-off-or-pit-cutover")
         for jid in active_jobs():
             try:
                 tick_job(jid)

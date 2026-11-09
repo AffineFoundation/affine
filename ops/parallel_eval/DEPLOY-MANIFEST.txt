@@ -11,6 +11,7 @@
 # --- PIT library (entire package) ---
 ops/parallel_eval/pit/__init__.py
 ops/parallel_eval/pit/apply_live.py
+ops/parallel_eval/pit/life_paths.py
 ops/parallel_eval/pit/baseline_job.py
 ops/parallel_eval/pit/bench_job.py
 ops/parallel_eval/pit/binding.py
