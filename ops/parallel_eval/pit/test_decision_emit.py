@@ -5,9 +5,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from priors import baseline_v1 as BV
+
 from .config import load_pit_config
 from .decision_emit import build_decision_doc, emit_decision, map_pit_decision
+from .gate_writer import GateWriteError, RecordingGateWriter
 from .state import ItemRecord, ItemState
+
+
+def _heldout():
+    return dict(
+        round_id='round-1',
+        baseline='prior-v1',
+        set_size=500,
+        bar_z=1.0,
+        k_cand=8,
+        head_rollouts=12,
+        scoring=BV.VERSION,
+        settings_hash='d' * 64,
+        max_tokens=64000,
+        scoring_mode='separate-run',
+        tau_run=0.01,
+        sigma_run_floor=0.05,
+        baseline_done_at_cr='2026-01-01 00:00:00 CR',
+    )
 
 
 class TestDecisionEmit(unittest.TestCase):
@@ -49,11 +70,12 @@ class TestDecisionEmit(unittest.TestCase):
     def test_shadow_refuses_write(self):
         cfg = load_pit_config({'pit': {'enabled': True, 'mode': 'shadow'}})
         with tempfile.TemporaryDirectory() as td:
+            gw = RecordingGateWriter(epochs_root=Path(td))
             path = emit_decision(
-                self._item(shadow=True),
-                scored={'evaluated': {'z': 1.0}},
+                self._item(shadow=True, bound_plan_seed='e' * 64),
+                scored={'evaluated': {'z': 1.0}, 'heldout': _heldout()},
+                gate_writer=gw,
                 config=cfg,
-                epochs_root=Path(td),
             )
             self.assertIsNone(path)
             self.assertEqual(list(Path(td).glob('**/DECISION.json')), [])
@@ -63,17 +85,35 @@ class TestDecisionEmit(unittest.TestCase):
             'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 5},
         })
         with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            gw = RecordingGateWriter(epochs_root=root)
+            item = self._item(bound_plan_seed='e' * 64)
             path = emit_decision(
-                self._item(),
-                scored={'evaluated': {'z': 1.5, 'n': 1000}, 'reasons': []},
+                item,
+                scored={'evaluated': {'z': 1.5, 'n': 1000}, 'reasons': [], 'heldout': _heldout()},
+                gate_writer=gw,
                 config=cfg,
-                epochs_root=Path(td),
             )
             self.assertIsNotNone(path)
             doc = json.loads(path.read_text())
             self.assertEqual(doc['decision'], 'green')
             self.assertEqual(doc['source'], 'pit')
             self.assertEqual(doc['parallel_eval']['item_id'], 'item1')
+            self.assertEqual(len(gw.turn_adds), 1)
+
+    def test_emit_refuses_incomplete_heldout(self):
+        cfg = load_pit_config({
+            'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 5},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            gw = RecordingGateWriter(epochs_root=Path(td))
+            with self.assertRaises(GateWriteError):
+                emit_decision(
+                    self._item(bound_plan_seed='e' * 64),
+                    scored={'evaluated': {'z': 1.0}, 'heldout': {'round_id': 'r1'}},
+                    gate_writer=gw,
+                    config=cfg,
+                )
 
     def test_red_no_decision_flags(self):
         item = self._item(decision='no_decision', paid=False, fresh=None, z=None)

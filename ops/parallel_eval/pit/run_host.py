@@ -26,7 +26,8 @@ from .apply_live import LiveApplicator
 from .config import load_pit_config
 from .controller import Controller
 from .cutover import plan_cutover
-from .decision_emit import emit_decision
+from .decision_emit import emit_decision, gate_epochs_root
+from .gate_writer import HostGateWriter
 from .durable import DurableStore, pit_state_root
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
 
@@ -114,7 +115,11 @@ def tick_once(
             scored = dict(item.meta.get('scored') or {})
             if not scored and item.z is not None:
                 scored = {'decision': item.decision, 'evaluated': {'z': item.z}}
-            path = emit_decision(item, scored=scored, config=ctl.config)
+            gw = HostGateWriter(
+                epochs_root=gate_epochs_root(),
+                shadow=ctl.config.is_shadow(),
+            )
+            path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
             if path:
                 summary['advanced'].append({'epoch': item.epoch, 'decision': path.name})
             store.decisions.append(

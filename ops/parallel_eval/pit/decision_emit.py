@@ -3,18 +3,24 @@
 k1_service, gate_ledger, ff_launcher_ntp and pe_lifecycle all read
 ``promotion-gate/state/epochs/<e>/DECISION.json``. PIT must write the same
 shape (decision green|red|no_decision, evaluated, heldout, parallel_eval, …)
-with ``source=pit``. Never writes in shadow mode.
+with ``source=pit``.
+
+Live writes are **deprecated** here: call ``emit_decision`` with a
+``GateWriter`` (see ``gate_writer.py``). Never writes in shadow mode.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
+import warnings
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, TYPE_CHECKING
 
 from .config import PitConfig
 from .state import ItemRecord
+
+if TYPE_CHECKING:
+    from .gate_writer import GateWriter
 
 
 GATE_VERSION = 'sn120-promotion-gate-v1'
@@ -34,14 +40,6 @@ def gate_epochs_root(explicit: Optional[str] = None) -> Path:
 
 def _cr(t: Optional[float] = None) -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S CR', time.gmtime((t or time.time()) - 21600))
-
-
-def _wj(path: Path, obj: Any, mode: int = 0o600) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
-    tmp.write_text(json.dumps(obj, indent=1, sort_keys=True, default=str) + '\n')
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
 
 
 def map_pit_decision(decision: Optional[str]) -> str:
@@ -118,26 +116,44 @@ def emit_decision(
     item: ItemRecord,
     *,
     scored: Mapping[str, Any],
+    gate_writer: 'GateWriter',
     config: PitConfig,
     epochs_root: Optional[Path] = None,
     decided_at: Optional[float] = None,
 ) -> Optional[Path]:
-    """Write DECISION.json for a live PIT decision. Shadow → None (refused)."""
+    """Write a live PIT decision via ``gate_writer``. Shadow → None (refused).
+
+    Direct filesystem writes without a ``GateWriter`` are no longer supported.
+    """
+    if epochs_root is not None:
+        warnings.warn(
+            'emit_decision(epochs_root=...) is ignored; use gate_writer.epochs_root',
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if config.is_shadow() or not config.may_write_live_artifacts():
         return None
+    from .gate_writer import validate_heldout
+
+    heldout = dict(scored.get('heldout') or {})
+    validate_heldout(heldout)
     doc = build_decision_doc(
         item, scored=scored, mode=config.mode, decided_at=decided_at,
     )
-    root = gate_epochs_root(str(epochs_root) if epochs_root else None)
-    path = root / str(int(item.epoch)) / 'DECISION.json'
-    if path.exists():
-        # Idempotent: refuse overwrite of a non-pit decision.
-        try:
-            existing = json.loads(path.read_text())
-        except Exception:
-            existing = {}
-        if existing.get('source') not in (None, 'pit') and existing.get('parallel_eval', {}).get('source') != 'pit':
-            if existing.get('decision') and existing.get('source') != 'pit':
-                raise RuntimeError('refusing to overwrite non-PIT DECISION.json for e%d' % item.epoch)
-    _wj(path, doc, 0o600)
-    return path
+    gate_decision = map_pit_decision(item.decision or scored.get('decision'))
+    plan_seed = item.bound_plan_seed or str(scored.get('plan_seed') or '')
+    if not plan_seed:
+        raise ValueError('plan_seed required for live gate emit')
+    return gate_writer.write_decision(
+        epoch=int(item.epoch),
+        head=item.bound_head or '',
+        candidate=item.candidate_id or '',
+        decision=gate_decision,
+        evaluated=doc['evaluated'],
+        reasons=doc['reasons'],
+        heldout=heldout,
+        plan_seed=plan_seed,
+        parallel_eval_meta=doc.get('parallel_eval') or {},
+        no_decision=bool(doc.get('no_decision')),
+        merge_blocked=bool(item.merge_blocked),
+    )

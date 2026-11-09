@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from .expected_master import lookup_expected_master
 from .state import ItemRecord, ItemState, TransitionError, apply_transition
@@ -22,8 +22,19 @@ def _hex64(value: str, field: str) -> str:
     return value
 
 
+def live_cand_seed(secret_seed: str, epoch: int) -> str:
+    """Live candidate plan seed — matches ``baseline_v1.cand_seed`` exactly."""
+    if not isinstance(secret_seed, str) or not secret_seed:
+        raise ValueError('secret_seed required')
+    if type(epoch) is not int or epoch < 0:
+        raise ValueError('epoch must be non-negative int')
+    return hashlib.sha256(
+        ('%s:prior-baseline:cand:%d' % (secret_seed, int(epoch))).encode()
+    ).hexdigest()
+
+
 def cand_seed_handle(round_seed_commitment: str, epoch: int) -> str:
-    """Opaque plan-seed handle. Does not embed the raw round seed.
+    """Shadow/test plan-seed handle only — **not** live-equivalent to ``live_cand_seed``.
 
     Uses only a commitment/handle string already safe to store, hashed with epoch.
     """
@@ -33,6 +44,22 @@ def cand_seed_handle(round_seed_commitment: str, epoch: int) -> str:
         raise ValueError('epoch must be non-negative int')
     material = ('pit-cand-seed-v1|%s|%d' % (round_seed_commitment, epoch)).encode()
     return hashlib.sha256(material).hexdigest()
+
+
+def _resolve_plan_seed(
+    epoch: int,
+    *,
+    secret_seed: Optional[str] = None,
+    plan_seed_fn: Optional[Callable[[int], str]] = None,
+    round_seed_commitment: Optional[str] = None,
+) -> str:
+    if secret_seed is not None:
+        return live_cand_seed(secret_seed, epoch)
+    if plan_seed_fn is not None:
+        return plan_seed_fn(epoch)
+    if round_seed_commitment is not None:
+        return cand_seed_handle(round_seed_commitment, epoch)
+    raise ValueError('secret_seed, plan_seed_fn, or round_seed_commitment required')
 
 
 @dataclass(frozen=True)
@@ -61,7 +88,9 @@ def dequeue_and_bind(
     head: str,
     head_epoch: int,
     round_id: str,
-    round_seed_commitment: str,
+    round_seed_commitment: Optional[str] = None,
+    secret_seed: Optional[str] = None,
+    plan_seed_fn: Optional[Callable[[int], str]] = None,
     master_digest: Optional[str] = None,
     chain_override: Optional[Dict[str, str]] = None,
     public_manifest: Optional[Dict[str, Any]] = None,
@@ -87,7 +116,12 @@ def dequeue_and_bind(
         raise ValueError('head_epoch must be non-negative int')
     if not isinstance(round_id, str) or not round_id:
         raise ValueError('round_id required')
-    plan = cand_seed_handle(round_seed_commitment, record.epoch)
+    plan = _resolve_plan_seed(
+        record.epoch,
+        secret_seed=secret_seed,
+        plan_seed_fn=plan_seed_fn,
+        round_seed_commitment=round_seed_commitment,
+    )
     now = float(dequeued_at_mono if dequeued_at_mono is not None else time.monotonic())
     binding = Binding(
         head=head,
@@ -117,7 +151,9 @@ def rebind_if_unsealed(
     head: str,
     head_epoch: int,
     round_id: str,
-    round_seed_commitment: str,
+    round_seed_commitment: Optional[str] = None,
+    secret_seed: Optional[str] = None,
+    plan_seed_fn: Optional[Callable[[int], str]] = None,
     master_digest: str,
     dequeued_at_mono: Optional[float] = None,
 ) -> ItemRecord:
@@ -135,7 +171,12 @@ def rebind_if_unsealed(
     # is not a state transition — only rewrite binding metadata, then caller rents.
     head = _hex64(head, 'head')
     dig = _hex64(master_digest, 'master_digest')
-    plan = cand_seed_handle(round_seed_commitment, record.epoch)
+    plan = _resolve_plan_seed(
+        record.epoch,
+        secret_seed=secret_seed,
+        plan_seed_fn=plan_seed_fn,
+        round_seed_commitment=round_seed_commitment,
+    )
     now = float(dequeued_at_mono if dequeued_at_mono is not None else time.monotonic())
     binding = Binding(
         head=head, master_digest=dig, round_id=round_id, plan_seed=plan,
