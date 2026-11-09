@@ -12,16 +12,18 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from . import PREFIX_LIVE, PREFIX_SHADOW
 from .box import BoxIO, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter
 from .pe_lane import LaneService, bind_host_lane_service
-from .pe_rent import RentService, bind_host_rent_service
+from .pe_rent import RentService, _bind_offer_precheck, bind_host_rent_service
 from .pe_score import call_live_host_score
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
 
@@ -61,8 +63,68 @@ def _pe_state_root() -> Path:
     )
 
 
+def _make_shadow_rent(rent_mod: Any, host_rent: Any) -> Callable[..., Mapping[str, Any]]:
+    """Rent affine-pit-shadow-* without live pe_rent's affine-pe-* assert.
+
+    Reuses pick_node / lium up / --no-backup from the live module when present.
+    """
+    pick_node = getattr(rent_mod, 'pick_node', None)
+    lium = getattr(rent_mod, 'lium', None)
+    our_pods = getattr(rent_mod, 'our_pods', None)
+    from_ps = getattr(rent_mod, '_from_ps', None)
+
+    def _rent(name: str, ttl: str = '4h', *, gpu: str = 'B300', **_kw: Any) -> Mapping[str, Any]:
+        if not str(name).startswith('affine-pit-shadow-'):
+            raise LiveWiringError('shadow rent name must start with affine-pit-shadow-')
+        if callable(host_rent) and str(name).startswith('affine-pe-'):
+            return host_rent(name, ttl, gpu=gpu)
+        if not callable(pick_node) or not callable(lium):
+            if callable(host_rent):
+                # Last resort: only works if host_rent tolerates the shadow prefix.
+                return host_rent(name, ttl, gpu=gpu)
+            raise LiveWiringError('shadow rent requires pe_rent.pick_node + lium')
+        g, row = pick_node([gpu] if gpu else None, fallback=False)
+        if not row:
+            raise LiveWiringError('no B300 offer for shadow rent')
+        huid = row['huid']
+        rc, o, e = lium(
+            'up', huid, '-c', '8', '--name', name, '--verify-gpus', '--strict-gpus',
+            '--no-volume-encryption', '--no-backup', '-y', '--json', '--timeout', '900',
+            '--ttl', ttl, timeout=1000,
+        )
+        if rc != 0:
+            raise LiveWiringError('shadow lium up failed: %s' % (e or o)[-300:])
+        try:
+            raw = json.loads(o)
+            info = raw.get('pod') if isinstance(raw, dict) and 'pod' in raw else raw
+        except Exception:
+            info = None
+        if not info and callable(our_pods):
+            for p in our_pods() or []:
+                if (p or {}).get('name') == name:
+                    info = p
+                    break
+        if not info:
+            raise LiveWiringError('shadow rent returned no pod')
+        if callable(from_ps):
+            d = from_ps(info, gpu=g or gpu, price=row.get('price_per_hour'), rented_at=time.time())
+        else:
+            d = dict(info)
+            d.setdefault('gpu', g or gpu)
+            d.setdefault('price_h', row.get('price_per_hour'))
+            d.setdefault('name', name)
+        d['auto_backup_disabled'] = True
+        d['shadow'] = True
+        return d
+
+    return _rent
+
+
 def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
-    """PIT + PE share one global eval-node cap (review-2 blocker 4)."""
+    """Live PIT + PE share one global eval-node cap (review-2 blocker 4).
+
+    Shadow boxes use PREFIX_SHADOW and never enter this shared budget.
+    """
     eval_nodes = getattr(rent_mod, 'eval_nodes', None)
     our_pods = getattr(rent_mod, 'our_pods', None) or getattr(rent_mod, 'list_pods', None)
 
@@ -82,7 +144,12 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                     name = str(p)
                 if name in warm_names or name.startswith('affine-warm-'):
                     continue
-                if name.startswith('affine-pe-pit-') or name.startswith('affine-pit-'):
+                # Exclude both live PIT and any legacy/shadow PIT names.
+                if (
+                    name.startswith('affine-pe-pit-')
+                    or name.startswith('affine-pit-shadow-')
+                    or name.startswith('affine-pit-')
+                ):
                     continue
                 n += 1
             return n
@@ -91,6 +158,7 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
             return sum(
                 1 for p in rows
                 if str((p or {}).get('name') or '').startswith('affine-pe-')
+                and not str((p or {}).get('name') or '').startswith('affine-pe-pit-')
             )
         return 0
 
@@ -263,6 +331,14 @@ def build_live_host_bundle(
         root_signer = None
 
     ledger_path = extra.get('rent_ledger_path') or os.environ.get('PIT_RENT_LEDGER')
+    shadow = bool(cfg.is_shadow())
+
+    # Shadow: own prefix + own cap; never share the live PE 5-node budget.
+    # Live pe_rent asserts affine-pe-*, so shadow rents via a thin lium wrapper.
+    effective_host_rent = host_rent
+    if shadow:
+        effective_host_rent = _make_shadow_rent(rent_mod, host_rent)
+
     rent = RentService(
         max_boxes=cfg.max_boxes,
         max_eval_nodes=int(extra.get('max_eval_nodes') or cfg.max_boxes or 5),
@@ -270,13 +346,16 @@ def build_live_host_bundle(
         price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
         disable_auto_backup=bool(cfg.disable_lium_auto_backup),
         require_host=True,
-        host_rent=host_rent,
+        shadow=shadow,
+        name_prefix=PREFIX_SHADOW if shadow else PREFIX_LIVE,
+        share_pe_cap=not shadow,
+        host_rent=effective_host_rent,
         host_release=host_release,
         list_pods=list_pods,
         ledger_path=ledger_path,
     )
-    _bind_shared_cap_counters(rent, rent_mod)
-    from .pe_rent import _bind_offer_precheck
+    if not shadow:
+        _bind_shared_cap_counters(rent, rent_mod)
     _bind_offer_precheck(rent, rent_mod)
 
     def _pod_of(handle):

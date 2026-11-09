@@ -11,9 +11,13 @@ Live defaults (SPEC): max_boxes=5, B300 pinned (no GPU fallback), price ceiling
 $56/h, masters upload only on GREEN_FRESH, REDs earn nothing under the
 last-10-GREEN rule.
 """
-# Live pe_rent asserts name.startswith("affine-pe-"). PIT boxes use this
-# sub-prefix so they share the PE rental path without colliding with lanes.
+# Live pe_rent asserts name.startswith("affine-pe-"). Live PIT boxes use this
+# sub-prefix so they share the PE rental path + global eval-node cap.
 PREFIX = 'affine-pe-pit-'
+PREFIX_LIVE = PREFIX
+# Shadow boxes use a separate prefix and do NOT count against the live PE
+# 5-node cap (pe_common.our_pods only lists affine-pe-*).
+PREFIX_SHADOW = 'affine-pit-shadow-'
 MAX_BOXES_SHADOW = 2
 MAX_BOXES_LIVE = 5
 MAX_BOXES_DEFAULT = MAX_BOXES_SHADOW  # disabled/shadow default; live overrides to 5
@@ -50,7 +54,8 @@ from .state import ItemState, ItemRecord, TransitionError, apply_transition, ALL
 from .shadow import ShadowGuard, ShadowWriteError, FORBIDDEN_SHADOW_WRITES
 
 __all__ = [
-    'PREFIX', 'MAX_BOXES_DEFAULT', 'MAX_BOXES_SHADOW', 'MAX_BOXES_LIVE',
+    'PREFIX', 'PREFIX_LIVE', 'PREFIX_SHADOW',
+    'MAX_BOXES_DEFAULT', 'MAX_BOXES_SHADOW', 'MAX_BOXES_LIVE',
     'GPU_ORDER', 'GPU_PINNED', 'PRICE_CEILING_USD_H', 'TRAIN_OUTPUT_TOKENS',
     'GATE_MAX_TOKENS', 'GATE_K_CAND', 'GATE_HEAD_ROLLOUTS', 'GATE_N_DRAWN',
     'MAX_SEQS', 'MAX_ATTEMPTS', 'ADMISSION_VERSION', 'DECISION_LOG_VERSION',

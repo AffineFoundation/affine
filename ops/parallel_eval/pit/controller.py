@@ -18,6 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from . import PREFIX_LIVE, PREFIX_SHADOW
 from .apply_live import ApplyLiveError, LiveApplicator, PromoteRefused
 from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
 from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
@@ -99,11 +100,15 @@ class Controller:
         **kwargs: Any,
     ) -> 'Controller':
         cfg = load_pit_config(parallel_eval)
+        shadow = bool(cfg.is_shadow())
         rent = RentService(
             max_boxes=cfg.max_boxes,
             gpu_order=tuple(cfg.gpu_order),
             price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
             disable_auto_backup=bool(cfg.disable_lium_auto_backup),
+            shadow=shadow,
+            name_prefix=PREFIX_SHADOW if shadow else PREFIX_LIVE,
+            share_pe_cap=not shadow,
         )
         bind_host_rent_service(rent, module_path=cfg.pe_rent_module)
         lane = LaneService()

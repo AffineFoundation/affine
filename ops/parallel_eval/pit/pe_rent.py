@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set
 
-from . import GPU_PINNED, PREFIX, PRICE_CEILING_USD_H
+from . import (
+    GPU_PINNED,
+    PREFIX,
+    PREFIX_LIVE,
+    PREFIX_SHADOW,
+    PRICE_CEILING_USD_H,
+)
 
 
 NEVER_NAME_PREFIXES = (
@@ -43,8 +49,16 @@ class RentError(RuntimeError):
     pass
 
 
+def is_live_pit_name(name: str) -> bool:
+    return isinstance(name, str) and name.startswith(PREFIX_LIVE)
+
+
+def is_shadow_pit_name(name: str) -> bool:
+    return isinstance(name, str) and name.startswith(PREFIX_SHADOW)
+
+
 def is_pit_name(name: str) -> bool:
-    return isinstance(name, str) and name.startswith(PREFIX)
+    return is_live_pit_name(name) or is_shadow_pit_name(name)
 
 
 def is_never_name(name: str) -> bool:
@@ -55,11 +69,17 @@ def is_never_name(name: str) -> bool:
     return any(name.startswith(p) for p in NEVER_NAME_PREFIXES)
 
 
-def count_pit_boxes(listings: List[Mapping[str, Any]]) -> int:
+def count_pit_boxes(listings: List[Mapping[str, Any]], *, shadow: Optional[bool] = None) -> int:
     n = 0
     for row in listings:
         name = row.get('name') or row.get('pod_name') or ''
-        if is_pit_name(name):
+        if shadow is True:
+            if is_shadow_pit_name(name):
+                n += 1
+        elif shadow is False:
+            if is_live_pit_name(name):
+                n += 1
+        elif is_pit_name(name):
             n += 1
     return n
 
@@ -146,6 +166,10 @@ class RentService:
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
     disable_auto_backup: bool = True
     require_host: bool = False
+    # Shadow: own prefix + own cap; never shares the live PE 5-node budget.
+    shadow: bool = False
+    name_prefix: str = PREFIX_LIVE
+    share_pe_cap: bool = True
     ledger: RentalLedger = field(default_factory=RentalLedger)
     ledger_path: Optional[str] = None
     host_rent: Optional[Callable[..., Mapping[str, Any]]] = None
@@ -173,6 +197,9 @@ class RentService:
             return False
         if self.ledger.count() >= self.max_boxes:
             return False
+        # Shadow has its own cap (max_boxes); do not consume live PE budget.
+        if self.shadow or not self.share_pe_cap:
+            return True
         pe = 0 if self.pe_eval_count_fn is None else int(self.pe_eval_count_fn())
         warm = 0 if self.pe_warm_count_fn is None else int(self.pe_warm_count_fn())
         pit = self.ledger.count()
@@ -277,11 +304,13 @@ class RentService:
             raise RentError('item rentals are pinned to B300')
         if self.require_host and self.host_rent is None:
             raise RentError('live rent requires host pe_rent module')
-        name = '%s%d-a%d' % (PREFIX, int(epoch), int(attempt))
+        prefix = self.name_prefix or (PREFIX_SHADOW if self.shadow else PREFIX_LIVE)
+        name = '%s%d-a%d' % (prefix, int(epoch), int(attempt))
         if is_never_name(name):
             raise RentError('refused NEVER_NAME')
-        # Live pe_rent requires affine-pe-*; our PREFIX is affine-pe-pit-.
-        if self.require_host and not name.startswith('affine-pe-'):
+        # Live pe_rent requires affine-pe-*; live PIT uses affine-pe-pit-.
+        # Shadow uses affine-pit-shadow-* and a rent path that does not share PE cap.
+        if self.require_host and self.share_pe_cap and not name.startswith('affine-pe-'):
             raise RentError('live rent name must start with affine-pe-')
         at = float(self.now_fn())
         # Pre-check offer listing (price/GPU) before committing the rental.
@@ -291,13 +320,21 @@ class RentService:
             raise
         except Exception as exc:
             raise RentError('offer precheck failed: %s' % str(exc)[:200]) from exc
+        # Shadow does not pass max_eval_nodes into live pe_rent (own cap only).
+        rent_kw: Dict[str, Any] = dict(gpu=PIT_LIVE_GPU)
+        if self.share_pe_cap and not self.shadow:
+            rent_kw['max_eval_nodes'] = self.max_eval_nodes
         if self.host_rent is not None:
             try:
-                raw = self.host_rent(
-                    name, PIT_LIVE_TTL, gpu=PIT_LIVE_GPU, max_eval_nodes=self.max_eval_nodes,
-                )
+                raw = self.host_rent(name, PIT_LIVE_TTL, **rent_kw)
+            except TypeError:
+                # Some host seams use positional ttl only.
+                try:
+                    raw = self.host_rent(name, PIT_LIVE_TTL, gpu=PIT_LIVE_GPU, max_eval_nodes=self.max_eval_nodes)
+                except Exception as exc:
+                    raise RentError('host rent failed: %s' % str(exc)[:300]) from exc
             except AssertionError as exc:
-                # live pe_rent asserts name.startswith(PREFIX); surface as RentError.
+                # live pe_rent asserts name.startswith(affine-pe-); surface as RentError.
                 raise RentError('host rent refused name %r: %s' % (name, exc)) from exc
             except Exception as exc:
                 raise RentError('host rent failed: %s' % str(exc)[:300]) from exc

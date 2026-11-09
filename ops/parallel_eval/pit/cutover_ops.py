@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Tuple
 
 from . import PREFIX
+from .pe_rent import is_pit_name
 
 BANNED_BASELINE_KEYS = frozenset(('indices', 'raw_seed', 'secret_draw', 'presign'))
 CLAIM_GLOB = 'PIT-CLAIM-e*.json'
@@ -227,7 +228,7 @@ def release_affine_pit_boxes() -> Dict[str, Any]:
                     pods = json.loads(proc.stdout)
                     for row in pods:
                         name = row.get('name') or ''
-                        if not name.startswith(PREFIX):
+                        if not is_pit_name(name):
                             continue
                         bid = str(row.get('id') or name)
                         try:
