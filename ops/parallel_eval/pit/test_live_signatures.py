@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import types
@@ -274,9 +275,15 @@ class TestSharedCapWiring(unittest.TestCase):
 
         rent_mod = types.SimpleNamespace(
             eval_nodes=lambda: [
-                {'name': 'affine-pe-lane-1'},
-                {'name': 'affine-pe-lane-2'},
-                {'name': 'affine-warm-1'},
+                {'name': 'affine-pe-lane-1', 'id': 'lane-1'},
+                {'name': 'affine-pe-lane-2', 'id': 'lane-2'},
+                {'name': 'affine-warm-1', 'id': 'warm-1'},
+            ],
+            our_pods=lambda: [
+                {'name': 'affine-pe-lane-1', 'id': 'lane-1'},
+                {'name': 'affine-pe-lane-2', 'id': 'lane-2'},
+                {'name': 'affine-warm-1', 'id': 'warm-1'},
+                {'name': 'affine-warm-2', 'id': 'warm-2'},
             ],
         )
         rent = RentService(max_boxes=5, max_eval_nodes=4)
@@ -284,15 +291,93 @@ class TestSharedCapWiring(unittest.TestCase):
             warm = Path(td) / 'WARM.json'
             warm.write_text(json.dumps({
                 'pods': {
-                    'affine-warm-1': {'state': 'ready'},
-                    'affine-warm-2': {'state': 'claimed'},
+                    'affine-warm-1': {'state': 'ready', 'pod': {'id': 'warm-1'}},
+                    'affine-warm-2': {'state': 'claimed', 'pod': {'id': 'warm-2'}},
                 }
             }))
-            with mock.patch('ops.parallel_eval.pit.host_wiring._pe_state_root', return_value=Path(td)):
-                _bind_shared_cap_counters(rent, rent_mod)
-                self.assertEqual(rent.pe_eval_count_fn(), 2)  # excludes warm
-                self.assertEqual(rent.pe_warm_count_fn(), 2)
-                self.assertFalse(rent.can_rent(queued_bound_waiting=1))  # 2+0+2 >= 4
+            # Isolate from suite PE_FLAG leftovers (empty ⇒ not cutover).
+            with mock.patch.dict(os.environ, {'PE_FLAG': ''}):
+                with mock.patch('ops.parallel_eval.pit.host_wiring._pe_state_root', return_value=Path(td)):
+                    _bind_shared_cap_counters(rent, rent_mod)
+                    self.assertEqual(rent.pe_eval_count_fn(), 2)  # excludes warm
+                    self.assertEqual(rent.pe_warm_count_fn(), 2)
+                    self.assertFalse(rent.can_rent(queued_bound_waiting=1))  # 2+0+2 >= 4
+
+    def test_warm_off_stale_warm_json_does_not_block_rent(self):
+        """WARM.json ready rows whose pods vanished must not block under WARM-OFF."""
+        from ops.parallel_eval.pit.host_wiring import _bind_shared_cap_counters
+        from ops.parallel_eval.pit.pe_rent import RentService
+
+        rent_mod = types.SimpleNamespace(
+            eval_nodes=lambda: [],
+            our_pods=lambda: [],  # neither warm pod is live on Lium
+        )
+        rent = RentService(max_boxes=2, max_eval_nodes=2, share_pe_cap=True)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / 'WARM.json').write_text(json.dumps({
+                'pods': {
+                    'affine-pe-warm-a': {
+                        'state': 'ready', 'pod': {'id': 'gone-a'},
+                    },
+                    'affine-pe-warm-b': {
+                        'state': 'ready', 'pod': {'id': 'gone-b'},
+                    },
+                }
+            }))
+            (root / 'WARM-OFF').write_text('{}')
+            with mock.patch.dict(os.environ, {'PE_FLAG': ''}):
+                with mock.patch('ops.parallel_eval.pit.host_wiring._pe_state_root', return_value=root):
+                    _bind_shared_cap_counters(rent, rent_mod)
+                    self.assertEqual(rent.pe_warm_count_fn(), 0)
+                    self.assertEqual(rent.pe_eval_count_fn(), 0)
+                    self.assertTrue(rent.can_rent(queued_bound_waiting=1))
+
+    def test_cutover_live_affine_pe_warm_counts_once_as_eval(self):
+        """Cutover: warm counter zeroed; one live affine-pe-warm-* counts as eval → 1 PIT rent on cap 2."""
+        from ops.parallel_eval.pit.host_wiring import _bind_shared_cap_counters
+        from ops.parallel_eval.pit.pe_rent import RentService
+
+        rent_mod = types.SimpleNamespace(
+            eval_nodes=lambda: [
+                {'name': 'affine-pe-warm-1', 'id': 'warm-live-1'},
+            ],
+            our_pods=lambda: [
+                {'name': 'affine-pe-warm-1', 'id': 'warm-live-1'},
+            ],
+        )
+        rent = RentService(max_boxes=2, max_eval_nodes=2, share_pe_cap=True)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            flag = root / 'flag.json'
+            flag.write_text(json.dumps({
+                'parallel_eval': {
+                    'enabled': True,
+                    'pit': {'enabled': True, 'mode': 'live', 'cutover': True},
+                },
+            }))
+            (root / 'WARM.json').write_text(json.dumps({
+                'pods': {
+                    'affine-pe-warm-1': {
+                        'state': 'ready', 'pod': {'id': 'warm-live-1'},
+                    },
+                    'affine-pe-warm-stale': {
+                        'state': 'ready', 'pod': {'id': 'gone'},
+                    },
+                }
+            }))
+            with mock.patch.dict(os.environ, {'PE_FLAG': str(flag)}):
+                with mock.patch('ops.parallel_eval.pit.host_wiring._pe_state_root', return_value=root):
+                    _bind_shared_cap_counters(rent, rent_mod)
+                    self.assertEqual(rent.pe_warm_count_fn(), 0)
+                    self.assertEqual(rent.pe_eval_count_fn(), 1)
+                    self.assertTrue(rent.can_rent(queued_bound_waiting=1))
+                    # Simulate one PIT box already rented → pe(1)+pit(1)+warm(0) == cap 2.
+                    rent.ledger.register(
+                        'pit-1', item_id='i1', name='affine-pe-pit-x', at=0.0,
+                    )
+                    self.assertEqual(rent.ledger.count(), 1)
+                    self.assertFalse(rent.can_rent(queued_bound_waiting=1))
 
 
 if __name__ == '__main__':

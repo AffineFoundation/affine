@@ -63,6 +63,59 @@ def _pe_state_root() -> Path:
     )
 
 
+def _pit_live_cutover() -> bool:
+    """True when the PE flag has live PIT cutover enabled (warm pool suppressed)."""
+    flag = os.environ.get('PE_FLAG')
+    if not flag:
+        return False
+    try:
+        doc = json.loads(Path(flag).read_text())
+    except Exception:
+        return False
+    pe = (doc or {}).get('parallel_eval') or {}
+    pit = pe.get('pit') or {}
+    if pit.get('revert') is True:
+        return False
+    return (
+        pe.get('enabled') is True
+        and pit.get('enabled') is True
+        and pit.get('mode') == 'live'
+        and pit.get('cutover') is True
+    )
+
+
+def _warm_suppressed() -> bool:
+    """WARM-OFF file or live PIT cutover — do not invent warm capacity pressure."""
+    return (_pe_state_root() / 'WARM-OFF').exists() or _pit_live_cutover()
+
+
+def _live_pod_ids(rent_mod: Any) -> set[str]:
+    """Current Lium pod ids from pe_rent our_pods/list_pods/ps (empty if unavailable)."""
+    our_pods = (
+        getattr(rent_mod, 'our_pods', None)
+        or getattr(rent_mod, 'list_pods', None)
+        or getattr(rent_mod, 'ps', None)
+    )
+    if not callable(our_pods):
+        return set()
+    try:
+        rows = list(our_pods() or [])
+    except TypeError:
+        try:
+            rows = list(our_pods(None) or [])
+        except Exception:
+            return set()
+    except Exception:
+        return set()
+    ids: set[str] = set()
+    for p in rows:
+        if isinstance(p, Mapping):
+            pid = p.get('id')
+            if pid:
+                ids.add(str(pid))
+    return ids
+
+
 def _make_shadow_rent(rent_mod: Any, host_rent: Any) -> Callable[..., Mapping[str, Any]]:
     """Rent ``affine-pe-pit-shadow-*`` via live pe_rent (prefix satisfies affine-pe-*).
 
@@ -104,6 +157,7 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
             except TypeError:
                 nodes = list(eval_nodes(None))
             warm_names = _warm_pod_names()
+            suppress = _warm_suppressed()
             n = 0
             for p in nodes:
                 name = ''
@@ -111,7 +165,16 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                     name = str(p.get('name') or p.get('pod_name') or '')
                 else:
                     name = str(p)
-                if name in warm_names or name.startswith('affine-warm-'):
+                # Legacy warm prefix always excluded from the PE eval bucket.
+                if name.startswith('affine-warm-'):
+                    continue
+                # affine-pe-warm-*: normally counted via pe_warm_count_fn. Under
+                # WARM-OFF / cutover the warm counter is zeroed, so count a live
+                # one once here as an eval node (do not double-count via WARM.json).
+                if name.startswith('affine-pe-warm-'):
+                    if not suppress:
+                        continue
+                elif name in warm_names:
                     continue
                 # Exclude live + shadow PIT (and legacy shadow prefix).
                 if (
@@ -133,7 +196,7 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
         return 0
 
     def _pe_warm_count() -> int:
-        return len(_warm_active_pods())
+        return len(_warm_active_pods(live_ids=_live_pod_ids(rent_mod)))
 
     rent.pe_eval_count_fn = _pe_eval_count
     rent.pe_warm_count_fn = _pe_warm_count
@@ -149,7 +212,15 @@ def _warm_pod_names() -> set[str]:
     return set(pods.keys()) if isinstance(pods, Mapping) else set()
 
 
-def _warm_active_pods() -> list[str]:
+def _warm_active_pods(*, live_ids: Optional[set[str]] = None) -> list[str]:
+    """Active WARM.json pods that still exist on Lium.
+
+    Under WARM-OFF or live PIT cutover return [] so stale WARM.json rows cannot
+    block shared-cap rentals. Otherwise only count entries whose ``pod.id`` is
+    in the current live Lium id set.
+    """
+    if _warm_suppressed():
+        return []
     warm = _pe_state_root() / 'WARM.json'
     try:
         doc = json.loads(warm.read_text()) if warm.is_file() else {}
@@ -160,10 +231,19 @@ def _warm_active_pods() -> list[str]:
         'renting', 'booting', 'ready', 'prefetching', 'served', 'claimed',
     )
     out = []
-    if isinstance(pods, Mapping):
-        for name, entry in pods.items():
-            if isinstance(entry, Mapping) and entry.get('state') in active:
-                out.append(str(name))
+    if not isinstance(pods, Mapping):
+        return out
+    # No live listing → fail closed (do not invent warm pressure from stale JSON).
+    if live_ids is None:
+        return out
+    for name, entry in pods.items():
+        if not isinstance(entry, Mapping) or entry.get('state') not in active:
+            continue
+        pod = entry.get('pod') or {}
+        pid = pod.get('id') if isinstance(pod, Mapping) else None
+        if not pid or str(pid) not in live_ids:
+            continue
+        out.append(str(name))
     return out
 
 
