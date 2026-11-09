@@ -238,15 +238,36 @@ Lium runway ≥ 24 h; ROOT ceremony done; `verify_uploads` wired fail-closed.
 ```bash
 export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
 export PE_STATE=/path/to/parallel-cutover/state   # WARM-OFF + optional cutover.lock
+export LIFE_ROOT=/path/to/mimo-mainnet-v1          # lifecycle CURRENT / epochs
 export AFFINE_PIT_HOST_KEY_FILE=/secure/pit-host.key
 export AFFINE_PIT_HOST_CERT_FILE=/secure/pit-host.cert.json
 export AFFINE_PIT_ROOT_PUBKEY_HEX=<hex>
+# On-box train + GREEN R2 upload (never commit these host paths):
+export PIT_BUNDLE_JSON=/path/to/BUNDLE5090.json          # must include trainer {key,sha256,bytes}
+export PIT_FP32_MASTER_INDEX=/path/to/k1/fp32-master     # published M(H) index (head_set)
+export PIT_LIFE_CFG=/path/to/lifecycle.ACTIVE.private.json  # bucket for scoped put_object
+export PIT_V834E_RELEASE=/path/to/release-v834e-signed
+# Exact pe_controller PID only (no cmdline pattern kill):
+export PE_CONTROLLER_PIDFILE=/path/to/pe-controller.pid
+# PYTHONPATH must resolve `subnet` AND the release `ops/` — do not shadow ops/:
+export PYTHONPATH=/path/to/release:/path/to/subnet120-rewrite
 bash ops/parallel_eval/pit/scripts/cutover_enable.sh
-# copies $PE_FLAG -> $PE_FLAG.bak-pre-pit-<utc>; writes PE_STATE/WARM-OFF ({})
-# optional: PE_CONTROLLER_UNIT=pe-controller.service stops warm/dispatch without restart
+# Preflight: import subnet + ops.parallel_eval.pit; refuse mid-probe lanes;
+# copies $PE_FLAG -> $PE_FLAG.bak-pre-pit-<utc>; writes PE_STATE/WARM-OFF ({});
+# stops pe_controller by exact PIDFILE only.
 # then install scripts/affine-pit-host.service (fill REPLACE_ME) and:
 #   systemctl --user enable --now affine-pit-host
 ```
+
+**Required live env (host-local; never commit paths):**
+
+| Variable | Purpose |
+|----------|---------|
+| `PIT_BUNDLE_JSON` | train-cap-64k `BUNDLE5090.json` with `trainer` entry |
+| `PIT_FP32_MASTER_INDEX` | public `k1/fp32-master/<head>.json` (queue_ingest `head_set`) |
+| `PIT_LIFE_CFG` | lifecycle ACTIVE.private.json (`bucket`) for GREEN R2 PUT |
+| `PE_CONTROLLER_PIDFILE` | exact pe_controller PID (refuse cmdline pattern kill) |
+| `PYTHONPATH` | resolves `subnet` + release `ops/` (do not shadow `ops/`) |
 
 Equivalent flag:
 

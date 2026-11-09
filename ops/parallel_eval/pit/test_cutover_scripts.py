@@ -8,11 +8,14 @@ import unittest
 from pathlib import Path
 
 from .cutover_ops import (
+    MidProbeError,
     TrainerBusyError,
+    assert_no_mid_probe,
     backup_pre_pit,
     clear_pit_claims,
     enable_cutover_on_flag,
     find_latest_pre_pit_backup,
+    lane_mid_probe_check,
     revert_cutover_on_flag,
     trainer_idle_check,
     warm_off_path,
@@ -108,7 +111,12 @@ class TestCutoverOps(unittest.TestCase):
         enable = (SCRIPTS / 'cutover_enable.sh').read_text()
         self.assertIn('stop_pe_controller_process', enable)
         self.assertIn('PE_CONTROLLER_PIDFILE', enable)
-        self.assertIn('cmdline', enable)
+        self.assertIn('PIT_LIFE_CFG', enable)
+        self.assertIn('import subnet', enable)
+        self.assertIn('mid-probe-check', enable)
+        # SAFETY: no cmdline pattern kill fallback.
+        self.assertNotIn('via cmdline match', enable)
+        self.assertNotIn('ps -eo pid=,args=', enable)
         revert = (SCRIPTS / 'cutover_revert.sh').read_text()
         self.assertIn('start_pe_controller_process', revert)
         self.assertIn('PE_CONTROLLER_START_CMD', revert)
@@ -118,6 +126,20 @@ class TestCutoverOps(unittest.TestCase):
             text=True,
         )
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
+
+    def test_mid_probe_check_refuses_busy_lane(self):
+        with tempfile.TemporaryDirectory() as td:
+            pe = Path(td)
+            jd = pe / 'jobs' / 'live-e99'
+            jd.mkdir(parents=True)
+            (jd / 'STATUS.json').write_text(json.dumps({'status': 'probing'}))
+            busy = lane_mid_probe_check(pe)
+            self.assertTrue(busy)
+            with self.assertRaises(MidProbeError):
+                assert_no_mid_probe(pe)
+            (jd / 'STATUS.json').write_text(json.dumps({'status': 'scored'}))
+            self.assertEqual(lane_mid_probe_check(pe), [])
+            assert_no_mid_probe(pe)
 
 
 class TestCutoverRestore(unittest.TestCase):

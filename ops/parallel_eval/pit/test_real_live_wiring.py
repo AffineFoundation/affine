@@ -43,8 +43,17 @@ def _sha(path: Path) -> str:
 
 class TestRealLiveWiring(unittest.TestCase):
     def setUp(self):
+        # SAFETY: never run the destructive fake-ssh harness as root or outside
+        # a tempdir sandbox (a prior rewrite bug wiped host /workspace).
+        if os.geteuid() == 0:
+            self.skipTest('refuse real-live-wiring fake-ssh as uid 0 (host wipe risk)')
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # Require the sandbox root to live under /tmp (or the process temp dir).
+        root_resolved = self.root.resolve()
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+        if not str(root_resolved).startswith(str(tmp_root) + os.sep):
+            self.skipTest('sandbox root %s not under %s' % (root_resolved, tmp_root))
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.state = self.root / 'pe-state'
@@ -329,36 +338,84 @@ class TestRealLiveWiring(unittest.TestCase):
                 cmd = " ".join(args[i:])
                 open(CMDS, "a").write("ssh-cmd " + cmd[:500] + "\\n")
 
-                def bpath(p):
-                    for src, dst in (
-                        ("/root/", BOXFS + "/root/"),
-                        ("/opt/plain/", BOXFS + "/opt/plain/"),
-                        ("/workspace/", BOXFS + "/workspace/"),
-                        ("/tmp/", BOXFS + "/tmp/"),
-                    ):
-                        if p.startswith(src):
+                import re as _re
+
+                # Path-boundary remap: /workspace (no trailing slash) must rewrite
+                # — pe_lane.boot runs `rm -rf /workspace` which previously hit the
+                # REAL host /workspace and wiped a shared machine.
+                _PREFIXES = (
+                    ("/opt/plain", BOXFS + "/opt/plain"),
+                    ("/workspace", BOXFS + "/workspace"),
+                    ("/root", BOXFS + "/root"),
+                    ("/tmp", BOXFS + "/tmp"),
+                    ("/opt", BOXFS + "/opt"),
+                )
+
+                def map_abs(p):
+                    for src, dst in _PREFIXES:
+                        if p == src or p.startswith(src + "/"):
                             return dst + p[len(src):]
-                    return os.path.join(BOXFS, p.lstrip("/"))
+                    if p.startswith("/"):
+                        return os.path.join(BOXFS, p.lstrip("/"))
+                    return p
 
                 def rewrite(s):
-                    # Insert a placeholder first so BOXFS (which lives under /tmp)
-                    # is not partially re-matched by the /tmp/ rule.
+                    # Protect already-BOXFS paths, then remap each absolute path
+                    # token once by longest host-root prefix. Critical:
+                    # `/workspace` (no trailing slash) must remap —
+                    # pe_lane.boot runs `rm -rf /workspace`.
                     mark = "@@BOXFS@@"
                     s = s.replace(BOXFS, mark)
-                    for src, suffix in (
-                        ("/root/", "/root/"),
-                        ("/opt/plain/", "/opt/plain/"),
-                        ("/workspace/", "/workspace/"),
-                        ("/tmp/", "/tmp/"),
-                    ):
-                        s = s.replace(src, mark + suffix)
+                    pairs = (
+                        ("/opt/plain", "/opt/plain"),
+                        ("/workspace", "/workspace"),
+                        ("/root", "/root"),
+                        ("/tmp", "/tmp"),
+                        ("/opt", "/opt"),
+                    )
+                    def repl(m):
+                        p = m.group(0)
+                        for src, suffix in pairs:
+                            if p == src or p.startswith(src + "/"):
+                                return mark + suffix + p[len(src):]
+                        return p
+                    # Whole absolute path tokens only (no rematch of suffixes).
+                    s = _re.sub(
+                        r'/(?:[A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)*)?',
+                        repl,
+                        s,
+                    )
                     return s.replace(mark, BOXFS)
+
+                def refuse_if_unsafe(original, rewritten):
+                    # After rewrite, destructive host-root targets must resolve
+                    # under BOXFS. Ignore /usr/bin etc.; ignore BOXFS paths that
+                    # merely end in "/workspace" (substring false positive).
+                    destr = ("rm -rf", "rm -fr", "rm -r ", "rmdir ", "mkfs")
+                    if not any(tok in original for tok in destr):
+                        return
+                    host_roots = ("/workspace", "/root", "/opt/plain", "/opt")
+                    for tok in _re.findall(r'/[A-Za-z0-9_./+-]*', rewritten):
+                        t = tok.rstrip("/") if len(tok) > 1 else tok
+                        if t == BOXFS or t.startswith(BOXFS + "/"):
+                            continue
+                        if any(t == h or t.startswith(h + "/") for h in host_roots):
+                            print(
+                                "REFUSE unsafe host path after rewrite:",
+                                t,
+                                file=sys.stderr,
+                            )
+                            open(CMDS, "a").write(
+                                "REFUSE-UNSAFE " + original[:300] + "\\n"
+                            )
+                            sys.exit(99)
 
                 for d in ("root", "opt/plain/tbx", "opt/plain/workspace", "opt/plain/probe/affine-env-probe/ckpt",
                           "workspace/pst", "workspace/affine-mimo-trainer-prod/fp32-master", "tmp"):
                     os.makedirs(os.path.join(BOXFS, d), exist_ok=True)
 
                 data = sys.stdin.buffer.read() if not sys.stdin.isatty() else b""
+                refuse_if_unsafe(cmd, rewrite(cmd))
 
                 # --- Intercept: bundle_fetch trainer → plant golden tree ---
                 if "bundle_fetch.py" in cmd and "trainer" in cmd:
@@ -506,12 +563,13 @@ class TestRealLiveWiring(unittest.TestCase):
                 src, dst = args[0], args[1]
                 def map_remote(r):
                     for a, b in (
-                        ("/root/", BOXFS + "/root/"),
-                        ("/opt/plain/", BOXFS + "/opt/plain/"),
-                        ("/workspace/", BOXFS + "/workspace/"),
-                        ("/tmp/", BOXFS + "/tmp/"),
+                        ("/opt/plain", BOXFS + "/opt/plain"),
+                        ("/workspace", BOXFS + "/workspace"),
+                        ("/root", BOXFS + "/root"),
+                        ("/tmp", BOXFS + "/tmp"),
+                        ("/opt", BOXFS + "/opt"),
                     ):
-                        if r.startswith(a):
+                        if r == a or r.startswith(a + "/"):
                             return b + r[len(a):]
                     if not r.startswith("/"):
                         return os.path.join(BOXFS, r)

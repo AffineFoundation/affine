@@ -22,6 +22,16 @@ class TrainerBusyError(RuntimeError):
     """TRAINING-JOB exists without TRAINING-RESULT at latest epoch."""
 
 
+class MidProbeError(RuntimeError):
+    """A live pe_controller lane is mid-probe / mid-serve — refuse cutover stop."""
+
+
+# STATUS.json phases that mean a lane still holds a box / is mid-eval.
+_MID_PROBE_STATUSES = frozenset({
+    'renting', 'booting', 'fetching', 'serving', 'probing', 'starting', 'warm-wait',
+})
+
+
 def cutover_lock_path(pe_flag: Path, pe_state: Optional[Path] = None) -> Path:
     if pe_state is not None:
         return pe_state / 'cutover.lock'
@@ -127,6 +137,43 @@ def trainer_idle_check(life_root: Path) -> Optional[int]:
     if job.exists() and not res.exists():
         raise TrainerBusyError('trainer mid-turn at e%s (JOB without RESULT)' % latest.name)
     return int(latest.name)
+
+
+def lane_mid_probe_check(pe_state: Path) -> List[str]:
+    """Return list of mid-probe job descriptions; empty when safe to stop pe_controller.
+
+    Inspects ``PE_STATE/jobs/*/STATUS.json`` (and CTL.json state=running). Raises
+    nothing — callers decide wait vs abort from the returned list.
+    """
+    busy: List[str] = []
+    jobs = pe_state / 'jobs'
+    if not jobs.is_dir():
+        return busy
+    for jd in sorted(jobs.iterdir()):
+        if not jd.is_dir():
+            continue
+        st = {}
+        try:
+            st = json.loads((jd / 'STATUS.json').read_text())
+        except Exception:
+            st = {}
+        status = str(st.get('status') or st.get('state') or '').lower()
+        if status in _MID_PROBE_STATUSES:
+            busy.append('%s status=%s' % (jd.name, status))
+            continue
+        try:
+            ctl = json.loads((jd / 'CTL.json').read_text())
+        except Exception:
+            ctl = {}
+        if str(ctl.get('state') or '').lower() == 'running':
+            busy.append('%s ctl=running' % jd.name)
+    return busy
+
+
+def assert_no_mid_probe(pe_state: Path) -> None:
+    busy = lane_mid_probe_check(pe_state)
+    if busy:
+        raise MidProbeError('live lane mid-probe; refuse stopping pe_controller: %s' % '; '.join(busy[:8]))
 
 
 def warm_off_path(pe_state: Path) -> Path:
@@ -311,6 +358,15 @@ def _cli() -> int:
         else:
             print('trainer idle at e%s' % ep, flush=True)
         return 0
+    if cmd == 'mid-probe-check':
+        pe_state = Path(os.environ.get('PE_STATE') or '/tmp/no-pe-state')
+        try:
+            assert_no_mid_probe(pe_state)
+        except MidProbeError as ex:
+            print(ex, flush=True)
+            return 3
+        print('no mid-probe lanes under %s/jobs' % pe_state, flush=True)
+        return 0
     if cmd == 'backup-flag' and pe_flag:
         bak = backup_pre_pit(pe_flag)
         print(str(bak))
@@ -342,7 +398,11 @@ def _cli() -> int:
         for w in out.get('warnings') or []:
             print('warning:', w, file=sys.stderr)
         return 0
-    print('usage: cutover_ops.py trainer-idle|backup-flag|enable-patch|revert-patch|clear-claims|release-pit-boxes', file=sys.stderr)
+    print(
+        'usage: cutover_ops.py trainer-idle|mid-probe-check|backup-flag|enable-patch|'
+        'revert-patch|clear-claims|release-pit-boxes',
+        file=sys.stderr,
+    )
     return 2
 
 

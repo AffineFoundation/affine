@@ -258,14 +258,78 @@ def _head_chain_tip() -> tuple[Optional[str], int]:
     return None, 0
 
 
+def _fp32_master_index_dir() -> Optional[Path]:
+    """Published k1/fp32-master index dir (same source pe_box verifies on the box)."""
+    for key in ('PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX'):
+        v = os.environ.get(key)
+        if v:
+            return Path(v)
+    return None
+
+
+def _published_master_manifest(head: str) -> Optional[Mapping[str, Any]]:
+    idx = _fp32_master_index_dir()
+    if idx is None:
+        return None
+    path = idx / ('%s.json' % head)
+    doc = _rj(path)
+    return doc if isinstance(doc, Mapping) else None
+
+
 def _master_for_head(head: str) -> Optional[str]:
+    """Resolve M(H): PE_STATE/MASTER-INDEX.json, then PIT_FP32_MASTER_INDEX/<head>.json.
+
+    Prod does not write MASTER-INDEX.json — the published website index is the
+    durable source (same file pe_box verifies on the box). Fail closed (return
+    None + loud alert) when neither source has a digest.
+    """
     st = _pe_state_root()
     index = _rj(st / 'MASTER-INDEX.json', {}) or {}
     if isinstance(index, Mapping):
         dig = index.get(head)
         if isinstance(dig, str) and len(dig) == 64:
             return dig
-    return lookup_expected_master(head, index=index if isinstance(index, Mapping) else None)
+
+    pub = _published_master_manifest(head)
+    if isinstance(pub, Mapping):
+        dig = pub.get('master_digest') or pub.get('digest')
+        if isinstance(dig, str) and len(dig) == 64:
+            return dig
+
+    dig = lookup_expected_master(
+        head,
+        public_manifest=pub if isinstance(pub, Mapping) else None,
+        index=index if isinstance(index, Mapping) else None,
+        alert=lambda kind, detail: print(
+            json.dumps({
+                'component': 'pit-queue-ingest',
+                'level': 'error',
+                'event': kind,
+                'detail': dict(detail),
+            }),
+            file=sys.stderr,
+            flush=True,
+        ),
+    )
+    if dig:
+        return dig
+
+    print(
+        json.dumps({
+            'component': 'pit-queue-ingest',
+            'level': 'error',
+            'event': 'master_unpublished',
+            'head': head[:16],
+            'note': (
+                'neither PE_STATE/MASTER-INDEX.json nor PIT_FP32_MASTER_INDEX/<head>.json '
+                'has M(H); pause dequeue/bind until the master is published (fail closed)'
+            ),
+            'pit_fp32_master_index': str(_fp32_master_index_dir() or ''),
+        }),
+        file=sys.stderr,
+        flush=True,
+    )
+    return None
 
 
 def _inbox_batches(*, floor: int) -> List[Dict[str, Any]]:
@@ -469,6 +533,8 @@ def _sync_inner(
 
     head, head_epoch = _head_chain_tip()
     head_set = False
+    master_missing = False
+    master = None
     if head:
         master = _master_for_head(head)
         if master:
@@ -476,12 +542,31 @@ def _sync_inner(
             round_id = str(cur.get('round_id') or controller.current_round_id)
             controller.set_head(head, epoch=head_epoch, master_digest=master, round_id=round_id)
             head_set = True
+        else:
+            master_missing = True
+            print(
+                json.dumps({
+                    'component': 'pit-queue-ingest',
+                    'level': 'warning',
+                    'event': 'head_set_paused_waiting_master',
+                    'head': head[:16],
+                    'head_epoch': head_epoch,
+                    'note': (
+                        'head known but M(H) unpublished — pause bind/rent until '
+                        'PIT_FP32_MASTER_INDEX/<head>.json (or MASTER-INDEX) appears'
+                    ),
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
 
     out = dict(
         enqueued=enqueued,
         head=head,
         head_epoch=head_epoch,
         head_set=head_set,
+        master=master,
+        master_missing=master_missing,
         current_epoch_floor=floor,
         skipped_backlog=skipped_backlog,
         sources=['inbox', 'k1', 'pending'],

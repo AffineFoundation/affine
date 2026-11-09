@@ -33,10 +33,17 @@ class TestQueueIngest(unittest.TestCase):
         self.pending.mkdir(parents=True)
         self.pe_state.mkdir(parents=True)
         (self.pe_state / 'pit').mkdir()
+        # Hermetic: every path from tempdir — never $HOME / /home/const defaults.
+        self.k1_turns = self.td / 'K1-TURNS.jsonl'
+        self.k1_turns.write_text('')
+        self.fp32_idx = self.td / 'fp32-master'
+        self.fp32_idx.mkdir()
         os.environ['PE_STATE'] = str(self.pe_state)
         os.environ['PE_LIFE_STATE'] = str(self.life)
         os.environ['PE_LIFE'] = str(self.life)
         os.environ['PIT_STATE'] = str(self.pe_state / 'pit')
+        os.environ['K1_TURNS'] = str(self.k1_turns)
+        os.environ['PIT_FP32_MASTER_INDEX'] = str(self.fp32_idx)
         (self.pe_state / 'HEAD-CHAIN.json').write_text(json.dumps({
             'genesis': HEAD,
             'applied': [],
@@ -54,7 +61,10 @@ class TestQueueIngest(unittest.TestCase):
         (self.pe_state / 'MASTER-INDEX.json').write_text(json.dumps({HEAD: MASTER}))
 
     def tearDown(self):
-        for k in ('PE_STATE', 'PE_LIFE_STATE', 'PE_LIFE', 'PIT_STATE', 'K1_TURNS'):
+        for k in (
+            'PE_STATE', 'PE_LIFE_STATE', 'PE_LIFE', 'PIT_STATE', 'K1_TURNS',
+            'PIT_FP32_MASTER_INDEX', 'AFFINE_FP32_MASTER_INDEX',
+        ):
             os.environ.pop(k, None)
 
     def _ctl(self):
@@ -219,6 +229,33 @@ class TestQueueIngest(unittest.TestCase):
     def test_write_ingest_alert_direct(self):
         path = write_ingest_alert(RuntimeError('direct'), root=self.pe_state / 'pit')
         self.assertTrue(path.is_file())
+
+    def test_master_from_pit_fp32_index_without_master_index_json(self):
+        """Prod has no MASTER-INDEX.json — fall back to PIT_FP32_MASTER_INDEX/<head>.json."""
+        (self.pe_state / 'MASTER-INDEX.json').unlink()
+        # Published website index shape (same source pe_box verifies on the box).
+        (self.fp32_idx / (HEAD + '.json')).write_text(json.dumps({
+            'bf16_sha256': 'd' * 64,
+            'master_digest': MASTER,
+        }))
+        self._write_epoch(1050)
+        ctl = self._ctl()
+        out = sync(ctl, store=DurableStore(root=self.pe_state / 'pit'))
+        self.assertTrue(out['head_set'], msg=out)
+        self.assertEqual(out.get('master'), MASTER)
+        self.assertEqual(ctl.current_head, HEAD)
+        self.assertEqual(ctl.current_master_digest, MASTER)
+        self.assertFalse(out.get('master_missing'))
+
+    def test_master_missing_fail_closed_head_set_false(self):
+        (self.pe_state / 'MASTER-INDEX.json').unlink()
+        # No PIT_FP32_MASTER_INDEX entry either.
+        self._write_epoch(1050)
+        ctl = self._ctl()
+        out = sync(ctl, store=DurableStore(root=self.pe_state / 'pit'))
+        self.assertFalse(out['head_set'])
+        self.assertTrue(out.get('master_missing'))
+        self.assertIsNone(ctl.current_head)
 
 
 if __name__ == '__main__':

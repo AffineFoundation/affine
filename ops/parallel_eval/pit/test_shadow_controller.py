@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
+"""Shadow controller — hermetic (no /home/const / $HOME path defaults)."""
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from .box import ScriptedBoxIO
 from .config import PitConfig
@@ -14,6 +19,46 @@ H0, M0 = 'a' * 64, 'b' * 64
 
 
 class TestShadowController(unittest.TestCase):
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.pe = self.td / 'pe'
+        self.life = self.td / 'life'
+        self.pe.mkdir()
+        self.life.mkdir()
+        (self.life / 'epochs').mkdir()
+        (self.pe / 'pit').mkdir()
+        # Isolate every host path — training_job_checkpoint / queue_ingest must
+        # never read real /home/const epochs (e.g. epoch 10).
+        self._env = {
+            'PE_STATE': str(self.pe),
+            'PE_LIFE': str(self.life),
+            'PE_LIFE_STATE': str(self.life),
+            'PIT_STATE': str(self.pe / 'pit'),
+            'K1_TURNS': str(self.td / 'K1-TURNS.jsonl'),
+            'PIT_FP32_MASTER_INDEX': str(self.td / 'fp32'),
+        }
+        (self.td / 'K1-TURNS.jsonl').write_text('')
+        (self.td / 'fp32').mkdir()
+        self._prev = {k: os.environ.get(k) for k in self._env}
+        os.environ.update(self._env)
+        # Matching TRAINING-JOB so stale-head check does not skip rent.
+        for ep in (10, 11):
+            ed = self.life / 'epochs' / str(ep)
+            ed.mkdir(parents=True, exist_ok=True)
+            (ed / 'TRAINING-JOB.json').write_text(json.dumps({
+                'payload': {'manifest': {'payload': {'checkpoint': {'id': H0}}}},
+            }))
+            (ed / 'TRAIN-DISPATCH-FF.json').write_text(json.dumps({
+                'signature': 's', 'signer': 'ROOT', 'payload': {},
+            }))
+
+    def tearDown(self):
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
     def test_guard_refuses_live_artifacts(self):
         g = ShadowGuard(PitConfig(enabled=True, mode='shadow'))
         for name in ('DECISION.json', 'HEAD-CHAIN.json', 'CURRENT.json', 'WEIGHTS.json'):
