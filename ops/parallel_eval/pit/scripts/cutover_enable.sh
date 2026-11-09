@@ -4,10 +4,14 @@
 # Never embeds key material. Operator supplies PE_FLAG + delegated host certs.
 set -euo pipefail
 
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
+export PYTHONPATH="${PYTHONPATH:-}:${REPO_ROOT}"
+
 PE_FLAG="${PE_FLAG:-}"
 PE_STATE="${PE_STATE:-}"
 PIT_STATE="${PIT_STATE:-${PE_STATE:+$PE_STATE/pit}}"
 LIFE_ROOT="${LIFE_ROOT:-/home/const/subnet120-rewrite/state/mimo-mainnet-v1}"
+PE_CONTROLLER_UNIT="${PE_CONTROLLER_UNIT:-}"
 
 die() { echo "cutover_enable: $*" >&2; exit 2; }
 
@@ -16,49 +20,60 @@ die() { echo "cutover_enable: $*" >&2; exit 2; }
 [[ -n "${AFFINE_PIT_HOST_CERT_FILE:-}" && -f "${AFFINE_PIT_HOST_CERT_FILE}" ]] || die "AFFINE_PIT_HOST_CERT_FILE required"
 [[ -n "${AFFINE_PIT_ROOT_PUBKEY_HEX:-}" ]] || die "AFFINE_PIT_ROOT_PUBKEY_HEX required"
 
-# Refuse mid-turn trainer.
-python3 - <<'PY' "$LIFE_ROOT"
-import json, sys
+if [[ -z "$PE_STATE" ]]; then
+  PE_STATE="$(dirname "$PE_FLAG")/state"
+fi
+
+LOCK="${CUT_OVER_LOCK:-}"
+if [[ -z "$LOCK" ]]; then
+  if [[ -n "$PE_STATE" ]]; then
+    LOCK="$PE_STATE/cutover.lock"
+  else
+    LOCK="${PE_FLAG}.lock"
+  fi
+fi
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+if ! flock -x 9; then
+  die "could not acquire cutover lock $LOCK"
+fi
+
+# TOCTOU: re-check trainer idle after lock.
+export LIFE_ROOT
+set +e
+out="$(python3 -m ops.parallel_eval.pit.cutover_ops trainer-idle 2>&1)"
+rc=$?
+set -e
+echo "$out"
+if [[ "$rc" -eq 3 ]]; then
+  echo "cutover_enable: REFUSED — $out" >&2
+  exit 3
+fi
+[[ "$rc" -eq 0 ]] || die "trainer-idle check failed (rc=$rc)"
+
+BAK="$(python3 -m ops.parallel_eval.pit.cutover_ops backup-flag)"
+echo "cutover_enable: backed up flag -> $BAK"
+
+export PE_FLAG
+python3 -m ops.parallel_eval.pit.cutover_ops enable-patch
+
+mkdir -p "$PE_STATE"
+python3 - <<'PY' "$PE_STATE"
+import sys
 from pathlib import Path
-root = Path(sys.argv[1]) / "epochs"
-latest = None
-for p in sorted(root.glob("*"), key=lambda x: int(x.name) if x.name.isdigit() else -1):
-    if p.name.isdigit():
-        latest = p
-if latest is None:
-    print("cutover_enable: no lifecycle epochs found; continuing", flush=True)
-    raise SystemExit(0)
-job = latest / "TRAINING-JOB.json"
-res = latest / "TRAINING-RESULT.json"
-if job.exists() and not res.exists():
-    print("cutover_enable: REFUSED — trainer mid-turn at e%s (JOB without RESULT)" % latest.name, flush=True)
-    raise SystemExit(3)
-print("cutover_enable: trainer idle at e%s" % latest.name, flush=True)
+from ops.parallel_eval.pit import cutover_ops
+cutover_ops.write_warm_off(Path(sys.argv[1]))
+print("cutover_enable: wrote WARM-OFF under", sys.argv[1])
 PY
 
-python3 - <<'PY' "$PE_FLAG"
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-doc = json.loads(p.read_text())
-pe = doc.setdefault("parallel_eval", {})
-pe["enabled"] = True
-pit = pe.setdefault("pit", {})
-pit.update({
-    "enabled": True,
-    "mode": "live",
-    "cutover": True,
-    "revert": False,
-    "max_boxes": int(pit.get("max_boxes") or 5),
-    "master_upload": "after_green",
-    "root_mode": "delegated_host",
-})
-tmp = p.with_suffix(p.suffix + ".tmp")
-tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
-tmp.replace(p)
-print("cutover_enable: wrote pit live cutover into", p)
-PY
+if [[ -n "$PE_CONTROLLER_UNIT" ]] && command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop "$PE_CONTROLLER_UNIT" 2>/dev/null || true
+  echo "cutover_enable: stopped $PE_CONTROLLER_UNIT (best-effort)"
+elif [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/pe-controller.service" ]]; then
+  systemctl --user stop pe-controller.service 2>/dev/null || true
+  echo "cutover_enable: stopped pe-controller.service (best-effort)"
+fi
 
-mkdir -p "${PIT_STATE:-/tmp/pit-state}"
-echo "cutover_enable: start affine-pit-host (systemd --user) after this script"
+echo "cutover_enable: next step -> systemctl --user start affine-pit-host"
+echo "cutover_enable: install unit template ops/parallel_eval/pit/scripts/affine-pit-host.service (placeholders)"
 echo "cutover_enable: one-command revert -> ops/parallel_eval/pit/scripts/cutover_revert.sh"

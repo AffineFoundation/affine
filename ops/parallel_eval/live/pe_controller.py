@@ -27,6 +27,17 @@ POD_CHECK_S = 60
 TERMINAL = ("scored", "decided", "gave-up", "cancelled")
 
 
+def _pit_live_cutover():
+    pit = pe_cfg().get("pit") or {}
+    if pit.get("revert") is True:
+        return False
+    return pit.get("enabled") is True and pit.get("mode") == "live" and pit.get("cutover") is True
+
+
+def _legacy_pe_dispatch_off():
+    return (ST / "WARM-OFF").exists() or _pit_live_cutover()
+
+
 def pid_alive(pid):
     try:
         pid = int(pid)
@@ -264,18 +275,20 @@ def main():
     while True:
         if (ST / "KILL").exists() or (ST / "STOP").exists():
             ev(event="controller_stop"); break
-        if mode() == "live":
+        if mode() == "live" and not _legacy_pe_dispatch_off():
             try:
                 import pe_live
                 S["live"] = pe_live.tick(submit_live)
             except Exception as ex:
                 ev(event="pe_live_tick_error", err=str(ex)[:300]); traceback.print_exc()
+        elif _legacy_pe_dispatch_off():
+            S["live"] = dict(skipped="warm-off-or-pit-cutover")
         for jid in active_jobs():
             try:
                 tick_job(jid)
             except Exception as ex:
                 ev(event="tick_job_error", job=jid, err=str(ex)[:300]); traceback.print_exc()
-        if mode() == "live" and not (ST / "WARM-OFF").exists():
+        if mode() == "live" and not _legacy_pe_dispatch_off():
             try:   # throughput-v4 warm pool + checkpoint prefetch (state/WARM-OFF disables without restart)
                 import pe_warm
                 S["warm"] = pe_warm.tick()

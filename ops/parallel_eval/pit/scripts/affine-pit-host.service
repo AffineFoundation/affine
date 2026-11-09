@@ -1,0 +1,14 @@
+[Unit]
+Description=SN120 PIT live host
+
+[Service]
+Type=simple
+Environment=PE_FLAG=%h/REPLACE_ME/PROMOTION-GATE.json
+Environment=AFFINE_PIT_HOST_KEY_FILE=%h/REPLACE_ME/pit-host.key
+Environment=AFFINE_PIT_HOST_CERT_FILE=%h/REPLACE_ME/pit-host.cert.json
+Environment=AFFINE_PIT_ROOT_PUBKEY_HEX=REPLACE_ME
+ExecStart=%h/subnet120-rewrite/.venv/bin/python -m ops.parallel_eval.pit.run_host --flag ${PE_FLAG}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

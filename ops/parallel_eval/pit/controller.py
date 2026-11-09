@@ -15,9 +15,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from .apply_live import LiveApplicator, PromoteRefused
+from .apply_live import ApplyLiveError, LiveApplicator, PromoteRefused
 from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
-from .box import BoxIO, BoxRunner, Fp32MasterError, ScriptedBoxIO
+from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .cutover import plan_cutover
 from .decisions import DecisionLog
@@ -69,6 +69,7 @@ class Controller:
     root_signer: Optional[RootSigner] = None
     on_green_fresh: Optional[Callable[[ItemRecord], Any]] = None  # bench/prior/baseline hooks
     destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
+    plan_seed_fn: Optional[Callable[[int], str]] = None
 
     def __post_init__(self) -> None:
         self.shadow = self.shadow or ShadowGuard(self.config)
@@ -99,11 +100,22 @@ class Controller:
         bind_host_rent_service(rent, module_path=cfg.pe_rent_module)
         lane = LaneService()
         bind_host_lane_service(lane, module_path=cfg.pe_lane_module)
+        if cfg.is_live():
+            rent.require_host = True
+            lane.require_host = True
+            if rent.host_rent is None:
+                raise ValueError('live mode requires host pe_rent (bind failed)')
+            if box_io_factory is None:
+                raise ValueError('live mode requires explicit box_io_factory (refuse ScriptedBoxIO default)')
+            if box_io_factory is ScriptedBoxIO:
+                raise ValueError('live mode refuses ScriptedBoxIO')
+        else:
+            box_io_factory = box_io_factory or ScriptedBoxIO
         return cls(
             config=cfg,
             rent=rent,
             lane=lane,
-            box_io_factory=box_io_factory or ScriptedBoxIO,
+            box_io_factory=box_io_factory,
             **kwargs,
         )
 
@@ -189,7 +201,8 @@ class Controller:
                 head=self.current_head,
                 head_epoch=self.current_head_epoch,
                 round_id=self.current_round_id,
-                round_seed_commitment=self.round_seed_commitment,
+                round_seed_commitment=self.round_seed_commitment if self.plan_seed_fn is None else None,
+                plan_seed_fn=self.plan_seed_fn,
                 master_digest=self.current_master_digest,
                 dequeued_at_mono=self.now_fn(),
             )
@@ -215,7 +228,10 @@ class Controller:
                 failed = self._fail_and_release(item, 'promote-refused:%s' % str(exc)[:200])
                 self._replace(failed)
                 actions.append({'op': 'no_decision', 'item_id': item.item_id, 'error': str(exc)[:200]})
-            except (Fp32MasterError, RentError, ShadowWriteError, TransitionError, ValueError, RuntimeError) as exc:
+            except (
+                ApplyLiveError, Fp32MasterError, RentError, ShadowWriteError,
+                TransitionError, TypeError, ValueError, RuntimeError,
+            ) as exc:
                 failed = self._fail_and_release(item, str(exc)[:300])
                 self._replace(failed)
                 actions.append({'op': 'fail', 'item_id': item.item_id, 'error': str(exc)[:200], 'rentals': self.rented_count()})
@@ -315,11 +331,16 @@ class Controller:
         )
         meta = dict(updated.meta)
         meta['probe_bundle'] = {
+            'item_id': bundle.item_id,
             'candidate_id': bundle.candidate_id,
-            'admission_digest': env.digest(),
+            'bound_head': bundle.bound_head,
+            'bound_master_digest': bundle.bound_master_digest,
+            'probe_result': dict(bundle.probe_result),
+            'master_upload': dict(bundle.master_upload),
+            'train_receipt': dict(bundle.train_receipt),
             'box_public_key_hex': bundle.box_public_key_hex,
+            'admission_digest': env.digest(),
         }
-        meta['_bundle'] = bundle
         meta['candidate_path'] = (bundle.train_receipt or {}).get('candidate_path')
         meta['candidate_master_path'] = (bundle.train_receipt or {}).get('candidate_master_path')
         meta['candidate_master_digest'] = (bundle.train_receipt or {}).get('candidate_master_digest')
@@ -330,10 +351,48 @@ class Controller:
         updated.result_stored = True
         return updated, 'box-complete'
 
-    def _decide(self, item: ItemRecord) -> tuple[ItemRecord, str]:
-        bundle = (item.meta or {}).get('_bundle')
-        if bundle is None:
+    def _probe_bundle_from_item(self, item: ItemRecord) -> ProbeBundle:
+        meta = item.meta or {}
+        raw = meta.get('_bundle')
+        if isinstance(raw, ProbeBundle):
+            return raw
+        snap = meta.get('probe_bundle')
+        if not isinstance(snap, Mapping):
             raise TransitionError('missing probe bundle')
+        return ProbeBundle(
+            item_id=str(snap.get('item_id') or item.item_id),
+            bound_head=str(snap.get('bound_head') or item.bound_head or ''),
+            bound_master_digest=str(snap.get('bound_master_digest') or item.bound_master_digest or ''),
+            candidate_id=str(snap.get('candidate_id') or item.candidate_id or ''),
+            probe_result=dict(snap.get('probe_result') or {}),
+            master_upload=dict(snap.get('master_upload') or {}),
+            train_receipt=dict(snap.get('train_receipt') or {}),
+            box_public_key_hex=str(snap.get('box_public_key_hex') or ''),
+            meta=dict(snap),
+        )
+
+    def _staleness_reference_head(self) -> str:
+        if self.current_head is None:
+            raise TransitionError('no current_head')
+        if not self.config.is_live():
+            return self.current_head
+        leaders: List[tuple[float, str]] = []
+        for rec in self.items:
+            if rec.decision != 'green_fresh' or not rec.candidate_id:
+                continue
+            if rec.state not in (ItemState.DECIDED, ItemState.RELEASED):
+                continue
+            gat = (rec.meta or {}).get('decided_at_mono')
+            if gat is None:
+                continue
+            leaders.append((float(gat), rec.candidate_id))
+        if not leaders:
+            return self.current_head
+        leaders.sort(key=lambda row: row[0])
+        return leaders[0][1]
+
+    def _decide(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        bundle = self._probe_bundle_from_item(item)
         if self.current_head is None:
             raise TransitionError('no current_head')
 
@@ -361,6 +420,8 @@ class Controller:
             if shadow_out['candidate'] != bundle.candidate_id:
                 raise TransitionError('shadow scorer returned wrong candidate')
         else:
+            if self.config.is_live() and self.score_fn is None:
+                raise TransitionError('live decide requires host score_fn')
             scored = pit_score(
                 epoch=item.epoch,
                 round_id=item.bound_round_id or self.current_round_id,
@@ -368,6 +429,7 @@ class Controller:
                 candidate_id=bundle.candidate_id,
                 head_id=item.bound_head or self.current_head,
                 host_score=self.score_fn,
+                require_host=self.config.is_live(),
             )
 
         if scored.get('candidate') != bundle.candidate_id:
@@ -385,9 +447,10 @@ class Controller:
 
         decided_at = float(self.now_fn())
         item.meta['decided_at_mono'] = decided_at
+        staleness_head = self._staleness_reference_head()
         updated = mark_scored_decision(
             item,
-            current_head=self.current_head,
+            current_head=staleness_head,
             decision='green' if decision == 'green' else 'red',
             z=scored.get('z'),
             candidate_id=bundle.candidate_id,
@@ -418,26 +481,30 @@ class Controller:
                 self.current_head_epoch = int(updated.meta.get('binding', {}).get('head_epoch') or self.current_head_epoch) + 1
                 if self.apply_hook is not None:
                     self.apply_hook(updated)
-        elif updated.decision == 'green_fresh':
-            # Advance the in-memory head immediately so later decisions in this
-            # epoch window classify as stale; durable pe_apply runs in finish.
-            self.current_head = updated.candidate_id
-            self.current_head_epoch = self.current_head_epoch + 1
         return updated, updated.decision or 'decided'
 
     def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         if self.config.is_live() and self.live_applicator is not None:
             scored = {'decision': item.decision}
-            result = self.live_applicator.apply(item, scored=scored)
+            try:
+                result = self.live_applicator.apply(item, scored=scored)
+            except ApplyLiveError as exc:
+                nd = apply_transition(
+                    item,
+                    ItemState.NO_DECISION,
+                    reason='apply-failed:%s' % str(exc)[:120],
+                    updates={'decision': 'no_decision', 'paid': False, 'fresh': None, 'merge_blocked': False},
+                )
+                item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300])
+                return self._destroy_and_release(nd, reason='apply-failed')
             item.meta['live_apply'] = result.as_dict()
             if result.head_advanced and item.candidate_id:
-                # current_head already advanced at decide-time for staleness;
-                # durable apply + sibling jobs fire here.
+                self.current_head = item.candidate_id
+                self.current_head_epoch = int(self.current_head_epoch) + 1
                 if self.on_green_fresh is not None:
                     self.on_green_fresh(item)
             if result.destroyed_box_state or item.decision != 'green_fresh':
                 return self._destroy_and_release(item, reason=item.decision or 'decided')
-            # GREEN_FRESH: release after verified upload (destroy not required).
             return self._release(item, reason='green_fresh-applied')
         # Shadow: just release; state already destroyed conceptually.
         if item.decision and item.decision != 'green_fresh':

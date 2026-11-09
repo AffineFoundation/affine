@@ -133,7 +133,6 @@ class BoxRunner:
             ))
 
         probe_fixture = dict(self.io.probe_result_fixture())
-        probe_fixture.setdefault('score', probe_fixture.get('score') or {'decision': 'green', 'z': 1.5})
         probe_result = lane.run_probe(
             record.box_id or 'box',
             candidate_id,
@@ -143,10 +142,6 @@ class BoxRunner:
             max_tokens=self.config.max_output_tokens,
             result=probe_fixture,
         )
-        # Ensure score block survives lane copy.
-        if 'score' not in probe_result and 'score' in probe_fixture:
-            probe_result['score'] = probe_fixture['score']
-
         record = apply_transition(record, ItemState.RESULT, reason='probe-complete', updates={'result_stored': True})
         bundle = ProbeBundle(
             item_id=record.item_id,

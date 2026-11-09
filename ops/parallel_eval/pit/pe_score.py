@@ -49,6 +49,7 @@ def score(
     head_id: str,
     estimate_fn: Optional[Callable[..., Mapping[str, Any]]] = None,
     host_score: Optional[Callable[..., Mapping[str, Any]]] = None,
+    require_host: bool = False,
 ) -> Dict[str, Any]:
     """Score one PIT probe result.
 
@@ -65,8 +66,9 @@ def score(
     elif estimate_fn is not None:
         out = dict(estimate_fn(result=result, candidate_id=candidate_id, head_id=head_id))
     else:
-        # Minimal fixture path for unit tests: honor an embedded score block.
         embedded = result.get('score')
+        if require_host:
+            raise ScoreError('live scoring refuses embedded result.score without host scorer')
         if not isinstance(embedded, Mapping):
             raise ScoreError('no scorer available and result.score missing')
         out = dict(embedded)

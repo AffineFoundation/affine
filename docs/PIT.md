@@ -113,8 +113,10 @@ Script: `ops/parallel_eval/pit/ceremony_sign_host_key.py`.
 | `decision_emit.py` | Gate-schema `DECISION.json` for k1 / ff_launcher / lifecycle |
 | `apply_live.py` | GREEN_FRESH → verify uploads (fail closed) → pe_apply; destroy otherwise |
 | `cutover.py` | Live cutover / revert plan (trainer, warm, lanes) |
-| `scripts/cutover_enable.sh` | Epoch-boundary enable (trainer idle check) |
-| `scripts/cutover_revert.sh` | One-command revert + stop `affine-pit-host` |
+| `scripts/cutover_enable.sh` | Flocked enable; TOCTOU trainer-idle; `WARM-OFF`; flag backup |
+| `scripts/cutover_revert.sh` | Flocked revert; clear `PIT-CLAIM-e*`; release `affine-pit-*`; restore bak |
+| `scripts/affine-pit-host.service` | **Template** systemd user unit (`REPLACE_ME` placeholders only) |
+| `cutover_ops.py` | Python helpers used by cutover scripts and tests |
 | `ceremony_sign_host_key.py` | One-time ROOT→host-key ceremony (no embedded keys) |
 | `baseline_job.py` / `bench_job.py` / `prior_job.py` | Sibling rent-per-job services |
 | `decisions.py` | Hash-chained decision log |
@@ -173,12 +175,20 @@ Lium runway ≥ 24 h; ROOT ceremony done; `verify_uploads` wired fail-closed.
 1. Shadow pass criteria met (DESIGN §10 / SPEC §7 step 0).
 2. ROOT ceremony complete; env vars `AFFINE_PIT_HOST_KEY_FILE`,
    `AFFINE_PIT_HOST_CERT_FILE`, `AFFINE_PIT_ROOT_PUBKEY_HEX` set on the host.
-3. Enable at an epoch boundary:
+3. Enable at an epoch boundary (trainer idle re-checked **after** acquiring
+   `$PE_FLAG.lock` or `$PE_STATE/cutover.lock`):
 
 ```bash
 export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
+export PE_STATE=/path/to/parallel-cutover/state   # WARM-OFF + optional cutover.lock
+export AFFINE_PIT_HOST_KEY_FILE=/secure/pit-host.key
+export AFFINE_PIT_HOST_CERT_FILE=/secure/pit-host.cert.json
+export AFFINE_PIT_ROOT_PUBKEY_HEX=<hex>
 bash ops/parallel_eval/pit/scripts/cutover_enable.sh
-# then start affine-pit-host (systemd --user) → run_host.py
+# copies $PE_FLAG -> $PE_FLAG.bak-pre-pit-<utc>; writes PE_STATE/WARM-OFF ({})
+# optional: PE_CONTROLLER_UNIT=pe-controller.service stops warm/dispatch without restart
+# then install scripts/affine-pit-host.service (fill REPLACE_ME) and:
+#   systemctl --user enable --now affine-pit-host
 ```
 
 Equivalent flag:
@@ -198,7 +208,8 @@ Equivalent flag:
 ```
 
 4. Effect: trainer dequeue **off** (pod kept 24 h as hot fallback); warm pool
-   **off**; standing PE lanes **off**; PIT owns the queue; first fresh GREEN
+   **off** (`WARM-OFF` + `pe_warm` / `pe_controller` no-op during PIT cutover);
+   standing PE lanes **off**; PIT owns the queue; first fresh GREEN
    uploads and applies; REDs earn nothing; per-epoch `DECISION.json` emitted for
    k1 / website / lifecycle finalize.
 5. After 24 h of healthy live: release the trainer pod with Jacob OK.
@@ -207,10 +218,16 @@ Equivalent flag:
 
 ```bash
 export PE_FLAG=/path/to/PROMOTION-GATE-or-PE-flag.json
+export PE_STATE=/path/to/parallel-cutover/state
+export PE_LIFE_STATE=...   # optional; claims mirrored here
+export PIT_STATE=$PE_STATE/pit
+# RESTORE_FLAG_BACKUP=1 restores latest $PE_FLAG.bak-pre-pit-* when present
 bash ops/parallel_eval/pit/scripts/cutover_revert.sh
 ```
 
-Sets `pit.revert=true`, `enabled=false`, stops `affine-pit-host` if present.
+Stops `affine-pit-host` if active; clears all `PIT-CLAIM-e*.json` under configured
+state roots; best-effort `release` of `affine-pit-*` via `pe_rent` / `lium`;
+removes `WARM-OFF`; sets `pit.revert=true`, `enabled=false`, `cutover=false`.
 Restores trainer dequeue, warm pool and standing lanes. Re-rent standing pods
 with `replace_pod.py` if they were released (≤ $35/h or prior price + 10%).
 
@@ -233,5 +250,7 @@ PYTHONPATH=. python3 -m unittest \
   ops.parallel_eval.pit.test_live_controller \
   ops.parallel_eval.pit.test_apply_live \
   ops.parallel_eval.pit.test_cutover \
+  ops.parallel_eval.pit.test_cutover_scripts \
+  ops.parallel_eval.pit.test_baseline_job \
   ops.parallel_eval.pit.test_jobs
 ```

@@ -28,6 +28,17 @@ is_baseline = pe_rent.is_baseline
 eval_nodes = pe_rent.eval_nodes
 
 
+def _pit_live_cutover():
+    pit = pe_cfg().get("pit") or {}
+    if pit.get("revert") is True:
+        return False
+    return pit.get("enabled") is True and pit.get("mode") == "live" and pit.get("cutover") is True
+
+
+def _warm_suppressed():
+    return (ST / "WARM-OFF").exists() or _pit_live_cutover()
+
+
 @contextlib.contextmanager
 def locked():
     ST.mkdir(parents=True, exist_ok=True)
@@ -110,6 +121,8 @@ def _cand_stale(C, e):
 # ------------------------------------------------------------------ controller tick
 def tick():
     """Called every controller tick in live mode. Never raises past the controller (caller wraps)."""
+    if _warm_suppressed():
+        return dict(actions=[], warm_off=True, pit_cutover=_pit_live_cutover())
     out = dict(actions=[])
     try:
         ps = lium_ps()

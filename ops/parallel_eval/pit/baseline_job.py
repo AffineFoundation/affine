@@ -52,12 +52,11 @@ class BaselineJobService:
             raise ValueError('baseline jobs are pinned to B300')
         if len(req.head) != 64:
             raise ValueError('head must be hex64')
-        # Refuse embedding indices/seeds in the request object beyond commitment.
-        blob = str(req.as_dict())
-        for banned in ('indices', 'raw_seed', 'secret_draw', 'presign'):
-            if banned in blob.lower() and banned != 'seed_commitment':
-                # seed_commitment is fine; raw seeds are not on the request.
-                pass
+        payload = req.as_dict()
+        banned = frozenset(('indices', 'raw_seed', 'secret_draw', 'presign'))
+        for key in payload:
+            if key in banned:
+                raise ValueError('baseline request must not include banned field: %s' % key)
         self.queue.append(req)
         return req
 
@@ -102,17 +101,17 @@ class BaselineJobService:
         indices = draw.get('indices')
         if indices is not None and not isinstance(indices, (list, tuple)):
             raise ValueError('draw indices malformed')
-        result = {'k': GATE_HEAD_ROLLOUTS, 'partial': False, 'ok': True, 'samples': GATE_N_DRAWN * GATE_HEAD_ROLLOUTS}
-        if self.probe_fn is not None:
-            # Pass indices only as a transient arg — probe_fn must not log them.
-            result = dict(self.probe_fn(
-                head=req.get('head'),
-                round_id=round_id,
-                indices=indices,
-                k=GATE_HEAD_ROLLOUTS,
-                max_tokens=GATE_MAX_TOKENS,
-                box_id=job.box_id,
-            ))
+        if self.probe_fn is None:
+            raise RuntimeError('baseline_job refuses to run without probe_fn')
+        # Pass indices only as a transient arg — probe_fn must not log them.
+        result = dict(self.probe_fn(
+            head=req.get('head'),
+            round_id=round_id,
+            indices=indices,
+            k=GATE_HEAD_ROLLOUTS,
+            max_tokens=GATE_MAX_TOKENS,
+            box_id=job.box_id,
+        ))
         if result.get('partial') or result.get('timeout'):
             raise RuntimeError('baseline partial/timeout → never score')
         # Store cells on host via store_fn; do not keep indices on the job record.
