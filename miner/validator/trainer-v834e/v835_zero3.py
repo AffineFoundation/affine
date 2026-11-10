@@ -325,16 +325,17 @@ def wrap_host_install(host_mod) -> None:
     orig = host_mod.install
 
     def install(config, start_dp=False):
-        patch_fp32_accumulator()
         engine = config['engine']
         mem = per_gpu_mem_gib()
-        if needs_zero3(mem):
-            enable_zero3_env()
-            # Slightly tighter token budget on low-VRAM to keep activations inside 32 GiB.
-            if int(engine.get('dp_token_budget', 69632)) > 24576 and (mem is not None and mem < 40):
-                engine = dict(engine)
-                engine['dp_token_budget'] = 24576
-                config = dict(config, engine=engine)
+        if not needs_zero3(mem):
+            return orig(config, start_dp=start_dp)
+        enable_zero3_env()
+        patch_fp32_accumulator()
+        # Slightly tighter token budget on low-VRAM to keep activations inside 32 GiB.
+        if int(engine.get('dp_token_budget', 69632)) > 24576 and (mem is not None and mem < 40):
+            engine = dict(engine)
+            engine['dp_token_budget'] = 24576
+            config = dict(config, engine=engine)
         # Load dp early, patch, then run original install with patched helper argv.
         dp = host_mod.load('v83_dp', 'v83_dp.py')
         patch_dp(dp)
@@ -387,14 +388,19 @@ def wrap_host_install(host_mod) -> None:
 
 
 def activate(host_mod=None) -> Mapping[str, Any]:
-    """Call from train_pit before install: patch accumulator + wrap install."""
-    patch_fp32_accumulator()
+    """Call from train_pit before install.
+
+    Monkey-patches the FP32 accumulator / DP helpers ONLY when sharded mode is
+    active (PIT_ZERO3 or per-GPU HBM < 100 GiB). Non-sharded B300/B200/H200
+    paths must keep the admitted host behaviour byte-identical.
+    """
     mem = per_gpu_mem_gib()
     will = needs_zero3(mem)
     if will:
         enable_zero3_env()
-    if host_mod is not None:
-        wrap_host_install(host_mod)
+        patch_fp32_accumulator()
+        if host_mod is not None:
+            wrap_host_install(host_mod)
     return {
         'per_gpu_mem_gib': mem,
         'zero3': will,

@@ -492,7 +492,9 @@ class BoxJobController:
                 return self._read_stage_payload(stage)
 
             # Stage missing: if a detached job is still running for this stage, poll it.
-            # Sync stages (no detached_command) always kill stale leftovers and re-run.
+            # Sync stages (no detached_command / wait_for_marker) kill stale leftovers
+            # and re-run. Callers that re-adopt a live eval/train pid must pass
+            # wait_for_marker=True (or detached_command) so we poll instead of kill.
             if (
                 (wait_for_marker or detached_command)
                 and st.state == STATUS_RUNNING

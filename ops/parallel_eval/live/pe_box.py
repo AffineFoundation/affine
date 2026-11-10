@@ -9,9 +9,10 @@ Faithful port of host ``drive_item.py`` + ``run5090.py`` (imported there as
    into RAM and does **not** push them over ssh.
 2. Golden trainer bundle (runtime-exact venv + source-final-v823u) is fetched
    ON THE BOX via ``bundle_fetch`` + ``BUN['trainer']`` (same as
-   ``drive_item.bundle_trainer``). Host ships ``trainer-host-v834f`` (ZeRO-3)
-   via tar and verifies checksums. ``train_pit.py`` runs under that venv — fail
-   closed if the venv is missing (never fall back to system python3).
+   ``drive_item.bundle_trainer``). Host ships ``trainer-host-v834e`` via tar
+   and verifies checksums (signed release by default). ``train_pit.py`` runs
+   under that venv — fail closed if the venv is missing (never fall back to
+   system python3). host-v834f (ZeRO-3) is a separate ROOT-admitted package.
 3. Artifacts return as **files** via scp (never binary over ssh stdout —
    ``replace_pod.Pod.run`` uses ``errors=replace`` and corrupts bytes).
 4. Inputs = signed TRAINING-JOB manifest + TRAIN-DISPATCH-FF + docs +
@@ -53,8 +54,7 @@ BOX_TBX = '/opt/plain/tbx'
 BOX_WORKSPACE = '/opt/plain/workspace'
 BOX_VENV = TW + '/runtime-exact/venv/bin/python'
 BOX_SOURCE = TW + '/source-final-v823u'
-BOX_HOST = TW + '/host-v834f'
-BOX_HOST_LINK = 'trainer-host-v834f'
+BOX_HOST = TW + '/host-v834e'
 BOX_ROOT = '/root/affine-env-probe'
 
 # drive_item.GRADER_FIX — stale grader uv symlinks from the probe bundle (zero-sample fix).
@@ -112,28 +112,26 @@ def _v834e_release() -> Path:
 
 
 def _trainer_host_dir() -> Path:
-    """Host modules shipped via put_tar → TW/host-v834f.
+    """Host modules shipped via put_tar → TW/host-v834e.
 
-    Prefer the in-repo trainer package (ZeRO-3 / host-v834f) so box training
-    actually runs the code in this checkout. Fall back to PIT_TRAINER_HOST /
-    the signed v834e release for the ROOT-admitted private json when needed.
+    Default: signed release (``PIT_V834E_RELEASE`` / trainer-host-v834e).
+    In-repo trainer may be used ONLY when ``PIT_USE_INREPO_TRAINER=1`` (or
+    ``PIT_TRAINER_HOST`` / ``AFFINE_TRAINER_HOST`` points at an explicit dir).
     """
     override = _env_path('PIT_TRAINER_HOST', 'AFFINE_TRAINER_HOST')
     if override is not None:
         return override
-    repo = _repo()
-    for cand in (
-        repo / 'miner' / 'validator' / 'trainer-v834e',
-        repo / 'miner' / 'validator' / 'trainer-v834f',
-    ):
+    use_inrepo = os.environ.get('PIT_USE_INREPO_TRAINER', '').strip().lower() in (
+        '1', 'true', 'yes', 'on',
+    )
+    if use_inrepo:
+        repo = _repo()
+        cand = repo / 'miner' / 'validator' / 'trainer-v834e'
         if cand.is_dir() and (cand / 'mimo_host_trainer_v83.py').is_file():
             return cand
     rel = _v834e_release()
-    for name in ('trainer-host-v834f', 'trainer-host-v834e'):
-        cand = rel / name
-        if cand.is_dir():
-            return cand
-    return rel
+    cand = rel / 'trainer-host-v834e'
+    return cand if cand.is_dir() else rel
 
 
 def _fp32_master_index() -> Path:
@@ -302,7 +300,7 @@ def put_tar(P: Any, local_dir: Path, remote_dir: str) -> None:
 
     Binary ship via scp of a tar (safer than ssh stdin for large trees). Remote:
     ``mkdir -p D && tar --no-same-owner -C D -xf T && rm -f T``.
-    Callers that need a clean dir (host-v834f) must ``rm -rf`` that path first.
+    Callers that need a clean dir (host-v834e) must ``rm -rf`` that path first.
     """
     local_dir = Path(local_dir)
     if not local_dir.is_dir():
@@ -638,31 +636,13 @@ def bundle_trainer(P: Any) -> Mapping[str, Any]:
     else:
         info['bundle-trainer'] = dict(present=True)
 
-    # Ship trainer-host-v834f (in-repo ZeRO-3 package → TW/host-v834f).
+    # Ship trainer-host-v834e (drive_item: put_tar REL/trainer-host-v834e → TW/host-v834e).
     # Clean only BOX_HOST — put_tar itself must not wipe (preserves pst/in/actor/<H>).
+    # Default source is the signed release; in-repo only via PIT_TRAINER_HOST /
+    # PIT_USE_INREPO_TRAINER (never implicit).
     host_src = _trainer_host_dir()
     if not host_src.is_dir():
-        raise BoxIOError('trainer-host-v834f missing on host (%s); set PIT_TRAINER_HOST / AFFINE_REPO' % host_src)
-    # Ensure ROOT-admitted private json is present (lives in the signed release, not the public repo tree).
-    priv_name = 'TRAINER-HOST.v8.3.3.ROOT-ADMITTED.private.json'
-    if not (host_src / priv_name).is_file():
-        rel = _v834e_release()
-        for folder in ('trainer-host-v834f', 'trainer-host-v834e', ''):
-            src = (rel / folder / priv_name) if folder else (rel / priv_name)
-            if src.is_file():
-                # Stage a ship dir: in-repo modules + release private json.
-                stage = Path(tempfile.mkdtemp(prefix='pit-host-v834f-'))
-                for item in host_src.iterdir():
-                    dest = stage / item.name
-                    if item.is_dir():
-                        shutil.copytree(item, dest)
-                    else:
-                        shutil.copy2(item, dest)
-                shutil.copy2(src, stage / priv_name)
-                os.chmod(stage / priv_name, 0o600)
-                host_src = stage
-                info['trainer_host_private_json'] = str(src)
-                break
+        raise BoxIOError('trainer-host-v834e missing on host (%s); set PIT_TRAINER_HOST / PIT_V834E_RELEASE' % host_src)
     P.run('rm -rf %s' % BOX_HOST, timeout=120)
     put_tar(P, host_src, BOX_HOST)
     man = subprocess.run(
@@ -674,21 +654,16 @@ def bundle_trainer(P: Any) -> Mapping[str, Any]:
         inp=man.encode(), timeout=120,
     )
     if 'SHA_OK' not in chk:
-        raise BoxIOError('host-v834f sha256sum -c failed')
-    info['trainer_host'] = BOX_HOST
-    info['trainer_host_sha256sum'] = hashlib.sha256(man.encode()).hexdigest()
+        raise BoxIOError('host-v834e sha256sum -c failed')
 
-    # Prefer in-repo / staged SIGNED-MANIFEST; else release manifest with v834f link name.
-    man_sha = host_src / 'SIGNED-MANIFEST.sha256'
-    if not man_sha.is_file():
-        rel = _v834e_release()
-        man_sha = rel / 'SIGNED-MANIFEST.sha256'
+    # SIGNED-MANIFEST paths are trainer-host-v834e/...; files ship to TW/host-v834e.
+    # Symlink then fail-closed check (never `; true`).
+    rel = _v834e_release()
+    man_sha = rel / 'SIGNED-MANIFEST.sha256'
     if man_sha.is_file():
         put(P, TW + '/SIGNED-MANIFEST.sha256', man_sha.read_bytes(), '644')
-        # Manifest paths may say trainer-host-v834e or trainer-host-v834f; link both names.
         P.run(
-            'set -e; cd %s && ln -sfn host-v834f trainer-host-v834f && '
-            'ln -sfn host-v834f trainer-host-v834e && '
+            'set -e; cd %s && ln -sfn host-v834e trainer-host-v834e && '
             'sha256sum --quiet -c SIGNED-MANIFEST.sha256 && echo MANIFEST_OK' % TW,
             timeout=300,
         )

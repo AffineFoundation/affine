@@ -720,7 +720,7 @@ class TestRealLiveWiring(unittest.TestCase):
                 'PUSH_BUNDLE_OK',
                 'bundle_fetch.py trainer',
                 'gate_fetch.py',
-                'ln -sfn host-v834f trainer-host-v834f',
+                'ln -sfn host-v834e trainer-host-v834e',
                 'SIGNED-MANIFEST.sha256',
                 'train_pit.py',
                 'AFFINE_FP32_EXPECTED_MASTER_HASH=',
@@ -750,7 +750,7 @@ class TestRealLiveWiring(unittest.TestCase):
             self.assertIn('mkdir -p %s && tar --no-same-owner -C %s -xf %s && rm -f %s && echo PUT_TAR_OK', src)
             self.assertNotIn('rm -rf %s && mkdir -p %s && tar --no-same-owner', src)
             self.assertIn("rm -rf %s' % BOX_HOST", src)
-            self.assertIn('ln -sfn host-v834f trainer-host-v834f', src)
+            self.assertIn('ln -sfn host-v834e trainer-host-v834e', src)
             self.assertIn('SIGNED-MANIFEST.sha256', src)
             self.assertNotIn('sha256sum -c SIGNED-MANIFEST; true', src)
             self.assertNotIn('else V=python3', src)

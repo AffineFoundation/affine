@@ -16,6 +16,7 @@ from ops.parallel_eval.live.pe_box import BOX_ROOT, _as_pod, detached_eval_comma
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
+from .box_job import STATUS_RUNNING
 from .config import GATE_DTYPE, PitConfig
 from .pe_lane import LaneService
 from .signer import AdmissionCert, EphemeralBoxKey, generate_ephemeral_box_key, verify_admission_cert
@@ -114,8 +115,10 @@ class BoxRunner:
         if pod is None and (self.lane and (self.lane.require_host or self.lane.host_run_probe is not None)):
             raise TransitionError('pod handle required for host box train/probe')
 
-        # Re-adopt: if the box already wrote RESULT.json, resume from that instead
-        # of re-running train+probe (host thread death must not cut box-side work).
+        # Re-adopt after host restart:
+        # 1) RESULT.json → fetch bundle, never re-train / re-eval / release.
+        # 2) train.done (+ optional live job.pid in eval) → skip train, resume eval
+        #    via markers/pid (run_stage_once polls; never double-launch or kill).
         box_job_ctrl = _try_box_job_controller(pod, record.item_id)
         if box_job_ctrl is not None:
             prior = box_job_ctrl.resume_or_fetch()
@@ -124,73 +127,123 @@ class BoxRunner:
                     record, prior, box_key=box_key, train_gpu=train_gpu, eval_gpu=eval_gpu,
                 )
 
-        head_path = self.io.download_head(record.bound_head)
-        try:
-            master_path = self.io.download_master(record.bound_head, record.bound_master_digest)
-        except Exception as exc:
-            msg = str(exc)
-            if 'expected-master' in msg or 'Fp32MasterError' in type(exc).__name__:
-                raise Fp32MasterError('expected-master-mismatch', detail=msg[:300]) from exc
-            raise
+        train_receipt: Dict[str, Any]
+        training_report: Dict[str, Any]
+        candidate_id: str
+        candidate_path: Any
+        candidate_master_path: Any
+        master_upload: Dict[str, Any] = {}
+        resumed_mid_eval = False
 
-        record = apply_transition(record, ItemState.TRAINING, reason='provisioned')
-
-        train_receipt = dict(self.io.train_v834e(
-            head_path=head_path,
-            master_path=master_path,
-            expected_master_digest=record.bound_master_digest,
-            batch_handle=batch_handle,
-            item_id=record.item_id,
-            hotkey=record.hotkey_prefix or None,
-            train_gpu=train_gpu,
-            pod=pod,
-            epoch=int(record.epoch),
-            epoch_dir=(record.meta or {}).get('epoch_dir'),
-        ))
-        if train_receipt.get('used_fp32_bootstrap_override'):
-            raise Fp32MasterError('bootstrap-override-refused-by-pit')
-        candidate_id = train_receipt.get('candidate_id')
-        candidate_path = train_receipt.get('candidate_path')
-        candidate_master_path = train_receipt.get('candidate_master_path')
-        if not isinstance(candidate_id, str) or len(candidate_id) != 64:
-            raise ValueError('trainer must return candidate_id hex64')
-        if not candidate_path or not candidate_master_path:
-            raise ValueError('trainer must return candidate paths')
-        train_gpu = gpu_type_of(train_receipt.get('train_gpu')) or train_gpu
-
-        # Copy training report to host BEFORE seal/release (Jacob 2026-11-09).
-        report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
-        report_path = train_receipt.get('report') if isinstance(train_receipt.get('report'), str) else None
-        try:
-            training_report = copy_training_report_to_host(
-                report_path=report_path,
-                item_id=record.item_id,
-                epoch=int(record.epoch),
-                candidate_id=candidate_id,
-                report_doc=report_doc if isinstance(report_doc, Mapping) else None,
+        train_marker = _train_marker_payload(box_job_ctrl) if box_job_ctrl is not None else None
+        if train_marker and _train_marker_usable(train_marker):
+            # Mid-eval / post-train re-adopt: do not re-download head/master or re-train.
+            train_receipt = dict(train_marker)
+            candidate_id = str(train_receipt.get('candidate_id') or train_receipt.get('checkpoint') or '')
+            candidate_path = train_receipt.get('candidate_path')
+            candidate_master_path = (
+                train_receipt.get('candidate_master_path')
+                or train_receipt.get('master_path')
             )
-        except TrainingReportError:
-            # Scripted/synthetic trainers may embed a minimal summary directly.
-            if isinstance(report_doc, Mapping):
-                training_report = extract_report_summary(report_doc)
-            elif isinstance(train_receipt.get('training_report_summary'), Mapping):
+            if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+                raise ValueError('train.done marker missing candidate_id hex64')
+            if not candidate_path or not candidate_master_path:
+                raise ValueError('train.done marker missing candidate paths')
+            train_gpu = gpu_type_of(train_receipt.get('train_gpu')) or train_gpu
+            report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
+            if isinstance(train_receipt.get('training_report_summary'), Mapping):
                 training_report = dict(train_receipt['training_report_summary'])
+            elif isinstance(report_doc, Mapping):
+                training_report = extract_report_summary(report_doc)
             else:
+                training_report = {
+                    'source_file_hashes': {'trainer': '0' * 64, 'batch': '0' * 64},
+                    'batching': {'tasks': 0, 'rollouts': 0},
+                    'tokens': {'prompt_tokens': 0, 'output_tokens': 0, 'loss_tokens': 0},
+                    'update_size': 0.0,
+                    'gradient_norm': 0.0,
+                    'engine': 'packed',
+                    'recovered': 'train-marker',
+                }
+            if record.state is ItemState.PROVISIONING:
+                record = apply_transition(record, ItemState.TRAINING, reason='readopt-train-marker')
+            if record.state is ItemState.TRAINING:
+                record = apply_transition(
+                    record, ItemState.SEALED, reason='readopt-train-marker',
+                    updates={'candidate_id': candidate_id, 'sealed': True},
+                )
+            else:
+                # Already past SEALED (SERVING/PROBING) on a previous tick — keep C.
+                record.sealed = True
+                record.candidate_id = candidate_id
+            resumed_mid_eval = True
+        else:
+            head_path = self.io.download_head(record.bound_head)
+            try:
+                master_path = self.io.download_master(record.bound_head, record.bound_master_digest)
+            except Exception as exc:
+                msg = str(exc)
+                if 'expected-master' in msg or 'Fp32MasterError' in type(exc).__name__:
+                    raise Fp32MasterError('expected-master-mismatch', detail=msg[:300]) from exc
                 raise
 
-        # Keep ~18.8 GB candidate on the box until GREEN. Only upload on
-        # green_fresh apply (presigned PUT); RED releases without transfer.
-        if not train_receipt.get('defer_candidate_upload'):
-            self.io.upload_candidate(candidate_id=candidate_id, candidate_path=candidate_path)
-        record = apply_transition(
-            record, ItemState.SEALED, reason='sealed',
-            updates={'candidate_id': candidate_id, 'sealed': True},
-        )
+            record = apply_transition(record, ItemState.TRAINING, reason='provisioned')
+
+            train_receipt = dict(self.io.train_v834e(
+                head_path=head_path,
+                master_path=master_path,
+                expected_master_digest=record.bound_master_digest,
+                batch_handle=batch_handle,
+                item_id=record.item_id,
+                hotkey=record.hotkey_prefix or None,
+                train_gpu=train_gpu,
+                pod=pod,
+                epoch=int(record.epoch),
+                epoch_dir=(record.meta or {}).get('epoch_dir'),
+            ))
+            if train_receipt.get('used_fp32_bootstrap_override'):
+                raise Fp32MasterError('bootstrap-override-refused-by-pit')
+            candidate_id = train_receipt.get('candidate_id')
+            candidate_path = train_receipt.get('candidate_path')
+            candidate_master_path = train_receipt.get('candidate_master_path')
+            if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+                raise ValueError('trainer must return candidate_id hex64')
+            if not candidate_path or not candidate_master_path:
+                raise ValueError('trainer must return candidate paths')
+            train_gpu = gpu_type_of(train_receipt.get('train_gpu')) or train_gpu
+
+            # Copy training report to host BEFORE seal/release (Jacob 2026-11-09).
+            report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
+            report_path = train_receipt.get('report') if isinstance(train_receipt.get('report'), str) else None
+            try:
+                training_report = copy_training_report_to_host(
+                    report_path=report_path,
+                    item_id=record.item_id,
+                    epoch=int(record.epoch),
+                    candidate_id=candidate_id,
+                    report_doc=report_doc if isinstance(report_doc, Mapping) else None,
+                )
+            except TrainingReportError:
+                # Scripted/synthetic trainers may embed a minimal summary directly.
+                if isinstance(report_doc, Mapping):
+                    training_report = extract_report_summary(report_doc)
+                elif isinstance(train_receipt.get('training_report_summary'), Mapping):
+                    training_report = dict(train_receipt['training_report_summary'])
+                else:
+                    raise
+
+            # Keep ~18.8 GB candidate on the box until GREEN. Only upload on
+            # green_fresh apply (presigned PUT); RED releases without transfer.
+            if not train_receipt.get('defer_candidate_upload'):
+                self.io.upload_candidate(candidate_id=candidate_id, candidate_path=candidate_path)
+            record = apply_transition(
+                record, ItemState.SEALED, reason='sealed',
+                updates={'candidate_id': candidate_id, 'sealed': True},
+            )
 
         lane = self.lane or LaneService()
         pod_handle = pod or record.box_id or 'box'
-        master_upload: Dict[str, Any] = {}
-        if self.config.master_upload == 'during_probe':
+        if self.config.master_upload == 'during_probe' and not resumed_mid_eval:
             master_upload = dict(self.io.upload_master_during_probe(
                 candidate_id=candidate_id, master_path=candidate_master_path,
             ))
@@ -317,6 +370,12 @@ class BoxRunner:
                     plan_handle=plan_handle, indices=idx_list,
                 )
 
+            # Host restart mid-eval: job.pid already live → poll, do not kill/relaunch.
+            st0 = box_job_ctrl.status()
+            already_running_eval = (
+                st0.state == STATUS_RUNNING and st0.next_stage == 'eval'
+            )
+
             def _host_forbidden() -> Mapping[str, Any]:
                 raise RuntimeError('host must not sync-run eval when detached path is armed')
 
@@ -324,7 +383,7 @@ class BoxRunner:
                 'eval',
                 _host_eval_runner if detached_cmd is None else _host_forbidden,
                 detached_command=detached_cmd,
-                wait_for_marker=bool(detached_cmd),
+                wait_for_marker=bool(detached_cmd) or already_running_eval,
                 poll_s=float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0),
                 timeout_s=float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200),
                 extra_kill_patterns=('vllm serve', 'podctl.py serve', 'pit-box-job-eval'),
@@ -469,6 +528,27 @@ def _try_box_job_controller(pod: Any, item_id: str):
         return controller_for_pod(P, item_id)
     except Exception:
         return None
+
+
+def _train_marker_payload(box_job_ctrl: Any) -> Optional[Dict[str, Any]]:
+    """Read markers/train.done payload when present (host restart mid-eval)."""
+    try:
+        st = box_job_ctrl.status()
+        if 'train' not in (st.markers or set()):
+            return None
+        return dict(box_job_ctrl._read_stage_payload('train') or {})
+    except Exception:
+        return None
+
+
+def _train_marker_usable(payload: Mapping[str, Any]) -> bool:
+    cid = payload.get('candidate_id') or payload.get('checkpoint')
+    path = payload.get('candidate_path')
+    master = payload.get('candidate_master_path') or payload.get('master_path')
+    return (
+        isinstance(cid, str) and len(cid) == 64
+        and bool(path) and bool(master)
+    )
 
 
 def _box_result_doc(bundle: ProbeBundle, *, train_receipt: Mapping[str, Any]) -> Dict[str, Any]:

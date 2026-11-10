@@ -330,6 +330,134 @@ class TestBoxJobRestart(unittest.TestCase):
         self.assertNotIn('10.', jd)
 
 
+class TestBoxRunnerMidEvalReadopt(unittest.TestCase):
+    """Documented host-restart check (eval phase).
+
+    After a host restart with cap=5, nearly every box is mid-eval. The host must:
+
+    * read ``markers/`` (download.done + train.done), ``job.pid``, and eventually
+      ``RESULT.json``;
+    * **not** re-run train;
+    * **not** kill / re-launch the detached eval while ``job.pid`` is alive;
+    * **not** release the box.
+
+    See also ``test_restart_mid_eval_resumes_to_result_without_release`` (box_job
+    layer) and this BoxRunner-level coverage.
+    """
+
+    def test_host_restart_mid_eval_skips_train_and_polls_pid(self):
+        trains = {'n': 0}
+        launches = {'n': 0}
+
+        class CountingIO(ScriptedBoxIO):
+            def train_v834e(self, **kwargs):
+                trains['n'] += 1
+                return super().train_v834e(**kwargs)
+
+        store = MemBoxJobStore(default_ticks=3)
+        item_id = 'item-mid-eval-readopt'
+        ctrl = BoxJobController(store=store, item_id=item_id, sleep_fn=lambda _s: None)
+        ctrl.ensure_dir()
+        write_marker(store, ctrl.job_dir, 'download', {'ok': True})
+        write_marker(store, ctrl.job_dir, 'train', {
+            'ok': True,
+            'checkpoint': 'c' * 64,
+            'candidate_id': 'c' * 64,
+            'candidate_path': 'box:/ckpt/' + ('c' * 64),
+            'candidate_master_path': '/tmp/master',
+            'train_gpu': 'B300',
+            'training_report_summary': {
+                'source_file_hashes': {'trainer': 'a' * 64, 'batch': 'b' * 64},
+                'batching': {'tasks': 1, 'rollouts': 1},
+                'tokens': {'prompt_tokens': 1, 'output_tokens': 1, 'loss_tokens': 1},
+                'update_size': 1.0,
+                'gradient_norm': 1.0,
+                'engine': 'packed',
+            },
+        })
+        store.arm_launch(
+            ticks=3,
+            auto_marker=True,
+            payload={
+                'ok': True,
+                'candidate_id': 'c' * 64,
+                'probe_result': {
+                    'k': 8, 'samples': 16, 'score': {'decision': 'red', 'z': -1.0},
+                    'eval_gpu': 'B300', 'partial': False,
+                    'planned_samples': 16, 'dtype': 'bf16',
+                },
+            },
+        )
+        pid = store.launch_detached(
+            ctrl.job_dir, stage='eval', command='setsid nohup pit-box-job-eval',
+        )
+        self.assertIn(pid, store.alive_pids)
+        st = inspect_job(store, ctrl.job_dir)
+        self.assertEqual(st.state, STATUS_RUNNING)
+        self.assertEqual(st.next_stage, 'eval')
+        self.assertIn('train', st.markers)
+        self.assertNotIn('eval', st.markers)
+        launches_before = len(store.launch_log)
+        killed: list[int] = []
+        _orig_kill = store.kill_pids
+
+        def _tracking_kill(pids):
+            killed.extend(int(p) for p in pids)
+            return _orig_kill(pids)
+
+        store.kill_pids = _tracking_kill  # type: ignore[method-assign]
+
+        clock = {'t': 0.0}
+
+        def now():
+            clock['t'] += 1.0
+            return clock['t']
+
+        ctrl.now_fn = now
+        ctrl.sleep_fn = lambda _s: store.advance()
+
+        io = CountingIO()
+        runner = BoxRunner(config=PitConfig(enabled=True, mode='shadow'), io=io, lane=LaneService())
+        record = ItemRecord(
+            item_id=item_id,
+            registration_index=1,
+            epoch=1069,
+            state=ItemState.PROVISIONING,
+            bound_head='a' * 64,
+            bound_master_digest='b' * 64,
+            shadow=True,
+            box_id='pod-mid-eval',
+            meta={'pod': {'id': 'pod-mid-eval', 'ip': '10.0.0.1', 'port': 22}, 'train_gpu': 'B300'},
+        )
+
+        import ops.parallel_eval.pit.box as box_mod
+        orig = box_mod._try_box_job_controller
+
+        def _fake_try(pod, iid):
+            if iid == item_id:
+                return ctrl
+            return orig(pod, iid)
+
+        box_mod._try_box_job_controller = _fake_try
+        try:
+            rec2, bundle = runner.run(
+                record,
+                batch_handle='opaque-batch',
+                plan_handle='opaque-plan',
+            )
+        finally:
+            box_mod._try_box_job_controller = orig
+
+        self.assertEqual(trains['n'], 0, 'must not re-run train on mid-eval re-adopt')
+        self.assertEqual(len(store.launch_log), launches_before, 'must not re-launch eval')
+        self.assertNotIn(pid, killed, 'must not kill the live eval pid during re-adopt')
+        self.assertEqual(rec2.state, ItemState.RESULT)
+        self.assertEqual(bundle.candidate_id, 'c' * 64)
+        self.assertEqual(bundle.probe_result.get('samples'), 16)
+        # RESULT path keeps the box; no release happens inside BoxRunner.
+        self.assertTrue(rec2.result_stored)
+
+
 class TestBoxRunnerResultResume(unittest.TestCase):
     def test_runner_short_circuits_on_box_result(self):
         trains = {'n': 0}
