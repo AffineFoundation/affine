@@ -69,7 +69,7 @@ def _item_needs_box(item) -> bool:
         return not _uploads_verified(item)
     if decision in (
         'red', 'green_stale', 'no_decision',
-        'blocked_no_candidate', 'blocked_incomplete_master',
+        'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
     ):
         # Terminal / known non-apply decisions — box may be reaped after release.
         return bool(item.box_id) and item.state.value not in ('released',)
@@ -198,6 +198,20 @@ def build_controller(
                 upload_candidate=bundle.upload_candidate,
                 checkpoint_signer=bundle.root_signer,
             )
+        def _lifecycle_epoch_from_env() -> int:
+            # Prefer LIFE_ROOT / PE_LIFE CURRENT.json (training lifecycle).
+            for key in ('LIFE_ROOT', 'PE_LIFE'):
+                root = os.environ.get(key)
+                if not root:
+                    continue
+                cur_path = Path(root) / 'CURRENT.json'
+                if not cur_path.is_file():
+                    continue
+                cur = json.loads(cur_path.read_text())
+                if isinstance(cur, Mapping) and cur.get('epoch_index') is not None:
+                    return int(cur['epoch_index'])
+            raise RuntimeError('lifecycle CURRENT.json epoch_index unavailable')
+
         ctl = Controller(
             config=cfg,
             rent=bundle.rent,
@@ -208,6 +222,7 @@ def build_controller(
             plan_seed_fn=bundle.plan_seed_fn,
             indices_fn=bundle.indices_fn,
             round_id_fn=bundle.round_id_fn,
+            lifecycle_epoch_fn=_lifecycle_epoch_from_env,
             live_applicator=applicator,
             destroy_box_state_fn=bundle.destroy_box_state_fn,
             durable_save_fn=store.save_item,
@@ -332,32 +347,48 @@ def tick_once(
         scored = dict(item.meta.get('scored') or {})
         if not scored and item.z is not None:
             scored = {'decision': item.decision, 'evaluated': {'z': item.z}}
-        # Fill heldout from the live score shape (set_size / evaluated.n / …).
-        scored = nest_heldout_fields(
-            scored, round_id=str(item.bound_round_id or scored.get('round_id') or ''),
-        )
-        item.meta['scored'] = scored
-        # HostGateWriter requires a complete heldout block — never silently skip.
-        if not (scored.get('heldout') or {}).get('set_size'):
-            print(
-                json.dumps({
-                    'component': 'pit-run-host',
-                    'level': 'error',
-                    'event': 'emit_heldout_incomplete',
-                    'epoch': item.epoch,
-                    'decision': item.decision,
-                }),
-                file=sys.stderr,
-                flush=True,
-            )
-            continue
+        pit_decision = str(item.decision or 'no_decision')
         try:
             gw = HostGateWriter(
                 epochs_root=gate_epochs_root(),
                 shadow=ctl.config.is_shadow(),
-                rounds=build_host_rounds(),
+                rounds=build_host_rounds() if pit_decision != 'no_sample' else None,
             )
-            path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
+            if pit_decision == 'no_sample':
+                # No heldout / no rounds turn credit / no k1 grant.
+                path = gw.write_no_sample(
+                    epoch=int(item.epoch),
+                    head=item.bound_head or '',
+                    candidate=item.candidate_id or '',
+                    why=str((item.meta or {}).get('no_sample_reason') or 'no SAMPLE.private.json'),
+                    parallel_eval_meta={
+                        'source': 'pit',
+                        'item_id': item.item_id,
+                        'pit_decision': 'no_sample',
+                        'settlement': 'pending_operator',
+                    },
+                )
+            else:
+                # Fill heldout from the live score shape (set_size / evaluated.n / …).
+                scored = nest_heldout_fields(
+                    scored, round_id=str(item.bound_round_id or scored.get('round_id') or ''),
+                )
+                item.meta['scored'] = scored
+                # HostGateWriter requires a complete heldout block — never silently skip.
+                if not (scored.get('heldout') or {}).get('set_size'):
+                    print(
+                        json.dumps({
+                            'component': 'pit-run-host',
+                            'level': 'error',
+                            'event': 'emit_heldout_incomplete',
+                            'epoch': item.epoch,
+                            'decision': item.decision,
+                        }),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
+                path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
         except (GateWriteError, RuntimeError, ValueError, OSError) as exc:
             # Keep decision_emitted unset so later ticks retry (e1055 recovery).
             print(
@@ -380,16 +411,16 @@ def tick_once(
         # Miner-credit marker: queue_ingest skips once PIT-RESULT exists.
         epoch_dir = _epoch_dir_for_item(item)
         if epoch_dir:
-            pit_decision = str(item.decision or 'no_decision')
+            terminal = pit_decision in (
+                'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
+            )
             extra = {
-                'paid': bool(item.paid) and pit_decision not in (
-                    'blocked_no_candidate', 'blocked_incomplete_master',
-                ),
+                'paid': False if terminal else bool(item.paid),
                 'z': item.z if item.z is not None else (scored.get('evaluated') or {}).get('z'),
                 'evaluated': dict(scored.get('evaluated') or {}),
                 'probe': dict(scored.get('probe') or {}),
             }
-            if pit_decision in ('blocked_no_candidate', 'blocked_incomplete_master'):
+            if terminal:
                 extra['settlement'] = 'pending_operator'
                 extra['paid'] = False
             write_pit_result(
@@ -407,9 +438,13 @@ def tick_once(
             candidate=item.candidate_id or '',
             decision=item.decision or 'no_decision',
             z=item.z,
-            fresh=item.fresh,
+            fresh=False if pit_decision in (
+                'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
+            ) else item.fresh,
             merge_blocked=item.merge_blocked,
-            paid=item.paid,
+            paid=False if pit_decision in (
+                'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
+            ) else bool(item.paid),
             shadow=False,
             extra={'item_id': item.item_id},
         )
@@ -482,10 +517,10 @@ def _gate_emit_ready(item) -> bool:
             and apply.get('master_verified')
             and apply.get('candidate_verified')
         )
-    if d in ('blocked_no_candidate', 'blocked_incomplete_master'):
+    if d in ('blocked_no_candidate', 'blocked_incomplete_master', 'no_sample'):
         if meta.get('gate_emit_ready'):
             return True
-        # Terminal NO_DECISION / RELEASED blocked rows always emit (free pending).
+        # Terminal NO_DECISION / RELEASED rows always emit (free pending).
         if item.state.value in ('no_decision', 'released') and not meta.get('decision_emitted'):
             return True
         return False

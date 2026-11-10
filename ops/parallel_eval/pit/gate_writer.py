@@ -244,6 +244,18 @@ class GateWriter(Protocol):
     ) -> Path:
         ...
 
+    def write_no_sample(
+        self,
+        *,
+        epoch: int,
+        head: str,
+        candidate: str,
+        why: str,
+        parallel_eval_meta: Optional[Mapping[str, Any]] = None,
+    ) -> Path:
+        """Terminal no_sample: DECISION only — no heldout turn credit, no k1 grant."""
+        ...
+
 
 @dataclass
 class HostGateWriter:
@@ -456,6 +468,60 @@ class HostGateWriter:
         _wj(decision_path, dec, 0o600)
         return decision_path
 
+    def write_no_sample(
+        self,
+        *,
+        epoch: int,
+        head: str,
+        candidate: str,
+        why: str,
+        parallel_eval_meta: Optional[Mapping[str, Any]] = None,
+    ) -> Path:
+        """Write DECISION=no_sample with settlement=pending_operator.
+
+        No heldout validation, no rounds turn_add (no turn credit), no k1 grant,
+        no APPLY/HEAD/bench. Frees lifecycle pending via DECISION + PIT-RESULT.
+        """
+        self._refuse_shadow()
+        now = time.time()
+        pe_meta = dict(parallel_eval_meta or {})
+        pe_meta.setdefault('settlement', 'pending_operator')
+        pe_meta.setdefault('terminal', 'no_sample')
+        pe_meta.setdefault('no_sample_reason', (why or '')[:400])
+        dec = dict(
+            version=self.gate_version,
+            epoch=int(epoch),
+            head=head or '',
+            candidate=candidate or '',
+            mode='live',
+            decided_at=now,
+            decided_at_cr=_cr(now),
+            decision='no_sample',
+            evaluated=dict(z=None),
+            reasons=['no_sample', (why or '')[:200]],
+            heldout={},
+            parallel_eval=pe_meta,
+            no_decision=False,
+            merge_blocked=False,
+            chart_status='no_sample',
+            red_credit='zero',
+            source='pit',
+            settlement='pending_operator',
+            paid=False,
+        )
+        epoch_dir = self.epochs_root / str(int(epoch))
+        decision_path = epoch_dir / 'DECISION.json'
+        if decision_path.exists():
+            existing = _rj(decision_path)
+            if isinstance(existing, Mapping) and _same_decision(existing, dec):
+                return decision_path
+            if isinstance(existing, Mapping):
+                raise GateWriteError(
+                    'conflicting DECISION.json for epoch %d' % int(epoch)
+                )
+        _wj(decision_path, dec, 0o600)
+        return decision_path
+
 
 @dataclass
 class RecordingGateWriter:
@@ -596,4 +662,42 @@ class RecordingGateWriter:
         epoch_dir = self.epochs_root / str(int(epoch))
         decision_path = epoch_dir / 'DECISION.json'
         _wj(decision_path, dec, 0o600)
+        return decision_path
+
+    def write_no_sample(
+        self,
+        *,
+        epoch: int,
+        head: str,
+        candidate: str,
+        why: str,
+        parallel_eval_meta: Optional[Mapping[str, Any]] = None,
+    ) -> Path:
+        self._refuse_shadow()
+        now = time.time()
+        pe_meta = dict(parallel_eval_meta or {})
+        pe_meta.setdefault('settlement', 'pending_operator')
+        pe_meta.setdefault('terminal', 'no_sample')
+        dec = dict(
+            version=GATE_VERSION,
+            epoch=int(epoch),
+            head=head or '',
+            candidate=candidate or '',
+            mode='live',
+            decided_at=now,
+            decided_at_cr=_cr(now),
+            decision='no_sample',
+            evaluated=dict(z=None),
+            reasons=['no_sample', (why or '')[:200]],
+            heldout={},
+            parallel_eval=pe_meta,
+            chart_status='no_sample',
+            settlement='pending_operator',
+            paid=False,
+            source='pit',
+        )
+        epoch_dir = self.epochs_root / str(int(epoch))
+        decision_path = epoch_dir / 'DECISION.json'
+        _wj(decision_path, dec, 0o600)
+        # Intentionally no turn_add / close — no rounds turn credit.
         return decision_path

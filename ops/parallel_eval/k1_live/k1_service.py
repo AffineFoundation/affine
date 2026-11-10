@@ -268,12 +268,15 @@ def verdicts(chain):
             # PIT terminal blocked (no candidate / incomplete master): never last-10
             # GREEN credit; chart shows blocked; settlement stays pending_operator.
             blocked_dec = dec.get('decision') in (
-                'blocked_no_candidate', 'blocked_incomplete_master',
+                'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
             ) or dec.get('settlement') == 'pending_operator'
             if blocked_dec:
                 ev = dec.get('evaluated') or {}
+                chart = dec.get('chart_status') or dec.get('decision') or 'blocked'
+                # no_sample never grants a rounds turn; chart stays no_sample.
+                verdict = 'no_sample' if dec.get('decision') == 'no_sample' else 'blocked'
                 rec.update(
-                    verdict='blocked',
+                    verdict=verdict,
                     candidate=dec.get('candidate'),
                     z=ev.get('z'),
                     n=ev.get('n'),
@@ -281,7 +284,7 @@ def verdicts(chain):
                     h_pass=ev.get('h_pass'),
                     c_pass=ev.get('c_pass'),
                     decided_at_cr=dec.get('decided_at_cr'),
-                    chart_status=dec.get('chart_status') or dec.get('decision') or 'blocked',
+                    chart_status=chart,
                     settlement=dec.get('settlement') or 'pending_operator',
                 )
                 rec.update(pass_rates(e, dec, ev))

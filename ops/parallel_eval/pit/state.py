@@ -44,7 +44,8 @@ TERMINAL = frozenset({
 })
 
 ALLOWED: Dict[ItemState, FrozenSet[ItemState]] = {
-    ItemState.QUEUED: frozenset({ItemState.BOUND, ItemState.ABORTED}),
+    # NO_DECISION: terminal no_sample (never got SAMPLE; frees pending without bind).
+    ItemState.QUEUED: frozenset({ItemState.BOUND, ItemState.ABORTED, ItemState.NO_DECISION}),
     ItemState.BOUND: frozenset({
         ItemState.RENTING, ItemState.ABORTED, ItemState.NO_DECISION,
     }),

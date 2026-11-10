@@ -96,15 +96,17 @@ def _seal(**kwargs: Any) -> DecisionEntry:
     decision = kwargs['decision']
     if decision not in (
         'green_fresh', 'green_stale', 'red', 'no_decision',
-        'blocked_no_candidate', 'blocked_incomplete_master',
+        'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
     ):
         raise ValueError('invalid decision')
     if decision == 'green_stale' and not kwargs.get('merge_blocked'):
         raise ValueError('green_stale must be merge_blocked')
     if decision == 'green_fresh' and kwargs.get('merge_blocked'):
         raise ValueError('green_fresh cannot be merge_blocked')
-    if decision in ('blocked_no_candidate', 'blocked_incomplete_master') and kwargs.get('paid'):
-        raise ValueError('blocked decisions must not be paid')
+    if decision in (
+        'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
+    ) and kwargs.get('paid'):
+        raise ValueError('terminal settlement decisions must not be paid')
     prev = kwargs['prev_sha256']
     if len(prev) != 64 or any(c not in '0123456789abcdef' for c in prev):
         raise ValueError('prev_sha256 must be hex64')

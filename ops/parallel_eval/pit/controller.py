@@ -79,6 +79,9 @@ BASELINE_WAIT_ALERT_S = 2 * 3600
 # Cap billing: after 45m waiting on baseline, upload C if needed then release the box
 # (score later from the saved result). Never release an unuploaded candidate.
 BASELINE_WAIT_RELEASE_S = 45 * 60
+# Missing SAMPLE.private.json: skip bind and continue FIFO; after 30m (or once the
+# lifecycle has moved ≥2 epochs past the item) terminate as no_sample.
+NO_SAMPLE_WAIT_S = 30 * 60
 
 
 @dataclass
@@ -108,6 +111,9 @@ class Controller:
     plan_seed_fn: Optional[Callable[[int], str]] = None
     indices_fn: Optional[Callable[[int], Any]] = None  # epoch → secret-draw indices (host-private)
     round_id_fn: Optional[Callable[[int], str]] = None  # epoch → SAMPLE.private.json round_id
+    # Optional: CURRENT.json epoch_index (lifecycle). Used to terminalize no_sample
+    # when item.epoch < lifecycle_epoch - 1 (gate will never sample that epoch).
+    lifecycle_epoch_fn: Optional[Callable[[], int]] = None
     durable_save_fn: Optional[Callable[[ItemRecord], None]] = None
     _workers: Dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
     _worker_out: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
@@ -217,6 +223,150 @@ class Controller:
             )
         return rid
 
+    def _lifecycle_epoch(self) -> Optional[int]:
+        """CURRENT.json epoch_index, or None when unavailable."""
+        if self.lifecycle_epoch_fn is not None:
+            try:
+                return int(self.lifecycle_epoch_fn())
+            except Exception:
+                return None
+        for key in ('LIFE_ROOT', 'PE_LIFE'):
+            root = os.environ.get(key)
+            if not root:
+                continue
+            cur_path = Path(root) / 'CURRENT.json'
+            if not cur_path.is_file():
+                continue
+            try:
+                cur = json.loads(cur_path.read_text())
+            except Exception:
+                continue
+            if isinstance(cur, Mapping) and cur.get('epoch_index') is not None:
+                try:
+                    return int(cur['epoch_index'])
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _note_sample_missing(self, item: ItemRecord, *, reason: str) -> ItemRecord:
+        """Stamp first-seen SAMPLE-miss clock; keep QUEUED for later skip/terminal."""
+        meta = dict(item.meta or {})
+        now = float(self.now_fn())
+        if meta.get('sample_wait_since') is None:
+            meta['sample_wait_since'] = now
+        meta['sample_wait_note'] = (reason or '')[:300]
+        meta['sample_wait_last_at'] = now
+        item.meta = meta
+        item.last_error = 'refuse-bind-round-id:%s' % (reason or '')[:200]
+        self._persist(item)
+        return item
+
+    def _maybe_terminal_no_sample(self, item: ItemRecord) -> Optional[ItemRecord]:
+        """QUEUED + no SAMPLE forever → terminal no_sample (frees pending).
+
+        Triggers when ``epoch < lifecycle_epoch - 1`` (gate will never sample it)
+        or after ``NO_SAMPLE_WAIT_S`` (30m) waiting for SAMPLE.
+        """
+        if item.state is not ItemState.QUEUED:
+            return None
+        if item.decision:
+            return None
+        meta = dict(item.meta or {})
+        since = meta.get('sample_wait_since')
+        if since is None:
+            return None
+        now = float(self.now_fn())
+        waited = now - float(since)
+        life_ep = self._lifecycle_epoch()
+        stale_vs_life = (
+            life_ep is not None and int(item.epoch) < int(life_ep) - 1
+        )
+        timed_out = waited >= float(NO_SAMPLE_WAIT_S)
+        if not stale_vs_life and not timed_out:
+            return None
+        if stale_vs_life:
+            why = 'epoch %d < lifecycle_epoch %d - 1 (gate will not sample)' % (
+                int(item.epoch), int(life_ep),
+            )
+        else:
+            why = 'no SAMPLE.private.json after %.0fs' % waited
+        return self._terminal_no_sample(item, reason=why)
+
+    def _terminal_no_sample(self, item: ItemRecord, *, reason: str) -> ItemRecord:
+        """Move QUEUED → NO_DECISION with decision=no_sample; emit-ready; alert once."""
+        meta = dict(item.meta or {})
+        meta['gate_emit_ready'] = True
+        meta['settlement'] = 'pending_operator'
+        meta['no_sample_reason'] = (reason or '')[:400]
+        meta['scored'] = dict(
+            decision='no_sample',
+            evaluated={'z': None},
+            reasons=['no_sample', reason[:200]],
+            heldout={},
+            probe={},
+        )
+        updated = apply_transition(
+            item, ItemState.NO_DECISION, reason='no-sample',
+            updates={
+                'decision': 'no_sample',
+                'paid': False,
+                'fresh': False,
+                'merge_blocked': False,
+                'result_stored': True,
+                'meta': meta,
+            },
+        )
+        if not meta.get('no_sample_alerted'):
+            self._alert_no_sample(updated, reason=reason)
+            updated.meta = dict(updated.meta or {}, no_sample_alerted=True)
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'no_sample',
+                'item_id': updated.item_id,
+                'epoch': updated.epoch,
+                'reason': reason[:300],
+                'note': 'terminal no_sample — emit DECISION/PIT-RESULT, free pending',
+            }, default=str),
+            flush=True,
+        )
+        self._persist(updated)
+        return updated
+
+    def _alert_no_sample(self, item: ItemRecord, *, reason: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'no_sample',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'reason': (reason or '')[:800],
+            'settlement': 'pending_operator',
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'NO-SAMPLE-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'no_sample_alert',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
     def rented_count(self) -> int:
         return self.rent.active_count()
 
@@ -249,6 +399,9 @@ class Controller:
             }
 
         actions: List[dict] = []
+        # Item ids refused for missing SAMPLE this tick — skip so newer bindable
+        # epochs (e1069…) can bind without the oldest (e1068) blocking forever.
+        skip_bind_ids: set[str] = set()
 
         while True:
             # Free box slots only: count every item that still needs or holds a
@@ -259,6 +412,7 @@ class Controller:
                 self.items,
                 rented=occupied,
                 max_boxes=self.config.max_boxes,
+                skip_ids=skip_bind_ids,
             )
             if nxt is None:
                 break
@@ -274,7 +428,21 @@ class Controller:
                     'epoch': nxt.epoch,
                     'error': str(exc)[:200],
                 })
-                break
+                # Stamp wait clock; maybe terminalize; never break the bind loop.
+                stamped = self._note_sample_missing(nxt, reason=str(exc)[:200])
+                self._replace(stamped)
+                terminal = self._maybe_terminal_no_sample(stamped)
+                if terminal is not None:
+                    self._replace(terminal)
+                    actions.append({
+                        'op': 'no_sample',
+                        'item_id': terminal.item_id,
+                        'epoch': terminal.epoch,
+                        'note': (terminal.meta or {}).get('no_sample_reason'),
+                    })
+                else:
+                    skip_bind_ids.add(nxt.item_id)
+                continue
             bound = dequeue_and_bind(
                 nxt,
                 head=self.current_head,
@@ -297,6 +465,23 @@ class Controller:
                 'head': bound.bound_head[:12],
                 'round_id': bound.bound_round_id,
             })
+
+        # Revisit previously skipped QUEUED items that may now be past the
+        # no_sample deadline even if they were not selected this tick.
+        for item in list(self.items):
+            if item.state is not ItemState.QUEUED:
+                continue
+            if not (item.meta or {}).get('sample_wait_since'):
+                continue
+            terminal = self._maybe_terminal_no_sample(item)
+            if terminal is not None:
+                self._replace(terminal)
+                actions.append({
+                    'op': 'no_sample',
+                    'item_id': terminal.item_id,
+                    'epoch': terminal.epoch,
+                    'note': (terminal.meta or {}).get('no_sample_reason'),
+                })
 
         for item in list(self.items):
             if item.state is ItemState.RELEASED:

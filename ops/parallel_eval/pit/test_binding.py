@@ -93,6 +93,12 @@ class TestBinding(unittest.TestCase):
         self.assertIsNotNone(select_next_queued(items, rented=0, max_boxes=2))
         self.assertIsNone(select_next_queued(items, rented=2, max_boxes=2))
 
+    def test_skip_ids_advances_fifo(self):
+        items = [queued(1), queued(2), queued(3)]
+        nxt = select_next_queued(items, rented=0, max_boxes=2, skip_ids={items[0].item_id})
+        self.assertEqual(nxt.epoch, 1002)
+        self.assertEqual(nxt.registration_index, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

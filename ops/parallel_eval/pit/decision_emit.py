@@ -64,6 +64,12 @@ BLOCKED_DECISIONS = frozenset({
     'blocked_incomplete_master',
 })
 
+# Terminal non-GREEN settlements: never last-10 payout / HEAD / bench.
+TERMINAL_SETTLEMENT_DECISIONS = frozenset({
+    *BLOCKED_DECISIONS,
+    'no_sample',
+})
+
 
 def map_pit_decision(decision: Optional[str]) -> str:
     d = (decision or '').lower()
@@ -73,13 +79,17 @@ def map_pit_decision(decision: Optional[str]) -> str:
         return 'red'
     if d in ('no_decision', ''):
         return 'no_decision'
-    if d in BLOCKED_DECISIONS:
+    if d in TERMINAL_SETTLEMENT_DECISIONS:
         return d
     return d
 
 
 def is_blocked_decision(decision: Optional[str]) -> bool:
     return map_pit_decision(decision) in BLOCKED_DECISIONS
+
+
+def is_terminal_settlement(decision: Optional[str]) -> bool:
+    return map_pit_decision(decision) in TERMINAL_SETTLEMENT_DECISIONS
 
 
 def build_decision_doc(
@@ -99,12 +109,12 @@ def build_decision_doc(
         reasons.append('merge_blocked')
     if getattr(item, 'stranded', False) and 'stranded' not in reasons:
         reasons.append('stranded')
-    if gate_decision in BLOCKED_DECISIONS and gate_decision not in reasons:
+    if gate_decision in TERMINAL_SETTLEMENT_DECISIONS and gate_decision not in reasons:
         reasons.append(gate_decision)
     heldout = dict(scored.get('heldout') or {})
     if item.bound_round_id and 'round_id' not in heldout:
         heldout['round_id'] = item.bound_round_id
-    blocked = gate_decision in BLOCKED_DECISIONS
+    terminal = gate_decision in TERMINAL_SETTLEMENT_DECISIONS
     doc = dict(
         version=GATE_VERSION,
         epoch=int(item.epoch),
@@ -121,18 +131,18 @@ def build_decision_doc(
         timing=dict(scored.get('timing') or {}),
         commitment=scored.get('commitment'),
         z_bar=scored.get('z_bar'),
-        red_credit='zero',  # last-10-GREEN: REDs earn nothing; blocked never pays
+        red_credit='zero',  # last-10-GREEN: REDs earn nothing; terminal never pays
         batch_tasks=None,
         early_staged=False,
         delta_rc=None,
         source='pit',
         merge_blocked=bool(item.merge_blocked or getattr(item, 'stranded', False)),
         stranded=bool(getattr(item, 'stranded', False) or item.merge_blocked),
-        fresh=False if blocked else item.fresh,
-        paid=False if blocked else bool(item.paid),
+        fresh=False if terminal else item.fresh,
+        paid=False if terminal else bool(item.paid),
         no_decision=(gate_decision == 'no_decision'),
         chart_status=(
-            gate_decision if blocked
+            gate_decision if terminal
             else ('no_decision' if gate_decision == 'no_decision' else gate_decision)
         ),
         parallel_eval=dict(
@@ -145,14 +155,20 @@ def build_decision_doc(
             pit_decision=item.decision,
             merge_blocked=bool(item.merge_blocked or getattr(item, 'stranded', False)),
             stranded=bool(getattr(item, 'stranded', False) or item.merge_blocked),
-            fresh=False if blocked else item.fresh,
+            fresh=False if terminal else item.fresh,
         ),
     )
-    if blocked:
+    if terminal:
         # Operator settlement only — never a GREEN payout / last-10 credit.
         doc['settlement'] = 'pending_operator'
         doc['parallel_eval']['settlement'] = 'pending_operator'
-        doc['parallel_eval']['blocked'] = gate_decision
+        doc['parallel_eval']['terminal'] = gate_decision
+        if gate_decision in BLOCKED_DECISIONS:
+            doc['parallel_eval']['blocked'] = gate_decision
+        if gate_decision == 'no_sample':
+            doc['parallel_eval']['no_sample_reason'] = (
+                (item.meta or {}).get('no_sample_reason') or ''
+            )[:400]
     return doc
 
 

@@ -249,17 +249,25 @@ def select_next_queued(
     *,
     rented: int,
     max_boxes: int,
+    skip_ids: Optional[Iterable[str]] = None,
 ) -> Optional[ItemRecord]:
     """FIFO next QUEUED item if under the box cap.
 
     Hard rule: rentals ≤ min(queued_or_in_flight_demand, max_boxes). The
     controller only calls rent after bind; empty queue ⇒ rented stays 0.
+
+    ``skip_ids``: item_ids refused this tick (e.g. missing SAMPLE) so a newer
+    bindable epoch can proceed without the oldest blocking the queue forever.
     """
     if max_boxes < 1:
         raise ValueError('max_boxes must be >= 1')
     if rented >= max_boxes:
         return None
-    queued = [i for i in items if i.state is ItemState.QUEUED]
+    skip = {str(x) for x in (skip_ids or ())}
+    queued = [
+        i for i in items
+        if i.state is ItemState.QUEUED and i.item_id not in skip
+    ]
     if not queued:
         return None
     queued.sort(key=lambda i: (i.registration_index, i.epoch, i.item_id))
