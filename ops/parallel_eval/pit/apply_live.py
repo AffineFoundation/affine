@@ -1,0 +1,480 @@
+"""Live GREEN_FRESH apply path (SPEC §3.1, BRIEF §1.9, CUTOVER-PLAN blocker 5).
+
+GREEN_FRESH: verify bf16 C + M(C) uploads (**fail closed**), then hand to pe_apply
+(first GREEN from a given head becomes HEAD).
+GREEN_STALE / stranded: paid + merge_blocked, never becomes HEAD; destroy box state.
+RED / NO_DECISION: destroy box state; RED earns nothing (last-10-GREEN rule).
+Never promote on timeout or fail-closed error.
+
+``verify_uploads`` is **mandatory** in live. Missing verifier or a failed
+fp32-master / bf16 hash check raises ApplyLiveError (never treats as verified).
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, Mapping, Optional
+
+from .checkpoint_auth import build_checkpoint_auth_payload, sign_checkpoint_authorization
+from .config import PitConfig
+from .cutover_apply import (
+    confirm_head_advanced,
+    cutover_apply_alert,
+    drive_cutover_apply,
+    master_index_is_complete,
+)
+from .life_paths import pending_dir
+from .state import ItemRecord
+
+
+class ApplyLiveError(RuntimeError):
+    pass
+
+
+class PromoteRefused(ApplyLiveError):
+    """Timeout / fail-closed / incomplete probe must never become GREEN."""
+
+
+@dataclass
+class LiveApplyResult:
+    applied: bool
+    decision: str
+    merge_blocked: bool
+    paid: bool
+    destroyed_box_state: bool
+    head_advanced: bool
+    pe_apply_accepted: bool = False
+    master_verified: bool = False
+    candidate_verified: bool = False
+    stranded: bool = False
+    detail: Dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {
+            'applied': self.applied,
+            'decision': self.decision,
+            'merge_blocked': self.merge_blocked,
+            'stranded': self.stranded or self.merge_blocked,
+            'paid': self.paid,
+            'destroyed_box_state': self.destroyed_box_state,
+            'head_advanced': self.head_advanced,
+            'pe_apply_accepted': self.pe_apply_accepted,
+            'master_verified': self.master_verified,
+            'candidate_verified': self.candidate_verified,
+            'detail': dict(self.detail),
+        }
+
+
+def refuse_if_unpromotable(scored: Mapping[str, Any]) -> None:
+    decision = str(scored.get('decision') or '').lower()
+    if scored.get('partial') or scored.get('timeout') or scored.get('incomplete'):
+        raise PromoteRefused('never promote on partial/timeout/incomplete')
+    if scored.get('fail_closed') or scored.get('fp32_fail_closed'):
+        raise PromoteRefused('never promote on fail-closed')
+    if decision in ('pending', 'no_decision', 'timeout', 'error'):
+        raise PromoteRefused('decision %r is not promotable' % decision)
+
+
+def destroy_box_state(
+    destroy_fn: Callable[..., Mapping[str, Any]],
+    *,
+    box_id: Optional[str],
+    candidate_id: Optional[str],
+    reason: str,
+) -> Dict[str, Any]:
+    """Call host destroy; live pe_box.destroy_box_state has no candidate_id."""
+    try:
+        return dict(destroy_fn(box_id=box_id, candidate_id=candidate_id, reason=reason))
+    except TypeError:
+        return dict(destroy_fn(box_id=box_id, reason=reason))
+
+
+def verify_green_uploads(
+    verify_fn: Callable[..., Mapping[str, Any]],
+    *,
+    candidate_id: str,
+    candidate_sha256: str,
+    master_digest: str,
+    candidate_path: Optional[str] = None,
+    master_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = dict(
+        candidate_id=candidate_id,
+        candidate_sha256=candidate_sha256,
+        master_digest=master_digest,
+    )
+    if candidate_path:
+        kwargs['candidate_path'] = candidate_path
+    if master_path:
+        kwargs['master_path'] = master_path
+    out = dict(verify_fn(**kwargs))
+    if not out.get('candidate_ok'):
+        raise ApplyLiveError('bf16 candidate hash verify failed (fail closed)')
+    if not out.get('master_ok'):
+        raise ApplyLiveError('fp32 master hash verify failed (fail closed)')
+    return out
+
+
+def _upload_receipt_dir(candidate_id: str) -> Optional[Path]:
+    pe = os.environ.get('PIT_UPLOAD_ROOT') or os.environ.get('PE_STATE')
+    if not pe:
+        return None
+    root = Path(pe)
+    # PIT_UPLOAD_ROOT points at uploads/; PE_STATE needs /pit/uploads/.
+    if root.name == 'uploads':
+        cand = root / candidate_id
+    else:
+        cand = root / 'pit' / 'uploads' / candidate_id
+    return cand if cand.exists() else None
+
+
+def _write_pending_json(path: Path, doc: Mapping[str, Any]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return str(path)
+
+
+@dataclass
+class LiveApplicator:
+    config: PitConfig
+    accept_pit_decision: Optional[Callable[[Mapping[str, Any]], Any]] = None
+    verify_uploads: Optional[Callable[..., Mapping[str, Any]]] = None
+    destroy_state: Optional[Callable[..., Mapping[str, Any]]] = None
+    upload_master: Optional[Callable[..., Mapping[str, Any]]] = None
+    upload_candidate: Optional[Callable[..., Mapping[str, Any]]] = None
+    checkpoint_signer: Optional[Any] = None
+
+    def apply(self, item: ItemRecord, *, scored: Mapping[str, Any]) -> LiveApplyResult:
+        if not self.config.may_write_live_artifacts():
+            raise ApplyLiveError('live apply refused: mode is not live or revert is set')
+        decision = (item.decision or str(scored.get('decision') or '')).lower()
+        if decision == 'green':
+            decision = 'green_fresh' if item.fresh else 'green_stale'
+
+        if decision == 'green_fresh':
+            return self._apply_fresh(item, scored=scored)
+        if decision == 'green_stale':
+            return self._stale_or_red(
+                item, decision='green_stale', paid=True, merge_blocked=True, stranded=True,
+            )
+        if decision == 'red':
+            if item.paid:
+                raise ApplyLiveError('RED must not be paid')
+            return self._stale_or_red(item, decision='red', paid=False, merge_blocked=False)
+        if decision in ('no_decision',):
+            return self._stale_or_red(item, decision='no_decision', paid=False, merge_blocked=False)
+        raise ApplyLiveError('unsupported decision %r' % decision)
+
+    def upload_candidate_artifacts(self, item: ItemRecord) -> Dict[str, Any]:
+        """Upload bf16 C + full fp32 shards and verify (no pe_apply / HEAD).
+
+        Used by the baseline-wait billing cap: persist C before releasing the box
+        so later scoring can apply from the durable upload.
+        """
+        cand = item.candidate_id
+        if not cand or len(cand) != 64:
+            raise ApplyLiveError('missing candidate_id')
+        if self.verify_uploads is None:
+            raise ApplyLiveError('upload refused: verify_uploads is required (fail closed)')
+        meta = item.meta or {}
+        existing = dict(meta.get('live_apply') or {})
+        if (
+            existing.get('candidate_verified')
+            and existing.get('master_verified')
+            and existing.get('master_complete') is not False
+            and master_index_is_complete(cand)
+        ):
+            return {
+                'candidate_verified': True,
+                'master_verified': True,
+                'master_complete': True,
+                'detail': {'skipped_upload': True, 'candidate': cand},
+            }
+        master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
+        cand_sha = meta.get('candidate_sha256')
+        if not master_digest or len(str(master_digest)) != 64:
+            raise ApplyLiveError('missing/invalid master digest for upload verify (fail closed)')
+        if not cand_sha or len(str(cand_sha)) != 64:
+            raise ApplyLiveError('missing/invalid bf16 candidate sha for upload verify (fail closed)')
+        if self.upload_candidate is not None:
+            self.upload_candidate(
+                candidate_id=cand,
+                candidate_path=meta.get('candidate_path') or '',
+                path=meta.get('candidate_path') or '',
+                pod=meta.get('pod'),
+                files=meta.get('candidate_files') or meta.get('files'),
+                box_candidate_dir=meta.get('box_candidate_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+            )
+        master_pub: Dict[str, Any] = {}
+        if self.upload_master is not None:
+            master_pub = dict(self.upload_master(
+                candidate_id=cand,
+                path=meta.get('candidate_master_path') or '',
+                master_digest=str(master_digest),
+                bf16_sha256=cand,
+                pod=meta.get('pod'),
+                box_master_dir=meta.get('box_master_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                store_entry=meta.get('output_store_entry') or '',
+            ) or {})
+        published_complete = bool(
+            master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
+        )
+        if not published_complete and not master_index_is_complete(cand):
+            raise ApplyLiveError(
+                'fp32 master index incomplete for %s (need weight shards; fail closed)'
+                % cand[:12]
+            )
+        receipt = _upload_receipt_dir(cand)
+        cand_path = str(receipt) if receipt is not None else None
+        raw_path = meta.get('candidate_path')
+        if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
+            cand_path = raw_path
+        verified = verify_green_uploads(
+            self.verify_uploads,
+            candidate_id=cand,
+            candidate_sha256=str(cand_sha),
+            master_digest=str(master_digest),
+            candidate_path=cand_path,
+            master_path=str(meta.get('candidate_master_path') or '') or None,
+        )
+        if not verified.get('master_ok') or not verified.get('candidate_ok'):
+            raise ApplyLiveError('upload verify failed (fail closed)')
+        if verified.get('master_complete') is False:
+            raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
+        return {
+            'candidate_verified': True,
+            'master_verified': True,
+            'master_complete': True if verified.get('master_complete') is not False else False,
+            'detail': {
+                'candidate': cand,
+                'verify': verified,
+                'master_publish': {
+                    k: master_pub.get(k)
+                    for k in ('shard_count', 'complete', 'index', 'box_master_dir')
+                    if k in master_pub
+                },
+            },
+        }
+
+    def _apply_fresh(self, item: ItemRecord, *, scored: Mapping[str, Any]) -> LiveApplyResult:
+        refuse_if_unpromotable({**dict(scored), 'decision': 'green'})
+        if item.merge_blocked or item.fresh is False:
+            raise ApplyLiveError('fresh GREEN cannot be merge_blocked/stale')
+        cand = item.candidate_id
+        if not cand or len(cand) != 64:
+            raise ApplyLiveError('missing candidate_id')
+        # FAIL CLOSED: verify_uploads is mandatory in live (CUTOVER-PLAN blocker 5).
+        if self.verify_uploads is None:
+            raise ApplyLiveError('live apply refused: verify_uploads is required (fail closed)')
+        meta = item.meta or {}
+        existing = dict(meta.get('live_apply') or {})
+        # Host-recorded digest at train.done — never trust box meta.json.
+        master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
+        cand_sha = meta.get('candidate_sha256')
+        if not master_digest or len(str(master_digest)) != 64:
+            raise ApplyLiveError(
+                'missing/invalid host-recorded master digest for GREEN verify (fail closed)'
+            )
+        if not cand_sha or len(str(cand_sha)) != 64:
+            raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
+        master_pub: Dict[str, Any] = {}
+        already_uploaded = bool(
+            existing.get('candidate_verified')
+            and existing.get('master_verified')
+            and (meta.get('artifacts_uploaded') or existing.get('detail', {}).get('early_upload'))
+        )
+        # Upload fp32 FIRST, then bf16. ALWAYS verify against R2 afterward
+        # (never skip verify on an early-upload record — aae897c1 review C).
+        if not already_uploaded and self.upload_master is not None:
+            master_pub = dict(self.upload_master(
+                candidate_id=cand,
+                path=meta.get('candidate_master_path') or '',
+                master_digest=str(master_digest),
+                bf16_sha256=cand,
+                pod=meta.get('pod'),
+                box_master_dir=meta.get('box_master_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                store_entry=meta.get('output_store_entry') or '',
+                pending=True,
+            ) or {})
+        if not already_uploaded and self.upload_candidate is not None:
+            self.upload_candidate(
+                candidate_id=cand,
+                candidate_path=meta.get('candidate_path') or '',
+                path=meta.get('candidate_path') or '',
+                pod=meta.get('pod'),
+                files=meta.get('candidate_files') or meta.get('files'),
+                box_candidate_dir=meta.get('box_candidate_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                pending=True,
+            )
+        # Incomplete-master refusal BEFORE promote (digest-only / no shards).
+        published_complete = bool(
+            master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
+        )
+        if (
+            not master_index_is_complete(cand)
+            and not published_complete
+            and not already_uploaded
+        ):
+            raise ApplyLiveError(
+                'fp32 master index incomplete for %s (need weight shards; fail closed)'
+                % cand[:12]
+            )
+        receipt = _upload_receipt_dir(cand)
+        cand_path = str(receipt) if receipt is not None else None
+        raw_path = meta.get('candidate_path')
+        if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
+            cand_path = raw_path
+        # VERIFY FIRST against R2 (pending or live), then promote.
+        verified = verify_green_uploads(
+            self.verify_uploads,
+            candidate_id=cand,
+            candidate_sha256=str(cand_sha),
+            master_digest=str(master_digest),
+            candidate_path=cand_path,
+            master_path=str(meta.get('candidate_master_path') or '') or None,
+        )
+        if not verified.get('master_ok') or not verified.get('candidate_ok'):
+            raise ApplyLiveError('upload verify failed (fail closed)')
+        if verified.get('master_complete') is False:
+            raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
+        # Promote private pending → live only after verify; server-side object copy.
+        try:
+            from ops.parallel_eval.live.pe_artifact_upload import promote_pending_master_to_live
+            promote_pending_master_to_live(candidate_id=cand, digest=str(master_digest))
+        except Exception as exc:
+            if not master_index_is_complete(cand):
+                raise ApplyLiveError(
+                    'fp32 pending→live promote failed for %s: %s'
+                    % (cand[:12], str(exc)[:200])
+                ) from exc
+        files = meta.get('candidate_files') or meta.get('files') or (meta.get('checkpoint') or {}).get('files')
+        ckpt = dict(id=cand)
+        if files:
+            ckpt['files'] = dict(files)
+        optimizer_step = int(meta.get('optimizer_step') or scored.get('optimizer_step') or 0)
+        # Live: delegated host signer only — FixtureRootSigner is test-only.
+        if self.checkpoint_signer is None:
+            raise ApplyLiveError(
+                'live apply refused: checkpoint_signer (delegated host key+cert) required; '
+                'FixtureRootSigner is test-only'
+            )
+        auth_payload = build_checkpoint_auth_payload(
+            checkpoint_id=cand,
+            input_head=item.bound_head or '',
+            optimizer_step=optimizer_step,
+            files=ckpt.get('files'),
+            publication_receipt_sha256=meta.get('publication_receipt_sha256'),
+        )
+        authorization = sign_checkpoint_authorization(auth_payload, signer=self.checkpoint_signer)
+        pending_path = pending_dir() / ('e%d-%s.json' % (item.epoch, cand[:16]))
+        pend_doc = dict(
+            epoch=item.epoch,
+            candidate=cand,
+            training_head=item.bound_head,
+            checkpoint=ckpt,
+            optimizer_step=optimizer_step,
+            checkpoint_authorization=authorization,
+            pe_keep=True,
+            source='pit',
+            at=time.time(),
+        )
+        pending_abs = _write_pending_json(pending_path, pend_doc)
+        pe_ok = False
+        if self.accept_pit_decision is not None:
+            payload = {
+                'source': 'pit',
+                'epoch': item.epoch,
+                'candidate': cand,
+                'training_head': item.bound_head,
+                'green_at': meta.get('decided_at_mono'),
+                'decision': 'green_fresh',
+                'merge_blocked': False,
+                'files': files,
+                'pending': pending_abs,
+            }
+            self.accept_pit_decision(payload)
+            pe_ok = True
+        # Under cutover, accept_pit_decision only queues GREENS pending.
+        # HEAD advances only after drive_cutover_apply → record_applied.
+        try:
+            drive_cutover_apply(alert_fn=cutover_apply_alert)
+        except Exception as exc:
+            # Queued + verified; head drive retries on later ticks. Keep box.
+            detail_drive = {'drive_error': str(exc)[:300]}
+        else:
+            detail_drive = {}
+        advanced = bool(pe_ok and confirm_head_advanced(cand))
+        detail = {
+            'candidate': cand,
+            'verify': verified,
+            'master_publish': {
+                k: master_pub.get(k)
+                for k in ('shard_count', 'complete', 'index', 'box_master_dir')
+                if k in master_pub
+            },
+            **detail_drive,
+        }
+        return LiveApplyResult(
+            applied=True,
+            decision='green_fresh',
+            merge_blocked=False,
+            stranded=False,
+            paid=True,
+            destroyed_box_state=False,
+            head_advanced=advanced,
+            pe_apply_accepted=pe_ok,
+            master_verified=bool(verified.get('master_ok')),
+            candidate_verified=bool(verified.get('candidate_ok')),
+            detail=detail,
+        )
+
+    def _stale_or_red(
+        self,
+        item: ItemRecord,
+        *,
+        decision: str,
+        paid: bool,
+        merge_blocked: bool,
+        stranded: bool = False,
+    ) -> LiveApplyResult:
+        destroyed = False
+        if self.destroy_state is not None:
+            destroy_box_state(
+                self.destroy_state,
+                box_id=item.box_id,
+                candidate_id=item.candidate_id,
+                reason=decision,
+            )
+            destroyed = True
+        # RED / stale: GC private pending R2 artifacts so host disk / pending
+        # index never accumulate (aae897c1 review B).
+        if decision == 'red' and item.candidate_id:
+            try:
+                from ops.parallel_eval.live.pe_artifact_upload import gc_pending_artifacts
+                gc_pending_artifacts(str(item.candidate_id))
+            except Exception:
+                pass
+        return LiveApplyResult(
+            applied=False,
+            decision=decision,
+            merge_blocked=merge_blocked,
+            stranded=bool(stranded or merge_blocked),
+            paid=paid,
+            destroyed_box_state=destroyed,
+            head_advanced=False,
+            detail={'candidate': item.candidate_id},
+        )

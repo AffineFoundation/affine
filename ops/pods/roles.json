@@ -151,6 +151,82 @@
   }
  },
 
+ "pit-box": {
+  "what": "PIT per-item train+eval box (ops/parallel_eval/pit). Live name glob affine-pe-pit-* (shares PE cap); shadow glob affine-pe-pit-shadow-* (own cap; still affine-pe-* so pe_rent.release works). Rented on demand only — no warm pool. B300 pinned (no GPU fallback). Lium auto-backup off. Price ceiling $56/h. Alert-only guardian; TTL 4h.",
+  "name": "affine-pe-pit-",
+  "names": [],
+  "name_glob": "affine-pe-pit-*",
+  "shadow_name": "affine-pe-pit-shadow-",
+  "shadow_name_glob": "affine-pe-pit-shadow-*",
+  "gpu_specs": [
+    {"gpu": "B300", "count": 8, "whole_node": true}
+  ],
+  "max_price_h": 56,
+  "min_disk_gb": 800,
+  "tiers": ["spot", "secure"],
+  "max_rents_24h": 48,
+  "ttl_h": 4,
+  "auto": false,
+  "optional": true,
+  "disable_auto_backup": true,
+  "guardian": "alert-only",
+  "root": "/opt/plain/pit"
+ },
+
+ "pit-baseline-job": {
+  "what": "Serverless baseline/secret-draw job box (SPEC §3.3). Name glob affine-baseline-*. B300 pinned. Does not count toward PIT item box_cap. Auto-backup off. TTL 2h.",
+  "name": "affine-baseline-",
+  "names": [],
+  "name_glob": "affine-baseline-*",
+  "gpu_specs": [{"gpu": "B300", "count": 8, "whole_node": true}],
+  "max_price_h": 56,
+  "min_disk_gb": 400,
+  "tiers": ["spot", "secure"],
+  "max_rents_24h": 24,
+  "ttl_h": 2,
+  "auto": false,
+  "optional": true,
+  "disable_auto_backup": true,
+  "guardian": "alert-only",
+  "root": "/opt/plain/pit-baseline"
+ },
+
+ "pit-bench-job": {
+  "what": "On-demand PIT GREEN bench (SPEC §3.2, profile qwen3.5-family-pp0). Name glob affine-pe-bench-*. Cap 1, separate from item max_boxes; B300 ≤$56/h; merge-only publish. Auto-backup off.",
+  "name": "affine-pe-bench-",
+  "names": [],
+  "name_glob": "affine-pe-bench-*",
+  "gpu_specs": [{"gpu": "B300", "count": 8, "whole_node": true}],
+  "max_price_h": 56,
+  "min_disk_gb": 400,
+  "tiers": ["spot", "secure"],
+  "max_rents_24h": 12,
+  "ttl_h": 3,
+  "auto": false,
+  "optional": true,
+  "disable_auto_backup": true,
+  "guardian": "alert-only",
+  "root": "/opt/plain/pit-bench"
+ },
+
+ "pit-prior-job": {
+  "what": "Serverless prior-pass job per GREEN head (SPEC §3.4). Name glob affine-prior-job-*. Does not count toward PIT item box_cap. Auto-backup off.",
+  "name": "affine-prior-job-",
+  "names": [],
+  "name_glob": "affine-prior-job-*",
+  "gpu_specs": [{"gpu": "H100", "count": 8, "whole_node": true}],
+  "max_price_h": 25,
+  "min_disk_gb": 200,
+  "tiers": ["spot", "secure"],
+  "max_rents_24h": 12,
+  "ttl_h": 2,
+  "auto": false,
+  "optional": true,
+  "disable_auto_backup": true,
+  "guardian": "alert-only",
+  "root": "/opt/plain/pit-prior"
+ },
+
  "evaluator": {
   "what": "MiMo public evaluator pod (affine-mimo-evaluator-supervised + -tunnel). Holds evaluator.seed by design: public runtime only, private staging is a ROOT step.",
   "name": "affine-evaluator-1", "names": ["affine-evaluator-1"],

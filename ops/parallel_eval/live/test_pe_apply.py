@@ -1,6 +1,12 @@
 import os, sys, tempfile, time, json
 from pathlib import Path
 td = tempfile.mkdtemp(); os.environ["PE_STATE"] = td + "/state"
+# Hermetic hash-sync hook: never touch a host install path.
+_fake_sync = Path(td) / "fake_sync_expected_hash.py"
+_fake_sync.write_text("import sys\n")
+os.environ["PE_SYNC_EXPECTED_HASH"] = str(_fake_sync)
+os.environ["PE_SYNC_EXPECTED_HASH_PYTHON"] = sys.executable
+os.environ["PE_SYNC_EXPECTED_HASH_LOG"] = str(Path(td) / "hook-sync.log")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 from safetensors.torch import save_file, load_file

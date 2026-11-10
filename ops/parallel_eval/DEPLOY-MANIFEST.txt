@@ -1,0 +1,97 @@
+# SN120 PIT live deploy manifest (PR #96)
+# Copy every listed file into the RA release snapshot / host PE code dir.
+# NEVER `git checkout` onto the live tree. Backup each destination first.
+# Placeholders only — fill RA tag / host paths at cutover time.
+#
+# Example destination root:
+#   RA/20261109-serverless/release/
+# Host PE code dir (additive for pe_apply accept_pit_decision):
+#   /home/const/subnet120-rewrite/state/root-audits/20261106-parallel-cutover/code/
+
+# --- PIT library (entire package) ---
+ops/parallel_eval/pit/__init__.py
+ops/parallel_eval/pit/apply_live.py
+ops/parallel_eval/pit/life_paths.py
+ops/parallel_eval/pit/baseline_job.py
+ops/parallel_eval/pit/bench_job.py
+ops/parallel_eval/pit/binding.py
+ops/parallel_eval/pit/box.py
+ops/parallel_eval/pit/ceremony_sign_host_key.py
+ops/parallel_eval/pit/checkpoint_auth.py
+ops/parallel_eval/pit/config.py
+ops/parallel_eval/pit/controller.py
+ops/parallel_eval/pit/cutover.py
+ops/parallel_eval/pit/cutover_ops.py
+ops/parallel_eval/pit/decision_emit.py
+ops/parallel_eval/pit/decisions.py
+ops/parallel_eval/pit/durable.py
+ops/parallel_eval/pit/expected_master.py
+ops/parallel_eval/pit/gate_writer.py
+ops/parallel_eval/pit/host_wiring.py
+ops/parallel_eval/pit/pe_lane.py
+ops/parallel_eval/pit/pe_rent.py
+ops/parallel_eval/pit/pe_score.py
+#   ↑ nest_heldout_fields: sigma_run_floor from top-level → evaluated → 0.0
+#     (real live pe_score has no top-level sigma; gate emit needs heldout filled)
+ops/parallel_eval/pit/prior_job.py
+ops/parallel_eval/pit/queue_ingest.py
+ops/parallel_eval/pit/run_host.py
+#   ↑ writes PE_STATE/pit/HOST-HEARTBEAT.json each tick (mining discovery cutover liveness)
+ops/parallel_eval/pit/shadow.py
+ops/parallel_eval/pit/shadow_compare.py
+ops/parallel_eval/pit/signer.py
+ops/parallel_eval/pit/state.py
+ops/parallel_eval/pit/train_box.py
+ops/parallel_eval/pit/training_report.py
+ops/parallel_eval/pit/scripts/affine-pit-host.service
+ops/parallel_eval/pit/scripts/cutover_enable.sh
+ops/parallel_eval/pit/scripts/cutover_revert.sh
+
+# --- Live pe_* SOT (MUST deploy alongside PIT; host code/ still lacks these hooks) ---
+ops/parallel_eval/live/pe_apply.py
+ops/parallel_eval/live/pe_lifecycle.py
+ops/parallel_eval/live/pe_warm.py
+ops/parallel_eval/live/pe_controller.py
+ops/parallel_eval/live/pe_live.py
+ops/parallel_eval/live/pe_gate_hook.py
+ops/parallel_eval/live/pe_rent.py
+ops/parallel_eval/live/pe_lane.py
+ops/parallel_eval/live/pe_score.py
+ops/parallel_eval/live/pe_common.py
+
+# --- New host seams required by host_wiring (fail closed if absent) ---
+ops/parallel_eval/live/pe_box.py
+ops/parallel_eval/live/pe_verify.py
+ops/parallel_eval/live/pe_upload_verify.py
+ops/parallel_eval/live/pe_round_seed.py
+# Vendored shadow-driver helpers (drive_item / run5090 on-box path):
+ops/parallel_eval/live/train_pit.py
+ops/parallel_eval/live/gate_fetch.py
+ops/parallel_eval/live/bundle_fetch.py
+# Host-only required env (NOT committed; cutover_enable + affine-pit-host.service):
+#   PIT_BUNDLE_JSON       → train-cap-64k BUNDLE5090.json with trainer {key,sha256,bytes}
+#                           (PE_STATE/BUNDLE.json is probe-only — refuse as default)
+#   PIT_FP32_MASTER_INDEX → public website k1/fp32-master/ index dir
+#   PIT_V834E_RELEASE / PIT_TRAINER_HOST → release-v834e-signed (+ trainer-host-v834e)
+# Never commit /home/const paths, IPs, or private ROOT-ADMITTED configs.
+
+# --- Docs / operator ---
+docs/PIT.md
+ops/parallel_eval/DEPLOY-MANIFEST.txt
+
+# --- Shared durable + serverless job lifecycle (controller imports from release) ---
+ops/parallel_eval/durable.py
+ops/jobs/__init__.py
+ops/jobs/kinds.py
+ops/jobs/runner.py
+
+# Deploy notes:
+# 1. Prefer additive-patch of live pe_apply.py for accept_pit_decision only if
+#    replacing the whole file would drop _sync_expected_hash_after_head_apply.
+# 2. Point affine-pit-host.service PYTHONPATH at the RA release that contains
+#    both ops/parallel_eval/pit and ops/parallel_eval/live (so pe_box /
+#    pe_verify / pe_round_seed import as top-level OR package names).
+# 3. After copy: run
+#      PYTHONPATH=<release> python3 -c "from ops.parallel_eval.pit.host_wiring import build_live_host_bundle"
+#    against the live flag (dry) before enabling cutover.
+# 4. Do not commit host IPs, known_hosts, or key material.

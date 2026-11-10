@@ -23,19 +23,55 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pe_common import *
-import pe_apply as PA
+# Single pe_apply module object under both import names. Package loaders
+# (ops.parallel_eval.live.pe_apply) and bare `import pe_apply` must share
+# identity — otherwise cutover patches / marks land on a different object
+# than apply_tick reads via PA.next_green.
+_PE_APPLY_PKG = "ops.parallel_eval.live.pe_apply"
+if _PE_APPLY_PKG in sys.modules:
+    PA = sys.modules[_PE_APPLY_PKG]
+    sys.modules["pe_apply"] = PA
+else:
+    import pe_apply as PA  # noqa: E402
+    sys.modules[_PE_APPLY_PKG] = PA
 import pe_gate_hook as HOOK
 
+def _life_state_root() -> Path:
+    """PE_LIFE_STATE when set (required for PIT cutover); else legacy ST/life."""
+    env = os.environ.get("PE_LIFE_STATE")
+    if env:
+        return Path(env)
+    return ST / "life"
+
+
+def _pending_dir() -> Path:
+    return _life_state_root() / "pending"
+
+
+def _apply_dir() -> Path:
+    return _life_state_root() / "apply"
+
+
+# Back-compat aliases (refreshed by _sync_life_paths). Prefer _pending_dir/_apply_dir.
 LST = Path(os.environ.get("PE_LIFE_STATE") or (ST / "life"))
 PENDING = LST / "pending"
 APPLY = LST / "apply"
 RESTORE_SH = Path(os.environ.get("PE_RESTORE_SH") or (GATE_CODE / "trainer_restore.sh"))
-RSSH = "/home/const/subnet120-rewrite/state/root-audits/20261026-rollback-189de412/scripts/rssh.sh"
-POD_KEEP = "/workspace/affine-mimo-trainer-prod/private/promotion-gate/pe_trainer_keep.py"
+RSSH = os.environ.get("PE_RSSH") or "rssh"
+POD_KEEP = os.environ.get("PE_POD_KEEP") or (
+    "/workspace/affine-mimo-trainer-prod/private/promotion-gate/pe_trainer_keep.py"
+)
 FAKE = os.environ.get("PE_FAKE_TRAINER")
 RESTORE_MAX_ATTEMPTS = 5
 RESTORE_BACKOFF_S = 60
 RESTORE_TIMEOUT_S = 2400
+
+
+def _sync_life_paths() -> None:
+    global LST, PENDING, APPLY
+    LST = _life_state_root()
+    PENDING = _pending_dir()
+    APPLY = _apply_dir()
 
 
 def _cur():
@@ -227,13 +263,55 @@ def live_spec(e, pend):
                 files=(pend.get("checkpoint") or {}).get("files"), max_num_seqs=512), None
 
 
+def _pit_flag():
+    """Load parallel_eval.pit from the PE flag JSON (best-effort)."""
+    try:
+        flag = Path(os.environ.get("PE_FLAG") or "")
+        if not flag or not flag.exists():
+            flag = Path(os.environ.get("PE_FLAG") or "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/PROMOTION-GATE.json")
+        pe = (json.loads(flag.read_text()).get("parallel_eval") or {})
+        return pe.get("pit") or {}
+    except Exception:
+        return {}
+
+
+def _pit_enabled():
+    """When parallel_eval.pit.enabled (and not revert), PIT owns dequeue/train."""
+    pit = _pit_flag()
+    if pit.get("revert") is True:
+        return False
+    return pit.get("enabled") is True
+
+
+def _pit_cutover():
+    """Live cutover: trainer dequeue / warm / standing lanes off (SPEC §7)."""
+    pit = _pit_flag()
+    if pit.get("revert") is True:
+        return False
+    return pit.get("enabled") is True and pit.get("mode") == "live" and pit.get("cutover") is True
+
+
 def dispatch_tick(submit):
+    # Stop live PE dispatch ONLY when pit.enabled AND pit.cutover are both true.
+    # Shadow must never affect live dispatch.
+    if _pit_cutover():
+        return {"pit": "dispatch_noop", "cutover": True}
     out = {}
     for p in sorted(PENDING.glob("e*.json")):
         pend = rj(p) or {}
         e = int(pend.get("epoch", -1))
         if (JOBS / ("live-e%d" % e) / "JOB.json").exists() or (EP / str(e) / "DECISION.json").exists():
             continue
+        # PIT host owns this batch (skip marker); never PE-lane double-dispatch.
+        from pathlib import Path as _P
+        _pit = os.environ.get("PIT_STATE")
+        _pe = os.environ.get("PE_STATE") or str(ST)
+        _pe_pit = str(_P(_pe) / "pit")
+        if _pit and _P(_pit).resolve() != _P(_pe_pit).resolve():
+            raise RuntimeError("PIT_STATE=%s disagrees with PE_STATE/pit=%s" % (_pit, _pe_pit))
+        _claim_roots = [LST, _P(_pit or _pe_pit), _P(_pit or _pe_pit) / "claims"]
+        if any((_r / ("PIT-CLAIM-e%d.json" % e)).exists() for _r in _claim_roots):
+            out[e] = "pit-claimed"; continue
         spec, why = live_spec(e, pend)
         if spec is None:
             if pend.get("dispatch_wait") != why:
@@ -275,13 +353,39 @@ def apply_tick():
         if not item:
             break
         kind, s = PA.decide_apply(item)
-        pend = rj(item["pending"]) or {}
+        pend_path = item.get("pending")
+        if not pend_path:
+            PA.mark(item["candidate"], state="unrestorable", staleness=s, why="missing pending path on GREEN row")
+            ev(event="green_unrestorable", epoch=item["epoch"], why="no-pending"); continue
+        pend = rj(pend_path) or {}
         if kind == "fresh":
             if pend.get("pe_keep") is False:
                 PA.mark(item["candidate"], state="unrestorable", staleness=s, why="pe-keep failed; applying would strand the trainer")
                 ev(event="green_unrestorable", epoch=item["epoch"]); continue
+            # Never write APPLY ready if record_applied would later refuse
+            # (incomplete master or older order-blocking pending).
+            ok_ready, why_ready = PA.can_write_apply_ready(item)
+            if not ok_ready:
+                if str(why_ready).startswith("incomplete-fp32-master"):
+                    PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                    ev(event="green_apply_blocked_incomplete_master", epoch=item["epoch"],
+                       candidate=str(item["candidate"])[:12])
+                    out["blocked_incomplete_master"] = item["epoch"]
+                else:
+                    ev(event="apply_ready_refused", epoch=item["epoch"], why=why_ready)
+                    out["apply_ready_refused"] = why_ready
+                continue
             ap = APPLY / ("e%d.json" % item["epoch"])
             if not ap.exists():
+                # Re-check immediately before the write (fail closed).
+                ok_ready, why_ready = PA.can_write_apply_ready(item)
+                if not ok_ready:
+                    if str(why_ready).startswith("incomplete-fp32-master"):
+                        PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                        out["blocked_incomplete_master"] = item["epoch"]
+                    else:
+                        out["apply_ready_refused"] = why_ready
+                    continue
                 wj(ap, dict(state="ready", epoch=item["epoch"], candidate=item["candidate"], base_head=item["training_head"],
                             green_at=item["green_at"], checkpoint=pend["checkpoint"], optimizer_step=pend["optimizer_step"],
                             checkpoint_authorization=pend["checkpoint_authorization"],
@@ -311,11 +415,20 @@ def reconcile_tick():
     return out
 
 
-def tick(submit):
+def tick(submit, *, skip_dispatch: bool = False):
+    """Controller tick. Under PIT cutover set skip_dispatch=True so legacy
+    PE-lane job submit is skipped while apply_tick + reconcile_tick still run.
+    """
+    _sync_life_paths()
     LST.mkdir(parents=True, exist_ok=True)
+    PENDING.mkdir(parents=True, exist_ok=True)
+    APPLY.mkdir(parents=True, exist_ok=True)
     res = {}
     for name, fn in (("restore", restore_tick), ("dispatch", lambda: dispatch_tick(submit)), ("reconcile", reconcile_tick),
                      ("apply", apply_tick)):
+        if skip_dispatch and name == "dispatch":
+            res[name] = dict(skipped="warm-off-or-pit-cutover")
+            continue
         try:
             res[name] = fn()
         except Exception as ex:

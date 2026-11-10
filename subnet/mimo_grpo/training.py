@@ -6,6 +6,7 @@ claimed LP, the top-k/top-p distribution, or our older experimental denominator.
 """
 from dataclasses import asdict
 import math
+import os
 import time
 import numpy as np
 import torch
@@ -103,7 +104,15 @@ def train_update(runtime, optimizer, groups, binding: InputBinding, *,
     if _versions(runtime.model) != versions:
         raise ValueError('input actor changed during OLD preparation')
     optimizer.zero_grad()
-    accumulator = FP32Accumulator(runtime.model.named_parameters())
+    # PIT low-mem (<100 GiB): FP32 accumulator on CPU — same math, fits 32 GiB.
+    _accum_device = None
+    if os.environ.get('PIT_LOW_MEM_SHARD') in ('1', 'true', 'True', 'yes'):
+        _accum_device = os.environ.get('PIT_FP32_ACCUM_DEVICE') or 'cpu'
+    elif os.environ.get('PIT_FP32_ACCUM_DEVICE'):
+        _accum_device = os.environ.get('PIT_FP32_ACCUM_DEVICE')
+    accumulator = FP32Accumulator(
+        runtime.model.named_parameters(), buffer_device=_accum_device,
+    )
     losses, details = [], []
     pending = []
     maximum_drift = 0.

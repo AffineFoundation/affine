@@ -7,7 +7,8 @@ prompt_headroom = 4096
 global_max_tokens_ceiling = 65536
 
 default_profile = "qwen3.5-family"
-king_profile = "qwen3.5-family"
+# Affine kings: presence_penalty 0 (Jacob 2026-11-09 / PR #95 / SPEC §3.2). Comparison models keep 1.5.
+king_profile = "qwen3.5-family-pp0"
 
 [profiles."qwen3.5-family"]
 # Qwen/Qwen3.5-9B Best Practices: thinking general + math/competition length (capped at 64K ceiling; card says 81920).
@@ -23,6 +24,19 @@ presence_penalty = 1.5
 repetition_penalty = 1.0
 enable_thinking = true
 source = "https://huggingface.co/Qwen/Qwen3.5-9B (Best Practices: thinking general + 81920 for math contests; Affine caps at 65536)"
+
+[profiles."qwen3.5-family-pp0"]
+# Same as qwen3.5-family but presence_penalty=0 for Affine kings (not trained with a presence penalty).
+max_tokens = 65536
+native_context = 262144
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+enable_thinking = true
+source = "Affine king default (PR #95): qwen3.5-family sampling with presence_penalty 0"
 
 [profiles.qwen3]
 # Qwen3-8B/4B/14B: thinking temp 0.6 top_p 0.95 top_k 20; math contests max_out 38912.

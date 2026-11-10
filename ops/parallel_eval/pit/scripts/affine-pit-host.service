@@ -1,0 +1,33 @@
+[Unit]
+Description=SN120 PIT live host
+
+[Service]
+Type=simple
+Environment=PE_FLAG=%h/REPLACE_ME/PROMOTION-GATE.json
+# LIFE_ROOT / PE_LIFE = training lifecycle (CURRENT.json + epochs/); PE_LIFE_STATE = PE pending/apply.
+Environment=LIFE_ROOT=%h/REPLACE_ME/training-lifecycle-root
+Environment=PE_LIFE=%h/REPLACE_ME/training-lifecycle-root
+Environment=PE_LIFE_STATE=%h/REPLACE_ME/pe-life-state
+Environment=PE_STATE=%h/REPLACE_ME/parallel-cutover/state
+# Gate private state (epochs/ + heldout/); required for HostGateWriter rounds/turn_add.
+Environment=HG_GATE_STATE=%h/REPLACE_ME/promotion-gate/state
+Environment=PE_GATE_EP=%h/REPLACE_ME/promotion-gate/state/epochs
+Environment=PE_HELDOUT=%h/REPLACE_ME/promotion-gate/state/heldout
+Environment=PE_SYNC_EXPECTED_HASH=%h/REPLACE_ME/sync_expected_hash.py
+Environment=AFFINE_PIT_HOST_KEY_FILE=%h/REPLACE_ME/pit-host.key
+Environment=AFFINE_PIT_HOST_CERT_FILE=%h/REPLACE_ME/pit-host.cert.json
+Environment=AFFINE_PIT_ROOT_PUBKEY_HEX=REPLACE_ME
+# Required for on-box train (drive_item / run5090) + GREEN R2 upload. Host fills real paths; never commit them.
+Environment=PIT_BUNDLE_JSON=%h/REPLACE_ME/BUNDLE5090.json
+Environment=PIT_FP32_MASTER_INDEX=%h/REPLACE_ME/k1/fp32-master
+Environment=PIT_V834E_RELEASE=%h/REPLACE_ME/release-v834e-signed
+Environment=PIT_TRAINER_HOST=%h/REPLACE_ME/release-v834e-signed/trainer-host-v834e
+# Lifecycle ACTIVE.private.json (bucket) for scoped GREEN put_object / master publish.
+Environment=PIT_LIFE_CFG=%h/REPLACE_ME/lifecycle.ACTIVE.private.json
+# PYTHONPATH must resolve `subnet` AND the release `ops/` (do not shadow ops/).
+Environment=PYTHONPATH=%h/REPLACE_ME/release:%h/subnet120-rewrite
+ExecStart=%h/subnet120-rewrite/.venv/bin/python -m ops.parallel_eval.pit.run_host --flag ${PE_FLAG}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
