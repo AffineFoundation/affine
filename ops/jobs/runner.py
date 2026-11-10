@@ -236,6 +236,10 @@ class JobRunner:
             job.state = JobState.RUNNING
             return 'running'
         if job.state is JobState.RUNNING:
+            # Callers that drive work across host ticks (PIT on-demand bench)
+            # set meta['hold_running']=True until mark_running_complete.
+            if job.meta.get('hold_running'):
+                return 'hold'
             # Kind-specific work is driven by callers; default marks stored.
             job.state = JobState.STORING
             job.result_stored = True

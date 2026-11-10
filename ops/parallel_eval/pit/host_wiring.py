@@ -172,11 +172,13 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                 elif name in warm_names:
                     continue
                 # Exclude live + shadow PIT (and legacy shadow prefix).
+                # Exclude on-demand GREEN bench boxes (own cap 1; not PE eval).
                 if (
                     name.startswith(PREFIX_LIVE)
                     or name.startswith(PREFIX_SHADOW)
                     or name.startswith('affine-pit-shadow-')
                     or name.startswith('affine-pit-')
+                    or name.startswith('affine-pe-bench-')
                 ):
                     continue
                 n += 1
@@ -187,6 +189,7 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                 1 for p in rows
                 if str((p or {}).get('name') or '').startswith('affine-pe-')
                 and not str((p or {}).get('name') or '').startswith('affine-pe-pit-')
+                and not str((p or {}).get('name') or '').startswith('affine-pe-bench-')
             )
         return 0
 

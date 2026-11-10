@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Baseline / bench / prior jobs + shared runner (SPEC §3–§4)."""
+import tempfile
 import unittest
+from pathlib import Path
 
 from ops.jobs.kinds import JobKind, counts_toward_item_cap, kind_cap
 from ops.jobs.runner import PRICE_CEILING_USD_H, FailClosedError, JobRunner, JobState
 
 from .baseline_job import BaselineJobService, BaselineRequest
+from .bench_box import MemBenchBoxStore
 from .bench_job import BenchJobService, BenchRequest, coalesce_bench_queue
 from .prior_job import PriorJobService
 
@@ -119,20 +122,28 @@ class TestBenchJob(unittest.TestCase):
         self.assertNotIn(H2, heads)
 
     def test_bench_every_green_and_merge_only(self):
-        runner = JobRunner(live=True)
         merges = []
-        svc = BenchJobService(
-            runner=runner,
-            run_fn=lambda **k: {'ok': True, 'profile': 'qwen3.5-family-pp0', 'benchmarks': 10},
-            merge_fn=lambda **k: merges.append(k) or {'ok': True, 'merge_only': True},
-        )
-        svc.on_green_fresh(head=H0, epoch=1)
-        for _ in range(15):
-            svc.tick()
-        self.assertEqual(len(svc.completed), 1)
-        self.assertEqual(svc.completed[0]['profile'], 'qwen3.5-family-pp0')
-        self.assertTrue(svc.completed[0]['merged'])
-        self.assertTrue(merges[0])
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = MemBenchBoxStore(default_ticks=1)
+            runner = JobRunner(live=True)
+            svc = BenchJobService(
+                runner=runner,
+                state_root=root,
+                box_store_factory=lambda _j: store,
+                publish_fn=lambda **k: merges.append(k) or {'ok': True, 'merge_only': True},
+            )
+            svc.wire_rent()
+            svc.on_green_fresh(head=H0, epoch=1)
+            for _ in range(40):
+                store.advance()
+                svc.tick()
+                if svc.completed:
+                    break
+            self.assertEqual(len(svc.completed), 1)
+            self.assertEqual(svc.completed[0]['profile'], 'qwen3.5-family-pp0')
+            self.assertTrue(svc.completed[0]['merged'])
+            self.assertTrue(merges)
 
 
 class TestPriorJob(unittest.TestCase):

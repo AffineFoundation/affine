@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
 from .apply_live import LiveApplicator
-from .bench_host_run import make_host_bench_run, make_job_log_tail, make_pe_box_exec
+from .bench_box import MemBenchBoxStore
+from .bench_host_run import make_bench_box_store_factory
 from .bench_job import BenchJobService, build_bench_rent_service, build_bench_service
 from .box import ScriptedBoxIO
 from .config import load_pit_config
@@ -281,27 +282,27 @@ def _attach_bench_service(
         active = getattr(getattr(bench_rent, 'ledger', None), 'active', None) or {}
         row = active.get(box_id)
         if isinstance(row, Mapping):
-            # Ledger stores name/item_id; merge with live listing when possible.
             out = dict(row)
             out.setdefault('id', box_id)
             out.setdefault('box_id', box_id)
             return out
         return None
 
-    box_exec = None
     if list_pods is not None or host_rent is not None:
-        box_exec = make_pe_box_exec(
+        box_factory = make_bench_box_store_factory(
             list_pods_fn=list_pods,
             rent_meta_fn=_rent_meta,
         )
+    else:
+        # Hermetic / unwired: in-memory detached store (still non-blocking).
+        box_factory = lambda _job: MemBenchBoxStore()
     svc = build_bench_service(
         state_root=store.root,
         enabled=True,
         live=True,  # bench cap 1 in both modes; separate from item max_boxes
         price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
         rent=bench_rent,
-        run_fn=make_host_bench_run(box_exec_fn=box_exec),
-        log_tail_fn=make_job_log_tail(),
+        box_store_factory=box_factory,
     )
     prev = ctl.on_green_fresh
 
