@@ -35,8 +35,13 @@ class TestJobCaps(unittest.TestCase):
         runner.rent_fn = rent
         job = runner.request(JobKind.BENCH, subject=H0)
         out = runner.tick()
-        # Rent attempt should fail on price; job ends up failed/retry path.
-        self.assertTrue(any(a.get('note') == 'fail' for a in out['actions']) or job.state in (JobState.FAILED, JobState.NO_DECISION, JobState.RELEASED))
+        # Over-ceiling offer: wait (do not burn attempt), stay REQUESTED.
+        self.assertTrue(
+            any(a.get('note') == 'wait-offer' for a in out['actions'])
+            or job.state is JobState.REQUESTED
+        )
+        self.assertEqual(job.attempt, 0)
+        self.assertIsNone(job.box_id)
 
     def test_auto_backup_must_disable(self):
         runner = JobRunner(live=True)

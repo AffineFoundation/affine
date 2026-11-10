@@ -29,15 +29,16 @@ LIVE_CAPS: Mapping[JobKind, int] = {
 SHADOW_CAPS: Mapping[JobKind, int] = {
     JobKind.ITEM: 2,
     JobKind.BASELINE: 2,  # uses the live round
-    JobKind.BENCH: 0,
+    JobKind.BENCH: 1,  # on-demand GREEN bench (separate from item cap)
     JobKind.PRIOR: 0,
 }
 
-# Name prefixes under affine-<kind>-…
+# Name prefixes. Bench uses affine-pe-bench-* so live pe_rent accepts the name
+# (affine-pe-*) while item reconcile (affine-pe-pit-*) never claims the box.
 NAME_PREFIX: Mapping[JobKind, str] = {
     JobKind.ITEM: 'affine-pit-',
     JobKind.BASELINE: 'affine-baseline-',
-    JobKind.BENCH: 'affine-bench-job-',
+    JobKind.BENCH: 'affine-pe-bench-',
     JobKind.PRIOR: 'affine-prior-job-',
 }
 

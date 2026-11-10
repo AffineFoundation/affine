@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
 from .apply_live import LiveApplicator
+from .bench_host_run import make_host_bench_run, make_job_log_tail, make_pe_box_exec
+from .bench_job import BenchJobService, build_bench_rent_service, build_bench_service
 from .box import ScriptedBoxIO
 from .config import load_pit_config
 from .controller import Controller
@@ -229,8 +231,10 @@ def build_controller(
         )
         ledger = store.root / 'rent-ledger.json'
         ctl.rent.ledger_path = str(ledger)
+        _attach_bench_service(ctl, store=store, item_rent=bundle.rent)
     else:
         ctl = Controller.from_flag(dict(parallel_eval))
+        _attach_bench_service(ctl, store=store, item_rent=getattr(ctl, 'rent', None))
 
     # Load durable items BEFORE rent reconcile so GREEN/undecided boxes are
     # known and re-adopted — never orphan-released on host restart.
@@ -245,6 +249,71 @@ def build_controller(
     ):
         _start_rent_reconcile(ctl)
     return ctl
+
+
+def _attach_bench_service(
+    ctl: Controller,
+    *,
+    store: DurableStore,
+    item_rent: Any = None,
+) -> Optional[BenchJobService]:
+    """Wire on-demand GREEN bench (async; never blocks HEAD / next bind)."""
+    cfg = ctl.config
+    enabled = bool(getattr(cfg, 'bench_on_green', True)) and bool(cfg.enabled)
+    if not enabled:
+        ctl.bench = None  # type: ignore[attr-defined]
+        return None
+    host_rent = getattr(item_rent, 'host_rent', None) if item_rent is not None else None
+    host_release = getattr(item_rent, 'host_release', None) if item_rent is not None else None
+    list_pods = getattr(item_rent, 'list_pods', None) if item_rent is not None else None
+    offer_precheck = getattr(item_rent, 'offer_precheck_fn', None) if item_rent is not None else None
+    bench_rent = build_bench_rent_service(
+        price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
+        host_rent=host_rent,
+        host_release=host_release,
+        list_pods=list_pods,
+        offer_precheck_fn=offer_precheck,
+        ledger_path=str(store.root / 'bench-rent-ledger.json'),
+        require_host=bool(cfg.is_live() and host_rent is not None),
+    )
+
+    def _rent_meta(box_id: str) -> Optional[Mapping[str, Any]]:
+        active = getattr(getattr(bench_rent, 'ledger', None), 'active', None) or {}
+        row = active.get(box_id)
+        if isinstance(row, Mapping):
+            # Ledger stores name/item_id; merge with live listing when possible.
+            out = dict(row)
+            out.setdefault('id', box_id)
+            out.setdefault('box_id', box_id)
+            return out
+        return None
+
+    box_exec = None
+    if list_pods is not None or host_rent is not None:
+        box_exec = make_pe_box_exec(
+            list_pods_fn=list_pods,
+            rent_meta_fn=_rent_meta,
+        )
+    svc = build_bench_service(
+        state_root=store.root,
+        enabled=True,
+        live=True,  # bench cap 1 in both modes; separate from item max_boxes
+        price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
+        rent=bench_rent,
+        run_fn=make_host_bench_run(box_exec_fn=box_exec),
+        log_tail_fn=make_job_log_tail(),
+    )
+    prev = ctl.on_green_fresh
+
+    def _on_green(item: Any) -> None:
+        # Enqueue only — never await rent/run; tick_once drives the job.
+        if prev is not None:
+            prev(item)
+        svc.on_green_fresh_item(item)
+
+    ctl.on_green_fresh = _on_green
+    ctl.bench = svc  # type: ignore[attr-defined]
+    return svc
 
 
 def write_host_heartbeat(root: Path, *, now: Optional[float] = None) -> Path:
@@ -334,6 +403,28 @@ def tick_once(
         ctl.rent.save_ledger()
         # Every item state transition / failure must land in run_host.out.
         _log_tick_actions(out)
+    # On-demand GREEN bench: never blocks promotion/bind; failure is logged + ≤1 retry.
+    bench = getattr(ctl, 'bench', None)
+    if bench is not None and not dry_run:
+        try:
+            summary['bench'] = bench.tick()
+            if getattr(bench, 'rent', None) is not None:
+                try:
+                    bench.rent.save_ledger()
+                except Exception:
+                    pass
+        except Exception as exc:
+            summary['bench'] = {'ok': False, 'error': str(exc)[:300]}
+            print(
+                json.dumps({
+                    'component': 'pit-run-host',
+                    'level': 'error',
+                    'event': 'bench_tick_failed',
+                    'error': str(exc)[:400],
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
     for item in list(ctl.items):
         store.save_item(item)
         if not ctl.config.may_write_live_artifacts():

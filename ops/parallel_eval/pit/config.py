@@ -74,6 +74,8 @@ class PitConfig:
     pe_lane_module: Optional[str] = None
     pe_score_module: Optional[str] = None
     root_signer_module: Optional[str] = None
+    # On-demand GREEN bench (replaces standing affine-bench daemon). Default on.
+    bench_on_green: bool = True
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -132,7 +134,7 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         'trainer_fallback_hours', 'disable_warm_pool', 'disable_standing_lanes',
         'disable_trainer_dequeue', 'disable_lium_auto_backup', 'full_redo_after_sealed',
         'reds_earn', 'root_mode', 'pe_rent_module', 'pe_lane_module', 'pe_score_module',
-        'root_signer_module', 'shadow', 'trainer_fallback',
+        'root_signer_module', 'shadow', 'trainer_fallback', 'bench_on_green',
     }
     kwargs: dict[str, Any] = {}
     extra: dict[str, Any] = {}

@@ -192,10 +192,10 @@
  },
 
  "pit-bench-job": {
-  "what": "Serverless bench job per GREEN head (SPEC §3.2, profile qwen3.5-family-pp0). Name glob affine-bench-job-*. Does not count toward PIT item box_cap. Merge-only history. Auto-backup off.",
-  "name": "affine-bench-job-",
+  "what": "On-demand PIT GREEN bench (SPEC §3.2, profile qwen3.5-family-pp0). Name glob affine-pe-bench-*. Cap 1, separate from item max_boxes; B300 ≤$56/h; merge-only publish. Auto-backup off.",
+  "name": "affine-pe-bench-",
   "names": [],
-  "name_glob": "affine-bench-job-*",
+  "name_glob": "affine-pe-bench-*",
   "gpu_specs": [{"gpu": "B300", "count": 8, "whole_node": true}],
   "max_price_h": 56,
   "min_disk_gb": 400,

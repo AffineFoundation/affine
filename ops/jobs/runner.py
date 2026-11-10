@@ -63,6 +63,14 @@ class FailClosedError(JobError):
     """fp32 / expected-hash / serve-flag / bundle-sha — never auto-retry."""
 
 
+class WaitForOffer(JobError):
+    """No eligible offer under the price ceiling yet.
+
+    Keeps the job in REQUESTED without burning an attempt. Used by bench/item
+    rent paths that must wait for B300 ≤ ceiling rather than fail-closed.
+    """
+
+
 @dataclass
 class JobRecord:
     job_id: str
@@ -190,6 +198,17 @@ class JobRunner:
                 note = self._advance(job)
                 if note != 'noop':
                     actions.append({'job_id': job.job_id, 'kind': job.kind.value, 'state': job.state.value, 'note': note})
+            except WaitForOffer as exc:
+                job.last_error = str(exc)[:300]
+                # Stay REQUESTED; attempt not burned (see _rent).
+                if job.state is not JobState.REQUESTED:
+                    job.state = JobState.REQUESTED
+                actions.append({
+                    'job_id': job.job_id,
+                    'kind': job.kind.value,
+                    'state': job.state.value,
+                    'note': 'wait-offer',
+                })
             except FailClosedError as exc:
                 job.last_error = str(exc)[:300]
                 self._fail_closed(job)
@@ -245,26 +264,41 @@ class JobRunner:
             # Already counted if re-entering; for first rent check cap.
             if job.job_id not in self._active_by_kind[job.kind]:
                 raise JobError('%s cap reached' % job.kind.value)
-        job.attempt += 1
+        next_attempt = int(job.attempt) + 1
         job.state = JobState.RENTING
-        name = '%s%s-a%d' % (NAME_PREFIX[job.kind], job.subject[:16], job.attempt)
+        name = '%s%s-a%d' % (NAME_PREFIX[job.kind], job.subject[:16], next_attempt)
         at = float(self.now_fn())
         if self.rent_fn is not None:
-            out = dict(self.rent_fn(
-                name=name, kind=job.kind.value, subject=job.subject,
-                attempt=job.attempt, gpu=job.gpu,
-                price_ceiling_usd_h=job.price_ceiling_usd_h,
-                disable_auto_backup=True,
-            ))
+            try:
+                out = dict(self.rent_fn(
+                    name=name, kind=job.kind.value, subject=job.subject,
+                    attempt=next_attempt, gpu=job.gpu,
+                    price_ceiling_usd_h=job.price_ceiling_usd_h,
+                    disable_auto_backup=True,
+                ))
+            except WaitForOffer:
+                job.state = JobState.REQUESTED
+                raise
             price = out.get('price_usd_h')
             if price is not None and float(price) > float(job.price_ceiling_usd_h):
-                raise JobError('price %.2f above ceiling %.2f' % (float(price), job.price_ceiling_usd_h))
+                # Offer slipped above ceiling after precheck — wait, do not burn attempt.
+                if self.release_fn is not None:
+                    bid = str(out.get('box_id') or out.get('id') or '')
+                    if bid:
+                        try:
+                            self.release_fn(box_id=bid, reason='rent-price-ceiling')
+                        except Exception:
+                            pass
+                job.state = JobState.REQUESTED
+                raise WaitForOffer(
+                    'price %.2f above ceiling %.2f' % (float(price), job.price_ceiling_usd_h)
+                )
             box_id = str(out.get('box_id') or out.get('id') or '')
             if not box_id:
                 raise JobError('rent returned no box_id')
             pod_name = out.get('name') or name
         else:
-            box_id = 'job-box-%s-%d' % (job.job_id[:12], job.attempt)
+            box_id = 'job-box-%s-%d' % (job.job_id[:12], next_attempt)
             pod_name = name
             out = dict(box_id=box_id, name=pod_name, synthetic=True, gpu=job.gpu,
                        price_usd_h=min(PREFERRED_PRICE_USD_H, job.price_ceiling_usd_h))
@@ -280,6 +314,7 @@ class JobRunner:
                 except Exception:
                     pass
             raise FailClosedError('lium auto-backup must be disabled on every rental')
+        job.attempt = next_attempt
         job.box_id = box_id
         job.box_name = pod_name
         job.auto_backup_disabled = True
