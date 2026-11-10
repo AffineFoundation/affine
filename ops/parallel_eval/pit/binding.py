@@ -270,7 +270,8 @@ def select_next_queued(
     ]
     if not queued:
         return None
-    queued.sort(key=lambda i: (i.registration_index, i.epoch, i.item_id))
+    # Higher priority first (sanctioned reruns); then registration_index FIFO.
+    queued.sort(key=lambda i: (-int(getattr(i, 'priority', 0) or 0), i.registration_index, i.epoch, i.item_id))
     return queued[0]
 
 

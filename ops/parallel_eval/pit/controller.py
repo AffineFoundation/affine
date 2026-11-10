@@ -179,6 +179,10 @@ class Controller:
         uid: int = 0,
         hotkey_prefix: str = '',
         item_id: Optional[str] = None,
+        attempt: int = 0,
+        priority: int = 0,
+        rerun_of: Optional[str] = None,
+        meta: Optional[Mapping[str, Any]] = None,
     ) -> ItemRecord:
         rec = ItemRecord(
             item_id=item_id or _new_id(),
@@ -186,7 +190,11 @@ class Controller:
             epoch=int(epoch),
             uid=int(uid),
             hotkey_prefix=(hotkey_prefix or '')[:16],
+            attempt=int(attempt or 0),
+            priority=int(priority or 0),
+            rerun_of=rerun_of,
             shadow=self.config.is_shadow(),
+            meta=dict(meta or {}),
         )
         self.items.append(rec)
         return rec

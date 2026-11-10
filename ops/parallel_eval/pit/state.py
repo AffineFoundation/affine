@@ -109,6 +109,9 @@ class ItemRecord:
     box_id: Optional[str] = None
     box_name: Optional[str] = None
     attempt: int = 0
+    # Higher binds first (reruns). Default 0 keeps registration_index FIFO.
+    priority: int = 0
+    rerun_of: Optional[str] = None  # prior item_id when this is a sanctioned rerun
     sealed: bool = False
     decision: Optional[str] = None  # green_fresh | green_stale | red | no_decision
     z: Optional[float] = None
@@ -141,6 +144,8 @@ class ItemRecord:
             'box_id': self.box_id,
             'box_name': self.box_name,
             'attempt': self.attempt,
+            'priority': int(self.priority or 0),
+            'rerun_of': self.rerun_of,
             'sealed': self.sealed,
             'decision': self.decision,
             'z': self.z,

@@ -89,20 +89,37 @@ def _round_private(rid: str) -> Mapping[str, Any]:
     return r
 
 
+def _cand_seed_attempt(secret: str, epoch: int, attempt: int) -> str:
+    if int(attempt) <= 1:
+        return _cand_seed(secret, epoch)
+    return hashlib.sha256(
+        ('%s:prior-baseline:cand:%d:attempt:%d' % (secret, int(epoch), int(attempt))).encode()
+    ).hexdigest()
+
+
 def plan_seed_for_epoch(epoch: int) -> str:
     """Public plan-seed handle for epoch ``e`` (never the raw secret)."""
     sm = _sample_for_epoch(int(epoch))
+    # Sanctioned rerun SAMPLE may embed the attempt plan_seed explicitly.
+    if sm.get('plan_seed') and int(sm.get('attempt') or 1) >= 2:
+        seed = str(sm['plan_seed'])
+        if len(seed) == 64:
+            return seed
     rid = str(sm['round_id'])
     r = _round_private(rid)
-    # Prefer baseline_v1 when importable so bit-identity is guaranteed.
+    attempt = int(sm.get('attempt') or 1)
+    # Prefer baseline_v1 when importable so bit-identity is guaranteed (attempt 1).
     try:
         gate_code = os.environ.get('GATE_CODE')
         if gate_code and gate_code not in sys.path:
             sys.path.insert(0, str(gate_code))
         import baseline_v1 as BV  # type: ignore
-        seed = BV.cand_seed(r['seed'], int(epoch))
+        if attempt <= 1:
+            seed = BV.cand_seed(r['seed'], int(epoch))
+        else:
+            seed = _cand_seed_attempt(str(r['seed']), int(epoch), attempt)
     except Exception:
-        seed = _cand_seed(str(r['seed']), int(epoch))
+        seed = _cand_seed_attempt(str(r['seed']), int(epoch), attempt)
     if not isinstance(seed, str) or len(seed) != 64:
         raise RoundSeedError('plan seed derivation failed for epoch %s' % epoch)
     return seed
@@ -116,10 +133,17 @@ cand_seed_for_epoch = plan_seed_for_epoch
 def indices_for_epoch(epoch: int) -> List[int]:
     """Host-private task indices for the epoch's bound round (fail closed)."""
     sm = _sample_for_epoch(int(epoch))
+    sm_idx = sm.get('indices')
+    # Sanctioned rerun (attempt≥2): SAMPLE holds a fresh prior_gate draw that
+    # may differ from the round's frozen indices — use SAMPLE as source of truth.
+    if int(sm.get('attempt') or 1) >= 2 and sm_idx is not None:
+        idx = [int(x) for x in sm_idx]
+        if not idx:
+            raise RoundSeedError('empty rerun indices for epoch %s' % epoch)
+        return idx
     rid = str(sm['round_id'])
     r = _round_private(rid)
     idx = list(r['indices'])
-    sm_idx = sm.get('indices')
     if sm_idx is not None and list(sm_idx) != idx:
         raise RoundSeedError('round draw != epoch sample for e%s' % epoch)
     if not idx:

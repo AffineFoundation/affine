@@ -352,6 +352,7 @@ class HostGateWriter:
             dec['k1_grant'] = grant
         epoch_dir = self.epochs_root / str(int(epoch))
         decision_path = epoch_dir / 'DECISION.json'
+        archived = epoch_dir / 'attempt-1' / 'DECISION.json'
         if decision_path.exists():
             existing = _rj(decision_path)
             if not isinstance(existing, Mapping):
@@ -359,6 +360,14 @@ class HostGateWriter:
                     'existing DECISION.json unreadable for epoch %d' % int(epoch)
                 )
             if not _same_decision(existing, dec):
+                # Sanctioned rerun archives the prior DECISION under attempt-1/.
+                # Never overwrite a live non-archived decision.
+                if archived.is_file():
+                    raise GateWriteError(
+                        'conflicting DECISION.json for epoch %d '
+                        '(attempt-1 archived but live DECISION still present; '
+                        'refuse overwrite)' % int(epoch)
+                    )
                 raise GateWriteError(
                     'conflicting DECISION.json for epoch %d '
                     '(refuse overwrite of different decision)' % int(epoch)
@@ -370,6 +379,7 @@ class HostGateWriter:
                 merge_blocked=merge_blocked,
             )
             return decision_path
+        # Fresh DECISION after attempt-1 archive (or first write) is allowed.
         _wj(epoch_dir / 'EVALUATED.private.json', dict(evaluated=dec['evaluated']), 0o600)
         _wj(decision_path, dec, 0o600)
         self._turn_and_maybe_close(

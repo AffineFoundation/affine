@@ -85,6 +85,8 @@ def item_from_dict(raw: dict) -> ItemRecord:
         box_id=raw.get('box_id'),
         box_name=raw.get('box_name'),
         attempt=int(raw.get('attempt') or 0),
+        priority=int(raw.get('priority') or 0),
+        rerun_of=(str(raw['rerun_of']) if raw.get('rerun_of') else None),
         sealed=bool(raw.get('sealed')),
         decision=raw.get('decision'),
         z=raw.get('z'),

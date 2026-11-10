@@ -54,23 +54,32 @@ def format_node_gpu(
     )
     raw = str(raw).strip()
     if not raw:
-        raise ValueError('gpu type missing for node record')
+        # publish_fleet shows '?' when node.gpu is missing — never raise.
+        return '?'
     if _NX_GPU.match(raw):
         return raw
     if ':' in raw:
         kind, _, rest = raw.partition(':')
         if rest.isdigit():
             return '%dx%s' % (int(rest), kind)
-        raw = kind
+        raw = kind or '?'
+        if raw == '?':
+            return '?'
     count = gpu_count
     if count is None:
         for key in ('gpu_count', 'available_gpu_count', 'n_gpu'):
             if meta.get(key) is not None:
-                count = int(meta[key])
+                try:
+                    count = int(meta[key])
+                except (TypeError, ValueError):
+                    count = None
                 break
     if count is None:
         count = 8  # PIT/bench pin is full 8-GPU B300 nodes
-    return '%dx%s' % (int(count), raw)
+    try:
+        return '%dx%s' % (int(count), raw)
+    except (TypeError, ValueError):
+        return '?'
 
 
 def node_record(
