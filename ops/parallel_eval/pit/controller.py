@@ -647,28 +647,47 @@ class Controller:
             )
         )
 
+    @staticmethod
+    def _is_gpu_busy_readopt_error(err: str) -> bool:
+        """GPU-busy during re-adopt must keep the box (prefer resume, never release)."""
+        msg = (err or '').lower()
+        return 'gpus not free' in msg or 'gpu-busy' in msg or 'gpus busy' in msg
+
     def _maybe_retry_readopt(
         self, item: ItemRecord, err: str,
     ) -> Optional[tuple[ItemRecord, str]]:
         """Retry a failed re-adopt a few times when the box is still in lium."""
-        if not self._is_readopt_transport_error(err):
+        soft = self._is_readopt_transport_error(err) or self._is_gpu_busy_readopt_error(err)
+        if not soft:
             return None
         if not item.box_id:
             return None
         attempts = int((item.meta or {}).get('readopt_attempts') or 0)
-        if attempts >= READOPT_MAX_ATTEMPTS:
-            return None
-        if not self._box_still_in_lium(item):
-            return None
+        # GPU-busy: unbounded soft wait while the box is still listed — never release.
+        if self._is_gpu_busy_readopt_error(err):
+            if not self._box_still_in_lium(item):
+                return None
+        else:
+            if attempts >= READOPT_MAX_ATTEMPTS:
+                return None
+            if not self._box_still_in_lium(item):
+                return None
         meta = dict(item.meta or {})
         meta['readopt_attempts'] = attempts + 1
         meta['last_readopt_error'] = (err or '')[:200]
-        meta.pop('probe_bundle', None)
+        # Keep candidate_id / sealed if train already finished — resume eval, don't wipe.
+        if not self._is_gpu_busy_readopt_error(err):
+            meta.pop('probe_bundle', None)
+            item.sealed = False
+            item.result_stored = False
+            item.candidate_id = None
         item.meta = meta
-        item.sealed = False
-        item.result_stored = False
-        item.candidate_id = None
-        if item.state is not ItemState.PROVISIONING:
+        if item.state not in (ItemState.PROVISIONING, ItemState.TRAINING, ItemState.SERVING, ItemState.PROBING):
+            try:
+                item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
+            except TransitionError:
+                item.state = ItemState.PROVISIONING
+        elif item.state is not ItemState.PROVISIONING and not self._is_gpu_busy_readopt_error(err):
             try:
                 item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
             except TransitionError:
@@ -682,6 +701,12 @@ class Controller:
             retry = self._maybe_retry_readopt(item, err)
             if retry is not None:
                 return retry
+            # Hard fail: still never release solely for GPU-busy (defense in depth).
+            if self._is_gpu_busy_readopt_error(err) and item.box_id:
+                item.meta = dict(item.meta or {}, last_error=err[:300], green_apply_pending=False)
+                item.last_error = err[:300]
+                self._persist(item)
+                return item, 'box-worker-gpu-busy-keep'
             return self._fail_and_release(item, err), 'box-worker-fail'
         updated = done.get('item')
         if not isinstance(updated, ItemRecord):

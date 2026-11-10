@@ -5,8 +5,13 @@ Fail-closed on fp32 expected-master mismatch. Never passes
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol
+
+from ops.parallel_eval.live.pe_box import BOX_ROOT, detached_eval_command
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
 from .config import GATE_DTYPE, PitConfig
@@ -175,91 +180,234 @@ class BoxRunner:
             record, ItemState.SEALED, reason='sealed',
             updates={'candidate_id': candidate_id, 'sealed': True},
         )
-        record = apply_transition(record, ItemState.SERVING, reason='serve-start')
 
         lane = self.lane or LaneService()
-        # Live pe_lane.serve/run_probe need the pod handle (object/dict), not a box-id string.
         pod_handle = pod or record.box_id or 'box'
-        if lane.require_host or lane.host_boot is not None:
-            lane.boot(pod_handle)
-        lane.serve(pod_handle, candidate_id, max_num_seqs=self.config.max_num_seqs)
-        record = apply_transition(record, ItemState.PROBING, reason='probe-start')
-
-        master_upload = {}
+        master_upload: Dict[str, Any] = {}
         if self.config.master_upload == 'during_probe':
             master_upload = dict(self.io.upload_master_during_probe(
                 candidate_id=candidate_id, master_path=candidate_master_path,
             ))
 
         idx_list = list(indices) if indices is not None else None
-        # Live / require_host lanes need the secret draw's task indices. Never
-        # fabricate them here — host pe_round_seed.indices_for_epoch supplies them.
-        if lane.require_host or lane.host_run_probe is not None:
-            if idx_list is None:
-                raise TransitionError('indices list required for host run_probe')
-            probe_result = lane.run_probe(
-                pod_handle,
-                candidate_id,
-                indices=idx_list,
-                plan_seed=plan_handle,
-                k=self.config.k_cand,
-                max_tokens=self.config.max_output_tokens,
-            )
-        else:
-            probe_fixture = dict(self.io.probe_result_fixture())
-            probe_result = lane.run_probe(
-                pod_handle,
-                candidate_id,
-                indices=idx_list,
-                indices_count=indices_count if idx_list is None else None,
-                plan_seed_handle=plan_handle,
-                k=self.config.k_cand,
-                max_tokens=self.config.max_output_tokens,
-                result=probe_fixture,
-            )
-        eval_gpu = (
-            gpu_type_of(eval_gpu)
-            or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
-            or gpu_type_of((record.meta or {}).get('eval_gpu'))
-            or train_gpu
+        probe_result, eval_gpu, record = self._run_eval_stage(
+            record,
+            box_job_ctrl=box_job_ctrl,
+            lane=lane,
+            pod_handle=pod_handle,
+            candidate_id=candidate_id,
+            plan_handle=plan_handle,
+            idx_list=idx_list,
+            indices_count=indices_count,
+            train_gpu=train_gpu,
+            eval_gpu=eval_gpu,
+            train_receipt=train_receipt,
+            training_report=training_report,
+            box_key=box_key,
+            master_upload=master_upload,
         )
-        probe_result = dict(probe_result)
-        probe_result['train_gpu'] = train_gpu
-        probe_result['eval_gpu'] = eval_gpu
-
-        record = apply_transition(record, ItemState.RESULT, reason='probe-complete', updates={'result_stored': True})
-        safe_receipt = {
-            k: v for k, v in train_receipt.items()
-            if k not in ('seed', 'presigned_url', 'private_key', 'secret', 'report_doc', 'training_report')
-        }
-        safe_receipt['train_gpu'] = train_gpu
-        safe_receipt['training_report_summary'] = dict(training_report)
-        bundle = ProbeBundle(
+        return record, ProbeBundle(
             item_id=record.item_id,
             bound_head=record.bound_head,
             bound_master_digest=record.bound_master_digest,
             candidate_id=candidate_id,
             probe_result=probe_result,
             master_upload=master_upload,
-            train_receipt=safe_receipt,
+            train_receipt={
+                **{
+                    k: v for k, v in train_receipt.items()
+                    if k not in ('seed', 'presigned_url', 'private_key', 'secret', 'report_doc', 'training_report')
+                },
+                'train_gpu': train_gpu,
+                'training_report_summary': dict(training_report),
+            },
             box_public_key_hex=box_key.public_key_hex,
             training_report=dict(training_report),
             train_gpu=train_gpu,
             eval_gpu=eval_gpu,
             meta={'shadow': record.shadow, 'train_gpu': train_gpu, 'eval_gpu': eval_gpu},
         )
+
+    def _run_eval_stage(
+        self,
+        record: ItemRecord,
+        *,
+        box_job_ctrl: Any,
+        lane: LaneService,
+        pod_handle: Any,
+        candidate_id: str,
+        plan_handle: str,
+        idx_list: Optional[list],
+        indices_count: int,
+        train_gpu: Optional[str],
+        eval_gpu: Optional[str],
+        train_receipt: Mapping[str, Any],
+        training_report: Mapping[str, Any],
+        box_key: EphemeralBoxKey,
+        master_upload: Mapping[str, Any],
+    ) -> tuple[Dict[str, Any], Optional[str], ItemRecord]:
+        """Detached eval (serve+probe): resume via eval.done / RESULT; never host-thread-only.
+
+        Prefer resume over re-run. Re-run kills recorded PIDs / vLLM first.
+        """
+        record = apply_transition(record, ItemState.SERVING, reason='serve-start')
+
+        def _host_eval_runner() -> Mapping[str, Any]:
+            if lane.require_host or lane.host_boot is not None:
+                lane.boot(pod_handle)
+            lane.serve(pod_handle, candidate_id, max_num_seqs=self.config.max_num_seqs)
+            if lane.require_host or lane.host_run_probe is not None:
+                if idx_list is None:
+                    raise TransitionError('indices list required for host run_probe')
+                probe = lane.run_probe(
+                    pod_handle, candidate_id,
+                    indices=idx_list, plan_seed=plan_handle,
+                    k=self.config.k_cand, max_tokens=self.config.max_output_tokens,
+                )
+            else:
+                probe = lane.run_probe(
+                    pod_handle, candidate_id,
+                    indices=idx_list,
+                    indices_count=indices_count if idx_list is None else None,
+                    plan_seed_handle=plan_handle,
+                    k=self.config.k_cand, max_tokens=self.config.max_output_tokens,
+                    result=dict(self.io.probe_result_fixture()),
+                )
+            return {
+                'ok': True,
+                'candidate_id': candidate_id,
+                'probe_result': dict(probe),
+            }
+
+        eval_marker: Dict[str, Any] = {}
+        if box_job_ctrl is not None:
+            # Prefer resume: if RESULT already written by a prior detached eval, use it.
+            prior = box_job_ctrl.resume_or_fetch()
+            if prior and prior.get('probe_result') and prior.get('candidate_id'):
+                probe_result = dict(prior['probe_result'])
+                eg = (
+                    gpu_type_of(eval_gpu)
+                    or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
+                    or gpu_type_of((record.meta or {}).get('eval_gpu'))
+                    or train_gpu
+                )
+                probe_result['train_gpu'] = train_gpu
+                probe_result['eval_gpu'] = eg
+                record = apply_transition(
+                    record, ItemState.RESULT, reason='eval-resume-result',
+                    updates={'result_stored': True},
+                )
+                return probe_result, eg, record
+
+            detached_cmd = None
+            # Real pod: ship plan + launch box-side detached eval (setsid).
+            if hasattr(getattr(box_job_ctrl, 'store', None), 'pod') and (
+                lane.require_host or lane.host_run_probe is not None
+            ):
+                if idx_list is None:
+                    raise TransitionError('indices list required for host run_probe')
+                detached_cmd = self._arm_detached_eval(
+                    box_job_ctrl, candidate_id=candidate_id,
+                    plan_handle=plan_handle, indices=idx_list,
+                )
+
+            def _host_forbidden() -> Mapping[str, Any]:
+                raise RuntimeError('host must not sync-run eval when detached path is armed')
+
+            eval_marker = dict(box_job_ctrl.run_stage_once(
+                'eval',
+                _host_eval_runner if detached_cmd is None else _host_forbidden,
+                detached_command=detached_cmd,
+                wait_for_marker=bool(detached_cmd),
+                poll_s=float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0),
+                timeout_s=float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200),
+                extra_kill_patterns=('vllm serve', 'podctl.py serve', 'pit-box-job-eval'),
+            ))
+        else:
+            eval_marker = dict(_host_eval_runner())
+
+        probe_raw = eval_marker.get('probe_result') or eval_marker
+        if not isinstance(probe_raw, Mapping):
+            raise TransitionError('eval marker missing probe_result')
+        probe_result = dict(probe_raw)
+        eg = (
+            gpu_type_of(eval_gpu)
+            or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
+            or gpu_type_of((record.meta or {}).get('eval_gpu'))
+            or train_gpu
+        )
+        probe_result['train_gpu'] = train_gpu
+        probe_result['eval_gpu'] = eg
+        if record.state is ItemState.SERVING:
+            record = apply_transition(record, ItemState.PROBING, reason='probe-start')
+        record = apply_transition(
+            record, ItemState.RESULT, reason='eval-complete', updates={'result_stored': True},
+        )
         if box_job_ctrl is not None:
             try:
-                box_job_ctrl.mark_stage('probe', {
-                    'ok': True,
-                    'candidate_id': candidate_id,
-                    'samples': probe_result.get('samples'),
-                })
-                box_job_ctrl.publish_result(_box_result_doc(bundle, train_receipt=train_receipt))
+                bundle_tmp = ProbeBundle(
+                    item_id=record.item_id,
+                    bound_head=record.bound_head or '',
+                    bound_master_digest=record.bound_master_digest or '',
+                    candidate_id=candidate_id,
+                    probe_result=probe_result,
+                    master_upload=dict(master_upload),
+                    train_receipt=dict(train_receipt),
+                    box_public_key_hex=box_key.public_key_hex,
+                    training_report=dict(training_report),
+                    train_gpu=train_gpu,
+                    eval_gpu=eg,
+                )
+                if 'eval' not in box_job_ctrl.status().markers:
+                    box_job_ctrl.mark_stage('eval', {
+                        'ok': True,
+                        'candidate_id': candidate_id,
+                        'samples': probe_result.get('samples'),
+                        'probe_result': probe_result,
+                    })
+                box_job_ctrl.publish_result(_box_result_doc(bundle_tmp, train_receipt=train_receipt))
             except Exception:
-                # Marker/RESULT write is best-effort for resume; probe already succeeded.
                 pass
-        return record, bundle
+        return probe_result, eg, record
+
+    def _arm_detached_eval(
+        self,
+        box_job_ctrl: Any,
+        *,
+        candidate_id: str,
+        plan_handle: str,
+        indices: list,
+    ) -> str:
+        """Ship eval plan JSON onto the box and return the detached shell command."""
+        name = 'pe-%s-%s' % (
+            candidate_id[:12],
+            hashlib.sha256(str(plan_handle).encode()).hexdigest()[:8],
+        )
+        plan = {
+            'run_name': name,
+            'checkpoint_id': candidate_id,
+            'seed': plan_handle,
+            'concurrency': 4096,
+            'grade_workers': 160,
+            'resume': False,
+            'bandit_topk': False,
+            'concurrency_per_replica': min(512, int(self.config.max_num_seqs)),
+            'envs': [{
+                'env_id': 'affine_gatepool',
+                'indices': list(indices),
+                'k': int(self.config.k_cand),
+                'max_tokens': int(self.config.max_output_tokens),
+            }],
+        }
+        plan_path = '%s/eval-plan.json' % box_job_ctrl.job_dir.rstrip('/')
+        box_job_ctrl.store.write_text(plan_path, json.dumps(plan, sort_keys=True) + '\n')
+        return detached_eval_command(
+            job_dir=box_job_ctrl.job_dir,
+            candidate_id=candidate_id,
+            plan_path=plan_path,
+            podd=BOX_ROOT,
+            max_num_seqs=int(self.config.max_num_seqs),
+        )
 
 
 def _try_box_job_controller(pod: Any, item_id: str):

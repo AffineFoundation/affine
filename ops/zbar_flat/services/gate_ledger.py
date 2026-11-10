@@ -75,6 +75,33 @@ def pre_probe(head, gather_start):
                 reused=bool(gather_start and r.get('finished_at') and r['finished_at'] < gather_start))
 
 
+def _head_chain_has(candidate):
+    """True only after PE HEAD-CHAIN append (PIT cutover / pe_apply.record_applied)."""
+    if not isinstance(candidate, str) or len(candidate) != 64:
+        return False
+    pe_state = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+    roots = []
+    if pe_state:
+        roots.append(Path(pe_state))
+    roots.append(LIFE.parent / 'pe' if hasattr(LIFE, 'parent') else None)
+    roots.append(ST / 'pe')
+    seen = set()
+    for root in roots:
+        if root is None:
+            continue
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        chain = rj(root / 'HEAD-CHAIN.json') or {}
+        for row in chain.get('applied') or []:
+            if not isinstance(row, dict):
+                continue
+            if row.get('candidate') == candidate or row.get('new_head') == candidate:
+                return True
+    return False
+
+
 def entry(e):
     d = EP / str(e); dec = rj(d / 'DECISION.json')
     if not dec or dec.get('decision') not in ('green', 'red'):
@@ -84,15 +111,41 @@ def entry(e):
     tl = rj(d / 'TIMELINE.json') or {}
     ev = dec.get('evaluated') or {}
     start, deadline = manifest_window(e)
-    verdict = 'promoted' if dec['decision'] == 'green' else 'rejected'
+    if dec['decision'] == 'green':
+        if _head_chain_has(dec.get('candidate')):
+            verdict = 'promoted'
+        else:
+            pe_block = None
+            pe_state = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+            if pe_state:
+                for row in (rj(Path(pe_state) / 'GREENS.json') or []):
+                    if isinstance(row, dict) and row.get('candidate') == dec.get('candidate'):
+                        pe_block = row
+                        break
+            if pe_block and (
+                pe_block.get('state') == 'blocked_incomplete_master'
+                or pe_block.get('apply_blocked') == 'incomplete-fp32-master'
+            ):
+                verdict = 'blocked'
+            else:
+                verdict = 'not-promoted'
+    else:
+        verdict = 'rejected'
     return dict(
         epoch=e, head=dec['head'], candidate=dec['candidate'], decision=dec['decision'], verdict=verdict,
         applied=applied.get('decision'), mode=dec.get('mode'),
         z=ev.get('z'), candidate_cap_rate=ev.get('c_cap_rate'), n=ev.get('n'),
         head_pass=ev.get('h_pass'), candidate_pass=ev.get('c_pass'),
         batch_tasks_dropped=dec.get('batch_overlap'), reasons=dec.get('reasons'),
-        reason=('; '.join(dec.get('reasons') or []) or (('z %s %.1f and cap-hit < %.2f' % ('>=' if dec.get('z_inclusive') else '>', dec.get('z_min', -1.0), dec.get('cap_max', 0.20)))
-                if verdict == 'promoted' else None)),
+        reason=(
+            'blocked_incomplete_master (HEAD never moved)' if verdict == 'blocked'
+            else ('green DECISION without HEAD-CHAIN append' if verdict == 'not-promoted'
+                  else ('; '.join(dec.get('reasons') or []) or (
+                      ('z %s %.1f and cap-hit < %.2f' % (
+                          '>=' if dec.get('z_inclusive') else '>',
+                          dec.get('z_min', -1.0), dec.get('cap_max', 0.20),
+                      )) if verdict == 'promoted' else None)))
+        ),
         thresholds=dict(z_min=dec.get('z_min', -1.0), z_inclusive=bool(dec.get('z_inclusive')), cap_max=dec.get('cap_max', 0.20),
                         min_tasks=dec.get('min_tasks', 200)), red_credit=dec.get('red_credit'),
         commitment=dec.get('commitment'),
@@ -203,8 +256,11 @@ def tick():
                rule=(_prior_rule() or HELDOUT_RULE) + ' History: E152-E153 paired z > -1, E154-E167 paired z >= -1.5, E168-E270 paired z > 0 on a 1000-task '
                     'private probe sample minus the epoch batch (cap-hit < 0.20); held-out gate from E271. ' + SCORE_RULE() + ' Append-only.'
                     + K1_RULE_SUFFIX(),
-               counts=dict(total=len(ledger), promoted=sum(r['verdict'] == 'promoted' for r in ledger),
-                           rejected=sum(r['verdict'] == 'rejected' for r in ledger)),
+               counts=dict(total=len(ledger),
+                           promoted=sum(r.get('verdict') == 'promoted' for r in ledger),
+                           rejected=sum(r.get('verdict') == 'rejected' for r in ledger),
+                           blocked=sum(r.get('verdict') == 'blocked' for r in ledger),
+                           not_promoted=sum(r.get('verdict') == 'not-promoted' for r in ledger)),
                current=current_status(), entries=ledger)
     try:   # z bar: fixed at z > 1.00 (RA/20261102-zbar-flat); gate.json z_bar + /gate/zbar.json
         import prior_gate as _PG; zb = _PG.z_bar_public()

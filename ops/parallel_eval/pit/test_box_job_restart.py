@@ -115,13 +115,83 @@ class TestBoxJobRestart(unittest.TestCase):
         # No additional launch — resumed the in-flight pid.
         self.assertEqual(len(store.launch_log), launches_before)
 
+    def test_restart_mid_eval_resumes_to_result_without_release(self):
+        """e1065 class: download.done + train.done, mid-probe → re-adopt polls eval."""
+        store = MemBoxJobStore(default_ticks=3)
+        ctrl = _ctrl(store, item_id='item-eval-mid')
+        ctrl.ensure_dir()
+        write_marker(store, ctrl.job_dir, 'download', {'ok': True})
+        write_marker(store, ctrl.job_dir, 'train', {
+            'ok': True, 'checkpoint': 'c' * 64,
+            'candidate_id': 'c' * 64,
+            'candidate_path': 'box:/ckpt/' + ('c' * 64),
+            'report': '/tmp/report.json',
+        })
+
+        store.arm_launch(
+            ticks=3,
+            auto_marker=True,
+            payload={
+                'ok': True,
+                'candidate_id': 'c' * 64,
+                'probe_result': {'samples': 32, 'score': {'decision': 'red'}},
+            },
+        )
+        pid = store.launch_detached(
+            ctrl.job_dir, stage='eval', command='setsid nohup pit-box-job-eval',
+        )
+        self.assertIn(pid, store.alive_pids)
+        st = inspect_job(store, ctrl.job_dir)
+        self.assertEqual(st.state, STATUS_RUNNING)
+        self.assertEqual(st.next_stage, 'eval')
+        self.assertNotIn('eval', st.markers)
+        launches_before = len(store.launch_log)
+
+        clock = {'t': 0.0}
+
+        def now():
+            clock['t'] += 1.0
+            return clock['t']
+
+        ctrl.now_fn = now
+        ctrl.sleep_fn = lambda _s: store.advance()
+
+        def must_not_rerun():
+            raise AssertionError('host must not re-run eval while detached job lives')
+
+        out = ctrl.run_stage_once(
+            'eval', must_not_rerun,
+            detached_command='pit-box-job-eval',
+            wait_for_marker=True,
+            poll_s=0.0,
+            timeout_s=30.0,
+        )
+        self.assertEqual(out.get('candidate_id'), 'c' * 64)
+        self.assertEqual((out.get('probe_result') or {}).get('samples'), 32)
+        self.assertIn('eval', ctrl.status().markers)
+        self.assertEqual(len(store.launch_log), launches_before)
+
+        # Publish RESULT as the detached job would; re-adopt fetches without release.
+        write_result(store, ctrl.job_dir, {
+            'ok': True,
+            'candidate_id': 'c' * 64,
+            'probe_result': out.get('probe_result'),
+            'candidate_path': 'box:/ckpt/' + ('c' * 64),
+        })
+        fetched = ctrl.resume_or_fetch()
+        self.assertIsNotNone(fetched)
+        assert fetched is not None
+        self.assertEqual(fetched['candidate_id'], 'c' * 64)
+        # No release semantics in box_job layer — controller must keep box on GPU-busy.
+        self.assertNotIn('release', str(fetched).lower())
+
     def test_restart_after_result_fetches_without_rerun(self):
         store = MemBoxJobStore()
         ctrl = _ctrl(store, item_id='item-done')
         ctrl.ensure_dir()
         write_marker(store, ctrl.job_dir, 'download', {'ok': True})
         write_marker(store, ctrl.job_dir, 'train', {'ok': True, 'checkpoint': 'c' * 64})
-        write_marker(store, ctrl.job_dir, 'probe', {'ok': True})
+        write_marker(store, ctrl.job_dir, 'eval', {'ok': True})
         result = {
             'ok': True,
             'candidate_id': 'c' * 64,

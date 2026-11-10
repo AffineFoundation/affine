@@ -311,6 +311,8 @@ def tick_once(
         out = ctl.tick()
         summary['tick'] = out
         ctl.rent.save_ledger()
+        # Every item state transition / failure must land in run_host.out.
+        _log_tick_actions(out)
     for item in list(ctl.items):
         store.save_item(item)
         if not ctl.config.may_write_live_artifacts():
@@ -413,6 +415,32 @@ def _epoch_dir_for_item(item) -> Optional[str]:
         if root:
             return str(Path(root) / 'epochs' / str(int(item.epoch)))
     return None
+
+
+def _log_tick_actions(tick_out: Mapping[str, Any]) -> None:
+    """Emit one JSON line per item advance/fail into run_host.out (stdout/stderr)."""
+    actions = list((tick_out or {}).get('actions') or [])
+    for act in actions:
+        if not isinstance(act, Mapping):
+            continue
+        op = str(act.get('op') or '')
+        level = 'error' if op in ('fail', 'no_decision') else 'info'
+        print(
+            json.dumps({
+                'component': 'pit-run-host',
+                'level': level,
+                'event': 'item_%s' % (op or 'action'),
+                'item_id': act.get('item_id'),
+                'to': act.get('to'),
+                'note': act.get('note'),
+                'box_id': act.get('box_id'),
+                'error': act.get('error'),
+                'exc_type': act.get('exc_type'),
+                'head': act.get('head'),
+                'round_id': act.get('round_id'),
+            }, default=str),
+            flush=True,
+        )
 
 
 def _gate_emit_ready(item) -> bool:

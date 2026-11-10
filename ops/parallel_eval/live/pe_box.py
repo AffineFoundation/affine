@@ -836,12 +836,35 @@ mkdir -p {K}/{c}; for f in $(ls $M); do ln -f $M/$f {K}/{c}/$f 2>/dev/null || cp
     return dict(place_tail=out.strip()[-200:], box_candidate_dir=KDIR + '/' + candidate_id)
 
 
-def free_gpus(P: Any) -> Mapping[str, Any]:
-    """drive_item stage 6 — kill leftover train_pit/v83_dp; require <2 GiB/GPU before serve."""
-    pids_raw = P.run("pgrep -f 'train_pit.py|v83_dp.py' || true", check=False, timeout=60)
-    pids = [p for p in str(pids_raw).split() if p.isdigit()]
+def free_gpus(P: Any, *, also_vllm: bool = True) -> Mapping[str, Any]:
+    """drive_item stage 6 — kill leftover train (and optionally vLLM); require free GPUs.
+
+    When re-running eval after a host restart, ``also_vllm=True`` clears the
+    previous host's detached serve processes by recorded pgrep patterns before
+    the busy check. Callers that prefer resume must not invoke this while an
+    eval job pid is still alive.
+    """
+    # Keep the historical combined train pattern (tests + live drive_item parity).
+    patterns = ["train_pit.py|v83_dp.py"]
+    if also_vllm:
+        patterns.extend(['vllm serve', 'podctl.py serve', 'pit-box-job-eval'])
+    pids: list[str] = []
+    for pat in patterns:
+        pids_raw = P.run("pgrep -f '%s' || true" % pat.replace("'", ""), check=False, timeout=60)
+        pids.extend(p for p in str(pids_raw).split() if p.isdigit())
+    # Unique preserve order.
+    seen: set[str] = set()
+    uniq: list[str] = []
     for p in pids:
-        P.run('kill %s 2>/dev/null || true' % p, check=False, timeout=30)
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    for p in uniq:
+        # Kill process group when possible so setsid children die with the leader.
+        P.run('kill -TERM -%s 2>/dev/null || kill -TERM %s 2>/dev/null || true' % (p, p), check=False, timeout=30)
+    time.sleep(1 if os.environ.get('PIT_FAST_FREE_GPUS') else 3)
+    for p in uniq:
+        P.run('kill -KILL -%s 2>/dev/null || kill -KILL %s 2>/dev/null || true' % (p, p), check=False, timeout=30)
     time.sleep(2 if os.environ.get('PIT_FAST_FREE_GPUS') else 10)
     used_raw = P.run(
         'nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits',
@@ -852,8 +875,51 @@ def free_gpus(P: Any) -> Mapping[str, Any]:
     if not used_mib:
         raise BoxIOError('free_gpus: nvidia-smi returned no memory.used rows')
     if any(u >= 2000 for u in used_mib):
+        # Soft, typed error — controller must NOT release the box on re-adopt.
         raise BoxIOError('GPUs not free after train: %s MiB' % used_mib)
-    return dict(killed=pids, used_mib=used_mib)
+    return dict(killed=uniq, used_mib=used_mib)
+
+
+def detached_eval_command(
+    *,
+    job_dir: str,
+    candidate_id: str,
+    plan_path: str,
+    podd: str = '/root/affine-env-probe',
+    max_num_seqs: int = 512,
+) -> str:
+    """Box-side shell: serve + probe under setsid; write markers/eval.done + RESULT.json.
+
+    The host ships ``plan_path`` (JSON plan for podctl start-run) before launch.
+    On host restart mid-eval the new host polls this marker instead of re-serving.
+    """
+    jd = job_dir.rstrip('/')
+    return (
+        "set -e; JD={JD}; CID={CID}; PLAN={PLAN}; PODD={PODD}; "
+        "mkdir -p \"$JD/markers\"; "
+        # Clear train leftovers only — do not kill our own eval tree after relaunch.
+        "pgrep -f 'train_pit.py|v83_dp.py' | while read p; do kill -TERM \"$p\" 2>/dev/null || true; done; "
+        "sleep 2; "
+        "MAX_SEQS={MS} python3 \"$PODD/podctl.py\" serve \"$CID\" 0.9; "
+        "python3 \"$PODD/podctl.py\" start-run \"$CID\" < \"$PLAN\"; "
+        "NAME=$(python3 -c \"import json;print(json.load(open('{PLAN}'))['run_name'])\"); "
+        "for i in $(seq 1 540); do "
+        "  ST=$(python3 \"$PODD/podctl.py\" status | tail -1); "
+        "  python3 -c \"import json,sys; st=json.loads(sys.argv[1]); ru=(st.get('runs') or {{}}).get(sys.argv[2]) or {{}}; "
+        "sys.exit(0 if ru.get('result') else 1)\" \"$ST\" \"$NAME\" && break; "
+        "  sleep 10; "
+        "done; "
+        "python3 - \"$JD\" \"$CID\" \"$PODD\" \"$NAME\" <<'PY'\n"
+        "import json, os, sys, time\n"
+        "jd, cid, podd, name = sys.argv[1:5]\n"
+        "res = json.load(open('%s/runs/%s/result.json' % (podd, name)))\n"
+        "doc = {{'ok': True, 'candidate_id': cid, 'probe_result': res, 'run_name': name, 'at': time.time()}}\n"
+        "open(os.path.join(jd, 'markers', 'eval.done'), 'w').write(json.dumps(doc, sort_keys=True) + '\\n')\n"
+        "open(os.path.join(jd, 'RESULT.json'), 'w').write(json.dumps(doc, sort_keys=True) + '\\n')\n"
+        "PY"
+    ).format(
+        JD=jd, CID=candidate_id, PLAN=plan_path, PODD=podd, MS=int(max_num_seqs),
+    )
 
 
 def pull_report_only(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[str, Any]:

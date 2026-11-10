@@ -15,7 +15,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, Set
 
 
-STAGES: tuple[str, ...] = ('download', 'train', 'probe')
+# 'eval' is the probe/serve stage (eval.done). Legacy 'probe.done' markers are
+# accepted as aliases when reading so mid-flight boxes stay resume-safe.
+STAGES: tuple[str, ...] = ('download', 'train', 'eval')
+STAGE_ALIASES: Dict[str, str] = {'probe': 'eval'}
 RESULT_NAME = 'RESULT.json'
 PID_NAME = 'job.pid'
 LOG_NAME = 'job.log'
@@ -127,12 +130,18 @@ def fetch_result(store: BoxJobStore, job_dir: str) -> Optional[Dict[str, Any]]:
     return _loads_json(store.read_text(result_path(job_dir)))
 
 
+def canonicalize_stage(stage: str) -> str:
+    s = str(stage or '')
+    return STAGE_ALIASES.get(s, s)
+
+
 def write_marker(
     store: BoxJobStore,
     job_dir: str,
     stage: str,
     payload: Optional[Mapping[str, Any]] = None,
 ) -> None:
+    stage = canonicalize_stage(stage)
     if stage not in STAGES:
         raise BoxJobError('unknown stage %r' % stage)
     store.ensure_dir(job_dir)
@@ -242,6 +251,7 @@ class BoxJobController:
         after launch / instead of launch and its return value becomes the marker
         payload.
         """
+        stage = canonicalize_stage(stage)
         if stage not in STAGES:
             raise BoxJobError('unknown stage %r' % stage)
         self.ensure_dir()
@@ -273,11 +283,18 @@ class BoxJobController:
                 raw = self.store.read_text(marker_path(self.job_dir, stage))
                 return _loads_json(raw) or {}
 
+        stage = canonicalize_stage(stage)
         kill_patterns = list(extra_kill_patterns)
         if stage == 'train':
             kill_patterns.append('train_pit.py')
         elif stage == 'download':
             kill_patterns.extend(('gate_fetch.py', 'bundle_fetch.py'))
+        elif stage == 'eval':
+            # Re-run must clear leftover vLLM / podctl / harness from a prior host.
+            kill_patterns.extend((
+                'vllm serve', 'podctl.py serve', 'podctl.py start-run',
+                'pit-box-job-eval', 'affine_gatepool',
+            ))
         self.kill_stale(extra_patterns=kill_patterns)
         if detached_command:
             self.store.launch_detached(self.job_dir, stage=stage, command=detached_command)
@@ -357,7 +374,7 @@ class RemoteBoxJobStore:
         )
         found: Set[str] = set()
         for line in (out or '').splitlines():
-            name = line.strip()
+            name = canonicalize_stage(line.strip())
             if name in STAGES:
                 found.add(name)
         return found
@@ -440,7 +457,7 @@ class MemBoxJobStore:
         found: Set[str] = set()
         for path in self.files:
             if path.startswith(prefix) and path.endswith('.done'):
-                name = path[len(prefix):-5]
+                name = canonicalize_stage(path[len(prefix):-5])
                 if name in STAGES:
                     found.add(name)
         return found
