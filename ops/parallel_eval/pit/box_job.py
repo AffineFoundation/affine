@@ -22,6 +22,8 @@ STAGE_ALIASES: Dict[str, str] = {'probe': 'eval'}
 RESULT_NAME = 'RESULT.json'
 PID_NAME = 'job.pid'
 LOG_NAME = 'job.log'
+# Per-attempt logs: job.log.0, job.log.1, … (never truncate prior attempts).
+LOG_ATTEMPT_PREFIX = 'job.log.'
 STATUS_RUNNING = 'running'
 STATUS_DONE = 'done'
 STATUS_NEED_LAUNCH = 'need_launch'
@@ -55,6 +57,27 @@ def pid_path(job_dir: str) -> str:
 
 def log_path(job_dir: str) -> str:
     return '%s/%s' % (job_dir.rstrip('/'), LOG_NAME)
+
+
+def log_attempt_path(job_dir: str, attempt: int) -> str:
+    return '%s/%s%d' % (job_dir.rstrip('/'), LOG_ATTEMPT_PREFIX, int(attempt))
+
+
+def next_log_attempt(store: 'BoxJobStore', job_dir: str) -> int:
+    """Next unused ``job.log.<n>`` index (0-based); never reuse / truncate."""
+    lister = getattr(store, 'list_log_attempts', None)
+    if callable(lister):
+        try:
+            existing = sorted(int(x) for x in lister(job_dir))
+            return (existing[-1] + 1) if existing else 0
+        except Exception:
+            pass
+    # Fallback: probe job.log.0 .. job.log.63 for the first missing slot past max.
+    found: list[int] = []
+    for i in range(64):
+        if store.read_text(log_attempt_path(job_dir, i)) is not None:
+            found.append(i)
+    return (found[-1] + 1) if found else 0
 
 
 def read_log_tail(
@@ -677,18 +700,36 @@ class RemoteBoxJobStore:
         text = (out or '').rstrip('\n')
         return text + '\n' if text else None
 
+    def list_log_attempts(self, job_dir: str) -> Sequence[int]:
+        out = self.pod.run(
+            'ls -1 %s/job.log.[0-9]* 2>/dev/null | sed -n "s/.*job\\.log\\.\\([0-9][0-9]*\\)$/\\1/p" || true'
+            % shlex.quote(job_dir.rstrip('/')),
+            timeout=30, check=False,
+        )
+        found: list[int] = []
+        for tok in str(out or '').split():
+            if tok.isdigit():
+                found.append(int(tok))
+        return found
+
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int:
         # Tag process with pit-box-job so kill_stale / pgrep can find duplicates.
+        # Per-attempt log: never truncate prior job.log.N; point job.log → latest.
+        attempt = next_log_attempt(self, job_dir)
+        log_n = 'job.log.%d' % int(attempt)
         wrapped = (
             'mkdir -p {jd}/markers; cd {jd}; '
             'setsid nohup bash -c {cmd} > {log} 2>&1 < /dev/null & '
-            'echo $! > {pid}; cat {pid}'
+            'echo $! > {pid}; '
+            'ln -sfn {log} {link} 2>/dev/null || cp -f {log} {link} 2>/dev/null || true; '
+            'cat {pid}'
         ).format(
             jd=shlex.quote(job_dir.rstrip('/')),
             cmd=shlex.quote(
                 'echo pit-box-job-%s; %s' % (stage, command)
             ),
-            log=shlex.quote(LOG_NAME),
+            log=shlex.quote(log_n),
+            link=shlex.quote(LOG_NAME),
             pid=shlex.quote(PID_NAME),
         )
         out = self.pod.run(wrapped, timeout=60, check=True)
@@ -780,11 +821,26 @@ class MemBoxJobStore:
                 out.append(pid)
         return out
 
+    def list_log_attempts(self, job_dir: str) -> Sequence[int]:
+        prefix = '%s/%s' % (job_dir.rstrip('/'), LOG_ATTEMPT_PREFIX)
+        found: list[int] = []
+        for path in self.files:
+            if path.startswith(prefix):
+                tail = path[len(prefix):]
+                if tail.isdigit():
+                    found.append(int(tail))
+        return found
+
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int:
         pid = self.next_pid
         self.next_pid += 1
         self.alive_pids.add(pid)
         self.files['%s/%s' % (job_dir.rstrip('/'), PID_NAME)] = str(pid)
+        # Per-attempt log (no truncation of prior attempts); job.log → latest.
+        attempt = next_log_attempt(self, job_dir)
+        log_n = log_attempt_path(job_dir, attempt)
+        self.files[log_n] = 'pit-box-job-%s pid=%d\n' % (stage, pid)
+        self.files['%s/%s' % (job_dir.rstrip('/'), LOG_NAME)] = self.files[log_n]
         ticks = int(getattr(self, '_next_ticks', self.default_ticks))
         payload = dict(getattr(self, '_next_payload', {}) or {})
         auto_marker = bool(getattr(self, '_next_auto_marker', True))
@@ -795,8 +851,12 @@ class MemBoxJobStore:
             'ticks_left': ticks,
             'payload': payload,
             'auto_marker': auto_marker,
+            'log_attempt': attempt,
         }
-        self.launch_log.append({'pid': pid, 'stage': stage, 'command': command, 'job_dir': job_dir})
+        self.launch_log.append({
+            'pid': pid, 'stage': stage, 'command': command, 'job_dir': job_dir,
+            'log_attempt': attempt,
+        })
         return pid
 
     def arm_launch(

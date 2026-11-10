@@ -2065,6 +2065,95 @@ class Controller:
             self._persist(item)
         return item, 'release-noop'
 
+    def _train_done_on_box(self, item: ItemRecord) -> bool:
+        """True when markers/train.done exists (or item already sealed with C)."""
+        if item.sealed and item.candidate_id and len(str(item.candidate_id)) == 64:
+            return True
+        if (item.meta or {}).get('train_done_checkpoint'):
+            return True
+        raw = (item.meta or {}).get('pod')
+        if raw is None:
+            return False
+        try:
+            from .box import normalize_meta_pod
+            from .box_job import controller_for_pod, marker_path
+            P = normalize_meta_pod(raw)
+            if P is None:
+                return False
+            ctrl = controller_for_pod(P, item.item_id)
+            st = ctrl.status()
+            if 'train' not in st.markers:
+                return False
+            raw_m = ctrl.store.read_text(marker_path(ctrl.job_dir, 'train'))
+            if raw_m:
+                try:
+                    doc = json.loads(raw_m)
+                except Exception:
+                    doc = {}
+                ck = (doc or {}).get('checkpoint') or (doc or {}).get('candidate_id')
+                if isinstance(ck, str) and len(ck) == 64:
+                    meta = dict(item.meta or {})
+                    meta['train_done_checkpoint'] = ck
+                    if not item.candidate_id:
+                        item.candidate_id = ck
+                    # Hydrate upload fields from the enriched train marker when present.
+                    for key in (
+                        'candidate_path', 'candidate_master_path', 'candidate_master_digest',
+                        'candidate_sha256', 'box_candidate_dir', 'box_master_dir',
+                        'candidate_files', 'defer_candidate_upload', 'candidate_on_box',
+                    ):
+                        if key in doc and meta.get(key) in (None, '', {}, []):
+                            meta[key] = doc[key]
+                    if not meta.get('candidate_sha256'):
+                        meta['candidate_sha256'] = ck
+                    if not meta.get('candidate_master_digest') and doc.get('candidate_master_digest'):
+                        meta['candidate_master_digest'] = doc['candidate_master_digest']
+                    item.meta = meta
+            return True
+        except Exception:
+            return bool(item.candidate_id and len(str(item.candidate_id)) == 64)
+
+    def _upload_before_release_after_train(
+        self, item: ItemRecord, *, reason: str,
+    ) -> Optional[ItemRecord]:
+        """After train.done: upload bf16+fp32 (verified) before any box release.
+
+        Returns a kept item when upload fails (never release an unuploaded C).
+        Returns None when upload succeeded (or was already complete) so release
+        may proceed.
+        """
+        if not item.box_id:
+            return None
+        if not self._train_done_on_box(item):
+            return None
+        if self._candidate_upload_complete(item):
+            return None
+        try:
+            item = self._ensure_candidate_uploaded(item)
+        except Exception as exc:
+            meta = dict(item.meta or {})
+            meta['post_train_upload_error'] = str(exc)[:400]
+            meta['post_train_upload_reason'] = (reason or '')[:200]
+            item.meta = meta
+            item.last_error = 'post-train-upload:%s' % str(exc)[:200]
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'error',
+                    'event': 'post_train_upload_failed',
+                    'item_id': item.item_id,
+                    'epoch': item.epoch,
+                    'box_id': item.box_id,
+                    'error': str(exc)[:400],
+                    'note': 'keeping box — never release unuploaded post-train candidate',
+                }, default=str),
+                flush=True,
+            )
+            self._persist(item)
+            return item
+        self._persist(item)
+        return None
+
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
         """Always return an ItemRecord (never a (item, note) tuple)."""
         if item.state is ItemState.DECIDED:
@@ -2092,6 +2181,10 @@ class Controller:
         # the item / host log BEFORE release so the trail survives pod teardown.
         if item.box_id:
             item = self._attach_box_job_log_tail(item)
+        # After train.done: upload full bf16 + fp32 shards (verified) before release.
+        kept = self._upload_before_release_after_train(item, reason=reason)
+        if kept is not None:
+            return kept
         next_attempt = item.attempt + 1
         if item.box_id and item.box_id in self.rent.ledger.active:
             try:

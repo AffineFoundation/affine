@@ -163,6 +163,13 @@ class TestDetachedEvalPlanParity(unittest.TestCase):
         self.assertIn('nvidia-smi --query-gpu=memory.used', cmd)
         self.assertIn('timeout_s=300', cmd)
         self.assertNotIn('; sleep 2; python3 -', cmd)
+        # Must not self-kill via literal pgrep on embedded cmdline patterns.
+        self.assertNotIn(
+            "pgrep -f 'train_pit.py|v83_dp.py|vllm serve|podctl.py serve'",
+            cmd,
+        )
+        self.assertIn('[v]llm serve', cmd)
+        self.assertIn('query-compute-apps=pid', cmd)
 
 
 if __name__ == '__main__':

@@ -230,8 +230,6 @@ class TestArtifactAndRetry(unittest.TestCase):
         )
         ctrl.ensure_dir()
         write_marker(store, ctrl.job_dir, 'download', {'ok': True})
-        store.write_text('%s/job.log' % ctrl.job_dir, 'train done\nrc=0\n')
-        self.assertTrue(job_log_rc_ok(store, ctrl.job_dir))
 
         store.arm_launch(ticks=1, auto_marker=False)
         pid = store.launch_detached(
@@ -239,6 +237,10 @@ class TestArtifactAndRetry(unittest.TestCase):
         )
         store.alive_pids.discard(pid)
         store.pending.pop(pid, None)
+        # Stamp rc=0 onto the attempt log *after* launch (launch creates job.log.N).
+        store.write_text('%s/job.log' % ctrl.job_dir, 'train done\nrc=0\n')
+        store.write_text('%s/job.log.0' % ctrl.job_dir, 'train done\nrc=0\n')
+        self.assertTrue(job_log_rc_ok(store, ctrl.job_dir))
 
         clock = {'t': 0.0}
         ctrl.now_fn = lambda: clock.__setitem__('t', clock['t'] + 1.0) or clock['t']

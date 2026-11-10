@@ -898,9 +898,45 @@ def detached_eval_command(
     """
     jd = job_dir.rstrip('/')
     # Use replace (not str.format) so the embedded Python braces stay intact.
-    # After host-side kill of leftover vLLM/train, poll nvidia-smi until GPUs are
-    # free (≤5 min) before podctl serve — never a fixed sleep 2 (restart mid-eval).
-    template = r'''mkdir -p __JD__/markers; pgrep -f 'train_pit.py|v83_dp.py|vllm serve|podctl.py serve' | while read p; do kill -TERM "$p" 2>/dev/null || true; done; python3 - __JD__ __CID__ __PLAN__ __PODD__ __MS__ <<'PY'
+    # Safe pre-eval cleanup: NEVER pgrep for literal 'vllm serve' etc. inside this
+    # setsid/nohup bash -c script — those strings appear in our own cmdline and
+    # the wrapper would TERM itself (e1067). Kill only: prior job.pid / its
+    # process group, GPU compute-app PIDs, and bracketed-pgrep leftovers, always
+    # excluding $$, $PPID, and our process group.
+    # After cleanup, poll nvidia-smi until GPUs are free (≤5 min) before serve.
+    template = r'''mkdir -p __JD__/markers
+SELF=$$; PARENT=$PPID; MYPGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d " " || true)
+_kill_one() {
+  p="$1"; [ -z "$p" ] && return 0
+  case "$p" in (*[!0-9]*|"") return 0 ;; esac
+  [ "$p" = "$SELF" ] && return 0
+  [ "$p" = "$PARENT" ] && return 0
+  [ -n "$MYPGID" ] && [ "$p" = "$MYPGID" ] && return 0
+  pg=$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " " || true)
+  [ -n "$MYPGID" ] && [ -n "$pg" ] && [ "$pg" = "$MYPGID" ] && return 0
+  kill -TERM "$p" 2>/dev/null || true
+}
+# Prior stage pidfile / process group (train job leader).
+if [ -f __JD__/job.pid ]; then
+  opid=$(head -1 __JD__/job.pid 2>/dev/null | tr -d " ")
+  if [ -n "$opid" ]; then
+    _kill_one "$opid"
+    # Negative PGID kill only when opid is a session leader we own — still exclude self.
+    if [ "$opid" != "$SELF" ] && [ "$opid" != "$PARENT" ]; then
+      kill -TERM -"$opid" 2>/dev/null || true
+    fi
+  fi
+fi
+# Processes currently holding GPU compute contexts.
+nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | while read -r raw; do
+  p=$(echo "$raw" | tr -d " ,")
+  _kill_one "$p"
+done
+# Bracketed pgrep: matches real leftovers, not this script's own argv text.
+pgrep -f "[t]rain_pit\\.py|[v]83_dp\\.py|[v]llm serve|[p]odctl\\.py serve" 2>/dev/null | while read -r p; do
+  _kill_one "$p"
+done
+python3 - __JD__ __CID__ __PLAN__ __PODD__ __MS__ <<'PY'
 import json, os, subprocess, sys, time
 jd, cid, plan_path, podd, ms = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
 
