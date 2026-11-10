@@ -718,38 +718,98 @@ def ship_inputs(P: Any, *, epoch_dir: Path, epoch: int, work_jd: Path) -> Mappin
     )
 
 
-def run_train_pit(P: Any, *, expected_master: str) -> Mapping[str, Any]:
-    """drive_item.train — ship train_pit.py and run under fetched venv (fail closed)."""
-    # Fail closed on venv before launch.
-    P.run('set -e; test -x %s; test -d %s' % (BOX_VENV, BOX_SOURCE), timeout=60)
-    src = _train_pit_src()
-    if not src.is_file():
-        raise BoxIOError('train_pit.py missing: %s' % src)
-    put(P, PST + '/train_pit.py', src.read_bytes(), '700')
-    cmd = (
+def _train_pit_inner_cmd(*, expected_master: str) -> str:
+    """Foreground train body (venv python + mem monitor). Used by sync and detached paths.
+
+    ``rc=$?`` is tee'd onto train.log so a detached job can parse success without
+    relying on the host SSH stdout capture.
+    """
+    return (
         "cd {S} && rm -rf {O} && "
         "(nohup nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu "
         "--format=csv,noheader,nounits -lms 2000 > {P}/mem.csv 2>&1 & echo $! > {P}/mem.pid); "
         "env -u AFFINE_FP32_BOOTSTRAP_OVERRIDE AFFINE_FP32_EXPECTED_MASTER_HASH={X} "
         "CUDA_VISIBLE_DEVICES=0 CUBLAS_WORKSPACE_CONFIG=:4096:8 MKL_NUM_THREADS=8 OMP_NUM_THREADS=8 "
         "PYTHONPATH={S} TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "
-        "{T}/runtime-exact/venv/bin/python -B {P}/train_pit.py > {P}/train.log 2>&1; echo rc=$?; "
+        "{T}/runtime-exact/venv/bin/python -B {P}/train_pit.py > {P}/train.log 2>&1; "
+        "echo rc=$? | tee -a {P}/train.log; "
         "kill $(cat {P}/mem.pid) 2>/dev/null; "
         "grep -E '^\\{{' {P}/train.log | tail -40; "
         "grep -v helper-preload {P}/train.log | grep -v '^\\{{' | tail -60"
     ).format(S=BOX_SOURCE, O=PST + '/out', T=TW, P=PST, X=expected_master)
-    out = P.run(cmd, timeout=int(os.environ.get('PIT_TRAIN_TIMEOUT_S') or 7200), check=False)
+
+
+def _parse_train_pit_output(out: str) -> Mapping[str, Any]:
     events = {}
-    for line in out.splitlines():
+    for line in (out or '').splitlines():
         try:
             x = json.loads(line)
         except Exception:
             continue
         if isinstance(x, dict) and x.get('event'):
             events[x['event']] = x
-    if 'rc=0' not in out or 'done' not in events:
-        raise BoxIOError('train failed: ' + out[-1500:])
-    return dict(events=events, checkpoint=events['done']['checkpoint'], log_tail=out[-4000:])
+    if 'rc=0' not in (out or '') or 'done' not in events:
+        raise BoxIOError('train failed: ' + (out or '')[-1500:])
+    return dict(events=events, checkpoint=events['done']['checkpoint'], log_tail=(out or '')[-4000:])
+
+
+def run_train_pit(P: Any, *, expected_master: str) -> Mapping[str, Any]:
+    """drive_item.train — ship train_pit.py and run under fetched venv (fail closed).
+
+    Prefer ``run_train_pit_detached`` from HostBoxIO so host restart cannot cut
+    the train process mid-flight. This sync helper remains for unit tests.
+    """
+    # Fail closed on venv before launch.
+    P.run('set -e; test -x %s; test -d %s' % (BOX_VENV, BOX_SOURCE), timeout=60)
+    src = _train_pit_src()
+    if not src.is_file():
+        raise BoxIOError('train_pit.py missing: %s' % src)
+    put(P, PST + '/train_pit.py', src.read_bytes(), '700')
+    out = P.run(
+        _train_pit_inner_cmd(expected_master=expected_master),
+        timeout=int(os.environ.get('PIT_TRAIN_TIMEOUT_S') or 7200),
+        check=False,
+    )
+    return _parse_train_pit_output(out)
+
+
+def _ship_train_pit(P: Any) -> None:
+    P.run('set -e; test -x %s; test -d %s' % (BOX_VENV, BOX_SOURCE), timeout=60)
+    src = _train_pit_src()
+    if not src.is_file():
+        raise BoxIOError('train_pit.py missing: %s' % src)
+    put(P, PST + '/train_pit.py', src.read_bytes(), '700')
+
+
+def detached_train_command(*, expected_master: str, job_dir: str) -> str:
+    """Box-side shell: run train under the job dir and write markers/train.done."""
+    # Marker writer reads train.log after the inner command; durable across host HUP.
+    inner = _train_pit_inner_cmd(expected_master=expected_master)
+    # Escape for embedding inside bash -c '...'.
+    return (
+        "mkdir -p {JD}/markers; "
+        "({INNER}); "
+        "python3 - {JD}/markers/train.done {P}/train.log <<'PY'\n"
+        "import json,sys\n"
+        "marker, logp = sys.argv[1], sys.argv[2]\n"
+        "text=open(logp,errors='replace').read() if __import__('os').path.isfile(logp) else ''\n"
+        "events={{}}\n"
+        "for line in text.splitlines():\n"
+        "    line=line.strip()\n"
+        "    if not line.startswith('{{'):\n"
+        "        continue\n"
+        "    try: x=json.loads(line)\n"
+        "    except Exception: continue\n"
+        "    if isinstance(x,dict) and x.get('event'): events[x['event']]=x\n"
+        "rc_ok=('rc=0' in text.splitlines()[-5:]) or ('rc=0' in text)\n"
+        "done=events.get('done') or {{}}\n"
+        "ck=done.get('checkpoint')\n"
+        "doc={{'ok': bool(rc_ok and ck), 'checkpoint': ck, 'events': "
+        "{{k: events[k] for k in events}}, 'rc_ok': bool(rc_ok)}}\n"
+        "open(marker,'w').write(json.dumps(doc,sort_keys=True)+'\\n')\n"
+        "sys.exit(0 if doc['ok'] else 1)\n"
+        "PY"
+    ).format(JD=job_dir.rstrip('/'), INNER=inner, P=PST)
 
 
 def place_cand(P: Any, *, candidate_id: str) -> Mapping[str, Any]:
@@ -1093,28 +1153,115 @@ class HostBoxIO:
         P = _as_pod(pod)
         info: dict = {}
 
-        # drive_item order: boot (+ GRADER_FIX) → push_bundle → bundle_trainer →
-        # head → master → inputs (no wipe) → train → place_cand.
-        boot_helpers(P)
-        push_probe_bundle(P)
-        info.update(bundle_trainer(P))
-        info['fetch-head'] = fetch_head_on_box(P, head=head, files=files)
-        info['fetch-master'] = fetch_master_on_box(
-            P, head=head, expected_master=str(expected), head_bf16=str(head_bf16), published=published,
+        # Restart-safe box job: stage markers + RESULT on the box. Host threads
+        # die on restart; detached train does not. Re-adopt resumes from markers.
+        from ops.parallel_eval.pit.box_job import (
+            BoxJobError,
+            controller_for_pod,
+            marker_path,
         )
-        if info['fetch-master'].get('skipped'):
-            raise BoxIOError('no published master -> fail closed')
 
-        with tempfile.TemporaryDirectory(prefix='pit-jd-') as td:
-            info['signed_inputs'] = ship_inputs(
-                P, epoch_dir=epoch_dir, epoch=epoch, work_jd=Path(td),
+        ctrl = controller_for_pod(P, str(item_id))
+        ctrl.ensure_dir()
+        prior = ctrl.resume_or_fetch()
+        if prior and prior.get('candidate_id') and prior.get('candidate_path'):
+            # Full RESULT already on box (train+probe finished earlier).
+            out = dict(prior)
+            out.setdefault('pod', pod)
+            out.setdefault('pod_id', getattr(P, 'id', None))
+            return out
+
+        poll_s = float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0)
+        train_timeout = float(os.environ.get('PIT_TRAIN_TIMEOUT_S') or 7200)
+
+        def _do_download() -> dict:
+            # drive_item order: boot (+ GRADER_FIX) → push_bundle → bundle_trainer →
+            # head → master → inputs (no wipe).
+            boot_helpers(P)
+            push_probe_bundle(P)
+            info.update(bundle_trainer(P))
+            info['fetch-head'] = fetch_head_on_box(P, head=head, files=files)
+            info['fetch-master'] = fetch_master_on_box(
+                P, head=head, expected_master=str(expected),
+                head_bf16=str(head_bf16), published=published,
             )
+            if info['fetch-master'].get('skipped'):
+                raise BoxIOError('no published master -> fail closed')
+            with tempfile.TemporaryDirectory(prefix='pit-jd-') as td:
+                info['signed_inputs'] = ship_inputs(
+                    P, epoch_dir=epoch_dir, epoch=epoch, work_jd=Path(td),
+                )
+            return dict(ok=True, head=head, epoch=epoch)
 
-        train = run_train_pit(P, expected_master=str(expected))
-        info['train-events'] = train['events']
-        candidate_id = train['checkpoint']
+        try:
+            ctrl.run_stage_once('download', _do_download, poll_s=poll_s, timeout_s=train_timeout)
+        except BoxJobError as exc:
+            raise BoxIOError('box download stage: %s' % exc) from exc
+
+        # Train: resume polling if already running; else kill stale + detach.
+        st = ctrl.status()
+        train_marker: dict = {}
+        if 'train' in st.markers:
+            raw = ctrl.store.read_text(marker_path(ctrl.job_dir, 'train'))
+            try:
+                train_marker = json.loads(raw) if raw else {}
+            except Exception:
+                train_marker = {}
+        else:
+            _ship_train_pit(P)
+            cmd = detached_train_command(expected_master=str(expected), job_dir=ctrl.job_dir)
+
+            def _train_host_forbidden() -> dict:
+                raise BoxIOError('host must not run sync train when detached path is armed')
+
+            try:
+                train_marker = ctrl.run_stage_once(
+                    'train', _train_host_forbidden,
+                    detached_command=cmd, wait_for_marker=True,
+                    poll_s=poll_s, timeout_s=train_timeout,
+                )
+            except BoxJobError as exc:
+                raise BoxIOError('box train stage: %s' % exc) from exc
+
+        if not train_marker.get('ok') and not train_marker.get('checkpoint'):
+            # Marker without checkpoint — fail closed (box wrote a failed marker).
+            raise BoxIOError('train marker missing checkpoint: %s' % str(train_marker)[:300])
+        candidate_id = train_marker.get('checkpoint')
         if len(str(candidate_id)) != 64:
             raise BoxIOError('train done.checkpoint missing')
+        info['train-events'] = train_marker.get('events') or {}
+
+        # If a prior host pass already finalized place/pull into the marker, reuse it.
+        if train_marker.get('candidate_path') and train_marker.get('report'):
+            pulled = dict(train_marker)
+            rep = pulled.get('report_doc') or {}
+            fp = ((rep.get('optimizer') or {}).get('sgd') or {}).get('fp32_master') or (rep.get('fp32') or {})
+            train_gpu = kwargs.get('train_gpu') or pulled.get('train_gpu') or _detect_box_gpu(P)
+            result = dict(
+                candidate_id=pulled['candidate_id'],
+                candidate_path=pulled['candidate_path'],
+                candidate_on_box=True,
+                box_candidate_dir=pulled.get('box_candidate_dir'),
+                candidate_files=dict(pulled.get('candidate_files') or {}),
+                candidate_master_path=pulled['candidate_master_path'],
+                candidate_master_digest=pulled['candidate_master_digest'],
+                candidate_sha256=pulled['candidate_id'],
+                defer_candidate_upload=True,
+                used_fp32_bootstrap_override=False,
+                fp32_master_source=fp.get('source') or 'disk',
+                report=pulled['report'],
+                report_doc=rep,
+                training_report=rep,
+                train_gpu=train_gpu,
+                pod_id=getattr(P, 'id', None),
+                pod=pod,
+                box_work=PST,
+                fetch='r2-box-side',
+                artifact_transport='on-box-until-green',
+                info=info,
+                venv=BOX_VENV,
+            )
+            return result
 
         # drive_item: place_cand → free_gpus → keep ~18.8 GB on box until GREEN.
         host_out = _upload_root() / ('train-%s-%d' % (str(item_id)[:16], int(time.time())))
@@ -1138,7 +1285,7 @@ class HostBoxIO:
             timeout=60, check=False,
         )
 
-        return dict(
+        result = dict(
             candidate_id=pulled['candidate_id'],
             candidate_path=pulled['candidate_path'],
             candidate_on_box=True,
@@ -1161,7 +1308,18 @@ class HostBoxIO:
             artifact_transport='on-box-until-green',
             info=info,
             venv=BOX_VENV,
+            # Keep box-side fields used by marker / RESULT resume.
+            ok=True,
+            checkpoint=str(candidate_id),
+            events=info.get('train-events') or {},
         )
+        # Enrich train marker so a host restart after place/pull does not redo train.
+        try:
+            ctrl.mark_stage('train', result)
+        except Exception:
+            pass
+        return result
+
 
     def upload_candidate(
         self,

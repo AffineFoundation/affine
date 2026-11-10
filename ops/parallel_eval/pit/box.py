@@ -98,6 +98,21 @@ class BoxRunner:
         if admission_cert is not None:
             self.admit(box_key, admission_cert, now=now)
 
+        train_gpu = gpu_type_of(train_gpu) or gpu_type_of((record.meta or {}).get('train_gpu'))
+        pod = (record.meta or {}).get('pod')
+        if pod is None and (self.lane and (self.lane.require_host or self.lane.host_run_probe is not None)):
+            raise TransitionError('pod handle required for host box train/probe')
+
+        # Re-adopt: if the box already wrote RESULT.json, resume from that instead
+        # of re-running train+probe (host thread death must not cut box-side work).
+        box_job_ctrl = _try_box_job_controller(pod, record.item_id)
+        if box_job_ctrl is not None:
+            prior = box_job_ctrl.resume_or_fetch()
+            if prior and prior.get('probe_result') and prior.get('candidate_id'):
+                return _bundle_from_box_result(
+                    record, prior, box_key=box_key, train_gpu=train_gpu, eval_gpu=eval_gpu,
+                )
+
         head_path = self.io.download_head(record.bound_head)
         try:
             master_path = self.io.download_master(record.bound_head, record.bound_master_digest)
@@ -108,10 +123,6 @@ class BoxRunner:
             raise
 
         record = apply_transition(record, ItemState.TRAINING, reason='provisioned')
-        train_gpu = gpu_type_of(train_gpu) or gpu_type_of((record.meta or {}).get('train_gpu'))
-        pod = (record.meta or {}).get('pod')
-        if pod is None and (self.lane and (self.lane.require_host or self.lane.host_run_probe is not None)):
-            raise TransitionError('pod handle required for host box train/probe')
 
         train_receipt = dict(self.io.train_v834e(
             head_path=head_path,
@@ -237,7 +248,124 @@ class BoxRunner:
             eval_gpu=eval_gpu,
             meta={'shadow': record.shadow, 'train_gpu': train_gpu, 'eval_gpu': eval_gpu},
         )
+        if box_job_ctrl is not None:
+            try:
+                box_job_ctrl.mark_stage('probe', {
+                    'ok': True,
+                    'candidate_id': candidate_id,
+                    'samples': probe_result.get('samples'),
+                })
+                box_job_ctrl.publish_result(_box_result_doc(bundle, train_receipt=train_receipt))
+            except Exception:
+                # Marker/RESULT write is best-effort for resume; probe already succeeded.
+                pass
         return record, bundle
+
+
+def _try_box_job_controller(pod: Any, item_id: str):
+    """Return a BoxJobController when the pod can run remote shell commands."""
+    if pod is None or not hasattr(pod, 'run'):
+        return None
+    try:
+        from .box_job import controller_for_pod
+        return controller_for_pod(pod, item_id)
+    except Exception:
+        return None
+
+
+def _box_result_doc(bundle: ProbeBundle, *, train_receipt: Mapping[str, Any]) -> Dict[str, Any]:
+    """Durable on-box RESULT.json — enough to rebuild ProbeBundle after host restart."""
+    safe_receipt = {
+        k: v for k, v in dict(train_receipt).items()
+        if k not in ('seed', 'presigned_url', 'private_key', 'secret', 'pod')
+    }
+    return {
+        'item_id': bundle.item_id,
+        'bound_head': bundle.bound_head,
+        'bound_master_digest': bundle.bound_master_digest,
+        'candidate_id': bundle.candidate_id,
+        'candidate_path': safe_receipt.get('candidate_path'),
+        'candidate_master_path': safe_receipt.get('candidate_master_path'),
+        'candidate_on_box': safe_receipt.get('candidate_on_box', True),
+        'box_candidate_dir': safe_receipt.get('box_candidate_dir'),
+        'candidate_files': safe_receipt.get('candidate_files'),
+        'candidate_master_digest': safe_receipt.get('candidate_master_digest'),
+        'defer_candidate_upload': safe_receipt.get('defer_candidate_upload', True),
+        'probe_result': dict(bundle.probe_result),
+        'master_upload': dict(bundle.master_upload or {}),
+        'train_receipt': safe_receipt,
+        'training_report': dict(bundle.training_report or {}),
+        'train_gpu': bundle.train_gpu,
+        'eval_gpu': bundle.eval_gpu,
+        'box_public_key_hex': bundle.box_public_key_hex,
+        'report': safe_receipt.get('report'),
+        'report_doc': safe_receipt.get('report_doc'),
+        'ok': True,
+    }
+
+
+def _bundle_from_box_result(
+    record: ItemRecord,
+    prior: Mapping[str, Any],
+    *,
+    box_key: EphemeralBoxKey,
+    train_gpu: Optional[str],
+    eval_gpu: Optional[str],
+) -> tuple[ItemRecord, ProbeBundle]:
+    """Rebuild state + ProbeBundle from on-box RESULT.json after re-adopt."""
+    candidate_id = str(prior.get('candidate_id') or '')
+    if len(candidate_id) != 64:
+        raise ValueError('box RESULT missing candidate_id')
+    probe_result = dict(prior.get('probe_result') or {})
+    train_receipt = dict(prior.get('train_receipt') or prior)
+    training_report = dict(prior.get('training_report') or {})
+    if not training_report and isinstance(train_receipt.get('training_report_summary'), Mapping):
+        training_report = dict(train_receipt['training_report_summary'])
+    train_gpu = (
+        gpu_type_of(train_gpu)
+        or gpu_type_of(prior.get('train_gpu'))
+        or gpu_type_of(train_receipt.get('train_gpu'))
+    )
+    eval_gpu = (
+        gpu_type_of(eval_gpu)
+        or gpu_type_of(prior.get('eval_gpu'))
+        or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
+        or train_gpu
+    )
+    # Walk legal edges from PROVISIONING to RESULT.
+    record = apply_transition(record, ItemState.TRAINING, reason='readopt-result')
+    record = apply_transition(
+        record, ItemState.SEALED, reason='readopt-result',
+        updates={'candidate_id': candidate_id, 'sealed': True},
+    )
+    record = apply_transition(record, ItemState.SERVING, reason='readopt-result')
+    record = apply_transition(record, ItemState.PROBING, reason='readopt-result')
+    record = apply_transition(
+        record, ItemState.RESULT, reason='readopt-result',
+        updates={'result_stored': True},
+    )
+    safe_receipt = {
+        k: v for k, v in train_receipt.items()
+        if k not in ('seed', 'presigned_url', 'private_key', 'secret', 'report_doc', 'training_report')
+    }
+    safe_receipt['train_gpu'] = train_gpu
+    if training_report:
+        safe_receipt['training_report_summary'] = dict(training_report)
+    bundle = ProbeBundle(
+        item_id=record.item_id,
+        bound_head=record.bound_head or str(prior.get('bound_head') or ''),
+        bound_master_digest=record.bound_master_digest or str(prior.get('bound_master_digest') or ''),
+        candidate_id=candidate_id,
+        probe_result=probe_result,
+        master_upload=dict(prior.get('master_upload') or {}),
+        train_receipt=safe_receipt,
+        box_public_key_hex=str(prior.get('box_public_key_hex') or box_key.public_key_hex),
+        training_report=training_report,
+        train_gpu=train_gpu,
+        eval_gpu=eval_gpu,
+        meta={'shadow': record.shadow, 'train_gpu': train_gpu, 'eval_gpu': eval_gpu, 'readopt_result': True},
+    )
+    return record, bundle
 
 
 @dataclass
