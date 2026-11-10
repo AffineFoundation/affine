@@ -196,6 +196,55 @@ class TestLostInfraWaiting(unittest.TestCase):
         self.assertEqual(w.decision, 'green_stale')
 
 
+class TestEarlyUploadKeep(unittest.TestCase):
+    def test_early_upload_error_keeps_box(self):
+        with tempfile.TemporaryDirectory() as td:
+            pit = Path(td) / 'pit'
+            pit.mkdir()
+            os.environ['PIT_STATE'] = str(pit)
+            item = _decided(epoch=9, candidate=C1, box_id='box-eu', meta={})
+            item.state = ItemState.TRAINING
+            item.decision = None
+            item.paid = False
+            cfg = PitConfig(enabled=True, mode='live', cutover=True, max_boxes=5)
+            ctl = Controller(
+                config=cfg,
+                rent=RentService(max_boxes=5),
+                lane=LaneService(),
+                box_io_factory=lambda: ScriptedBoxIO(),
+                items=[item],
+                current_head=H,
+                current_master_digest='f' * 64,
+                now_fn=lambda: 42.0,
+            )
+            out = ctl._fail_and_release(
+                item, 'box-worker:EarlyUploadError: early upload failed after 3 attempts',
+            )
+            self.assertEqual(out.box_id, 'box-eu')
+            self.assertTrue((out.meta or {}).get('early_upload_failed'))
+            self.assertTrue((out.meta or {}).get('defer_eval'))
+            self.assertTrue((pit / 'EARLY-UPLOAD-ALERT.json').is_file())
+
+    def test_keep_green_stamps_green_apply_since(self):
+        item = _decided(epoch=3, candidate=C1, meta={})
+        cfg = PitConfig(enabled=True, mode='live', cutover=True, max_boxes=5)
+        with tempfile.TemporaryDirectory() as td:
+            os.environ['PIT_STATE'] = str(Path(td) / 'pit')
+            Path(os.environ['PIT_STATE']).mkdir(parents=True, exist_ok=True)
+            ctl = Controller(
+                config=cfg,
+                rent=RentService(max_boxes=5),
+                lane=LaneService(),
+                box_io_factory=lambda: ScriptedBoxIO(),
+                items=[item],
+                current_head=H,
+                current_master_digest='f' * 64,
+                now_fn=lambda: 99.0,
+            )
+            kept = ctl._keep_green_for_retry(item, 'upload-boom')
+            self.assertEqual((kept.meta or {}).get('green_apply_since'), 99.0)
+
+
 class TestCancelRequest(unittest.TestCase):
     def test_write_and_consume_cancel(self):
         from .durable import DurableStore

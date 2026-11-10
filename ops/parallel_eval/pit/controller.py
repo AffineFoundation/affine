@@ -1099,6 +1099,9 @@ class Controller:
     def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
         if not done.get('ok'):
             err = 'box-worker:%s' % (done.get('error') or 'failed')
+            # Early upload failed after retries: never start eval; keep box + alert.
+            if self._is_early_upload_error(err):
+                return self._keep_after_early_upload_fail(item, err), 'early-upload-keep'
             retry = self._maybe_retry_readopt(item, err)
             if retry is not None:
                 return retry
@@ -1683,16 +1686,77 @@ class Controller:
             GREEN_APPLY_BACKOFF_CAP_S,
             GREEN_APPLY_BACKOFF_S * (2 ** max(0, retries - 1)),
         ))
+        now = float(self.now_fn())
+        if meta.get('green_apply_since') is None:
+            meta['green_apply_since'] = now
         meta.update({
             'live_apply_error': reason[:300],
             'apply_retry_count': retries,
-            'apply_retry_at': float(self.now_fn()) + delay,
+            'apply_retry_at': now + delay,
             'gate_emit_ready': False,
             'green_apply_pending': True,
         })
         item.meta = meta
         item.last_error = reason[:300]
         self._alert_green_apply_failure(item, reason)
+        self._persist(item)
+        return item
+
+    @staticmethod
+    def _is_early_upload_error(err: str) -> bool:
+        msg = (err or '').lower()
+        return (
+            'earlyuploaderror' in msg
+            or 'early upload' in msg
+            or 'early-upload' in msg
+        )
+
+    def _keep_after_early_upload_fail(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Fail-closed: early upload died → do not eval, keep box, durable alert."""
+        meta = dict(item.meta or {})
+        meta.update({
+            'early_upload_failed': True,
+            'early_upload_error': reason[:400],
+            'defer_eval': True,
+            'gate_emit_ready': False,
+        })
+        item.meta = meta
+        item.last_error = reason[:300]
+        # Loud alert (reuse GREEN-APPLY channel + dedicated event).
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'EARLY-UPLOAD-ALERT.json'
+            doc = {
+                'ok': False,
+                'event': 'early_upload_failed',
+                'at_unix': self.now_fn(),
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'candidate_id': item.candidate_id,
+                'error': reason[:800],
+                'note': 'keep box; refuse eval until upload succeeds',
+            }
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+        except Exception:
+            pass
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'early_upload_failed',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'note': 'keeping box — eval not started',
+            }, default=str),
+            flush=True,
+        )
         self._persist(item)
         return item
 
@@ -2480,6 +2544,8 @@ class Controller:
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
         """Always return an ItemRecord (never a (item, note) tuple)."""
+        if self._is_early_upload_error(reason):
+            return self._keep_after_early_upload_fail(item, reason)
         if item.state is ItemState.DECIDED:
             item.last_error = reason
             decision = (item.decision or '').lower()
