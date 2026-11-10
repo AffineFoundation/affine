@@ -489,7 +489,13 @@ def fetch_master_on_box(P: Any, *, head: str, expected_master: str, head_bf16: s
     s, b = fetch(P, entry, files, urls, FP32)
     # Resolve meta.json contents (drive_item / run5090).
     mj = published.get('meta_json') or {}
-    if isinstance(mj, Mapping) and 'version' in mj:
+    # A PIT index lists meta.json among the files: the trainer's own meta.json came
+    # down with the shards and gate_fetch checked its sha256. Keep it — an inline
+    # index body has no tensor_file and the trainer rejects the master without it.
+    meta_on_box = 'meta.json' in files
+    if meta_on_box:
+        meta = json.loads(P.run('cat %s/%s/meta.json' % (FP32, entry), timeout=60))
+    elif isinstance(mj, Mapping) and 'version' in mj:
         meta = mj
     elif isinstance(mj, Mapping) and mj.get('r2_key'):
         meta = json.loads(urllib.request.urlopen(presign_keys({'meta': mj['r2_key']})['meta'], timeout=120).read())
@@ -499,7 +505,8 @@ def fetch_master_on_box(P: Any, *, head: str, expected_master: str, head_bf16: s
         meta = json.loads(raw)
     if meta.get('bf16_sha256') != entry or meta.get('master_digest') != expected_master:
         raise BoxIOError('fp32 master meta mismatch: %s' % {k: meta.get(k) for k in ('bf16_sha256', 'master_digest')})
-    put(P, FP32 + '/' + entry + '/meta.json', json.dumps(meta, sort_keys=True, indent=1).encode())
+    if not meta_on_box:
+        put(P, FP32 + '/' + entry + '/meta.json', json.dumps(meta, sort_keys=True, indent=1).encode())
     # Box-side verify (drive_item.master) — print computed fields, assert equality.
     got = P.run(
         "python3 -c \"import json;m=json.load(open('%s/%s/meta.json'));"
@@ -1698,7 +1705,7 @@ def _master_files_meta_from_dir(local_dir: Path, *, candidate_id: str) -> dict[s
 
 
 def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
-    """Fail closed: require real weight shards, not digest-only."""
+    """Fail closed: require real weight shards + meta.json, not digest-only."""
     if not files_meta:
         raise BoxIOError('fp32 master publish refused: empty master tree')
     shards = [
@@ -1710,6 +1717,68 @@ def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
             'fp32 master publish refused: no weight shards '
             '(digest-only master_digest.txt is not sufficient)'
         )
+    if 'meta.json' not in files_meta:
+        raise BoxIOError(
+            'fp32 master publish refused: meta.json missing '
+            '(trainer _fp32_load needs tensor_file)'
+        )
+
+
+def _meta_json_r2_ptr(
+    files_meta: Mapping[str, Mapping[str, Any]], *, candidate_id: str,
+) -> dict:
+    """Index meta_json must be {r2_key: ...} — never a synthetic body.
+
+    fetch_master_on_box treats a version key as the whole meta and overwrites
+    the real uploaded meta.json, dropping tensor_file so _fp32_load fails.
+    """
+    meta = files_meta.get('meta.json')
+    if not isinstance(meta, Mapping):
+        raise BoxIOError('files_meta missing meta.json for index pointer')
+    key = str(meta.get('r2_key') or ('fp32-master/%s/meta.json' % candidate_id))
+    if not key.endswith('meta.json'):
+        raise BoxIOError('meta_json r2_key must end with meta.json: %s' % key)
+    return {'r2_key': key}
+
+
+def _is_hex64(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+
+def _trainer_master_meta(
+    local_dir: Path,
+    files_meta: Mapping[str, Any],
+    *,
+    master_digest: str = '',
+) -> Mapping[str, Any]:
+    """The trainer's own meta.json of a staged master, checked for the next load.
+
+    ``bf16_sha256`` is the FP32 store entry the trainer looks the master up by
+    (``FP32/<bf16_sha256>/meta.json``); it is not the checkpoint id. The
+    host-recorded digest ties this entry to the candidate that was trained. Fail
+    closed here, while the candidate is still on the box, on anything
+    ``_fp32_load`` would reject.
+    """
+    try:
+        meta = json.loads((Path(local_dir) / 'meta.json').read_text())
+    except Exception as exc:
+        raise BoxIOError('fp32 master meta.json unreadable: %s' % str(exc)[:200]) from exc
+    if not isinstance(meta, Mapping):
+        raise BoxIOError('fp32 master meta.json is not an object')
+    if not _is_hex64(meta.get('bf16_sha256')) or not _is_hex64(meta.get('master_digest')):
+        raise BoxIOError('fp32 master meta.json lacks bf16_sha256 / master_digest')
+    tensor_file = meta.get('tensor_file')
+    if not isinstance(tensor_file, Mapping) or not tensor_file:
+        raise BoxIOError('fp32 master meta.json has no tensor_file (the trainer cannot load it)')
+    absent = sorted({str(v) for v in tensor_file.values()} - set(files_meta))
+    if absent:
+        raise BoxIOError('fp32 master meta.json names shards that are not in the upload: %s' % absent[:3])
+    if master_digest and meta['master_digest'] != master_digest:
+        raise BoxIOError(
+            'fp32 master meta.json digest %s != host-recorded %s'
+            % (str(meta['master_digest'])[:12], master_digest[:12])
+        )
+    return meta
 
 
 def _write_master_index(
@@ -1719,6 +1788,7 @@ def _write_master_index(
     digest: str,
     files_meta: Mapping[str, Mapping[str, Any]],
 ) -> Path:
+    _assert_master_tree_complete(files_meta)
     idx_dir = _fp32_master_index()
     idx_dir.mkdir(parents=True, exist_ok=True)
     idx_path = idx_dir / ('%s.json' % candidate_id)
@@ -1726,16 +1796,8 @@ def _write_master_index(
         'bf16_sha256': bf16,
         'master_digest': digest,
         'files': dict(files_meta),
-        'meta_json': {
-            'version': 'pit-fp32-master-v1',
-            'bf16_sha256': bf16,
-            'master_digest': digest,
-            'source': 'pit',
-            'shard_count': sum(
-                1 for n in files_meta
-                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-            ),
-        },
+        # Same shape as live HEAD / k1 fp32-master publish.
+        'meta_json': _meta_json_r2_ptr(files_meta, candidate_id=candidate_id),
         'source': 'pit',
         'at': time.time(),
     }
@@ -1806,16 +1868,11 @@ def upload_master_from_box(
 
     files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)
     _assert_master_tree_complete(files_meta)
-    # Prefer meta.json digest when present.
-    meta_p = dst / 'meta.json'
-    if meta_p.is_file():
-        try:
-            md = str((json.loads(meta_p.read_text()) or {}).get('master_digest') or '')
-            if len(md) == 64:
-                digest = md
-        except Exception:
-            pass
-    bf16 = str(bf16_sha256 or candidate_id)
+    trainer_meta = _trainer_master_meta(dst, files_meta, master_digest=digest)
+    # The index names the trainer's store entry: the next box lands the master
+    # under FP32/<bf16_sha256>/ and the trainer looks it up by that digest. The
+    # caller's bf16_sha256 is the checkpoint id and must not be used here.
+    bf16 = str(trainer_meta['bf16_sha256'])
     _publish_fp32_master_objects(candidate_id, dst, files_meta)
     idx_path = _write_master_index(
         candidate_id=candidate_id, bf16=bf16, digest=digest, files_meta=files_meta,
@@ -1891,9 +1948,10 @@ def upload_master(
                 h.update(_sha256_file(f).encode())
             digest = h.hexdigest()
 
-    bf16 = str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id)
     files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)
     _assert_master_tree_complete(files_meta)
+    trainer_meta = _trainer_master_meta(dst, files_meta, master_digest=digest)
+    bf16 = str(trainer_meta['bf16_sha256'])
     _publish_fp32_master_objects(candidate_id, dst, files_meta)
     idx_path = _write_master_index(
         candidate_id=candidate_id, bf16=bf16, digest=digest, files_meta=files_meta,
