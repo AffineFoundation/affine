@@ -40,6 +40,31 @@ class ScoreError(ValueError):
     """Fail-closed scoring error."""
 
 
+class BaselinePending(ScoreError):
+    """Live baseline not ready — caller must keep the box and retry (never release)."""
+
+
+def is_live_pending_exc(exc: BaseException) -> bool:
+    """True for live ``pe_score.Pending`` (class name and/or importable class)."""
+    if isinstance(exc, BaselinePending):
+        return True
+    if type(exc).__name__ == 'Pending':
+        return True
+    for mod_name in (
+        'ops.parallel_eval.live.pe_score',
+        'pe_score',
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        pending_cls = getattr(mod, 'Pending', None)
+        if isinstance(pending_cls, type) and isinstance(exc, pending_cls):
+            return True
+    msg = str(exc or '').lower()
+    return 'baseline for round' in msg and 'not ready' in msg
+
+
 def _hex64(value: Any, field: str) -> str:
     if not isinstance(value, str) or len(value) != 64:
         raise ScoreError('%s must be hex64' % field)
@@ -190,24 +215,39 @@ def call_live_host_score(
 
     Falls back to keyword ``round_id=`` only for non-live test doubles that
     declare that parameter — never pass ``round_id=`` to the live module.
+
+    Live ``Pending`` (baseline not ready) becomes ``decision='pending'`` so the
+    controller can keep the box and retry — never raise into ``_fail_and_release``.
     """
     rid = str(round_id)
     try:
         params = inspect.signature(host_score).parameters
     except (TypeError, ValueError):
         params = {}
-    # Live: (epoch, rid, result, flag=None) — call positionally.
-    if 'rid' in params or (list(params)[:2] == ['epoch', 'rid']):
-        raw = host_score(int(epoch), rid, result)
-    elif 'round_id' in params:
-        # PIT/test doubles that accept round_id=
-        raw = host_score(epoch=int(epoch), round_id=rid, result=result)
-    else:
-        # Last resort: positional live shape (also covers builtins / wraps).
-        try:
+    try:
+        # Live: (epoch, rid, result, flag=None) — call positionally.
+        if 'rid' in params or (list(params)[:2] == ['epoch', 'rid']):
             raw = host_score(int(epoch), rid, result)
-        except TypeError:
+        elif 'round_id' in params:
+            # PIT/test doubles that accept round_id=
             raw = host_score(epoch=int(epoch), round_id=rid, result=result)
+        else:
+            # Last resort: positional live shape (also covers builtins / wraps).
+            try:
+                raw = host_score(int(epoch), rid, result)
+            except TypeError:
+                raw = host_score(epoch=int(epoch), round_id=rid, result=result)
+    except Exception as exc:
+        if is_live_pending_exc(exc):
+            return nest_heldout_fields(
+                {
+                    'decision': 'pending',
+                    'pending': True,
+                    'pending_reason': str(exc)[:400],
+                },
+                round_id=rid,
+            )
+        raise
     if not isinstance(raw, Mapping):
         raise ScoreError('host score must return a mapping')
     return nest_heldout_fields(raw, round_id=rid)

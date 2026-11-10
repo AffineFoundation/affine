@@ -37,6 +37,7 @@ from .decisions import DecisionLog
 from .durable import item_from_dict, item_to_dict, pit_state_root
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentError, RentService, bind_host_rent_service
+from .pe_score import is_live_pending_exc
 from .pe_score import score as pit_score
 from .pe_score import score_epoch_shadow
 from .queue_ingest import training_job_checkpoint
@@ -71,6 +72,10 @@ GPU_BUSY_KILL_RETRY_MAX = 1
 # GREEN apply (upload/verify) failure: keep the box and retry with backoff.
 GREEN_APPLY_BACKOFF_S = 30.0
 GREEN_APPLY_BACKOFF_CAP_S = 300.0
+# Live baseline Pending: keep box + candidate; retry score with backoff; alert after 2h.
+BASELINE_WAIT_BACKOFF_S = 30.0
+BASELINE_WAIT_BACKOFF_CAP_S = 300.0
+BASELINE_WAIT_ALERT_S = 2 * 3600
 
 
 @dataclass
@@ -314,6 +319,21 @@ class Controller:
             except Exception as exc:
                 # Isolate per item: one failure must never abort the tick for peers
                 # (e.g. e1056 still evaluating while e1055 post-decision retries).
+                # After a probe result exists, never release a box whose candidate
+                # is not uploaded — keep + alert (Pending / other post-result errors).
+                if self._must_keep_unuploaded_candidate(item) or is_live_pending_exc(exc):
+                    kept = self._keep_after_result_error(item, exc)
+                    self._replace(kept)
+                    actions.append({
+                        'op': 'keep-after-result',
+                        'item_id': item.item_id,
+                        'to': kept.state.value,
+                        'note': (kept.meta or {}).get('post_result_keep_note') or 'keep',
+                        'error': str(exc)[:200],
+                        'exc_type': type(exc).__name__,
+                        'box_id': kept.box_id,
+                    })
+                    continue
                 failed = self._fail_and_release(item, str(exc)[:300])
                 self._replace(failed)
                 actions.append({
@@ -994,6 +1014,12 @@ class Controller:
         if self.current_head is None:
             raise TransitionError('no current_head')
 
+        # Backoff while waiting on live baseline — stay SCORED, keep box.
+        meta0 = dict(item.meta or {})
+        next_at = meta0.get('baseline_wait_next_at')
+        if next_at is not None and float(self.now_fn()) < float(next_at):
+            return item, 'wait-baseline'
+
         probe = bundle.probe_result or {}
         if probe.get('partial') or probe.get('timeout') or probe.get('incomplete'):
             updated = apply_transition(
@@ -1002,59 +1028,88 @@ class Controller:
             )
             return updated, 'no_decision-incomplete'
 
-        if self.config.is_shadow() and self.live_decision_lookup is not None:
-            live = self.live_decision_lookup(item.epoch)
-            shadow_out = score_epoch_shadow(
-                epoch=item.epoch,
-                round_id=item.bound_round_id or self.current_round_id,
-                box_result=bundle.probe_result,
-                box_candidate_id=bundle.candidate_id,
-                box_head_id=item.bound_head or self.current_head,
-                live_decision=live,
-                host_score=self.score_fn,
-                box_report=bundle.training_report or (item.meta or {}).get('training_report'),
-                live_report=(live or {}).get('training_report') if isinstance(live, Mapping) else None,
-                box_meta={
-                    'round_id': item.bound_round_id or self.current_round_id,
-                    'plan_seed': item.bound_plan_seed,
-                    'train_gpu': bundle.train_gpu or (item.meta or {}).get('train_gpu'),
-                    'eval_gpu': bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
-                    'training_report': bundle.training_report,
-                },
-                live_meta=dict(live or {}) if isinstance(live, Mapping) else None,
-                train_gpu=bundle.train_gpu or (item.meta or {}).get('train_gpu'),
-                eval_gpu=bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
-            )
-            scored = shadow_out['scored']
-            item.meta['shadow_comparison'] = shadow_out['comparison']
-            item.meta['shadow_pass'] = shadow_out.get('shadow_pass')
-            if shadow_out['candidate'] != bundle.candidate_id:
-                raise TransitionError('shadow scorer returned wrong candidate')
-        else:
-            if self.config.is_live() and self.score_fn is None:
-                raise TransitionError('live decide requires host score_fn')
-            scored = pit_score(
-                epoch=item.epoch,
-                round_id=item.bound_round_id or self.current_round_id,
-                result=bundle.probe_result,
-                candidate_id=bundle.candidate_id,
-                head_id=item.bound_head or self.current_head,
-                host_score=self.score_fn,
-                require_host=self.config.is_live(),
-            )
+        try:
+            if self.config.is_shadow() and self.live_decision_lookup is not None:
+                live = self.live_decision_lookup(item.epoch)
+                shadow_out = score_epoch_shadow(
+                    epoch=item.epoch,
+                    round_id=item.bound_round_id or self.current_round_id,
+                    box_result=bundle.probe_result,
+                    box_candidate_id=bundle.candidate_id,
+                    box_head_id=item.bound_head or self.current_head,
+                    live_decision=live,
+                    host_score=self.score_fn,
+                    box_report=bundle.training_report or (item.meta or {}).get('training_report'),
+                    live_report=(live or {}).get('training_report') if isinstance(live, Mapping) else None,
+                    box_meta={
+                        'round_id': item.bound_round_id or self.current_round_id,
+                        'plan_seed': item.bound_plan_seed,
+                        'train_gpu': bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                        'eval_gpu': bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
+                        'training_report': bundle.training_report,
+                    },
+                    live_meta=dict(live or {}) if isinstance(live, Mapping) else None,
+                    train_gpu=bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                    eval_gpu=bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
+                )
+                scored = shadow_out['scored']
+                item.meta['shadow_comparison'] = shadow_out['comparison']
+                item.meta['shadow_pass'] = shadow_out.get('shadow_pass')
+                if shadow_out['candidate'] != bundle.candidate_id:
+                    raise TransitionError('shadow scorer returned wrong candidate')
+            else:
+                if self.config.is_live() and self.score_fn is None:
+                    raise TransitionError('live decide requires host score_fn')
+                scored = pit_score(
+                    epoch=item.epoch,
+                    round_id=item.bound_round_id or self.current_round_id,
+                    result=bundle.probe_result,
+                    candidate_id=bundle.candidate_id,
+                    head_id=item.bound_head or self.current_head,
+                    host_score=self.score_fn,
+                    require_host=self.config.is_live(),
+                )
+        except Exception as exc:
+            # Belt-and-suspenders: Pending must never reach tick→_fail_and_release.
+            if is_live_pending_exc(exc):
+                return self._wait_baseline(
+                    item, pending_reason=str(exc)[:400],
+                )
+            raise
 
         if scored.get('candidate') != bundle.candidate_id:
             raise TransitionError('scored candidate must be the box candidate')
 
         decision = str(scored.get('decision') or '').lower()
         if decision == 'pending':
-            return item, 'wait-baseline'
+            return self._wait_baseline(
+                item,
+                pending_reason=str(
+                    scored.get('pending_reason') or scored.get('reason') or 'baseline not ready'
+                )[:400],
+            )
         if decision == 'no_decision':
             updated = apply_transition(
                 item, ItemState.NO_DECISION, reason='infra-no-decision',
                 updates={'decision': 'no_decision', 'result_stored': True, 'paid': False},
             )
             return updated, 'no_decision'
+
+        # Clear baseline-wait markers once we have a real decision.
+        if (item.meta or {}).get('baseline_wait_since') is not None:
+            meta_clear = dict(item.meta or {})
+            for key in (
+                'baseline_wait_since', 'baseline_wait_next_at', 'baseline_wait_note',
+                'baseline_wait_alerted', 'baseline_wait_logged_note',
+                'baseline_wait_retries',
+            ):
+                meta_clear.pop(key, None)
+            item.meta = meta_clear
+
+        # e1065 class: scored GREEN but box/candidate already gone — terminal block,
+        # never apply (same posture as blocked_incomplete_master).
+        if decision == 'green' and not self._candidate_available_for_apply(item):
+            return self._block_green_no_candidate(item, scored)
 
         decided_at = float(self.now_fn())
         item.meta['decided_at_mono'] = decided_at
@@ -1189,6 +1244,228 @@ class Controller:
         self._alert_green_apply_failure(item, reason)
         self._persist(item)
         return item
+
+    def _candidate_uploaded(self, item: ItemRecord) -> bool:
+        apply = (item.meta or {}).get('live_apply') or {}
+        return bool(apply.get('candidate_verified'))
+
+    def _candidate_available_for_apply(self, item: ItemRecord) -> bool:
+        """True when bf16 C can still be uploaded/verified (box held or already uploaded)."""
+        if self._candidate_uploaded(item):
+            return True
+        if item.box_id:
+            return True
+        return False
+
+    def _must_keep_unuploaded_candidate(self, item: ItemRecord) -> bool:
+        """After a probe result, never release a box whose candidate isn't uploaded.
+
+        DECIDED is handled by the green-keep / destroy paths in ``_fail_and_release``.
+        """
+        if item.state is ItemState.DECIDED:
+            return False
+        if item.state not in (ItemState.RESULT, ItemState.SCORED) and not item.result_stored:
+            return False
+        return not self._candidate_uploaded(item)
+
+    def _wait_baseline(
+        self, item: ItemRecord, *, pending_reason: str,
+    ) -> tuple[ItemRecord, str]:
+        """Stay SCORED; keep box + candidate; retry score with backoff; alert after 2h."""
+        now = float(self.now_fn())
+        meta = dict(item.meta or {})
+        first = meta.get('baseline_wait_since')
+        note = (pending_reason or 'baseline not ready')[:400]
+        retries = int(meta.get('baseline_wait_retries') or 0)
+        if first is None:
+            meta['baseline_wait_since'] = now
+            first = now
+            retries = 0
+        else:
+            retries += 1
+        delay = float(min(
+            BASELINE_WAIT_BACKOFF_CAP_S,
+            BASELINE_WAIT_BACKOFF_S * (2 ** max(0, retries - 1)),
+        ))
+        meta['baseline_wait_retries'] = retries
+        meta['baseline_wait_next_at'] = now + delay
+        meta['baseline_wait_note'] = note
+        # Log once per state change (not every tick).
+        logged = meta.get('baseline_wait_logged_note')
+        if logged != note:
+            meta['baseline_wait_logged_note'] = note
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'warning',
+                    'event': 'wait_baseline',
+                    'item_id': item.item_id,
+                    'epoch': item.epoch,
+                    'box_id': item.box_id,
+                    'note': note,
+                    'waited_s': round(now - float(first), 1),
+                    'next_at': meta['baseline_wait_next_at'],
+                }, default=str),
+                flush=True,
+            )
+        elapsed = now - float(first)
+        if elapsed >= float(BASELINE_WAIT_ALERT_S) and not meta.get('baseline_wait_alerted'):
+            self._alert_baseline_wait(item, elapsed_s=elapsed, note=note)
+            meta['baseline_wait_alerted'] = True
+        item.meta = meta
+        item.last_error = 'wait-baseline:%s' % note[:200]
+        # Ensure we remain SCORED so ticks keep calling _decide.
+        if item.state is ItemState.RESULT and can_transition(item, ItemState.SCORED):
+            item = apply_transition(
+                item, ItemState.SCORED, reason='wait-baseline',
+                updates={'result_stored': True, 'meta': dict(item.meta)},
+            )
+        self._persist(item)
+        return item, 'wait-baseline'
+
+    def _alert_baseline_wait(
+        self, item: ItemRecord, *, elapsed_s: float, note: str,
+    ) -> None:
+        doc = {
+            'ok': False,
+            'event': 'baseline_wait_timeout',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'candidate_id': item.candidate_id,
+            'elapsed_s': round(float(elapsed_s), 1),
+            'note': note[:800],
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'BASELINE-WAIT-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'baseline_wait_timeout',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'elapsed_s': round(float(elapsed_s), 1),
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def _keep_after_result_error(
+        self, item: ItemRecord, exc: BaseException,
+    ) -> ItemRecord:
+        """Keep box (if any) + candidate after post-result errors; never silent release."""
+        if is_live_pending_exc(exc):
+            kept, _note = self._wait_baseline(item, pending_reason=str(exc)[:400])
+            return kept
+        reason = '%s:%s' % (type(exc).__name__, str(exc)[:300])
+        meta = dict(item.meta or {})
+        meta['post_result_error'] = reason
+        meta['post_result_keep'] = True
+        meta['post_result_keep_note'] = reason[:200]
+        if item.state is ItemState.RESULT and can_transition(item, ItemState.SCORED):
+            item = apply_transition(
+                item, ItemState.SCORED, reason='post-result-keep',
+                updates={'result_stored': True},
+            )
+        item.meta = meta
+        item.last_error = reason[:300]
+        # Alert once per distinct error string.
+        if meta.get('post_result_alerted_for') != reason[:200]:
+            meta['post_result_alerted_for'] = reason[:200]
+            item.meta = meta
+            self._alert_post_result_keep(item, reason)
+        self._persist(item)
+        return item
+
+    def _alert_post_result_keep(self, item: ItemRecord, reason: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'post_result_keep',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'candidate_id': item.candidate_id,
+            'state': item.state.value,
+            'error': reason[:800],
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'POST-RESULT-KEEP-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'post_result_keep',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def _block_green_no_candidate(
+        self, item: ItemRecord, scored: Mapping[str, Any],
+    ) -> tuple[ItemRecord, str]:
+        """GREEN but candidate gone (e1065): terminal blocked, never apply."""
+        meta = dict(item.meta or {})
+        meta['scored'] = dict(scored)
+        meta['blocked'] = 'no_candidate'
+        meta['blocked_like'] = 'blocked_incomplete_master'
+        meta['gate_emit_ready'] = False
+        meta['green_apply_pending'] = False
+        for key in (
+            'baseline_wait_since', 'baseline_wait_next_at', 'baseline_wait_note',
+            'baseline_wait_alerted', 'baseline_wait_logged_note', 'baseline_wait_retries',
+        ):
+            meta.pop(key, None)
+        updated = apply_transition(
+            item, ItemState.NO_DECISION, reason='green-no-candidate',
+            updates={
+                'decision': 'blocked_no_candidate',
+                'paid': False,
+                'result_stored': True,
+                'fresh': False,
+                'merge_blocked': False,
+                'meta': meta,
+            },
+        )
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'blocked_no_candidate',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'candidate_id': item.candidate_id,
+                'note': 'GREEN with no box/candidate — terminal block, never apply',
+            }, default=str),
+            flush=True,
+        )
+        self._persist(updated)
+        return updated, 'blocked-no-candidate'
 
     def _drive_pending_head(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         """Drive pending → APPLY ready → record_applied for a queued GREEN.
@@ -1414,10 +1691,6 @@ class Controller:
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
         """Always return an ItemRecord (never a (item, note) tuple)."""
-        # e1066: train/eval job can exit without a marker; copy job.log tail onto
-        # the item / host log BEFORE release so the trail survives pod teardown.
-        if item.box_id:
-            item = self._attach_box_job_log_tail(item)
         if item.state is ItemState.DECIDED:
             item.last_error = reason
             decision = (item.decision or '').lower()
@@ -1430,9 +1703,19 @@ class Controller:
                 return self._keep_green_for_retry(item, 'fail-keep-green:%s' % reason[:200])
             # Post-decision failures for RED/stale/verified GREEN: clear box and
             # surface gate_emit_ready so later ticks finish turns / PIT-RESULT.
+            if item.box_id:
+                item = self._attach_box_job_log_tail(item)
             released, _note = self._destroy_and_release(item, reason=reason)
             released.meta = dict(released.meta or {}, gate_emit_ready=True)
             return released
+        # After a probe result, never release a box whose candidate isn't uploaded
+        # (Pending / scoring blips must not destroy the only copy of C).
+        if self._must_keep_unuploaded_candidate(item):
+            return self._keep_after_result_error(item, RuntimeError(reason))
+        # e1066: train/eval job can exit without a marker; copy job.log tail onto
+        # the item / host log BEFORE release so the trail survives pod teardown.
+        if item.box_id:
+            item = self._attach_box_job_log_tail(item)
         next_attempt = item.attempt + 1
         if item.box_id and item.box_id in self.rent.ledger.active:
             try:

@@ -1,0 +1,258 @@
+"""Live pe_score.Pending must keep the box; scored-no-decision retries; GREEN w/o C blocks."""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from .config import load_pit_config
+from .controller import BASELINE_WAIT_ALERT_S, Controller
+from .pe_lane import LaneService
+from .pe_rent import RentService
+from .pe_score import BaselinePending, call_live_host_score, is_live_pending_exc, score
+from .state import ItemRecord, ItemState
+
+
+# Real live exception shape (ops.parallel_eval.live.pe_score.Pending) — class name
+# + message; import may fail hermetically, so mirror the live class exactly.
+class Pending(Exception):
+    """Mirror of live pe_score.Pending."""
+
+
+H = 'a' * 64
+C = 'c' * 64
+PROBE = {
+    'k': 8, 'samples': 16, 'partial': False, 'dtype': 'bf16',
+    'planned_samples': 16, 'score': {'decision': 'green', 'z': 2.0},
+}
+
+
+def _bundle_meta():
+    return {
+        'probe_bundle': {
+            'item_id': 'e1065',
+            'bound_head': H,
+            'bound_master_digest': 'b' * 64,
+            'candidate_id': C,
+            'probe_result': dict(PROBE),
+            'master_upload': {},
+            'train_receipt': {
+                'candidate_id': C,
+                'candidate_path': 'box:/ckpt/' + C,
+                'candidate_master_path': '/workspace/master',
+                'defer_candidate_upload': True,
+                'candidate_on_box': True,
+            },
+            'box_public_key_hex': 'ab' * 32,
+            'training_report': {},
+            'train_gpu': 'B300',
+            'eval_gpu': 'B300',
+        },
+        'candidate_on_box': True,
+        'defer_candidate_upload': True,
+        'train_gpu': 'B300',
+        'eval_gpu': 'B300',
+    }
+
+
+class TestLivePendingShape(unittest.TestCase):
+    def test_is_live_pending_by_class_name_and_message(self):
+        exc = Pending('baseline for round r-abc not ready')
+        self.assertTrue(is_live_pending_exc(exc))
+        self.assertTrue(is_live_pending_exc(BaselinePending('baseline for round r-x not ready')))
+        self.assertFalse(is_live_pending_exc(RuntimeError('boom')))
+
+    def test_call_live_host_score_converts_pending_to_decision(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        out = call_live_host_score(host, epoch=1065, round_id='r-test', result=PROBE)
+        self.assertEqual(out.get('decision'), 'pending')
+        self.assertIn('baseline for round r-test not ready', out.get('pending_reason', ''))
+
+    def test_pit_score_returns_pending_not_raise(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        out = score(
+            epoch=1065, round_id='r-test', result=PROBE,
+            candidate_id=C, head_id=H, host_score=host, require_host=True,
+        )
+        self.assertEqual(out['decision'], 'pending')
+        self.assertEqual(out['candidate'], C)
+
+
+class TestBaselinePendingKeepBox(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.mkdtemp()
+        pe = Path(self.td) / 'pe'
+        (pe / 'pit').mkdir(parents=True)
+        self.prev = {k: os.environ.get(k) for k in ('PE_STATE', 'PIT_STATE')}
+        os.environ['PE_STATE'] = str(pe)
+        os.environ['PIT_STATE'] = str(pe / 'pit')
+        self.clock = {'t': 1_000.0}
+
+    def tearDown(self):
+        for k, v in self.prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _ctl(self, score_fn):
+        cfg = load_pit_config({
+            'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 2},
+        })
+        rent = RentService(max_boxes=2)
+        rent.ledger.active['pod-1065'] = {
+            'box_id': 'pod-1065', 'name': 'affine-pe-pit-1065-a0', 'at': 1.0,
+        }
+        ctl = Controller(
+            config=cfg,
+            rent=rent,
+            lane=LaneService(),
+            box_io_factory=lambda: None,
+            now_fn=lambda: self.clock['t'],
+            score_fn=score_fn,
+        )
+        ctl.current_head = H
+        ctl.current_master_digest = 'b' * 64
+        ctl.current_round_id = 'r-test'
+        ctl.rent.list_pods = lambda: [{'id': 'pod-1065', 'name': 'affine-pe-pit-1065-a0'}]
+        return ctl
+
+    def _scored_item(self, *, box_id='pod-1065'):
+        return ItemRecord(
+            item_id='e1065', registration_index=1, epoch=1065,
+            state=ItemState.SCORED, bound_head=H, bound_master_digest='b' * 64,
+            bound_round_id='r-test', candidate_id=C, box_id=box_id,
+            box_name='affine-pe-pit-1065-a0' if box_id else None,
+            result_stored=True, sealed=True,
+            meta=_bundle_meta(),
+        )
+
+    def test_decide_pending_keeps_box_and_retries(self):
+        calls = {'n': 0}
+
+        def host(epoch, rid, result):
+            calls['n'] += 1
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        ctl.items.append(item)
+
+        updated, note = ctl._decide(item)
+        self.assertEqual(note, 'wait-baseline')
+        self.assertEqual(updated.state, ItemState.SCORED)
+        self.assertEqual(updated.box_id, 'pod-1065')
+        self.assertIn('pod-1065', ctl.rent.ledger.active)
+        self.assertIsNone(updated.decision)
+        self.assertIn('baseline_wait_since', updated.meta or {})
+        first_calls = calls['n']
+        self.assertGreaterEqual(first_calls, 1)
+
+        # Within backoff: no re-score.
+        self.clock['t'] += 1.0
+        updated2, note2 = ctl._decide(updated)
+        self.assertEqual(note2, 'wait-baseline')
+        self.assertEqual(calls['n'], first_calls)
+        self.assertEqual(updated2.box_id, 'pod-1065')
+
+        # Past backoff: score again, still pending, still keep.
+        self.clock['t'] = float((updated2.meta or {}).get('baseline_wait_next_at') or 0) + 1.0
+        updated3, note3 = ctl._decide(updated2)
+        self.assertEqual(note3, 'wait-baseline')
+        self.assertGreater(calls['n'], first_calls)
+        self.assertEqual(updated3.box_id, 'pod-1065')
+
+    def test_pending_alert_after_two_hours_still_keeps_box(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        updated, _ = ctl._decide(item)
+        self.clock['t'] = float((updated.meta or {})['baseline_wait_since']) + float(BASELINE_WAIT_ALERT_S) + 1.0
+        # Clear backoff so _decide re-enters wait path with alert.
+        meta = dict(updated.meta or {})
+        meta['baseline_wait_next_at'] = self.clock['t'] - 1.0
+        updated.meta = meta
+        updated2, note = ctl._decide(updated)
+        self.assertEqual(note, 'wait-baseline')
+        self.assertTrue((updated2.meta or {}).get('baseline_wait_alerted'))
+        self.assertTrue((Path(os.environ['PIT_STATE']) / 'BASELINE-WAIT-ALERT.json').is_file())
+        self.assertEqual(updated2.box_id, 'pod-1065')
+        self.assertIn('pod-1065', ctl.rent.ledger.active)
+
+    def test_tick_pending_does_not_fail_and_release(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        ctl.items = [item]
+        out = ctl.tick()
+        notes = [a.get('note') for a in out.get('actions') or [] if a.get('item_id') == 'e1065']
+        self.assertTrue(
+            any(n == 'wait-baseline' for n in notes)
+            or any(a.get('op') == 'keep-after-result' for a in out.get('actions') or []),
+            out.get('actions'),
+        )
+        kept = ctl.items[0]
+        self.assertEqual(kept.box_id, 'pod-1065')
+        self.assertEqual(kept.state, ItemState.SCORED)
+        self.assertIn('pod-1065', ctl.rent.ledger.active)
+
+    def test_fail_and_release_keeps_scored_unuploaded(self):
+        ctl = self._ctl(lambda *a, **k: {'decision': 'red', 'z': -1})
+        item = self._scored_item()
+        out = ctl._fail_and_release(item, 'simulated-score-boom')
+        self.assertEqual(out.box_id, 'pod-1065')
+        self.assertEqual(out.state, ItemState.SCORED)
+        self.assertIn('pod-1065', ctl.rent.ledger.active)
+        self.assertTrue((out.meta or {}).get('post_result_keep'))
+
+    def test_scored_no_decision_retries_then_records(self):
+        """e1065-style scored item (box gone) retries; RED records a decision."""
+        calls = {'n': 0}
+
+        def host(epoch, rid, result):
+            calls['n'] += 1
+            if calls['n'] < 2:
+                raise Pending('baseline for round %s not ready' % rid)
+            return {'decision': 'red', 'z': -0.5, 'evaluated': {'z': -0.5}}
+
+        ctl = self._ctl(host)
+        item = self._scored_item(box_id=None)
+        item.meta = dict(item.meta or {})
+        # No box — still must retry scoring.
+        updated, note = ctl._decide(item)
+        self.assertEqual(note, 'wait-baseline')
+        self.assertIsNone(updated.decision)
+
+        self.clock['t'] = float((updated.meta or {}).get('baseline_wait_next_at') or 0) + 1.0
+        updated2, note2 = ctl._decide(updated)
+        self.assertEqual(updated2.state, ItemState.DECIDED)
+        self.assertEqual(updated2.decision, 'red')
+        self.assertIn(note2, ('red', 'decided'))
+        self.assertFalse(updated2.paid)
+
+    def test_green_without_candidate_blocks_terminal(self):
+        def host(epoch, rid, result):
+            return {'decision': 'green', 'z': 2.1, 'evaluated': {'z': 2.1}}
+
+        ctl = self._ctl(host)
+        item = self._scored_item(box_id=None)  # box already released
+        updated, note = ctl._decide(item)
+        self.assertEqual(note, 'blocked-no-candidate')
+        self.assertEqual(updated.state, ItemState.NO_DECISION)
+        self.assertEqual(updated.decision, 'blocked_no_candidate')
+        self.assertFalse(updated.paid)
+        self.assertEqual((updated.meta or {}).get('blocked'), 'no_candidate')
+
+
+if __name__ == '__main__':
+    unittest.main()

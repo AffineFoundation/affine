@@ -75,7 +75,8 @@ ALLOWED: Dict[ItemState, FrozenSet[ItemState]] = {
     ItemState.RESULT: frozenset({
         ItemState.SCORED, ItemState.RETRY_WAIT, ItemState.FAILED, ItemState.ABORTED,
     }),
-    ItemState.SCORED: frozenset({ItemState.DECIDED, ItemState.ABORTED}),
+    # NO_DECISION: incomplete probe / terminal blocked (e.g. GREEN but candidate gone).
+    ItemState.SCORED: frozenset({ItemState.DECIDED, ItemState.ABORTED, ItemState.NO_DECISION}),
     ItemState.DECIDED: frozenset({ItemState.RELEASED}),
     ItemState.NO_DECISION: frozenset({ItemState.RELEASED}),
     ItemState.FAILED: frozenset({ItemState.RETRY_WAIT, ItemState.ABORTED, ItemState.RELEASED}),
