@@ -22,6 +22,7 @@ from .box import BoxIO, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter, build_host_rounds
+from .life_paths import pe_state_root
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentService, _bind_offer_precheck, bind_host_rent_service
 from .pe_score import call_live_host_score
@@ -54,13 +55,7 @@ def _require_attr(mod: Any, names: tuple[str, ...], label: str) -> Callable[...,
 
 
 def _pe_state_root() -> Path:
-    env = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
-    if env:
-        return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261106-parallel-cutover/state'
-    )
+    return pe_state_root()
 
 
 def _pit_live_cutover() -> bool:

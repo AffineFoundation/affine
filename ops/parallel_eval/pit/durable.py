@@ -40,7 +40,9 @@ def pit_state_root(explicit: Optional[str] = None) -> Path:
         return Path(pit)
     if pe:
         return Path(pe) / 'pit'
-    return Path('/home/const/subnet120-rewrite/state/root-audits/20261109-serverless/state')
+    raise RuntimeError(
+        'PIT_STATE/PE_STATE unset (fail closed; no host-path defaults)'
+    )
 
 
 def _wj(path: Path, obj: Any, mode: int = 0o600) -> None:

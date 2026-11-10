@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, TYPE_CHECKING
 
 from .durable import pit_state_root
 from .expected_master import lookup_expected_master
+from .life_paths import pe_state_root
 
 if TYPE_CHECKING:
     from .controller import Controller
@@ -48,12 +49,7 @@ def _rj(path: Path, default=None):
 
 
 def _pe_state_root() -> Path:
-    env = os.environ.get('PE_STATE')
-    if env:
-        return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/20261106-parallel-cutover/state'
-    )
+    return pe_state_root()
 
 
 def _pit_state_root() -> Path:
@@ -91,15 +87,21 @@ def _gate_epochs_root() -> Path:
     if env:
         p = Path(env)
         return p if p.name == 'epochs' else p / 'epochs'
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261026-promotion-gate/state/epochs'
+    gate = os.environ.get('HG_GATE_STATE')
+    if gate:
+        return Path(gate) / 'epochs'
+    raise RuntimeError(
+        'PE_GATE_EP/HG_GATE_STATE unset (fail closed; no host-path defaults)'
     )
 
 
 def _sample_round_id(epoch: int) -> Optional[str]:
     """Host-side SAMPLE.private.json['round_id'] for epoch (never sent to the box)."""
-    sm = _rj(_gate_epochs_root() / str(int(epoch)) / 'SAMPLE.private.json')
+    try:
+        root = _gate_epochs_root()
+    except RuntimeError:
+        return None
+    sm = _rj(root / str(int(epoch)) / 'SAMPLE.private.json')
     if isinstance(sm, Mapping):
         rid = sm.get('round_id')
         if isinstance(rid, str) and rid and rid not in ('round-fixture', 'fixture'):
@@ -129,9 +131,8 @@ def _k1_turns_path() -> Path:
     env = os.environ.get('K1_TURNS')
     if env:
         return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261027-k1-per-uid/state/K1-TURNS.jsonl'
+    raise RuntimeError(
+        'K1_TURNS unset (fail closed; no host-path defaults)'
     )
 
 
@@ -511,7 +512,11 @@ def _k1_batch_rows(*, floor: int) -> List[Dict[str, Any]]:
                 raw=dict(turn),
             ))
     # Append-only turns log (best-effort tail) — still require epoch_index.
-    turns = _k1_turns_path()
+    try:
+        turns = _k1_turns_path()
+    except RuntimeError:
+        # K1_TURNS unset: skip the jsonl source (life epochs above still apply).
+        return rows
     if turns.is_file():
         try:
             lines = turns.read_text().splitlines()[-200:]

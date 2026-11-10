@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
@@ -36,12 +37,16 @@ def _rj(path: Path, default=None):
 
 
 def _pe_state() -> Path:
-    env = os.environ.get('PE_STATE') or os.environ.get('PE_ST') or os.environ.get('PIT_STATE')
+    env = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
     if env:
         return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261106-parallel-cutover/state'
+    pit = os.environ.get('PIT_STATE')
+    if pit:
+        # PIT_STATE is …/pit; host training-reports live under PE_STATE/pit/.
+        p = Path(pit)
+        return p.parent if p.name == 'pit' else p
+    raise RuntimeError(
+        'PE_STATE unset (fail closed; no host-path defaults for training-reports)'
     )
 
 
@@ -161,7 +166,13 @@ def copy_training_report_to_host(
     summary = extract_report_summary(raw)
     summary = dict(summary)
     try:
-        root = _pe_state() / 'pit' / 'training-reports'
+        try:
+            root = _pe_state() / 'pit' / 'training-reports'
+        except RuntimeError as exc:
+            # No PE_STATE: never fall back to a host path. Unit tests land in
+            # a fresh tempfile; production must export PE_STATE.
+            root = Path(tempfile.mkdtemp(prefix='pit-training-reports-'))
+            summary['host_store_error'] = str(exc)[:200]
         root.mkdir(parents=True, exist_ok=True)
         dest = root / ('e%d-%s.json' % (int(epoch), (candidate_id or item_id)[:16]))
         payload = dict(
@@ -186,7 +197,7 @@ def copy_training_report_to_host(
         summary['host_path'] = str(dest)
     except OSError as exc:
         # Content is still returned for item.meta; durable path is best-effort
-        # when PE_STATE is unset (unit tests / dry hosts).
+        # when the configured PE_STATE tree is not writable.
         summary['host_path'] = None
         summary['host_store_error'] = str(exc)[:200]
     return summary

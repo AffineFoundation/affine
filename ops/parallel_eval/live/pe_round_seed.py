@@ -43,9 +43,8 @@ def _gate_epochs() -> Path:
     gate = os.environ.get('HG_GATE_STATE')
     if gate:
         return Path(gate) / 'epochs'
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261026-promotion-gate/state/epochs'
+    raise RoundSeedError(
+        'PE_GATE_EP/HG_GATE_STATE unset (fail closed; no host-path defaults)'
     )
 
 
@@ -56,9 +55,8 @@ def _heldout_root() -> Path:
     gate = os.environ.get('HG_GATE_STATE')
     if gate:
         return Path(gate) / 'heldout'
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261026-promotion-gate/state/heldout'
+    raise RoundSeedError(
+        'PE_HELDOUT/HG_GATE_STATE unset (fail closed; no host-path defaults)'
     )
 
 
@@ -98,10 +96,7 @@ def plan_seed_for_epoch(epoch: int) -> str:
     r = _round_private(rid)
     # Prefer baseline_v1 when importable so bit-identity is guaranteed.
     try:
-        gate_code = os.environ.get('GATE_CODE') or (
-            '/home/const/subnet120-rewrite/state/root-audits/'
-            '20261026-promotion-gate/code'
-        )
+        gate_code = os.environ.get('GATE_CODE')
         if gate_code and gate_code not in sys.path:
             sys.path.insert(0, str(gate_code))
         import baseline_v1 as BV  # type: ignore

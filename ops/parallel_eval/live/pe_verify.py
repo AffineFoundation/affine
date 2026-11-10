@@ -43,9 +43,8 @@ def _pe_state() -> Path:
     env = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
     if env:
         return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261106-parallel-cutover/state'
+    raise VerifyError(
+        'PE_STATE unset (fail closed; no host-path defaults)'
     )
 
 

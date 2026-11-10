@@ -56,6 +56,10 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+# SSH/transport re-adopt after restart: retry before releasing a still-listed box.
+READOPT_MAX_ATTEMPTS = 3
+
+
 @dataclass
 class Controller:
     config: PitConfig
@@ -226,10 +230,10 @@ class Controller:
         actions: List[dict] = []
 
         while True:
-            occupied = sum(
-                1 for i in self.items
-                if i.state is ItemState.BOUND or i.state in RENTED_STATES
-            )
+            # Free box slots only: count every item that still needs or holds a
+            # slot (BOUND / in-rental / retryable FAILED / RETRY_WAIT). Price
+            # failures stay waiting so they do not free a slot for a newer bind.
+            occupied = sum(1 for i in self.items if self._occupies_box_slot(i))
             nxt = select_next_queued(
                 self.items,
                 rented=occupied,
@@ -359,6 +363,49 @@ class Controller:
             return self._destroy_and_release(item, reason='aborted')
         return item, 'noop'
 
+    def _occupies_box_slot(self, item: ItemRecord) -> bool:
+        """True when this item still consumes a max_boxes slot (blocks new binds)."""
+        if item.state is ItemState.BOUND:
+            return True
+        if item.state in RENTED_STATES:
+            return True
+        if item.state is ItemState.RETRY_WAIT:
+            return True
+        if item.state is ItemState.FAILED and item.attempt <= self.config.max_attempts:
+            return True
+        return False
+
+    def _is_rent_waiter(self, item: ItemRecord) -> bool:
+        """Oldest-first rent queue: bound / renting-without-box / retryable waiters."""
+        if item.state is ItemState.BOUND:
+            return True
+        if item.state is ItemState.RENTING and not item.box_id:
+            return True
+        if item.state is ItemState.RETRY_WAIT:
+            return True
+        if item.state is ItemState.FAILED and item.attempt <= self.config.max_attempts:
+            return True
+        return False
+
+    def _has_older_rent_waiter(self, item: ItemRecord) -> bool:
+        waiters = [i for i in self.items if self._is_rent_waiter(i)]
+        waiters.sort(key=lambda i: (i.registration_index, i.epoch, i.item_id))
+        for w in waiters:
+            if w.item_id == item.item_id:
+                return False
+            return True
+        return False
+
+    @staticmethod
+    def _is_price_rent_error(exc: BaseException) -> bool:
+        msg = str(exc).lower()
+        return (
+            'ceiling' in msg
+            or 'above ceiling' in msg
+            or 'no eligible b300' in msg
+            or 'no b300 offer' in msg
+        )
+
     def _rent_on_demand(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         if item.state is ItemState.BOUND:
             # Stale-head: TRAINING-JOB checkpoint must equal current head — else
@@ -376,10 +423,14 @@ class Controller:
                         },
                     )
                     return skipped, 'stale-head-skip'
+            if self._has_older_rent_waiter(item):
+                return item, 'rent-wait-older'
             if not self.rent.can_rent(queued_bound_waiting=1):
                 return item, 'cap-wait'
             renting = apply_transition(item, ItemState.RENTING, reason='rent-start')
         elif item.state is ItemState.RENTING and not item.box_id:
+            if self._has_older_rent_waiter(item):
+                return item, 'rent-wait-older'
             if not self.rent.can_rent(queued_bound_waiting=1):
                 return item, 'cap-wait'
             renting = item
@@ -389,6 +440,15 @@ class Controller:
             out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
         except (RentError, AssertionError, RuntimeError, ValueError, TypeError) as exc:
             # Per-item catch: a bad rent name/cap/offer must not crash the tick loop.
+            # Price / offer-ceiling failures: stay RENTING without a box, do not
+            # burn attempts, and keep the slot so newer items cannot jump ahead.
+            if self._is_price_rent_error(exc):
+                renting.last_error = 'rent:%s' % str(exc)[:240]
+                meta = dict(renting.meta or {})
+                meta['rent_price_wait'] = True
+                meta['rent_price_error'] = str(exc)[:200]
+                renting.meta = meta
+                return renting, 'rent-price-wait'
             failed = apply_transition(
                 renting, ItemState.FAILED, reason='rent-error',
                 updates={'last_error': 'rent:%s' % str(exc)[:240]},
@@ -541,14 +601,79 @@ class Controller:
             return self._run_box_async(item)
         return item, 'box-worker-wait'
 
+    def _box_still_in_lium(self, item: ItemRecord) -> bool:
+        """True when the item's box is still visible in lium (or listing unavailable)."""
+        if not item.box_id:
+            return False
+        if self.rent.list_pods is None:
+            # No listing hook: treat pod meta as still live so we retry rather than
+            # release a potentially billing box after a transient SSH blip.
+            return bool((item.meta or {}).get('pod'))
+        try:
+            rows = list(self.rent.list_pods() or [])
+        except Exception:
+            return True
+        box_id = str(item.box_id)
+        box_name = str(item.box_name or '')
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            bid = str(row.get('id') or row.get('box_id') or '')
+            name = str(row.get('name') or row.get('pod_name') or '')
+            if bid and bid == box_id:
+                return True
+            if name and (name == box_id or (box_name and name == box_name)):
+                return True
+        return False
+
+    @staticmethod
+    def _is_readopt_transport_error(err: str) -> bool:
+        msg = (err or '').lower()
+        return any(
+            tok in msg
+            for tok in (
+                'rc=255', 'ssh', 'connection refused', 'connection reset',
+                'broken pipe', 'timed out', 'timeout', 'no route',
+                'network is unreachable', 'readopt',
+            )
+        )
+
+    def _maybe_retry_readopt(
+        self, item: ItemRecord, err: str,
+    ) -> Optional[tuple[ItemRecord, str]]:
+        """Retry a failed re-adopt a few times when the box is still in lium."""
+        if not self._is_readopt_transport_error(err):
+            return None
+        if not item.box_id:
+            return None
+        attempts = int((item.meta or {}).get('readopt_attempts') or 0)
+        if attempts >= READOPT_MAX_ATTEMPTS:
+            return None
+        if not self._box_still_in_lium(item):
+            return None
+        meta = dict(item.meta or {})
+        meta['readopt_attempts'] = attempts + 1
+        meta['last_readopt_error'] = (err or '')[:200]
+        meta.pop('probe_bundle', None)
+        item.meta = meta
+        item.sealed = False
+        item.result_stored = False
+        item.candidate_id = None
+        if item.state is not ItemState.PROVISIONING:
+            try:
+                item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
+            except TransitionError:
+                item.state = ItemState.PROVISIONING
+        self._persist(item)
+        return item, 'readopt-retry'
+
     def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
         if not done.get('ok'):
-            return (
-                self._fail_and_release(
-                    item, 'box-worker:%s' % (done.get('error') or 'failed'),
-                ),
-                'box-worker-fail',
-            )
+            err = 'box-worker:%s' % (done.get('error') or 'failed')
+            retry = self._maybe_retry_readopt(item, err)
+            if retry is not None:
+                return retry
+            return self._fail_and_release(item, err), 'box-worker-fail'
         updated = done.get('item')
         if not isinstance(updated, ItemRecord):
             return self._fail_and_release(item, 'box-worker:bad-result'), 'box-worker-fail'
@@ -560,6 +685,12 @@ class Controller:
                 self._fail_and_release(item, 'worker-result-persist:%s' % str(exc)[:200]),
                 'box-worker-fail',
             )
+        # Successful worker clears prior re-adopt retry counters.
+        if (updated.meta or {}).get('readopt_attempts'):
+            meta = dict(updated.meta or {})
+            meta.pop('readopt_attempts', None)
+            meta.pop('last_readopt_error', None)
+            updated.meta = meta
         self._persist(updated)
         return updated, str(done.get('note') or 'box-complete')
 

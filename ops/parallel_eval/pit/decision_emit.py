@@ -47,9 +47,11 @@ def gate_epochs_root(explicit: Optional[str] = None) -> Path:
     env = os.environ.get('PE_GATE_EP')
     if env:
         return Path(env)
-    return Path(
-        '/home/const/subnet120-rewrite/state/root-audits/'
-        '20261026-promotion-gate/state/epochs'
+    gate = os.environ.get('HG_GATE_STATE')
+    if gate:
+        return Path(gate) / 'epochs'
+    raise RuntimeError(
+        'PE_GATE_EP/HG_GATE_STATE unset (fail closed; no host-path defaults)'
     )
 
 
