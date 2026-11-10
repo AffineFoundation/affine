@@ -4,8 +4,9 @@ Trigger: HEAD-CHAIN append (``Controller.on_green_fresh``). Never blocks HEAD
 promotion or the next bind.
 
 Lifecycle mirrors PIT ``box_job``:
-  rent → launch setup/fetch/run detached → each tick only ``inspect`` →
-  pull RESULT → merge-only publish → release.
+  rent → push descriptor/urls → launch setup/fetch/run detached →
+  each tick only ``inspect`` → pull RESULT → land results for
+  publish_fleet → release.
 
 State lives only under ``pit_state/bench/<head>/``. Never reads/writes
 ``bench-results/daemon.json`` or standing-daemon globals. Cap 1, B300 ≤ $56/h,
@@ -35,7 +36,8 @@ from .bench_box import (
     BenchBoxController,
     MemBenchBoxStore,
 )
-from .bench_publish import merge_publish
+from .bench_fetch_inputs import flatten_files, push_fetch_inputs
+from .bench_publish import write_results
 from .box_job import STATUS_NEED_LAUNCH
 from .pe_rent import RentError, RentService
 
@@ -52,24 +54,31 @@ class BenchRequest:
     profile: str = BENCH_PROFILE
     queued_at: float = 0.0
     held_since: Optional[float] = None
+    # Flat {name: sha256} from the GREEN item — never URLs.
+    files: Optional[Dict[str, str]] = None
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             'head': self.head,
             'epoch': self.epoch,
             'profile': self.profile,
             'queued_at': self.queued_at,
             'held_since': self.held_since,
         }
+        if self.files:
+            d['files'] = dict(self.files)
+        return d
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> 'BenchRequest':
+        files = raw.get('files')
         return cls(
             head=str(raw['head']),
             epoch=raw.get('epoch'),
             profile=str(raw.get('profile') or BENCH_PROFILE),
             queued_at=float(raw.get('queued_at') or 0.0),
             held_since=raw.get('held_since'),
+            files=dict(files) if isinstance(files, Mapping) else None,
         )
 
 
@@ -122,7 +131,9 @@ class BenchJobService:
     rent: Optional[RentService] = None
     box_store_factory: Optional[Callable[[JobRecord], Any]] = None
     publish_fn: Optional[Callable[..., Mapping[str, Any]]] = None
-    site: Optional[str] = None
+    results_dir: Optional[str] = None  # BENCH_RESULTS_DIR — publish_fleet input root
+    resolve_files_fn: Optional[Callable[..., Mapping[str, str]]] = None
+    presign_fn: Optional[Callable[..., Mapping[str, Any]]] = None
     enabled: bool = True
     queue: List[BenchRequest] = field(default_factory=list)
     completed: List[Dict[str, Any]] = field(default_factory=list)
@@ -130,6 +141,7 @@ class BenchJobService:
     now_fn: Callable[[], float] = time.time
     # head → box store (re-adopted across ticks / restart)
     _stores: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _head_files: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
     _loaded: bool = field(default=False, init=False, repr=False)
 
     def _dir(self, head: str) -> Path:
@@ -171,8 +183,22 @@ class BenchJobService:
                         'bench_resumed', head=head, job_id=job.job_id,
                         state=job.state.value, box_id=job.box_id,
                     )
+                bench_meta = (job.meta.get('bench') or {})
+                if isinstance(bench_meta.get('files'), Mapping) and bench_meta['files']:
+                    self._head_files[head] = {
+                        str(k): str(v) for k, v in bench_meta['files'].items()
+                    }
             elif isinstance(req, Mapping) and not any(r.head == head for r in self.queue):
-                self.queue.append(BenchRequest.from_dict(req))
+                restored = BenchRequest.from_dict(req)
+                self.queue.append(restored)
+                if restored.files:
+                    self._head_files[head] = dict(restored.files)
+            if head not in self._head_files and isinstance(req, Mapping):
+                req_files = req.get('files')
+                if isinstance(req_files, Mapping) and req_files:
+                    self._head_files[head] = {
+                        str(k): str(v) for k, v in req_files.items()
+                    }
 
     def _job_from_dict(self, raw: Mapping[str, Any]) -> JobRecord:
         state = raw.get('state') or JobState.REQUESTED.value
@@ -235,6 +261,7 @@ class BenchJobService:
         head: str,
         epoch: Optional[int] = None,
         held_since: Optional[float] = None,
+        files: Optional[Mapping[str, Any]] = None,
     ) -> Optional[BenchRequest]:
         self.ensure_loaded()
         if not self.enabled:
@@ -248,24 +275,40 @@ class BenchJobService:
         if self.is_enqueued(head):
             self._emit('bench_skip_duplicate', head=head)
             return None
+        flat: Optional[Dict[str, str]] = None
+        if files:
+            flat = flatten_files(files)
+            self._head_files[head] = flat
         req = BenchRequest(
             head=head,
             epoch=epoch,
             profile=self.profile,
             queued_at=float(self.now_fn()),
             held_since=held_since if held_since is not None else float(self.now_fn()),
+            files=flat,
         )
         self.queue.append(req)
         _wj(self._dir(head) / 'request.json', req.as_dict())
-        self._emit('bench_enqueued', head=head, epoch=epoch, profile=self.profile,
-                   git_ref=self.git_ref)
+        self._emit(
+            'bench_enqueued', head=head, epoch=epoch, profile=self.profile,
+            git_ref=self.git_ref, n_files=(len(flat) if flat else 0),
+        )
         return req
 
     def on_green_fresh_item(self, item: Any) -> Optional[BenchRequest]:
         head = getattr(item, 'candidate_id', None)
         if not head:
             return None
-        return self.on_green_fresh(head=str(head), epoch=getattr(item, 'epoch', None))
+        meta = getattr(item, 'meta', None) or {}
+        files = meta.get('candidate_files') or meta.get('files')
+        if not files:
+            live = meta.get('live_apply') or {}
+            files = live.get('candidate_files') or live.get('files')
+        return self.on_green_fresh(
+            head=str(head),
+            epoch=getattr(item, 'epoch', None),
+            files=files if isinstance(files, Mapping) else None,
+        )
 
     # --- rent ------------------------------------------------------------
     def _make_rent_fn(self) -> Callable[..., Mapping[str, Any]]:
@@ -362,6 +405,41 @@ class BenchJobService:
         self._stores[head] = store
         return store
 
+    def _prepare_fetch(self, job: JobRecord) -> Callable[[Any, str], Mapping[str, Any]]:
+        head = job.subject
+        bench = job.meta.get('bench') or {}
+        files = self._head_files.get(head) or bench.get('files')
+
+        def _prep(store: Any, job_dir: str) -> Mapping[str, Any]:
+            receipt = push_fetch_inputs(
+                store,
+                job_dir,
+                head=head,
+                files=files,
+                resolve_fn=self.resolve_files_fn,
+                presign_fn=self.presign_fn,
+            )
+            # Persist descriptor sha map under pit_state — never URLs.
+            desc_text = store.read_text('%s/descriptor.json' % job_dir.rstrip('/'))
+            try:
+                desc_doc = json.loads(desc_text) if desc_text else {'id': head}
+            except Exception:
+                desc_doc = {'id': head, 'files': {}}
+            host_desc = {
+                'id': head,
+                'files': dict(desc_doc.get('files') or {}),
+                'n_files': receipt.get('n_files'),
+                'at': float(self.now_fn()),
+            }
+            _wj(self._dir(head) / 'descriptor.json', host_desc)
+            self._emit(
+                'bench_fetch_inputs', head=head, job_id=job.job_id,
+                n_files=receipt.get('n_files'), names=receipt.get('names'),
+            )
+            return receipt
+
+        return _prep
+
     def _controller(self, job: JobRecord) -> BenchBoxController:
         return BenchBoxController(
             store=self._box_store(job),
@@ -369,6 +447,7 @@ class BenchJobService:
             profile=(job.meta.get('bench') or {}).get('profile') or self.profile,
             git_ref=self.git_ref,
             now_fn=self.now_fn,
+            prepare_fetch_fn=self._prepare_fetch(job),
         )
 
     def _release_box(self, job: JobRecord, *, reason: str) -> None:
@@ -389,17 +468,25 @@ class BenchJobService:
             return 'log_tail failed: %s' % str(exc)[:200]
 
     def _publish(self, head: str, result: Mapping[str, Any]) -> Dict[str, Any]:
-        # Persist pulled result under pit_state/bench/<head>/ only.
-        results_dir = self._dir(head) / 'results'
-        results_dir.mkdir(parents=True, exist_ok=True)
-        _wj(results_dir / 'RESULT.json', dict(result))
+        # Keep a copy under pit_state/bench/<head>/; land into publish_fleet results dir.
+        local = self._dir(head) / 'results'
+        local.mkdir(parents=True, exist_ok=True)
+        _wj(local / 'RESULT.json', dict(result))
         if self.publish_fn is not None:
-            out = dict(self.publish_fn(head=head, result=result))
+            out = dict(self.publish_fn(
+                head=head, result=result, results_dir_path=self.results_dir,
+            ))
         else:
-            out = dict(merge_publish(head=head, result=result, site=self.site, now=self.now_fn()))
-        if not out.get('merge_only', True):
-            raise RuntimeError('bench history must be merge-only')
-        _wj(self._dir(head) / 'publish.json', out)
+            out = dict(write_results(
+                head=head, result=result,
+                results_dir_path=self.results_dir, now=self.now_fn(),
+            ))
+        # Never rewrite website/benchmarks.json from PIT.
+        if out.get('path') and str(out.get('path')).endswith('benchmarks.json'):
+            raise RuntimeError('refuse website/benchmarks.json write from PIT bench')
+        _wj(self._dir(head) / 'publish.json', {
+            k: v for k, v in out.items() if k != 'urls'
+        })
         return out
 
     # --- tick (non-blocking) --------------------------------------------
@@ -620,7 +707,9 @@ def build_bench_service(
     rent: Optional[RentService] = None,
     box_store_factory: Optional[Callable[[JobRecord], Any]] = None,
     publish_fn: Optional[Callable[..., Mapping[str, Any]]] = None,
-    site: Optional[str] = None,
+    results_dir: Optional[str] = None,
+    resolve_files_fn: Optional[Callable[..., Mapping[str, str]]] = None,
+    presign_fn: Optional[Callable[..., Mapping[str, Any]]] = None,
     git_ref: str = BENCH_BOX_GIT_REF,
     now_fn: Callable[[], float] = time.time,
 ) -> BenchJobService:
@@ -631,7 +720,9 @@ def build_bench_service(
         rent=rent,
         box_store_factory=box_store_factory,
         publish_fn=publish_fn,
-        site=site,
+        results_dir=results_dir or os.environ.get('BENCH_RESULTS_DIR') or os.environ.get('AFFINE_BENCH_RESULTS'),
+        resolve_files_fn=resolve_files_fn,
+        presign_fn=presign_fn,
         enabled=enabled,
         git_ref=git_ref,
         now_fn=now_fn,

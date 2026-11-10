@@ -141,23 +141,48 @@ def inspect_bench_job(store: Any, job_dir: str) -> BoxJobStatus:
     return BoxJobStatus(state=STATUS_NEED_LAUNCH, markers=markers, next_stage=nxt, pid=pid)
 
 
+def _is_git_sha(ref: str) -> bool:
+    r = str(ref or '')
+    return len(r) in (40, 64) and all(c in '0123456789abcdef' for c in r.lower())
+
+
 def setup_command(*, git_ref: str = BENCH_BOX_GIT_REF, git_url: str = BENCH_GIT_URL) -> str:
-    """Idempotent clone + ``bench/deploy/bootstrap.sh``; writes ``markers/setup.done``."""
+    """Idempotent clone + ``bench/deploy/bootstrap.sh``; writes ``markers/setup.done``.
+
+    Branch refs: shallow clone ``--branch``. Commit SHAs: ``git init`` +
+    ``fetch --depth 1 origin <sha>`` (no full clone).
+    """
     root = BENCH_BOX_ROOT
     repo = '%s/repo' % root
     ref = shlex.quote(git_ref)
     url = shlex.quote(git_url)
+    if _is_git_sha(git_ref):
+        clone = (
+            'if [ ! -d {repo}/.git ]; then '
+            '  mkdir -p {repo} && git -C {repo} init && '
+            '  git -C {repo} remote add origin {url} && '
+            '  git -C {repo} fetch --depth 1 origin {ref} && '
+            '  git -C {repo} checkout FETCH_HEAD; '
+            'else '
+            '  git -C {repo} fetch --depth 1 origin {ref} && '
+            '  git -C {repo} checkout FETCH_HEAD; '
+            'fi; '
+        ).format(repo=shlex.quote(repo), url=url, ref=ref)
+    else:
+        clone = (
+            'if [ ! -d {repo}/.git ]; then '
+            '  git clone --depth 1 --branch {ref} {url} {repo} '
+            '    || (git clone {url} {repo} && git -C {repo} fetch --depth 1 origin {ref} '
+            '        && git -C {repo} checkout {ref}); '
+            'else '
+            '  git -C {repo} fetch --depth 1 origin {ref} || git -C {repo} fetch origin {ref}; '
+            '  git -C {repo} checkout {ref} || git -C {repo} checkout FETCH_HEAD; '
+            'fi; '
+        ).format(repo=shlex.quote(repo), url=url, ref=ref)
     return (
         'set -euo pipefail; '
         'JD="$PWD"; mkdir -p {root}/{{models,hf,runs,logs,tmp,uvcache,jobs}} "$JD/markers"; '
-        'if [ ! -d {repo}/.git ]; then '
-        '  git clone --depth 1 --branch {ref} {url} {repo} '
-        '    || (git clone {url} {repo} && git -C {repo} fetch --depth 1 origin {ref} '
-        '        && git -C {repo} checkout {ref}); '
-        'else '
-        '  git -C {repo} fetch --depth 1 origin {ref} || git -C {repo} fetch origin {ref}; '
-        '  git -C {repo} checkout {ref} || git -C {repo} checkout FETCH_HEAD; '
-        'fi; '
+        '{clone}'
         'bash {repo}/bench/deploy/bootstrap.sh; '
         'test -f {root}/venv-vllm/bin/python; '
         'test -f {root}/venv-vf/bin/python; '
@@ -166,8 +191,7 @@ def setup_command(*, git_ref: str = BENCH_BOX_GIT_REF, git_url: str = BENCH_GIT_
     ).format(
         root=shlex.quote(root),
         repo=shlex.quote(repo),
-        ref=ref,
-        url=url,
+        clone=clone,
         ref_raw=git_ref.replace('"', ''),
     )
 
@@ -276,6 +300,8 @@ class BenchBoxController:
     git_ref: str = BENCH_BOX_GIT_REF
     job_root: str = BENCH_JOB_ROOT
     now_fn: Callable[[], float] = time.time
+    # Called immediately before launching the fetch stage (push descriptor+urls).
+    prepare_fetch_fn: Optional[Callable[[Any, str], Mapping[str, Any]]] = None
 
     @property
     def job_dir(self) -> str:
@@ -321,15 +347,35 @@ class BenchBoxController:
         pid = read_pid(self.store, self.job_dir)
         if pid and self.store.pid_alive(pid) and callable(kill):
             kill([pid])
+        fetch_prep: Optional[Mapping[str, Any]] = None
+        if stage == 'fetch':
+            if self.prepare_fetch_fn is None:
+                return {
+                    'op': 'failed',
+                    'error': 'prepare_fetch_fn unset; refuse fetch without descriptor/urls',
+                    'state': st.state,
+                }
+            fetch_prep = dict(self.prepare_fetch_fn(self.store, self.job_dir))
+            # Redacted receipt only — never include URLs in the tick note.
+            if 'urls' in fetch_prep or any(
+                isinstance(v, str) and v.startswith('http') for v in fetch_prep.values()
+            ):
+                raise BoxJobError('prepare_fetch_fn must not return URL material')
         cmd = stage_command(stage, head=self.head, profile=self.profile, git_ref=self.git_ref)
         launched = self.store.launch_detached(self.job_dir, stage=stage, command=cmd)
-        return {
+        note = {
             'op': 'launched',
             'stage': stage,
             'pid': launched,
             'state': STATUS_RUNNING,
             'markers': sorted(st.markers),
         }
+        if fetch_prep is not None:
+            note['fetch_prep'] = {
+                'n_files': fetch_prep.get('n_files'),
+                'names': fetch_prep.get('names'),
+            }
+        return note
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +564,9 @@ class MemBenchBoxStore:
             if job.get('auto_marker') and stage in BENCH_STAGES:
                 path = marker_path(jd, stage)
                 self.files[path] = json.dumps(job.get('payload') or {'ok': True}, sort_keys=True) + '\n'
+            # Mirror on-box gate_fetch: delete short-lived URLs after fetch.
+            if stage == 'fetch' and job.get('auto_marker'):
+                self.files.pop('%s/urls.private.json' % jd.rstrip('/'), None)
             if job.get('write_result') or (stage == 'run' and job.get('auto_marker')):
                 head = jd.rstrip('/').split('/')[-1]
                 # Pad short test heads.

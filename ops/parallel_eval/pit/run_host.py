@@ -296,6 +296,9 @@ def _attach_bench_service(
     else:
         # Hermetic / unwired: in-memory detached store (still non-blocking).
         box_factory = lambda _job: MemBenchBoxStore()
+    results_dir = getattr(cfg, 'bench_results_dir', None) or None
+    if isinstance(results_dir, str) and not results_dir.strip():
+        results_dir = None
     svc = build_bench_service(
         state_root=store.root,
         enabled=True,
@@ -303,6 +306,7 @@ def _attach_bench_service(
         price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
         rent=bench_rent,
         box_store_factory=box_factory,
+        results_dir=results_dir,
     )
     prev = ctl.on_green_fresh
 

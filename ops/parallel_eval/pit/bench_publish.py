@@ -1,8 +1,13 @@
-"""Merge-only publish of PIT on-demand bench results into website/benchmarks.json.
+"""Land PIT on-demand bench results where ``affine-bench-publish`` already reads.
 
-Host-side only — does **not** import ``bench.affine_bench``. SITE path comes from
-``AFFINE_SITE`` or ``SITE`` (fail closed if unset). Never touches
-``bench-results/daemon.json`` or standing-daemon globals.
+``publish_fleet`` / ``affine-bench-publish`` rebuilds ``website/benchmarks.json``
+every ~2 minutes from ``$BENCH_RESULTS_DIR/results/<model_id>/<benchmark>.json``.
+This module writes those result files (same schema as the standing daemon's
+``collect()``). It does **not** merge into ``benchmarks.json`` and does **not**
+import ``bench.affine_bench``.
+
+Results root is config/env only (``bench_results_dir`` / ``BENCH_RESULTS_DIR`` /
+``AFFINE_BENCH_RESULTS``) — fail closed if unset. No host-path defaults.
 """
 from __future__ import annotations
 
@@ -13,54 +18,103 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 
-def site_root(explicit: Optional[str] = None) -> Path:
+def results_root(explicit: Optional[str] = None) -> Path:
     if explicit:
         return Path(explicit)
-    for key in ('AFFINE_SITE', 'SITE'):
+    for key in ('BENCH_RESULTS_DIR', 'AFFINE_BENCH_RESULTS'):
         val = os.environ.get(key)
         if val:
             return Path(val)
-    raise RuntimeError('AFFINE_SITE/SITE unset (fail closed; no host-path defaults)')
-
-
-def benchmarks_path(site: Optional[Path] = None) -> Path:
-    return (site or site_root()) / 'benchmarks.json'
-
-
-def _row_key(r: Mapping[str, Any]) -> tuple:
-    return (
-        str(r.get('model_id') or ''),
-        str(r.get('benchmark_id') or r.get('benchmark') or ''),
-        str(r.get('env_version') or ''),
+    raise RuntimeError(
+        'BENCH_RESULTS_DIR/AFFINE_BENCH_RESULTS unset (fail closed; no host-path defaults)'
     )
 
 
-def _normalize_result_row(raw: Mapping[str, Any], *, head: str) -> Dict[str, Any]:
-    bid = raw.get('benchmark_id') or raw.get('benchmark')
-    mid = raw.get('model_id') or ('king-%s' % head[:16])
+def results_dir(root: Optional[Path] = None) -> Path:
+    return (root or results_root()) / 'results'
+
+
+def _normalize_summary(raw: Mapping[str, Any], *, head: str, model_id: str) -> Dict[str, Any]:
+    """Match the standing daemon collect() / node_run summary.json shape."""
+    bid = raw.get('benchmark') or raw.get('benchmark_id')
+    if not bid:
+        raise ValueError('result row missing benchmark id')
+    sampling = dict(raw.get('sampling') or {})
+    if 'presence_penalty' not in sampling:
+        sampling['presence_penalty'] = float(
+            raw.get('presence_penalty') if raw.get('presence_penalty') is not None else 0.0
+        )
+    if float(sampling.get('presence_penalty', 1.0)) != 0.0:
+        raise RuntimeError('refuse result write: Affine king presence_penalty must be 0')
+    out = dict(raw)
+    out.update(
+        model_id=model_id,
+        model_kind=raw.get('model_kind') or 'king',
+        benchmark=str(bid),
+        king=raw.get('king') or head,
+        profile=raw.get('profile') or sampling.get('profile') or 'qwen3.5-family-pp0',
+        presence_penalty=0.0,
+        sampling=sampling,
+        finished_at=raw.get('finished_at') or time.time(),
+    )
+    # Required numeric fields publish.py/_row_from_disk reads.
+    for key, default in (
+        ('score', None),
+        ('se', None),
+        ('tasks', raw.get('n') or 0),
+        ('samples', 0),
+        ('rollouts', 1),
+        ('cap_rate', 0.0),
+        ('mean_out_tokens', None),
+        ('wall_seconds', raw.get('wall_s') or 0),
+    ):
+        out.setdefault(key, default)
+    if 'bench_version' not in out and raw.get('env_version'):
+        out['bench_version'] = raw.get('env_version')
+    return out
+
+
+def write_results(
+    *,
+    head: str,
+    result: Mapping[str, Any],
+    results_dir_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Write ``results/<model_id>/<benchmark>.json`` for publish_fleet consumption."""
+    if float(result.get('presence_penalty', 0.0) or 0.0) != 0.0:
+        raise RuntimeError('refuse write: Affine king presence_penalty must be 0')
+    root = results_root(results_dir_path)
+    out_dir = results_dir(root)
+    mid = str(result.get('model_id') or ('king-%s' % head[:16]))
+    model_dir = out_dir / mid
+    model_dir.mkdir(parents=True, exist_ok=True)
+    written: List[str] = []
+    rows = list(result.get('results') or [])
+    if not rows:
+        raise RuntimeError('bench RESULT has no results rows to land')
+    at = float(now if now is not None else time.time())
+    for raw in rows:
+        if not isinstance(raw, Mapping):
+            continue
+        doc = _normalize_summary(raw, head=head, model_id=mid)
+        doc['collected_at'] = at
+        bid = str(doc['benchmark'])
+        path = model_dir / ('%s.json' % bid)
+        tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n')
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+        written.append(str(path))
     return {
+        'ok': True,
+        'merge_only': True,  # publish_fleet owns website merge; we never rewrite benchmarks.json
+        'landed': True,
+        'results_root': str(root),
         'model_id': mid,
-        'model_kind': raw.get('model_kind') or 'king',
-        'benchmark_id': bid,
-        'suite': raw.get('suite'),
-        'env_version': raw.get('env_version') or raw.get('bench_version') or '',
-        'score': raw.get('score'),
-        'se': raw.get('se'),
-        'n': raw.get('n') or raw.get('tasks'),
-        'samples': raw.get('samples'),
-        'samples_expected': raw.get('samples_expected'),
-        'errors': raw.get('errors'),
-        'complete': raw.get('complete'),
-        'rollouts': raw.get('rollouts'),
-        'cap_rate': raw.get('cap_rate'),
-        'budget': raw.get('budget') or (raw.get('sampling') or {}).get('max_tokens'),
-        'profile': raw.get('profile') or 'qwen3.5-family-pp0',
-        'presence_penalty': float(raw.get('presence_penalty') if raw.get('presence_penalty') is not None else 0.0),
-        'mean_out_tokens': raw.get('mean_out_tokens'),
-        'run_at': raw.get('run_at') or raw.get('finished_at'),
-        'wall_s': raw.get('wall_s'),
-        'gpu': raw.get('gpu'),
-        'king': raw.get('king') or head,
+        'files': written,
+        'n': len(written),
+        'presence_penalty': 0.0,
     }
 
 
@@ -69,78 +123,14 @@ def merge_publish(
     head: str,
     result: Mapping[str, Any],
     site: Optional[str] = None,
+    results_dir_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Merge RESULT rows into ``$SITE/benchmarks.json`` (never drop prior rows)."""
-    if float(result.get('presence_penalty', 0.0) or 0.0) != 0.0:
-        raise RuntimeError('refuse publish: Affine king presence_penalty must be 0')
-    root = site_root(site)
-    out_path = benchmarks_path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    prev: Dict[str, Any] = {}
-    if out_path.is_file():
-        try:
-            prev = json.loads(out_path.read_text())
-        except Exception:
-            prev = {}
-    prior = list(prev.get('results') or [])
-    models = list(prev.get('models') or [])
-    new_rows = [
-        _normalize_result_row(r, head=head)
-        for r in list(result.get('results') or [])
-        if isinstance(r, Mapping)
-    ]
-    merged: Dict[tuple, Dict[str, Any]] = {}
-    for r in prior + new_rows:
-        if not r.get('model_id') or not r.get('benchmark_id'):
-            continue
-        merged[_row_key(r)] = dict(r)
-    mid = str(result.get('model_id') or ('king-%s' % head[:16]))
-    model_doc = {
-        'model_id': mid,
-        'label': 'king-%s' % head[:8],
-        'kind': 'king',
-        'king': head,
-        'status': 'scored',
-        'profile': result.get('profile') or 'qwen3.5-family-pp0',
-        'budget': (result.get('sampling') or {}).get('max_tokens'),
-        'green': True,
-    }
-    models = [m for m in models if m.get('model_id') != mid]
-    models.append(model_doc)
-    at = float(now if now is not None else time.time())
-    doc = {
-        'version': prev.get('version') or 'affine-bench-v2',
-        'updated_at': at,
-        'serving': prev.get('serving') or {},
-        'about': prev.get('about') or (
-            'MERGE-ONLY publish from PIT on-demand GREEN bench. '
-            'Affine kings use presence_penalty 0 (qwen3.5-family-pp0).'
-        ),
-        'benchmarks': prev.get('benchmarks') or [],
-        'suites': prev.get('suites') or [],
-        'models': models,
-        'results': list(merged.values()),
-        'results_prior': prev.get('results_prior') or [],
-        'node': prev.get('node') or {},
-        'progress': prev.get('progress') or {},
-        'pit_bench': {
-            'head': head,
-            'profile': result.get('profile'),
-            'presence_penalty': 0.0,
-            'published_at': at,
-            'merge_only': True,
-        },
-    }
-    tmp = out_path.with_name('.%s.%d.tmp' % (out_path.name, os.getpid()))
-    tmp.write_text(json.dumps(doc, separators=(',', ':')))
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, out_path)
-    return {
-        'ok': True,
-        'merge_only': True,
-        'path': str(out_path),
-        'rows_added': len(new_rows),
-        'rows_total': len(doc['results']),
-        'presence_penalty': 0.0,
-    }
+    """Deprecated name kept for callers — lands results for publish_fleet; no website merge.
+
+    ``site`` is ignored (website/benchmarks.json is owned by affine-bench-publish).
+    """
+    del site  # never write website/benchmarks.json from PIT
+    return write_results(
+        head=head, result=result, results_dir_path=results_dir_path, now=now,
+    )

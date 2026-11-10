@@ -123,6 +123,7 @@ class TestBenchJob(unittest.TestCase):
 
     def test_bench_every_green_and_merge_only(self):
         merges = []
+        files = {'model.safetensors': 'c' * 64}
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             store = MemBenchBoxStore(default_ticks=1)
@@ -131,10 +132,17 @@ class TestBenchJob(unittest.TestCase):
                 runner=runner,
                 state_root=root,
                 box_store_factory=lambda _j: store,
-                publish_fn=lambda **k: merges.append(k) or {'ok': True, 'merge_only': True},
+                publish_fn=lambda **k: merges.append(k) or {
+                    'ok': True, 'merge_only': True, 'landed': True,
+                },
+                results_dir=str(root / 'bench-results-out'),
+                resolve_files_fn=lambda head, files=None, **_k: dict(files or {}),
+                presign_fn=lambda head, files: {
+                    n: 'https://example.invalid/%s' % n for n in files
+                },
             )
             svc.wire_rent()
-            svc.on_green_fresh(head=H0, epoch=1)
+            svc.on_green_fresh(head=H0, epoch=1, files=files)
             for _ in range(40):
                 store.advance()
                 svc.tick()
