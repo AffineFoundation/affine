@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol
 
-from ops.parallel_eval.live.pe_box import BOX_ROOT, detached_eval_command
+from ops.parallel_eval.live.pe_box import BOX_ROOT, _as_pod, detached_eval_command
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
@@ -106,7 +106,11 @@ class BoxRunner:
             self.admit(box_key, admission_cert, now=now)
 
         train_gpu = gpu_type_of(train_gpu) or gpu_type_of((record.meta or {}).get('train_gpu'))
-        pod = (record.meta or {}).get('pod')
+        # Item records / pods.json persist a plain rent dict (no .run). Normalize
+        # to a Pod before box-job controller / lane / train — otherwise detached
+        # eval is skipped and the host takes the inert sync-serve path.
+        raw_pod = (record.meta or {}).get('pod')
+        pod = normalize_meta_pod(raw_pod)
         if pod is None and (self.lane and (self.lane.require_host or self.lane.host_run_probe is not None)):
             raise TransitionError('pod handle required for host box train/probe')
 
@@ -433,13 +437,36 @@ def _load_public_harness() -> dict:
     return {}
 
 
+def normalize_meta_pod(pod: Any) -> Any:
+    """Turn a persisted rent dict / Pod into an object with ``.run``.
+
+    Controller writes ``meta['pod']`` as a plain dict (id/ip/port/…) into the
+    item record and pods.json. Callers that need SSH must normalize via
+    ``pe_box._as_pod`` — never gate on ``hasattr(pod, 'run')`` of the raw dict.
+    """
+    if pod is None:
+        return None
+    try:
+        return _as_pod(pod)
+    except Exception:
+        # Already a Pod-like, or unusable handle — surface None so callers
+        # fall back / fail closed rather than crashing the host tick.
+        if hasattr(pod, 'run') and callable(getattr(pod, 'run')):
+            return pod
+        return None
+
+
 def _try_box_job_controller(pod: Any, item_id: str):
-    """Return a BoxJobController when the pod can run remote shell commands."""
-    if pod is None or not hasattr(pod, 'run'):
+    """Return a BoxJobController when the pod can run remote shell commands.
+
+    Accepts a live Pod *or* the persisted rent dict from ``meta['pod']``.
+    """
+    P = normalize_meta_pod(pod)
+    if P is None or not hasattr(P, 'run'):
         return None
     try:
         from .box_job import controller_for_pod
-        return controller_for_pod(pod, item_id)
+        return controller_for_pod(P, item_id)
     except Exception:
         return None
 

@@ -735,18 +735,71 @@ class Controller:
         return None
 
     def _kill_box_job_pids(self, item: ItemRecord) -> list:
-        """Best-effort kill of recorded box-job PIDs / vLLM on the pod."""
-        pod = (item.meta or {}).get('pod')
-        if pod is None or not hasattr(pod, 'run'):
+        """Best-effort kill of recorded box-job PIDs / vLLM on the pod.
+
+        ``meta['pod']`` is a persisted rent dict — normalize via ``_as_pod``
+        before building the box-job controller (a bare dict has no ``.run``).
+        """
+        raw = (item.meta or {}).get('pod')
+        if raw is None:
             return []
         try:
+            from .box import normalize_meta_pod
             from .box_job import controller_for_pod
-            ctrl = controller_for_pod(pod, item.item_id)
+            P = normalize_meta_pod(raw)
+            if P is None or not hasattr(P, 'run'):
+                return []
+            ctrl = controller_for_pod(P, item.item_id)
             return list(ctrl.kill_stale(extra_patterns=(
                 'vllm serve', 'podctl.py serve', 'pit-box-job-eval', 'train_pit.py',
             )))
         except Exception:
             return []
+
+    def _capture_box_job_log_tail(
+        self, item: ItemRecord, *, n_lines: int = 200,
+    ) -> Optional[str]:
+        """Pull last lines of box ``job.log`` before release (e1066 class)."""
+        raw = (item.meta or {}).get('pod')
+        if raw is None or not item.box_id:
+            return None
+        try:
+            from .box import normalize_meta_pod
+            from .box_job import controller_for_pod
+            P = normalize_meta_pod(raw)
+            if P is None:
+                return None
+            ctrl = controller_for_pod(P, item.item_id)
+            return ctrl.read_log_tail(n_lines=n_lines)
+        except Exception:
+            return None
+
+    def _attach_box_job_log_tail(self, item: ItemRecord) -> ItemRecord:
+        """Stamp log tail onto the item + host log before any box release."""
+        if (item.meta or {}).get('box_job_log_tail'):
+            return item
+        tail = self._capture_box_job_log_tail(item)
+        if not tail:
+            return item
+        # Cap stored size — ~200 lines, but also byte-cap for durable meta.
+        stored = tail if len(tail) <= 64_000 else tail[-64_000:]
+        meta = dict(item.meta or {})
+        meta['box_job_log_tail'] = stored
+        item.meta = meta
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'box_job_log_tail',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'lines': stored.count('\n') or (1 if stored else 0),
+                'tail': stored[-4000:],
+            }, default=str),
+            flush=True,
+        )
+        return item
 
     def _alert_gpu_busy_release(self, item: ItemRecord, err: str) -> None:
         doc = {
@@ -1361,6 +1414,10 @@ class Controller:
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
         """Always return an ItemRecord (never a (item, note) tuple)."""
+        # e1066: train/eval job can exit without a marker; copy job.log tail onto
+        # the item / host log BEFORE release so the trail survives pod teardown.
+        if item.box_id:
+            item = self._attach_box_job_log_tail(item)
         if item.state is ItemState.DECIDED:
             item.last_error = reason
             decision = (item.decision or '').lower()
@@ -1384,6 +1441,8 @@ class Controller:
                 if item.box_id in self.rent.ledger.active:
                     self.rent.ledger.release(item.box_id, reason='fail-force', at=self.now_fn())
         updates = {'attempt': next_attempt, 'last_error': reason, 'box_id': None, 'box_name': None}
+        if item.meta:
+            updates['meta'] = dict(item.meta)
         if 'expected-master' in reason or 'fp32-master' in reason or 'Fp32MasterError' in reason or 'promote-refused' in reason:
             if can_transition(item, ItemState.NO_DECISION):
                 nd = apply_transition(item, ItemState.NO_DECISION, reason=reason, updates={**updates, 'decision': 'no_decision'})

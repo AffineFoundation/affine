@@ -48,6 +48,31 @@ def pid_path(job_dir: str) -> str:
     return '%s/%s' % (job_dir.rstrip('/'), PID_NAME)
 
 
+def log_path(job_dir: str) -> str:
+    return '%s/%s' % (job_dir.rstrip('/'), LOG_NAME)
+
+
+def read_log_tail(
+    store: 'BoxJobStore',
+    job_dir: str,
+    *,
+    n_lines: int = 200,
+) -> Optional[str]:
+    """Last ``n_lines`` of the box job log (stdout/stderr of the detached stage)."""
+    path = log_path(job_dir)
+    tail_fn = getattr(store, 'tail_text', None)
+    if callable(tail_fn):
+        text = tail_fn(path, int(n_lines))
+    else:
+        text = store.read_text(path)
+        if text:
+            lines = text.splitlines()
+            text = '\n'.join(lines[-int(n_lines):])
+    if not text:
+        return None
+    return text if text.endswith('\n') else text + '\n'
+
+
 def next_missing_stage(markers: Set[str]) -> Optional[str]:
     for stage in STAGES:
         if stage not in markers:
@@ -231,6 +256,10 @@ class BoxJobController:
     def kill_stale(self, *, extra_patterns: Sequence[str] = ()) -> list[int]:
         return kill_stale_job(self.store, self.job_dir, extra_patterns=extra_patterns)
 
+    def read_log_tail(self, *, n_lines: int = 200) -> Optional[str]:
+        """Last lines of ``job.log`` — capture before release so host keeps the trail."""
+        return read_log_tail(self.store, self.job_dir, n_lines=n_lines)
+
     def run_stage_once(
         self,
         stage: str,
@@ -402,6 +431,15 @@ class RemoteBoxJobStore:
                 out.append(int(tok))
         return out
 
+    def tail_text(self, path: str, n_lines: int = 200) -> Optional[str]:
+        out = self.pod.run(
+            'tail -n %d %s 2>/dev/null || true'
+            % (int(n_lines), shlex.quote(path)),
+            timeout=60, check=False,
+        )
+        text = (out or '').rstrip('\n')
+        return text + '\n' if text else None
+
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int:
         # Tag process with pit-box-job so kill_stale / pgrep can find duplicates.
         wrapped = (
@@ -445,6 +483,14 @@ class MemBoxJobStore:
 
     def read_text(self, path: str) -> Optional[str]:
         return self.files.get(path)
+
+    def tail_text(self, path: str, n_lines: int = 200) -> Optional[str]:
+        text = self.files.get(path)
+        if not text:
+            return None
+        lines = text.splitlines()
+        body = '\n'.join(lines[-int(n_lines):])
+        return body + '\n' if body else None
 
     def write_text(self, path: str, text: str) -> None:
         self.files[path] = text
