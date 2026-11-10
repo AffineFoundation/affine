@@ -1698,7 +1698,7 @@ def _master_files_meta_from_dir(local_dir: Path, *, candidate_id: str) -> dict[s
 
 
 def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
-    """Fail closed: require real weight shards, not digest-only."""
+    """Fail closed: require real weight shards + meta.json, not digest-only."""
     if not files_meta:
         raise BoxIOError('fp32 master publish refused: empty master tree')
     shards = [
@@ -1710,6 +1710,28 @@ def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
             'fp32 master publish refused: no weight shards '
             '(digest-only master_digest.txt is not sufficient)'
         )
+    if 'meta.json' not in files_meta:
+        raise BoxIOError(
+            'fp32 master publish refused: meta.json missing '
+            '(trainer _fp32_load needs tensor_file)'
+        )
+
+
+def _meta_json_r2_ptr(
+    files_meta: Mapping[str, Mapping[str, Any]], *, candidate_id: str,
+) -> dict:
+    """Index meta_json must be {r2_key: ...} — never a synthetic body.
+
+    fetch_master_on_box treats a version key as the whole meta and overwrites
+    the real uploaded meta.json, dropping tensor_file so _fp32_load fails.
+    """
+    meta = files_meta.get('meta.json')
+    if not isinstance(meta, Mapping):
+        raise BoxIOError('files_meta missing meta.json for index pointer')
+    key = str(meta.get('r2_key') or ('fp32-master/%s/meta.json' % candidate_id))
+    if not key.endswith('meta.json'):
+        raise BoxIOError('meta_json r2_key must end with meta.json: %s' % key)
+    return {'r2_key': key}
 
 
 def _write_master_index(
@@ -1719,6 +1741,7 @@ def _write_master_index(
     digest: str,
     files_meta: Mapping[str, Mapping[str, Any]],
 ) -> Path:
+    _assert_master_tree_complete(files_meta)
     idx_dir = _fp32_master_index()
     idx_dir.mkdir(parents=True, exist_ok=True)
     idx_path = idx_dir / ('%s.json' % candidate_id)
@@ -1726,16 +1749,8 @@ def _write_master_index(
         'bf16_sha256': bf16,
         'master_digest': digest,
         'files': dict(files_meta),
-        'meta_json': {
-            'version': 'pit-fp32-master-v1',
-            'bf16_sha256': bf16,
-            'master_digest': digest,
-            'source': 'pit',
-            'shard_count': sum(
-                1 for n in files_meta
-                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-            ),
-        },
+        # Same shape as live HEAD / k1 fp32-master publish.
+        'meta_json': _meta_json_r2_ptr(files_meta, candidate_id=candidate_id),
         'source': 'pit',
         'at': time.time(),
     }
