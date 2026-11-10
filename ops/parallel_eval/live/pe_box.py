@@ -1381,13 +1381,7 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
     last_err: Exception | None = None
     for attempt in range(1, int(EARLY_UPLOAD_RETRIES) + 1):
         try:
-            cand_up = upload_candidate_from_box(
-                P,
-                candidate_id=cid,
-                files=files,
-                box_candidate_dir=out.get('box_candidate_dir'),
-                pending=True,
-            )
+            # fp32 master FIRST, then bf16 (Jacob 2026-11-10).
             master_up = upload_master_from_box(
                 P,
                 candidate_id=cid,
@@ -1406,6 +1400,13 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
             )
             if not master_up.get('complete') and not int(master_up.get('shard_count') or 0):
                 raise EarlyUploadError('early upload master incomplete')
+            cand_up = upload_candidate_from_box(
+                P,
+                candidate_id=cid,
+                files=files,
+                box_candidate_dir=out.get('box_candidate_dir'),
+                pending=True,
+            )
             seed = {
                 'candidate_verified': True,
                 'master_verified': True,
@@ -1453,15 +1454,26 @@ def _r2_local_mirror() -> Optional[Path]:
     return _env_path('PIT_R2_LOCAL_MIRROR')
 
 
-def _ckpt_r2_prefix(candidate_id: str) -> str:
+def _ckpt_r2_prefix(candidate_id: str, *, pending: bool = False) -> str:
+    if pending:
+        from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix
+        return '%s/model' % pending_r2_prefix(candidate_id)
     prefix = os.environ.get('PIT_R2_CKPT_PREFIX') or (
         'mimo/affine-mimo9b-grpo-20261013/checkpoints'
     )
     return '%s/%s/model' % (prefix.rstrip('/'), candidate_id)
 
 
-def presign_put_urls(candidate_id: str, files: Mapping[str, str]) -> Mapping[str, str]:
-    """Scoped presigned PUT URLs for GREEN candidate upload (box → R2)."""
+def presign_put_urls(
+    candidate_id: str,
+    files: Mapping[str, str],
+    *,
+    pending: bool = False,
+) -> Mapping[str, str]:
+    """Scoped presigned PUT URLs for GREEN candidate upload (box → R2).
+
+    ``pending=True`` always targets the private pending prefix (never live ckpt).
+    """
     inj = _env_path('PIT_PRESIGN_PUT_JSON')
     if inj is not None and inj.is_file():
         doc = json.loads(inj.read_text())
@@ -1470,17 +1482,16 @@ def presign_put_urls(candidate_id: str, files: Mapping[str, str]) -> Mapping[str
             return {n: str(urls[n]) for n in files if n in urls}
     mirror = _r2_local_mirror()
     if mirror is not None:
-        # Test / dry-run: file:// URLs under a local R2 mirror (host verifies sha from disk).
+        # Test / dry-run: file:// URLs under the same prefix verify will read.
         out: dict[str, str] = {}
-        base = mirror / candidate_id
+        prefix = _ckpt_r2_prefix(candidate_id, pending=pending)
+        base = mirror / prefix
         base.mkdir(parents=True, exist_ok=True)
         for name in files:
             dest = base / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             out[name] = 'file://' + str(dest)
         return out
-    # Live: Bucket.presign put_object via host helper / storage.
-    # Live: Bucket.presign put_object (requires PIT_LIFE_CFG with bucket credentials).
     try:
         from subnet.storage import Bucket  # type: ignore
         life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
@@ -1490,7 +1501,7 @@ def presign_put_urls(candidate_id: str, files: Mapping[str, str]) -> Mapping[str
                 '(or set PIT_PRESIGN_PUT_JSON / PIT_R2_LOCAL_MIRROR)'
             )
         bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
-        prefix = _ckpt_r2_prefix(candidate_id)
+        prefix = _ckpt_r2_prefix(candidate_id, pending=pending)
         return {
             n: bucket.presign('%s/%s' % (prefix, n), 'put_object', 7200)
             for n in sorted(files)
@@ -1518,38 +1529,28 @@ def upload_candidate_from_box(
     if not files:
         raise BoxIOError('candidate files missing for R2 upload')
     box_dir = box_candidate_dir or (KDIR + '/' + candidate_id)
-    # Prefer pending prefix for pre-APPLY uploads (RED-safe).
-    if pending:
-        try:
-            from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix, r2_local_mirror
-            mirror = r2_local_mirror()
-            if mirror is not None:
-                urls = {}
-                base = mirror / pending_r2_prefix(candidate_id) / 'model'
-                base.mkdir(parents=True, exist_ok=True)
-                for name in files:
-                    dest = base / name
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    urls[name] = 'file://' + str(dest)
-            else:
-                urls = dict(presign_put_urls(candidate_id, files))
-        except Exception:
-            urls = dict(presign_put_urls(candidate_id, files))
-    else:
-        urls = dict(presign_put_urls(candidate_id, files))
+    # Always use the same pending/live prefix that verify will read.
+    urls = dict(presign_put_urls(candidate_id, files, pending=pending))
     missing = [n for n in files if n not in urls]
     if missing:
         raise BoxIOError('presign PUT missing urls for %s' % missing[:5])
 
-    # Push URLs to the box (private, deleted after).
-    url_doc = json.dumps(dict(urls=urls, headers={'Content-Type': 'application/octet-stream'}))
-    remote_urls = '/tmp/pit-put-%s.urls.private.json' % candidate_id[:12]
-    put(P, remote_urls, url_doc.encode(), '600')
-    # Box-side PUT (curl for https; cp for file:// mirror).
-    script = r"""
+    file_urls = {n: u for n, u in urls.items() if str(u).startswith('file://')}
+    https_urls = {n: u for n, u in urls.items() if not str(u).startswith('file://')}
+    # file:// (local mirror): host materializes from box via scp — Fake SSH must
+    # never rewrite host mirror destinations inside a box-side cp.
+    for name, url in file_urls.items():
+        dest = Path(str(url)[7:])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _scp_from(P, '%s/%s' % (box_dir.rstrip('/'), name), dest, timeout=7200)
+    if https_urls:
+        url_doc = json.dumps(dict(urls=https_urls, headers={'Content-Type': 'application/octet-stream'}))
+        remote_urls = '/tmp/pit-put-%s.urls.private.json' % candidate_id[:12]
+        put(P, remote_urls, url_doc.encode(), '600')
+        script = r"""
 set -e
 python3 - <<'PY'
-import json, os, subprocess, sys, urllib.request
+import json, os, sys, urllib.request
 doc = json.load(open(%r))
 urls = doc['urls']; headers = doc.get('headers') or {}
 box = %r
@@ -1558,47 +1559,32 @@ for name, url in urls.items():
     src = os.path.join(box, name)
     if not os.path.isfile(src):
         bad.append(('missing', name)); continue
-    if url.startswith('file://'):
-        dest = url[7:]
-        os.makedirs(os.path.dirname(dest) or '.', exist_ok=True)
-        subprocess.check_call(['cp', '-f', src, dest])
-    else:
-        req = urllib.request.Request(url, data=open(src, 'rb').read(), method='PUT')
-        for k, v in headers.items():
-            req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=3600) as resp:
-            if getattr(resp, 'status', 200) not in (200, 201):
-                bad.append(('http', name, getattr(resp, 'status', None)))
+    req = urllib.request.Request(url, data=open(src, 'rb').read(), method='PUT')
+    for k, v in headers.items():
+        req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=3600) as resp:
+        if getattr(resp, 'status', 200) not in (200, 201):
+            bad.append(('http', name, getattr(resp, 'status', None)))
 print('PUT_OK', len(urls), 'BAD', len(bad))
 if bad:
     sys.exit(1)
 PY
 rm -f %s
 """.strip() % (remote_urls, box_dir, remote_urls)
-    out = P.run(script, timeout=7200)
-    if 'PUT_OK' not in out:
-        raise BoxIOError('box R2 PUT failed: %s' % out[-400:])
+        out = P.run(script, timeout=7200)
+        if 'PUT_OK' not in str(out):
+            raise BoxIOError('box R2 PUT failed: %s' % str(out)[-400:])
 
     # Host verifies sha256 from R2 / local mirror (never trust the box alone).
     verified: dict[str, str] = {}
     mirror = _r2_local_mirror()
-    pending_model_root = None
-    if pending and mirror is not None:
-        try:
-            from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix
-            pending_model_root = mirror / pending_r2_prefix(candidate_id) / 'model'
-        except Exception:
-            pending_model_root = None
+    verify_root = None
+    if mirror is not None:
+        verify_root = mirror / _ckpt_r2_prefix(candidate_id, pending=pending)
     for name, expected in files.items():
         if mirror is not None:
-            path = None
-            if pending_model_root is not None:
-                cand = pending_model_root / name
-                if cand.is_file():
-                    path = cand
-            if path is None:
-                path = mirror / candidate_id / name
-            if not path.is_file():
+            path = (verify_root / name) if verify_root is not None else None
+            if path is None or not path.is_file():
                 raise BoxIOError('R2 mirror missing after PUT: %s' % name)
             got = _sha256_file(path)
         else:
@@ -2130,13 +2116,19 @@ def upload_master(
     bf16_sha256: str = '',
     **kwargs: Any,
 ) -> Mapping[str, Any]:
-    """Stage master, upload to R2, write PIT_FP32_MASTER_INDEX/<cand>.json.
+    """Upload fp32 master. Prefer box→R2 stream; never trust box meta.json digest.
 
-    Under ``defer_candidate_upload`` / ``candidate_on_box``, shards must come
-    from the box (``pod`` + ``box_master_dir``). Digest-only trees are refused.
+    Host-recorded ``master_digest`` is mandatory (fail closed). Local host-tree
+    staging is refused for live/on-box paths; fixtures may pass an explicit
+    host digest with a small local tree for unit tests only.
     """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
+    digest = str(master_digest or kwargs.get('master_digest') or '').strip()
+    if len(digest) != 64:
+        raise BoxIOError(
+            'master_digest must be host-recorded hex64 (meta.json fallback refused)'
+        )
     pod = kwargs.get('pod')
     on_box = bool(kwargs.get('candidate_on_box') or kwargs.get('defer_candidate_upload'))
     box_master_dir = kwargs.get('box_master_dir')
@@ -2144,15 +2136,24 @@ def upload_master(
         return upload_master_from_box(
             _as_pod(pod),
             candidate_id=candidate_id,
-            master_digest=str(master_digest or kwargs.get('master_digest') or ''),
+            master_digest=digest,
             bf16_sha256=str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id),
             box_master_dir=str(box_master_dir) if box_master_dir else None,
             store_entry=str(kwargs.get('store_entry') or ''),
+            pending=bool(kwargs.get('pending', True)),
         )
 
     src = Path(path) if path else None
     if src is None or not src.exists():
-        raise BoxIOError('master path missing')
+        raise BoxIOError('master path missing (and no box stream available)')
+    # Fixture-only local tree: never stage a 35 GB live master on the host.
+    if src.is_dir():
+        total = sum(p.stat().st_size for p in src.rglob('*') if p.is_file())
+        if total > (2 << 30):
+            raise BoxIOError(
+                'refuse host-staging fp32 master (%d bytes); use box→R2 stream'
+                % total
+            )
     dst = _upload_root() / candidate_id / 'fp32-master'
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
@@ -2162,20 +2163,6 @@ def upload_master(
     else:
         dst.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst / src.name)
-
-    digest = str(master_digest or kwargs.get('master_digest') or '').strip()
-    if not digest or len(digest) != 64:
-        meta_p = dst / 'meta.json'
-        if meta_p.is_file():
-            try:
-                digest = str((json.loads(meta_p.read_text()) or {}).get('master_digest') or '')
-            except Exception:
-                digest = ''
-        if not digest or len(digest) != 64:
-            h = hashlib.sha256()
-            for f in sorted(p for p in dst.rglob('*') if p.is_file()):
-                h.update(_sha256_file(f).encode())
-            digest = h.hexdigest()
 
     bf16 = str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id)
     files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)

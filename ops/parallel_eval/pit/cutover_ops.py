@@ -179,8 +179,8 @@ def assert_no_mid_probe(pe_state: Path) -> None:
 def apply_busy_check(items: List[Any], *, now: Optional[float] = None) -> List[str]:
     """Clean-window install check: waiting GREENs are BUSY.
 
-    Exclude items in green-apply-backoff with a dead box, or ``lost_infra``.
-    Those must not block installs forever.
+    Exclude ``lost_infra`` and dead-box GREENs in apply backoff (even when
+    ``box_id`` is still set — e1073 class). Those must not block installs forever.
     """
     import time as _time
     at = float(now if now is not None else _time.time())
@@ -194,14 +194,21 @@ def apply_busy_check(items: List[Any], *, now: Optional[float] = None) -> List[s
             continue
         if meta.get('head_advanced'):
             continue
-        # green-apply-backoff + dead box ⇒ not busy for install.
         retry_at = meta.get('apply_retry_at')
         box_id = getattr(item, 'box_id', None)
-        if retry_at is not None and not box_id:
-            continue
-        if retry_at is not None and float(retry_at) > at and not box_id:
+        dead = bool(
+            not box_id
+            or meta.get('lium_unreachable')
+            or meta.get('box_dead')
+            or int(meta.get('lium_missing_count') or 0) >= 2
+            or meta.get('early_upload_failed')
+        )
+        # green-apply-backoff + dead box (id may still be stamped) ⇒ not busy.
+        if retry_at is not None and dead:
             continue
         if meta.get('green_apply_pending') or decision == 'green_waiting':
+            if dead and retry_at is not None:
+                continue
             busy.append(
                 'e%s %s decision=%s' % (
                     getattr(item, 'epoch', '?'),
@@ -211,6 +218,8 @@ def apply_busy_check(items: List[Any], *, now: Optional[float] = None) -> List[s
             )
             continue
         if decision in ('green_fresh', 'green') and not meta.get('head_advanced'):
+            if dead and retry_at is not None:
+                continue
             busy.append(
                 'e%s %s decision=%s awaiting-apply' % (
                     getattr(item, 'epoch', '?'),
@@ -420,6 +429,23 @@ def _cli() -> int:
             print(ex, flush=True)
             return 3
         print('no mid-probe lanes under %s/jobs' % pe_state, flush=True)
+        return 0
+    if cmd == 'apply-busy-check':
+        # Clean-window install: refuse while a live GREEN awaits apply
+        # (excludes lost_infra / dead-box backoff).
+        from .durable import DurableStore, pit_state_root
+        try:
+            root = pit_state_root()
+            store = DurableStore(root)
+            items = list(store.list_items() or [])
+            assert_apply_not_busy(items)
+        except MidProbeError as ex:
+            print(ex, flush=True)
+            return 3
+        except Exception as ex:
+            print('apply-busy-check failed: %s' % ex, flush=True)
+            return 2
+        print('no GREEN awaiting apply (clean-window ok)', flush=True)
         return 0
     if cmd == 'backup-flag' and pe_flag:
         bak = backup_pre_pit(pe_flag)

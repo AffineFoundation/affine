@@ -1273,6 +1273,33 @@ class Controller:
         leaders.sort(key=lambda row: row[0])
         return leaders[0][1]
 
+    def _note_lium_missing(self, item: ItemRecord) -> Dict[str, Any]:
+        """Accumulate Lium-missing samples; never declare lost on a single miss."""
+        meta = dict(item.meta or {})
+        now = float(self.now_fn())
+        first = meta.get('lium_missing_since')
+        if first is None:
+            meta['lium_missing_since'] = now
+            meta['lium_missing_count'] = 1
+            meta['lium_missing_last_at'] = now
+        else:
+            last = float(meta.get('lium_missing_last_at') or first)
+            # Require ≥5 minutes between consecutive miss samples.
+            if (now - last) >= 300.0:
+                meta['lium_missing_count'] = int(meta.get('lium_missing_count') or 1) + 1
+                meta['lium_missing_last_at'] = now
+        item.meta = meta
+        return meta
+
+    def _lium_missing_confirmed(self, item: ItemRecord) -> bool:
+        """True after ≥2 Lium misses spanning ≥5 minutes."""
+        meta = item.meta or {}
+        count = int(meta.get('lium_missing_count') or 0)
+        first = meta.get('lium_missing_since')
+        if count < 2 or first is None:
+            return False
+        return (float(self.now_fn()) - float(first)) >= 300.0
+
     def _should_declare_lost_infra(self, item: ItemRecord) -> bool:
         if self._candidate_upload_complete(item):
             return False
@@ -1281,21 +1308,26 @@ class Controller:
             return False
         if (item.meta or {}).get('lost_infra') or decision == 'lost_infra':
             return False
-        # Lium no longer lists the box (or Node is not reachable).
-        if item.box_id and not self._box_still_in_lium(item):
-            return True
-        if not item.box_id and not self._candidate_upload_complete(item):
-            # Already released / gone without upload.
-            since = (item.meta or {}).get('green_apply_since') or (item.meta or {}).get('decided_at_mono')
-            if since is not None and (
-                float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S)
-            ):
-                return True
-            return True
         since = (item.meta or {}).get('green_apply_since') or (item.meta or {}).get('decided_at_mono')
-        if since is None:
-            return False
-        return float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S)
+        timed_out = (
+            since is not None
+            and (float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S))
+        )
+        # box_id None must NOT mean lost immediately — require the 30m timer.
+        if not item.box_id:
+            return bool(timed_out)
+        # Lium unreachable / not listing: require 2 samples ≥5 min apart (no single-sample lost).
+        if not self._box_still_in_lium(item):
+            self._note_lium_missing(item)
+            if self._lium_missing_confirmed(item):
+                return True
+            return bool(timed_out)
+        # Box still listed — clear miss counters; timer alone can still fire.
+        meta = dict(item.meta or {})
+        for k in ('lium_missing_since', 'lium_missing_count', 'lium_missing_last_at'):
+            meta.pop(k, None)
+        item.meta = meta
+        return bool(timed_out)
 
     def declare_lost_infra(
         self,
@@ -1724,7 +1756,8 @@ class Controller:
         item.last_error = reason[:300]
         # Loud alert (reuse GREEN-APPLY channel + dedicated event).
         try:
-            root = pit_state_root()
+            # Prefer PIT_STATE directly so a disagreeing PE_STATE cannot silence the alert.
+            root = Path(os.environ['PIT_STATE']) if os.environ.get('PIT_STATE') else pit_state_root()
             root.mkdir(parents=True, exist_ok=True)
             alert = root / 'EARLY-UPLOAD-ALERT.json'
             doc = {
@@ -1742,8 +1775,16 @@ class Controller:
             tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
             os.chmod(tmp, 0o600)
             os.replace(tmp, alert)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'error',
+                    'event': 'early_upload_alert_write_failed',
+                    'error': str(exc)[:200],
+                }, default=str),
+                flush=True,
+            )
         print(
             json.dumps({
                 'component': 'pit-controller',
@@ -1761,14 +1802,17 @@ class Controller:
         return item
 
     def _candidate_upload_complete(self, item: ItemRecord) -> bool:
-        """Verified complete upload: bf16 + all fp32 shards + meta/descriptor."""
+        """Verified durable upload: bf16 + fp32 (pending early-upload or live).
+
+        Once ``live_apply`` stamps candidate_verified + master_verified and
+        master_complete is not False, the upload is durable — do NOT also
+        require the public master index (pending seeds / fixture skips /
+        green_waiting promote all stamp verified before promote).
+        """
         apply = (item.meta or {}).get('live_apply') or {}
         if not (apply.get('candidate_verified') and apply.get('master_verified')):
             return False
         if apply.get('master_complete') is False:
-            return False
-        cand = item.candidate_id or ''
-        if cand and not master_index_is_complete(cand):
             return False
         return True
 
@@ -2223,10 +2267,10 @@ class Controller:
                 self.ping_box_liveness(item)
             except Exception:
                 pass
-            # Lium unreachable / gone: apply from upload if complete, else lost_infra.
+            # Lium unreachable / gone: apply from upload if complete; else wait for
+            # confirmed multi-sample miss or 30m timer (never single-sample lost).
             if not self._box_still_in_lium(item):
                 if self._candidate_upload_complete(item):
-                    # Drop box handle; APPLY uses R2 upload (no ssh).
                     meta = self._stamp_released_box_id(item)
                     item.meta = meta
                     item.box_id = None
@@ -2237,10 +2281,9 @@ class Controller:
                         item, reason='lium-unreachable-no-upload',
                     )
                 else:
-                    # Treat as lost immediately when Lium says unreachable.
-                    return self.declare_lost_infra(
-                        item, reason='lium-node-not-reachable',
-                    )
+                    self._note_lium_missing(item)
+                    self._persist(item)
+                    return item, 'lium-missing-sample'
             elif self._should_declare_lost_infra(item):
                 return self.declare_lost_infra(
                     item, reason='green-apply-timeout-no-upload',

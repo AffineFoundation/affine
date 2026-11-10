@@ -44,11 +44,17 @@ def example_doc() -> Dict[str, Any]:
 
 
 def load_infra_credits(path: Path) -> Dict[str, Any]:
-    """Load credits file; empty/disabled on missing or corrupt (fail soft)."""
+    """Load credits file; empty/disabled on missing or corrupt (fail soft).
+
+    Always logs on exception — never silently disable.
+    """
     try:
         doc = json.loads(Path(path).read_text())
+    except FileNotFoundError as exc:
+        LOG.info('infra_credits_missing path=%s err=%s', path, str(exc)[:200])
+        return {'enabled': False, 'credits': [], 'error': str(exc)[:200]}
     except Exception as exc:
-        LOG.info('infra_credits_unreadable path=%s err=%s', path, str(exc)[:200])
+        LOG.exception('infra_credits_unreadable path=%s', path)
         return {'enabled': False, 'credits': [], 'error': str(exc)[:200]}
     if not isinstance(doc, dict):
         return {'enabled': False, 'credits': [], 'error': 'not-a-dict'}

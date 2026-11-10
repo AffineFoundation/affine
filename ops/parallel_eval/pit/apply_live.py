@@ -293,19 +293,8 @@ class LiveApplicator:
             and existing.get('master_verified')
             and (meta.get('artifacts_uploaded') or existing.get('detail', {}).get('early_upload'))
         )
-        # Upload only when not already on R2; ALWAYS verify against R2 afterward
+        # Upload fp32 FIRST, then bf16. ALWAYS verify against R2 afterward
         # (never skip verify on an early-upload record — aae897c1 review C).
-        if not already_uploaded and self.upload_candidate is not None:
-            self.upload_candidate(
-                candidate_id=cand,
-                candidate_path=meta.get('candidate_path') or '',
-                path=meta.get('candidate_path') or '',
-                pod=meta.get('pod'),
-                files=meta.get('candidate_files') or meta.get('files'),
-                box_candidate_dir=meta.get('box_candidate_dir'),
-                candidate_on_box=meta.get('candidate_on_box'),
-                defer_candidate_upload=meta.get('defer_candidate_upload'),
-            )
         if not already_uploaded and self.upload_master is not None:
             master_pub = dict(self.upload_master(
                 candidate_id=cand,
@@ -317,32 +306,39 @@ class LiveApplicator:
                 candidate_on_box=meta.get('candidate_on_box'),
                 defer_candidate_upload=meta.get('defer_candidate_upload'),
                 store_entry=meta.get('output_store_entry') or '',
+                pending=True,
             ) or {})
-        # Promote private pending master index → public live index on APPLY.
-        try:
-            from ops.parallel_eval.live.pe_artifact_upload import promote_pending_master_to_live
-            promote_pending_master_to_live(candidate_id=cand, digest=str(master_digest))
-        except Exception as exc:
-            # If already public/complete, continue; else fail closed.
-            if not master_index_is_complete(cand):
-                raise ApplyLiveError(
-                    'fp32 pending→live promote failed for %s: %s'
-                    % (cand[:12], str(exc)[:200])
-                ) from exc
-        if not master_index_is_complete(cand):
-            published_complete = bool(
-                master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
+        if not already_uploaded and self.upload_candidate is not None:
+            self.upload_candidate(
+                candidate_id=cand,
+                candidate_path=meta.get('candidate_path') or '',
+                path=meta.get('candidate_path') or '',
+                pod=meta.get('pod'),
+                files=meta.get('candidate_files') or meta.get('files'),
+                box_candidate_dir=meta.get('box_candidate_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                pending=True,
             )
-            if not published_complete:
-                raise ApplyLiveError(
-                    'fp32 master index incomplete for %s (need weight shards; fail closed)'
-                    % cand[:12]
-                )
+        # Incomplete-master refusal BEFORE promote (digest-only / no shards).
+        published_complete = bool(
+            master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
+        )
+        if (
+            not master_index_is_complete(cand)
+            and not published_complete
+            and not already_uploaded
+        ):
+            raise ApplyLiveError(
+                'fp32 master index incomplete for %s (need weight shards; fail closed)'
+                % cand[:12]
+            )
         receipt = _upload_receipt_dir(cand)
         cand_path = str(receipt) if receipt is not None else None
         raw_path = meta.get('candidate_path')
         if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
             cand_path = raw_path
+        # VERIFY FIRST against R2 (pending or live), then promote.
         verified = verify_green_uploads(
             self.verify_uploads,
             candidate_id=cand,
@@ -355,6 +351,16 @@ class LiveApplicator:
             raise ApplyLiveError('upload verify failed (fail closed)')
         if verified.get('master_complete') is False:
             raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
+        # Promote private pending → live only after verify; server-side object copy.
+        try:
+            from ops.parallel_eval.live.pe_artifact_upload import promote_pending_master_to_live
+            promote_pending_master_to_live(candidate_id=cand, digest=str(master_digest))
+        except Exception as exc:
+            if not master_index_is_complete(cand):
+                raise ApplyLiveError(
+                    'fp32 pending→live promote failed for %s: %s'
+                    % (cand[:12], str(exc)[:200])
+                ) from exc
         files = meta.get('candidate_files') or meta.get('files') or (meta.get('checkpoint') or {}).get('files')
         ckpt = dict(id=cand)
         if files:

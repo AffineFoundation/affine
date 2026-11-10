@@ -180,20 +180,47 @@ def box_put_files(
     urls: Mapping[str, str],
     put: Any,
 ) -> None:
-    """Box streams each file to its PUT URL (https or file://). No host scp."""
+    """Box streams each https PUT; file:// mirror is host-materialized via P.run cat.
+
+    Never stage a full live master on the host for https; file:// is test-mirror only.
+    """
+    file_urls = {n: u for n, u in urls.items() if str(u).startswith('file://')}
+    https_urls = {n: u for n, u in urls.items() if not str(u).startswith('file://')}
+    for name, url in file_urls.items():
+        dest = Path(str(url)[7:])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Host reads from box (Fake SSH rewrites box path, not host dest).
+        raw = P.run(
+            "python3 -c \"import sys;sys.stdout.buffer.write(open(%r,'rb').read())\""
+            % ('%s/%s' % (box_dir.rstrip('/'), name)),
+            timeout=7200,
+        )
+        data = raw if isinstance(raw, (bytes, bytearray)) else str(raw).encode()
+        # Some FakePod.run returns text; prefer binary get when available.
+        get = getattr(P, 'get', None)
+        if callable(get):
+            try:
+                data = get('%s/%s' % (box_dir.rstrip('/'), name))
+            except Exception:
+                pass
+        if isinstance(data, str):
+            data = data.encode()
+        dest.write_bytes(bytes(data))
+    if not https_urls:
+        return
     remote_urls = '/tmp/pit-master-put-%s.urls.private.json' % hashlib.sha256(
-        json.dumps(sorted(urls)).encode()
+        json.dumps(sorted(https_urls)).encode()
     ).hexdigest()[:12]
     put(
         P,
         remote_urls,
-        json.dumps(dict(urls=dict(urls), headers={'Content-Type': 'application/octet-stream'})).encode(),
+        json.dumps(dict(urls=dict(https_urls), headers={'Content-Type': 'application/octet-stream'})).encode(),
         '600',
     )
     script = r"""
 set -e
 python3 - <<'PY'
-import json, os, subprocess, sys, urllib.request
+import json, os, sys, urllib.request
 doc = json.load(open(%r))
 urls = doc['urls']; headers = doc.get('headers') or {}
 box = %r
@@ -202,20 +229,14 @@ for name, url in urls.items():
     src = os.path.join(box, name)
     if not os.path.isfile(src):
         bad.append(('missing', name)); continue
-    if url.startswith('file://'):
-        dest = url[7:]
-        os.makedirs(os.path.dirname(dest) or '.', exist_ok=True)
-        subprocess.check_call(['cp', '-f', src, dest])
-    else:
-        # Stream without loading whole shard into memory when possible.
-        with open(src, 'rb') as fh:
-            data = fh.read()
-        req = urllib.request.Request(url, data=data, method='PUT')
-        for k, v in headers.items():
-            req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=7200) as resp:
-            if getattr(resp, 'status', 200) not in (200, 201):
-                bad.append(('http', name, getattr(resp, 'status', None)))
+    with open(src, 'rb') as fh:
+        data = fh.read()
+    req = urllib.request.Request(url, data=data, method='PUT')
+    for k, v in headers.items():
+        req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=7200) as resp:
+        if getattr(resp, 'status', 200) not in (200, 201):
+            bad.append(('http', name, getattr(resp, 'status', None)))
 print('PUT_OK', len(urls), 'BAD', len(bad))
 if bad:
     sys.exit(1)
@@ -335,16 +356,67 @@ def write_pending_master_index(
     return idx_path
 
 
+def _open_life_bucket() -> Any:
+    from subnet.storage import Bucket  # type: ignore
+    life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
+    if life_cfg is None or not life_cfg.is_file():
+        raise ArtifactUploadError('PIT_LIFE_CFG required for R2 object ops')
+    return Bucket(json.loads(life_cfg.read_text())['bucket'])
+
+
+def _sha256_live_object(key: str) -> str:
+    """Hash an object from local mirror or live R2 (fail closed)."""
+    mirror = r2_local_mirror()
+    if mirror is not None:
+        path = mirror / key
+        if not path.is_file():
+            raise ArtifactUploadError('live object missing after promote: %s' % key)
+        return _sha256_file(path)
+    try:
+        bucket = _open_life_bucket()
+        data = bucket.get(key)
+    except ArtifactUploadError:
+        raise
+    except Exception as exc:
+        raise ArtifactUploadError('R2 GET for promote verify failed: %s' % str(exc)[:200]) from exc
+    return hashlib.sha256(data).hexdigest()
+
+
+def _copy_object_pending_to_live(src_key: str, dst_key: str) -> None:
+    """Server-side copy pending → live (mirror: shutil; live: Bucket.copy)."""
+    mirror = r2_local_mirror()
+    if mirror is not None:
+        src = mirror / src_key
+        dst = mirror / dst_key
+        if not src.is_file():
+            raise ArtifactUploadError('pending object missing for promote: %s' % src_key)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return
+    try:
+        bucket = _open_life_bucket()
+        copy_fn = getattr(bucket, 'copy_object', None) or getattr(bucket, 'copy', None)
+        if callable(copy_fn):
+            copy_fn(src_key, dst_key)
+            return
+        # Fallback: GET+PUT (streaming) when Bucket has no copy helper.
+        data = bucket.get(src_key)
+        bucket.put(dst_key, data)
+    except ArtifactUploadError:
+        raise
+    except Exception as exc:
+        raise ArtifactUploadError('R2 server-side copy failed: %s' % str(exc)[:200]) from exc
+
+
 def promote_pending_master_to_live(
     *,
     candidate_id: str,
     digest: str,
 ) -> Path:
-    """Copy pending index → public index; rewrite r2_keys to live prefix.
+    """Server-side copy pending→live objects, verify, THEN write public index.
 
-    Object copy on R2 is best-effort (mirror: rename/copy; live: leave pending
-    readable or copy when Bucket supports it). Index promote is authoritative
-    for APPLY.
+    Never rewrite the public index to live keys before objects exist there —
+    the next box's master download reads index r2_key and would stall.
     """
     pending_path = pending_master_index_dir() / ('%s.json' % candidate_id)
     if not pending_path.is_file():
@@ -356,23 +428,25 @@ def promote_pending_master_to_live(
             % (str(doc.get('master_digest'))[:12], str(digest)[:12])
         )
     files = dict(doc.get('files') or {})
-    live_files = {}
+    if not files:
+        raise ArtifactUploadError('pending master has no files for %s' % candidate_id[:12])
+    src_prefix = pending_r2_prefix(candidate_id)
+    dst_prefix = live_fp32_r2_prefix(candidate_id)
+    live_files: Dict[str, Any] = {}
     for n, meta in files.items():
-        live_files[n] = dict(
-            meta,
-            r2_key='%s/%s' % (live_fp32_r2_prefix(candidate_id), n),
-        )
-    # Mirror: copy pending objects to live prefix.
-    mirror = r2_local_mirror()
-    if mirror is not None:
-        src_prefix = pending_r2_prefix(candidate_id)
-        dst_prefix = live_fp32_r2_prefix(candidate_id)
-        for n in live_files:
-            src = mirror / src_prefix / n
-            dst = mirror / dst_prefix / n
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if src.is_file():
-                shutil.copy2(src, dst)
+        src_key = str((meta or {}).get('r2_key') or ('%s/%s' % (src_prefix, n)))
+        dst_key = '%s/%s' % (dst_prefix, n)
+        _copy_object_pending_to_live(src_key, dst_key)
+        # Verify live object before committing the public index.
+        expected = str((meta or {}).get('sha256') or '')
+        if expected:
+            got = _sha256_live_object(dst_key)
+            if got != expected:
+                raise ArtifactUploadError(
+                    'promote verify mismatch %s: got %s want %s'
+                    % (n, got[:12], expected[:12])
+                )
+        live_files[n] = dict(meta or {}, r2_key=dst_key)
     public = public_master_index_dir()
     public.mkdir(parents=True, exist_ok=True)
     out_path = public / ('%s.json' % candidate_id)
@@ -400,18 +474,63 @@ def promote_pending_master_to_live(
 
 
 def gc_pending_artifacts(candidate_id: str) -> Dict[str, Any]:
-    """Remove private pending index + mirror objects for a RED / released item."""
-    removed = []
+    """Remove private pending index AND R2/mirror objects (~55 GB), not just the index."""
+    removed: list = []
     pending_path = pending_master_index_dir() / ('%s.json' % candidate_id)
+    keys: list = []
     if pending_path.is_file():
+        try:
+            doc = json.loads(pending_path.read_text())
+            for n, meta in (doc.get('files') or {}).items():
+                k = (meta or {}).get('r2_key') or ('%s/%s' % (pending_r2_prefix(candidate_id), n))
+                keys.append(str(k))
+        except Exception:
+            pass
         pending_path.unlink()
         removed.append(str(pending_path))
+    # Always include the whole pending prefix (bf16 model/ + master shards).
+    prefix = pending_r2_prefix(candidate_id)
     mirror = r2_local_mirror()
     if mirror is not None:
-        prefix = mirror / pending_r2_prefix(candidate_id)
-        if prefix.exists():
-            shutil.rmtree(prefix, ignore_errors=True)
-            removed.append(str(prefix))
+        root = mirror / prefix
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+            removed.append(str(root))
+    else:
+        try:
+            bucket = _open_life_bucket()
+            client = getattr(bucket, 'client', None)
+            # Prefer boto3 list+delete so ~55 GB objects leave with the index.
+            if client is not None:
+                token = None
+                while True:
+                    kwargs = dict(Bucket=bucket.name, Prefix=prefix + '/', MaxKeys=1000)
+                    if token:
+                        kwargs['ContinuationToken'] = token
+                    page = client.list_objects_v2(**kwargs)
+                    for entry in page.get('Contents') or []:
+                        key = entry.get('Key')
+                        if key:
+                            keys.append(str(key))
+                    if not page.get('IsTruncated'):
+                        break
+                    token = page.get('NextContinuationToken')
+                    if not token:
+                        break
+            delete_fn = getattr(bucket, 'delete_object', None) or getattr(bucket, 'delete', None)
+            for key in sorted(set(keys)):
+                try:
+                    if callable(delete_fn):
+                        delete_fn(key)
+                    elif client is not None:
+                        client.delete_object(Bucket=bucket.name, Key=key)
+                    else:
+                        continue
+                    removed.append(key)
+                except Exception:
+                    pass
+        except Exception as exc:
+            removed.append('r2-gc-error:%s' % str(exc)[:120])
     return {'ok': True, 'removed': removed, 'candidate_id': candidate_id}
 
 

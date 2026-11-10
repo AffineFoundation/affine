@@ -177,6 +177,7 @@ class TestRealLiveWiring(unittest.TestCase):
             assert (IN / 'meta.json').is_file()
             assert (IN / 'train_config.json').is_file()
             cid = {self.cand!r}
+            out_master = {'5'*64!r}
             # Minimal safetensors-named file so place_cand find works.
             model = OUT / 'model'
             model.mkdir(parents=True, exist_ok=True)
@@ -185,12 +186,24 @@ class TestRealLiveWiring(unittest.TestCase):
             import hashlib
             h = hashlib.sha256(blob).hexdigest()
             (OUT / 'descriptor.json').write_text(json.dumps({{'id': cid, 'files': {{'model-00001-of-00001.safetensors': h}}}}))
+            # Plant fp32 master shards so early-upload (pending) can stream box→mirror.
+            fp32_root = Path('/workspace/affine-mimo-trainer-prod/fp32-master') / out_master
+            fp32_root.mkdir(parents=True, exist_ok=True)
+            master_blob = b'MASTER'
+            (fp32_root / 'master.safetensors').write_bytes(master_blob)
+            meta = {{
+              'version': 'pit-fp32-master-v1',
+              'bf16_sha256': cid,
+              'master_digest': out_master,
+            }}
+            (fp32_root / 'meta.json').write_text(json.dumps(meta))
             rep = {{
               'status': 'ok',
               'optimizer': {{'sgd': {{'fp32_master': {{
                 'source': 'disk',
                 'input_master_digest': exp,
-                'output_master_digest': {'5'*64!r},
+                'output_master_digest': out_master,
+                'output_store_entry': out_master,
                 'input_bf16_sha256': {'c'*64!r},
                 'output_bf16_sha256': {'6'*64!r},
               }}}}}},
@@ -243,6 +256,8 @@ class TestRealLiveWiring(unittest.TestCase):
             'PIT_TRAINER_HOST': str(host),
             'PIT_BUNDLE_JSON': str(self.bun),
             'PIT_FP32_MASTER_INDEX': str(self.fp32_idx),
+            'PIT_FP32_PENDING_INDEX': str(self.root / 'fp32-pending'),
+            'PIT_R2_PENDING_PREFIX': 'pit-pending',
             'PIT_TRAIN_PIT_PY': str(self.train_pit),
             'PIT_PRESIGN_KEYS_JSON': str(self.presign_keys),
             'PIT_PRESIGN_PAYLOAD_JSON': str(self.presign_ckpt),
@@ -254,6 +269,7 @@ class TestRealLiveWiring(unittest.TestCase):
             'AFFINE_REPO': str(self.root / 'repo'),
         }
         (self.root / 'r2-mirror').mkdir()
+        (self.root / 'fp32-pending').mkdir()
         (self.root / 'repo').mkdir()
 
         pod = {
@@ -692,9 +708,19 @@ class TestRealLiveWiring(unittest.TestCase):
                         epoch_dir=str(self.epoch_dir),
                     )
             self.assertEqual(out.get('fetch'), 'r2-box-side')
-            self.assertEqual(out.get('artifact_transport'), 'on-box-until-green')
-            self.assertTrue(out.get('defer_candidate_upload'))
-            self.assertTrue(out.get('candidate_on_box'))
+            # Early upload-before-eval (aae897c1 review): pending R2 seed, or
+            # legacy on-box defer when upload harness is unavailable.
+            transport = out.get('artifact_transport')
+            self.assertIn(transport, (
+                'uploaded-after-train-pending', 'on-box-until-green',
+            ))
+            if transport == 'uploaded-after-train-pending':
+                self.assertTrue(out.get('artifacts_uploaded'))
+                self.assertTrue(out.get('live_apply_seed'))
+                self.assertFalse(out.get('defer_candidate_upload'))
+            else:
+                self.assertTrue(out.get('defer_candidate_upload'))
+                self.assertTrue(out.get('candidate_on_box'))
             self.assertEqual(out['candidate_id'], self.cand)
             self.assertTrue(str(out['candidate_path']).startswith('box:'))
             self.assertEqual(out.get('venv'), pe_box.BOX_VENV)

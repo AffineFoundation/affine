@@ -176,7 +176,13 @@ class TestLostInfraWaiting(unittest.TestCase):
             'apply_retry_at': time.time() + 3600,
             'green_apply_pending': True,
         })
-        busy = apply_busy_check([live, lost, dead])
+        # e1073 class: box_id still set but dead/unreachable + backoff.
+        dead_stamped = _decided(epoch=4, candidate='2' * 64, box_id='dead-box', meta={
+            'apply_retry_at': time.time() + 3600,
+            'green_apply_pending': True,
+            'lium_unreachable': True,
+        })
+        busy = apply_busy_check([live, lost, dead, dead_stamped])
         self.assertEqual(len(busy), 1)
         self.assertIn('e1', busy[0])
 
@@ -199,8 +205,12 @@ class TestLostInfraWaiting(unittest.TestCase):
 class TestEarlyUploadKeep(unittest.TestCase):
     def test_early_upload_error_keeps_box(self):
         with tempfile.TemporaryDirectory() as td:
-            pit = Path(td) / 'pit'
-            pit.mkdir()
+            pe = Path(td) / 'pe'
+            pit = pe / 'pit'
+            pit.mkdir(parents=True)
+            # Keep PIT_STATE and PE_STATE consistent (pit_state_root fail-closed).
+            os.environ['PE_STATE'] = str(pe)
+            os.environ['PE_ST'] = str(pe)
             os.environ['PIT_STATE'] = str(pit)
             item = _decided(epoch=9, candidate=C1, box_id='box-eu', meta={})
             item.state = ItemState.TRAINING

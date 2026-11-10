@@ -120,10 +120,23 @@ rc=$?
 set -e
 echo "$out"
 if [[ "$rc" -eq 3 ]]; then
-  echo "cutover_enable: REFUSED — mid-probe lane; wait or abort ($out)" >&2
+  echo "cutover_enable: REFUSED — $out" >&2
   exit 3
 fi
 [[ "$rc" -eq 0 ]] || die "mid-probe-check failed (rc=$rc)"
+
+# Clean-window: refuse install while a GREEN awaits apply (exclude lost_infra /
+# dead-box backoff so a stuck e1073 cannot block forever).
+set +e
+out="$(python3 -m ops.parallel_eval.pit.cutover_ops apply-busy-check 2>&1)"
+rc=$?
+set -e
+echo "$out"
+if [[ "$rc" -eq 3 ]]; then
+  echo "cutover_enable: REFUSED — GREEN awaiting apply; wait or declare lost ($out)" >&2
+  exit 3
+fi
+[[ "$rc" -eq 0 ]] || die "apply-busy-check failed (rc=$rc)"
 
 BAK="$(python3 -m ops.parallel_eval.pit.cutover_ops backup-flag)"
 echo "cutover_enable: backed up flag -> $BAK"

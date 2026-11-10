@@ -2,6 +2,7 @@
 """fp32 master streams box→R2; pending index; host digest authoritative; GC on RED."""
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -112,9 +113,10 @@ class TestStreamMasterUpload(unittest.TestCase):
             pending_idx.mkdir()
             public.mkdir()
             mirror.mkdir()
+            blob = b'data'
             inv = {
                 'master-00001-of-00001.safetensors': {
-                    'sha256': '1' * 64, 'bytes': 4,
+                    'sha256': hashlib.sha256(blob).hexdigest(), 'bytes': len(blob),
                 },
             }
             env = {
@@ -131,7 +133,7 @@ class TestStreamMasterUpload(unittest.TestCase):
                 # Plant mirror object
                 src = mirror / 'pit-pending' / C / 'master-00001-of-00001.safetensors'
                 src.parent.mkdir(parents=True, exist_ok=True)
-                src.write_bytes(b'data')
+                src.write_bytes(blob)
                 out = AU.promote_pending_master_to_live(candidate_id=C, digest=M)
                 self.assertTrue(Path(out).is_file())
                 live = json.loads(Path(out).read_text())
