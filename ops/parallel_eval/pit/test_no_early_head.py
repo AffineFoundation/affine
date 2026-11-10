@@ -101,13 +101,16 @@ class TestNoEarlyHead(unittest.TestCase):
         ctl.enqueue(epoch=11, registration_index=1)
         for _ in range(30):
             ctl.tick()
-            if ctl.items and ctl.items[0].state in (ItemState.RELEASED, ItemState.NO_DECISION):
+            if ctl.items and (ctl.items[0].meta or {}).get('green_apply_pending'):
                 break
         self.assertEqual(ctl.current_head, H0)
         item = ctl.items[0]
-        self.assertIn(item.state, (ItemState.NO_DECISION, ItemState.RELEASED))
-        if item.decision == 'no_decision':
-            self.assertFalse(item.paid)
+        # Upload/verify failure keeps DECIDED green + box for retry (never silent drop).
+        self.assertEqual(item.state, ItemState.DECIDED)
+        self.assertEqual(item.decision, 'green_fresh')
+        self.assertTrue(item.box_id)
+        self.assertTrue((item.meta or {}).get('green_apply_pending'))
+        self.assertFalse((item.meta or {}).get('gate_emit_ready'))
         self.assertFalse(item.decision == 'green_fresh' and item.paid and ctl.current_head != H0)
 
 

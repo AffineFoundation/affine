@@ -1368,8 +1368,19 @@ def upload_master(
 
 
 def upload_candidate(*, candidate_id: str, path: str = '', **kwargs: Any) -> Mapping[str, Any]:
+    """Module-level GREEN upload seam used by ``LiveApplicator``.
+
+    ``apply_live`` may pass both ``path`` and ``candidate_path``; prefer an
+    explicit ``candidate_path`` kwarg and never forward it twice.
+    """
+    cand_path = kwargs.pop('candidate_path', None)
+    if cand_path is None or cand_path == '':
+        cand_path = path
     return HostBoxIO().upload_candidate(
-        candidate_id=candidate_id, candidate_path=path, path=path, **kwargs,
+        candidate_id=candidate_id,
+        candidate_path=str(cand_path or ''),
+        path=str(path or ''),
+        **kwargs,
     )
 
 

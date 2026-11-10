@@ -179,10 +179,11 @@ class LiveApplicator:
         # GREEN only: transfer candidate (prefer box → R2 scoped presigned PUT).
         # RED / stale paths never call upload — box is released without the 18 GB scp.
         if self.upload_candidate is not None:
+            # Pass candidate_path once (pe_box.upload_candidate also accepts path=).
             self.upload_candidate(
                 candidate_id=cand,
-                path=meta.get('candidate_path'),
-                candidate_path=meta.get('candidate_path'),
+                candidate_path=meta.get('candidate_path') or '',
+                path=meta.get('candidate_path') or '',
                 pod=meta.get('pod'),
                 files=meta.get('candidate_files') or meta.get('files'),
                 box_candidate_dir=meta.get('box_candidate_dir'),

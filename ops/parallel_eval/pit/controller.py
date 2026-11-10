@@ -58,6 +58,9 @@ def _new_id() -> str:
 
 # SSH/transport re-adopt after restart: retry before releasing a still-listed box.
 READOPT_MAX_ATTEMPTS = 3
+# GREEN apply (upload/verify) failure: keep the box and retry with backoff.
+GREEN_APPLY_BACKOFF_S = 30.0
+GREEN_APPLY_BACKOFF_CAP_S = 300.0
 
 
 @dataclass
@@ -943,14 +946,85 @@ class Controller:
         )
         item.meta = dict(item.meta or {}, decision_log_pending=False)
 
+
+    def _green_apply_backoff_s(self, item: ItemRecord) -> float:
+        n = int((item.meta or {}).get('apply_retry_count') or 0)
+        return float(min(GREEN_APPLY_BACKOFF_CAP_S, GREEN_APPLY_BACKOFF_S * (2 ** max(0, n))))
+
+    def _alert_green_apply_failure(self, item: ItemRecord, reason: str) -> Optional[Path]:
+        """Loud durable alert: never silently drop a GREEN that still owns a box."""
+        doc = {
+            'ok': False,
+            'event': 'green_apply_failure',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'candidate_id': item.candidate_id,
+            'box_id': item.box_id,
+            'decision': item.decision,
+            'error': reason[:800],
+            'apply_retry_count': int((item.meta or {}).get('apply_retry_count') or 0),
+            'apply_retry_at': (item.meta or {}).get('apply_retry_at'),
+            'candidate_on_box': bool((item.meta or {}).get('candidate_on_box')),
+            'defer_candidate_upload': bool((item.meta or {}).get('defer_candidate_upload')),
+        }
+        alert: Optional[Path] = None
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'GREEN-APPLY-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'green_apply_failure',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'alert': str(alert) if alert is not None else None,
+            }, default=str),
+            flush=True,
+        )
+        return alert
+
+    def _keep_green_for_retry(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Stay DECIDED with box held; schedule backoff retry. Never silent-drop."""
+        meta = dict(item.meta or {})
+        retries = int(meta.get('apply_retry_count') or 0) + 1
+        delay = float(min(
+            GREEN_APPLY_BACKOFF_CAP_S,
+            GREEN_APPLY_BACKOFF_S * (2 ** max(0, retries - 1)),
+        ))
+        meta.update({
+            'live_apply_error': reason[:300],
+            'apply_retry_count': retries,
+            'apply_retry_at': float(self.now_fn()) + delay,
+            'gate_emit_ready': False,
+            'green_apply_pending': True,
+        })
+        item.meta = meta
+        item.last_error = reason[:300]
+        self._alert_green_apply_failure(item, reason)
+        self._persist(item)
+        return item
+
     def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
-        # Recovery (e1055): decided + box already gone + DECISION already on disk.
-        # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish
-        # without re-running apply or changing the decision.
+        # Recovery (e1055): decided + box already gone + non-GREEN decision on disk.
+        # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish.
+        # Never take this path for unverified GREEN — that would drop C on the box.
+        decision = (item.decision or '').lower()
         if (
             self.config.is_live()
             and item.decision
             and not item.box_id
+            and decision not in ('green_fresh', 'green')
             and (item.meta or {}).get('decision_emitted') is not True
         ):
             item.meta = dict(item.meta or {}, gate_emit_ready=True)
@@ -961,20 +1035,52 @@ class Controller:
                     updates={'box_id': None, 'box_name': None},
                 ), 'post-decision-recovery'
             return item, 'post-decision-recovery'
+        if decision in ('green_fresh', 'green') and not item.box_id:
+            kept = self._keep_green_for_retry(
+                item, 'green-missing-box:cannot-apply-without-pod',
+            )
+            return kept, 'green-apply-retry'
         if self.config.is_live() and self.live_applicator is not None:
+            retry_at = (item.meta or {}).get('apply_retry_at')
+            if (
+                decision in ('green_fresh', 'green')
+                and retry_at is not None
+                and float(retry_at) > float(self.now_fn())
+            ):
+                return item, 'green-apply-backoff'
             scored = dict((item.meta or {}).get('scored') or {'decision': item.decision})
             try:
                 result = self.live_applicator.apply(item, scored=scored)
+            except PromoteRefused as exc:
+                # Never promote on timeout / incomplete — demote loudly.
+                item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300], gate_emit_ready=True)
+                self._alert_green_apply_failure(item, 'promote-refused:%s' % str(exc)[:200])
+                demoted = item
+                if can_transition(item, ItemState.RELEASED):
+                    demoted = apply_transition(
+                        item,
+                        ItemState.RELEASED,
+                        reason='promote-refused:%s' % str(exc)[:120],
+                        updates={
+                            'decision': 'no_decision', 'paid': False, 'fresh': None,
+                            'merge_blocked': False,
+                        },
+                    )
+                demoted.meta = dict(demoted.meta or {}, gate_emit_ready=True)
+                return self._destroy_and_release(demoted, reason='promote-refused')
             except ApplyLiveError as exc:
                 item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300])
-                # Keep RED / stranded stale GREEN (e1055 recovery). Never keep an
-                # unverified green_fresh — that must become unpaid no_decision.
                 if item.decision in ('red', 'green_stale'):
                     item.meta['gate_emit_ready'] = True
                     self._seal_decision_log(item)
                     return self._destroy_and_release(
                         item, reason='apply-failed-keep-decision:%s' % str(exc)[:80],
                     )
+                if decision in ('green_fresh', 'green'):
+                    kept = self._keep_green_for_retry(
+                        item, 'green-apply:%s' % str(exc)[:200],
+                    )
+                    return kept, 'green-apply-retry'
                 released = apply_transition(
                     item,
                     ItemState.RELEASED,
@@ -984,12 +1090,13 @@ class Controller:
                         'merge_blocked': False, 'box_id': None, 'box_name': None,
                     },
                 )
-                # Seal as no_decision only after verify failed — never a paid GREEN.
                 released.meta = dict(released.meta or {}, decision_log_pending=True, gate_emit_ready=True)
                 self._seal_decision_log(released)
                 return released, 'apply-failed'
             item.meta['live_apply'] = result.as_dict()
             item.meta['gate_emit_ready'] = True
+            item.meta.pop('green_apply_pending', None)
+            item.meta.pop('apply_retry_at', None)
             self._seal_decision_log(item)
             if result.head_advanced and item.candidate_id:
                 self.current_head = item.candidate_id
@@ -1005,7 +1112,28 @@ class Controller:
             return self._destroy_and_release(item, reason=item.decision)
         return self._release(item, reason='decided')
 
+    def _unverified_green(self, item: ItemRecord) -> bool:
+        """Live GREEN whose candidate/master uploads are not yet verified.
+
+        Shadow / unit paths without a live applicator must still release.
+        """
+        if not self.config.is_live():
+            return False
+        decision = (item.decision or '').lower()
+        if decision not in ('green_fresh', 'green'):
+            return False
+        apply = (item.meta or {}).get('live_apply') or {}
+        return not (
+            apply.get('candidate_verified') and apply.get('master_verified')
+        )
+
     def _destroy_and_release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
+        # Never destroy a pod that still holds the only copy of a GREEN candidate.
+        if self._unverified_green(item) and reason != 'green_fresh-applied':
+            kept = self._keep_green_for_retry(
+                item, 'refuse-destroy-unverified-green:%s' % reason[:160],
+            )
+            return kept, 'green-hold'
         if self.destroy_box_state_fn is not None and item.box_id:
             try:
                 self.destroy_box_state_fn(
@@ -1016,6 +1144,11 @@ class Controller:
         return self._release(item, reason=reason)
 
     def _release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
+        if self._unverified_green(item) and reason != 'green_fresh-applied':
+            kept = self._keep_green_for_retry(
+                item, 'refuse-release-unverified-green:%s' % reason[:160],
+            )
+            return kept, 'green-hold'
         if item.box_id and (holds_rental(item) or item.box_id):
             # Skip rent.release when already out of the active ledger (idempotent
             # decided-item retries must not grow history).
@@ -1043,9 +1176,16 @@ class Controller:
         """Always return an ItemRecord (never a (item, note) tuple)."""
         if item.state is ItemState.DECIDED:
             item.last_error = reason
-            # Post-decision failures (e.g. destroy TypeError, emit deps) must still
-            # clear the box and surface gate_emit_ready so later ticks finish
-            # turns / PIT-RESULT without changing the decision.
+            decision = (item.decision or '').lower()
+            # Unverified GREEN: keep the box and retry apply — never terminal release
+            # without DECISION/PIT-RESULT (candidate may exist only on the pod).
+            if decision in ('green_fresh', 'green') and not (
+                ((item.meta or {}).get('live_apply') or {}).get('candidate_verified')
+                and ((item.meta or {}).get('live_apply') or {}).get('master_verified')
+            ):
+                return self._keep_green_for_retry(item, 'fail-keep-green:%s' % reason[:200])
+            # Post-decision failures for RED/stale/verified GREEN: clear box and
+            # surface gate_emit_ready so later ticks finish turns / PIT-RESULT.
             released, _note = self._destroy_and_release(item, reason=reason)
             released.meta = dict(released.meta or {}, gate_emit_ready=True)
             return released

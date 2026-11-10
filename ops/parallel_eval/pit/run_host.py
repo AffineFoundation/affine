@@ -23,7 +23,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, List, Mapping, Optional
 
 from .apply_live import LiveApplicator
 from .box import ScriptedBoxIO
@@ -55,14 +55,98 @@ def load_flag(path: Path) -> dict:
     return raw
 
 
+def _uploads_verified(item) -> bool:
+    apply = (item.meta or {}).get('live_apply') or {}
+    return bool(apply.get('candidate_verified') and apply.get('master_verified'))
+
+
+def _item_needs_box(item) -> bool:
+    """True until uploads are verified for GREEN, or while the item is undecided."""
+    if item.state.value in ('released', 'aborted'):
+        return False
+    decision = (item.decision or '').lower()
+    if decision in ('green_fresh', 'green'):
+        return not _uploads_verified(item)
+    if decision in ('red', 'green_stale', 'no_decision'):
+        # Decision known and not a deferred-upload GREEN — box may be reaped after release.
+        return bool(item.box_id) and item.state.value not in ('released',)
+    # Not yet decided: keep the box.
+    return item.state.value not in ('queued',)
+
+
+def _bound_box_ids(ctl: Controller) -> set[str]:
+    """Box ids still bound to in-flight / GREEN-pending items (never orphan-reap)."""
+    known: set[str] = set()
+    for item in ctl.items:
+        if not _item_needs_box(item):
+            continue
+        if item.box_id:
+            known.add(str(item.box_id))
+        pod = (item.meta or {}).get('pod') or {}
+        for key in ('id', 'box_id'):
+            pid = pod.get(key)
+            if pid:
+                known.add(str(pid))
+        name = item.box_name or pod.get('name')
+        if name:
+            known.add(str(name))
+    return known
+
+
+def _restore_box_bindings(ctl: Controller, listings: List[Any]) -> List[str]:
+    """Re-attach box_id from meta/listing when a GREEN/undecided item lost it."""
+    restored: List[str] = []
+    by_id: dict[str, Mapping[str, Any]] = {}
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for row in listings:
+        if not isinstance(row, Mapping):
+            continue
+        bid = str(row.get('id') or row.get('box_id') or '')
+        name = str(row.get('name') or row.get('pod_name') or '')
+        if bid:
+            by_id[bid] = row
+        if name:
+            by_name[name] = row
+    for item in ctl.items:
+        if item.box_id or not _item_needs_box(item):
+            continue
+        pod = (item.meta or {}).get('pod') or {}
+        bid = str(pod.get('id') or pod.get('box_id') or '')
+        name = str(item.box_name or pod.get('name') or '')
+        row = by_id.get(bid) or by_name.get(name)
+        if row is None:
+            continue
+        item.box_id = str(row.get('id') or row.get('box_id') or bid or '')
+        item.box_name = str(row.get('name') or row.get('pod_name') or name or '') or item.box_name
+        if item.box_id:
+            restored.append(item.box_id)
+            ctl._persist(item)
+    return restored
+
+
 def _start_rent_reconcile(ctl: Controller) -> dict:
+    """Adopt bound boxes; only reap listings with no in-flight / GREEN-pending item.
+
+    Must run AFTER items are loaded onto the controller. Releasing a GREEN box
+    whose candidate still lives only on the pod (candidate_on_box) destroys the
+    only copy of C — never do that from startup orphan cleanup.
+    """
     ctl.rent.load_ledger()
-    known = {
-        str(i.box_id) for i in ctl.items
-        if i.box_id and i.state.value not in ('released', 'aborted', 'queued')
-    }
     listings = list(ctl.rent.list_pods() or []) if ctl.rent.list_pods is not None else []
+    restored = _restore_box_bindings(ctl, listings)
+    known = _bound_box_ids(ctl)
+    # Names in known should also map to ids from listings for ledger adopt.
+    for row in listings:
+        if not isinstance(row, Mapping):
+            continue
+        bid = str(row.get('id') or row.get('box_id') or '')
+        name = str(row.get('name') or row.get('pod_name') or '')
+        if bid and (bid in known or name in known):
+            known.add(bid)
+        if name and (bid in known or name in known):
+            known.add(name)
     out = ctl.rent.reconcile(listings, item_box_ids=known)
+    out['restored_box_ids'] = restored
     ctl.rent.save_ledger()
     return out
 
@@ -124,13 +208,21 @@ def build_controller(
         )
         ledger = store.root / 'rent-ledger.json'
         ctl.rent.ledger_path = str(ledger)
-        if not dry_run:
-            _start_rent_reconcile(ctl)
     else:
         ctl = Controller.from_flag(dict(parallel_eval))
 
+    # Load durable items BEFORE rent reconcile so GREEN/undecided boxes are
+    # known and re-adopted — never orphan-released on host restart.
     for item in store.list_items():
         ctl.items.append(item)
+    if (
+        cfg.enabled
+        and (cfg.is_live() or cfg.is_shadow())
+        and not dry_run
+        and getattr(ctl, 'rent', None) is not None
+        and getattr(ctl.rent, 'ledger_path', None)
+    ):
+        _start_rent_reconcile(ctl)
     return ctl
 
 

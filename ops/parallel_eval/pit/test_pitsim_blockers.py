@@ -82,14 +82,16 @@ class TestPitsimBlockers(unittest.TestCase):
             ctl.tick()
             for it in ctl.items:
                 item_states.append((it.state.value, it.decision, _gate_emit_ready(it)))
-            if ctl.items and ctl.items[0].state is ItemState.RELEASED:
+            if ctl.items and (ctl.items[0].meta or {}).get('green_apply_pending'):
                 break
-        # Never ready to emit a paid green; final decision is no_decision unpaid.
+        # Verify fail: keep GREEN + box for retry; never emit / never advance HEAD.
         self.assertFalse(any(
             ready and dec == 'green_fresh' for _st, dec, ready in item_states
         ))
-        self.assertEqual(ctl.items[0].decision, 'no_decision')
-        self.assertFalse(ctl.items[0].paid)
+        self.assertEqual(ctl.items[0].decision, 'green_fresh')
+        self.assertEqual(ctl.items[0].state, ItemState.DECIDED)
+        self.assertTrue(ctl.items[0].box_id)
+        self.assertTrue((ctl.items[0].meta or {}).get('green_apply_pending'))
         self.assertEqual(ctl.current_head, H0)
 
     def test_tick_once_skips_emit_without_verified_apply(self):
