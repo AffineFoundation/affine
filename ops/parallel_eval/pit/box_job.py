@@ -26,6 +26,11 @@ STATUS_RUNNING = 'running'
 STATUS_DONE = 'done'
 STATUS_NEED_LAUNCH = 'need_launch'
 
+# After a detached stage exits with no marker yet, re-read markers/RESULT up to
+# three times over ~10s (write-.done-then-exit race / NFS lag).
+MARKER_REREAD_ATTEMPTS = 3
+MARKER_REREAD_GAP_S = 3.0
+
 
 class BoxJobError(RuntimeError):
     pass
@@ -206,19 +211,77 @@ def kill_stale_job(
     return killed
 
 
+def job_log_rc_ok(store: BoxJobStore, job_dir: str) -> bool:
+    """True when ``job.log`` (or train.log) shows a clean ``rc=0`` exit."""
+    texts: list[str] = []
+    tail = read_log_tail(store, job_dir, n_lines=80)
+    if tail:
+        texts.append(tail)
+    # Detached train also writes PST/train.log; Remote stores may surface it.
+    for extra in (
+        '%s/train.log' % job_dir.rstrip('/'),
+        '/workspace/pst/train.log',
+    ):
+        raw = store.read_text(extra)
+        if raw:
+            texts.append(raw)
+    for text in texts:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        # Prefer trailing lines (final exit) but accept anywhere for short logs.
+        window = lines[-20:] if len(lines) > 20 else lines
+        if any(ln == 'rc=0' or ln.endswith(' rc=0') for ln in window):
+            return True
+        if 'rc=0' in '\n'.join(window):
+            return True
+    return False
+
+
+def train_artifacts_present(store: BoxJobStore, job_dir: str) -> bool:
+    """True when on-box train shards / checkpoint artifacts exist.
+
+    Prefer a store-specific checker when available (Remote / Mem); otherwise
+    look for a recorded artifact hint under the job dir.
+    """
+    checker = getattr(store, 'train_artifacts_present', None)
+    if callable(checker):
+        try:
+            return bool(checker(job_dir))
+        except Exception:
+            pass
+    # Fallback hint file written by recovery tests / box helpers.
+    hint = store.read_text('%s/train-artifacts.ok' % job_dir.rstrip('/'))
+    return bool(hint and hint.strip())
+
+
 def inspect_job(store: BoxJobStore, job_dir: str) -> BoxJobStatus:
+    """Inspect box job state.
+
+    Order matters: check pid-alive **before** reading markers. A stage that
+    writes ``<stage>.done`` and exits between those two reads used to look like
+    "not running + no marker" when markers were snapshotted first.
+    """
     result = fetch_result(store, job_dir)
-    markers = read_markers(store, job_dir)
     if result is not None:
         return BoxJobStatus(state=STATUS_DONE, markers=set(STAGES), result=result)
+
     pid = read_pid(store, job_dir)
-    if pid and store.pid_alive(pid):
+    alive = bool(pid and store.pid_alive(pid))
+    # Pid-alive first — if still running, accept possibly-incomplete markers.
+    if alive:
+        markers = read_markers(store, job_dir)
         return BoxJobStatus(
             state=STATUS_RUNNING,
             markers=markers,
             pid=pid,
             next_stage=next_missing_stage(markers),
         )
+
+    # Process dead: read markers *after* the pid check so a just-written
+    # ``.done`` (and RESULT.json for eval) are visible.
+    markers = read_markers(store, job_dir)
+    result = fetch_result(store, job_dir)
+    if result is not None:
+        return BoxJobStatus(state=STATUS_DONE, markers=set(STAGES) | markers, result=result)
     nxt = next_missing_stage(markers)
     if nxt is None:
         return BoxJobStatus(state=STATUS_NEED_LAUNCH, markers=markers, next_stage='result')
@@ -234,6 +297,7 @@ class BoxJobController:
     job_root: str = '/workspace/pst/pit-jobs'
     sleep_fn: Callable[[float], None] = time.sleep
     now_fn: Callable[[], float] = time.time
+    _stage_retries: Dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     @property
     def job_dir(self) -> str:
@@ -260,6 +324,113 @@ class BoxJobController:
         """Last lines of ``job.log`` — capture before release so host keeps the trail."""
         return read_log_tail(self.store, self.job_dir, n_lines=n_lines)
 
+    def _read_stage_payload(self, stage: str) -> Dict[str, Any]:
+        raw = self.store.read_text(marker_path(self.job_dir, stage))
+        return _loads_json(raw) or {}
+
+    def _await_late_marker(
+        self,
+        stage: str,
+        *,
+        attempts: int = MARKER_REREAD_ATTEMPTS,
+        gap_s: float = MARKER_REREAD_GAP_S,
+    ) -> Optional[Dict[str, Any]]:
+        """Re-read markers (and RESULT for eval) after a short delay.
+
+        Covers the write-.done-then-exit race and slow filesystem visibility.
+        Up to ``attempts`` re-reads spaced by ``gap_s`` (~10s total by default).
+        """
+        for _ in range(max(1, int(attempts))):
+            self.sleep_fn(float(gap_s))
+            result = fetch_result(self.store, self.job_dir)
+            if result is not None:
+                return dict(result)
+            markers = read_markers(self.store, self.job_dir)
+            if stage in markers:
+                return self._read_stage_payload(stage)
+            if stage == 'eval':
+                # Eval's durable completion is RESULT.json even without eval.done.
+                result = fetch_result(self.store, self.job_dir)
+                if result is not None:
+                    return dict(result)
+        return None
+
+    def _recover_from_artifacts(self, stage: str) -> Optional[Dict[str, Any]]:
+        """If on-box artifacts exist and job log rc==0, treat the stage as done.
+
+        Never release on 'exited without marker' without this check first.
+        """
+        stage = canonicalize_stage(stage)
+        if not job_log_rc_ok(self.store, self.job_dir):
+            return None
+        if stage == 'eval':
+            result = fetch_result(self.store, self.job_dir)
+            if result is not None:
+                return dict(result)
+            return None
+        if stage == 'train':
+            if not train_artifacts_present(self.store, self.job_dir):
+                return None
+            # Synthesize a minimal successful train marker from log / hint.
+            payload: Dict[str, Any] = {'ok': True, 'recovered': 'artifacts+rc0'}
+            hint = getattr(self.store, 'recovered_train_payload', None)
+            if callable(hint):
+                try:
+                    extra = hint(self.job_dir)
+                    if isinstance(extra, Mapping):
+                        payload.update(dict(extra))
+                except Exception:
+                    pass
+            ck = payload.get('checkpoint') or payload.get('candidate_id')
+            if not ck:
+                # Best-effort parse of checkpoint hex from job.log.
+                tail = read_log_tail(self.store, self.job_dir, n_lines=200) or ''
+                for line in reversed(tail.splitlines()):
+                    line = line.strip()
+                    if line.startswith('{'):
+                        try:
+                            doc = json.loads(line)
+                        except Exception:
+                            continue
+                        if isinstance(doc, dict):
+                            ck = doc.get('checkpoint') or (doc.get('done') or {}).get('checkpoint')
+                            if ck:
+                                payload['checkpoint'] = ck
+                                break
+            write_marker(self.store, self.job_dir, 'train', payload)
+            return payload
+        return None
+
+    def _handle_exited_without_marker(self, stage: str) -> Dict[str, Any]:
+        """Recover or signal that the caller may retry once on the same box.
+
+        Returns a payload when recovered. Raises ``BoxJobError`` with a
+        ``retryable`` note when one same-box retry remains; raises a hard error
+        after that retry is exhausted.
+        """
+        late = self._await_late_marker(stage)
+        if late is not None:
+            if stage not in read_markers(self.store, self.job_dir) and stage != 'eval':
+                write_marker(self.store, self.job_dir, stage, late)
+            elif stage in STAGES and stage not in read_markers(self.store, self.job_dir):
+                # eval with RESULT only — stamp eval.done for resume.
+                write_marker(self.store, self.job_dir, stage, {
+                    'ok': True, 'recovered': 'late-result',
+                    'candidate_id': late.get('candidate_id'),
+                    'probe_result': late.get('probe_result'),
+                })
+            return late
+        recovered = self._recover_from_artifacts(stage)
+        if recovered is not None:
+            return recovered
+        used = int(self._stage_retries.get(stage, 0))
+        if used < 1:
+            self._stage_retries[stage] = used + 1
+            raise BoxJobError(
+                'detached stage %s exited without marker; retry once on same box' % stage
+            )
+        raise BoxJobError('detached stage %s exited without marker' % stage)
+
     def run_stage_once(
         self,
         stage: str,
@@ -279,69 +450,98 @@ class BoxJobController:
         appears (runner optional). Otherwise ``runner()`` executes on the host
         after launch / instead of launch and its return value becomes the marker
         payload.
+
+        Never releases the box on a bare 'exited without marker': re-reads
+        markers/RESULT, checks artifacts + ``rc=0``, then retries the stage
+        once on the same box before failing.
         """
         stage = canonicalize_stage(stage)
         if stage not in STAGES:
             raise BoxJobError('unknown stage %r' % stage)
         self.ensure_dir()
-        st = self.status()
-        if st.result is not None:
-            return dict(st.result)
-        if stage in st.markers:
-            raw = self.store.read_text(marker_path(self.job_dir, stage))
-            return _loads_json(raw) or {}
-
-        # Stage missing: if a detached job is still running for this stage, poll it.
-        # Sync stages (no detached_command) always kill stale leftovers and re-run.
         deadline = float(self.now_fn()) + float(timeout_s)
-        if (
-            (wait_for_marker or detached_command)
-            and st.state == STATUS_RUNNING
-            and st.next_stage == stage
-        ):
-            while float(self.now_fn()) < deadline:
-                st = self.status()
-                if stage in st.markers:
-                    raw = self.store.read_text(marker_path(self.job_dir, stage))
-                    return _loads_json(raw) or {}
-                if st.state != STATUS_RUNNING:
-                    break
-                self.sleep_fn(poll_s)
+        # Initial attempt + at most one same-box retry after recovery miss.
+        for attempt in (0, 1):
             st = self.status()
+            if st.result is not None:
+                return dict(st.result)
             if stage in st.markers:
-                raw = self.store.read_text(marker_path(self.job_dir, stage))
-                return _loads_json(raw) or {}
+                return self._read_stage_payload(stage)
 
-        stage = canonicalize_stage(stage)
-        kill_patterns = list(extra_kill_patterns)
-        if stage == 'train':
-            kill_patterns.append('train_pit.py')
-        elif stage == 'download':
-            kill_patterns.extend(('gate_fetch.py', 'bundle_fetch.py'))
-        elif stage == 'eval':
-            # Re-run must clear leftover vLLM / podctl / harness from a prior host.
-            kill_patterns.extend((
-                'vllm serve', 'podctl.py serve', 'podctl.py start-run',
-                'pit-box-job-eval', 'affine_gatepool',
-            ))
-        self.kill_stale(extra_patterns=kill_patterns)
-        if detached_command:
-            self.store.launch_detached(self.job_dir, stage=stage, command=detached_command)
-            if wait_for_marker:
+            # Stage missing: if a detached job is still running for this stage, poll it.
+            # Sync stages (no detached_command) always kill stale leftovers and re-run.
+            if (
+                (wait_for_marker or detached_command)
+                and st.state == STATUS_RUNNING
+                and st.next_stage == stage
+            ):
                 while float(self.now_fn()) < deadline:
                     st = self.status()
                     if stage in st.markers:
-                        raw = self.store.read_text(marker_path(self.job_dir, stage))
-                        return _loads_json(raw) or {}
-                    if st.state != STATUS_RUNNING and stage not in st.markers:
-                        # Process died without marker — fail closed (caller may retry once).
-                        raise BoxJobError('detached stage %s exited without marker' % stage)
+                        return self._read_stage_payload(stage)
+                    if st.result is not None:
+                        return dict(st.result)
+                    if st.state != STATUS_RUNNING:
+                        break
                     self.sleep_fn(poll_s)
-                raise BoxJobError('detached stage %s timed out' % stage)
+                st = self.status()
+                if stage in st.markers:
+                    return self._read_stage_payload(stage)
+                if st.result is not None:
+                    return dict(st.result)
+                if st.state != STATUS_RUNNING and stage not in st.markers:
+                    try:
+                        return self._handle_exited_without_marker(stage)
+                    except BoxJobError as exc:
+                        if 'retry once' not in str(exc) or attempt >= 1:
+                            raise
+                        # Fall through: kill_stale + relaunch on same box (once).
 
-        payload = dict(runner() or {})
-        write_marker(self.store, self.job_dir, stage, payload)
-        return payload
+            kill_patterns = list(extra_kill_patterns)
+            if stage == 'train':
+                kill_patterns.append('train_pit.py')
+            elif stage == 'download':
+                kill_patterns.extend(('gate_fetch.py', 'bundle_fetch.py'))
+            elif stage == 'eval':
+                # Re-run must clear leftover vLLM / podctl / harness from a prior host.
+                kill_patterns.extend((
+                    'vllm serve', 'podctl.py serve', 'podctl.py start-run',
+                    'pit-box-job-eval', 'affine_gatepool',
+                ))
+            self.kill_stale(extra_patterns=kill_patterns)
+            if detached_command:
+                self.store.launch_detached(
+                    self.job_dir, stage=stage, command=detached_command,
+                )
+                if wait_for_marker:
+                    while float(self.now_fn()) < deadline:
+                        st = self.status()
+                        if stage in st.markers:
+                            return self._read_stage_payload(stage)
+                        if st.result is not None:
+                            return dict(st.result)
+                        if st.state != STATUS_RUNNING and stage not in st.markers:
+                            try:
+                                return self._handle_exited_without_marker(stage)
+                            except BoxJobError as exc:
+                                if 'retry once' not in str(exc) or attempt >= 1:
+                                    raise
+                                break  # for-loop: one same-box relaunch
+                        self.sleep_fn(poll_s)
+                    else:
+                        raise BoxJobError('detached stage %s timed out' % stage)
+                    continue  # retry launch once
+
+                # Detached without wait_for_marker: runner runs on host after launch.
+                payload = dict(runner() or {})
+                write_marker(self.store, self.job_dir, stage, payload)
+                return payload
+
+            payload = dict(runner() or {})
+            write_marker(self.store, self.job_dir, stage, payload)
+            return payload
+
+        raise BoxJobError('detached stage %s exited without marker' % stage)
 
     def resume_or_fetch(self) -> Optional[Dict[str, Any]]:
         """Return RESULT if present; None if host must continue missing stages."""
@@ -415,6 +615,43 @@ class RemoteBoxJobStore:
         )
         return 'ALIVE' in (out or '')
 
+    def train_artifacts_present(self, job_dir: str) -> bool:
+        """True when safetensor shards exist under PST/out or KDIR (train succeeded)."""
+        out = self.pod.run(
+            "find /workspace/pst/out /opt/plain/probe/affine-env-probe/ckpt "
+            "-name 'model-*-of-*.safetensors' 2>/dev/null | head -3",
+            timeout=60, check=False,
+        )
+        text = (out or '').strip()
+        return bool(text) and 'model-' in text
+
+    def recovered_train_payload(self, job_dir: str) -> Optional[Dict[str, Any]]:
+        """Best-effort checkpoint id from train.log / job.log done events."""
+        for path in (
+            '/workspace/pst/train.log',
+            '%s/train.log' % job_dir.rstrip('/'),
+            log_path(job_dir),
+        ):
+            raw = self.read_text(path)
+            if not raw:
+                continue
+            for line in reversed(raw.splitlines()):
+                line = line.strip()
+                if not line.startswith('{'):
+                    continue
+                try:
+                    doc = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(doc, dict):
+                    continue
+                ck = doc.get('checkpoint')
+                if not ck and isinstance(doc.get('done'), dict):
+                    ck = doc['done'].get('checkpoint')
+                if isinstance(ck, str) and len(ck) == 64:
+                    return {'ok': True, 'checkpoint': ck, 'candidate_id': ck}
+        return None
+
     def kill_pids(self, pids: Sequence[int]) -> None:
         for pid in pids:
             self.pod.run(
@@ -477,8 +714,22 @@ class MemBoxJobStore:
     default_ticks: int = 2
     crash_pids: Set[int] = field(default_factory=set)
     launch_log: list = field(default_factory=list)
+    # Artifact-recovery hooks for hermetic tests (no real shards).
+    has_train_artifacts: bool = False
+    train_recovery_payload: Optional[Dict[str, Any]] = None
 
     def ensure_dir(self, job_dir: str) -> None:
+        return None
+
+    def train_artifacts_present(self, job_dir: str) -> bool:
+        if self.has_train_artifacts:
+            return True
+        hint = self.files.get('%s/train-artifacts.ok' % job_dir.rstrip('/'))
+        return bool(hint and str(hint).strip())
+
+    def recovered_train_payload(self, job_dir: str) -> Optional[Dict[str, Any]]:
+        if self.train_recovery_payload:
+            return dict(self.train_recovery_payload)
         return None
 
     def read_text(self, path: str) -> Optional[str]:
