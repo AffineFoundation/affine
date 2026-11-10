@@ -8,6 +8,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pe_common import *
 import pe_rent
+from pe_probe_plan import build_probe_plan  # shared with detached eval (no drift)
 
 BUNDLE = PRIV / "probe-pe.tar.zst"
 HARNESS = rj(PRIV / "public_harness.json") or {}
@@ -244,20 +245,11 @@ def verify_serve_flags(P, cid, replicas=8):
 
 
 def run_probe(P, cid, indices, plan_seed, k=8, max_tokens=65536, env_id="affine_gatepool", run_name=None, max_num_seqs=512, beat=None):
-    name = run_name or ("pe-%s-%s" % (cid[:12], hashlib.sha256(plan_seed.encode()).hexdigest()[:8]))
-    pub = HARNESS
-    cpr = min(512, int(max_num_seqs))
-    plan = dict(
-        run_name=name, checkpoint_id=cid, seed=plan_seed, concurrency=4096, grade_workers=160,
-        resume=False, bandit_topk=False, concurrency_per_replica=cpr,
-        envs=[dict(env_id=env_id, indices=list(indices), k=int(k), max_tokens=int(max_tokens))],
+    plan = build_probe_plan(
+        cid, indices, plan_seed, k=k, max_tokens=max_tokens, env_id=env_id,
+        run_name=run_name, max_num_seqs=max_num_seqs, harness=HARNESS,
     )
-    if pub.get("harness"):
-        plan["harness"] = pub["harness"]
-        plan["manifest_projection"] = dict(
-            mimo_answer_projection=pub.get("mimo_answer_projection"),
-            sampling_contract=pub.get("sampling_contract"),
-        )
+    name = plan["run_name"]
     P.run("test ! -f %s/live_math_manifest_subset.json" % PODD)
     P.run("python3 %s/podctl.py start-run %s" % (PODD, cid), inp=json.dumps(plan).encode(), timeout=120)
     t0 = time.time()

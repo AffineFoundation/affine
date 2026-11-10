@@ -888,37 +888,102 @@ def detached_eval_command(
     podd: str = '/root/affine-env-probe',
     max_num_seqs: int = 512,
 ) -> str:
-    """Box-side shell: serve + probe under setsid; write markers/eval.done + RESULT.json.
+    """Box-side setsid driver: serve → serve_wait → verify_serve_flags → probe.
 
-    The host ships ``plan_path`` (JSON plan for podctl start-run) before launch.
-    On host restart mid-eval the new host polls this marker instead of re-serving.
+    Mirrors live ``pe_lane.serve`` / ``serve_wait`` / ``verify_serve_flags`` /
+    ``run_probe`` stall rules (finalize-run after 20 min no progress or 90 min
+    wall). Always writes ``markers/eval.done`` with status
+    ``ok`` / ``finalized`` / ``failed`` so the host never waits out a 2h timeout.
+    Plan JSON at ``plan_path`` must be built by ``pe_lane.build_probe_plan``.
     """
     jd = job_dir.rstrip('/')
+    # Use replace (not str.format) so the embedded Python braces stay intact.
+    template = r'''mkdir -p __JD__/markers; pgrep -f 'train_pit.py|v83_dp.py' | while read p; do kill -TERM "$p" 2>/dev/null || true; done; sleep 2; python3 - __JD__ __CID__ __PLAN__ __PODD__ __MS__ <<'PY'
+import json, os, subprocess, sys, time
+jd, cid, plan_path, podd, ms = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+
+def sh(cmd, check=True, timeout=900):
+    p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    if check and p.returncode != 0:
+        raise RuntimeError('rc=%s cmd=%s stderr=%s' % (p.returncode, cmd[:120], (p.stderr or '')[-300:]))
+    return (p.stdout or '')
+
+def write_done(status, **extra):
+    doc = dict(ok=(status == 'ok'), status=status, candidate_id=cid, at=time.time(), **extra)
+    open(os.path.join(jd, 'markers', 'eval.done'), 'w').write(json.dumps(doc, sort_keys=True) + '\n')
+    open(os.path.join(jd, 'RESULT.json'), 'w').write(json.dumps(doc, sort_keys=True) + '\n')
+    return doc
+
+try:
+    plan = json.load(open(plan_path))
+    name = plan['run_name']
+    # Live pe_lane.serve
+    sh('MAX_SEQS=%d python3 %s/podctl.py serve %s 0.9' % (ms, podd, cid), timeout=900)
+    # Live pe_lane.serve_wait: all replicas up + OpenAI models, stable 2 polls.
+    t0 = time.time(); ready = 0
+    while time.time() - t0 < 900:
+        st_raw = sh('python3 %s/podctl.py status' % podd, timeout=120).strip().splitlines()[-1]
+        st = json.loads(st_raw)
+        up = int(st.get('replicas_up') or st.get('serve_procs') or 0)
+        need = int(st.get('replicas') or 8)
+        models = sh('curl -s -m 3 http://127.0.0.1:18555/v1/models 2>/dev/null | head -c 200 || true', check=False, timeout=15)
+        ok_m = ('data' in (models or '')) or ('model' in (models or '').lower())
+        served = st.get('served') or st.get('serve_ckpt')
+        if served and served != cid:
+            raise RuntimeError('pod serves %s, expected %s' % (str(served)[:12], cid[:12]))
+        if up >= need and ok_m:
+            ready += 1
+            if ready >= 2:
+                break
+        else:
+            ready = 0
+        time.sleep(5)
+    else:
+        raise RuntimeError('serve timeout after %.0fs' % (time.time() - t0))
+    # Live pe_lane.verify_serve_flags (fail closed).
+    out = sh("ps -eo args | grep -F 'vllm serve' | grep -v grep || true", check=False, timeout=60)
+    procs = [l for l in (out or '').splitlines() if ' serve ' in l and '/vllm' in l]
+    bad = [l[:200] for l in procs if ('/ckpt/%s' % cid) not in l or '--dtype bfloat16' not in l
+           or '--max-model-len 69632' not in l or '--max-num-seqs 512' not in l or 'fp8' in l]
+    if len(procs) < need or bad:
+        raise RuntimeError('serve parity failed: procs=%d need=%d bad=%s' % (len(procs), need, bad[:1]))
+    # Live pe_lane.run_probe start-run + stall rules.
+    sh('test ! -f %s/live_math_manifest_subset.json' % podd)
+    p = subprocess.run(['python3', '%s/podctl.py' % podd, 'start-run', cid],
+                      input=json.dumps(plan).encode(), capture_output=True, timeout=120)
+    if p.returncode != 0:
+        raise RuntimeError('start-run failed: %s' % ((p.stderr or b'')[-300:].decode('utf-8', 'replace')))
+    t0 = time.time(); last_p = None; last_t = time.time(); status = 'ok'
+    while True:
+        st = json.loads(sh('python3 %s/podctl.py status' % podd, timeout=120).strip().splitlines()[-1])
+        ru = (st.get('runs') or {}).get(name, {})
+        if ru.get('result'):
+            break
+        pg = ru.get('progress') or {}
+        ph = (pg.get('generated'), pg.get('samples'), pg.get('done'))
+        if ph != last_p:
+            last_p, last_t = ph, time.time()
+        if time.time() - last_t > 1200:
+            sh('python3 %s/podctl.py finalize-run %s 60' % (podd, name), check=False, timeout=180)
+            time.sleep(20); status = 'finalized'; break
+        if time.time() - t0 > 5400:
+            sh('python3 %s/podctl.py finalize-run %s 60' % (podd, name), check=False, timeout=180)
+            status = 'finalized'; break
+        time.sleep(10)
+    res = json.load(open('%s/runs/%s/result.json' % (podd, name)))
+    write_done(status, probe_result=res, run_name=name)
+    sys.exit(0)
+except Exception as ex:
+    write_done('failed', error=str(ex)[:500])
+    sys.exit(1)
+PY'''
     return (
-        "set -e; JD={JD}; CID={CID}; PLAN={PLAN}; PODD={PODD}; "
-        "mkdir -p \"$JD/markers\"; "
-        # Clear train leftovers only — do not kill our own eval tree after relaunch.
-        "pgrep -f 'train_pit.py|v83_dp.py' | while read p; do kill -TERM \"$p\" 2>/dev/null || true; done; "
-        "sleep 2; "
-        "MAX_SEQS={MS} python3 \"$PODD/podctl.py\" serve \"$CID\" 0.9; "
-        "python3 \"$PODD/podctl.py\" start-run \"$CID\" < \"$PLAN\"; "
-        "NAME=$(python3 -c \"import json;print(json.load(open('{PLAN}'))['run_name'])\"); "
-        "for i in $(seq 1 540); do "
-        "  ST=$(python3 \"$PODD/podctl.py\" status | tail -1); "
-        "  python3 -c \"import json,sys; st=json.loads(sys.argv[1]); ru=(st.get('runs') or {{}}).get(sys.argv[2]) or {{}}; "
-        "sys.exit(0 if ru.get('result') else 1)\" \"$ST\" \"$NAME\" && break; "
-        "  sleep 10; "
-        "done; "
-        "python3 - \"$JD\" \"$CID\" \"$PODD\" \"$NAME\" <<'PY'\n"
-        "import json, os, sys, time\n"
-        "jd, cid, podd, name = sys.argv[1:5]\n"
-        "res = json.load(open('%s/runs/%s/result.json' % (podd, name)))\n"
-        "doc = {{'ok': True, 'candidate_id': cid, 'probe_result': res, 'run_name': name, 'at': time.time()}}\n"
-        "open(os.path.join(jd, 'markers', 'eval.done'), 'w').write(json.dumps(doc, sort_keys=True) + '\\n')\n"
-        "open(os.path.join(jd, 'RESULT.json'), 'w').write(json.dumps(doc, sort_keys=True) + '\\n')\n"
-        "PY"
-    ).format(
-        JD=jd, CID=candidate_id, PLAN=plan_path, PODD=podd, MS=int(max_num_seqs),
+        template
+        .replace('__JD__', jd)
+        .replace('__CID__', candidate_id)
+        .replace('__PLAN__', plan_path)
+        .replace('__PODD__', podd)
+        .replace('__MS__', str(int(max_num_seqs)))
     )
 
 

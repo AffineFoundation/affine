@@ -64,6 +64,10 @@ def _new_id() -> str:
 
 # SSH/transport re-adopt after restart: retry before releasing a still-listed box.
 READOPT_MAX_ATTEMPTS = 3
+# GPU-busy during re-adopt: keep the box briefly, then kill job PIDs and retry once.
+# Unbounded keep would bill forever (e1065 class). Cap → kill+retry → alert+release.
+GPU_BUSY_KEEP_S = 15 * 60
+GPU_BUSY_KILL_RETRY_MAX = 1
 # GREEN apply (upload/verify) failure: keep the box and retry with backoff.
 GREEN_APPLY_BACKOFF_S = 30.0
 GREEN_APPLY_BACKOFF_CAP_S = 300.0
@@ -663,31 +667,21 @@ class Controller:
         if not item.box_id:
             return None
         attempts = int((item.meta or {}).get('readopt_attempts') or 0)
-        # GPU-busy: unbounded soft wait while the box is still listed — never release.
         if self._is_gpu_busy_readopt_error(err):
-            if not self._box_still_in_lium(item):
-                return None
-        else:
-            if attempts >= READOPT_MAX_ATTEMPTS:
-                return None
-            if not self._box_still_in_lium(item):
-                return None
+            return self._maybe_retry_gpu_busy(item, err)
+        if attempts >= READOPT_MAX_ATTEMPTS:
+            return None
+        if not self._box_still_in_lium(item):
+            return None
         meta = dict(item.meta or {})
         meta['readopt_attempts'] = attempts + 1
         meta['last_readopt_error'] = (err or '')[:200]
-        # Keep candidate_id / sealed if train already finished — resume eval, don't wipe.
-        if not self._is_gpu_busy_readopt_error(err):
-            meta.pop('probe_bundle', None)
-            item.sealed = False
-            item.result_stored = False
-            item.candidate_id = None
+        meta.pop('probe_bundle', None)
         item.meta = meta
-        if item.state not in (ItemState.PROVISIONING, ItemState.TRAINING, ItemState.SERVING, ItemState.PROBING):
-            try:
-                item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
-            except TransitionError:
-                item.state = ItemState.PROVISIONING
-        elif item.state is not ItemState.PROVISIONING and not self._is_gpu_busy_readopt_error(err):
+        item.sealed = False
+        item.result_stored = False
+        item.candidate_id = None
+        if item.state is not ItemState.PROVISIONING:
             try:
                 item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
             except TransitionError:
@@ -695,18 +689,108 @@ class Controller:
         self._persist(item)
         return item, 'readopt-retry'
 
+    def _maybe_retry_gpu_busy(
+        self, item: ItemRecord, err: str,
+    ) -> Optional[tuple[ItemRecord, str]]:
+        """GPU-busy: keep ≤15 min, then kill recorded job PIDs and retry once.
+
+        Still busy after that → alert + release (no unbounded billing).
+        """
+        if not self._box_still_in_lium(item):
+            return None
+        now = float(self.now_fn())
+        meta = dict(item.meta or {})
+        first_at = meta.get('gpu_busy_since')
+        if first_at is None:
+            meta['gpu_busy_since'] = now
+            first_at = now
+        meta['last_readopt_error'] = (err or '')[:200]
+        elapsed = now - float(first_at)
+        kill_retries = int(meta.get('gpu_busy_kill_retries') or 0)
+        if elapsed < float(GPU_BUSY_KEEP_S):
+            # Prefer resume: keep box, wait for eval job / free GPUs.
+            item.meta = meta
+            item.last_error = (err or '')[:300]
+            self._persist(item)
+            return item, 'readopt-gpu-busy-keep'
+        if kill_retries < int(GPU_BUSY_KILL_RETRY_MAX):
+            # Cap elapsed: kill recorded box-job PIDs / vLLM, then one more try.
+            killed = self._kill_box_job_pids(item)
+            meta['gpu_busy_kill_retries'] = kill_retries + 1
+            meta['gpu_busy_killed'] = killed
+            meta['gpu_busy_since'] = now  # reset window for the single retry
+            meta.pop('probe_bundle', None)
+            item.meta = meta
+            item.sealed = False
+            item.result_stored = False
+            if item.state is not ItemState.PROVISIONING:
+                try:
+                    item = apply_transition(item, ItemState.PROVISIONING, reason='gpu-busy-kill-retry')
+                except TransitionError:
+                    item.state = ItemState.PROVISIONING
+            self._persist(item)
+            return item, 'readopt-gpu-busy-kill-retry'
+        # Still busy after keep+kill+retry → alert and release.
+        self._alert_gpu_busy_release(item, err)
+        return None
+
+    def _kill_box_job_pids(self, item: ItemRecord) -> list:
+        """Best-effort kill of recorded box-job PIDs / vLLM on the pod."""
+        pod = (item.meta or {}).get('pod')
+        if pod is None or not hasattr(pod, 'run'):
+            return []
+        try:
+            from .box_job import controller_for_pod
+            ctrl = controller_for_pod(pod, item.item_id)
+            return list(ctrl.kill_stale(extra_patterns=(
+                'vllm serve', 'podctl.py serve', 'pit-box-job-eval', 'train_pit.py',
+            )))
+        except Exception:
+            return []
+
+    def _alert_gpu_busy_release(self, item: ItemRecord, err: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'gpu_busy_release',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'error': (err or '')[:800],
+            'gpu_busy_since': (item.meta or {}).get('gpu_busy_since'),
+            'gpu_busy_kill_retries': (item.meta or {}).get('gpu_busy_kill_retries'),
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'GPU-BUSY-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'gpu_busy_release',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': (err or '')[:400],
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
     def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
         if not done.get('ok'):
             err = 'box-worker:%s' % (done.get('error') or 'failed')
             retry = self._maybe_retry_readopt(item, err)
             if retry is not None:
                 return retry
-            # Hard fail: still never release solely for GPU-busy (defense in depth).
-            if self._is_gpu_busy_readopt_error(err) and item.box_id:
-                item.meta = dict(item.meta or {}, last_error=err[:300], green_apply_pending=False)
-                item.last_error = err[:300]
-                self._persist(item)
-                return item, 'box-worker-gpu-busy-keep'
             return self._fail_and_release(item, err), 'box-worker-fail'
         updated = done.get('item')
         if not isinstance(updated, ItemRecord):
@@ -719,11 +803,17 @@ class Controller:
                 self._fail_and_release(item, 'worker-result-persist:%s' % str(exc)[:200]),
                 'box-worker-fail',
             )
-        # Successful worker clears prior re-adopt retry counters.
-        if (updated.meta or {}).get('readopt_attempts'):
-            meta = dict(updated.meta or {})
-            meta.pop('readopt_attempts', None)
-            meta.pop('last_readopt_error', None)
+        # Successful worker clears prior re-adopt / GPU-busy retry counters.
+        meta = dict(updated.meta or {})
+        cleared = False
+        for key in (
+            'readopt_attempts', 'last_readopt_error',
+            'gpu_busy_since', 'gpu_busy_kill_retries', 'gpu_busy_killed',
+        ):
+            if key in meta:
+                meta.pop(key, None)
+                cleared = True
+        if cleared:
             updated.meta = meta
         self._persist(updated)
         return updated, str(done.get('note') or 'box-complete')

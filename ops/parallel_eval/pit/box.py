@@ -5,13 +5,15 @@ Fail-closed on fp32 expected-master mismatch. Never passes
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol
 
 from ops.parallel_eval.live.pe_box import BOX_ROOT, detached_eval_command
+from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
 from .config import GATE_DTYPE, PitConfig
@@ -378,27 +380,21 @@ class BoxRunner:
         plan_handle: str,
         indices: list,
     ) -> str:
-        """Ship eval plan JSON onto the box and return the detached shell command."""
-        name = 'pe-%s-%s' % (
-            candidate_id[:12],
-            hashlib.sha256(str(plan_handle).encode()).hexdigest()[:8],
+        """Ship live-identical eval plan JSON onto the box; return detached command.
+
+        Plan is built by ``pe_probe_plan.build_probe_plan`` — the same builder
+        ``pe_lane.run_probe`` uses — so harness / manifest_projection cannot drift.
+        """
+        harness = _load_public_harness()
+        plan = build_probe_plan(
+            candidate_id,
+            list(indices),
+            plan_handle,
+            k=int(self.config.k_cand),
+            max_tokens=int(self.config.max_output_tokens),
+            max_num_seqs=int(self.config.max_num_seqs),
+            harness=harness,
         )
-        plan = {
-            'run_name': name,
-            'checkpoint_id': candidate_id,
-            'seed': plan_handle,
-            'concurrency': 4096,
-            'grade_workers': 160,
-            'resume': False,
-            'bandit_topk': False,
-            'concurrency_per_replica': min(512, int(self.config.max_num_seqs)),
-            'envs': [{
-                'env_id': 'affine_gatepool',
-                'indices': list(indices),
-                'k': int(self.config.k_cand),
-                'max_tokens': int(self.config.max_output_tokens),
-            }],
-        }
         plan_path = '%s/eval-plan.json' % box_job_ctrl.job_dir.rstrip('/')
         box_job_ctrl.store.write_text(plan_path, json.dumps(plan, sort_keys=True) + '\n')
         return detached_eval_command(
@@ -408,6 +404,33 @@ class BoxRunner:
             podd=BOX_ROOT,
             max_num_seqs=int(self.config.max_num_seqs),
         )
+
+
+def _load_public_harness() -> dict:
+    """Best-effort public_harness.json (same source pe_lane.HARNESS uses)."""
+    candidates = []
+    env = os.environ.get('PIT_PUBLIC_HARNESS') or os.environ.get('PE_PUBLIC_HARNESS')
+    if env:
+        candidates.append(Path(env))
+    # Live pe_common PRIV/public_harness.json when pe_lane is importable.
+    try:
+        live = Path(__file__).resolve().parents[1] / 'live'
+        if str(live) not in sys.path:
+            sys.path.insert(0, str(live))
+        import pe_lane as PL  # type: ignore
+        h = getattr(PL, 'HARNESS', None)
+        if isinstance(h, dict):
+            return dict(h)
+    except Exception:
+        pass
+    for p in candidates:
+        try:
+            doc = json.loads(Path(p).read_text())
+            if isinstance(doc, dict):
+                return doc
+        except Exception:
+            continue
+    return {}
 
 
 def _try_box_job_controller(pod: Any, item_id: str):
