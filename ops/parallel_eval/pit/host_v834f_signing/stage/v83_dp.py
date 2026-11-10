@@ -132,16 +132,6 @@ def _install_fast(B, FK, runtime, no_ckpt):
         runtime.model._v83_fast = True
 
 
-def _fp32_accum_device():
-    """CPU accumulator only when PIT_ZERO3 is set.
-
-    PIT_FP32_ACCUM_DEVICE alone must not change admitted non-sharded behaviour.
-    """
-    if os.environ.get('PIT_ZERO3', '').strip().lower() in ('1', 'true', 'yes', 'on'):
-        return 'cpu'
-    return None
-
-
 def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, active_rollouts, versions, guard, record):
     """One rank's share. Returns (accumulator|None, details, losses, err)."""
     from subnet.mimo_grpo.optimizer import FP32Accumulator
@@ -151,11 +141,7 @@ def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, activ
         if B._versions(actor.model) != versions:
             raise ValueError('input actor changed during reference preparation')
         for p in actor.model.parameters(): p.grad = None
-        _adev = _fp32_accum_device()
-        if _adev:
-            accumulator = FP32Accumulator(actor.model.named_parameters(), buffer_device=_adev)
-        else:
-            accumulator = FP32Accumulator(actor.model.named_parameters())
+        accumulator = FP32Accumulator(actor.model.named_parameters())
         B._gradient_pass(actor, rows, plan, config, agg_config, loss_scale, active_rollouts, accumulator, versions,
                          details, losses, engine='packed', logit_chunk=LOGIT_CHUNK, guard=guard, record=record)
         torch.cuda.synchronize()
@@ -171,12 +157,8 @@ def _reduce(B, rows, accumulator, details, losses, err, rank):
     if ok.item() < 1:
         if accumulator is not None: accumulator.buffers.clear()
         return None, [e for e in errs if e]
-    group = None
-    first = next(iter(accumulator.buffers.values()))
-    if first.device.type == 'cpu':
-        group = STATE.get('ctrl')
     for name in sorted(accumulator.buffers):
-        dist.reduce(accumulator.buffers[name], dst=0, op=dist.ReduceOp.SUM, group=group)
+        dist.reduce(accumulator.buffers[name], dst=0, op=dist.ReduceOp.SUM)
     gathered = [None] * world
     dist.all_gather_object(gathered, (details, losses, {i: (rows[i]['keep'], rows[i]['derail_index']) for i in details}))
     if rank != 0:

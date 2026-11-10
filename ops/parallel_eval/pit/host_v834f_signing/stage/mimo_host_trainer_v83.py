@@ -1,7 +1,10 @@
 """ROOT-admitted v8.3 trainer host launcher over the unchanged worker closure.
 
-v8.3.5 / host-v834f = v8.3.4e + ZeRO-3 (v835_zero3.py). Requires a separate ROOT admission;
-see ops/parallel_eval/pit/host_v834f_signing/TODO-ROOT-SIGN.md.
+v8.3.5 / host-v834f = v8.3.4e + a sharded (ZeRO-3) execution of the same update for 8 GPUs that cannot hold it
+  unsharded (v835_zero3.py). Only when PIT_ZERO3 is on: install() starts every helper rank through the
+  v835_zero3 helper entry, uses its micro-batch token budget and installs its update in place of the v83_dp one.
+  With PIT_ZERO3 off this launcher takes the v8.3.4e path, statement for statement. Requires a separate ROOT
+  admission; see ops/parallel_eval/pit/host_v834f_signing/TODO-ROOT-SIGN.md.
 
 v8.3.4e = v8.3.4c + fail-closed fp32 head master (host-v834e): never silently upcast bf16 -> fp32 when the
   matching master is missing or rejected. Memory and local-store loads must verify bf16_rne(M) == head and, when an
@@ -1053,6 +1056,14 @@ def load(name, rel):
     return module
 
 
+def zero3():
+    """v8.3.5: the v835_zero3 module of THIS host directory, loaded once (the caller and install() share it)."""
+    module = sys.modules.get('v835_zero3')
+    if module is None or Path(getattr(module, '__file__', '') or '.').resolve() != (P / 'v835_zero3.py').resolve():
+        module = load('v835_zero3', 'v835_zero3.py')
+    return module
+
+
 def patched_def(rel, qualname):
     """Exact source of one def from the admitted patched copy."""
     tree = ast.parse((P / 'patched' / rel).read_text())
@@ -1290,6 +1301,10 @@ def install(config, start_dp=False):
     dp = load('v83_dp', 'v83_dp.py')
     dp.BUDGET, dp.MAX_ROWS = engine['dp_token_budget'], engine['dp_max_rows']
     dp.install_fast_hash()     # v8.3.3g
+    z3 = zero3()               # v8.3.5: sharded execution only when PIT_ZERO3 is on (one predicate for rank 0 and the helpers)
+    sharded = z3.enabled()
+    if sharded:
+        dp.BUDGET = z3.token_budget(engine['dp_token_budget'])
     helpers = []
     if start_dp:
         import subprocess
@@ -1297,12 +1312,16 @@ def install(config, start_dp=False):
         for r in range(1, world):
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(r), MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port),
                        TRITON_CACHE_DIR=TRITON_CACHE + '/rank%d' % r)
-            helpers.append(subprocess.Popen([sys.executable, '-B', str(P / 'v83_dp.py'), str(r), str(world), str(port),
-                                             str(P), str(Path(config['source_root']).resolve())],
-                                            env=env, cwd=str(Path(config['source_root']).resolve())))
-        dp.init(world, port)
+            argv = (z3.helper_argv(P, r, world, port, Path(config['source_root']).resolve()) if sharded else
+                    [sys.executable, '-B', str(P / 'v83_dp.py'), str(r), str(world), str(port),
+                     str(P), str(Path(config['source_root']).resolve())])
+            helpers.append(subprocess.Popen(argv, env=env, cwd=str(Path(config['source_root']).resolve())))
+        if sharded:
+            z3.init(dp, world, port, helpers)
+        else:
+            dp.init(world, port)
         dp.STATE['helpers'] = helpers
-    dp_update = dp.make_train_update(batched, fast_kernels)
+    dp_update = z3.make_train_update(dp, batched, fast_kernels) if sharded else dp.make_train_update(batched, fast_kernels)
 
     def train_update_v833i(runtime, optimizer, groups, binding, *, config, **kwargs):
         if support is not None:     # Allan: the support settings must equal the job's (manifest) sampling settings
@@ -1403,6 +1422,7 @@ def install(config, start_dp=False):
     train_update_v833j._original = dp_update._original
     batched.train_update_batched = train_update_v833j
     return dict(component='trainer-host-v83', dp_world=engine['dp_world'] if start_dp else 0, training_kernels=kernels,
+                zero3=sharded, dp_token_budget=dp.BUDGET,
                 engine=engine, drop_unresolved=batched.DROP_UNRESOLVED,
                 loss_agg_mode=batched.LOSS_AGG_MODE, loss_scale=batched.LOSS_SCALE, math_levels=len(batched.MATH_LEVELS),
                 drop_policy=batched.DROP_POLICY, optimizer_persistence=engine['optimizer_persistence'],
