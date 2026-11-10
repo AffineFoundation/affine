@@ -133,10 +133,13 @@ def _install_fast(B, FK, runtime, no_ckpt):
 
 
 def _fp32_accum_device():
-    """CPU when PIT_ZERO3 / PIT_FP32_ACCUM_DEVICE=cpu (host-v834f ZeRO-3)."""
+    """CPU accumulator only when PIT_ZERO3 is set.
+
+    PIT_FP32_ACCUM_DEVICE alone must not change admitted non-sharded behaviour.
+    """
     if os.environ.get('PIT_ZERO3', '').strip().lower() in ('1', 'true', 'yes', 'on'):
         return 'cpu'
-    return os.environ.get('PIT_FP32_ACCUM_DEVICE') or None
+    return None
 
 
 def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, active_rollouts, versions, guard, record):

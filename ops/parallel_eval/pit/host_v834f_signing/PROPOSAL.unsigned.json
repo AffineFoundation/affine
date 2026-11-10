@@ -20,14 +20,14 @@
     "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
     "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
     "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-    "v835_zero3.py": "e3f4d7d944c23de3e86338592fe53d49ebe6f83e2a3b1deaa6c68d2e5e8c7b1f",
-    "v83_dp.py": "82e97fe6d9ad807cfef60092dc2e9acaff87d60cfaa41aa6a2a5646a83332186",
+    "v835_zero3.py": "9b2ceb6bac71b8866b1eb47e5ea0d0245eee42b354b6337bab967f64c581adb3",
+    "v83_dp.py": "14244484998c413bc049d7d1fa25c5de4b729b67061653d6d3f7357c7d2faac5",
     "v83_fast_kernels.py": "e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4",
     "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
   },
   "host_version": "host-v834f",
-  "manifest_sha256": "85a04bb6e2b95f33a620f3e5381842763b455e6e666caedc2cb63254f975d50d",
-  "note": "UNSIGNED proposal for Jacob ROOT signing. Do not bootstrap or override ROOT. Run the operator sign script against this stage + a prior ROOT-admitted private json.",
+  "manifest_sha256": "058e3a5d4a687435ec3e44ec52dbe6fa0a3061897089a5ae815d40629e809ecf",
+  "note": "UNSIGNED proposal for Jacob ROOT signing. Do not bootstrap or override ROOT. Run sign_host_v834f.py against this stage + a prior ROOT-admitted private json.",
   "scope": "sn120-mimo-trainer-host-overrides-v8.3.3",
   "version": "affine-mimo-trainer-host-v833"
 }

@@ -1,8 +1,9 @@
 """Low-memory / ZeRO-3 train helpers for <100 GiB GPUs (RTX5090 32 GiB).
 
-The on-box path that actually runs is ``miner/validator/trainer-v834e/v835_zero3.py``
-shipped as part of trainer-host-v834f. This module mirrors the public API for
-host-side tests and config (needs_optimizer_shard, numeric equivalence, preflight).
+The on-box path that actually runs is ``host-v834f/v835_zero3.py`` (staged under
+``ops/parallel_eval/pit/host_v834f_signing/stage/``). This module mirrors the
+public API for host-side tests and config. ``v835_zero3.py`` must NOT live in
+``trainer-v834e/`` (that tree stays byte-identical to host_v834e_admitted).
 """
 from __future__ import annotations
 
@@ -18,9 +19,12 @@ PIT_ACCUM_DEVICE_ENV = 'PIT_FP32_ACCUM_DEVICE'
 PIT_ZERO3_ENV = 'PIT_ZERO3'
 
 
+def _stage_v835_path() -> Path:
+    return Path(__file__).resolve().parent / 'host_v834f_signing' / 'stage' / 'v835_zero3.py'
+
+
 def _load_v835():
-    root = Path(__file__).resolve().parents[3]
-    path = root / 'miner' / 'validator' / 'trainer-v834e' / 'v835_zero3.py'
+    path = _stage_v835_path()
     if not path.is_file():
         return None
     spec = importlib.util.spec_from_file_location('v835_zero3_host', path)
@@ -83,11 +87,10 @@ def configure_low_mem_train(per_gpu_mem_gib: Optional[float] = None) -> Mapping[
 
 
 def fp32_accum_device_from_env() -> Optional[str]:
-    if os.environ.get(PIT_ZERO3_ENV) in ('1', 'true', 'True', 'yes'):
+    """CPU accum device only when PIT_ZERO3 is set (never from ACCUM env alone)."""
+    if os.environ.get(PIT_ZERO3_ENV, '').strip().lower() in ('1', 'true', 'yes', 'on'):
         return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
-    if os.environ.get(PIT_LOW_MEM_ENV) in ('1', 'true', 'True', 'yes'):
-        return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
-    return os.environ.get(PIT_ACCUM_DEVICE_ENV) or None
+    return None
 
 
 def shard_param_names(
@@ -116,14 +119,14 @@ def shard_param_names(
 def estimate_peak_gib(**kwargs) -> Mapping[str, float]:
     z = _load_v835()
     if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+        raise RuntimeError('v835_zero3.py missing from host_v834f_signing/stage')
     return z.estimate_peak_gib(**kwargs)
 
 
 def preflight_or_raise(**kwargs) -> Mapping[str, Any]:
     z = _load_v835()
     if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+        raise RuntimeError('v835_zero3.py missing from host_v834f_signing/stage')
     return z.preflight_or_raise(**kwargs)
 
 
@@ -133,43 +136,66 @@ def numeric_equivalence_step(
     clip: float = 1.0,
     seed: int = 0,
 ) -> Mapping[str, Any]:
-    """Compare default GPU-buffer path vs CPU-offload path on a tiny model."""
+    """Compare default GPU-buffer path vs CPU-offload path on a tiny model.
+
+    Applies the v835 accumulator patch under a temporary PIT_ZERO3 so the
+    golden-bundle FP32Accumulator gains ``buffer_device`` for the comparison.
+    """
     import torch
     from subnet.mimo_grpo.optimizer import FP32Accumulator
 
-    torch.manual_seed(seed)
-    params_a = []
-    params_b = []
-    for i, shape in enumerate(shapes):
-        p = torch.nn.Parameter(torch.randn(shape, dtype=torch.bfloat16))
-        params_a.append(('p%d' % i, p))
-        params_b.append(('p%d' % i, p.clone().detach().requires_grad_(True)))
+    z = _load_v835()
+    prev = os.environ.get(PIT_ZERO3_ENV)
+    os.environ[PIT_ZERO3_ENV] = '1'
+    try:
+        if z is not None:
+            z.patch_fp32_accumulator()
+        torch.manual_seed(seed)
+        params_a = []
+        params_b = []
+        for i, shape in enumerate(shapes):
+            p = torch.nn.Parameter(torch.randn(shape, dtype=torch.bfloat16))
+            params_a.append(('p%d' % i, p))
+            params_b.append(('p%d' % i, p.clone().detach().requires_grad_(True)))
 
-    for (_, a), (_, b) in zip(params_a, params_b):
-        g = torch.randn_like(a, dtype=torch.float32)
-        a.grad = g.to(dtype=a.dtype)
-        b.grad = g.to(dtype=b.dtype).clone()
+        for (_, a), (_, b) in zip(params_a, params_b):
+            g = torch.randn_like(a, dtype=torch.float32)
+            a.grad = g.to(dtype=a.dtype)
+            b.grad = g.to(dtype=b.dtype).clone()
 
-    acc_a = FP32Accumulator(params_a)
-    acc_b = FP32Accumulator(params_b, buffer_device='cpu')
-    acc_a.capture()
-    acc_b.capture()
-    n_a = acc_a.clip(clip)
-    n_b = acc_b.clip(clip)
-    diffs = []
-    for name, _ in params_a:
-        diffs.append(float((acc_a.buffers[name].cpu() - acc_b.buffers[name].cpu()).abs().max()))
-    return {
-        'max_abs_diff': max(diffs) if diffs else 0.0,
-        'norm_a': n_a,
-        'norm_b': n_b,
-        'norm_diff': abs(n_a - n_b),
-    }
+        # Default path: no buffer_device (and with patch + ZERO3 the default
+        # becomes cpu — compare explicit None via orig when available).
+        Acc = FP32Accumulator
+        if getattr(Acc, '_v835_orig_init', None) is not None:
+            acc_a = object.__new__(Acc)
+            Acc._v835_orig_init(acc_a, params_a)
+        else:
+            # Repo subnet already accepts buffer_device=None.
+            acc_a = FP32Accumulator(params_a)
+        acc_b = FP32Accumulator(params_b, buffer_device='cpu')
+        acc_a.capture()
+        acc_b.capture()
+        n_a = acc_a.clip(clip)
+        n_b = acc_b.clip(clip)
+        diffs = []
+        for name, _ in params_a:
+            diffs.append(float((acc_a.buffers[name].cpu() - acc_b.buffers[name].cpu()).abs().max()))
+        return {
+            'max_abs_diff': max(diffs) if diffs else 0.0,
+            'norm_a': n_a,
+            'norm_b': n_b,
+            'norm_diff': abs(n_a - n_b),
+        }
+    finally:
+        if prev is None:
+            os.environ.pop(PIT_ZERO3_ENV, None)
+        else:
+            os.environ[PIT_ZERO3_ENV] = prev
 
 
 def numeric_equivalence_zero3(**kwargs) -> Mapping[str, Any]:
     """Tiny-model single-GPU vs sharded ZeRO-3-style update (final bf16 must match)."""
     z = _load_v835()
     if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+        raise RuntimeError('v835_zero3.py missing from host_v834f_signing/stage')
     return z.numeric_equivalence_tiny(**kwargs)

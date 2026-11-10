@@ -7,6 +7,8 @@ host-v834e — same call and admitted host-file digests as 27701370.
 
 Sharded path (host-v834f): separate ROOT-admitted package. Until Jacob ROOT-signs that
 admission, host-v834f is absent on the box and this script stays on host-v834e.
+``z3.activate(host)`` (never ``None``) so ``wrap_host_install`` runs; helpers start
+through ``v835_zero3.py``; every rank FSDP-wraps together before the optimizer.
 """
 import json, os, sys, time, importlib.util
 from pathlib import Path
@@ -67,14 +69,18 @@ rd = lambda n: json.loads((IN / n).read_text())
 head = {k: v for k, v in rd('head.descriptor.json').items() if k in ('id', 'files')}
 manifest = rd('manifest.json'); dispatch = rd('dispatch.json'); tcfg = rd('train_config.json'); step = int(rd('meta.json')['optimizer_step'])
 assert dispatch['signature'] and dispatch['signer'] != 'SHADOW-UNSIGNED'
-# ZeRO-3 activate only on the sharded host, and only when sharded mode is active.
+# ZeRO-3: pass host so wrap_host_install runs (helpers via v835_zero3 entry).
 z3 = None
 if HOST.name == 'host-v834f' and (HOST / 'v835_zero3.py').is_file():
     zspec = importlib.util.spec_from_file_location('v835_zero3', HOST / 'v835_zero3.py')
     z3 = importlib.util.module_from_spec(zspec); sys.modules['v835_zero3'] = z3; zspec.loader.exec_module(z3)
-    pol = z3.activate(None)
+    pol = z3.activate(host)
+    if pol.get('zero3'):
+        eng = z3.apply_low_vram_token_budget(cfg['engine'], pol.get('per_gpu_mem_gib'))
+        cfg = dict(cfg, engine=eng)
     ev('zero3-policy', **{k: pol[k] for k in pol})
-info = host.install(cfg, start_dp=True); ev('native-installed', dp_world=info.get('dp_world') if isinstance(info, dict) else None)
+info = host.install(cfg, start_dp=True); ev('native-installed', dp_world=info.get('dp_world') if isinstance(info, dict) else None,
+                                           zero3=(info or {}).get('zero3') if isinstance(info, dict) else None)
 import torch
 from subnet.mimo_runtime import MimoRuntime
 from subnet.mimo_grpo.config import TrainerConfig
@@ -91,18 +97,27 @@ if z3 is not None and (z3.zero3_enabled() or z3.needs_zero3()):
     except z3.VramPreflightError as ex:
         ev('vram-preflight-refuse', error=str(ex)[:300])
         raise
-    runtime.model = z3.wrap_fsdp(runtime.model, local_rank=0)
-    ev('fsdp-wrapped', sharding='FULL_SHARD')
-opt = CPUAdamW(runtime.model.named_parameters(), config, input_checkpoint=head['id']); opt.global_step = step; ev('optimizer-built', step=step)
+    # Every rank wraps together (helpers handle op=fsdp-init). Never wrap rank-0 alone.
+    runtime = z3.prepare_wrapped_model(runtime, local_rank=0)
+    ev('fsdp-wrapped', sharding='FULL_SHARD', world=world)
+    named = z3.canonical_named_parameters(runtime.model)
+else:
+    named = list(runtime.model.named_parameters())
+opt = CPUAdamW(named, config, input_checkpoint=head['id']); opt.global_step = step; ev('optimizer-built', step=step)
 prepared = worker.prepare_signed_dispatch(manifest, dispatch, authority=cfg['authority'], documents_root=str(IN / 'docs'), runtime=runtime, optimizer_step=step)
 groups, binding = prepared['groups'], prepared['binding']
 mr = max(len(t.tokens) for g in groups for t in g.trajectories); mc = max(len(g.prompt) + len(t.tokens) for g in groups for t in g.trajectories)
 ev('signed-dispatch-prepared', groups=len(groups), rollouts=sum(len(g.trajectories) for g in groups), max_response_tokens=mr, max_context_tokens=mc)
 e = cfg['engine']
-report = sys.modules['v824_batched'].train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=None, engine=e['batched_engine'], token_budget=e['token_budget'], max_rows=e['max_rows'])
+# Use the (possibly cut) engine token_budget — not a stale pre-cut value.
+report = sys.modules['v824_batched'].train_update_batched(
+    runtime, opt, groups, binding, config=config, reference_runtime=None,
+    engine=e['batched_engine'], token_budget=e['token_budget'], max_rows=e['max_rows'],
+)
 ev('native-grpo-complete', status=report.get('status'), optimizer_step=report.get('optimizer_step'), trained_rollouts=report.get('trained_rollouts'), trained_tokens=report.get('trained_tokens'),
    preparation_seconds=report.get('preparation_seconds'), optimizer_seconds=report.get('optimizer_seconds'), preclip=report.get('preclip_gradient_norm'), loss=report.get('objective_loss'))
 OUT.mkdir(parents=True, exist_ok=True)
+# save_model is patched under ZeRO-3 to emit host-v834e canonical keys.
 off = sys.modules['v8210_optimizer_offpath']; staged = off.stage_for_publication_model_only(runtime, opt, report, str(OUT), workers=e['stage_workers']); staged = staged[0] if isinstance(staged, tuple) else staged
 (OUT / 'descriptor.json').write_text(json.dumps(dict(id=staged['output_checkpoint'], files=staged['checkpoint_files'])))
 (OUT / 'report.private.json').write_text(json.dumps(report, default=str))
@@ -113,8 +128,8 @@ fp = report['optimizer']['sgd']['fp32_master']
 assert fp['source'] in ('disk', 'memory'), 'fp32 source %s' % fp['source']
 assert fp['input_master_digest'] == exp, 'input master digest mismatch'
 ev('done', checkpoint=staged['output_checkpoint'], fp32=dict(source=fp['source'], input_master_digest=fp['input_master_digest'], output_master_digest=fp.get('output_master_digest'),
-   input_bf16=fp.get('input_bf16_sha256'), output_bf16=fp.get('output_bf16_sha256')), torch_max_alloc_gib=round(torch.cuda.max_memory_allocated() / 2**30, 2),
-   host=HOST.name)
+   input_bf16=fp.get('input_bf16_sha256'), output_bf16=fp.get('output_bf16_sha256')), torch_max_alloc_gib=round(torch.cuda.max_memory_allocated() / 2**30, 2) if torch.cuda.is_available() else 0,
+   host=HOST.name, token_budget=e.get('token_budget'), dp_token_budget=e.get('dp_token_budget'))
 try: sys.modules['v83_dp']._bcast(dict(op='stop'))
 except Exception: pass
 os._exit(0)

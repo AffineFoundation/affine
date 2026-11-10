@@ -1,6 +1,16 @@
 {
- "about": "Public copy of trainer v8.3.4e (host-v834e) settings (no secrets). Same hyperparams as v834c/v834d public config; fail-closed fp32 master (no silent bf16 upcast; ROOT override only). KL term still ignored as of v8.3.4: train.kl accepted/parsed in [0.005,0.1] but kl_applied=0 and no Genesis ref loaded. engine = host engine block; Live step = v8211_batched.train_update_batched (packed, 8-GPU DP) + mimo_host_trainer_v83.sgd_step(fresh-adam, fp32 master, normgrad).",
- "configuration_sha256": "b31640a15624cac23d4bccdf84b2f6fd88f87ac087d3d8040f17ff5235d41d75",
+ "about": "Public copy of trainer host-v834f (ZeRO-3 / FSDP FULL_SHARD) settings (no secrets). Separate ROOT admission from host-v834e. Not used as an engine overlay \u2014 train_pit always calls host.checked(ROOT-ADMITTED.private.json).",
+ "caps": {
+  "dp_token_budget": 69632,
+  "logit_chunk": 4096,
+  "max_context_tokens": 69632,
+  "max_output_tokens": 65536,
+  "overlong_penalty": 0.5,
+  "overlong_window": [
+   53846,
+   65536
+  ]
+ },
  "engine": {
   "batched_engine": "packed",
   "dp_max_rows": 256,
@@ -47,29 +57,32 @@
  "host_files_sha256": {
   "ff_trainer.py": "19485bf5ad0046980d4f48ecec8bcd13e0f93fa478bbb8421fc42bf926431c59",
   "math_levels.json": "c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50",
-  "mimo_host_trainer_v83.py": "52df53f86b8dd671bd427ebc23ebf6343bea836b95cc014f2f28ed56c2af34cb",
+  "mimo_host_trainer_v83.py": "e6cdabf5469a0371bbe767fb6634123311031d4a613530a8471b0631bc434c27",
   "patched/mimo_grpo.publication.py": "4432e51bce406dcc73dc04438e351497ec910087ad6a4a1152fa974a26cd9e44",
   "patched/mimo_grpo.service.py": "83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2",
   "patched/mimo_grpo.transaction.py": "f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217",
   "patched/mimo_training_worker.py": "ef3f94b24e0cc6cbbf40fa7825cba3e114080ef10746587b365ffaeb941d92c8",
   "v8210_optimizer_offpath.py": "8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad",
-  "v8211_batched.py": "63a29a322a2cd85a6328aad0f6331e339d0591ff1e2baa44face0785073a61e4",
+  "v8211_batched.py": "ad7596e2ffe8e01f7554ccf78795b2c26038c03020cae2e90a5684e0b7622a60",
   "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
   "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
   "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-  "v83_dp.py": "0e7515c1c2328423e8464d42860a9d904d45541242b43c31fee0fdbb4e71db92",
-  "v83_fast_kernels.py": "a022542538742a8014deb8938a540548830b371255cf2d417f0bc7b0c5450d52",
+  "v835_zero3.py": "9b2ceb6bac71b8866b1eb47e5ea0d0245eee42b354b6337bab967f64c581adb3",
+  "v83_dp.py": "14244484998c413bc049d7d1fa25c5de4b729b67061653d6d3f7357c7d2faac5",
+  "v83_fast_kernels.py": "e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4",
   "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
  },
- "host_version": "host-v834e",
- "host_version_note": "v8.3.4e / host-v834e: fail-closed fp32 master (abort if matching master missing/rejected; ROOT-signed bootstrap override only; durable PIN + current/previous-head GC protect; emit fp32_master_source and fp32_master_hash_in/out). Built on trainer-v834c (KL ignored). Repo directory: miner/validator/trainer-v834e. Do not change batch 125x8 / training context vs the prior release without a separate signed cutover.",
+ "host_version": "host-v834f",
+ "host_version_note": "v8.3.5 / host-v834f: ZeRO-3 FSDP FULL_SHARD + CPU fp32 accumulator for 8x low-VRAM (RTX5090). Built on host-v834e fail-closed fp32 master. Stage: ops/parallel_eval/pit/host_v834f_signing/stage. allow_sharded_gpus defaults false.",
+ "kl_ignored": true,
+ "kl_note": "train.kl accepted in [0.005,0.1] but ignored; loss uses kl_coefficient=0; reference_runtime=None; no 87de8304\u2026 Genesis forward.",
  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration",
  "runtime_versions": {
   "toploc": "0.1.6",
   "torch": "2.14.0",
   "transformers": "5.14.1"
  },
- "scope": "sn120-mimo-trainer-host-overrides-v8.3.4",
+ "scope": "sn120-mimo-trainer-host-overrides-v8.3.5",
  "trainable": "model.language_model.* and lm_head.* (vision tower and MTP heads frozen)",
  "trainer_config": {
   "objective": "vanilla-dual-clip-ppo-seq-mean-token-sum-norm-derail-masked-k3-kl-reference-overlong-soft-penalty",
@@ -115,6 +128,7 @@
   "upstream_revision": "a2ad9f6160b03ff2d47e59832bfb6b289f37c917",
   "version": "affine-mimo-reference-grpo-v2"
  },
+ "trainer_config_note": "Signed job document fields below (objective name, settings.kl_coefficient=0.02, kl_reference_checkpoint) are what turn.json training.config still publishes. The live host overrides: kl_coefficient forced to 0, kl_reference_checkpoint unused, no ref loaded. See training.train_params.kl_ignored on each turn.",
  "trainer_host_operator_config_sha256": "06f28fbd915a7e909ca45ac2e0e6b7f7105034a407da2c16a41315ac8b68efcf",
  "turn_train_params": {
   "bounds": {
@@ -132,19 +146,5 @@
    "lr": 5e-07
   }
  },
- "version": "sn120-miner-kit-trainer-config-v1",
- "kl_ignored": true,
- "kl_note": "train.kl accepted in [0.005,0.1] but ignored; loss uses kl_coefficient=0; reference_runtime=None; no 87de8304\u2026 Genesis forward.",
- "trainer_config_note": "Signed job document fields below (objective name, settings.kl_coefficient=0.02, kl_reference_checkpoint) are what turn.json training.config still publishes. The live host overrides: kl_coefficient forced to 0, kl_reference_checkpoint unused, no ref loaded. See training.train_params.kl_ignored on each turn.",
- "caps": {
-  "dp_token_budget": 69632,
-  "logit_chunk": 4096,
-  "max_context_tokens": 69632,
-  "max_output_tokens": 65536,
-  "overlong_penalty": 0.5,
-  "overlong_window": [
-   53846,
-   65536
-  ]
- }
+ "version": "sn120-miner-kit-trainer-config-v1"
 }
