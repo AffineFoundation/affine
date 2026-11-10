@@ -1512,6 +1512,28 @@ def presign_put_urls(
         raise BoxIOError('presign put_object failed: %s' % str(exc)[:300]) from exc
 
 
+def _sha256_r2_object(key: str) -> str:
+    """Stream-hash the exact R2 key the box PUT (pending or live), never a re-derived presign."""
+    try:
+        from subnet.storage import Bucket  # type: ignore
+        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
+        if life_cfg is None or not life_cfg.is_file():
+            raise BoxIOError('PIT_LIFE_CFG required to GET %s for sha verify' % key)
+        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        body = bucket.client.get_object(Bucket=bucket.name, Key=key)['Body']
+        h = hashlib.sha256()
+        try:
+            for chunk in iter(lambda: body.read(1 << 20), b''):
+                h.update(chunk)
+        finally:
+            body.close()
+        return h.hexdigest()
+    except BoxIOError:
+        raise
+    except Exception as exc:
+        raise BoxIOError('cannot GET %s from R2 for sha verify: %s' % (key, str(exc)[:200])) from exc
+
+
 def upload_candidate_from_box(
     P: Any,
     *,
@@ -1588,22 +1610,9 @@ rm -f %s
                 raise BoxIOError('R2 mirror missing after PUT: %s' % name)
             got = _sha256_file(path)
         else:
-            # Live: GET the object via a short-lived GET presign and hash.
-            get_urls = None
-            try:
-                get_urls = ckpt_urls(candidate_id, {name: expected})
-            except Exception:
-                get_urls = None
-            if not get_urls or name not in get_urls:
-                raise BoxIOError('cannot GET %s from R2 for sha verify' % name)
-            data = urllib.request.urlopen(
-                urllib.request.Request(
-                    get_urls[name],
-                    headers={'User-Agent': 'affine-pit-pe-box/1'},
-                ),
-                timeout=3600,
-            ).read()
-            got = hashlib.sha256(data).hexdigest()
+            got = _sha256_r2_object(
+                '%s/%s' % (_ckpt_r2_prefix(candidate_id, pending=pending), name)
+            )
         if got != expected:
             raise BoxIOError('R2 sha mismatch for %s: got %s want %s' % (name, got[:12], expected[:12]))
         verified[name] = got
@@ -2017,7 +2026,7 @@ def _master_files_meta_from_dir(local_dir: Path, *, candidate_id: str) -> dict[s
 
 
 def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
-    """Fail closed: require real weight shards, not digest-only."""
+    """Fail closed: require real weight shards + meta.json, not digest-only."""
     if not files_meta:
         raise BoxIOError('fp32 master publish refused: empty master tree')
     shards = [
@@ -2029,6 +2038,28 @@ def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
             'fp32 master publish refused: no weight shards '
             '(digest-only master_digest.txt is not sufficient)'
         )
+    if 'meta.json' not in files_meta:
+        raise BoxIOError(
+            'fp32 master publish refused: meta.json missing '
+            '(trainer _fp32_load needs tensor_file)'
+        )
+
+
+def _meta_json_r2_ptr(
+    files_meta: Mapping[str, Mapping[str, Any]], *, candidate_id: str,
+) -> dict[str, str]:
+    """Index ``meta_json`` must be ``{r2_key: ...}`` — never a synthetic body.
+
+    ``fetch_master_on_box`` treats a ``version`` key as the whole meta and
+    overwrites the real uploaded meta.json, dropping ``tensor_file``.
+    """
+    meta = files_meta.get('meta.json')
+    if not isinstance(meta, Mapping):
+        raise BoxIOError('files_meta missing meta.json for index pointer')
+    key = str(meta.get('r2_key') or ('fp32-master/%s/meta.json' % candidate_id))
+    if not key.endswith('meta.json'):
+        raise BoxIOError('meta_json r2_key must end with meta.json: %s' % key)
+    return {'r2_key': key}
 
 
 def _write_master_index(
@@ -2038,6 +2069,7 @@ def _write_master_index(
     digest: str,
     files_meta: Mapping[str, Mapping[str, Any]],
 ) -> Path:
+    _assert_master_tree_complete(files_meta)
     idx_dir = _fp32_master_index()
     idx_dir.mkdir(parents=True, exist_ok=True)
     idx_path = idx_dir / ('%s.json' % candidate_id)
@@ -2045,16 +2077,8 @@ def _write_master_index(
         'bf16_sha256': bf16,
         'master_digest': digest,
         'files': dict(files_meta),
-        'meta_json': {
-            'version': 'pit-fp32-master-v1',
-            'bf16_sha256': bf16,
-            'master_digest': digest,
-            'source': 'pit',
-            'shard_count': sum(
-                1 for n in files_meta
-                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-            ),
-        },
+        # Same shape as live HEAD / k1 fp32-master publish.
+        'meta_json': _meta_json_r2_ptr(files_meta, candidate_id=candidate_id),
         'source': 'pit',
         'at': time.time(),
     }
@@ -2094,6 +2118,11 @@ def upload_master_from_box(
     box_dir = box_master_dir or _resolve_box_master_dir(
         P, master_digest=digest, store_entry=store_entry,
     )
+    # The index bf16_sha256 names the FP32 store entry (trainer bf_out tensor
+    # digest, == meta.json bf16_sha256), which is NOT the checkpoint id.
+    entry = str(store_entry or '').strip().lower()
+    if len(entry) == 64 and all(c in '0123456789abcdef' for c in entry):
+        bf16_sha256 = entry
     try:
         return stream_upload_master_from_box(
             P,

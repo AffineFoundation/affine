@@ -192,9 +192,16 @@ class TestRealLiveWiring(unittest.TestCase):
             master_blob = b'MASTER'
             (fp32_root / 'master.safetensors').write_bytes(master_blob)
             meta = {{
-              'version': 'pit-fp32-master-v1',
+              'version': 'v833f-fp32-head-master-v1',
               'bf16_sha256': cid,
               'master_digest': out_master,
+              'tensor_file': {{'layer.weight': 'master.safetensors'}},
+              'files': {{
+                'master.safetensors': {{
+                  'sha256': hashlib.sha256(master_blob).hexdigest(),
+                  'bytes': len(master_blob),
+                }},
+              }},
             }}
             (fp32_root / 'meta.json').write_text(json.dumps(meta))
             rep = {{
@@ -708,19 +715,12 @@ class TestRealLiveWiring(unittest.TestCase):
                         epoch_dir=str(self.epoch_dir),
                     )
             self.assertEqual(out.get('fetch'), 'r2-box-side')
-            # Early upload-before-eval (aae897c1 review): pending R2 seed, or
-            # legacy on-box defer when upload harness is unavailable.
-            transport = out.get('artifact_transport')
-            self.assertIn(transport, (
-                'uploaded-after-train-pending', 'on-box-until-green',
-            ))
-            if transport == 'uploaded-after-train-pending':
-                self.assertTrue(out.get('artifacts_uploaded'))
-                self.assertTrue(out.get('live_apply_seed'))
-                self.assertFalse(out.get('defer_candidate_upload'))
-            else:
-                self.assertTrue(out.get('defer_candidate_upload'))
-                self.assertTrue(out.get('candidate_on_box'))
+            # Strict: early upload-before-eval must seed pending R2 (never
+            # fall back to on-box-until-green when the harness is present).
+            self.assertEqual(out.get('artifact_transport'), 'uploaded-after-train-pending')
+            self.assertTrue(out.get('artifacts_uploaded'))
+            self.assertTrue(out.get('live_apply_seed'))
+            self.assertFalse(out.get('defer_candidate_upload'))
             self.assertEqual(out['candidate_id'], self.cand)
             self.assertTrue(str(out['candidate_path']).startswith('box:'))
             self.assertEqual(out.get('venv'), pe_box.BOX_VENV)

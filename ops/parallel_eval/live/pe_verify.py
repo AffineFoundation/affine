@@ -48,6 +48,18 @@ def _pe_state() -> Path:
     )
 
 
+def _pending_master_index_dir() -> Optional[Path]:
+    """Must resolve exactly like ``pe_artifact_upload.pending_master_index_dir``."""
+    env = os.environ.get('PIT_FP32_PENDING_INDEX')
+    if env:
+        return Path(env)
+    pe = os.environ.get('PIT_STATE') or os.environ.get('PE_STATE')
+    if not pe:
+        return None
+    root = Path(pe)
+    return root / 'fp32-pending' if root.name == 'pit' else root / 'pit' / 'fp32-pending'
+
+
 def _candidate_roots(candidate_id: str) -> list[Path]:
     st = _pe_state()
     roots = [
@@ -205,10 +217,17 @@ def verify_uploads(
         master_ok = False
 
     # Published k1/fp32-master index must list weight shards (not digest-only).
+    # Before APPLY promotes, an early-uploaded GREEN only has the private
+    # pending index; that is the same shard record promote copies from.
     master_complete = False
     idx_env = os.environ.get('PIT_FP32_MASTER_INDEX') or os.environ.get('AFFINE_FP32_MASTER_INDEX')
-    if idx_env:
-        idx_path = Path(idx_env) / ('%s.json' % candidate_id)
+    idx_path = Path(idx_env) / ('%s.json' % candidate_id) if idx_env else None
+    if idx_path is None or not idx_path.is_file():
+        pending_dir = _pending_master_index_dir()
+        if pending_dir is not None and (pending_dir / ('%s.json' % candidate_id)).is_file():
+            idx_path = pending_dir / ('%s.json' % candidate_id)
+            detail['master_index_pending'] = True
+    if idx_path is not None:
         idx = _rj(idx_path)
         if isinstance(idx, Mapping) and str(idx.get('master_digest') or '') == master_digest:
             files = idx.get('files') if isinstance(idx.get('files'), Mapping) else {}
