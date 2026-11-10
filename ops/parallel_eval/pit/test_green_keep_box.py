@@ -102,7 +102,7 @@ class TestPeBoxUploadCandidateSignature(unittest.TestCase):
                 config=cfg,
                 verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
                 upload_candidate=wrap_upload,
-                upload_master=lambda **k: {'ok': True},
+                upload_master=lambda **k: {'ok': True, 'complete': True, 'shard_count': 2},
                 accept_pit_decision=lambda payload: True,
                 checkpoint_signer=FixtureRootSigner(),
             )
@@ -112,10 +112,22 @@ class TestPeBoxUploadCandidateSignature(unittest.TestCase):
             }
             (Path(td) / 'life' / 'pending').mkdir(parents=True)
             with mock.patch.dict(os.environ, env, clear=False):
-                # Must not raise TypeError: multiple values for candidate_path.
-                result = applicator._apply_fresh(
-                    item, scored=item.meta['scored'],
-                )
+                with mock.patch(
+                    'ops.parallel_eval.pit.apply_live.master_index_is_complete',
+                    return_value=True,
+                ):
+                    with mock.patch(
+                        'ops.parallel_eval.pit.apply_live.drive_cutover_apply',
+                        return_value={'ok': True},
+                    ):
+                        with mock.patch(
+                            'ops.parallel_eval.pit.apply_live.confirm_head_advanced',
+                            return_value=True,
+                        ):
+                            # Must not raise TypeError: multiple values for candidate_path.
+                            result = applicator._apply_fresh(
+                                item, scored=item.meta['scored'],
+                            )
             self.assertTrue(result.applied)
             self.assertEqual(len(calls), 1)
             self.assertIn('candidate_path', calls[0])
@@ -300,9 +312,13 @@ class TestGreenRestartE2E(unittest.TestCase):
                 rent.ledger_path = str(pit / 'rent-ledger.json')
                 applicator = LiveApplicator(
                     config=cfg,
-                    verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
+                    verify_uploads=lambda **k: {
+                        'candidate_ok': True, 'master_ok': True, 'master_complete': True,
+                    },
                     upload_candidate=realish_upload,
-                    upload_master=lambda **k: {'ok': True, 'master_digest': M},
+                    upload_master=lambda **k: {
+                        'ok': True, 'master_digest': M, 'complete': True, 'shard_count': 2,
+                    },
                     accept_pit_decision=lambda payload: True,
                     destroy_state=lambda **k: None,
                     checkpoint_signer=FixtureRootSigner(),
@@ -334,11 +350,23 @@ class TestGreenRestartE2E(unittest.TestCase):
 
                 emitted = False
                 out = {}
-                for _ in range(8):
-                    out = tick_once(ctl, store, dry_run=False)
-                    if (ctl.items[0].meta or {}).get('decision_emitted'):
-                        emitted = True
-                        break
+                with mock.patch(
+                    'ops.parallel_eval.pit.apply_live.master_index_is_complete',
+                    return_value=True,
+                ):
+                    with mock.patch(
+                        'ops.parallel_eval.pit.apply_live.drive_cutover_apply',
+                        return_value={'ok': True},
+                    ):
+                        with mock.patch(
+                            'ops.parallel_eval.pit.apply_live.confirm_head_advanced',
+                            return_value=True,
+                        ):
+                            for _ in range(8):
+                                out = tick_once(ctl, store, dry_run=False)
+                                if (ctl.items[0].meta or {}).get('decision_emitted'):
+                                    emitted = True
+                                    break
                 self.assertTrue(emitted, ctl.items[0].meta)
                 self.assertTrue(uploaded)
                 final = ctl.items[0]

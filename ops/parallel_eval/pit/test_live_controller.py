@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from .apply_live import LiveApplicator, PromoteRefused, refuse_if_unpromotable
 from .box import ScriptedBoxIO
@@ -22,15 +23,35 @@ class TestLiveController(unittest.TestCase):
     def setUp(self):
         self._td = tempfile.mkdtemp()
         life = Path(self._td) / 'life'
+        pe = Path(self._td) / 'pe'
         (life / 'pending').mkdir(parents=True)
-        self._prev_life = os.environ.get('PE_LIFE_STATE')
+        (pe / 'pit').mkdir(parents=True)
+        self._prev = {
+            k: os.environ.get(k)
+            for k in ('PE_LIFE_STATE', 'PE_STATE', 'PIT_STATE')
+        }
         os.environ['PE_LIFE_STATE'] = str(life)
+        os.environ['PE_STATE'] = str(pe)
+        os.environ['PIT_STATE'] = str(pe / 'pit')
+        self._head_patches = [
+            mock.patch('ops.parallel_eval.pit.apply_live.master_index_is_complete', return_value=True),
+            mock.patch('ops.parallel_eval.pit.apply_live.drive_cutover_apply', return_value={'ok': True}),
+            mock.patch('ops.parallel_eval.pit.apply_live.confirm_head_advanced', return_value=True),
+            mock.patch('ops.parallel_eval.pit.controller.master_index_is_complete', return_value=True),
+            mock.patch('ops.parallel_eval.pit.controller.drive_cutover_apply', return_value={'ok': True}),
+            mock.patch('ops.parallel_eval.pit.controller.confirm_head_advanced', return_value=True),
+        ]
+        for p in self._head_patches:
+            p.start()
 
     def tearDown(self):
-        if self._prev_life is None:
-            os.environ.pop('PE_LIFE_STATE', None)
-        else:
-            os.environ['PE_LIFE_STATE'] = self._prev_life
+        for p in reversed(self._head_patches):
+            p.stop()
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     def _ctl(self, **cfg_kw):
         clock = {'t': 100.0}
@@ -64,7 +85,7 @@ class TestLiveController(unittest.TestCase):
             accept_pit_decision=lambda item: applied.append(dict(item)) or True,
             verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
             destroy_state=lambda **k: destroyed.append(dict(k)) or {'ok': True},
-            upload_master=lambda **k: {'ok': True},
+            upload_master=lambda **k: {'ok': True, 'complete': True, 'shard_count': 2},
             upload_candidate=lambda **k: {'ok': True},
             checkpoint_signer=FixtureRootSigner(),
         )

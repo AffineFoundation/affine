@@ -204,9 +204,36 @@ def verify_uploads(
         detail['master_error'] = 'no-master-artifact'
         master_ok = False
 
+    # Published k1/fp32-master index must list weight shards (not digest-only).
+    master_complete = False
+    idx_env = os.environ.get('PIT_FP32_MASTER_INDEX') or os.environ.get('AFFINE_FP32_MASTER_INDEX')
+    if idx_env:
+        idx_path = Path(idx_env) / ('%s.json' % candidate_id)
+        idx = _rj(idx_path)
+        if isinstance(idx, Mapping) and str(idx.get('master_digest') or '') == master_digest:
+            files = idx.get('files') if isinstance(idx.get('files'), Mapping) else {}
+            shards = [
+                n for n in (files or {})
+                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
+            ]
+            master_complete = bool(shards)
+            detail['master_index'] = str(idx_path)
+            detail['master_shard_count'] = len(shards)
+            if not master_complete:
+                master_ok = False
+                detail['master_error'] = 'incomplete-master-index'
+            elif not master_ok:
+                # Digest matched via index + shards present → accept.
+                master_ok = True
+                detail['master_lookup'] = 'fp32-master-index'
+        elif idx_path.is_file():
+            detail['master_index_digest_mismatch'] = True
+            master_ok = False
+
     return dict(
         candidate_ok=bool(cand_ok),
         master_ok=bool(master_ok),
+        master_complete=bool(master_complete),
         detail=detail,
     )
 

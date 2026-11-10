@@ -898,6 +898,20 @@ def pull_report_only(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[st
     if len(master_dig) != 64:
         raise BoxIOError('candidate master digest missing from training report')
     (master_out / 'master_digest.txt').write_text(master_dig + '\n')
+    # Locate the on-box store entry (digest-generation or digest-only). Host
+    # upload_master_from_box pulls every shard from here — never digest-only.
+    store_entry = str(
+        fp.get('output_store_entry')
+        or rep.get('output_store_entry')
+        or ''
+    )
+    # Best-effort locate; GREEN upload_master_from_box fails closed if missing.
+    try:
+        box_master_dir = _resolve_box_master_dir(
+            P, master_digest=master_dig, store_entry=store_entry,
+        )
+    except BoxIOError:
+        box_master_dir = None
 
     # Box-side path marker — host must NOT treat this as a local tree to scp.
     box_path = 'box:%s/%s' % (KDIR, cid)
@@ -906,6 +920,7 @@ def pull_report_only(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[st
         candidate_path=box_path,
         candidate_on_box=True,
         box_candidate_dir=KDIR + '/' + cid,
+        box_master_dir=box_master_dir,
         candidate_files=dict(desc.get('files') or {}),
         candidate_master_path=str(master_out),
         candidate_master_digest=master_dig,
@@ -913,6 +928,42 @@ def pull_report_only(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[st
         report_doc=rep,
         descriptor=desc,
         defer_candidate_upload=True,
+    )
+
+
+def _resolve_box_master_dir(
+    P: Any,
+    *,
+    master_digest: str,
+    store_entry: str = '',
+) -> str:
+    """Return the on-box FP32 store directory for this candidate master."""
+    candidates: list[str] = []
+    if store_entry and '/' not in store_entry:
+        candidates.append('%s/%s' % (FP32, store_entry))
+    if len(master_digest) == 64:
+        # Prefer exact digest-generation entries; fall back to digest prefix match.
+        listing = P.run(
+            'ls -1 %s 2>/dev/null || true' % FP32,
+            timeout=60, check=False,
+        )
+        for name in str(listing or '').splitlines():
+            name = name.strip()
+            if not name:
+                continue
+            if name == master_digest or name.startswith(master_digest + '-'):
+                candidates.append('%s/%s' % (FP32, name))
+    for path in candidates:
+        marker = P.run(
+            'test -d %s && ls %s/*.safetensors >/dev/null 2>&1 && echo YES || echo NO'
+            % (path, path),
+            timeout=60, check=False,
+        )
+        if 'YES' in str(marker):
+            return path
+    raise BoxIOError(
+        'fp32 master shards missing on box for digest %s (store_entry=%r)'
+        % (master_digest[:12], store_entry[:20])
     )
 
 
@@ -1242,6 +1293,7 @@ class HostBoxIO:
                 candidate_path=pulled['candidate_path'],
                 candidate_on_box=True,
                 box_candidate_dir=pulled.get('box_candidate_dir'),
+                box_master_dir=pulled.get('box_master_dir'),
                 candidate_files=dict(pulled.get('candidate_files') or {}),
                 candidate_master_path=pulled['candidate_master_path'],
                 candidate_master_digest=pulled['candidate_master_digest'],
@@ -1290,6 +1342,7 @@ class HostBoxIO:
             candidate_path=pulled['candidate_path'],
             candidate_on_box=True,
             box_candidate_dir=pulled.get('box_candidate_dir'),
+            box_master_dir=pulled.get('box_master_dir'),
             candidate_files=dict(pulled.get('candidate_files') or {}),
             candidate_master_path=pulled['candidate_master_path'],
             candidate_master_digest=pulled['candidate_master_digest'],
@@ -1439,21 +1492,185 @@ def _publish_fp32_master_objects(
         raise BoxIOError('fp32 master R2 publish failed: %s' % str(exc)[:300]) from exc
 
 
+def _master_files_meta_from_dir(local_dir: Path, *, candidate_id: str) -> dict[str, dict[str, Any]]:
+    files_meta: dict[str, dict[str, Any]] = {}
+    for f in sorted(p for p in local_dir.rglob('*') if p.is_file()):
+        rel = f.relative_to(local_dir).as_posix()
+        files_meta[rel] = {
+            'sha256': _sha256_file(f),
+            'bytes': int(f.stat().st_size),
+            'r2_key': 'fp32-master/%s/%s' % (candidate_id, rel),
+        }
+    return files_meta
+
+
+def _assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
+    """Fail closed: require real weight shards, not digest-only."""
+    if not files_meta:
+        raise BoxIOError('fp32 master publish refused: empty master tree')
+    shards = [
+        n for n in files_meta
+        if str(n).endswith('.safetensors') or str(n).endswith('.bin')
+    ]
+    if not shards:
+        raise BoxIOError(
+            'fp32 master publish refused: no weight shards '
+            '(digest-only master_digest.txt is not sufficient)'
+        )
+
+
+def _write_master_index(
+    *,
+    candidate_id: str,
+    bf16: str,
+    digest: str,
+    files_meta: Mapping[str, Mapping[str, Any]],
+) -> Path:
+    idx_dir = _fp32_master_index()
+    idx_dir.mkdir(parents=True, exist_ok=True)
+    idx_path = idx_dir / ('%s.json' % candidate_id)
+    idx_doc = {
+        'bf16_sha256': bf16,
+        'master_digest': digest,
+        'files': dict(files_meta),
+        'meta_json': {
+            'version': 'pit-fp32-master-v1',
+            'bf16_sha256': bf16,
+            'master_digest': digest,
+            'source': 'pit',
+            'shard_count': sum(
+                1 for n in files_meta
+                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
+            ),
+        },
+        'source': 'pit',
+        'at': time.time(),
+    }
+    tmp = idx_path.with_name('.%s.%d.tmp' % (idx_path.name, os.getpid()))
+    tmp.write_text(json.dumps(idx_doc, indent=1, sort_keys=True) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, idx_path)
+    return idx_path
+
+
+def upload_master_from_box(
+    P: Any,
+    *,
+    candidate_id: str,
+    master_digest: str,
+    bf16_sha256: str = '',
+    box_master_dir: Optional[str] = None,
+    store_entry: str = '',
+) -> Mapping[str, Any]:
+    """GREEN: box → R2 for every fp32 master shard; write complete index entry."""
+    if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+        raise BoxIOError('candidate_id must be hex64')
+    digest = str(master_digest or '').strip()
+    if len(digest) != 64:
+        raise BoxIOError('master_digest must be hex64')
+    box_dir = box_master_dir or _resolve_box_master_dir(
+        P, master_digest=digest, store_entry=store_entry,
+    )
+    # Inventory shards on the box (name + sha256 + bytes).
+    inv_raw = P.run(
+        "python3 - <<'PY'\n"
+        "import hashlib, json, os\n"
+        "root = %r\n"
+        "out = {}\n"
+        "for dirpath, _, files in os.walk(root):\n"
+        "    for name in files:\n"
+        "        path = os.path.join(dirpath, name)\n"
+        "        rel = os.path.relpath(path, root)\n"
+        "        h = hashlib.sha256()\n"
+        "        with open(path, 'rb') as f:\n"
+        "            for b in iter(lambda: f.read(1 << 20), b''):\n"
+        "                h.update(b)\n"
+        "        out[rel.replace(os.sep, '/')] = dict(sha256=h.hexdigest(), bytes=os.path.getsize(path))\n"
+        "print(json.dumps(out, sort_keys=True))\n"
+        "PY" % box_dir,
+        timeout=1800, check=True,
+    )
+    try:
+        inv = json.loads(inv_raw.strip().splitlines()[-1])
+    except Exception as exc:
+        raise BoxIOError('box master inventory parse failed: %s' % str(exc)[:200]) from exc
+    if not isinstance(inv, dict) or not inv:
+        raise BoxIOError('box master inventory empty at %s' % box_dir)
+    _assert_master_tree_complete(inv)
+
+    # Stage on host via scp (binary-safe) then publish; keeps verify local.
+    dst = _upload_root() / candidate_id / 'fp32-master'
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    for rel in sorted(inv):
+        local = dst / rel
+        local.parent.mkdir(parents=True, exist_ok=True)
+        _scp_from(P, '%s/%s' % (box_dir.rstrip('/'), rel), local, timeout=3600)
+        got = _sha256_file(local)
+        if got != inv[rel]['sha256']:
+            raise BoxIOError('master shard sha mismatch after scp: %s' % rel)
+
+    files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)
+    _assert_master_tree_complete(files_meta)
+    # Prefer meta.json digest when present.
+    meta_p = dst / 'meta.json'
+    if meta_p.is_file():
+        try:
+            md = str((json.loads(meta_p.read_text()) or {}).get('master_digest') or '')
+            if len(md) == 64:
+                digest = md
+        except Exception:
+            pass
+    bf16 = str(bf16_sha256 or candidate_id)
+    _publish_fp32_master_objects(candidate_id, dst, files_meta)
+    idx_path = _write_master_index(
+        candidate_id=candidate_id, bf16=bf16, digest=digest, files_meta=files_meta,
+    )
+    return dict(
+        ok=True,
+        path=str(dst),
+        candidate_id=candidate_id,
+        master_digest=digest,
+        index=str(idx_path),
+        published=True,
+        box_master_dir=box_dir,
+        shard_count=sum(
+            1 for n in files_meta
+            if str(n).endswith('.safetensors') or str(n).endswith('.bin')
+        ),
+        complete=True,
+    )
+
+
 def upload_master(
     *,
     candidate_id: str,
-    path: str,
+    path: str = '',
     master_digest: str = '',
     bf16_sha256: str = '',
     **kwargs: Any,
 ) -> Mapping[str, Any]:
-    """Stage master locally, upload to R2, write PIT_FP32_MASTER_INDEX/<cand>.json.
+    """Stage master, upload to R2, write PIT_FP32_MASTER_INDEX/<cand>.json.
 
-    ``queue_ingest._master_for_head`` reads that index after the first PIT GREEN;
-    without it the network stalls one GREEN later (master_unpublished).
+    Under ``defer_candidate_upload`` / ``candidate_on_box``, shards must come
+    from the box (``pod`` + ``box_master_dir``). Digest-only trees are refused.
     """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
+    pod = kwargs.get('pod')
+    on_box = bool(kwargs.get('candidate_on_box') or kwargs.get('defer_candidate_upload'))
+    box_master_dir = kwargs.get('box_master_dir')
+    if pod is not None and (on_box or box_master_dir):
+        return upload_master_from_box(
+            _as_pod(pod),
+            candidate_id=candidate_id,
+            master_digest=str(master_digest or kwargs.get('master_digest') or ''),
+            bf16_sha256=str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id),
+            box_master_dir=str(box_master_dir) if box_master_dir else None,
+            store_entry=str(kwargs.get('store_entry') or ''),
+        )
+
     src = Path(path) if path else None
     if src is None or not src.exists():
         raise BoxIOError('master path missing')
@@ -1469,7 +1686,6 @@ def upload_master(
 
     digest = str(master_digest or kwargs.get('master_digest') or '').strip()
     if not digest or len(digest) != 64:
-        # Prefer meta.json digest when present; else hash concatenated shard digests.
         meta_p = dst / 'meta.json'
         if meta_p.is_file():
             try:
@@ -1483,38 +1699,12 @@ def upload_master(
             digest = h.hexdigest()
 
     bf16 = str(bf16_sha256 or kwargs.get('bf16_sha256') or candidate_id)
-    files_meta: dict[str, dict[str, str]] = {}
-    for f in sorted(p for p in dst.rglob('*') if p.is_file()):
-        rel = f.relative_to(dst).as_posix()
-        files_meta[rel] = {
-            'sha256': _sha256_file(f),
-            'r2_key': 'fp32-master/%s/%s' % (candidate_id, rel),
-        }
-    if not files_meta:
-        raise BoxIOError('fp32 master publish refused: empty master tree')
-
+    files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)
+    _assert_master_tree_complete(files_meta)
     _publish_fp32_master_objects(candidate_id, dst, files_meta)
-
-    idx_dir = _fp32_master_index()
-    idx_dir.mkdir(parents=True, exist_ok=True)
-    idx_path = idx_dir / ('%s.json' % candidate_id)
-    idx_doc = {
-        'bf16_sha256': bf16,
-        'master_digest': digest,
-        'files': files_meta,
-        'meta_json': {
-            'version': 'pit-fp32-master-v1',
-            'bf16_sha256': bf16,
-            'master_digest': digest,
-            'source': 'pit',
-        },
-        'source': 'pit',
-        'at': time.time(),
-    }
-    tmp = idx_path.with_name('.%s.%d.tmp' % (idx_path.name, os.getpid()))
-    tmp.write_text(json.dumps(idx_doc, indent=1, sort_keys=True) + '\n')
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, idx_path)
+    idx_path = _write_master_index(
+        candidate_id=candidate_id, bf16=bf16, digest=digest, files_meta=files_meta,
+    )
     return dict(
         ok=True,
         path=str(dst),
@@ -1522,6 +1712,11 @@ def upload_master(
         master_digest=digest,
         index=str(idx_path),
         published=True,
+        shard_count=sum(
+            1 for n in files_meta
+            if str(n).endswith('.safetensors') or str(n).endswith('.bin')
+        ),
+        complete=True,
     )
 
 

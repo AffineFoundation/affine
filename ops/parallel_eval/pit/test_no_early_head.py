@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from .apply_live import ApplyLiveError, LiveApplicator
 from .box import ScriptedBoxIO
@@ -58,7 +59,7 @@ class TestNoEarlyHead(unittest.TestCase):
             config=cfg,
             verify_uploads=verify_uploads,
             accept_pit_decision=lambda _payload: True,
-            upload_master=lambda **k: {'ok': True},
+            upload_master=lambda **k: {'ok': True, 'complete': True, 'shard_count': 2},
             checkpoint_signer=FixtureRootSigner(),
         )
         return Controller(
@@ -74,7 +75,9 @@ class TestNoEarlyHead(unittest.TestCase):
         ), clock
 
     def test_head_unchanged_at_decide_advances_after_apply(self):
-        ctl, _clock = self._ctl(verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True})
+        ctl, _clock = self._ctl(verify_uploads=lambda **k: {
+            'candidate_ok': True, 'master_ok': True, 'master_complete': True,
+        })
         ctl.set_head(H0, epoch=5, master_digest=M0)
         ctl.enqueue(epoch=10, registration_index=1)
         seen_at_scored = []
@@ -87,10 +90,22 @@ class TestNoEarlyHead(unittest.TestCase):
             return out
 
         ctl._decide = watch_decide  # type: ignore[method-assign]
-        for _ in range(25):
-            ctl.tick()
-            if ctl.items and ctl.items[0].state is ItemState.RELEASED:
-                break
+        with mock.patch(
+            'ops.parallel_eval.pit.apply_live.master_index_is_complete',
+            return_value=True,
+        ):
+            with mock.patch(
+                'ops.parallel_eval.pit.apply_live.drive_cutover_apply',
+                return_value={'ok': True},
+            ):
+                with mock.patch(
+                    'ops.parallel_eval.pit.apply_live.confirm_head_advanced',
+                    return_value=True,
+                ):
+                    for _ in range(25):
+                        ctl.tick()
+                        if ctl.items and ctl.items[0].state is ItemState.RELEASED:
+                            break
         self.assertEqual(seen_at_scored, [H0])
         self.assertNotEqual(ctl.current_head, H0)
         self.assertEqual(ctl.items[0].decision, 'green_fresh')

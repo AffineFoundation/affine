@@ -289,6 +289,24 @@ def tick_once(
         return {'dry_run': True, 'items': len(ctl.items), 'plan': plan.as_dict(), 'ingest': ingest}
 
     summary: dict[str, Any] = {'plan': plan.as_dict(), 'advanced': [], 'ingest': ingest}
+    # Under cutover the PE controller does not run pe_live.tick — PIT must drive
+    # pending GREENS → APPLY ready → record_applied (HEAD-CHAIN + hash-sync).
+    if ctl.config.is_live() and ctl.config.may_write_live_artifacts():
+        try:
+            from .cutover_apply import drive_cutover_apply
+            summary['cutover_apply'] = drive_cutover_apply()
+        except Exception as exc:
+            summary['cutover_apply'] = {'ok': False, 'error': str(exc)[:300]}
+            print(
+                json.dumps({
+                    'component': 'pit-run-host',
+                    'level': 'error',
+                    'event': 'cutover_apply_failed',
+                    'error': str(exc)[:400],
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
     if hasattr(ctl, 'tick'):
         out = ctl.tick()
         summary['tick'] = out

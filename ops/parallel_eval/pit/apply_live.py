@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from .checkpoint_auth import build_checkpoint_auth_payload, sign_checkpoint_authorization
 from .config import PitConfig
+from .cutover_apply import confirm_head_advanced, drive_cutover_apply, master_index_is_complete
 from .life_paths import pending_dir
 from .state import ItemRecord
 
@@ -196,14 +197,31 @@ class LiveApplicator:
             raise ApplyLiveError('missing/invalid master digest for GREEN verify (fail closed)')
         if not cand_sha or len(str(cand_sha)) != 64:
             raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
-        # Publish real fp32 master to R2 + PIT_FP32_MASTER_INDEX/<cand>.json before
-        # head advance / verify (queue_ingest._master_for_head reads that index).
+        # Publish real fp32 master shards to R2 + complete PIT_FP32_MASTER_INDEX
+        # entry BEFORE verify / HEAD advance. Digest-only trees fail closed.
+        master_pub: Dict[str, Any] = {}
         if self.upload_master is not None:
-            self.upload_master(
+            master_pub = dict(self.upload_master(
                 candidate_id=cand,
-                path=meta.get('candidate_master_path'),
+                path=meta.get('candidate_master_path') or '',
                 master_digest=str(master_digest),
                 bf16_sha256=cand,
+                pod=meta.get('pod'),
+                box_master_dir=meta.get('box_master_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                store_entry=meta.get('output_store_entry') or '',
+            ) or {})
+            if not master_pub.get('complete') and not master_pub.get('shard_count'):
+                # Older stubs may omit flags — still require index completeness below.
+                pass
+        published_complete = bool(
+            master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
+        )
+        if not published_complete and not master_index_is_complete(cand):
+            raise ApplyLiveError(
+                'fp32 master index incomplete for %s (need weight shards; fail closed)'
+                % cand[:12]
             )
         receipt = _upload_receipt_dir(cand)
         cand_path = str(receipt) if receipt is not None else None
@@ -219,6 +237,11 @@ class LiveApplicator:
             candidate_path=cand_path,
             master_path=str(meta.get('candidate_master_path') or '') or None,
         )
+        if not verified.get('master_ok'):
+            raise ApplyLiveError('fp32 master hash verify failed (fail closed)')
+        # Require shard-aware verify when the verifier surfaces completeness.
+        if verified.get('master_complete') is False:
+            raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
         files = meta.get('candidate_files') or meta.get('files') or (meta.get('checkpoint') or {}).get('files')
         ckpt = dict(id=cand)
         if files:
@@ -266,6 +289,26 @@ class LiveApplicator:
             }
             self.accept_pit_decision(payload)
             pe_ok = True
+        # Under cutover, accept_pit_decision only queues GREENS pending.
+        # HEAD advances only after drive_cutover_apply → record_applied.
+        try:
+            drive_cutover_apply()
+        except Exception as exc:
+            # Queued + verified; head drive retries on later ticks. Keep box.
+            detail_drive = {'drive_error': str(exc)[:300]}
+        else:
+            detail_drive = {}
+        advanced = bool(pe_ok and confirm_head_advanced(cand))
+        detail = {
+            'candidate': cand,
+            'verify': verified,
+            'master_publish': {
+                k: master_pub.get(k)
+                for k in ('shard_count', 'complete', 'index', 'box_master_dir')
+                if k in master_pub
+            },
+            **detail_drive,
+        }
         return LiveApplyResult(
             applied=True,
             decision='green_fresh',
@@ -273,11 +316,11 @@ class LiveApplicator:
             stranded=False,
             paid=True,
             destroyed_box_state=False,
-            head_advanced=True,
+            head_advanced=advanced,
             pe_apply_accepted=pe_ok,
             master_verified=bool(verified.get('master_ok')),
             candidate_verified=bool(verified.get('candidate_ok')),
-            detail={'candidate': cand, 'verify': verified},
+            detail=detail,
         )
 
     def _stale_or_red(

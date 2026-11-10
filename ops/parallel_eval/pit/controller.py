@@ -27,6 +27,11 @@ from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
 from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .cutover import plan_cutover
+from .cutover_apply import (
+    confirm_head_advanced,
+    drive_cutover_apply,
+    master_index_is_complete,
+)
 from .decisions import DecisionLog
 from .durable import item_from_dict, item_to_dict, pit_state_root
 from .pe_lane import LaneService, bind_host_lane_service
@@ -756,6 +761,7 @@ class Controller:
         meta['candidate_path'] = receipt.get('candidate_path')
         meta['candidate_on_box'] = bool(receipt.get('candidate_on_box') or receipt.get('defer_candidate_upload'))
         meta['box_candidate_dir'] = receipt.get('box_candidate_dir')
+        meta['box_master_dir'] = receipt.get('box_master_dir')
         meta['candidate_files'] = dict(receipt.get('candidate_files') or {})
         meta['defer_candidate_upload'] = bool(receipt.get('defer_candidate_upload'))
         meta['candidate_master_path'] = receipt.get('candidate_master_path')
@@ -1015,6 +1021,59 @@ class Controller:
         self._persist(item)
         return item
 
+    def _drive_pending_head(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        """Drive pending → APPLY ready → record_applied for a queued GREEN.
+
+        ``head_advanced`` / box release only after HEAD-CHAIN append is verified.
+        Incomplete fp32 master index blocks apply and keeps the box.
+        """
+        cand = item.candidate_id or ''
+        if not cand or not master_index_is_complete(cand):
+            kept = self._keep_green_for_retry(
+                item, 'incomplete-fp32-master:refuse-head-apply',
+            )
+            # Keep gate_emit_ready if DECISION already landed; still block HEAD.
+            if ((item.meta or {}).get('live_apply') or {}).get('candidate_verified'):
+                kept.meta = dict(kept.meta or {}, gate_emit_ready=True, green_apply_pending=True)
+                self._persist(kept)
+            return kept, 'green-master-incomplete'
+
+        def _finalize_advanced() -> tuple[ItemRecord, str]:
+            item.meta = dict(item.meta or {})
+            item.meta.pop('green_apply_pending', None)
+            item.meta['head_advanced'] = True
+            live = dict(item.meta.get('live_apply') or {})
+            live['head_advanced'] = True
+            item.meta['live_apply'] = live
+            self.current_head = cand
+            self.current_head_epoch = int(self.current_head_epoch) + 1
+            if self.on_green_fresh is not None:
+                self.on_green_fresh(item)
+            self._persist(item)
+            return self._release(item, reason='green_fresh-applied')
+
+        if confirm_head_advanced(cand):
+            return _finalize_advanced()
+        try:
+            drive_cutover_apply(
+                alert_fn=lambda doc: self._alert_green_apply_failure(
+                    item, str(doc.get('event') or 'cutover-apply'),
+                ),
+            )
+        except Exception as exc:
+            if confirm_head_advanced(cand):
+                return _finalize_advanced()
+            kept = self._keep_green_for_retry(
+                item, 'cutover-apply:%s' % str(exc)[:200],
+            )
+            return kept, 'green-head-drive-error'
+        if not confirm_head_advanced(cand):
+            # Lifecycle may still need an epoch tick to offer/consume APPLY ready.
+            item.meta = dict(item.meta or {}, green_apply_pending=True, head_advanced=False)
+            self._persist(item)
+            return item, 'green-head-pending'
+        return _finalize_advanced()
+
     def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         # Recovery (e1055): decided + box already gone + non-GREEN decision on disk.
         # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish.
@@ -1048,6 +1107,14 @@ class Controller:
                 and float(retry_at) > float(self.now_fn())
             ):
                 return item, 'green-apply-backoff'
+            # Already queued GREEN waiting on HEAD-CHAIN: drive apply_tick /
+            # reconcile without re-uploading; refuse incomplete master.
+            if (
+                decision in ('green_fresh', 'green')
+                and (item.meta or {}).get('green_apply_pending')
+                and ((item.meta or {}).get('live_apply') or {}).get('pe_apply_accepted')
+            ):
+                return self._drive_pending_head(item)
             scored = dict((item.meta or {}).get('scored') or {'decision': item.decision})
             try:
                 result = self.live_applicator.apply(item, scored=scored)
@@ -1095,9 +1162,17 @@ class Controller:
                 return released, 'apply-failed'
             item.meta['live_apply'] = result.as_dict()
             item.meta['gate_emit_ready'] = True
-            item.meta.pop('green_apply_pending', None)
             item.meta.pop('apply_retry_at', None)
             self._seal_decision_log(item)
+            if item.decision == 'green_fresh' and not result.head_advanced:
+                # Queued in GREENS pending; HEAD-CHAIN not yet appended. Keep the
+                # box until cutover_apply confirms record_applied (or master fix).
+                item.meta['green_apply_pending'] = True
+                item.meta['head_advanced'] = False
+                self._persist(item)
+                return item, 'green-head-pending'
+            item.meta.pop('green_apply_pending', None)
+            item.meta['head_advanced'] = bool(result.head_advanced)
             if result.head_advanced and item.candidate_id:
                 self.current_head = item.candidate_id
                 self.current_head_epoch = int(self.current_head_epoch) + 1
