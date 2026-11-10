@@ -49,8 +49,11 @@ class TestStreamMasterUpload(unittest.TestCase):
             box.mkdir()
             (box / 'master-00001-of-00001.safetensors').write_bytes(b'WEIGHTS')
             (box / 'meta.json').write_text(json.dumps({
-                # Box meta lies — host digest must win.
+                # Box meta lies about digest — host digest must win.
+                'version': 'v833f-fp32-head-master-v1',
                 'master_digest': 'e' * 64,
+                'bf16_sha256': C,
+                'tensor_file': {'layer.weight': 'master-00001-of-00001.safetensors'},
             }))
             mirror = td_p / 'mirror'
             mirror.mkdir()
@@ -114,9 +117,19 @@ class TestStreamMasterUpload(unittest.TestCase):
             public.mkdir()
             mirror.mkdir()
             blob = b'data'
+            meta_blob = json.dumps({
+                'version': 'v833f-fp32-head-master-v1',
+                'bf16_sha256': C,
+                'master_digest': M,
+                'tensor_file': {'layer.weight': 'master-00001-of-00001.safetensors'},
+            }).encode()
             inv = {
                 'master-00001-of-00001.safetensors': {
                     'sha256': hashlib.sha256(blob).hexdigest(), 'bytes': len(blob),
+                },
+                'meta.json': {
+                    'sha256': hashlib.sha256(meta_blob).hexdigest(),
+                    'bytes': len(meta_blob),
                 },
             }
             env = {
@@ -130,15 +143,28 @@ class TestStreamMasterUpload(unittest.TestCase):
                 AU.write_pending_master_index(
                     candidate_id=C, bf16=C, digest=M, inv=inv,
                 )
-                # Plant mirror object
-                src = mirror / 'pit-pending' / C / 'master-00001-of-00001.safetensors'
-                src.parent.mkdir(parents=True, exist_ok=True)
-                src.write_bytes(blob)
+                pend = json.loads((pending_idx / ('%s.json' % C)).read_text())
+                self.assertEqual(
+                    set(pend['meta_json'].keys()), {'r2_key'},
+                )
+                self.assertNotIn('version', pend['meta_json'])
+                # Plant mirror objects
+                root = mirror / 'pit-pending' / C
+                root.mkdir(parents=True, exist_ok=True)
+                (root / 'master-00001-of-00001.safetensors').write_bytes(blob)
+                (root / 'meta.json').write_bytes(meta_blob)
                 out = AU.promote_pending_master_to_live(candidate_id=C, digest=M)
                 self.assertTrue(Path(out).is_file())
                 live = json.loads(Path(out).read_text())
                 self.assertFalse(live.get('pending'))
                 self.assertEqual(live['master_digest'], M)
+                self.assertEqual(set(live['meta_json'].keys()), {'r2_key'})
+                self.assertTrue(live['meta_json']['r2_key'].endswith('/meta.json'))
+                self.assertNotIn('version', live['meta_json'])
+                live_meta = mirror / live['meta_json']['r2_key']
+                self.assertTrue(live_meta.is_file())
+                loaded = json.loads(live_meta.read_text())
+                self.assertIn('tensor_file', loaded)
                 gc = AU.gc_pending_artifacts(C)
                 self.assertTrue(gc['ok'])
                 self.assertFalse((pending_idx / ('%s.json' % C)).exists())

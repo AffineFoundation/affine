@@ -87,14 +87,27 @@ class TestMotoR2KeySemantics(unittest.TestCase):
     def test_promote_copies_objects_before_public_index(self):
         shard = b'WEIGHTS-PENDING'
         sha = _sha(shard)
+        meta_blob = json.dumps({
+            'version': 'v833f-fp32-head-master-v1',
+            'bf16_sha256': C,
+            'master_digest': M,
+            'tensor_file': {'layer.weight': 'master.safetensors'},
+        }).encode()
+        meta_sha = _sha(meta_blob)
         src_key = 'pit-pending/%s/master.safetensors' % C
+        meta_key = 'pit-pending/%s/meta.json' % C
         dst_key = 'fp32-master/%s/master.safetensors' % C
+        dst_meta = 'fp32-master/%s/meta.json' % C
         with mock_aws():
             client = self._start_bucket()
             client.put_object(Bucket=BUCKET, Key=src_key, Body=shard)
+            client.put_object(Bucket=BUCKET, Key=meta_key, Body=meta_blob)
             inv = {
                 'master.safetensors': {
                     'sha256': sha, 'bytes': len(shard), 'r2_key': src_key,
+                },
+                'meta.json': {
+                    'sha256': meta_sha, 'bytes': len(meta_blob), 'r2_key': meta_key,
                 },
             }
             with mock.patch.dict(os.environ, self.env, clear=False):
@@ -115,6 +128,12 @@ class TestMotoR2KeySemantics(unittest.TestCase):
             body = client.get_object(Bucket=BUCKET, Key=dst_key)['Body'].read()
             self.assertEqual(body, shard)
             self.assertEqual(_sha(body), sha)
+            meta_live = client.get_object(Bucket=BUCKET, Key=dst_meta)['Body'].read()
+            self.assertEqual(json.loads(meta_live)['tensor_file']['layer.weight'],
+                             'master.safetensors')
+            self.assertEqual(set(live['meta_json'].keys()), {'r2_key'})
+            self.assertEqual(live['meta_json']['r2_key'], dst_meta)
+            self.assertNotIn('version', live['meta_json'])
 
     def test_promote_refuses_when_pending_object_missing(self):
         with mock_aws():
@@ -123,6 +142,10 @@ class TestMotoR2KeySemantics(unittest.TestCase):
                 'master.safetensors': {
                     'sha256': '1' * 64, 'bytes': 1,
                     'r2_key': 'pit-pending/%s/master.safetensors' % C,
+                },
+                'meta.json': {
+                    'sha256': '2' * 64, 'bytes': 2,
+                    'r2_key': 'pit-pending/%s/meta.json' % C,
                 },
             }
             with mock.patch.dict(os.environ, self.env, clear=False):
@@ -148,6 +171,9 @@ class TestMotoR2KeySemantics(unittest.TestCase):
             inv = {
                 'master.safetensors': {
                     'sha256': _sha(blob), 'bytes': len(blob), 'r2_key': keys[0],
+                },
+                'meta.json': {
+                    'sha256': _sha(blob), 'bytes': len(blob), 'r2_key': keys[2],
                 },
             }
             with mock.patch.dict(os.environ, self.env, clear=False):

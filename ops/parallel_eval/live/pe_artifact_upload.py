@@ -100,6 +100,26 @@ def assert_master_tree_complete(files_meta: Mapping[str, Any]) -> None:
         raise ArtifactUploadError(
             'fp32 master has no weight shards (digest-only refused)'
         )
+    if 'meta.json' not in files_meta:
+        raise ArtifactUploadError(
+            'fp32 master missing meta.json (required for trainer tensor_file)'
+        )
+
+
+def meta_json_r2_ptr(files_meta: Mapping[str, Any], *, prefix: str) -> Dict[str, str]:
+    """Public/pending index pointer at the real uploaded meta.json (never inline).
+
+    Live HEAD indexes use ``{"r2_key": "<prefix>/meta.json"}``. A synthetic
+    ``{"version": "pit-fp32-master-v1", ...}`` would be written over the real
+    meta.json by ``fetch_master_on_box`` and break ``_fp32_load`` (no tensor_file).
+    """
+    meta = files_meta.get('meta.json')
+    if not isinstance(meta, Mapping):
+        raise ArtifactUploadError('files_meta missing meta.json for index pointer')
+    key = str(meta.get('r2_key') or ('%s/meta.json' % prefix.rstrip('/')))
+    if not key.endswith('meta.json'):
+        raise ArtifactUploadError('meta_json r2_key must end with meta.json: %s' % key)
+    return {'r2_key': key}
 
 
 def inventory_box_master(P: Any, box_dir: str) -> Dict[str, Dict[str, Any]]:
@@ -333,6 +353,7 @@ def write_pending_master_index(
     idx_dir = pending_master_index_dir()
     idx_dir.mkdir(parents=True, exist_ok=True)
     idx_path = idx_dir / ('%s.json' % candidate_id)
+    prefix = pending_r2_prefix(candidate_id)
     doc = {
         'bf16_sha256': bf16,
         'master_digest': digest,  # host-recorded; never overwritten from box meta.json
@@ -341,16 +362,8 @@ def write_pending_master_index(
         'private': True,
         'source': 'pit-pending',
         'at': time.time(),
-        'meta_json': {
-            'version': 'pit-fp32-pending-v1',
-            'bf16_sha256': bf16,
-            'master_digest': digest,
-            'pending': True,
-            'shard_count': sum(
-                1 for n in files_meta
-                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-            ),
-        },
+        # Pointer only — real meta.json (with tensor_file) lives at r2_key.
+        'meta_json': meta_json_r2_ptr(files_meta, prefix=prefix),
     }
     _wj(idx_path, doc, 0o600)
     return idx_path
@@ -447,6 +460,10 @@ def promote_pending_master_to_live(
                     % (n, got[:12], expected[:12])
                 )
         live_files[n] = dict(meta or {}, r2_key=dst_key)
+    if 'meta.json' not in live_files:
+        raise ArtifactUploadError(
+            'promote refused: meta.json missing after pending→live copy'
+        )
     public = public_master_index_dir()
     public.mkdir(parents=True, exist_ok=True)
     out_path = public / ('%s.json' % candidate_id)
@@ -458,16 +475,8 @@ def promote_pending_master_to_live(
         'source': 'pit',
         'promoted_from_pending': True,
         'at': time.time(),
-        'meta_json': {
-            'version': 'pit-fp32-master-v1',
-            'bf16_sha256': doc.get('bf16_sha256') or candidate_id,
-            'master_digest': digest,
-            'source': 'pit',
-            'shard_count': sum(
-                1 for n in live_files
-                if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-            ),
-        },
+        # Same shape as live HEAD index: pointer to uploaded meta.json only.
+        'meta_json': meta_json_r2_ptr(live_files, prefix=dst_prefix),
     }
     _wj(out_path, out_doc, 0o600)
     return out_path
