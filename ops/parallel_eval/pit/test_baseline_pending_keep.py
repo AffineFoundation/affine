@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from .apply_live import LiveApplicator
 from .config import load_pit_config
-from .controller import BASELINE_WAIT_ALERT_S, Controller
+from .controller import BASELINE_WAIT_ALERT_S, BASELINE_WAIT_RELEASE_S, Controller
 from .pe_lane import LaneService
 from .pe_rent import RentService
 from .pe_score import BaselinePending, call_live_host_score, is_live_pending_exc, score
@@ -169,10 +170,12 @@ class TestBaselinePendingKeepBox(unittest.TestCase):
         self.assertEqual(updated3.box_id, 'pod-1065')
 
     def test_pending_alert_after_two_hours_still_keeps_box(self):
+        """2h alert + no upload path: refuse release (never drop unuploaded C), keep box."""
         def host(epoch, rid, result):
             raise Pending('baseline for round %s not ready' % rid)
 
         ctl = self._ctl(host)
+        # No live_applicator → 45m cap cannot upload → must keep the box.
         item = self._scored_item()
         updated, _ = ctl._decide(item)
         self.clock['t'] = float((updated.meta or {})['baseline_wait_since']) + float(BASELINE_WAIT_ALERT_S) + 1.0
@@ -181,7 +184,7 @@ class TestBaselinePendingKeepBox(unittest.TestCase):
         meta['baseline_wait_next_at'] = self.clock['t'] - 1.0
         updated.meta = meta
         updated2, note = ctl._decide(updated)
-        self.assertEqual(note, 'wait-baseline')
+        self.assertEqual(note, 'wait-baseline-upload-failed')
         self.assertTrue((updated2.meta or {}).get('baseline_wait_alerted'))
         self.assertTrue((Path(os.environ['PIT_STATE']) / 'BASELINE-WAIT-ALERT.json').is_file())
         self.assertEqual(updated2.box_id, 'pod-1065')
@@ -252,6 +255,198 @@ class TestBaselinePendingKeepBox(unittest.TestCase):
         self.assertEqual(updated.decision, 'blocked_no_candidate')
         self.assertFalse(updated.paid)
         self.assertEqual((updated.meta or {}).get('blocked'), 'no_candidate')
+
+    def test_green_stale_box_id_blocks_no_apply_gate_or_bench(self):
+        """e1065-like: box_id present but released → blocked_no_candidate; no side effects."""
+        applies: list = []
+        benches: list = []
+        accepts: list = []
+
+        def host(epoch, rid, result):
+            return {'decision': 'green', 'z': 2.1, 'evaluated': {'z': 2.1}}
+
+        ctl = self._ctl(host)
+        # Ledger no longer holds the released box (e1065/e1066 class).
+        ctl.rent.ledger.active.clear()
+        ctl.rent.list_pods = lambda: []
+        ctl.apply_hook = lambda it: applies.append(it.item_id)
+        ctl.on_green_fresh = lambda it: benches.append(it.item_id)
+        cfg = ctl.config
+        ctl.live_applicator = LiveApplicator(
+            config=cfg,
+            verify_uploads=lambda **k: {'candidate_ok': True, 'master_ok': True},
+            accept_pit_decision=lambda payload: accepts.append(dict(payload)),
+            upload_candidate=lambda **k: {'ok': True},
+            upload_master=lambda **k: {'ok': True, 'complete': True, 'shard_count': 2},
+            checkpoint_signer=object(),
+        )
+        stale = '0f07be4e' + 'a' * 56
+        item = self._scored_item(box_id=stale)
+        item.box_name = 'affine-pe-pit-1065-gone'
+        ctl.items = [item]
+
+        updated, note = ctl._decide(item)
+        self.assertEqual(note, 'blocked-no-candidate')
+        self.assertEqual(updated.state, ItemState.NO_DECISION)
+        self.assertEqual(updated.decision, 'blocked_no_candidate')
+        self.assertFalse(updated.paid)
+        self.assertFalse((updated.meta or {}).get('gate_emit_ready'))
+        self.assertFalse((updated.meta or {}).get('green_apply_pending'))
+        self.assertEqual(applies, [])
+        self.assertEqual(benches, [])
+        self.assertEqual(accepts, [])
+        # No APPLY ready file under PE_STATE.
+        pe = Path(os.environ['PE_STATE'])
+        apply_files = list(pe.rglob('apply/*.json')) + list(pe.rglob('**/APPLY*.json'))
+        self.assertEqual(apply_files, [])
+
+    def test_migrate_stale_box_ids_moves_to_released_box_id(self):
+        ctl = self._ctl(lambda *a, **k: {'decision': 'red', 'z': -1})
+        ctl.rent.ledger.active.clear()
+        stale = '639bf826' + 'b' * 56
+        item = self._scored_item(box_id=stale)
+        item.box_name = 'affine-pe-pit-1066-gone'
+        ctl.items = [item]
+        moved = ctl.migrate_stale_box_ids()
+        self.assertEqual(moved, [stale])
+        self.assertIsNone(item.box_id)
+        self.assertIsNone(item.box_name)
+        self.assertEqual((item.meta or {}).get('released_box_id'), stale)
+        self.assertEqual((item.meta or {}).get('released_box_name'), 'affine-pe-pit-1066-gone')
+
+    def test_release_stamps_released_box_id(self):
+        ctl = self._ctl(lambda *a, **k: {'decision': 'red', 'z': -1})
+        item = self._scored_item()
+        # Mark uploaded so fail/release path is allowed for a RED decided item.
+        item.state = ItemState.DECIDED
+        item.decision = 'red'
+        item.meta = dict(item.meta or {}, live_apply={
+            'candidate_verified': True, 'master_verified': True, 'master_complete': True,
+        })
+        with mock.patch(
+            'ops.parallel_eval.pit.controller.master_index_is_complete', return_value=True,
+        ):
+            released, note = ctl._release(item, reason='test-release')
+        self.assertIn(note, ('released', 'already-released', 'release-noop'))
+        self.assertIsNone(released.box_id)
+        self.assertEqual((released.meta or {}).get('released_box_id'), 'pod-1065')
+
+    def test_baseline_wait_cap_releases_when_already_uploaded(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        item.meta = dict(item.meta or {}, live_apply={
+            'candidate_verified': True, 'master_verified': True, 'master_complete': True,
+        })
+        with mock.patch(
+            'ops.parallel_eval.pit.controller.master_index_is_complete', return_value=True,
+        ):
+            updated, _ = ctl._decide(item)
+            self.clock['t'] = (
+                float((updated.meta or {})['baseline_wait_since'])
+                + float(BASELINE_WAIT_RELEASE_S) + 1.0
+            )
+            meta = dict(updated.meta or {})
+            meta['baseline_wait_next_at'] = self.clock['t'] - 1.0
+            updated.meta = meta
+            updated2, note = ctl._decide(updated)
+        self.assertEqual(note, 'wait-baseline-box-released')
+        self.assertIsNone(updated2.box_id)
+        self.assertEqual(updated2.state, ItemState.SCORED)
+        self.assertNotIn('pod-1065', ctl.rent.ledger.active)
+        self.assertEqual((updated2.meta or {}).get('released_box_id'), 'pod-1065')
+        self.assertTrue((updated2.meta or {}).get('baseline_wait_box_released'))
+
+    def test_baseline_wait_cap_uploads_then_releases(self):
+        uploads = {'cand': 0, 'master': 0}
+
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        meta = dict(item.meta or {})
+        meta.update({
+            'candidate_sha256': C,
+            'candidate_master_digest': 'd' * 64,
+            'candidate_path': 'box:/ckpt/' + C,
+            'candidate_master_path': '/workspace/master',
+            'candidate_on_box': True,
+            'defer_candidate_upload': True,
+        })
+        item.meta = meta
+
+        def upload_cand(**k):
+            uploads['cand'] += 1
+            return {'ok': True}
+
+        def upload_master(**k):
+            uploads['master'] += 1
+            return {'ok': True, 'complete': True, 'shard_count': 4}
+
+        ctl.live_applicator = LiveApplicator(
+            config=ctl.config,
+            verify_uploads=lambda **k: {
+                'candidate_ok': True, 'master_ok': True, 'master_complete': True,
+            },
+            upload_candidate=upload_cand,
+            upload_master=upload_master,
+            checkpoint_signer=object(),
+        )
+        with mock.patch(
+            'ops.parallel_eval.pit.controller.master_index_is_complete', return_value=True,
+        ), mock.patch(
+            'ops.parallel_eval.pit.apply_live.master_index_is_complete', return_value=True,
+        ):
+            updated, _ = ctl._decide(item)
+            self.clock['t'] = (
+                float((updated.meta or {})['baseline_wait_since'])
+                + float(BASELINE_WAIT_RELEASE_S) + 1.0
+            )
+            m = dict(updated.meta or {})
+            m['baseline_wait_next_at'] = self.clock['t'] - 1.0
+            updated.meta = m
+            updated2, note = ctl._decide(updated)
+        self.assertEqual(note, 'wait-baseline-box-released')
+        self.assertEqual(uploads['cand'], 1)
+        self.assertEqual(uploads['master'], 1)
+        self.assertIsNone(updated2.box_id)
+        self.assertEqual(updated2.state, ItemState.SCORED)
+        self.assertTrue(
+            (updated2.meta or {}).get('live_apply', {}).get('candidate_verified')
+        )
+        self.assertTrue(
+            (updated2.meta or {}).get('live_apply', {}).get('master_verified')
+        )
+
+    def test_baseline_wait_cap_never_releases_unuploaded(self):
+        def host(epoch, rid, result):
+            raise Pending('baseline for round %s not ready' % rid)
+
+        ctl = self._ctl(host)
+        item = self._scored_item()
+        ctl.live_applicator = LiveApplicator(
+            config=ctl.config,
+            verify_uploads=lambda **k: {'candidate_ok': False, 'master_ok': False},
+            upload_candidate=lambda **k: (_ for _ in ()).throw(RuntimeError('upload boom')),
+            upload_master=lambda **k: {'ok': True, 'complete': True, 'shard_count': 1},
+            checkpoint_signer=object(),
+        )
+        updated, _ = ctl._decide(item)
+        self.clock['t'] = (
+            float((updated.meta or {})['baseline_wait_since'])
+            + float(BASELINE_WAIT_RELEASE_S) + 1.0
+        )
+        m = dict(updated.meta or {})
+        m['baseline_wait_next_at'] = self.clock['t'] - 1.0
+        updated.meta = m
+        updated2, note = ctl._decide(updated)
+        self.assertEqual(note, 'wait-baseline-upload-failed')
+        self.assertEqual(updated2.box_id, 'pod-1065')
+        self.assertIn('pod-1065', ctl.rent.ledger.active)
+        self.assertEqual(updated2.state, ItemState.SCORED)
 
 
 if __name__ == '__main__':

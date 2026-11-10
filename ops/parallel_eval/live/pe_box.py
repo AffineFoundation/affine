@@ -898,7 +898,9 @@ def detached_eval_command(
     """
     jd = job_dir.rstrip('/')
     # Use replace (not str.format) so the embedded Python braces stay intact.
-    template = r'''mkdir -p __JD__/markers; pgrep -f 'train_pit.py|v83_dp.py' | while read p; do kill -TERM "$p" 2>/dev/null || true; done; sleep 2; python3 - __JD__ __CID__ __PLAN__ __PODD__ __MS__ <<'PY'
+    # After host-side kill of leftover vLLM/train, poll nvidia-smi until GPUs are
+    # free (≤5 min) before podctl serve — never a fixed sleep 2 (restart mid-eval).
+    template = r'''mkdir -p __JD__/markers; pgrep -f 'train_pit.py|v83_dp.py|vllm serve|podctl.py serve' | while read p; do kill -TERM "$p" 2>/dev/null || true; done; python3 - __JD__ __CID__ __PLAN__ __PODD__ __MS__ <<'PY'
 import json, os, subprocess, sys, time
 jd, cid, plan_path, podd, ms = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
 
@@ -914,7 +916,31 @@ def write_done(status, **extra):
     open(os.path.join(jd, 'RESULT.json'), 'w').write(json.dumps(doc, sort_keys=True) + '\n')
     return doc
 
+def wait_gpus_free(timeout_s=300, thresh_mib=2000, poll_s=5):
+    """Poll nvidia-smi until all GPUs report memory.used < thresh (or timeout)."""
+    t0 = time.time()
+    used = []
+    while True:
+        raw = sh(
+            'nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits',
+            check=False, timeout=60,
+        )
+        used = []
+        for tok in (raw or '').replace(',', ' ').split():
+            try:
+                used.append(int(float(tok)))
+            except ValueError:
+                continue
+        if used and all(u < thresh_mib for u in used):
+            return used
+        if time.time() - t0 >= timeout_s:
+            raise RuntimeError(
+                'GPUs not free after %.0fs before serve: %s MiB' % (time.time() - t0, used)
+            )
+        time.sleep(poll_s)
+
 try:
+    wait_gpus_free()
     plan = json.load(open(plan_path))
     name = plan['run_name']
     # Live pe_lane.serve

@@ -147,6 +147,9 @@ def _start_rent_reconcile(ctl: Controller) -> dict:
             known.add(name)
     out = ctl.rent.reconcile(listings, item_box_ids=known)
     out['restored_box_ids'] = restored
+    # Stale box_id (not in ledger.active) → released_box_id so GREEN never
+    # treats a destroyed candidate as available for apply (e1065/e1066 class).
+    out['migrated_stale_box_ids'] = ctl.migrate_stale_box_ids()
     ctl.rent.save_ledger()
     return out
 

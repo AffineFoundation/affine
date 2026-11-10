@@ -158,6 +158,11 @@ class TestDetachedEvalPlanParity(unittest.TestCase):
         self.assertIn("status == 'ok'", cmd)
         self.assertIn('eval.done', cmd)
         self.assertIn('failed', cmd)
+        # Restart mid-eval: poll nvidia-smi until free (≤5 min), not sleep 2.
+        self.assertIn('wait_gpus_free', cmd)
+        self.assertIn('nvidia-smi --query-gpu=memory.used', cmd)
+        self.assertIn('timeout_s=300', cmd)
+        self.assertNotIn('; sleep 2; python3 -', cmd)
 
 
 if __name__ == '__main__':

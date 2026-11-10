@@ -76,6 +76,9 @@ GREEN_APPLY_BACKOFF_CAP_S = 300.0
 BASELINE_WAIT_BACKOFF_S = 30.0
 BASELINE_WAIT_BACKOFF_CAP_S = 300.0
 BASELINE_WAIT_ALERT_S = 2 * 3600
+# Cap billing: after 45m waiting on baseline, upload C if needed then release the box
+# (score later from the saved result). Never release an unuploaded candidate.
+BASELINE_WAIT_RELEASE_S = 45 * 60
 
 
 @dataclass
@@ -1245,17 +1248,66 @@ class Controller:
         self._persist(item)
         return item
 
-    def _candidate_uploaded(self, item: ItemRecord) -> bool:
+    def _candidate_upload_complete(self, item: ItemRecord) -> bool:
+        """Verified complete upload: bf16 + all fp32 shards + meta/descriptor."""
         apply = (item.meta or {}).get('live_apply') or {}
-        return bool(apply.get('candidate_verified'))
+        if not (apply.get('candidate_verified') and apply.get('master_verified')):
+            return False
+        if apply.get('master_complete') is False:
+            return False
+        cand = item.candidate_id or ''
+        if cand and not master_index_is_complete(cand):
+            return False
+        return True
+
+    def _candidate_uploaded(self, item: ItemRecord) -> bool:
+        return self._candidate_upload_complete(item)
+
+    def _box_still_active(self, item: ItemRecord) -> bool:
+        """True only when box_id is in the rent ledger AND still listed in lium."""
+        if not item.box_id:
+            return False
+        if item.box_id not in self.rent.ledger.active:
+            return False
+        return self._box_still_in_lium(item)
 
     def _candidate_available_for_apply(self, item: ItemRecord) -> bool:
-        """True when bf16 C can still be uploaded/verified (box held or already uploaded)."""
-        if self._candidate_uploaded(item):
+        """True when C can be applied: active live box, or verified complete upload.
+
+        A stale ``box_id`` left after release must NOT count — e1065/e1066 still
+        carried released ids and would have DECIDED GREEN against a destroyed C.
+        """
+        if self._candidate_upload_complete(item):
             return True
+        return self._box_still_active(item)
+
+    def _stamp_released_box_id(self, item: ItemRecord, meta: Optional[dict] = None) -> dict:
+        """Move box_id → meta.released_box_id for audit; return updated meta."""
+        out = dict(meta if meta is not None else (item.meta or {}))
         if item.box_id:
-            return True
-        return False
+            out['released_box_id'] = item.box_id
+            if item.box_name:
+                out['released_box_name'] = item.box_name
+        return out
+
+    def migrate_stale_box_ids(self) -> list[str]:
+        """Startup: box_id not in rent.ledger.active → released_box_id (clear box_id)."""
+        moved: list[str] = []
+        active = set(self.rent.ledger.active.keys()) if self.rent.ledger is not None else set()
+        for item in self.items:
+            if not item.box_id:
+                continue
+            bid = str(item.box_id)
+            if bid in active:
+                continue
+            meta = self._stamp_released_box_id(item)
+            meta['stale_box_migrated_at'] = float(self.now_fn())
+            item.meta = meta
+            item.box_id = None
+            item.box_name = None
+            self._persist(item)
+            moved.append(bid)
+        return moved
 
     def _must_keep_unuploaded_candidate(self, item: ItemRecord) -> bool:
         """After a probe result, never release a box whose candidate isn't uploaded.
@@ -1271,7 +1323,11 @@ class Controller:
     def _wait_baseline(
         self, item: ItemRecord, *, pending_reason: str,
     ) -> tuple[ItemRecord, str]:
-        """Stay SCORED; keep box + candidate; retry score with backoff; alert after 2h."""
+        """Stay SCORED; keep box + candidate; retry score with backoff; alert after 2h.
+
+        After ``BASELINE_WAIT_RELEASE_S`` (45m), upload C if needed then release the
+        box (score later from the saved result). Never release an unuploaded C.
+        """
         now = float(self.now_fn())
         meta = dict(item.meta or {})
         first = meta.get('baseline_wait_since')
@@ -1320,8 +1376,105 @@ class Controller:
                 item, ItemState.SCORED, reason='wait-baseline',
                 updates={'result_stored': True, 'meta': dict(item.meta)},
             )
+        # Cap billing: after 45m, upload then release the box (unless already done).
+        if (
+            elapsed >= float(BASELINE_WAIT_RELEASE_S)
+            and not (item.meta or {}).get('baseline_wait_box_released')
+            and item.box_id
+        ):
+            self._persist(item)
+            return self._release_after_baseline_wait(item, note=note)
         self._persist(item)
         return item, 'wait-baseline'
+
+    def _ensure_candidate_uploaded(self, item: ItemRecord) -> ItemRecord:
+        """Upload bf16 + full fp32 shards via live applicator; stamp live_apply."""
+        if self._candidate_upload_complete(item):
+            return item
+        app = self.live_applicator
+        if app is None or not hasattr(app, 'upload_candidate_artifacts'):
+            raise RuntimeError('no live applicator upload_candidate_artifacts')
+        stamped = dict(app.upload_candidate_artifacts(item) or {})
+        meta = dict(item.meta or {})
+        live = dict(meta.get('live_apply') or {})
+        live.update(stamped)
+        meta['live_apply'] = live
+        item.meta = meta
+        self._persist(item)
+        if not self._candidate_upload_complete(item):
+            raise RuntimeError('candidate upload incomplete after upload_candidate_artifacts')
+        return item
+
+    def _release_box_keep_scored(
+        self, item: ItemRecord, *, reason: str, note: str = '',
+    ) -> tuple[ItemRecord, str]:
+        """Release rental after candidate is durably uploaded; stay SCORED for later score."""
+        meta = self._stamp_released_box_id(item)
+        meta['baseline_box_released_at'] = float(self.now_fn())
+        meta['baseline_box_released_reason'] = reason
+        meta['baseline_box_released_note'] = (note or '')[:400]
+        meta['baseline_wait_box_released'] = True
+        bid = item.box_id
+        if bid and bid in self.rent.ledger.active:
+            try:
+                self.rent.release(bid, reason=reason)
+            except Exception:
+                if bid in self.rent.ledger.active:
+                    self.rent.ledger.release(
+                        bid, reason='force-%s' % reason, at=self.now_fn(),
+                    )
+        item.meta = meta
+        item.box_id = None
+        item.box_name = None
+        item.last_error = 'wait-baseline-box-released:%s' % reason[:120]
+        self._persist(item)
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'warning',
+                'event': 'baseline_wait_box_released',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'released_box_id': (item.meta or {}).get('released_box_id'),
+                'reason': reason,
+                'note': (note or '')[:200],
+            }, default=str),
+            flush=True,
+        )
+        return item, 'wait-baseline-box-released'
+
+    def _release_after_baseline_wait(
+        self, item: ItemRecord, *, note: str,
+    ) -> tuple[ItemRecord, str]:
+        """45m cap: upload C if needed, then release box; never release unuploaded C."""
+        if self._candidate_upload_complete(item):
+            return self._release_box_keep_scored(
+                item, reason='baseline-wait-cap-uploaded', note=note,
+            )
+        try:
+            item = self._ensure_candidate_uploaded(item)
+        except Exception as exc:
+            meta = dict(item.meta or {})
+            meta['baseline_wait_upload_error'] = str(exc)[:300]
+            if not meta.get('baseline_wait_release_alerted'):
+                self._alert_baseline_wait(
+                    item,
+                    elapsed_s=float(self.now_fn()) - float(
+                        meta.get('baseline_wait_since') or self.now_fn()
+                    ),
+                    note='upload-before-release-failed:%s' % str(exc)[:200],
+                )
+                meta['baseline_wait_release_alerted'] = True
+            item.meta = meta
+            item.last_error = 'wait-baseline-upload-failed:%s' % str(exc)[:200]
+            self._persist(item)
+            return item, 'wait-baseline-upload-failed'
+        if not self._candidate_upload_complete(item):
+            # Fail closed: never release an unuploaded candidate.
+            return item, 'wait-baseline-keep-unuploaded'
+        return self._release_box_keep_scored(
+            item, reason='baseline-wait-cap-uploaded-after-put', note=note,
+        )
 
     def _alert_baseline_wait(
         self, item: ItemRecord, *, elapsed_s: float, note: str,
@@ -1537,10 +1690,12 @@ class Controller:
                 ), 'post-decision-recovery'
             return item, 'post-decision-recovery'
         if decision in ('green_fresh', 'green') and not item.box_id:
-            kept = self._keep_green_for_retry(
-                item, 'green-missing-box:cannot-apply-without-pod',
-            )
-            return kept, 'green-apply-retry'
+            # Uploaded C can apply from R2 without a live box (baseline-wait release).
+            if not self._candidate_upload_complete(item):
+                kept = self._keep_green_for_retry(
+                    item, 'green-missing-box:cannot-apply-without-pod',
+                )
+                return kept, 'green-apply-retry'
         if self.config.is_live() and self.live_applicator is not None:
             retry_at = (item.meta or {}).get('apply_retry_at')
             if (
@@ -1677,16 +1832,30 @@ class Controller:
                         self.rent.ledger.release(
                             item.box_id, reason='force-%s' % reason, at=self.now_fn(),
                         )
+        meta = self._stamp_released_box_id(item)
         if item.state is ItemState.RELEASED:
+            if item.box_id:
+                item.meta = meta
+                item.box_id = None
+                item.box_name = None
+                self._persist(item)
             return item, 'already-released'
         if can_transition(item, ItemState.RELEASED):
             released = apply_transition(
                 item, ItemState.RELEASED, reason=reason,
-                updates={'box_id': None, 'box_name': None},
+                updates={'box_id': None, 'box_name': None, 'meta': meta},
             )
             return released, 'released'
         if item.state is ItemState.ABORTED and can_transition(item, ItemState.RELEASED):
-            return apply_transition(item, ItemState.RELEASED, reason=reason), 'released'
+            return apply_transition(
+                item, ItemState.RELEASED, reason=reason,
+                updates={'box_id': None, 'box_name': None, 'meta': meta},
+            ), 'released'
+        if item.box_id:
+            item.meta = meta
+            item.box_id = None
+            item.box_name = None
+            self._persist(item)
         return item, 'release-noop'
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
@@ -1723,9 +1892,14 @@ class Controller:
             except Exception:
                 if item.box_id in self.rent.ledger.active:
                     self.rent.ledger.release(item.box_id, reason='fail-force', at=self.now_fn())
-        updates = {'attempt': next_attempt, 'last_error': reason, 'box_id': None, 'box_name': None}
-        if item.meta:
-            updates['meta'] = dict(item.meta)
+        meta = self._stamp_released_box_id(item, dict(item.meta or {}))
+        updates = {
+            'attempt': next_attempt,
+            'last_error': reason,
+            'box_id': None,
+            'box_name': None,
+            'meta': meta,
+        }
         if 'expected-master' in reason or 'fp32-master' in reason or 'Fp32MasterError' in reason or 'promote-refused' in reason:
             if can_transition(item, ItemState.NO_DECISION):
                 nd = apply_transition(item, ItemState.NO_DECISION, reason=reason, updates={**updates, 'decision': 'no_decision'})
