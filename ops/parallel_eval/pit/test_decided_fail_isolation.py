@@ -223,6 +223,125 @@ class TestDecidedFailIsolation(unittest.TestCase):
                 self.assertTrue(any(r.get('epoch') == 1055 and r.get('decision') == 'red' for r in rows))
                 self.assertTrue(any(a.get('epoch') == 1055 for a in (out.get('advanced') or [])))
 
+    def test_worker_result_on_disk_ticks_to_decision_emit_and_release(self):
+        """Finished worker-result + no worker → decide, DECISION/PIT-RESULT, release box."""
+        cfg = load_pit_config({
+            'pit': {'enabled': True, 'mode': 'live', 'cutover': True, 'max_boxes': 1},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            life = root / 'life'
+            ep = life / 'epochs' / '1056'
+            ep.mkdir(parents=True)
+            gate = root / 'gate'
+            epochs = gate / 'epochs'
+            heldout = gate / 'heldout' / 'r-e1056'
+            heldout.mkdir(parents=True)
+            epochs.mkdir(parents=True)
+            (heldout / 'ROUND.private.json').write_text(json.dumps({
+                'id': 'r-e1056', 'head': H, 'n': 1, 'seed': 's' * 64, 'indices': [0],
+            }))
+            pe = root / 'pe'
+            pit = pe / 'pit'
+            pit.mkdir(parents=True)
+            (life / 'CURRENT.json').write_text(json.dumps({
+                'epoch_index': 1056, 'checkpoint': {'id': H},
+            }))
+            (pe / 'CURRENT.json').write_text(json.dumps({
+                'epoch_index': 1056, 'checkpoint': {'id': H},
+            }))
+            (pe / 'HEAD-CHAIN.json').write_text(json.dumps({'genesis': H, 'applied': []}))
+            (pe / 'MASTER-INDEX.json').write_text(json.dumps({H: M}))
+            env = {
+                'LIFE_ROOT': str(life), 'PE_LIFE': str(life),
+                'PE_STATE': str(pe), 'PIT_STATE': str(pit),
+                'HG_GATE_STATE': str(gate), 'PE_GATE_EP': str(epochs),
+                'PE_HELDOUT': str(gate / 'heldout'),
+                'K1_TURNS': str(root / 'K1-TURNS.jsonl'),
+            }
+            (root / 'K1-TURNS.jsonl').write_text('')
+            destroyed = []
+
+            def score_fn(**_k):
+                return {
+                    'decision': 'red', 'z': -0.3, 'candidate': C,
+                    'evaluated': {'z': -0.3}, 'heldout': _heldout('r-e1056'),
+                    'plan_seed': 'p' * 64,
+                }
+
+            with mock.patch.dict(os.environ, env, clear=False):
+                store = DurableStore(root=pit)
+                rent = RentService(max_boxes=1)
+                rent.ledger.register('pod-1056', item_id='e1056', name='l1056-a0', at=1.0)
+                applicator = LiveApplicator(
+                    config=cfg,
+                    destroy_state=lambda **k: destroyed.append(dict(k)) or {'ok': True},
+                )
+                ctl = _ctl(
+                    config=cfg, rent=rent, durable_save_fn=store.save_item,
+                    score_fn=score_fn, live_applicator=applicator,
+                    destroy_box_state_fn=lambda **k: destroyed.append(dict(k)) or {'ok': True},
+                    round_id_fn=lambda e: 'r-e1056',
+                    plan_seed_fn=lambda e: 'p' * 64,
+                )
+                ctl.set_head(H, epoch=1056, master_digest=M)
+                crashed = ItemRecord(
+                    item_id='e1056' + '0' * 27, registration_index=1056, epoch=1056,
+                    state=ItemState.TRAINING, box_id='pod-1056', box_name='l1056-a0',
+                    bound_head=H, bound_master_digest=M, bound_round_id='r-e1056',
+                    bound_plan_seed='p' * 64, candidate_id=C, result_stored=False,
+                    meta=dict(
+                        pod=dict(id='pod-1056', name='l1056-a0'),
+                        epoch_dir=str(ep),
+                    ),
+                )
+                finished = ItemRecord(
+                    item_id=crashed.item_id, registration_index=1056, epoch=1056,
+                    state=ItemState.RESULT, box_id='pod-1056', box_name='l1056-a0',
+                    bound_head=H, bound_master_digest=M, bound_round_id='r-e1056',
+                    bound_plan_seed='p' * 64, candidate_id=C, result_stored=True,
+                    meta=dict(
+                        pod=dict(id='pod-1056', name='l1056-a0'),
+                        epoch_dir=str(ep),
+                        probe_bundle=dict(
+                            item_id=crashed.item_id, candidate_id=C,
+                            bound_head=H, bound_master_digest=M,
+                            probe_result=dict(score=dict(decision='red', z=-0.3)),
+                            master_upload={}, train_receipt={},
+                            box_public_key_hex='00', training_report={},
+                        ),
+                    ),
+                )
+                store.save_item(crashed)
+                ctl._save_worker_result(
+                    crashed.item_id, dict(ok=True, item=finished, note='box-complete'),
+                )
+                # Sidecar must not break list_items / rebuild.
+                ctl.items = store.list_items()
+                self.assertEqual(len(ctl.items), 1)
+                self.assertEqual(ctl.items[0].state, ItemState.TRAINING)
+
+                emitted = False
+                for _ in range(12):
+                    out = tick_once(ctl, store, dry_run=False)
+                    item = ctl.items[0]
+                    if (item.meta or {}).get('decision_emitted'):
+                        emitted = True
+                        break
+                self.assertTrue(emitted, 'decision never emitted: state=%s decision=%s meta=%s' % (
+                    ctl.items[0].state, ctl.items[0].decision, ctl.items[0].meta,
+                ))
+                final = ctl.items[0]
+                self.assertEqual(final.decision, 'red')
+                self.assertFalse(final.paid)
+                self.assertEqual(final.state, ItemState.RELEASED)
+                self.assertIsNone(final.box_id)
+                self.assertNotIn('pod-1056', rent.ledger.active)
+                self.assertTrue((epochs / '1056' / 'DECISION.json').is_file())
+                self.assertTrue((ep / 'PIT-RESULT.json').is_file())
+                self.assertTrue(any(a.get('epoch') == 1056 for a in (out.get('advanced') or [])))
+
 
 if __name__ == '__main__':
     unittest.main()
+

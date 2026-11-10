@@ -137,11 +137,20 @@ class DurableStore:
         return item_from_dict(raw)
 
     def list_items(self) -> List[ItemRecord]:
+        """Load ItemRecord snapshots only.
+
+        Sidecars such as ``<item_id>.worker-result.json`` live in the same
+        directory for restart recovery and must never be parsed as items
+        (they lack top-level ``item_id`` and would break every tick ingest).
+        """
         out = []
         for p in sorted(self.items_dir.glob('*.json')):
+            if p.name.endswith('.worker-result.json'):
+                continue
             raw = _rj(p)
-            if raw:
-                out.append(item_from_dict(raw))
+            if not isinstance(raw, dict) or 'item_id' not in raw:
+                continue
+            out.append(item_from_dict(raw))
         return out
 
     def write_claim(self, epoch: int, *, candidate: str, head: str, item_id: str) -> Path:
