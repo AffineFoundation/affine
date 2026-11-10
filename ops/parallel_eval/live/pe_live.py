@@ -23,7 +23,17 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pe_common import *
-import pe_apply as PA
+# Single pe_apply module object under both import names. Package loaders
+# (ops.parallel_eval.live.pe_apply) and bare `import pe_apply` must share
+# identity — otherwise cutover patches / marks land on a different object
+# than apply_tick reads via PA.next_green.
+_PE_APPLY_PKG = "ops.parallel_eval.live.pe_apply"
+if _PE_APPLY_PKG in sys.modules:
+    PA = sys.modules[_PE_APPLY_PKG]
+    sys.modules["pe_apply"] = PA
+else:
+    import pe_apply as PA  # noqa: E402
+    sys.modules[_PE_APPLY_PKG] = PA
 import pe_gate_hook as HOOK
 
 def _life_state_root() -> Path:
@@ -352,8 +362,20 @@ def apply_tick():
             if pend.get("pe_keep") is False:
                 PA.mark(item["candidate"], state="unrestorable", staleness=s, why="pe-keep failed; applying would strand the trainer")
                 ev(event="green_unrestorable", epoch=item["epoch"]); continue
+            # Defense in depth: never write APPLY ready without a complete fp32 master.
+            if not PA.master_index_is_complete(item["candidate"]):
+                PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                ev(event="green_apply_blocked_incomplete_master", epoch=item["epoch"],
+                   candidate=str(item["candidate"])[:12])
+                out["blocked_incomplete_master"] = item["epoch"]
+                continue
             ap = APPLY / ("e%d.json" % item["epoch"])
             if not ap.exists():
+                # Re-check immediately before the write (fail closed).
+                if not PA.master_index_is_complete(item["candidate"]):
+                    PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                    out["blocked_incomplete_master"] = item["epoch"]
+                    continue
                 wj(ap, dict(state="ready", epoch=item["epoch"], candidate=item["candidate"], base_head=item["training_head"],
                             green_at=item["green_at"], checkpoint=pend["checkpoint"], optimizer_step=pend["optimizer_step"],
                             checkpoint_authorization=pend["checkpoint_authorization"],

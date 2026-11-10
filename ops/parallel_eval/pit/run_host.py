@@ -293,8 +293,8 @@ def tick_once(
     # pending GREENS → APPLY ready → record_applied (HEAD-CHAIN + hash-sync).
     if ctl.config.is_live() and ctl.config.may_write_live_artifacts():
         try:
-            from .cutover_apply import drive_cutover_apply
-            summary['cutover_apply'] = drive_cutover_apply()
+            from .cutover_apply import cutover_apply_alert, drive_cutover_apply
+            summary['cutover_apply'] = drive_cutover_apply(alert_fn=cutover_apply_alert)
         except Exception as exc:
             summary['cutover_apply'] = {'ok': False, 'error': str(exc)[:300]}
             print(

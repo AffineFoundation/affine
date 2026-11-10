@@ -141,10 +141,74 @@ def greens():
     return rj(_st() / "GREENS.json", []) or []
 
 
+def _fp32_master_index_dir(index_dir=None):
+    if index_dir is not None:
+        return Path(index_dir)
+    for key in ("PIT_FP32_MASTER_INDEX", "AFFINE_FP32_MASTER_INDEX"):
+        v = os.environ.get(key)
+        if v:
+            return Path(v)
+    return None
+
+
+def master_index_is_complete(candidate_id, *, index_dir=None):
+    """True when the published fp32 master index lists real weight shards (not digest-only).
+
+    When PIT_FP32_MASTER_INDEX / AFFINE_FP32_MASTER_INDEX (or index_dir) is unset the
+    completeness gate is inactive and this returns True (legacy PE apply path).
+    When the gate is configured: missing index / digest-only / no shards ⇒ False
+    (fail closed). Used by next_green, apply_tick, and record_applied.
+    """
+    root = _fp32_master_index_dir(index_dir)
+    if root is None:
+        return True
+    if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+        return False
+    path = Path(root) / ("%s.json" % candidate_id)
+    if not path.is_file():
+        return False
+    try:
+        doc = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(doc, dict):
+        return False
+    digest = str(doc.get("master_digest") or "")
+    if len(digest) != 64:
+        return False
+    files = doc.get("files")
+    if not isinstance(files, dict) or not files:
+        return False
+    shards = []
+    for name, meta in files.items():
+        n = str(name)
+        if n in ("master_digest.txt", "MASTER.json", "FP32-MASTER.json"):
+            continue
+        if n.endswith(".safetensors") or n.endswith(".bin"):
+            if isinstance(meta, dict) and meta.get("sha256"):
+                shards.append(n)
+    return bool(shards)
+
+
+APPLY_BLOCKED_INCOMPLETE_MASTER = "incomplete-fp32-master"
+
+
 def next_green():
-    for x in sorted(greens(), key=lambda x: (x["green_at"], x["epoch"])):
-        if x["state"] == "pending" and not x.get("merge_blocked"):
-            return x
+    """First pending GREEN in green-time order that is eligible to become APPLY ready.
+
+    Skips merge_blocked, non-recoverable apply_blocked, and incomplete fp32 masters.
+    Incomplete-master apply_blocked is recoverable once the master index lists shards.
+    """
+    for x in sorted(greens(), key=lambda r: (r["green_at"], r["epoch"])):
+        if x.get("state") != "pending" or x.get("merge_blocked"):
+            continue
+        blocked = x.get("apply_blocked")
+        if blocked and blocked != APPLY_BLOCKED_INCOMPLETE_MASTER:
+            continue
+        cand = str(x.get("candidate") or "")
+        if not cand or not master_index_is_complete(cand):
+            continue
+        return x
     return None
 
 
@@ -162,6 +226,57 @@ def mark(candidate, **kw):
         _mark(candidate, resolved_at_cr=cr(), **kw)
 
 
+def mark_apply_blocked_incomplete(candidate, *, epoch=None, alert_fn=None):
+    """Persist apply_blocked once for an incomplete fp32 master; alert at most once.
+
+    Returns True when this call newly marked the row (and may have alerted).
+    Subsequent ticks are no-ops against GREENS.json and do not re-alert.
+    """
+    should_alert = False
+    dirty = False
+    with locked():
+        q = greens()
+        row = next((x for x in q if x.get("candidate") == candidate), None)
+        if row is None:
+            return False
+        if row.get("apply_blocked") == APPLY_BLOCKED_INCOMPLETE_MASTER and row.get("apply_blocked_alerted"):
+            return False
+        if row.get("apply_blocked") != APPLY_BLOCKED_INCOMPLETE_MASTER:
+            row["apply_blocked"] = APPLY_BLOCKED_INCOMPLETE_MASTER
+            row["why"] = "fp32 master index incomplete (need weight shards, not digest-only)"
+            row["blocked_at"] = time.time()
+            row["resolved_at_cr"] = cr()
+            dirty = True
+        if not row.get("apply_blocked_alerted"):
+            row["apply_blocked_alerted"] = True
+            should_alert = True
+            dirty = True
+        if dirty:
+            wj(_st() / "GREENS.json", q)
+    if should_alert and alert_fn is not None:
+        alert_fn({
+            "event": "green_apply_blocked_incomplete_master",
+            "candidate": candidate,
+            "epoch": epoch,
+            "apply_blocked": APPLY_BLOCKED_INCOMPLETE_MASTER,
+        })
+    return dirty
+
+
+def block_incomplete_pending_greens(*, alert_fn=None, index_dir=None):
+    """Scan pending GREENs; mark+alert incomplete masters once. Returns newly blocked candidates."""
+    newly_blocked = []
+    for item in greens():
+        if item.get("state") != "pending" or item.get("merge_blocked"):
+            continue
+        cand = str(item.get("candidate") or "")
+        if not cand or master_index_is_complete(cand, index_dir=index_dir):
+            continue
+        if mark_apply_blocked_incomplete(cand, epoch=item.get("epoch"), alert_fn=alert_fn):
+            newly_blocked.append(cand)
+    return newly_blocked
+
+
 def decide_apply(item, c=None):
     """-> ("fresh"|"merge"|"stale", staleness)"""
     c = c or chain()
@@ -175,6 +290,11 @@ def decide_apply(item, c=None):
 
 def record_applied(item, kind, s, new_head, base_head, merge_info=None):
     """Atomic head-chain append + green state; idempotent per candidate; refuses if head moved under us."""
+    cand = item["candidate"]
+    if not master_index_is_complete(cand):
+        raise RuntimeError(
+            "refuse record_applied: incomplete fp32 master for %s (fail closed)" % str(cand)[:12]
+        )
     with locked():
         c = chain()
         if any(a["candidate"] == item["candidate"] for a in c["applied"]):
@@ -184,11 +304,17 @@ def record_applied(item, kind, s, new_head, base_head, merge_info=None):
         older = [x for x in greens() if x["state"] == "pending" and (x["green_at"], x["epoch"]) < (item["green_at"], item["epoch"])]
         if older:
             raise RuntimeError("green-time order: %d older pending GREEN(s) first" % len(older))
+        # Defense in depth: re-check under the lock before HEAD-CHAIN append.
+        if not master_index_is_complete(cand):
+            raise RuntimeError(
+                "refuse record_applied: incomplete fp32 master for %s (fail closed)" % str(cand)[:12]
+            )
         c["applied"].append(dict(candidate=item["candidate"], epoch=item["epoch"], training_head=item["training_head"],
                                  base_head=base_head, new_head=new_head, kind=kind, staleness=s,
                                  green_at=item["green_at"], applied_at=time.time(), applied_at_cr=cr(), merge=merge_info))
         wj(_st() / "HEAD-CHAIN.json", c)
-        _mark(item["candidate"], state="applied", kind=kind, staleness=s, new_head=new_head, applied_at_cr=cr())
+        _mark(item["candidate"], state="applied", kind=kind, staleness=s, new_head=new_head, applied_at_cr=cr(),
+              apply_blocked=None, apply_blocked_alerted=None)
     # Ops hook (2026-11-09 CR, Jacob option A): sync fp32 expected-master hash after GREEN head-apply.
     # Paths are env-injected (PE_SYNC_EXPECTED_HASH*); no host defaults. Unset ⇒ no-op.
     # sync_expected_hash.py keeps fail-closed + refuses when a JOB has no RESULT.

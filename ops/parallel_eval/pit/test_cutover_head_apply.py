@@ -1,4 +1,9 @@
-"""Cutover HEAD apply + complete fp32 master (e1062 class)."""
+"""Cutover HEAD apply + complete fp32 master (e1062 class).
+
+Tests go through the REAL pe_live import path (bare ``import pe_apply`` bound
+as ``pe_live.PA``), including the dual-name package load that previously made
+monkeypatched ``next_green`` a no-op.
+"""
 from __future__ import annotations
 
 import json
@@ -17,8 +22,10 @@ from .box import ScriptedBoxIO
 from .controller import Controller
 from .cutover_apply import (
     confirm_head_advanced,
+    cutover_apply_alert,
     drive_cutover_apply,
     master_index_is_complete,
+    normalize_pe_modules,
 )
 from .pe_lane import LaneService
 from .pe_rent import RentService
@@ -30,6 +37,11 @@ HEAD = 'a' * 64
 CAND = 'b' * 64
 MASTER = 'd' * 64
 AUTH = {'input': HEAD, 'id': CAND, 'payload': {'checkpoint_id': CAND, 'input_head': HEAD}}
+
+_PKG_APPLY = 'ops.parallel_eval.live.pe_apply'
+_PKG_LIVE = 'ops.parallel_eval.live.pe_live'
+_PKG_LIFE = 'ops.parallel_eval.live.pe_lifecycle'
+_PKG_COMMON = 'ops.parallel_eval.live.pe_common'
 
 
 def _live_cfg():
@@ -172,6 +184,7 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
             sys.path.insert(0, str(live))
         self._live_mod_names = (
             'replace_pod', 'pe_common', 'pe_apply', 'pe_live', 'pe_lifecycle',
+            _PKG_APPLY, _PKG_LIVE, _PKG_LIFE, _PKG_COMMON,
         )
         self._prev_mods = {n: sys.modules.get(n) for n in self._live_mod_names}
 
@@ -187,7 +200,13 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
             else:
                 sys.modules[name] = prev
 
-    def _import_live(self):
+    def _import_live_real_path(self, *, dual_package_first: bool = False):
+        """Import via the same path pe_live uses in production.
+
+        When dual_package_first=True, deliberately load the package name first
+        (the historical dual-module trap), then import pe_live — normalize must
+        still yield one shared pe_apply object.
+        """
         rp = types.ModuleType('replace_pod')
 
         class _Pod:
@@ -195,25 +214,31 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
 
         rp.Pod = _Pod
         with mock.patch.dict(sys.modules, {'replace_pod': rp}):
-            for name in ('pe_common', 'pe_apply', 'pe_live', 'pe_lifecycle'):
-                sys.modules.pop(name, None)
-            import pe_apply as PA  # type: ignore
-            import pe_live as PL  # type: ignore
-            import pe_lifecycle as Life  # type: ignore
-            import pe_common as PC  # type: ignore
+            for name in self._live_mod_names:
+                if name != 'replace_pod':
+                    sys.modules.pop(name, None)
+            if dual_package_first:
+                # Force the package module into sys.modules first.
+                importlib = __import__('importlib')
+                importlib.import_module(_PKG_APPLY)
+            import pe_live as PL  # type: ignore  # noqa: E402
+            import pe_lifecycle as Life  # type: ignore  # noqa: E402
+            import pe_common as PC  # type: ignore  # noqa: E402
+            PA = PL.PA
+            # Identity must hold after normalize (and pe_live's own aliasing).
+            PA2, PL2 = normalize_pe_modules(pe_live=PL)
+            self.assertIs(PA2, PL.PA)
+            self.assertIs(PA2, sys.modules.get('pe_apply'))
+            self.assertIs(PA2, sys.modules.get(_PKG_APPLY))
             PL.EP = self.gate
             PC.LIFE = self.life
             PL.LIFE = self.life
             return PA, PL, Life, PC
 
-    def test_e2e_green_reaches_head_chain_hash_sync_and_bench(self):
-        PA, PL, Life, PC = self._import_live()
-        _write_complete_master_index(self.idx, CAND)
-        benches = []
-
-        pend = self.life / 'pending' / 'e1062-test.json'
+    def _queue_pending_green(self, PA, *, epoch: int = 1062, pending_name: str = 'e1062.json'):
+        pend = self.life / 'pending' / pending_name
         pend.write_text(json.dumps({
-            'epoch': 1062,
+            'epoch': epoch,
             'candidate': CAND,
             'training_head': HEAD,
             'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
@@ -224,29 +249,36 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
         }))
         self.assertTrue(PA.accept_pit_decision({
             'source': 'pit',
-            'epoch': 1062,
+            'epoch': epoch,
             'candidate': CAND,
             'training_head': HEAD,
             'green_at': time.time(),
             'decision': 'green_fresh',
             'pending': str(pend),
         }))
-        (self.gate / '1062').mkdir(parents=True)
-        (self.gate / '1062' / 'DECISION.json').write_text(json.dumps({
+        (self.gate / str(epoch)).mkdir(parents=True)
+        (self.gate / str(epoch) / 'DECISION.json').write_text(json.dumps({
             'decision': 'green',
             'candidate': CAND,
             'source': 'pit',
             'evaluated': {'z': 2.0, 'n': 100},
             'decided_at': time.time(),
         }))
+        return pend
 
-        # Drive pending → ready (PIT-owned; pe_controller does not run under cutover).
-        out = drive_cutover_apply(pe_apply=PA, pe_live=PL, index_dir=self.idx)
+    def test_e2e_green_reaches_head_chain_hash_sync_and_bench(self):
+        PA, PL, Life, PC = self._import_live_real_path(dual_package_first=True)
+        _write_complete_master_index(self.idx, CAND)
+        benches = []
+        self._queue_pending_green(PA)
+
+        # Drive via REAL pe_live path — do NOT pass a separate pe_apply object.
+        out = drive_cutover_apply(pe_live=PL, alert_fn=cutover_apply_alert)
+        self.assertEqual(out.get('pe_apply_id'), out.get('pe_live_pa_id'))
         ready = self.life / 'apply' / 'e1062.json'
         self.assertTrue(ready.is_file(), msg=out)
         self.assertEqual(json.loads(ready.read_text())['state'], 'ready')
 
-        # Lifecycle consumes ready → offered → CURRENT → consumed.
         class LC:
             def _training(self, directory, opening, dispatch, current, now):
                 return None
@@ -294,15 +326,13 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
             self.life, json.loads((self.life / 'CURRENT.json').read_text()),
         ))
 
-        # reconcile → record_applied → hash-sync hook.
-        rec = drive_cutover_apply(pe_apply=PA, pe_live=PL, index_dir=self.idx)
+        rec = drive_cutover_apply(pe_live=PL, alert_fn=cutover_apply_alert)
         self.assertIn(1062, rec.get('recorded_epochs') or [])
-        self.assertTrue(confirm_head_advanced(CAND, pe_apply=PA))
+        self.assertTrue(confirm_head_advanced(CAND, pe_apply=PL.PA))
         chain = json.loads((self.pe / 'HEAD-CHAIN.json').read_text())
         self.assertTrue(any(a.get('new_head') == CAND for a in chain.get('applied') or []))
         self.assertTrue(self.sync_log.is_file() or (self.td / 'sync-run.log').is_file())
 
-        # Bench trigger via controller on_green_fresh after HEAD confirmed.
         ctl = Controller(
             config=_live_cfg(),
             rent=RentService(max_boxes=1),
@@ -334,61 +364,45 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
         self.assertEqual(updated.state, ItemState.RELEASED)
 
     def test_restart_with_pending_green_resumes(self):
-        PA, PL, Life, PC = self._import_live()
+        PA, PL, Life, PC = self._import_live_real_path()
         _write_complete_master_index(self.idx, CAND)
-        # Simulate host crash after accept_pit_decision only.
-        pend = self.life / 'pending' / 'e1062-restart.json'
-        pend.write_text(json.dumps({
-            'epoch': 1062,
-            'candidate': CAND,
-            'training_head': HEAD,
-            'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
-            'optimizer_step': 2,
-            'checkpoint_authorization': AUTH,
-            'pe_keep': True,
-            'source': 'pit',
-        }))
-        PA.accept_pit_decision({
-            'source': 'pit', 'epoch': 1062, 'candidate': CAND,
-            'training_head': HEAD, 'green_at': time.time(),
-            'decision': 'green_fresh', 'pending': str(pend),
-        })
-        (self.gate / '1062').mkdir(parents=True)
-        (self.gate / '1062' / 'DECISION.json').write_text(json.dumps({
-            'decision': 'green', 'candidate': CAND, 'source': 'pit',
-            'evaluated': {'z': 1.0, 'n': 10}, 'decided_at': time.time(),
-        }))
-        # Fresh process: drive again — must create APPLY ready from pending.
-        drive_cutover_apply(pe_apply=PA, pe_live=PL, index_dir=self.idx)
+        self._queue_pending_green(PA, pending_name='e1062-restart.json')
+        drive_cutover_apply(pe_live=PL, alert_fn=cutover_apply_alert)
         self.assertTrue((self.life / 'apply' / 'e1062.json').is_file())
 
-    def test_incomplete_master_blocks_apply_ready(self):
-        PA, PL, Life, PC = self._import_live()
+    def test_incomplete_master_no_apply_file_single_alert_real_pe_live(self):
+        """REAL pe_live path: incomplete master ⇒ no apply/, no HEAD, one alert."""
+        PA, PL, Life, PC = self._import_live_real_path(dual_package_first=True)
         _write_digest_only_index(self.idx, CAND)
-        pend = self.life / 'pending' / 'e1062-bad.json'
-        pend.write_text(json.dumps({
-            'epoch': 1062,
-            'candidate': CAND,
-            'training_head': HEAD,
-            'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
-            'optimizer_step': 2,
-            'checkpoint_authorization': AUTH,
-            'pe_keep': True,
-            'source': 'pit',
-        }))
-        PA.accept_pit_decision({
-            'source': 'pit', 'epoch': 1062, 'candidate': CAND,
-            'training_head': HEAD, 'green_at': time.time(),
-            'decision': 'green_fresh', 'pending': str(pend),
-        })
-        (self.gate / '1062').mkdir(parents=True)
-        (self.gate / '1062' / 'DECISION.json').write_text(json.dumps({
-            'decision': 'green', 'candidate': CAND, 'source': 'pit',
-            'evaluated': {'z': 1.0, 'n': 10}, 'decided_at': time.time(),
-        }))
-        out = drive_cutover_apply(pe_apply=PA, pe_live=PL, index_dir=self.idx)
-        self.assertIn(CAND, out.get('refused_incomplete_master') or [])
-        self.assertFalse((self.life / 'apply' / 'e1062.json').exists())
+        self._queue_pending_green(PA, pending_name='e1062-bad.json')
+
+        alerts = []
+
+        def _alert(doc):
+            alerts.append(dict(doc))
+            return cutover_apply_alert(doc)
+
+        out1 = drive_cutover_apply(pe_live=PL, alert_fn=_alert)
+        self.assertIn(CAND, out1.get('refused_incomplete_master') or [])
+        apply_path = self.life / 'apply' / 'e1062.json'
+        self.assertFalse(apply_path.exists(), msg='must not write APPLY ready: %s' % out1)
+        chain = json.loads((self.pe / 'HEAD-CHAIN.json').read_text())
+        self.assertEqual(chain.get('applied') or [], [])
+        self.assertEqual(len(alerts), 1)
+
+        # Second tick: still no apply file, still no HEAD, no re-alert / no re-mark churn.
+        greens_before = (self.pe / 'GREENS.json').read_text()
+        out2 = drive_cutover_apply(pe_live=PL, alert_fn=_alert)
+        self.assertEqual(out2.get('refused_incomplete_master') or [], [])
+        self.assertFalse(apply_path.exists())
+        self.assertEqual(len(alerts), 1)
+        greens_after = (self.pe / 'GREENS.json').read_text()
+        self.assertEqual(greens_before, greens_after)
+        row = next(g for g in json.loads(greens_after) if g.get('candidate') == CAND)
+        self.assertEqual(row.get('apply_blocked'), 'incomplete-fp32-master')
+        self.assertTrue(row.get('apply_blocked_alerted'))
+        self.assertIs(PL.PA.next_green(), None)
+
         # Controller keeps the box.
         ctl = Controller(
             config=_live_cfg(),
@@ -417,10 +431,8 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
         self.assertEqual(note, 'green-master-incomplete')
         self.assertEqual(updated.box_id, 'pod-1062')
         self.assertEqual(updated.state, ItemState.DECIDED)
-        self.assertTrue((updated.meta or {}).get('green_apply_pending'))
         from .durable import pit_state_root
-        alert = pit_state_root() / 'GREEN-APPLY-ALERT.json'
-        self.assertTrue(alert.is_file(), msg='incomplete master must raise GREEN-APPLY-ALERT')
+        self.assertTrue((pit_state_root() / 'GREEN-APPLY-ALERT.json').is_file())
 
 
 if __name__ == '__main__':

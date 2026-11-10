@@ -29,6 +29,7 @@ from .config import PitConfig, load_pit_config
 from .cutover import plan_cutover
 from .cutover_apply import (
     confirm_head_advanced,
+    cutover_apply_alert,
     drive_cutover_apply,
     master_index_is_complete,
 )
@@ -1055,11 +1056,7 @@ class Controller:
         if confirm_head_advanced(cand):
             return _finalize_advanced()
         try:
-            drive_cutover_apply(
-                alert_fn=lambda doc: self._alert_green_apply_failure(
-                    item, str(doc.get('event') or 'cutover-apply'),
-                ),
-            )
+            drive_cutover_apply(alert_fn=cutover_apply_alert)
         except Exception as exc:
             if confirm_head_advanced(cand):
                 return _finalize_advanced()

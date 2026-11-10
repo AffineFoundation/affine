@@ -40,6 +40,15 @@ class TestCutoverApplyReconcile(unittest.TestCase):
             'optimizer_step': 1,
             'checkpoint_authorization': {'input': 'genesis', 'id': HEAD},
         }))
+        self.idx = self.td / 'fp32-idx'
+        self.idx.mkdir(parents=True)
+        (self.idx / ('%s.json' % CAND)).write_text(json.dumps({
+            'bf16_sha256': CAND,
+            'master_digest': 'd' * 64,
+            'files': {
+                'model-00001-of-00001.safetensors': {'sha256': '1' * 64, 'bytes': 100},
+            },
+        }) + '\n')
         self.env = {
             'PE_LIFE_STATE': str(self.life),
             'LIFE_ROOT': str(self.life),
@@ -49,6 +58,7 @@ class TestCutoverApplyReconcile(unittest.TestCase):
             'PE_ST': str(self.pe),
             'PE_GATE_EP': str(self.gate),
             'HG_GATE_STATE': str(self.td / 'gate'),
+            'PIT_FP32_MASTER_INDEX': str(self.idx),
         }
         self._prev = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)

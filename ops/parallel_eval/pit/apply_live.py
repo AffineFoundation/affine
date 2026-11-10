@@ -20,7 +20,12 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from .checkpoint_auth import build_checkpoint_auth_payload, sign_checkpoint_authorization
 from .config import PitConfig
-from .cutover_apply import confirm_head_advanced, drive_cutover_apply, master_index_is_complete
+from .cutover_apply import (
+    confirm_head_advanced,
+    cutover_apply_alert,
+    drive_cutover_apply,
+    master_index_is_complete,
+)
 from .life_paths import pending_dir
 from .state import ItemRecord
 
@@ -292,7 +297,7 @@ class LiveApplicator:
         # Under cutover, accept_pit_decision only queues GREENS pending.
         # HEAD advances only after drive_cutover_apply → record_applied.
         try:
-            drive_cutover_apply()
+            drive_cutover_apply(alert_fn=cutover_apply_alert)
         except Exception as exc:
             # Queued + verified; head drive retries on later ticks. Keep box.
             detail_drive = {'drive_error': str(exc)[:300]}

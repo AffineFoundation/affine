@@ -7,18 +7,20 @@ forever. This module drives:
   pending → APPLY ready → (lifecycle offers/consumes) → record_applied
   → hash-sync
 
-Idempotent and crash-safe. Refuses to promote a GREEN whose published fp32
-master index is incomplete (digest-only / no shards). ``head_advanced`` is
-true only after the candidate appears on ``HEAD-CHAIN.json``.
+Idempotent and crash-safe. Refusal of incomplete fp32 masters lives inside
+``pe_apply.next_green`` / ``pe_live.apply_tick`` / ``pe_apply.record_applied``
+(no monkeypatching). ``head_advanced`` is true only after the candidate
+appears on ``HEAD-CHAIN.json``.
 """
 from __future__ import annotations
 
 import importlib
 import json
 import os
+import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Mapping, Optional
 
 
 class CutoverApplyError(RuntimeError):
@@ -32,7 +34,25 @@ def _pe_state() -> Path:
     return Path(env)
 
 
+def _ensure_live_on_path() -> None:
+    live = Path(__file__).resolve().parents[1] / 'live'
+    live_s = str(live)
+    if live_s not in sys.path:
+        sys.path.insert(0, live_s)
+
+
+def _load_pe_live():
+    _ensure_live_on_path()
+    for name in ('pe_live', 'ops.parallel_eval.live.pe_live'):
+        try:
+            return importlib.import_module(name)
+        except ImportError:
+            continue
+    raise CutoverApplyError('pe_live module not importable')
+
+
 def _load_pe_apply():
+    _ensure_live_on_path()
     for name in ('pe_apply', 'ops.parallel_eval.live.pe_apply'):
         try:
             return importlib.import_module(name)
@@ -41,13 +61,31 @@ def _load_pe_apply():
     raise CutoverApplyError('pe_apply module not importable')
 
 
-def _load_pe_live():
-    for name in ('pe_live', 'ops.parallel_eval.live.pe_live'):
-        try:
-            return importlib.import_module(name)
-        except ImportError:
-            continue
-    raise CutoverApplyError('pe_live module not importable')
+def normalize_pe_modules(
+    *,
+    pe_apply: Any = None,
+    pe_live: Any = None,
+) -> tuple[Any, Any]:
+    """Return the single shared (pe_apply, pe_live) pair pe_live.apply_tick uses.
+
+    Fail closed if the caller's pe_apply is a different module object than
+    ``pe_live.PA``. Registers both import names onto that object.
+    """
+    PL = pe_live or _load_pe_live()
+    live_pa = getattr(PL, 'PA', None)
+    if live_pa is None:
+        raise CutoverApplyError('pe_live.PA missing (fail closed)')
+    if pe_apply is not None and pe_apply is not live_pa:
+        raise CutoverApplyError(
+            'pe_apply module identity mismatch with pe_live.PA '
+            '(bare pe_apply vs ops.parallel_eval.live.pe_apply) — fail closed'
+        )
+    PA = live_pa
+    sys.modules['pe_apply'] = PA
+    sys.modules['ops.parallel_eval.live.pe_apply'] = PA
+    if getattr(PL, 'PA', None) is not PA:
+        raise CutoverApplyError('pe_live.PA is not the shared pe_apply module')
+    return PA, PL
 
 
 def _fp32_master_index_dir() -> Optional[Path]:
@@ -59,10 +97,16 @@ def _fp32_master_index_dir() -> Optional[Path]:
 
 
 def master_index_is_complete(candidate_id: str, *, index_dir: Optional[Path] = None) -> bool:
-    """True when the published master index lists real weight shards (not digest-only)."""
+    """Delegate to pe_apply when loaded; otherwise evaluate the index directly."""
+    try:
+        PA = _load_pe_apply()
+        return bool(PA.master_index_is_complete(candidate_id, index_dir=index_dir))
+    except CutoverApplyError:
+        pass
+    # Hermetic fallback for unit tests that never import live pe_*.
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         return False
-    root = index_dir if index_dir is not None else _fp32_master_index_dir()
+    root = Path(index_dir) if index_dir is not None else _fp32_master_index_dir()
     if root is None:
         return False
     path = Path(root) / ('%s.json' % candidate_id)
@@ -80,22 +124,31 @@ def master_index_is_complete(candidate_id: str, *, index_dir: Optional[Path] = N
     files = doc.get('files')
     if not isinstance(files, Mapping) or not files:
         return False
-    # Digest-only publish wrote solely master_digest.txt — refuse that.
-    weight = []
+    shards = []
     for name, meta in files.items():
         n = str(name)
         if n in ('master_digest.txt', 'MASTER.json', 'FP32-MASTER.json'):
             continue
-        if n.endswith('.safetensors') or n.endswith('.bin') or n == 'meta.json':
+        if n.endswith('.safetensors') or n.endswith('.bin'):
             if isinstance(meta, Mapping) and meta.get('sha256'):
-                weight.append(n)
-    shard_like = [n for n in weight if n.endswith('.safetensors') or n.endswith('.bin')]
-    return bool(shard_like)
+                shards.append(n)
+    return bool(shards)
 
 
 def head_chain_has_candidate(candidate_id: str, *, pe_apply: Any = None) -> bool:
-    PA = pe_apply or _load_pe_apply()
-    chain = PA.chain() or {}
+    """True when HEAD-CHAIN.json lists candidate. Reads PE_STATE directly (no pe_live import)."""
+    chain: Mapping[str, Any] = {}
+    if pe_apply is not None:
+        chain = pe_apply.chain() or {}
+    else:
+        try:
+            path = _pe_state() / 'HEAD-CHAIN.json'
+            if path.is_file():
+                doc = json.loads(path.read_text())
+                if isinstance(doc, Mapping):
+                    chain = doc
+        except Exception:
+            chain = {}
     for row in chain.get('applied') or []:
         if isinstance(row, Mapping) and row.get('candidate') == candidate_id:
             return True
@@ -110,38 +163,9 @@ def refuse_incomplete_pending_greens(
     index_dir: Optional[Path] = None,
     alert_fn: Optional[Callable[[Mapping[str, Any]], None]] = None,
 ) -> list[str]:
-    """Skip (do not APPLY-ready) pending GREENs whose master index is incomplete.
-
-    Marks them with ``why`` but leaves ``state=pending`` so a later complete
-    publish can proceed. Returns candidate ids that were refused this pass.
-    """
-    PA = pe_apply or _load_pe_apply()
-    refused: list[str] = []
-    for item in PA.greens():
-        if item.get('state') != 'pending' or item.get('merge_blocked'):
-            continue
-        cand = str(item.get('candidate') or '')
-        if not cand or master_index_is_complete(cand, index_dir=index_dir):
-            continue
-        refused.append(cand)
-        try:
-            PA.mark(
-                cand,
-                apply_blocked='incomplete-fp32-master',
-                why='fp32 master index incomplete (need weight shards, not digest-only)',
-                blocked_at=time.time(),
-            )
-        except Exception:
-            # mark may require locked write; still alert
-            pass
-        if alert_fn is not None:
-            alert_fn({
-                'event': 'green_apply_blocked_incomplete_master',
-                'candidate': cand,
-                'epoch': item.get('epoch'),
-                'source': item.get('source'),
-            })
-    return refused
+    """Mark+alert incomplete pending GREENs once via pe_apply (no re-mark every tick)."""
+    PA = pe_apply or normalize_pe_modules()[0]
+    return list(PA.block_incomplete_pending_greens(alert_fn=alert_fn, index_dir=index_dir) or [])
 
 
 def drive_cutover_apply(
@@ -151,47 +175,20 @@ def drive_cutover_apply(
     index_dir: Optional[Path] = None,
     alert_fn: Optional[Callable[[Mapping[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
-    """Run apply_tick + reconcile_tick under cutover. Idempotent.
+    """Run apply_tick + reconcile_tick under cutover. Idempotent. No monkeypatching.
 
-    Before apply_tick, refuse incomplete-master pending GREENs so they never
-    become APPLY ready. ``record_applied`` (inside reconcile) appends HEAD-CHAIN
-    and runs the env-injected hash-sync hook.
+    Incomplete-master refusal is inside pe_apply.next_green / pe_live.apply_tick /
+    pe_apply.record_applied. This driver only marks+alerts once, then calls the
+    real pe_live ticks on the shared module object.
     """
-    PA = pe_apply or _load_pe_apply()
-    PL = pe_live or _load_pe_live()
+    PA, PL = normalize_pe_modules(pe_apply=pe_apply, pe_live=pe_live)
     refused = refuse_incomplete_pending_greens(
         pe_apply=PA, index_dir=index_dir, alert_fn=alert_fn,
     )
-    # Temporarily strip incomplete pending from consideration by marking them
-    # unrestorable-for-apply is too strong (would strand forever). Instead we
-    # monkey-patch next_green via mark apply_blocked and filter in a local wrapper
-    # if pe_live.apply_tick cannot see our flag. pe_live.apply_tick uses
-    # PA.next_green() which only checks state==pending && !merge_blocked.
-    # So we temporarily set merge_blocked for incomplete ones? That would strand
-    # for K1 pay. Better: set state aside... Actually user said first-GREEN-wins /
-    # stranded semantics must hold — incomplete is NOT stranded, just blocked.
-    #
-    # Patch: wrap PA.next_green for this call to skip incomplete masters.
-    real_next = PA.next_green
-
-    def _next_complete():
-        for x in sorted(PA.greens(), key=lambda r: (r['green_at'], r['epoch'])):
-            if x.get('state') != 'pending' or x.get('merge_blocked'):
-                continue
-            cand = str(x.get('candidate') or '')
-            if cand and not master_index_is_complete(cand, index_dir=index_dir):
-                continue
-            return x
-        return None
-
-    PA.next_green = _next_complete  # type: ignore[method-assign]
-    try:
-        if hasattr(PL, '_sync_life_paths'):
-            PL._sync_life_paths()
-        apply_out = PL.apply_tick()
-        reconcile_out = PL.reconcile_tick()
-    finally:
-        PA.next_green = real_next  # type: ignore[method-assign]
+    if hasattr(PL, '_sync_life_paths'):
+        PL._sync_life_paths()
+    apply_out = PL.apply_tick()
+    reconcile_out = PL.reconcile_tick()
     recorded = list(reconcile_out or [])
     return {
         'ok': True,
@@ -199,9 +196,43 @@ def drive_cutover_apply(
         'reconcile': reconcile_out,
         'recorded_epochs': recorded,
         'refused_incomplete_master': refused,
+        'pe_apply_id': id(PA),
+        'pe_live_pa_id': id(getattr(PL, 'PA', None)),
     }
 
 
 def confirm_head_advanced(candidate_id: str, *, pe_apply: Any = None) -> bool:
     """True only after HEAD-CHAIN append for this candidate is durable."""
     return head_chain_has_candidate(candidate_id, pe_apply=pe_apply)
+
+
+def cutover_apply_alert(doc: Mapping[str, Any]) -> Optional[Path]:
+    """run_host alert sink: write GREEN-APPLY-ALERT.json once per call site decision.
+
+    De-dupe of GREENS.json re-marks is owned by pe_apply.mark_apply_blocked_incomplete;
+    this only materializes the durable alert file for operators.
+    """
+    from .durable import pit_state_root
+    root = pit_state_root()
+    root.mkdir(parents=True, exist_ok=True)
+    alert = root / 'GREEN-APPLY-ALERT.json'
+    payload = dict(doc or {})
+    payload.setdefault('at_unix', time.time())
+    payload.setdefault('ok', False)
+    tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+    tmp.write_text(json.dumps(payload, indent=1, sort_keys=True, default=str) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, alert)
+    print(
+        json.dumps({
+            'component': 'pit-cutover-apply',
+            'level': 'error',
+            'event': payload.get('event') or 'green_apply_blocked_incomplete_master',
+            'candidate': str(payload.get('candidate') or '')[:16],
+            'epoch': payload.get('epoch'),
+            'alert': str(alert),
+        }, default=str),
+        file=sys.stderr,
+        flush=True,
+    )
+    return alert
