@@ -362,19 +362,29 @@ def apply_tick():
             if pend.get("pe_keep") is False:
                 PA.mark(item["candidate"], state="unrestorable", staleness=s, why="pe-keep failed; applying would strand the trainer")
                 ev(event="green_unrestorable", epoch=item["epoch"]); continue
-            # Defense in depth: never write APPLY ready without a complete fp32 master.
-            if not PA.master_index_is_complete(item["candidate"]):
-                PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
-                ev(event="green_apply_blocked_incomplete_master", epoch=item["epoch"],
-                   candidate=str(item["candidate"])[:12])
-                out["blocked_incomplete_master"] = item["epoch"]
+            # Never write APPLY ready if record_applied would later refuse
+            # (incomplete master or older order-blocking pending).
+            ok_ready, why_ready = PA.can_write_apply_ready(item)
+            if not ok_ready:
+                if str(why_ready).startswith("incomplete-fp32-master"):
+                    PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                    ev(event="green_apply_blocked_incomplete_master", epoch=item["epoch"],
+                       candidate=str(item["candidate"])[:12])
+                    out["blocked_incomplete_master"] = item["epoch"]
+                else:
+                    ev(event="apply_ready_refused", epoch=item["epoch"], why=why_ready)
+                    out["apply_ready_refused"] = why_ready
                 continue
             ap = APPLY / ("e%d.json" % item["epoch"])
             if not ap.exists():
                 # Re-check immediately before the write (fail closed).
-                if not PA.master_index_is_complete(item["candidate"]):
-                    PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
-                    out["blocked_incomplete_master"] = item["epoch"]
+                ok_ready, why_ready = PA.can_write_apply_ready(item)
+                if not ok_ready:
+                    if str(why_ready).startswith("incomplete-fp32-master"):
+                        PA.mark_apply_blocked_incomplete(item["candidate"], epoch=item.get("epoch"))
+                        out["blocked_incomplete_master"] = item["epoch"]
+                    else:
+                        out["apply_ready_refused"] = why_ready
                     continue
                 wj(ap, dict(state="ready", epoch=item["epoch"], candidate=item["candidate"], base_head=item["training_head"],
                             green_at=item["green_at"], checkpoint=pend["checkpoint"], optimizer_step=pend["optimizer_step"],

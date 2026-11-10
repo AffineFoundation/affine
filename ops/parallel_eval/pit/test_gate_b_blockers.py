@@ -533,9 +533,15 @@ class TestSyncExpectedHashInjectable(unittest.TestCase):
                 'PE_SYNC_EXPECTED_HASH_PYTHON',
                 'PE_SYNC_EXPECTED_HASH_LOG',
                 'PE_SYNC_EXPECTED_HASH_ALERT',
+                'PIT_FP32_MASTER_INDEX',
+                'AFFINE_FP32_MASTER_INDEX',
             )
         }
         os.environ['PE_STATE'] = str(self.pe)
+        # Completeness gate must be inactive here (or fixture a complete index).
+        # Leaked PIT_FP32_MASTER_INDEX from earlier tests made next_green() None.
+        os.environ.pop('PIT_FP32_MASTER_INDEX', None)
+        os.environ.pop('AFFINE_FP32_MASTER_INDEX', None)
         # Point at a hermetic fake — never the live host script.
         self.fake = self.td / 'fake_sync_expected_hash.py'
         self.log = self.td / 'hook-sync.log'
@@ -570,6 +576,9 @@ class TestSyncExpectedHashInjectable(unittest.TestCase):
         PA.set_genesis(HEAD)
         PA.add_green(1, CAND, HEAD, green_at=1.0)
         it = PA.next_green()
+        self.assertIsNotNone(it, 'next_green must return the queued GREEN (fp32 gate inactive)')
+        with self.assertRaises(RuntimeError):
+            PA.record_applied(None, 'fresh', 0, CAND, HEAD)
         PA.record_applied(it, 'fresh', 0, CAND, HEAD)
         self.assertTrue(self.log.is_file(), 'fake sync script must have been executed')
         self.assertIn('--head=%s' % CAND, self.log.read_text())

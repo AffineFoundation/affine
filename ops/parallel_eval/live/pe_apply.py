@@ -191,19 +191,68 @@ def master_index_is_complete(candidate_id, *, index_dir=None):
 
 
 APPLY_BLOCKED_INCOMPLETE_MASTER = "incomplete-fp32-master"
+STATE_BLOCKED_INCOMPLETE_MASTER = "blocked_incomplete_master"
+
+
+def _is_order_blocking_pending(row):
+    """True for a GREEN that must still be applied before later GREENs.
+
+    Terminal rows (blocked_incomplete_master, merge_blocked, unrestorable,
+    applied, stale, …) and apply_blocked markers never block green-time order.
+    """
+    if not isinstance(row, dict):
+        return False
+    if row.get("state") != "pending":
+        return False
+    if row.get("merge_blocked") or row.get("stranded"):
+        return False
+    if row.get("apply_blocked"):
+        return False
+    return True
+
+
+def older_order_blocking_pendings(item, *, rows=None):
+    """Older green-time rows that would make record_applied refuse order."""
+    rows = rows if rows is not None else greens()
+    key = (float(item.get("green_at") or 0), int(item.get("epoch") or 0))
+    out = []
+    for x in rows:
+        if not _is_order_blocking_pending(x):
+            continue
+        if (float(x.get("green_at") or 0), int(x.get("epoch") or 0)) < key:
+            out.append(x)
+    return out
+
+
+def can_write_apply_ready(item, *, index_dir=None):
+    """Preflight before writing APPLY ready: master complete + no older blockers.
+
+    Lifecycle must never consume an apply file whose record_applied would then
+    fail — call this (or rely on apply_tick) before creating APPLY ready.
+    """
+    if not isinstance(item, dict):
+        return False, "item-invalid"
+    cand = str(item.get("candidate") or "")
+    if not cand:
+        return False, "missing-candidate"
+    if not master_index_is_complete(cand, index_dir=index_dir):
+        return False, "incomplete-fp32-master"
+    older = older_order_blocking_pendings(item)
+    if older:
+        return False, "older-pending-first:%d" % len(older)
+    return True, "ok"
 
 
 def next_green():
     """First pending GREEN in green-time order that is eligible to become APPLY ready.
 
-    Skips merge_blocked, non-recoverable apply_blocked, and incomplete fp32 masters.
-    Incomplete-master apply_blocked is recoverable once the master index lists shards.
+    Skips terminal / blocked rows and incomplete fp32 masters. Incomplete masters
+    are moved to state=blocked_incomplete_master so they never block later GREENs.
     """
     for x in sorted(greens(), key=lambda r: (r["green_at"], r["epoch"])):
         if x.get("state") != "pending" or x.get("merge_blocked"):
             continue
-        blocked = x.get("apply_blocked")
-        if blocked and blocked != APPLY_BLOCKED_INCOMPLETE_MASTER:
+        if x.get("apply_blocked"):
             continue
         cand = str(x.get("candidate") or "")
         if not cand or not master_index_is_complete(cand):
@@ -227,40 +276,63 @@ def mark(candidate, **kw):
 
 
 def mark_apply_blocked_incomplete(candidate, *, epoch=None, alert_fn=None):
-    """Persist apply_blocked once for an incomplete fp32 master; alert at most once.
+    """Move GREEN to terminal blocked_incomplete_master; alert at most once.
 
-    Returns True when this call newly marked the row (and may have alerted).
-    Subsequent ticks are no-ops against GREENS.json and do not re-alert.
+    ``apply_blocked_alerted`` is set only after the alert sink succeeds, so a
+    failing sink can retry on a later tick. Returns True when the row was newly
+    transitioned to the terminal blocked state (or alert newly delivered).
     """
     should_alert = False
-    dirty = False
+    newly_blocked = False
     with locked():
         q = greens()
         row = next((x for x in q if x.get("candidate") == candidate), None)
         if row is None:
             return False
-        if row.get("apply_blocked") == APPLY_BLOCKED_INCOMPLETE_MASTER and row.get("apply_blocked_alerted"):
+        if (
+            row.get("state") == STATE_BLOCKED_INCOMPLETE_MASTER
+            and row.get("apply_blocked") == APPLY_BLOCKED_INCOMPLETE_MASTER
+            and row.get("apply_blocked_alerted")
+        ):
             return False
-        if row.get("apply_blocked") != APPLY_BLOCKED_INCOMPLETE_MASTER:
+        dirty = False
+        if row.get("state") != STATE_BLOCKED_INCOMPLETE_MASTER or row.get("apply_blocked") != APPLY_BLOCKED_INCOMPLETE_MASTER:
+            row["state"] = STATE_BLOCKED_INCOMPLETE_MASTER
             row["apply_blocked"] = APPLY_BLOCKED_INCOMPLETE_MASTER
             row["why"] = "fp32 master index incomplete (need weight shards, not digest-only)"
             row["blocked_at"] = time.time()
             row["resolved_at_cr"] = cr()
+            newly_blocked = True
             dirty = True
         if not row.get("apply_blocked_alerted"):
-            row["apply_blocked_alerted"] = True
             should_alert = True
-            dirty = True
         if dirty:
             wj(_st() / "GREENS.json", q)
+    alerted_ok = False
     if should_alert and alert_fn is not None:
-        alert_fn({
-            "event": "green_apply_blocked_incomplete_master",
-            "candidate": candidate,
-            "epoch": epoch,
-            "apply_blocked": APPLY_BLOCKED_INCOMPLETE_MASTER,
-        })
-    return dirty
+        try:
+            alert_fn({
+                "event": "green_apply_blocked_incomplete_master",
+                "candidate": candidate,
+                "epoch": epoch,
+                "apply_blocked": APPLY_BLOCKED_INCOMPLETE_MASTER,
+                "state": STATE_BLOCKED_INCOMPLETE_MASTER,
+            })
+            alerted_ok = True
+        except Exception:
+            alerted_ok = False
+    elif should_alert and alert_fn is None:
+        # No sink provided — still mark alerted so we do not churn GREENS forever
+        # when the caller only wanted the terminal state transition.
+        alerted_ok = True
+    if should_alert and alerted_ok:
+        with locked():
+            q = greens()
+            row = next((x for x in q if x.get("candidate") == candidate), None)
+            if row is not None and not row.get("apply_blocked_alerted"):
+                row["apply_blocked_alerted"] = True
+                wj(_st() / "GREENS.json", q)
+    return newly_blocked or (should_alert and alerted_ok)
 
 
 def block_incomplete_pending_greens(*, alert_fn=None, index_dir=None):
@@ -290,7 +362,11 @@ def decide_apply(item, c=None):
 
 def record_applied(item, kind, s, new_head, base_head, merge_info=None):
     """Atomic head-chain append + green state; idempotent per candidate; refuses if head moved under us."""
-    cand = item["candidate"]
+    if item is None or not isinstance(item, dict):
+        raise RuntimeError("refuse record_applied: item is None/invalid (fail closed)")
+    cand = item.get("candidate")
+    if not isinstance(cand, str) or not cand:
+        raise RuntimeError("refuse record_applied: missing candidate (fail closed)")
     if not master_index_is_complete(cand):
         raise RuntimeError(
             "refuse record_applied: incomplete fp32 master for %s (fail closed)" % str(cand)[:12]
@@ -301,7 +377,7 @@ def record_applied(item, kind, s, new_head, base_head, merge_info=None):
             return c
         if current_head_of(c) != base_head:
             raise RuntimeError("base head moved under apply (%s != %s)" % (str(current_head_of(c))[:12], base_head[:12]))
-        older = [x for x in greens() if x["state"] == "pending" and (x["green_at"], x["epoch"]) < (item["green_at"], item["epoch"])]
+        older = older_order_blocking_pendings(item)
         if older:
             raise RuntimeError("green-time order: %d older pending GREEN(s) first" % len(older))
         # Defense in depth: re-check under the lock before HEAD-CHAIN append.

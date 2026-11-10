@@ -90,6 +90,49 @@ class TestMasterIndexComplete(unittest.TestCase):
             self.assertTrue(master_index_is_complete(CAND, index_dir=idx))
 
 
+class TestAlertAfterSink(unittest.TestCase):
+    def test_apply_blocked_alerted_only_after_sink_succeeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            pe = Path(td) / 'pe'
+            pe.mkdir()
+            live = Path(__file__).resolve().parents[1] / 'live'
+            if str(live) not in sys.path:
+                sys.path.insert(0, str(live))
+            env = {
+                'PE_STATE': str(pe),
+                'PIT_FP32_MASTER_INDEX': str(Path(td) / 'idx'),
+            }
+            (Path(td) / 'idx').mkdir()
+            with mock.patch.dict(os.environ, env, clear=False):
+                for name in ('pe_apply', 'ops.parallel_eval.live.pe_apply'):
+                    sys.modules.pop(name, None)
+                import pe_apply as PA  # type: ignore
+                PA.set_genesis(HEAD)
+                PA.add_green(1062, CAND, HEAD, green_at=1.0)
+                calls = {'n': 0}
+
+                def _fail(_doc):
+                    calls['n'] += 1
+                    raise RuntimeError('sink-down')
+
+                self.assertTrue(PA.mark_apply_blocked_incomplete(CAND, epoch=1062, alert_fn=_fail))
+                row = next(g for g in PA.greens() if g['candidate'] == CAND)
+                self.assertEqual(row.get('state'), 'blocked_incomplete_master')
+                self.assertFalse(bool(row.get('apply_blocked_alerted')))
+                self.assertEqual(calls['n'], 1)
+
+                def _ok(_doc):
+                    calls['n'] += 1
+
+                self.assertTrue(PA.mark_apply_blocked_incomplete(CAND, epoch=1062, alert_fn=_ok))
+                row = next(g for g in PA.greens() if g['candidate'] == CAND)
+                self.assertTrue(row.get('apply_blocked_alerted'))
+                self.assertEqual(calls['n'], 2)
+                # Third call is a no-op once alerted.
+                self.assertFalse(PA.mark_apply_blocked_incomplete(CAND, epoch=1062, alert_fn=_ok))
+                self.assertEqual(calls['n'], 2)
+
+
 class TestIncompleteMasterBlocksApply(unittest.TestCase):
     def test_applicator_refuses_incomplete_master_keeps_signal(self):
         with tempfile.TemporaryDirectory() as td:
@@ -399,6 +442,7 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
         greens_after = (self.pe / 'GREENS.json').read_text()
         self.assertEqual(greens_before, greens_after)
         row = next(g for g in json.loads(greens_after) if g.get('candidate') == CAND)
+        self.assertEqual(row.get('state'), 'blocked_incomplete_master')
         self.assertEqual(row.get('apply_blocked'), 'incomplete-fp32-master')
         self.assertTrue(row.get('apply_blocked_alerted'))
         self.assertIs(PL.PA.next_green(), None)
@@ -433,6 +477,165 @@ class TestCutoverHeadApplyE2E(unittest.TestCase):
         self.assertEqual(updated.state, ItemState.DECIDED)
         from .durable import pit_state_root
         self.assertTrue((pit_state_root() / 'GREEN-APPLY-ALERT.json').is_file())
+
+    def test_complete_green_advances_past_older_blocked_pending(self):
+        """Sandbox repro: blocked e1062 must not strand a later complete e9999.
+
+        Older incomplete GREEN → terminal blocked_incomplete_master; younger
+        complete GREEN still reaches APPLY ready → HEAD-CHAIN → hash-sync → bench.
+        """
+        PA, PL, Life, PC = self._import_live_real_path(dual_package_first=True)
+        CAND_LATER = 'c' * 64
+        _write_digest_only_index(self.idx, CAND)
+        _write_complete_master_index(self.idx, CAND_LATER)
+
+        # Older incomplete e1062.
+        pend_old = self.life / 'pending' / 'e1062-blocked.json'
+        pend_old.write_text(json.dumps({
+            'epoch': 1062,
+            'candidate': CAND,
+            'training_head': HEAD,
+            'checkpoint': {'id': CAND, 'files': {'x': '1' * 64}},
+            'optimizer_step': 2,
+            'checkpoint_authorization': AUTH,
+            'pe_keep': True,
+            'source': 'pit',
+        }))
+        PA.accept_pit_decision({
+            'source': 'pit', 'epoch': 1062, 'candidate': CAND,
+            'training_head': HEAD, 'green_at': 1000.0,
+            'decision': 'green_fresh', 'pending': str(pend_old),
+        })
+        (self.gate / '1062').mkdir(parents=True)
+        (self.gate / '1062' / 'DECISION.json').write_text(json.dumps({
+            'decision': 'green', 'candidate': CAND, 'source': 'pit',
+            'evaluated': {'z': 1.0, 'n': 10}, 'decided_at': 1000.0,
+        }))
+
+        # Younger complete e9999.
+        pend_new = self.life / 'pending' / 'e9999.json'
+        pend_new.write_text(json.dumps({
+            'epoch': 9999,
+            'candidate': CAND_LATER,
+            'training_head': HEAD,
+            'checkpoint': {'id': CAND_LATER, 'files': {'x': '2' * 64}},
+            'optimizer_step': 3,
+            'checkpoint_authorization': {
+                'input': HEAD, 'id': CAND_LATER,
+                'payload': {'checkpoint_id': CAND_LATER, 'input_head': HEAD},
+            },
+            'pe_keep': True,
+            'source': 'pit',
+        }))
+        PA.accept_pit_decision({
+            'source': 'pit', 'epoch': 9999, 'candidate': CAND_LATER,
+            'training_head': HEAD, 'green_at': 2000.0,
+            'decision': 'green_fresh', 'pending': str(pend_new),
+        })
+        (self.gate / '9999').mkdir(parents=True)
+        (self.gate / '9999' / 'DECISION.json').write_text(json.dumps({
+            'decision': 'green', 'candidate': CAND_LATER, 'source': 'pit',
+            'evaluated': {'z': 2.0, 'n': 100}, 'decided_at': 2000.0,
+        }))
+
+        out = drive_cutover_apply(pe_live=PL, alert_fn=cutover_apply_alert)
+        self.assertIn(CAND, out.get('refused_incomplete_master') or [])
+        # Older row is terminal — does not block green-time order.
+        old_row = next(g for g in PA.greens() if g.get('candidate') == CAND)
+        self.assertEqual(old_row.get('state'), 'blocked_incomplete_master')
+        ready = self.life / 'apply' / 'e9999.json'
+        self.assertTrue(ready.is_file(), msg='complete later GREEN must become APPLY ready: %s' % out)
+        self.assertFalse((self.life / 'apply' / 'e1062.json').exists())
+        self.assertEqual(json.loads(ready.read_text())['candidate'], CAND_LATER)
+
+        class LC:
+            def _training(self, directory, opening, dispatch, current, now):
+                return None
+
+        def v829i(Lifecycle):
+            prior = Lifecycle._training
+
+            def _training(self, *a):
+                return prior(self, *a)
+
+            Lifecycle._training = _training
+
+        v829i(LC)
+        Life.install_pe(LC)
+        ep = self.life / 'epochs' / '9999'
+        ep.mkdir(parents=True)
+        cur = json.loads((self.life / 'CURRENT.json').read_text())
+        r = LC()._training(ep, None, None, cur, 0)
+        self.assertEqual(r['status'], 'updated')
+        self.assertEqual(r['checkpoint']['id'], CAND_LATER)
+
+        ckpt = {'id': CAND_LATER, 'files': {'x': '2' * 64}}
+        auth_later = {
+            'input': HEAD, 'id': CAND_LATER,
+            'payload': {'checkpoint_id': CAND_LATER, 'input_head': HEAD},
+        }
+        (self.life / 'CURRENT.json').write_text(json.dumps({
+            'epoch_index': 10000,
+            'checkpoint': ckpt,
+            'optimizer_step': 3,
+            'checkpoint_authorization': auth_later,
+        }))
+        (ep / 'FINALIZED.json').write_text(json.dumps({
+            'payload': {
+                'input_checkpoint': HEAD,
+                'result': {
+                    'status': 'updated',
+                    'checkpoint': ckpt,
+                    'optimizer_step': 3,
+                    'checkpoint_authorization': auth_later,
+                },
+            },
+        }))
+        offered = json.loads(ready.read_text())
+        offered['checkpoint'] = ckpt
+        offered['checkpoint_authorization'] = auth_later
+        ready.write_text(json.dumps(offered))
+        self.assertTrue(Life.confirm_applied(
+            self.life, json.loads((self.life / 'CURRENT.json').read_text()),
+        ))
+
+        # reconcile → record_applied must NOT raise older-pending order error.
+        rec = drive_cutover_apply(pe_live=PL, alert_fn=cutover_apply_alert)
+        self.assertIn(9999, rec.get('recorded_epochs') or [])
+        self.assertTrue(confirm_head_advanced(CAND_LATER, pe_apply=PL.PA))
+        chain = json.loads((self.pe / 'HEAD-CHAIN.json').read_text())
+        self.assertTrue(any(a.get('new_head') == CAND_LATER for a in chain.get('applied') or []))
+        self.assertTrue(self.sync_log.is_file() or (self.td / 'sync-run.log').is_file())
+
+        benches = []
+        ctl = Controller(
+            config=_live_cfg(),
+            rent=RentService(max_boxes=1),
+            lane=LaneService(),
+            box_io_factory=lambda: ScriptedBoxIO(),
+            on_green_fresh=lambda item: benches.append(item.candidate_id),
+        )
+        item = ItemRecord(
+            item_id='e9999', registration_index=2, epoch=9999,
+            state=ItemState.DECIDED, bound_head=HEAD, candidate_id=CAND_LATER,
+            decision='green_fresh', fresh=True, paid=True, shadow=False,
+            box_id='pod-9999',
+            meta={
+                'green_apply_pending': True,
+                'live_apply': {
+                    'pe_apply_accepted': True,
+                    'candidate_verified': True,
+                    'master_verified': True,
+                    'head_advanced': False,
+                },
+                'gate_emit_ready': True,
+            },
+        )
+        ctl.items.append(item)
+        updated, note = ctl._drive_pending_head(item)
+        self.assertIn(note, ('released', 'green-fresh-applied', 'already-released'))
+        self.assertEqual(benches, [CAND_LATER])
+        self.assertTrue((updated.meta or {}).get('head_advanced'))
 
 
 if __name__ == '__main__':
