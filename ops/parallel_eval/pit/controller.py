@@ -1158,6 +1158,15 @@ class Controller:
         meta['candidate_master_path'] = receipt.get('candidate_master_path')
         meta['candidate_master_digest'] = receipt.get('candidate_master_digest')
         meta['candidate_sha256'] = receipt.get('candidate_sha256') or bundle.candidate_id
+        meta['artifacts_uploaded'] = bool(receipt.get('artifacts_uploaded'))
+        # Early post-train upload stamps live_apply so APPLY never needs the box.
+        seed = receipt.get('live_apply_seed')
+        if isinstance(seed, Mapping) and seed.get('candidate_verified') and seed.get('master_verified'):
+            live = dict(meta.get('live_apply') or {})
+            live.update(dict(seed))
+            meta['live_apply'] = live
+            meta['candidate_on_box'] = False
+            meta['defer_candidate_upload'] = False
         # Persist training report + GPUs on the item before any release path.
         meta['training_report'] = dict(bundle.training_report or {})
         meta['train_gpu'] = bundle.train_gpu
@@ -1912,6 +1921,18 @@ class Controller:
                 )
                 return kept, 'green-apply-retry'
         if self.config.is_live() and self.live_applicator is not None:
+            # GREEN: upload+verify before anything else depends on the box.
+            # Early post-train upload may already have stamped live_apply; this
+            # call is then a no-op. If the box dies afterward, apply still uses
+            # the durable upload (no ssh).
+            if decision in ('green_fresh', 'green') and not self._candidate_upload_complete(item):
+                try:
+                    item = self._ensure_candidate_uploaded(item)
+                except Exception as exc:
+                    kept = self._keep_green_for_retry(
+                        item, 'green-upload-before-apply:%s' % str(exc)[:200],
+                    )
+                    return kept, 'green-apply-retry'
             retry_at = (item.meta or {}).get('apply_retry_at')
             if (
                 decision in ('green_fresh', 'green')

@@ -798,17 +798,23 @@ def _ship_train_pit(P: Any) -> None:
 
 
 def detached_train_command(*, expected_master: str, job_dir: str) -> str:
-    """Box-side shell: run train under the job dir and write markers/train.done."""
+    """Box-side shell: run train under the job dir and write markers/train.done.
+
+    Real train.done always carries at least checkpoint/events/ok/rc_ok. When the
+    out/ tree is present the writer also places the candidate into KDIR and
+    records candidate_path, candidate_master_path, and a training_report_summary
+    so host re-adopt never needs free_gpus/place_cand mid-eval.
+    """
     # Marker writer reads train.log after the inner command; durable across host HUP.
     inner = _train_pit_inner_cmd(expected_master=expected_master)
     # Escape for embedding inside bash -c '...'.
     return (
         "mkdir -p {JD}/markers; "
         "({INNER}); "
-        "python3 - {JD}/markers/train.done {P}/train.log <<'PY'\n"
-        "import json,sys\n"
-        "marker, logp = sys.argv[1], sys.argv[2]\n"
-        "text=open(logp,errors='replace').read() if __import__('os').path.isfile(logp) else ''\n"
+        "python3 - {JD}/markers/train.done {P}/train.log {O} {K} <<'PY'\n"
+        "import json,sys,os,hashlib,shutil\n"
+        "marker, logp, out_dir, kdir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]\n"
+        "text=open(logp,errors='replace').read() if os.path.isfile(logp) else ''\n"
         "events={{}}\n"
         "for line in text.splitlines():\n"
         "    line=line.strip()\n"
@@ -822,10 +828,78 @@ def detached_train_command(*, expected_master: str, job_dir: str) -> str:
         "ck=done.get('checkpoint')\n"
         "doc={{'ok': bool(rc_ok and ck), 'checkpoint': ck, 'events': "
         "{{k: events[k] for k in events}}, 'rc_ok': bool(rc_ok)}}\n"
+        "rep_path=None\n"
+        "for cand in (os.path.join(out_dir,'report.private.json'), "
+        "os.path.join(out_dir,'report.json')):\n"
+        "    if os.path.isfile(cand):\n"
+        "        rep_path=cand; break\n"
+        "rep={{}}\n"
+        "if rep_path:\n"
+        "    try: rep=json.load(open(rep_path))\n"
+        "    except Exception: rep={{}}\n"
+        "fp=((rep.get('optimizer') or {{}}).get('sgd') or {{}}).get('fp32_master') or "
+        "rep.get('fp32') or {{}}\n"
+        "master_dig=str(fp.get('output_master_digest') or "
+        "rep.get('candidate_master_digest') or '')\n"
+        "desc_path=os.path.join(out_dir,'descriptor.json')\n"
+        "desc={{}}\n"
+        "if os.path.isfile(desc_path):\n"
+        "    try: desc=json.load(open(desc_path))\n"
+        "    except Exception: desc={{}}\n"
+        "cid=str(desc.get('id') or ck or '')\n"
+        "if isinstance(cid,str) and len(cid)==64 and os.path.isdir(out_dir):\n"
+        "    # place_cand (no free_gpus): link/copy weights into KDIR/<cid>.\n"
+        "    model=None\n"
+        "    for root, dirs, files in os.walk(out_dir):\n"
+        "        for n in files:\n"
+        "            if n.startswith('model-00001-of-') and n.endswith('.safetensors'):\n"
+        "                model=os.path.join(root, n); break\n"
+        "        if model: break\n"
+        "    if model:\n"
+        "        src=os.path.dirname(model)\n"
+        "        dest=os.path.join(kdir, cid)\n"
+        "        os.makedirs(dest, exist_ok=True)\n"
+        "        for n in os.listdir(src):\n"
+        "            s,d=os.path.join(src,n), os.path.join(dest,n)\n"
+        "            try:\n"
+        "                if os.path.exists(d): os.remove(d)\n"
+        "                os.link(s,d)\n"
+        "            except Exception:\n"
+        "                shutil.copy2(s,d)\n"
+        "        shutil.copy2(desc_path, os.path.join(kdir, cid+'.descriptor.json'))\n"
+        "        open(os.path.join(dest,'.verified'),'w').close()\n"
+        "        doc['candidate_id']=cid\n"
+        "        doc['candidate_path']='box:%s/%s' % (kdir, cid)\n"
+        "        doc['box_candidate_dir']='%s/%s' % (kdir, cid)\n"
+        "        doc['candidate_files']=dict(desc.get('files') or {{}})\n"
+        "        doc['candidate_sha256']=cid\n"
+        "if isinstance(master_dig,str) and len(master_dig)==64:\n"
+        "    doc['candidate_master_digest']=master_dig\n"
+        "    doc['candidate_master_path']=os.path.join(out_dir,'fp32-master-digest')\n"
+        "    try:\n"
+        "        os.makedirs(doc['candidate_master_path'], exist_ok=True)\n"
+        "        open(os.path.join(doc['candidate_master_path'],'master_digest.txt'),'w')"
+        ".write(master_dig+'\\n')\n"
+        "    except Exception: pass\n"
+        "if rep:\n"
+        "    summary={{\n"
+        "        'source_file_hashes': rep.get('source_file_hashes') or "
+        "{{'trainer': '0'*64, 'batch': '0'*64}},\n"
+        "        'batching': rep.get('batching') or {{'tasks': 0, 'rollouts': 0}},\n"
+        "        'tokens': rep.get('tokens') or "
+        "{{'prompt_tokens': 0, 'output_tokens': 0, 'loss_tokens': 0}},\n"
+        "        'update_size': float(rep.get('update_size') or "
+        "rep.get('trained_tokens') or 0),\n"
+        "        'gradient_norm': float(rep.get('preclip_gradient_norm') or "
+        "rep.get('gradient_norm') or 0),\n"
+        "        'engine': (rep.get('engine') or 'packed'),\n"
+        "    }}\n"
+        "    doc['training_report_summary']=summary\n"
+        "    doc['report']=rep_path\n"
         "open(marker,'w').write(json.dumps(doc,sort_keys=True)+'\\n')\n"
         "sys.exit(0 if doc['ok'] else 1)\n"
         "PY"
-    ).format(JD=job_dir.rstrip('/'), INNER=inner, P=PST)
+    ).format(JD=job_dir.rstrip('/'), INNER=inner, P=PST, O=PST + '/out', K=KDIR)
 
 
 def place_cand(P: Any, *, candidate_id: str) -> Mapping[str, Any]:
@@ -1177,13 +1251,177 @@ def _resolve_box_master_dir(
 
 
 def place_and_pull(P: Any, *, candidate_id: str, host_out: Path) -> Mapping[str, Any]:
-    """place_cand + free_gpus + report-only pull (no full candidate scp)."""
+    """place_cand + free_gpus + report-only pull (no full candidate scp).
+
+    Only for the first pass after train (eval not running). Mid-eval re-adopt
+    must never call this — ``free_gpus(also_vllm=True)`` would kill the live
+    eval process group.
+    """
     placed = place_cand(P, candidate_id=candidate_id)
     gpus = free_gpus(P)
     pulled = pull_report_only(P, candidate_id=candidate_id, host_out=host_out)
     pulled['place_tail'] = placed.get('place_tail')
     pulled['gpus_after_train'] = gpus
     return pulled
+
+
+def _receipt_from_sparse_train_marker(
+    P: Any,
+    *,
+    train_marker: Mapping[str, Any],
+    candidate_id: str,
+    pod: Any,
+    info: Mapping[str, Any],
+    train_gpu: Any = None,
+    pull_report: bool = True,
+) -> Dict[str, Any]:
+    """Rebuild a train receipt from real sparse train.done without place/free.
+
+    Real markers carry only checkpoint/events/ok/rc_ok until enrichment. When
+    eval is already live we synthesize box paths from the checkpoint and pull
+    the host copy of the training report — never invent an all-zero report.
+    """
+    cid = str(candidate_id)
+    cand_path = train_marker.get('candidate_path') or ('box:%s/%s' % (KDIR, cid))
+    box_dir = train_marker.get('box_candidate_dir') or (KDIR + '/' + cid)
+    host_out = _upload_root() / ('readopt-%s-%d' % (cid[:16], int(time.time())))
+    rep: Dict[str, Any] = {}
+    report_path = train_marker.get('report')
+    master_path = train_marker.get('candidate_master_path')
+    master_dig = train_marker.get('candidate_master_digest')
+    files = dict(train_marker.get('candidate_files') or {})
+    if pull_report:
+        try:
+            pulled = pull_report_only(P, candidate_id=cid, host_out=host_out)
+            rep = dict(pulled.get('report_doc') or {})
+            report_path = pulled.get('report') or report_path
+            master_path = pulled.get('candidate_master_path') or master_path
+            master_dig = pulled.get('candidate_master_digest') or master_dig
+            files = dict(pulled.get('candidate_files') or files)
+            box_dir = pulled.get('box_candidate_dir') or box_dir
+            if pulled.get('candidate_path'):
+                cand_path = pulled['candidate_path']
+        except Exception as exc:
+            # Prefer marker summary over zeros; never invent a fake report.
+            if isinstance(train_marker.get('training_report_summary'), Mapping):
+                rep = dict(train_marker['training_report_summary'])
+                rep['_report_pull_error'] = str(exc)[:200]
+            elif isinstance(train_marker.get('report_doc'), Mapping):
+                rep = dict(train_marker['report_doc'])
+            else:
+                raise BoxIOError(
+                    'mid-eval re-adopt: training report unavailable (%s)' % str(exc)[:200]
+                ) from exc
+    fp = ((rep.get('optimizer') or {}).get('sgd') or {}).get('fp32_master') or (rep.get('fp32') or {})
+    if not master_dig and isinstance(fp, dict):
+        master_dig = fp.get('output_master_digest')
+    gpu = train_gpu or train_marker.get('train_gpu') or _detect_box_gpu(P)
+    return dict(
+        candidate_id=cid,
+        candidate_path=cand_path,
+        candidate_on_box=True,
+        box_candidate_dir=box_dir,
+        box_master_dir=train_marker.get('box_master_dir'),
+        candidate_files=files,
+        candidate_master_path=master_path,
+        candidate_master_digest=master_dig,
+        candidate_sha256=cid,
+        # Mid-eval: artifacts may already be uploaded; leave defer as prior.
+        defer_candidate_upload=bool(
+            train_marker.get('defer_candidate_upload', True)
+        ) and not bool(train_marker.get('artifacts_uploaded')),
+        artifacts_uploaded=bool(train_marker.get('artifacts_uploaded')),
+        live_apply_seed=dict(train_marker.get('live_apply_seed') or {}),
+        used_fp32_bootstrap_override=False,
+        fp32_master_source=(fp.get('source') if isinstance(fp, dict) else None) or 'disk',
+        report=report_path,
+        report_doc=rep,
+        training_report=rep,
+        training_report_summary=train_marker.get('training_report_summary'),
+        train_gpu=gpu,
+        pod_id=getattr(P, 'id', None),
+        pod=pod,
+        box_work=PST,
+        fetch='r2-box-side',
+        artifact_transport='mid-eval-readopt',
+        info=dict(info),
+        venv=BOX_VENV,
+        ok=True,
+        checkpoint=cid,
+        events=dict(train_marker.get('events') or {}),
+        mid_eval_readopt=True,
+    )
+
+
+def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any]:
+    """Upload bf16 + fp32 right after train (before eval). Fail soft — keep defer.
+
+    APPLY must later succeed from the uploaded copy without ssh when this works.
+    """
+    out = dict(receipt)
+    cid = str(out.get('candidate_id') or '')
+    if len(cid) != 64:
+        return out
+    if out.get('artifacts_uploaded') and out.get('live_apply_seed'):
+        return out
+    files = dict(out.get('candidate_files') or {})
+    master_dig = str(out.get('candidate_master_digest') or '')
+    try:
+        if not files:
+            raise BoxIOError('early upload needs candidate_files')
+        if len(master_dig) != 64:
+            raise BoxIOError('early upload needs candidate_master_digest')
+        cand_up = upload_candidate_from_box(
+            P,
+            candidate_id=cid,
+            files=files,
+            box_candidate_dir=out.get('box_candidate_dir'),
+        )
+        master_up = upload_master_from_box(
+            P,
+            candidate_id=cid,
+            master_digest=master_dig,
+            bf16_sha256=cid,
+            box_master_dir=out.get('box_master_dir'),
+            store_entry=str(
+                ((out.get('report_doc') or {}).get('optimizer') or {})
+                .get('sgd', {})
+                .get('fp32_master', {})
+                .get('output_store_entry')
+                or out.get('output_store_entry')
+                or ''
+            ),
+        )
+        if not master_up.get('complete') and not int(master_up.get('shard_count') or 0):
+            raise BoxIOError('early upload master incomplete')
+        seed = {
+            'candidate_verified': True,
+            'master_verified': True,
+            'master_complete': True,
+            'detail': {
+                'candidate': cid,
+                'early_upload': True,
+                'candidate_upload': {
+                    k: cand_up.get(k) for k in ('ok', 'path', 'verified') if k in cand_up
+                },
+                'master_publish': {
+                    k: master_up.get(k)
+                    for k in ('shard_count', 'complete', 'index', 'box_master_dir')
+                    if k in master_up
+                },
+            },
+        }
+        out['artifacts_uploaded'] = True
+        out['defer_candidate_upload'] = False
+        out['candidate_on_box'] = False
+        out['live_apply_seed'] = seed
+        out['artifact_transport'] = 'uploaded-after-train'
+        out['early_upload'] = seed['detail']
+    except Exception as exc:
+        out['early_upload_error'] = str(exc)[:400]
+        out['defer_candidate_upload'] = True
+        out['candidate_on_box'] = True
+    return out
 
 
 def _r2_local_mirror() -> Optional[Path]:
@@ -1486,49 +1724,65 @@ class HostBoxIO:
         if not train_marker.get('ok') and not train_marker.get('checkpoint'):
             # Marker without checkpoint — fail closed (box wrote a failed marker).
             raise BoxIOError('train marker missing checkpoint: %s' % str(train_marker)[:300])
-        candidate_id = train_marker.get('checkpoint')
+        candidate_id = train_marker.get('checkpoint') or train_marker.get('candidate_id')
         if len(str(candidate_id)) != 64:
             raise BoxIOError('train done.checkpoint missing')
         info['train-events'] = train_marker.get('events') or {}
 
-        # If a prior host pass already finalized place/pull into the marker, reuse it.
-        if train_marker.get('candidate_path') and train_marker.get('report'):
-            pulled = dict(train_marker)
-            rep = pulled.get('report_doc') or {}
-            fp = ((rep.get('optimizer') or {}).get('sgd') or {}).get('fp32_master') or (rep.get('fp32') or {})
-            train_gpu = kwargs.get('train_gpu') or pulled.get('train_gpu') or _detect_box_gpu(P)
-            result = dict(
-                candidate_id=pulled['candidate_id'],
-                candidate_path=pulled['candidate_path'],
-                candidate_on_box=True,
-                box_candidate_dir=pulled.get('box_candidate_dir'),
-                box_master_dir=pulled.get('box_master_dir'),
-                candidate_files=dict(pulled.get('candidate_files') or {}),
-                candidate_master_path=pulled['candidate_master_path'],
-                candidate_master_digest=pulled['candidate_master_digest'],
-                candidate_sha256=pulled['candidate_id'],
-                defer_candidate_upload=True,
-                used_fp32_bootstrap_override=False,
-                fp32_master_source=fp.get('source') or 'disk',
-                report=pulled['report'],
-                report_doc=rep,
-                training_report=rep,
-                train_gpu=train_gpu,
-                pod_id=getattr(P, 'id', None),
+        # Mid-eval re-adopt: train.done exists and eval job.pid is alive (or
+        # eval.done/RESULT already present). NEVER free_gpus / place_cand —
+        # that would TERM/KILL the live eval process group.
+        from ops.parallel_eval.pit.box_job import STATUS_RUNNING
+        st_now = ctrl.status()
+        eval_live = (
+            st_now.state == STATUS_RUNNING and st_now.next_stage == 'eval'
+        )
+        eval_done = ('eval' in (st_now.markers or set())) or (st_now.result is not None)
+        if eval_live or eval_done:
+            return _receipt_from_sparse_train_marker(
+                P,
+                train_marker=train_marker,
+                candidate_id=str(candidate_id),
                 pod=pod,
-                box_work=PST,
-                fetch='r2-box-side',
-                artifact_transport='on-box-until-green',
                 info=info,
-                venv=BOX_VENV,
+                train_gpu=kwargs.get('train_gpu'),
+                pull_report=True,
             )
-            return result
 
-        # drive_item: place_cand → free_gpus → keep ~18.8 GB on box until GREEN.
+        # First pass after train (eval not started). The box-side marker writer may
+        # already have placed the candidate; still free train leftovers (never
+        # vLLM — eval has not started) and pull the report. Mid-eval re-adopt
+        # already returned above.
         host_out = _upload_root() / ('train-%s-%d' % (str(item_id)[:16], int(time.time())))
-        pulled = place_and_pull(P, candidate_id=str(candidate_id), host_out=host_out)
-        info['gpus-after-train'] = pulled.get('gpus_after_train')
-        rep = pulled['report_doc']
+        if train_marker.get('candidate_path') and (
+            train_marker.get('candidate_master_digest') or train_marker.get('report')
+            or train_marker.get('training_report_summary')
+        ):
+            # Already placed on box — skip place_cand; free train only.
+            gpus = free_gpus(P, also_vllm=False)
+            info['gpus-after-train'] = gpus
+            try:
+                pulled = dict(pull_report_only(
+                    P, candidate_id=str(candidate_id), host_out=host_out,
+                ))
+            except Exception:
+                pulled = dict(train_marker)
+                pulled.setdefault('candidate_id', str(candidate_id))
+            for k, v in train_marker.items():
+                pulled.setdefault(k, v)
+            pulled['gpus_after_train'] = gpus
+        else:
+            # drive_item: place_cand → free_gpus → report pull.
+            pulled = place_and_pull(P, candidate_id=str(candidate_id), host_out=host_out)
+            info['gpus-after-train'] = pulled.get('gpus_after_train')
+        rep = pulled.get('report_doc') or {}
+        if not rep and pulled.get('report'):
+            try:
+                rep = json.loads(Path(pulled['report']).read_text())
+            except Exception:
+                rep = {}
+        if not rep:
+            raise BoxIOError('train report missing after place/pull')
         if rep.get('used_fp32_bootstrap_override') or (
             (rep.get('fp32_master') or {}).get('source') == 'bootstrap-upcast'
         ):
@@ -1575,6 +1829,8 @@ class HostBoxIO:
             checkpoint=str(candidate_id),
             events=info.get('train-events') or {},
         )
+        # Upload bf16+fp32 now (before eval) so APPLY survives a dead box.
+        result = _early_upload_artifacts(P, result)
         # Enrich train marker so a host restart after place/pull does not redo train.
         try:
             ctrl.mark_stage('train', result)

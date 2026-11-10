@@ -164,7 +164,11 @@ def allow_sharded_gpus():
 def gpu_order():
     """Effective rental order: flag parallel_eval.gpu_order / parallel_eval.pit.gpu_order
     when every entry is in ALLOWED_GPUS (incl. RTX5090); else GPU_ORDER.
-    Sharded classes (RTX5090/H100) are dropped unless allow_sharded_gpus is true."""
+    Sharded classes (RTX5090/H100) are dropped unless allow_sharded_gpus is true.
+
+    Fail closed: never fall back to the unfiltered order when the gate empties
+    the list (keep in sync with ``pit.gpu_policy.effective_gpu_order``).
+    """
     cfg = pe_cfg()
     o = cfg.get("gpu_order")
     pit = cfg.get("pit") if isinstance(cfg.get("pit"), dict) else {}
@@ -177,7 +181,9 @@ def gpu_order():
     if allow_sharded_gpus():
         return order
     out = tuple(g for g in order if g not in SHARDED_GPUS)
-    return out if out else order
+    if not out:
+        raise ValueError('gpu_order empty after sharded-GPU gate (fail closed)')
+    return out
 
 
 def pick_best_offer(cands, order=None, ceiling=None):
@@ -187,10 +193,16 @@ def pick_best_offer(cands, order=None, ceiling=None):
     exactly 8 GPUs / available. When any preferred-class offer is under the
     optional ceiling, return the cheapest of that class; else the global
     cheapest under the ceiling. Keep in sync with ``pit.gpu_policy``.
+
+    Fail closed: never re-admit filtered-out sharded GPUs via an empty-order
+    fallback.
     """
     order = tuple(order) if order else gpu_order()
     if not allow_sharded_gpus():
-        order = tuple(g for g in order if g not in SHARDED_GPUS) or order
+        filtered = tuple(g for g in order if g not in SHARDED_GPUS)
+        if not filtered:
+            raise ValueError('pick_best_offer: gpu_order empty after sharded-GPU gate')
+        order = filtered
     allowed = set(order)
     rows = []
     for g, r, p in cands:

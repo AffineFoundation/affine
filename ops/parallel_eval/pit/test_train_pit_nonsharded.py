@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 TRAIN_PIT = REPO / 'ops' / 'parallel_eval' / 'live' / 'train_pit.py'
 TRAINER_E = REPO / 'miner' / 'validator' / 'trainer-v834e'
-# Byte-identical baseline from the last admitted non-sharded ship (27701370).
-BASE_SHA = '27701370'
+# Committed sha256 inventory — no git history required.
+ADMITTED_MANIFEST = (
+    REPO / 'ops' / 'parallel_eval' / 'pit' / 'host_v834e_admitted.sha256.json'
+)
 
 
 class TestTrainPitNonShardedUnchanged(unittest.TestCase):
@@ -24,10 +27,10 @@ class TestTrainPitNonShardedUnchanged(unittest.TestCase):
         # Default host selection prefers host-v834e for non-sharded.
         self.assertIn("v834e = W / 'host-v834e'", src)
 
-    def test_admitted_host_files_byte_identical_to_27701370(self):
-        """Non-sharded HOST_FILES must match the 27701370 tree byte-for-byte."""
-        import subprocess
-        # HOST_FILES from the on-disk launcher (must not include v835 for the e package).
+    def test_admitted_host_files_byte_identical_to_manifest(self):
+        """Non-sharded HOST_FILES must match the committed sha256 manifest."""
+        man = json.loads(ADMITTED_MANIFEST.read_text())
+        expected = man['host_files']
         tree = ast.parse((TRAINER_E / 'mimo_host_trainer_v83.py').read_text())
         host_files = None
         for node in tree.body:
@@ -37,17 +40,14 @@ class TestTrainPitNonShardedUnchanged(unittest.TestCase):
                         host_files = ast.literal_eval(node.value)
         self.assertIsNotNone(host_files)
         self.assertNotIn('v835_zero3.py', host_files)
+        self.assertEqual(set(host_files), set(expected))
         for rel in host_files:
             path = TRAINER_E / rel
             self.assertTrue(path.is_file(), 'missing admitted host file %s' % rel)
             cur = hashlib.sha256(path.read_bytes()).hexdigest()
-            old = subprocess.check_output(
-                ['git', 'show', '%s:miner/validator/trainer-v834e/%s' % (BASE_SHA, rel)],
-                cwd=str(REPO),
-            )
             self.assertEqual(
-                cur, hashlib.sha256(old).hexdigest(),
-                'host file drifted from %s: %s' % (BASE_SHA, rel),
+                cur, expected[rel],
+                'host file drifted from admitted manifest: %s' % rel,
             )
 
     def test_pe_box_defaults_to_signed_release_not_inrepo(self):

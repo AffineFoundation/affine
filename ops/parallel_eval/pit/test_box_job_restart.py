@@ -1,7 +1,10 @@
 """Restart-safe box jobs: resume from markers / RESULT; never re-run completed stages."""
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from .box import BoxRunner, ScriptedBoxIO, _bundle_from_box_result
 from .box_job import (
@@ -346,34 +349,44 @@ class TestBoxRunnerMidEvalReadopt(unittest.TestCase):
     """
 
     def test_host_restart_mid_eval_skips_train_and_polls_pid(self):
+        """Real sparse train.done (checkpoint/events/ok/rc_ok only) + live eval pid."""
         trains = {'n': 0}
-        launches = {'n': 0}
+        places = {'n': 0}
+        frees = {'n': 0}
 
         class CountingIO(ScriptedBoxIO):
             def train_v834e(self, **kwargs):
                 trains['n'] += 1
+                # If the mid-eval path wrongly falls through, HostBoxIO would
+                # call place_and_pull → free_gpus. Scripted path still counts.
+                places['n'] += 1
+                frees['n'] += 1
                 return super().train_v834e(**kwargs)
+
+            def pull_training_report(self, **kwargs):
+                return {
+                    'source_file_hashes': {'trainer': 'a' * 64, 'batch': 'b' * 64},
+                    'batching': {'tasks': 1, 'rollouts': 1},
+                    'tokens': {'prompt_tokens': 1, 'output_tokens': 1, 'loss_tokens': 1},
+                    'update_size': 1.0,
+                    'gradient_norm': 1.0,
+                    'engine': 'packed',
+                }
 
         store = MemBoxJobStore(default_ticks=3)
         item_id = 'item-mid-eval-readopt'
         ctrl = BoxJobController(store=store, item_id=item_id, sleep_fn=lambda _s: None)
         ctrl.ensure_dir()
         write_marker(store, ctrl.job_dir, 'download', {'ok': True})
+        # Exact real-box train.done shape — no candidate_path / master_path.
         write_marker(store, ctrl.job_dir, 'train', {
             'ok': True,
             'checkpoint': 'c' * 64,
-            'candidate_id': 'c' * 64,
-            'candidate_path': 'box:/ckpt/' + ('c' * 64),
-            'candidate_master_path': '/tmp/master',
-            'train_gpu': 'B300',
-            'training_report_summary': {
-                'source_file_hashes': {'trainer': 'a' * 64, 'batch': 'b' * 64},
-                'batching': {'tasks': 1, 'rollouts': 1},
-                'tokens': {'prompt_tokens': 1, 'output_tokens': 1, 'loss_tokens': 1},
-                'update_size': 1.0,
-                'gradient_norm': 1.0,
-                'engine': 'packed',
+            'events': {
+                'done': {'event': 'done', 'checkpoint': 'c' * 64},
+                'native-grpo-complete': {'event': 'native-grpo-complete'},
             },
+            'rc_ok': True,
         })
         store.arm_launch(
             ticks=3,
@@ -440,21 +453,29 @@ class TestBoxRunnerMidEvalReadopt(unittest.TestCase):
 
         box_mod._try_box_job_controller = _fake_try
         try:
-            rec2, bundle = runner.run(
-                record,
-                batch_handle='opaque-batch',
-                plan_handle='opaque-plan',
-            )
+            with tempfile.TemporaryDirectory() as td:
+                with mock.patch.dict(os.environ, {'PE_STATE': td}, clear=False):
+                    rec2, bundle = runner.run(
+                        record,
+                        batch_handle='opaque-batch',
+                        plan_handle='opaque-plan',
+                    )
         finally:
             box_mod._try_box_job_controller = orig
 
         self.assertEqual(trains['n'], 0, 'must not re-run train on mid-eval re-adopt')
+        self.assertEqual(places['n'], 0, 'must not place_cand while eval pid alive')
+        self.assertEqual(frees['n'], 0, 'must not free_gpus while eval pid alive')
         self.assertEqual(len(store.launch_log), launches_before, 'must not re-launch eval')
-        self.assertNotIn(pid, killed, 'must not kill the live eval pid during re-adopt')
+        self.assertNotIn(pid, killed, 'must not kill/signal the live eval pid')
         self.assertEqual(rec2.state, ItemState.RESULT)
         self.assertEqual(bundle.candidate_id, 'c' * 64)
         self.assertEqual(bundle.probe_result.get('samples'), 16)
-        # RESULT path keeps the box; no release happens inside BoxRunner.
+        # Real report pulled — not an all-zero invented summary.
+        self.assertEqual(
+            (bundle.training_report or {}).get('source_file_hashes', {}).get('trainer'),
+            'a' * 64,
+        )
         self.assertTrue(rec2.result_stored)
 
 

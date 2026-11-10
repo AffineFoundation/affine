@@ -8,11 +8,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol
 
-from ops.parallel_eval.live.pe_box import BOX_ROOT, _as_pod, detached_eval_command
+from ops.parallel_eval.live.pe_box import (
+    BOX_ROOT,
+    _as_pod,
+    _upload_root,
+    detached_eval_command,
+    pull_report_only,
+)
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
@@ -22,6 +29,7 @@ from .pe_lane import LaneService
 from .signer import AdmissionCert, EphemeralBoxKey, generate_ephemeral_box_key, verify_admission_cert
 from .state import ItemRecord, ItemState, TransitionError, apply_transition
 from .training_report import (
+    REPORT_SUMMARY_KEYS,
     TrainingReportError,
     copy_training_report_to_host,
     extract_report_summary,
@@ -136,35 +144,37 @@ class BoxRunner:
         resumed_mid_eval = False
 
         train_marker = _train_marker_payload(box_job_ctrl) if box_job_ctrl is not None else None
-        if train_marker and _train_marker_usable(train_marker):
+        mid_eval_alive = _eval_job_alive(box_job_ctrl) if box_job_ctrl is not None else False
+        if train_marker and _train_marker_resumable(train_marker, eval_alive=mid_eval_alive):
             # Mid-eval / post-train re-adopt: do not re-download head/master or re-train.
+            # Real sparse train.done (checkpoint/events/ok/rc_ok only) is enough when
+            # eval job.pid is alive — never fall through to train_v834e/place_and_pull.
             train_receipt = dict(train_marker)
             candidate_id = str(train_receipt.get('candidate_id') or train_receipt.get('checkpoint') or '')
-            candidate_path = train_receipt.get('candidate_path')
+            if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+                raise ValueError('train.done marker missing candidate_id hex64')
+            candidate_path = train_receipt.get('candidate_path') or (
+                'box:/opt/plain/probe/affine-env-probe/ckpt/%s' % candidate_id
+            )
             candidate_master_path = (
                 train_receipt.get('candidate_master_path')
                 or train_receipt.get('master_path')
+                or ''
             )
-            if not isinstance(candidate_id, str) or len(candidate_id) != 64:
-                raise ValueError('train.done marker missing candidate_id hex64')
-            if not candidate_path or not candidate_master_path:
-                raise ValueError('train.done marker missing candidate paths')
+            train_receipt['candidate_id'] = candidate_id
+            train_receipt['candidate_path'] = candidate_path
+            if candidate_master_path:
+                train_receipt['candidate_master_path'] = candidate_master_path
             train_gpu = gpu_type_of(train_receipt.get('train_gpu')) or train_gpu
-            report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
-            if isinstance(train_receipt.get('training_report_summary'), Mapping):
-                training_report = dict(train_receipt['training_report_summary'])
-            elif isinstance(report_doc, Mapping):
-                training_report = extract_report_summary(report_doc)
-            else:
-                training_report = {
-                    'source_file_hashes': {'trainer': '0' * 64, 'batch': '0' * 64},
-                    'batching': {'tasks': 0, 'rollouts': 0},
-                    'tokens': {'prompt_tokens': 0, 'output_tokens': 0, 'loss_tokens': 0},
-                    'update_size': 0.0,
-                    'gradient_norm': 0.0,
-                    'engine': 'packed',
-                    'recovered': 'train-marker',
-                }
+            # Always prefer a real host copy of the training report; never all-zero.
+            training_report = _training_report_for_readopt(
+                train_receipt,
+                item_id=record.item_id,
+                epoch=int(record.epoch),
+                candidate_id=candidate_id,
+                io=self.io,
+                pod=pod,
+            )
             if record.state is ItemState.PROVISIONING:
                 record = apply_transition(record, ItemState.TRAINING, reason='readopt-train-marker')
             if record.state is ItemState.TRAINING:
@@ -541,13 +551,106 @@ def _train_marker_payload(box_job_ctrl: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _eval_job_alive(box_job_ctrl: Any) -> bool:
+    """True when detached eval is mid-flight (job.pid alive) or already done."""
+    try:
+        st = box_job_ctrl.status()
+    except Exception:
+        return False
+    if st.result is not None:
+        return True
+    if 'eval' in (st.markers or set()):
+        return True
+    return st.state == STATUS_RUNNING and st.next_stage == 'eval'
+
+
 def _train_marker_usable(payload: Mapping[str, Any]) -> bool:
+    """Enriched marker with candidate paths (post place/pull or new writer)."""
     cid = payload.get('candidate_id') or payload.get('checkpoint')
     path = payload.get('candidate_path')
     master = payload.get('candidate_master_path') or payload.get('master_path')
     return (
         isinstance(cid, str) and len(cid) == 64
         and bool(path) and bool(master)
+    )
+
+
+def _train_marker_resumable(payload: Mapping[str, Any], *, eval_alive: bool) -> bool:
+    """Resume without re-train when marker is enriched OR eval is already live.
+
+    Real boxes write sparse train.done (checkpoint/events/ok/rc_ok only). That
+    is enough to skip train_v834e/place_and_pull when eval job.pid is alive.
+    """
+    cid = payload.get('candidate_id') or payload.get('checkpoint')
+    if not (isinstance(cid, str) and len(cid) == 64):
+        return False
+    if _train_marker_usable(payload):
+        return True
+    return bool(eval_alive)
+
+
+def _training_report_for_readopt(
+    train_receipt: Mapping[str, Any],
+    *,
+    item_id: str,
+    epoch: int,
+    candidate_id: str,
+    io: Any,
+    pod: Any,
+) -> Dict[str, Any]:
+    """Host copy of the training report on re-adopt — never invent all-zero."""
+    report_doc = train_receipt.get('training_report') or train_receipt.get('report_doc')
+    report_path = train_receipt.get('report') if isinstance(train_receipt.get('report'), str) else None
+    summary = train_receipt.get('training_report_summary')
+
+    def _from_doc(doc: Mapping[str, Any]) -> Dict[str, Any]:
+        return copy_training_report_to_host(
+            report_path=report_path,
+            item_id=item_id,
+            epoch=epoch,
+            candidate_id=candidate_id,
+            report_doc=dict(doc),
+        )
+
+    if isinstance(summary, Mapping) and all(k in summary for k in REPORT_SUMMARY_KEYS):
+        try:
+            return _from_doc(report_doc if isinstance(report_doc, Mapping) else dict(summary))
+        except TrainingReportError:
+            return dict(summary)
+    if isinstance(report_doc, Mapping) or report_path:
+        try:
+            return copy_training_report_to_host(
+                report_path=report_path,
+                item_id=item_id,
+                epoch=epoch,
+                candidate_id=candidate_id,
+                report_doc=report_doc if isinstance(report_doc, Mapping) else None,
+            )
+        except TrainingReportError:
+            if isinstance(report_doc, Mapping):
+                return extract_report_summary(report_doc)
+    # Ask BoxIO / live pe_box for a report pull (real sparse train.done path).
+    pull = getattr(io, 'pull_training_report', None)
+    if callable(pull):
+        try:
+            got = pull(pod=pod, candidate_id=candidate_id, item_id=item_id)
+            if isinstance(got, Mapping):
+                return _from_doc(got)
+        except Exception:
+            pass
+    if pod is not None and hasattr(pod, 'run'):
+        try:
+            host_out = _upload_root() / (
+                'readopt-report-%s-%d' % (candidate_id[:12], int(time.time()))
+            )
+            pulled = pull_report_only(pod, candidate_id=candidate_id, host_out=host_out)
+            doc = pulled.get('report_doc') or {}
+            if isinstance(doc, Mapping) and doc:
+                return _from_doc(doc)
+        except Exception:
+            pass
+    raise TrainingReportError(
+        'mid-eval re-adopt refused: training report missing (never invent zeros)'
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from ops.parallel_eval.pit import (
     GPU_ORDER as PIT_ORDER,
@@ -145,6 +146,50 @@ class TestPitGpuConfig(unittest.TestCase):
                     'gpu_order': ['B300', 'A100'],
                 },
             })
+
+    def test_effective_order_fail_closed_when_all_sharded(self):
+        with self.assertRaises(ValueError):
+            effective_gpu_order(
+                ('RTX5090', 'H100'), allow_sharded_gpus=False,
+            )
+
+
+class TestPeCommonGpuOrderFailClosed(unittest.TestCase):
+    def _load_pe_common(self):
+        import importlib.util
+        import sys
+        import types
+        from pathlib import Path
+        repo = Path(__file__).resolve().parents[3]
+        live = str(repo / 'ops' / 'parallel_eval' / 'live')
+        if live not in sys.path:
+            sys.path.insert(0, live)
+        # pe_common imports replace_pod at module load — stub it.
+        rp = types.ModuleType('replace_pod')
+        rp.Pod = type('Pod', (), {})
+        path = repo / 'ops' / 'parallel_eval' / 'live' / 'pe_common.py'
+        with mock.patch.dict(sys.modules, {'replace_pod': rp}):
+            # Drop any prior stub load so we re-exec with the mock present.
+            sys.modules.pop('pe_common_under_test', None)
+            spec = importlib.util.spec_from_file_location('pe_common_under_test', path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+
+    def test_gpu_order_fail_closed_when_filter_empties(self):
+        PC = self._load_pe_common()
+        with mock.patch.object(PC, 'pe_cfg', return_value={
+            'pit': {'gpu_order': ['RTX5090', 'H100'], 'allow_sharded_gpus': False},
+        }), mock.patch.object(PC, 'allow_sharded_gpus', return_value=False):
+            with self.assertRaises(ValueError):
+                PC.gpu_order()
+
+    def test_pick_best_offer_fail_closed_when_filter_empties(self):
+        PC = self._load_pe_common()
+        cands = [('RTX5090', _row('rtx', 5.0), 5.0)]
+        with mock.patch.object(PC, 'allow_sharded_gpus', return_value=False):
+            with self.assertRaises(ValueError):
+                PC.pick_best_offer(cands, order=('RTX5090', 'H100'), ceiling=56.0)
 
 
 class TestLowMemShard(unittest.TestCase):
