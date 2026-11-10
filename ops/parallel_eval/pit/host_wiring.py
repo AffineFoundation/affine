@@ -411,7 +411,7 @@ def build_live_host_bundle(
     rent = RentService(
         max_boxes=cfg.max_boxes,
         max_eval_nodes=int(extra.get('max_eval_nodes') or cfg.max_boxes or 5),
-        gpu_order=tuple(cfg.gpu_order),
+        gpu_order=tuple(cfg.effective_gpu_order()),
         price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
         disable_auto_backup=bool(cfg.disable_lium_auto_backup),
         require_host=True,

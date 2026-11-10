@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Optional
 
 from . import (
+    ALLOW_SHARDED_GPUS_DEFAULT,
     ALLOWED_GPUS,
     GATE_HEAD_ROLLOUTS,
     GATE_K_CAND,
@@ -24,6 +25,7 @@ from . import (
     MAX_BOXES_SHADOW,
     MAX_SEQS,
     PRICE_CEILING_USD_H,
+    SHARDED_GPUS,
     TRAIN_OUTPUT_TOKENS,
     TRAINER_FALLBACK_HOURS,
 )
@@ -47,6 +49,9 @@ class PitConfig:
     master_upload: str = MASTER_UPLOAD_AFTER_GREEN
     baseline: str = BASELINE_OPTION_A
     gpu_order: tuple = GPU_ORDER
+    # PROMOTION-GATE: when false (default), drop RTX5090/H100 from the effective
+    # rental order even if they appear in gpu_order. Enable after first live ZeRO-3 test.
+    allow_sharded_gpus: bool = ALLOW_SHARDED_GPUS_DEFAULT
     max_attempts: int = MAX_ATTEMPTS
     decision_timeout_seconds: int = 21000
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
@@ -104,13 +109,24 @@ class PitConfig:
             return False
         return self.enabled and self.mode == 'live' and self.cutover
 
+    def effective_gpu_order(self) -> tuple:
+        """gpu_order with SHARDED_GPUS removed unless allow_sharded_gpus is true."""
+        if self.allow_sharded_gpus:
+            return tuple(self.gpu_order)
+        blocked = set(SHARDED_GPUS)
+        out = tuple(g for g in self.gpu_order if g not in blocked)
+        if not out:
+            raise ValueError('effective gpu_order empty after sharded-GPU gate')
+        return out
+
     def as_dict(self) -> dict:
         d = asdict(self)
         d['gpu_order'] = list(self.gpu_order)
+        d['effective_gpu_order'] = list(self.effective_gpu_order())
         d['extra'] = dict(self.extra)
         d['on_demand_rent_only'] = True
         d['non_item_jobs_outside_cap'] = True
-        d['gpu_pinned'] = list(self.gpu_order)
+        d['gpu_pinned'] = list(self.effective_gpu_order())
         return d
 
 
@@ -132,7 +148,8 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
     known = {
         'enabled', 'mode', 'max_boxes', 'box_cap', 'max_pending', 'master_upload',
         'baseline',
-        'gpu_order', 'max_attempts', 'decision_timeout_seconds', 'price_ceiling_usd_h',
+        'gpu_order', 'allow_sharded_gpus', 'max_attempts', 'decision_timeout_seconds',
+        'price_ceiling_usd_h',
         'k_cand', 'head_rollouts', 'n_drawn', 'max_output_tokens', 'train_output_tokens',
         'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'cutover', 'revert',
         'trainer_fallback_hours', 'disable_warm_pool', 'disable_standing_lanes',

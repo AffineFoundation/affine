@@ -1,24 +1,33 @@
-"""Low-memory train path for <100 GiB GPUs (RTX5090 32 GiB).
+"""Low-memory / ZeRO-3 train helpers for <100 GiB GPUs (RTX5090 32 GiB).
 
-CPUAdamW already keeps the FP32 master + Adam state on CPU. The remaining
-GPU-side cost is the full FP32 gradient accumulator (~4 bytes × params). On a
-9B model that is ~36 GiB and will not fit next to the BF16 actor on 32 GiB.
-
-When per-GPU HBM is under ``LOW_MEM_GPU_GIB`` (100), enable ZeRO-style offload:
-move the FP32 accumulator to CPU. Math is identical (same add / clip / scale);
-only the buffer device changes. Optional parameter-group sharding across DP
-ranks is available for true ZeRO-2 when ``world_size > 1``.
+The on-box path that actually runs is ``miner/validator/trainer-v834e/v835_zero3.py``
+shipped as part of trainer-host-v834f. This module mirrors the public API for
+host-side tests and config (needs_optimizer_shard, numeric equivalence, preflight).
 """
 from __future__ import annotations
 
+import importlib.util
 import os
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 from . import LOW_MEM_GPU_GIB
 
-# Env the on-box train_pit / host trainer reads.
 PIT_LOW_MEM_ENV = 'PIT_LOW_MEM_SHARD'
 PIT_ACCUM_DEVICE_ENV = 'PIT_FP32_ACCUM_DEVICE'
+PIT_ZERO3_ENV = 'PIT_ZERO3'
+
+
+def _load_v835():
+    root = Path(__file__).resolve().parents[3]
+    path = root / 'miner' / 'validator' / 'trainer-v834e' / 'v835_zero3.py'
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location('v835_zero3_host', path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def needs_optimizer_shard(per_gpu_mem_gib: Optional[float]) -> bool:
@@ -43,27 +52,13 @@ def per_gpu_mem_gib_from_env() -> Optional[float]:
 
 
 def detect_per_gpu_mem_gib() -> Optional[float]:
-    """Best-effort local HBM size in GiB (nvidia-smi); None when unavailable."""
     env = per_gpu_mem_gib_from_env()
     if env is not None:
         return env
-    try:
-        import subprocess
-        out = subprocess.run(
-            [
-                'nvidia-smi',
-                '--query-gpu=memory.total',
-                '--format=csv,noheader,nounits',
-            ],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if out.returncode != 0:
-            return None
-        line = (out.stdout or '').strip().splitlines()[0]
-        # nvidia-smi reports MiB.
-        return float(line) / 1024.0
-    except Exception:
-        return None
+    z = _load_v835()
+    if z is not None:
+        return z.per_gpu_mem_gib()
+    return None
 
 
 def configure_low_mem_train(per_gpu_mem_gib: Optional[float] = None) -> Mapping[str, Any]:
@@ -73,18 +68,23 @@ def configure_low_mem_train(per_gpu_mem_gib: Optional[float] = None) -> Mapping[
     if shard:
         os.environ[PIT_LOW_MEM_ENV] = '1'
         os.environ[PIT_ACCUM_DEVICE_ENV] = 'cpu'
+        os.environ[PIT_ZERO3_ENV] = '1'
     else:
         os.environ.pop(PIT_LOW_MEM_ENV, None)
         os.environ.pop(PIT_ACCUM_DEVICE_ENV, None)
+        os.environ.pop(PIT_ZERO3_ENV, None)
     return {
         'per_gpu_mem_gib': mem,
         'low_mem_shard': shard,
+        'zero3': shard,
         'fp32_accum_device': 'cpu' if shard else None,
         'threshold_gib': float(LOW_MEM_GPU_GIB),
     }
 
 
 def fp32_accum_device_from_env() -> Optional[str]:
+    if os.environ.get(PIT_ZERO3_ENV) in ('1', 'true', 'True', 'yes'):
+        return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
     if os.environ.get(PIT_LOW_MEM_ENV) in ('1', 'true', 'True', 'yes'):
         return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
     return os.environ.get(PIT_ACCUM_DEVICE_ENV) or None
@@ -105,14 +105,26 @@ def shard_param_names(
         return list(names)
     owned = []
     for name in names:
-        # Stable ownership independent of process ordering.
         h = sum(ord(c) for c in name) % int(world_size)
         if h == int(rank):
             owned.append(name)
-    # Guarantee every rank owns at least one when possible.
     if not owned and names:
         owned.append(names[int(rank) % len(names)])
     return owned
+
+
+def estimate_peak_gib(**kwargs) -> Mapping[str, float]:
+    z = _load_v835()
+    if z is None:
+        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+    return z.estimate_peak_gib(**kwargs)
+
+
+def preflight_or_raise(**kwargs) -> Mapping[str, Any]:
+    z = _load_v835()
+    if z is None:
+        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+    return z.preflight_or_raise(**kwargs)
 
 
 def numeric_equivalence_step(
@@ -121,10 +133,7 @@ def numeric_equivalence_step(
     clip: float = 1.0,
     seed: int = 0,
 ) -> Mapping[str, Any]:
-    """Compare default GPU-buffer path vs CPU-offload path on a tiny model.
-
-    Returns max abs diff of clipped buffers; must be ~0 (same math).
-    """
+    """Compare default GPU-buffer path vs CPU-offload path on a tiny model."""
     import torch
     from subnet.mimo_grpo.optimizer import FP32Accumulator
 
@@ -136,7 +145,6 @@ def numeric_equivalence_step(
         params_a.append(('p%d' % i, p))
         params_b.append(('p%d' % i, p.clone().detach().requires_grad_(True)))
 
-    # Plant identical grads.
     for (_, a), (_, b) in zip(params_a, params_b):
         g = torch.randn_like(a, dtype=torch.float32)
         a.grad = g.to(dtype=a.dtype)
@@ -157,3 +165,11 @@ def numeric_equivalence_step(
         'norm_b': n_b,
         'norm_diff': abs(n_a - n_b),
     }
+
+
+def numeric_equivalence_zero3(**kwargs) -> Mapping[str, Any]:
+    """Tiny-model single-GPU vs sharded ZeRO-3-style update (final bf16 must match)."""
+    z = _load_v835()
+    if z is None:
+        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
+    return z.numeric_equivalence_tiny(**kwargs)

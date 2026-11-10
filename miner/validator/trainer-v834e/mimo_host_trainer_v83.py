@@ -1,5 +1,10 @@
 """ROOT-admitted v8.3 trainer host launcher over the unchanged worker closure.
 
+v8.3.5 / host-v834f = v8.3.4e + ZeRO-3 / FSDP FULL_SHARD for 8x low-VRAM GPUs (RTX5090 32 GiB):
+  params+grads sharded across dp_world, fp32 master CPU-offloaded (unchanged), fp32 accumulator on CPU,
+  VRAM preflight refuse-before-OOM, numeric equivalence vs single-GPU update. Gated on-box by PIT_ZERO3 /
+  per-GPU HBM < 100 GiB. Math: same fresh-adam / fp32-master / bf16 projection as host-v834e.
+
 v8.3.4e = v8.3.4c + fail-closed fp32 head master (host-v834e): never silently upcast bf16 -> fp32 when the
   matching master is missing or rejected. Memory and local-store loads must verify bf16_rne(M) == head and, when an
   expected/published master digest is provided, master_digest == expected. A ROOT-signed bootstrap override is the only
@@ -1281,6 +1286,19 @@ def install(config, start_dp=False):
     # ---- v8.3: declared training kernels + data-parallel packed execution of the same update
     # v8.3.1: private Triton kernel cache per rank on local disk (no cross-process compile race, no FUSE rename; /dev/shm is noexec)
     os.environ['TRITON_CACHE_DIR'] = TRITON_CACHE + '/rank0'
+    # host-v834f: ZeRO-3 / CPU fp32 accum when PIT_ZERO3 or per-GPU HBM < 100 GiB.
+    zero3_meta = {}
+    try:
+        z3 = load('v835_zero3', 'v835_zero3.py')
+        zero3_meta = dict(z3.activate(None))
+        if zero3_meta.get('zero3'):
+            z3.patch_fp32_accumulator()
+            # Cap token budget on 32 GiB-class GPUs so activations fit beside sharded params.
+            mem = zero3_meta.get('per_gpu_mem_gib')
+            if mem is not None and float(mem) < 40 and int(engine.get('dp_token_budget', 0)) > 24576:
+                engine['dp_token_budget'] = 24576
+    except Exception as _z3ex:
+        zero3_meta = dict(zero3=False, error=repr(_z3ex)[:200])
     kernels_policy = load('v83_kernels_policy', 'v83_kernels_policy.py')
     kernels = kernels_policy.allow(engine['training_kernels'])
     fast_kernels = load('v83_fast_kernels', 'v83_fast_kernels.py')
@@ -1291,14 +1309,23 @@ def install(config, start_dp=False):
     if start_dp:
         import subprocess
         world, port = engine['dp_world'], engine['dp_port']
+        helper_script = P / 'v835_zero3.py' if zero3_meta.get('zero3') and (P / 'v835_zero3.py').is_file() else P / 'v83_dp.py'
         for r in range(1, world):
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(r), MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port),
                        TRITON_CACHE_DIR=TRITON_CACHE + '/rank%d' % r)
-            helpers.append(subprocess.Popen([sys.executable, '-B', str(P / 'v83_dp.py'), str(r), str(world), str(port),
-                                             str(P), str(Path(config['source_root']).resolve())],
-                                            env=env, cwd=str(Path(config['source_root']).resolve())))
+            if zero3_meta.get('zero3'):
+                env['PIT_ZERO3'] = '1'
+                env['PIT_FP32_ACCUM_DEVICE'] = 'cpu'
+            if helper_script.name == 'v835_zero3.py':
+                argv = [sys.executable, '-B', str(helper_script), 'helper', str(r), str(world), str(port),
+                        str(P), str(Path(config['source_root']).resolve())]
+            else:
+                argv = [sys.executable, '-B', str(helper_script), str(r), str(world), str(port),
+                        str(P), str(Path(config['source_root']).resolve())]
+            helpers.append(subprocess.Popen(argv, env=env, cwd=str(Path(config['source_root']).resolve())))
         dp.init(world, port)
         dp.STATE['helpers'] = helpers
+        dp.STATE['zero3'] = bool(zero3_meta.get('zero3'))
     dp_update = dp.make_train_update(batched, fast_kernels)
 
     def train_update_v833i(runtime, optimizer, groups, binding, *, config, **kwargs):
@@ -1399,7 +1426,8 @@ def install(config, start_dp=False):
         return out
     train_update_v833j._original = dp_update._original
     batched.train_update_batched = train_update_v833j
-    return dict(component='trainer-host-v83', dp_world=engine['dp_world'] if start_dp else 0, training_kernels=kernels,
+    return dict(component='trainer-host-v83', host_version='host-v834f', zero3=dict(zero3_meta),
+                dp_world=engine['dp_world'] if start_dp else 0, training_kernels=kernels,
                 engine=engine, drop_unresolved=batched.DROP_UNRESOLVED,
                 loss_agg_mode=batched.LOSS_AGG_MODE, loss_scale=batched.LOSS_SCALE, math_levels=len(batched.MATH_LEVELS),
                 drop_policy=batched.DROP_POLICY, optimizer_persistence=engine['optimizer_persistence'],

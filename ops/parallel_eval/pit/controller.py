@@ -142,7 +142,7 @@ class Controller:
         shadow = bool(cfg.is_shadow())
         rent = RentService(
             max_boxes=cfg.max_boxes,
-            gpu_order=tuple(cfg.gpu_order),
+            gpu_order=tuple(cfg.effective_gpu_order()),
             price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
             disable_auto_backup=bool(cfg.disable_lium_auto_backup),
             shadow=shadow,
@@ -549,7 +549,7 @@ class Controller:
             'max_boxes': self.config.max_boxes,
             'on_demand_rent_only': True,
             'price_ceiling_usd_h': self.config.price_ceiling_usd_h,
-            'gpu_pinned': list(self.config.gpu_order),
+            'gpu_pinned': list(self.config.effective_gpu_order()),
             'cutover': self.cutover_plan(),
             'actions': actions,
         }

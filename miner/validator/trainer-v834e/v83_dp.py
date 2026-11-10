@@ -132,6 +132,14 @@ def _install_fast(B, FK, runtime, no_ckpt):
         runtime.model._v83_fast = True
 
 
+def _fp32_accum_device():
+    """CPU when PIT_ZERO3 / PIT_FP32_ACCUM_DEVICE=cpu (host-v834f ZeRO-3 / low-VRAM)."""
+    if os.environ.get('PIT_ZERO3', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+        return 'cpu'
+    dev = os.environ.get('PIT_FP32_ACCUM_DEVICE')
+    return dev if dev else None
+
+
 def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, active_rollouts, versions, guard, record):
     """One rank's share. Returns (accumulator|None, details, losses, err)."""
     from subnet.mimo_grpo.optimizer import FP32Accumulator
@@ -141,7 +149,13 @@ def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, activ
         if B._versions(actor.model) != versions:
             raise ValueError('input actor changed during reference preparation')
         for p in actor.model.parameters(): p.grad = None
-        accumulator = FP32Accumulator(actor.model.named_parameters())
+        # host-v834f: CPU fp32 accumulator under ZeRO-3 (same math; frees ~36 GiB HBM).
+        # Only pass buffer_device when set — golden source FP32Accumulator may lack the kwarg.
+        _adev = _fp32_accum_device()
+        if _adev:
+            accumulator = FP32Accumulator(actor.model.named_parameters(), buffer_device=_adev)
+        else:
+            accumulator = FP32Accumulator(actor.model.named_parameters())
         B._gradient_pass(actor, rows, plan, config, agg_config, loss_scale, active_rollouts, accumulator, versions,
                          details, losses, engine='packed', logit_chunk=LOGIT_CHUNK, guard=guard, record=record)
         torch.cuda.synchronize()
@@ -157,8 +171,13 @@ def _reduce(B, rows, accumulator, details, losses, err, rank):
     if ok.item() < 1:
         if accumulator is not None: accumulator.buffers.clear()
         return None, [e for e in errs if e]
+    # CPU buffers cannot use NCCL; reduce on the gloo ctrl group (host-v834f).
+    group = None
+    first = next(iter(accumulator.buffers.values()))
+    if first.device.type == 'cpu':
+        group = STATE.get('ctrl')
     for name in sorted(accumulator.buffers):
-        dist.reduce(accumulator.buffers[name], dst=0, op=dist.ReduceOp.SUM)
+        dist.reduce(accumulator.buffers[name], dst=0, op=dist.ReduceOp.SUM, group=group)
     gathered = [None] * world
     dist.all_gather_object(gathered, (details, losses, {i: (rows[i]['keep'], rows[i]['derail_index']) for i in details}))
     if rank != 0:
@@ -212,13 +231,15 @@ def make_train_update(B, FK):
         _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0)
         if reference_runtime is not None:                         # v8.3.4: skip when KL is off
             _install_fast(B, FK, reference_runtime, 0)
-        # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor)
+        # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor).
+        # ZeRO-3: rank0 model must already be FSDP-wrapped (train_pit) before CPUAdamW is built.
         t = time.monotonic()
         job = dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
                     actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
                     ref_dir=(str(reference_runtime._checkpoint_guard.directory) if reference_runtime is not None else None),
                     ref_desc=(reference_runtime._checkpoint_guard.descriptor if reference_runtime is not None else None),
-                    spec=runtime.spec.to_dict(), assign=assign)
+                    spec=runtime.spec.to_dict(), assign=assign,
+                    zero3=bool(getattr(runtime.model, '_v835_fsdp', False) or _fp32_accum_device() == 'cpu'))
         _bcast(job)
         for _, p in runtime.model.named_parameters():
             dist.broadcast(p.data, src=0)
@@ -385,6 +406,11 @@ def helper_main(rank, world, port, host_dir, source_root):
             STATE['actor'] = MimoRuntime.load(job['actor_dir'], job['actor_desc'], job['spec'], device='cuda', trainable=True)
             _install_fast(B, FK, STATE['actor'], NO_CKPT_LAYERS_HELPER)
         actor = STATE['actor']
+        # host-v834f ZeRO-3: shard the helper actor the same way as rank 0.
+        if job.get('zero3') and not getattr(actor.model, '_v835_fsdp', False):
+            import v835_zero3 as _z3
+            _z3.patch_fp32_accumulator()
+            actor.model = _z3.wrap_fsdp(actor.model, local_rank=0)
         for _, p in actor.model.named_parameters():
             dist.broadcast(p.data, src=0)
         config = job['config']; agg_config, loss_scale, _ = B.loss_aggregation(config)

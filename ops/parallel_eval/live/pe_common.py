@@ -35,10 +35,12 @@ NEVER_NAMES = (
 # GPU classes PE may rent (live-replica MAX_SEQS 512 at 64K; Lium class 'RTX5090').
 # Eval stays bf16 / max_model_len 69632 / MAX_SEQS 512 / one replica per GPU / no fp8
 # on every allowed class — including RTX5090 (do not re-enable max_num_seqs_5090=64).
-ALLOWED_GPUS = ("B300", "RTX5090", "B200", "H200", "H100")
+ALLOWED_GPUS = ("B300", "B200", "H200", "RTX5090", "H100")
 # B300-first-then-cheapest: prefer cheapest 8xB300 when available; else cheapest
 # full 8-GPU offer of any allowed type. Probe semantics are hardware-independent.
-GPU_ORDER = ("B300", "RTX5090", "B200", "H200", "H100")
+# RTX5090/H100 require pit.allow_sharded_gpus (PROMOTION-GATE, default false).
+GPU_ORDER = ("B300", "B200", "H200", "RTX5090", "H100")
+SHARDED_GPUS = ("RTX5090", "H100")
 REQUIRED_GPU_COUNT = 8
 PODD = "/root/affine-env-probe"
 STALENESS_MAX = 2  # GREENs applied since training head (merge window)
@@ -148,17 +150,34 @@ def current_round():
     return rid, rj(HELDOUT / rid / "ROUND.private.json")
 
 
+def allow_sharded_gpus():
+    """PROMOTION-GATE: pit.allow_sharded_gpus (default false) unlocks RTX5090/H100."""
+    cfg = pe_cfg()
+    pit = cfg.get("pit") if isinstance(cfg.get("pit"), dict) else {}
+    if "allow_sharded_gpus" in cfg:
+        return bool(cfg.get("allow_sharded_gpus"))
+    if isinstance(pit, dict) and "allow_sharded_gpus" in pit:
+        return bool(pit.get("allow_sharded_gpus"))
+    return False
+
+
 def gpu_order():
     """Effective rental order: flag parallel_eval.gpu_order / parallel_eval.pit.gpu_order
-    when every entry is in ALLOWED_GPUS (incl. RTX5090); else GPU_ORDER."""
+    when every entry is in ALLOWED_GPUS (incl. RTX5090); else GPU_ORDER.
+    Sharded classes (RTX5090/H100) are dropped unless allow_sharded_gpus is true."""
     cfg = pe_cfg()
     o = cfg.get("gpu_order")
     pit = cfg.get("pit") if isinstance(cfg.get("pit"), dict) else {}
     if (not isinstance(o, list) or not o) and isinstance(pit, dict):
         o = pit.get("gpu_order")
     if isinstance(o, list) and o and all(isinstance(g, str) and g in ALLOWED_GPUS for g in o) and len(set(o)) == len(o):
-        return tuple(o)
-    return GPU_ORDER
+        order = tuple(o)
+    else:
+        order = GPU_ORDER
+    if allow_sharded_gpus():
+        return order
+    out = tuple(g for g in order if g not in SHARDED_GPUS)
+    return out if out else order
 
 
 def pick_best_offer(cands, order=None, ceiling=None):
@@ -170,6 +189,9 @@ def pick_best_offer(cands, order=None, ceiling=None):
     cheapest under the ceiling. Keep in sync with ``pit.gpu_policy``.
     """
     order = tuple(order) if order else gpu_order()
+    if not allow_sharded_gpus():
+        order = tuple(g for g in order if g not in SHARDED_GPUS) or order
+    allowed = set(order)
     rows = []
     for g, r, p in cands:
         try:
@@ -178,7 +200,7 @@ def pick_best_offer(cands, order=None, ceiling=None):
             continue
         if ceiling is not None and price > float(ceiling):
             continue
-        if g not in ALLOWED_GPUS:
+        if g not in ALLOWED_GPUS or g not in allowed:
             continue
         rows.append((g, r, price))
     if not rows:
