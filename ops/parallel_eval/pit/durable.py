@@ -176,12 +176,21 @@ class DurableStore:
     def queue_path(self) -> Path:
         return self.root / 'queue.json'
 
+    def _enqueue_unlocked(self, item_id: str) -> None:
+        """Append to ``queue.json`` without taking ``pit.lock``.
+
+        Call only while the caller already holds ``store.locked()``. Linux
+        ``fcntl.flock`` is not re-entrant across distinct fds, so ``enqueue``
+        under an outer ``locked()`` deadlocks.
+        """
+        q = _rj(self.queue_path(), []) or []
+        if item_id not in q:
+            q.append(item_id)
+        _wj(self.queue_path(), q, 0o600)
+
     def enqueue(self, item_id: str) -> None:
         with self.locked():
-            q = _rj(self.queue_path(), []) or []
-            if item_id not in q:
-                q.append(item_id)
-            _wj(self.queue_path(), q, 0o600)
+            self._enqueue_unlocked(item_id)
 
     def queue(self) -> List[str]:
         return list(_rj(self.queue_path(), []) or [])

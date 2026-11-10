@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,7 @@ from .bench_publish import format_node_gpu
 from .binding import select_next_queued
 from .controller import Controller
 from .durable import DurableStore
-from .gate_ledger_reconcile import reconcile_rows
+from .gate_ledger_reconcile import reconcile_rows, wrap_ledger_entry
 from .gate_writer import GateWriteError, HostGateWriter
 from .queue_ingest import _epoch_dir_ready
 from .rerun import (
@@ -22,6 +23,7 @@ from .rerun import (
     RERUN_PRIORITY,
     RerunError,
     archive_attempt1,
+    consume_pending_requests,
     consume_rerun_request,
     preflight,
     rerun_cand_seed,
@@ -434,6 +436,34 @@ class TestRerunHappyPath(unittest.TestCase):
         self.assertEqual(sm['attempt'], 2)
         self.assertEqual(sm['indices'], ROUND_INDICES)
 
+    def test_consume_under_store_locked_no_deadlock(self):
+        """BLOCKER 1: consume must not re-take pit.lock via store.enqueue()."""
+        e = 1060
+        old = self._ok_epoch(e)
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='lock test', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+
+        def _boom(signum, frame):
+            raise TimeoutError('consume_pending_requests deadlocked under store.locked()')
+
+        prev = signal.signal(signal.SIGALRM, _boom)
+        try:
+            signal.alarm(5)
+            with self.fx.store.locked():
+                out = consume_pending_requests(store=self.fx.store, ctl=ctl)
+            signal.alarm(0)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, prev)
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].get('status'), 'consumed')
+        new_id = out[0]['new_item_id']
+        self.assertIn(new_id, self.fx.store.queue())
+
 
 class TestLedgerReconcile(unittest.TestCase):
     def test_pit_green_without_head_chain_rejected(self):
@@ -483,6 +513,51 @@ class TestLedgerReconcile(unittest.TestCase):
         self.assertEqual(rows[2]['verdict'], 'promoted')
         self.assertNotIn('reconcile', rows[0])
         self.assertEqual(rows[3]['verdict'], 'rejected')
+
+    def test_wrap_entry_only_pit_green_without_head_changes(self):
+        """Live wrap: non-PIT / no_decision / audit fields byte-stable; only PIT GREEN flips."""
+        pre_pe = {
+            'epoch': 811, 'candidate': 'd' * 64, 'decision': 'green', 'verdict': 'promoted',
+            'applied': 'legacy-applied', 'gain': 0.12, 'rejudge': {'was': 'red'},
+            'audit': {'note': 'keep-me'},
+        }
+        no_decision = None  # orig entry() returns None for no_decision
+        with_fields = {
+            'epoch': 908, 'candidate': 'e' * 64, 'decision': 'green', 'verdict': 'promoted',
+            'applied': 'green', 'rejudge': {'z': 1.5}, 'audit': 'a' * 16, 'gain': 0.01,
+        }
+        pit_green = {
+            'epoch': 1062, 'candidate': CAND, 'decision': 'green', 'verdict': 'promoted',
+            'applied': 'pending', 'rejudge': {'keep': True}, 'audit': 'pit-audit', 'gain': 0.4,
+        }
+        # Same object identity for non-PIT / None.
+        self.assertIs(
+            wrap_ledger_entry(pre_pe, is_pit=False, chain_candidates=set(), archived=False),
+            pre_pe,
+        )
+        self.assertIsNone(
+            wrap_ledger_entry(no_decision, is_pit=True, chain_candidates=set(), archived=False)
+        )
+        self.assertIs(
+            wrap_ledger_entry(with_fields, is_pit=False, chain_candidates=set(), archived=False),
+            with_fields,
+        )
+        self.assertEqual(
+            json.dumps(with_fields, sort_keys=True),
+            json.dumps(
+                wrap_ledger_entry(with_fields, is_pit=False, chain_candidates=set(), archived=False),
+                sort_keys=True,
+            ),
+        )
+        out = wrap_ledger_entry(
+            pit_green, is_pit=True, chain_candidates=set(), archived=False,
+        )
+        self.assertIsNot(out, pit_green)
+        self.assertEqual(out['verdict'], 'rejected')
+        self.assertEqual(out['reconcile'], 'green-without-head-chain')
+        # All non-verdict fields preserved.
+        for key in ('applied', 'rejudge', 'audit', 'gain', 'candidate', 'decision', 'epoch'):
+            self.assertEqual(out[key], pit_green[key], key)
 
 
 class TestGpuFallback(unittest.TestCase):

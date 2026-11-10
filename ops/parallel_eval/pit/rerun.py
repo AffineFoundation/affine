@@ -586,7 +586,9 @@ def enqueue_rerun_item(
     else:
         ctl.items.append(rec)
     store.save_item(rec)
-    store.enqueue(rec.item_id)
+    # Caller (consume under store.locked()) already holds pit.lock — never
+    # re-enter via store.enqueue() (fcntl deadlock on a second fd).
+    store._enqueue_unlocked(rec.item_id)
     return rec
 
 

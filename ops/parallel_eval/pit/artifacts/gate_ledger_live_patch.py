@@ -7,13 +7,15 @@ PR rule-text copies under ``ops/zbar_flat`` / ``ops/green_only_reveal`` in a
 way that diverges them.
 
 What it changes (PIT epochs only):
+  * Wrap ``entry`` — never replace it wholesale.
   * GREEN ⇒ ``promoted`` only when HEAD-CHAIN (via the live file's existing
     ``PE_ST``) lists the candidate.
-  * Archived ``attempt-1/DECISION.json`` with no live DECISION ⇒ ``superseded``.
-  * Pre-PE / non-PIT rows keep their existing verdicts untouched.
+  * Archived attempt-1 with a still-returned entry ⇒ ``superseded``.
+  * Non-PIT rows are returned byte-identical to the original ``entry``.
 
 Result for the lost GREENs: e1062 becomes ``rejected`` now; once archived by
-a sanctioned rerun it becomes ``superseded``.
+a sanctioned rerun (and ``entry`` still returns a row) it becomes
+``superseded``.
 
 Print the snippet with ``python3 -m ops.parallel_eval.pit.artifacts.gate_ledger_live_patch``.
 This file is documentation + snippet, not an auto-editor of the live host.
@@ -21,15 +23,15 @@ This file is documentation + snippet, not an auto-editor of the live host.
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Snippet to splice into live gate_ledger.py (replace ``entry``).
-# Assumes the live module already defines PE_ST, EP, LIFE, rj, mtime, cr,
-# manifest_window, pre_probe — do not invent host-path fallbacks here.
+# Snippet to splice into live gate_ledger.py AFTER the existing entry().
+# Assumes PE_ST, EP, LIFE, rj already exist — do not invent host-path fallbacks.
 # ---------------------------------------------------------------------------
 
 LIVE_SNIPPET = r'''
 # --- PIT sanctioned-rerun reconcile (2026-11-10) ---------------------------
-# HEAD-CHAIN lives under the live unit's existing PE_ST (never invent a path).
+# Wrap entry(); never rebuild the public row. HEAD-CHAIN under existing PE_ST.
 HEAD_CHAIN = PE_ST / 'HEAD-CHAIN.json'
+_entry_orig = entry
 
 
 def _head_chain_candidates():
@@ -56,52 +58,26 @@ def _is_pit_epoch(e):
 
 
 def entry(e):
-    d = EP / str(e); dec = rj(d / 'DECISION.json')
-    archived = _decision_archived(e)
-    if (not dec or dec.get('decision') not in ('green', 'red')) and archived:
-        dec = rj(d / 'attempt-1' / 'DECISION.json')
-    if not dec or dec.get('decision') not in ('green', 'red'):
-        return None
-    life = LIFE / 'epochs' / str(e)
-    applied = rj(life / 'PROMOTION-GATE.json') or {}
-    tl = rj(d / 'TIMELINE.json') or {}
-    ev = dec.get('evaluated') or {}
-    start, deadline = manifest_window(e)
-    is_pit = _is_pit_epoch(e)
-    if is_pit and archived and not (d / 'DECISION.json').exists():
-        verdict = 'superseded'
-        reconcile = 'archived-attempt'
-    elif is_pit and dec['decision'] == 'green':
-        if dec.get('candidate') in _head_chain_candidates():
-            verdict = 'promoted'; reconcile = 'head-chain'
+    r = _entry_orig(e)
+    if r is None or not _is_pit_epoch(e):
+        return r
+    # PIT only: adjust verdict / reconcile / superseded. All other fields stay.
+    out = dict(r)
+    if _decision_archived(e) and not (EP / str(e) / 'DECISION.json').exists():
+        out['verdict'] = 'superseded'
+        out['reconcile'] = 'archived-attempt'
+        out['superseded'] = True
+        return out
+    if out.get('decision') == 'green':
+        if out.get('candidate') in _head_chain_candidates():
+            out['verdict'] = 'promoted'
+            out['reconcile'] = 'head-chain'
+            out.pop('superseded', None)
         else:
-            verdict = 'rejected'; reconcile = 'green-without-head-chain'
-    else:
-        # Non-PIT (pre-PE) history: keep the classic green→promoted mapping.
-        verdict = 'promoted' if dec['decision'] == 'green' else 'rejected'
-        reconcile = 'pre-pit' if not is_pit else ('red' if dec['decision'] == 'red' else 'head-chain')
-    return dict(
-        epoch=e, head=dec['head'], candidate=dec['candidate'], decision=dec['decision'], verdict=verdict,
-        applied=applied.get('decision'), mode=dec.get('mode'),
-        z=ev.get('z'), candidate_cap_rate=ev.get('c_cap_rate'), n=ev.get('n'),
-        head_pass=ev.get('h_pass'), candidate_pass=ev.get('c_pass'),
-        batch_tasks_dropped=dec.get('batch_overlap'), reasons=dec.get('reasons'),
-        reason=('; '.join(dec.get('reasons') or []) or (('z %s %.1f and cap-hit < %.2f' % ('>=' if dec.get('z_inclusive') else '>', dec.get('z_min', -1.0), dec.get('cap_max', 0.20)))
-                if verdict == 'promoted' else None)),
-        thresholds=dict(z_min=dec.get('z_min', -1.0), z_inclusive=bool(dec.get('z_inclusive')), cap_max=dec.get('cap_max', 0.20),
-                        min_tasks=dec.get('min_tasks', 200)), red_credit=dec.get('red_credit'),
-        commitment=dec.get('commitment'),
-        timestamps=dict(gather_start=start, upload_deadline=deadline,
-                        training_result=tl.get('result_mtime') or mtime(life / 'TRAINING-RESULT.json'),
-                        pre_probe=pre_probe(dec['head'], start),
-                        post_probe=dict(start=tl.get('fetch_start') or tl.get('h_ready'), fetch_start=tl.get('fetch_start'),
-                                        fetched=tl.get('fetched'), serve_start=tl.get('serve_start'), served=tl.get('served'),
-                                        run_start=tl.get('run_start'), end=tl.get('run_done')),
-                        decided_at=dec.get('decided_at'), finalized=mtime(life / 'FINALIZED.json')),
-        decided_at_cr=dec.get('decided_at_cr'), timing_s=dec.get('timing'),
-        reconcile=reconcile,
-        superseded=(verdict == 'superseded'),
-        pit=is_pit)
+            out['verdict'] = 'rejected'
+            out['reconcile'] = 'green-without-head-chain'
+            out.pop('superseded', None)
+    return out
 # --- end PIT reconcile snippet --------------------------------------------
 '''
 

@@ -74,6 +74,38 @@ def epoch_is_pit(life_epochs: Path, epoch: int) -> bool:
     return (Path(life_epochs) / str(int(epoch)) / 'PIT-DISPATCHED.json').is_file()
 
 
+def wrap_ledger_entry(
+    orig: Optional[Mapping[str, Any]],
+    *,
+    is_pit: bool,
+    chain_candidates: set,
+    archived: bool,
+) -> Optional[Mapping[str, Any]]:
+    """Live-patch semantics: wrap ``entry`` output.
+
+    Non-PIT / None → return ``orig`` unchanged (same object). PIT → copy and
+    adjust only ``verdict`` / ``reconcile`` / ``superseded``.
+    """
+    if orig is None or not is_pit:
+        return orig
+    out = dict(orig)
+    if archived:
+        out['verdict'] = 'superseded'
+        out['reconcile'] = 'archived-attempt'
+        out['superseded'] = True
+        return out
+    if out.get('decision') == 'green':
+        if out.get('candidate') in chain_candidates:
+            out['verdict'] = 'promoted'
+            out['reconcile'] = 'head-chain'
+            out.pop('superseded', None)
+        else:
+            out['verdict'] = 'rejected'
+            out['reconcile'] = 'green-without-head-chain'
+            out.pop('superseded', None)
+    return out
+
+
 def reconcile_entry(
     ent: Mapping[str, Any],
     *,
@@ -83,31 +115,17 @@ def reconcile_entry(
 ) -> Dict[str, Any]:
     """Return a corrected ledger entry (does not mutate input).
 
-    Non-PIT rows are returned unchanged so pre-PE history keeps its verdicts.
+    Non-PIT rows keep every field. PIT rows only adjust verdict / reconcile /
+    superseded (same rules as the live wrap snippet).
     """
-    out = dict(ent)
-    if not is_pit:
-        return out
-    cand = out.get('candidate')
-    decision = out.get('decision')
-    if archived:
-        out['verdict'] = 'superseded'
-        out['superseded'] = True
-        out['reconcile'] = 'archived-attempt'
-        return out
-    if decision == 'green':
-        if cand in chain_candidates:
-            out['verdict'] = 'promoted'
-            out['reconcile'] = 'head-chain'
-        else:
-            # PIT GREEN without HEAD-CHAIN — not actually promoted (e.g. e1062).
-            out['verdict'] = 'rejected'
-            out['reconcile'] = 'green-without-head-chain'
-            out['promoted_refused'] = True
-    elif decision == 'red':
-        out['verdict'] = 'rejected'
-        out.setdefault('reconcile', 'red')
-    return out
+    wrapped = wrap_ledger_entry(
+        ent,
+        is_pit=is_pit,
+        chain_candidates=chain_candidates,
+        archived=archived,
+    )
+    assert wrapped is not None
+    return dict(wrapped)
 
 
 def reconcile_ledger(
