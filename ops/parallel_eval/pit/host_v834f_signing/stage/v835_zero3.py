@@ -186,8 +186,9 @@ def preflight_or_raise(
     limit = min(float(per_gpu_gib), float(TARGET_PEAK_GIB) if float(per_gpu_gib) < 40 else float(per_gpu_gib))
     if float(est['peak_gib']) > float(limit):
         raise VramPreflightError(
-            'projected per-GPU peak %.1f GiB exceeds limit %.1f GiB (VRAM %.1f, world=%d, sharded=%s, offload=%s)'
-            % (est['peak_gib'], limit, per_gpu_gib, world, sharded, cpu_offload)
+            'projected per-GPU peak %.1f GiB exceeds VRAM %.1f GiB '
+            '(limit %.1f, world=%d, sharded=%s, offload=%s)'
+            % (est['peak_gib'], per_gpu_gib, limit, world, sharded, cpu_offload)
         )
     return est
 
