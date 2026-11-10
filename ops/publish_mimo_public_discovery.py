@@ -38,7 +38,78 @@ def _pinned_reference(ref):
     return path
 
 
-def process_live(record, proc=Path('/proc')):
+PIT_HEARTBEAT_NAME = 'HOST-HEARTBEAT.json'
+PIT_HEARTBEAT_VERSION = 'affine-pit-host-heartbeat-v1'
+PIT_HEARTBEAT_MAX_AGE_S = 120.0
+
+
+def _pe_state_root():
+    env = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+    return Path(env) if env else None
+
+
+def _pit_state_root():
+    """PIT_STATE, else PE_STATE/pit. No hardcoded host defaults."""
+    pit = os.environ.get('PIT_STATE')
+    pe = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
+    if pit and pe:
+        expected = Path(pe) / 'pit'
+        if Path(pit).resolve() != expected.resolve():
+            return None
+    if pit:
+        return Path(pit)
+    if pe:
+        return Path(pe) / 'pit'
+    return None
+
+
+def cutover_active():
+    """True when live PIT cutover is on, or WARM-OFF marks PE warm/controller off."""
+    pe_root = _pe_state_root()
+    if pe_root is not None and (pe_root / 'WARM-OFF').exists():
+        return True
+    flag = os.environ.get('PE_FLAG')
+    if not flag:
+        return False
+    try:
+        doc = json.loads(Path(flag).read_text())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    pe = (doc or {}).get('parallel_eval') or {}
+    pit = pe.get('pit') or {}
+    if pit.get('revert') is True:
+        return False
+    return (
+        pe.get('enabled') is True
+        and pit.get('enabled') is True
+        and pit.get('mode') == 'live'
+        and pit.get('cutover') is True
+    )
+
+
+def pit_executor_live(*, now=None, max_age=PIT_HEARTBEAT_MAX_AGE_S):
+    """Fresh affine-pit-host heartbeat (written by run_host each tick)."""
+    now = time.time() if now is None else now
+    root = _pit_state_root()
+    if root is None:
+        return False
+    path = root / PIT_HEARTBEAT_NAME
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    if doc.get('version') != PIT_HEARTBEAT_VERSION:
+        return False
+    at = doc.get('at')
+    if type(at) not in (int, float) or not math.isfinite(at):
+        return False
+    age = now - float(at)
+    return 0 <= age <= float(max_age)
+
+
+def process_live(record, proc=Path('/proc'), *, now=None):
+    if record.get('executor') == 'pit':
+        return pit_executor_live(now=now)
     try:
         fields = (proc/str(record['child_pid'])/'stat').read_text().rsplit(')', 1)[1].split()
         return fields[0] not in ('Z', 'X') and fields[19] == str(record['child_ticks'])
@@ -111,22 +182,31 @@ def selector(observer, *, proc=Path('/proc'), inspect_unit=None):
         inspect_unit = lambda: subprocess.check_output(['systemctl', '--user', 'show',
             observer['lifecycle_unit'], '-p', 'MainPID', '-p', 'ActiveState'], text=True, timeout=10)
     fields = dict(line.split('=', 1) for line in inspect_unit().splitlines())
-    pid = int(fields['MainPID'])
-    if fields['ActiveState'] != 'active' or pid <= 0:
-        raise ValueError('activated MiMo lifecycle is not running')
-    argv = [part.decode() for part in (proc/str(pid)/'cmdline').read_bytes().split(b'\0') if part]
-    scripts = [Path(arg) for arg in argv[1:] if arg.endswith('.py')]
-    direct = (scripts == [entry] and argv.count('--config') == 1
-        and argv.index('--config') + 1 < len(argv)
-        and argv[argv.index('--config')+1] == str(config_path)
-        and argv.count('--allow-public-mimo') == 1)
-    if not direct and not host_capture_execution(observer, argv, entry, config_path):
-        raise ValueError('physical MiMo lifecycle config/entry/activation differs')
-    stat = (proc/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
-    record = dict(child_pid=pid, child_ticks=stat[19])
-    if not process_live(record, proc):
-        raise ValueError('MiMo lifecycle lifetime ended')
-    return config, policy, record
+    try:
+        pid = int(fields.get('MainPID') or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    unit_running = fields.get('ActiveState') == 'active' and pid > 0
+    if unit_running:
+        # Live PE controller / lifecycle PID path — argv and lifetime still fail closed.
+        argv = [part.decode() for part in (proc/str(pid)/'cmdline').read_bytes().split(b'\0') if part]
+        scripts = [Path(arg) for arg in argv[1:] if arg.endswith('.py')]
+        direct = (scripts == [entry] and argv.count('--config') == 1
+            and argv.index('--config') + 1 < len(argv)
+            and argv[argv.index('--config')+1] == str(config_path)
+            and argv.count('--allow-public-mimo') == 1)
+        if not direct and not host_capture_execution(observer, argv, entry, config_path):
+            raise ValueError('physical MiMo lifecycle config/entry/activation differs')
+        stat = (proc/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
+        record = dict(child_pid=pid, child_ticks=stat[19])
+        if not process_live(record, proc):
+            raise ValueError('MiMo lifecycle lifetime ended')
+        return config, policy, record
+    # Unit intentionally stopped under PIT cutover / WARM-OFF: accept PIT host
+    # heartbeat instead of the PE controller PID. Pins/signatures above still apply.
+    if cutover_active() and pit_executor_live():
+        return config, policy, dict(executor='pit', child_pid=0, child_ticks='0')
+    raise ValueError('activated MiMo lifecycle is not running')
 
 
 def project(policy, current, opening, receipt, *, authority, live, now):

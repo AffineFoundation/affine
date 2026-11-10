@@ -134,6 +134,28 @@ def build_controller(
     return ctl
 
 
+def write_host_heartbeat(root: Path, *, now: Optional[float] = None) -> Path:
+    """Affine-pit-host liveness marker for mining discovery under cutover.
+
+    Discovery accepts this file (fresh ``at``) instead of a PE controller PID
+    when ``parallel_eval.pit.cutover`` or ``WARM-OFF`` is set. Fail-closed
+    elsewhere: other bindings still require the live lifecycle unit.
+    """
+    now = time.time() if now is None else float(now)
+    path = Path(root) / 'HOST-HEARTBEAT.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        'version': 'affine-pit-host-heartbeat-v1',
+        'at': now,
+        'pid': os.getpid(),
+    }
+    tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n')
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return path
+
+
 def tick_once(
     ctl: Controller,
     store: DurableStore,
@@ -141,6 +163,8 @@ def tick_once(
     dry_run: bool = False,
 ) -> dict:
     plan = plan_cutover(ctl.config)
+    if not dry_run:
+        write_host_heartbeat(store.root)
     try:
         ingest = queue_ingest_sync(ctl, store=store)
     except Exception as exc:

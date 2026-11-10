@@ -27,7 +27,7 @@ SVC="gate_service|$RA/20261026-promotion-gate/code/gate_service.py|affine-promot
 training_params|$RA/20261026-promotion-gate/code/training_params.py|affine-training-params|40bbdbff84acee9d64c05f4ac8b5ed56c7bd73c45792adb323e2c0dcff19927f
 k1_service|$RA/20261027-k1-per-uid/code/k1_service.py|affine-k1|2c8181ec82b5e4bed5d74a2965f634e5d0afb5dbe582993588a084e67527393c
 k1_transparency|$RA/20261027-k1-per-uid/code/k1_transparency.py|affine-k1-transparency|cf3fb38c8f91763f4340e2e769fac5969311fda02055154a9f31453f5cc539b7
-publish_mimo_public_discovery|$RA/20261023-toploc-credit-train-gate/observer-v829/publish_mimo_public_discovery.py|affine-mining-discovery|f7b02d84fa488154d037234ab612f2a27509ce75cdfcd026d2739831c3032615"
+publish_mimo_public_discovery|$RA/20261023-toploc-credit-train-gate/observer-v829/publish_mimo_public_discovery.py|affine-mining-discovery|15c924ce33fabab9dceab0d79025230d5ac120376dbada75a5550ca01f3fa984"
 NEED_GB=192; POD=/workspace/affine-mimo-trainer-prod; OW="$POD/runtime-exact/venv/bin/python -I -B $POD/owned-worker-v7.py"
 TKH=/home/const/.lium/known_hosts/ef2b6085-adae-43e2-8a13-39182a3b3f7a
 SSHO=(-T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=20 -o ServerAliveCountMax=6)
