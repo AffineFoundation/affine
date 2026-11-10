@@ -5,7 +5,8 @@ WIPING → RELEASED.
 
 Hard rules:
 * Rent only when a JOB.json exists (no warm pool).
-* Price ceiling $56/h for B300 item/baseline (SPEC D1).
+* Price ceiling $56/h for item/baseline (SPEC D1); B300-first then cheapest
+  allowed 8-GPU class (B300/RTX5090/B200/H200/H100).
 * Disable Lium auto-backup on every rental.
 * Never promote / never score a partial or timed-out probe.
 * Fail-closed errors are not auto-retried.
@@ -16,13 +17,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from .kinds import JOB_KINDS, JobKind, NAME_PREFIX, counts_toward_item_cap, kind_cap
 
 PRICE_CEILING_USD_H = 56.0
 PREFERRED_PRICE_USD_H = 35.0
-PINNED_GPU = 'B300'
+PINNED_GPU = 'B300'  # preferred first; fallback via ALLOWED_GPUS
+ALLOWED_GPUS: Tuple[str, ...] = ('B300', 'RTX5090', 'B200', 'H200', 'H100')
 MAX_ATTEMPTS_DEFAULT = 3
 
 
@@ -67,7 +69,7 @@ class WaitForOffer(JobError):
     """No eligible offer under the price ceiling yet.
 
     Keeps the job in REQUESTED without burning an attempt. Used by bench/item
-    rent paths that must wait for B300 ≤ ceiling rather than fail-closed.
+    rent paths that must wait for an allowed 8-GPU ≤ ceiling rather than fail-closed.
     """
 
 
@@ -170,10 +172,17 @@ class JobRunner:
             kind = JobKind(kind)
         if kind in (JobKind.ITEM, JobKind.BASELINE):
             gpu = gpu or PINNED_GPU
-            if gpu != PINNED_GPU:
-                raise ValueError('item/baseline jobs are pinned to B300 (no fallback)')
+            if gpu not in ALLOWED_GPUS:
+                raise ValueError(
+                    'item/baseline GPU must be one of %s; got %r'
+                    % (list(ALLOWED_GPUS), gpu)
+                )
         else:
             gpu = gpu or PINNED_GPU
+            if gpu not in ALLOWED_GPUS:
+                raise ValueError(
+                    'job GPU must be one of %s; got %r' % (list(ALLOWED_GPUS), gpu)
+                )
         if not self.can_start(kind):
             raise JobError('%s cap reached' % kind.value)
         rec = JobRecord(

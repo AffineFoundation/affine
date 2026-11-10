@@ -9,8 +9,9 @@ Lifecycle mirrors PIT ``box_job``:
   publish_fleet → release.
 
 State lives only under ``pit_state/bench/<head>/``. Never reads/writes
-``bench-results/daemon.json`` or standing-daemon globals. Cap 1, B300 ≤ $56/h,
-separate from item ``max_boxes``. Bench failure: log + ≤1 retry; never promotes.
+``bench-results/daemon.json`` or standing-daemon globals. Cap 1, B300-first
+then cheapest allowed 8-GPU ≤ $56/h, separate from item ``max_boxes``. Bench
+failure: log + ≤1 retry; never promotes.
 """
 from __future__ import annotations
 
@@ -342,9 +343,13 @@ class BenchJobService:
             at = float(self.now_fn())
             if rent.host_rent is not None:
                 try:
-                    raw = rent.host_rent(name, '4h', gpu=GPU_PINNED[0])
+                    # gpu=None → B300-first-then-cheapest under the ceiling.
+                    raw = rent.host_rent(name, '4h', gpu=None)
                 except TypeError:
-                    raw = rent.host_rent(name, '4h')
+                    try:
+                        raw = rent.host_rent(name, '4h', gpu=GPU_PINNED[0])
+                    except TypeError:
+                        raw = rent.host_rent(name, '4h')
                 except Exception as exc:
                     msg = str(exc)
                     if any(x in msg.lower() for x in ('ceiling', 'no eligible', 'no offer')):
@@ -361,7 +366,7 @@ class BenchJobService:
                 out = dict(
                     box_id='bench-box-%s-%d' % (subject[:12], attempt),
                     name=name,
-                    gpu=GPU_PINNED[0],
+                    gpu=gpu or GPU_PINNED[0],
                     price_usd_h=min(35.0, float(price_ceiling_usd_h or PIT_CEILING)),
                     auto_backup_disabled=True,
                     synthetic=True,

@@ -6,8 +6,8 @@ Host RA ``pe_rent.py`` owns real Lium rental. This git port:
 * counts ``affine-pe-pit-*`` boxes toward the item box_cap only
   (live ``pe_rent`` requires names starting ``affine-pe-``);
 * refuses NEVER_NAMES / warm-pool semantics;
-* pins item rentals to B300 (no GPU fallback);
-* enforces the $56/h price ceiling;
+* prefers B300 then cheapest allowed GPU under the $56/h ceiling;
+* requires a full 8-GPU pack of an allowed class (B300/RTX5090/B200/H200/H100);
 * disables Lium auto-backup on every rental;
 * loads the host module when present.
 
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set
 
 from . import (
+    ALLOWED_GPUS,
+    GPU_ORDER,
     GPU_PINNED,
     PREFIX,
     PREFIX_LIVE,
@@ -43,6 +45,7 @@ NEVER_NAME_PREFIXES = (
 )
 
 PIT_LIVE_TTL = '4h'
+# Preferred first class; pick_node falls back to cheaper allowed classes.
 PIT_LIVE_GPU = 'B300'
 
 
@@ -108,13 +111,34 @@ def _price_usd_h(pod: Mapping[str, Any]) -> Optional[float]:
     return None
 
 
-def _gpu_is_b300(pod: Mapping[str, Any]) -> bool:
+def _gpu_class_of(pod: Mapping[str, Any]) -> Optional[str]:
+    """Normalize a rental GPU string to an ALLOWED_GPUS member, or None."""
+    chunks: List[str] = []
     for key in ('gpu', 'gpu_model', 'gpu_name'):
         val = pod.get(key)
-        if val is not None and 'B300' in str(val).upper():
-            return True
+        if val is not None:
+            chunks.append(str(val).upper())
     name = pod.get('name') or ''
-    return 'B300' in str(name).upper()
+    if name:
+        chunks.append(str(name).upper())
+    text = ' '.join(chunks)
+    # Check longer / more specific names first (RTX5090 before bare 5090).
+    for cls in ALLOWED_GPUS:
+        token = cls.upper()
+        if token in text:
+            return cls
+        if token == 'RTX5090' and '5090' in text:
+            return 'RTX5090'
+    return None
+
+
+def _gpu_is_allowed(pod: Mapping[str, Any]) -> bool:
+    return _gpu_class_of(pod) in ALLOWED_GPUS
+
+
+def _gpu_is_b300(pod: Mapping[str, Any]) -> bool:
+    """Backward-compatible alias — True when the rental is specifically B300."""
+    return _gpu_class_of(pod) == 'B300'
 
 
 def _no_backup_confirmed(pod: Mapping[str, Any]) -> bool:
@@ -172,7 +196,7 @@ class RentalLedger:
 class RentService:
     max_boxes: int = 2
     max_eval_nodes: int = 5
-    gpu_order: tuple = GPU_PINNED
+    gpu_order: tuple = GPU_ORDER
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
     disable_auto_backup: bool = True
     require_host: bool = False
@@ -226,9 +250,12 @@ class RentService:
             self.host_release(box_id=name_or_id, reason=reason)
 
     def _validate_host_rental(self, out: Dict[str, Any], *, box_id: str) -> None:
-        if not _gpu_is_b300(out):
+        if not _gpu_is_allowed(out):
             self._host_release(box_id, reason='rent-gpu-mismatch')
-            raise RentError('item rentals require B300 GPU')
+            raise RentError(
+                'item rentals require one of %s (got %r)'
+                % (list(ALLOWED_GPUS), out.get('gpu') or out.get('gpu_model'))
+            )
         price = _price_usd_h(out)
         if price is not None and price > float(self.price_ceiling_usd_h):
             self._host_release(box_id, reason='rent-price-ceiling')
@@ -284,19 +311,16 @@ class RentService:
         return dict(adopted=adopted, released=released)
 
     def precheck_offer(self) -> Dict[str, Any]:
-        """Check B300 ≤ ceiling on the offer listing BEFORE committing a rental.
+        """Check allowed 8-GPU ≤ ceiling BEFORE committing a rental.
 
-        Uses host ``pick_node`` / ``lium_ls`` when available. Raises RentError
-        when no eligible offer exists. Does not rent.
+        Uses host ``pick_node`` / ``lium_ls`` when available (B300-first-then-
+        cheapest). Raises RentError when no eligible offer exists. Does not rent.
         """
         if self.offer_precheck_fn is not None:
-            offer = self.offer_precheck_fn(gpu=PIT_LIVE_GPU)
+            offer = self.offer_precheck_fn(gpu=None)
             if not offer:
-                raise RentError('no eligible B300 offer under ceiling')
+                raise RentError('no eligible 8-GPU offer under ceiling')
             out = dict(offer) if isinstance(offer, Mapping) else {'raw': offer}
-            if not _gpu_is_b300(out) and 'B300' not in str(out.get('gpu') or out.get('gpu_model') or 'B300').upper():
-                # Explicit B300 request may omit gpu field; require price check anyway.
-                pass
             price = _price_usd_h(out)
             if price is not None and price > float(self.price_ceiling_usd_h):
                 raise RentError(
@@ -310,8 +334,9 @@ class RentService:
     def rent(self, *, item_id: str, epoch: int, attempt: int) -> Dict[str, Any]:
         if self.ledger.count() >= self.max_boxes:
             raise RentError('box_cap reached')
-        if tuple(self.gpu_order) != GPU_PINNED:
-            raise RentError('item rentals are pinned to B300')
+        order = tuple(self.gpu_order) or GPU_ORDER
+        if any(g not in ALLOWED_GPUS for g in order):
+            raise RentError('gpu_order has unsupported class: %r' % (order,))
         if self.require_host and self.host_rent is None:
             raise RentError('live rent requires host pe_rent module')
         prefix = self.name_prefix or (PREFIX_SHADOW if self.shadow else PREFIX_LIVE)
@@ -330,17 +355,20 @@ class RentService:
             raise
         except Exception as exc:
             raise RentError('offer precheck failed: %s' % str(exc)[:200]) from exc
-        # Shadow does not pass max_eval_nodes into live pe_rent (own cap only).
-        rent_kw: Dict[str, Any] = dict(gpu=PIT_LIVE_GPU)
+        # gpu=None → host pick_node uses full order (B300-first-then-cheapest).
+        rent_kw: Dict[str, Any] = dict(gpu=None)
         if self.share_pe_cap and not self.shadow:
             rent_kw['max_eval_nodes'] = self.max_eval_nodes
         if self.host_rent is not None:
             try:
                 raw = self.host_rent(name, PIT_LIVE_TTL, **rent_kw)
             except TypeError:
-                # Some host seams use positional ttl only.
+                # Some host seams use positional ttl only / require an explicit gpu.
                 try:
-                    raw = self.host_rent(name, PIT_LIVE_TTL, gpu=PIT_LIVE_GPU, max_eval_nodes=self.max_eval_nodes)
+                    raw = self.host_rent(
+                        name, PIT_LIVE_TTL,
+                        gpu=order[0], max_eval_nodes=self.max_eval_nodes,
+                    )
                 except Exception as exc:
                     raise RentError('host rent failed: %s' % str(exc)[:300]) from exc
             except AssertionError as exc:
@@ -366,7 +394,7 @@ class RentService:
             pod_name = name
             out = dict(
                 box_id=box_id, name=pod_name, synthetic=True,
-                gpu=self.gpu_order[0], price_usd_h=min(35.0, self.price_ceiling_usd_h),
+                gpu=order[0], price_usd_h=min(35.0, self.price_ceiling_usd_h),
             )
             if self.disable_auto_backup:
                 out['auto_backup_disabled'] = True
@@ -469,41 +497,62 @@ def load_host_pe_rent(module_path: Optional[str] = None):
 
 
 def _bind_offer_precheck(service: RentService, mod: Any) -> None:
-    """Wire listing-based B300/price precheck from live pe_rent helpers."""
+    """Wire listing-based B300-first-then-cheapest/price precheck."""
     pick_node = getattr(mod, 'pick_node', None)
     lium_ls = getattr(mod, 'lium_ls', None)
+    pick_best = getattr(mod, 'pick_best_offer', None)
     ceiling = float(service.price_ceiling_usd_h)
+    order = tuple(service.gpu_order) or GPU_ORDER
 
-    def _precheck(*, gpu: str = PIT_LIVE_GPU) -> Mapping[str, Any]:
+    def _precheck(*, gpu: Optional[str] = None) -> Mapping[str, Any]:
+        prefer = [gpu] if gpu else list(order)
         if callable(pick_node):
-            g, row = pick_node([gpu] if gpu else None, fallback=False)
+            try:
+                g, row = pick_node(prefer, fallback=True, price_ceiling=ceiling)
+            except TypeError:
+                # Older host pe_rent without price_ceiling kwarg.
+                g, row = pick_node(prefer, fallback=True)
             if not row:
-                raise RentError('no B300 offer available (pick_node)')
+                raise RentError('no eligible 8-GPU offer under ceiling (pick_node)')
             price = float(row.get('price_per_hour') or row.get('price_h') or 999)
             if price > ceiling:
                 raise RentError(
                     'offer price %.2f above ceiling %.2f' % (price, ceiling)
                 )
-            if g and 'B300' not in str(g).upper():
-                raise RentError('offer GPU %r is not B300' % g)
-            return dict(row, gpu=g or gpu, price_per_hour=price)
+            if g and g not in ALLOWED_GPUS:
+                raise RentError('offer GPU %r not in allow-list' % g)
+            return dict(row, gpu=g or gpu or order[0], price_per_hour=price)
         if callable(lium_ls):
-            rows = list(lium_ls(gpu) or [])
-            eligible = []
-            for r in rows:
-                if not isinstance(r, Mapping):
+            cands = []
+            for g in prefer:
+                try:
+                    rows = list(lium_ls(g) or [])
+                except Exception:
                     continue
-                if int(r.get('available_gpu_count') or 0) < 8:
-                    continue
-                price = float(r.get('price_per_hour') or r.get('price_h') or 999)
-                if price <= ceiling:
-                    eligible.append((price, r))
-            if not eligible:
-                raise RentError('no B300 offer ≤ $%.2f/h' % ceiling)
-            eligible.sort(key=lambda x: x[0])
-            best = dict(eligible[0][1])
-            best['gpu'] = gpu
-            best['price_per_hour'] = eligible[0][0]
+                for r in rows:
+                    if not isinstance(r, Mapping):
+                        continue
+                    if int(r.get('available_gpu_count') or 0) < 8:
+                        continue
+                    price = float(r.get('price_per_hour') or r.get('price_h') or 999)
+                    cands.append((g, r, price))
+            if callable(pick_best):
+                g, row = pick_best(cands, order=prefer, ceiling=ceiling)
+            else:
+                under = [(g, r, p) for g, r, p in cands if p <= ceiling]
+                if not under:
+                    g, row = None, None
+                else:
+                    pref = [x for x in under if x[0] == prefer[0]]
+                    pool = pref or under
+                    pool.sort(key=lambda x: x[2])
+                    g, row = pool[0][0], pool[0][1]
+            if not row:
+                raise RentError('no eligible 8-GPU offer ≤ $%.2f/h' % ceiling)
+            price = float(row.get('price_per_hour') or row.get('price_h') or 999)
+            best = dict(row)
+            best['gpu'] = g or prefer[0]
+            best['price_per_hour'] = price
             return best
         return dict(ok=True, deferred='post-rent-validate')
 

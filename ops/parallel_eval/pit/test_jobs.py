@@ -53,12 +53,15 @@ class TestJobCaps(unittest.TestCase):
         out = runner.tick()
         self.assertTrue(any(a.get('note') == 'fail-closed' for a in out['actions']))
 
-    def test_item_and_baseline_pinned_b300(self):
+    def test_item_and_baseline_allow_list(self):
         runner = JobRunner(live=True)
+        # Allowed classes (B300-first preference is the rent picker, not request).
+        runner.request(JobKind.ITEM, subject='1', gpu='B200')
+        runner.request(JobKind.BASELINE, subject='r1', gpu='RTX5090')
         with self.assertRaises(ValueError):
-            runner.request(JobKind.ITEM, subject='1', gpu='B200')
+            runner.request(JobKind.ITEM, subject='2', gpu='A100')
         with self.assertRaises(ValueError):
-            runner.request(JobKind.BASELINE, subject='r1', gpu='H200')
+            runner.request(JobKind.BASELINE, subject='r2', gpu='V100')
 
 
 class TestBaselineJob(unittest.TestCase):

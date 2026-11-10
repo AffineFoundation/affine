@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Rent / release affine-pe-* pods. B300 > B200 > H200 > H100 (throughput-v4); never 5090s; no price cap.
-Never touches NEVER_NAMES. One lium-up at a time (rent.lock).
+"""Rent / release affine-pe-* pods. B300-first-then-cheapest among ALLOWED_GPUS.
+
+Allowed: B300, RTX5090, B200, H200, H100. Exactly 8 GPUs. Optional price ceiling
+(PIT). Never touches NEVER_NAMES. One lium-up at a time (rent.lock).
 """
 import fcntl, json, re, sys, time
 from pathlib import Path
@@ -32,20 +34,25 @@ def avoid_executor(huid, why):
     wj(AVOID, d, 0o600)
     ev(event="executor_avoided", huid=huid, why=str(why)[:200], ttl_s=AVOID_TTL_S)
 
-def pick_node(prefer=None, fallback=True):
-    """-> (gpu, row): cheapest available 8-GPU node of the FIRST class (in order) that has one.
-    throughput-v4: order = prefer (explicit JOB gpu) then the effective gpu_order() (B300 > B200 > H200 > H100);
-    fallback=False restricts to prefer only. Never 5090 / unknown classes."""
+def pick_node(prefer=None, fallback=True, price_ceiling=None):
+    """-> (gpu, row): B300-first-then-cheapest 8-GPU offer under optional ceiling.
+
+    Collect every allowed class (prefer first, then the rest of gpu_order when
+    fallback=True). Prefer the cheapest offer of order[0] (default B300) when
+    one exists under the ceiling; otherwise the global cheapest under the
+    ceiling. Requires exactly 8 GPUs available.
+    """
     if prefer and any(g not in ALLOWED_GPUS for g in prefer):
-        raise ValueError("PE requires B300/B200/H200/H100; unsupported GPU class")
+        raise ValueError("PE requires %s; unsupported GPU class" % "/".join(ALLOWED_GPUS))
     base = list(gpu_order())
     order = list(prefer or [])
     if fallback or not order:
         order += [g for g in base if g not in order]
     if not order or any(g not in ALLOWED_GPUS for g in order):
-        raise ValueError("PE requires B300/B200/H200/H100; unsupported GPU class")
+        raise ValueError("PE requires %s; unsupported GPU class" % "/".join(ALLOWED_GPUS))
     cands = []
     bad = avoided()
+    need = int(REQUIRED_GPU_COUNT)
     for g in order:
         try:
             rows = lium_ls(g)
@@ -53,9 +60,12 @@ def pick_node(prefer=None, fallback=True):
             ev(event="ls_fail", gpu=g, err=str(ex)[:200])
             continue
         for r in rows:
-            if (r.get("available_gpu_count") or 0) < 8:
+            avail = int(r.get("available_gpu_count") or 0)
+            total = int(r.get("gpu_count") or 0)
+            # Require a full 8-GPU pack (lium up always uses -c 8).
+            if avail < need:
                 continue
-            if (r.get("gpu_count") or 0) < 8:
+            if total and total < need:
                 continue
             huid = r.get("huid") or ""
             if any(n in huid or n in (r.get("name") or "") for n in NEVER_NAMES):
@@ -63,20 +73,7 @@ def pick_node(prefer=None, fallback=True):
             if huid in bad:
                 continue
             cands.append((g, r, float(r.get("price_per_hour") or 999)))
-        if cands:
-            break  # first class (in order) with a free 8-GPU node wins; slower classes are not even listed
-    if not cands:
-        return None, None
-    # within first available class in order, pick cheapest; else global cheapest preferring earlier classes
-    by_class = {}
-    for g, r, p in cands:
-        by_class.setdefault(g, []).append((p, r))
-    for g in order:
-        if g in by_class:
-            by_class[g].sort(key=lambda x: x[0])
-            return g, by_class[g][0][1]
-    cands.sort(key=lambda x: (order.index(x[0]) if x[0] in order else 99, x[2]))
-    return cands[0][0], cands[0][1]
+    return pick_best_offer(cands, order=order, ceiling=price_ceiling)
 
 class CapReached(RuntimeError):
     """throughput-v4: renting would exceed MAX_EVAL_NODES live eval nodes (lanes + warm, dedicated baseline excluded)."""
@@ -99,7 +96,7 @@ def rent(name, ttl="12h", gpu=None, huid=None, max_eval_nodes=None):
     """max_eval_nodes: checked under rent.lock (every PE rental serializes there, lium up completes inside the lock) so
     concurrent lanes/warm workers can never push the live eval-node count past the cap. Raises CapReached."""
     if gpu is not None and gpu not in ALLOWED_GPUS:
-        raise ValueError("PE requires B300/B200/H200/H100; unsupported GPU class")
+        raise ValueError("PE requires %s; unsupported GPU class" % "/".join(ALLOWED_GPUS))
     if huid is not None:
         raise ValueError("Unverified explicit-node override is disabled; use a supported GPU listing")
     assert name.startswith(PREFIX), name

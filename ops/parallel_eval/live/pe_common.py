@@ -32,12 +32,14 @@ NEVER_NAMES = (
     "lunar-shark-c5", "affine-bench-4", "affine-prior-1", "affine-trainer-1", "affine-probe-8xb200-1",
     "affine-pks-5090-a", "affine-pks-5090-t64", "casper-h100-ask-before-delete", "affineminer-sim-1",
 )
-# GPU classes PE may rent (live-replica MAX_SEQS 512 at 64K; never 5090s).
-ALLOWED_GPUS = ("B300", "B200", "H200", "H100")
-# throughput-v4 (2026-11-07 12:10 CR, t1365u): fastest first. B300 measured 27-29 min full-plan sampling vs 82 min on H100
-# (state/THROUGHPUT-SUMMARY-1200.json); B200/H200 fallback; H100 only when nothing faster has an 8-GPU node free.
-# Probe semantics are hardware-independent (same public serve/probe code, bf16, MAX_SEQS 512, n/k/head/64K/z>1/floor 0).
-GPU_ORDER = ("B300", "B200", "H200", "H100")
+# GPU classes PE may rent (live-replica MAX_SEQS 512 at 64K; Lium class 'RTX5090').
+# Eval stays bf16 / max_model_len 69632 / MAX_SEQS 512 / one replica per GPU / no fp8
+# on every allowed class — including RTX5090 (do not re-enable max_num_seqs_5090=64).
+ALLOWED_GPUS = ("B300", "RTX5090", "B200", "H200", "H100")
+# B300-first-then-cheapest: prefer cheapest 8xB300 when available; else cheapest
+# full 8-GPU offer of any allowed type. Probe semantics are hardware-independent.
+GPU_ORDER = ("B300", "RTX5090", "B200", "H200", "H100")
+REQUIRED_GPU_COUNT = 8
 PODD = "/root/affine-env-probe"
 STALENESS_MAX = 2  # GREENs applied since training head (merge window)
 APPLY_STALENESS_MAX = 0  # fresh-only phase 1 (Jacob 2026-11-07 07:27 CR Option B)
@@ -147,12 +149,48 @@ def current_round():
 
 
 def gpu_order():
-    """Effective rental order: flag parallel_eval.gpu_order if it is a valid subset of ALLOWED_GPUS, else GPU_ORDER.
-    Any 5090 / unknown class in the flag -> ignore the flag entirely (fail safe to the code default)."""
-    o = pe_cfg().get("gpu_order")
+    """Effective rental order: flag parallel_eval.gpu_order / parallel_eval.pit.gpu_order
+    when every entry is in ALLOWED_GPUS (incl. RTX5090); else GPU_ORDER."""
+    cfg = pe_cfg()
+    o = cfg.get("gpu_order")
+    pit = cfg.get("pit") if isinstance(cfg.get("pit"), dict) else {}
+    if (not isinstance(o, list) or not o) and isinstance(pit, dict):
+        o = pit.get("gpu_order")
     if isinstance(o, list) and o and all(isinstance(g, str) and g in ALLOWED_GPUS for g in o) and len(set(o)) == len(o):
         return tuple(o)
     return GPU_ORDER
+
+
+def pick_best_offer(cands, order=None, ceiling=None):
+    """B300-first-then-cheapest (order[0]-first-then-cheapest).
+
+    ``cands``: iterable of ``(gpu, row, price)``. Caller must already require
+    exactly 8 GPUs / available. When any preferred-class offer is under the
+    optional ceiling, return the cheapest of that class; else the global
+    cheapest under the ceiling. Keep in sync with ``pit.gpu_policy``.
+    """
+    order = tuple(order) if order else gpu_order()
+    rows = []
+    for g, r, p in cands:
+        try:
+            price = float(p)
+        except (TypeError, ValueError):
+            continue
+        if ceiling is not None and price > float(ceiling):
+            continue
+        if g not in ALLOWED_GPUS:
+            continue
+        rows.append((g, r, price))
+    if not rows:
+        return None, None
+    preferred = order[0] if order else None
+    if preferred:
+        pref = [(g, r, p) for g, r, p in rows if g == preferred]
+        if pref:
+            pref.sort(key=lambda x: x[2])
+            return pref[0][0], pref[0][1]
+    rows.sort(key=lambda x: x[2])
+    return rows[0][0], rows[0][1]
 
 
 def warm_target():

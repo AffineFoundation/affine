@@ -1,8 +1,9 @@
 """Baseline / secret-draw short job per new head (SPEC §3.3).
 
-Host draws N=1000 secret indices (private). The job rents one B300, serves the
-head, receives the draw over stdin at PROBE time only, runs k=12 at 64K, streams
-cells home, wipes, and releases. Does **not** count toward the item box_cap.
+Host draws N=1000 secret indices (private). The job prefers B300 then any
+allowed 8-GPU under the ceiling, serves the head, receives the draw over stdin
+at PROBE time only, runs k=12 at 64K, streams cells home, wipes, and releases.
+Does **not** count toward the item box_cap.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from ops.jobs.kinds import JobKind
-from ops.jobs.runner import PINNED_GPU, JobRecord, JobRunner, JobState
+from ops.jobs.runner import ALLOWED_GPUS, PINNED_GPU, JobRecord, JobRunner, JobState
 
 from . import GATE_HEAD_ROLLOUTS, GATE_MAX_TOKENS, GATE_N_DRAWN
 
@@ -48,8 +49,11 @@ class BaselineJobService:
     completed: List[Dict[str, Any]] = field(default_factory=list)
 
     def enqueue(self, req: BaselineRequest) -> BaselineRequest:
-        if req.gpu != PINNED_GPU:
-            raise ValueError('baseline jobs are pinned to B300')
+        if req.gpu not in ALLOWED_GPUS:
+            raise ValueError(
+                'baseline GPU must be one of %s; got %r'
+                % (list(ALLOWED_GPUS), req.gpu)
+            )
         if len(req.head) != 64:
             raise ValueError('head must be hex64')
         payload = req.as_dict()

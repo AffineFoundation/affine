@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live Lium rent seam: adapter invokes host pe_rent with B300, ttl 4h, --no-backup."""
+"""Live Lium rent seam: adapter invokes host pe_rent with ttl 4h, --no-backup."""
 import json
 import sys
 import tempfile
@@ -9,16 +9,17 @@ from pathlib import Path
 from unittest import mock
 
 from . import PREFIX
+from .gpu_policy import pick_best_offer
 from .pe_lane import LaneError, LaneService
 from .pe_rent import RentError, RentService
 
 
 class TestLiveLiumRent(unittest.TestCase):
-    def test_pit_adapter_passes_b300_ttl_and_max_eval_nodes(self):
+    def test_pit_adapter_passes_ttl_and_max_eval_nodes(self):
         calls = []
         lium_args = []
 
-        def host_rent(name, ttl, *, gpu, max_eval_nodes):
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
             calls.append(dict(name=name, ttl=ttl, gpu=gpu, max_eval_nodes=max_eval_nodes))
             lium_args.append('--no-backup')
             return dict(
@@ -29,7 +30,8 @@ class TestLiveLiumRent(unittest.TestCase):
         rent = RentService(require_host=True, host_rent=host_rent, max_eval_nodes=5, max_boxes=2)
         out = rent.rent(item_id='f' * 32, epoch=7, attempt=2)
         self.assertEqual(out['gpu'], 'B300')
-        self.assertEqual(calls[0]['gpu'], 'B300')
+        # gpu=None lets host pick_node use B300-first-then-cheapest.
+        self.assertIsNone(calls[0]['gpu'])
         self.assertEqual(calls[0]['ttl'], '4h')
         self.assertEqual(calls[0]['max_eval_nodes'], 5)
         self.assertIn('--no-backup', lium_args)
@@ -61,7 +63,7 @@ class TestLiveLiumRent(unittest.TestCase):
                 '',
             )
 
-        def fake_pick_node(prefer=None, fallback=True):
+        def fake_pick_node(prefer=None, fallback=True, price_ceiling=None):
             return 'B300', dict(huid='exec-b300', price_per_hour=50.0, country_code='US', tier='t1')
 
         def fake_our_pods(ps=None):
@@ -69,12 +71,14 @@ class TestLiveLiumRent(unittest.TestCase):
 
         fake_common = mock.MagicMock()
         fake_common.PREFIX = PREFIX
-        fake_common.ALLOWED_GPUS = ('B300', 'B200', 'H200', 'H100')
+        fake_common.ALLOWED_GPUS = ('B300', 'RTX5090', 'B200', 'H200', 'H100')
+        fake_common.REQUIRED_GPU_COUNT = 8
+        fake_common.pick_best_offer = pick_best_offer
         fake_common.cr = lambda t=None: 'ts'
         fake_common.ev = lambda **kw: None
         fake_common.lium = fake_lium
         fake_common.lium_ls = lambda g: []
-        fake_common.gpu_order = lambda: ('B300', 'B200', 'H200', 'H100')
+        fake_common.gpu_order = lambda: ('B300', 'RTX5090', 'B200', 'H200', 'H100')
         fake_common.our_pods = fake_our_pods
         fake_common.NEVER_NAMES = ()
 

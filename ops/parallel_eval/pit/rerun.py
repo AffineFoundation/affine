@@ -38,7 +38,11 @@ from .life_paths import pe_state_root
 from .state import ItemRecord, ItemState, RENTED_STATES
 
 RERUN_PRIORITY = 1_000_000
+# First sanctioned GREEN rerun (attempt-1 = original). Box-retry ``item.attempt``
+# is independent and starts at 0 on every new rerun item.
 RERUN_ATTEMPT = 2
+# Meta keys copied from the prior item so HostBoxIO gets a real K1/epoch path.
+RERUN_BATCH_META_KEYS = ('batch_path', 'epoch_dir', 'ticket_path', 'ingest_source')
 GATE_ARCHIVE_NAMES = (
     'SAMPLE.private.json',
     'DECISION.json',
@@ -110,13 +114,122 @@ def request_path(store_root: Path, epoch: int) -> Path:
     return Path(store_root) / 'rerun' / ('RERUN-REQUEST-e%d.json' % int(epoch))
 
 
+def rerun_attempt_of(item: Optional[ItemRecord]) -> int:
+    """Sanctioned SAMPLE/plan_seed attempt number (not the box-retry counter)."""
+    if item is None:
+        return 0
+    meta = item.meta or {}
+    raw = meta.get('rerun_attempt')
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    # Legacy items stamped attempt=RERUN_ATTEMPT before the counter split.
+    if item.rerun_of or meta.get('rerun'):
+        try:
+            return int(item.attempt or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
 def find_item_for_epoch(items: Sequence[ItemRecord], epoch: int) -> Optional[ItemRecord]:
     matches = [i for i in items if int(i.epoch) == int(epoch)]
     if not matches:
         return None
-    # Prefer non-archived live items; highest attempt last.
-    matches.sort(key=lambda i: (int(i.attempt or 0), i.item_id))
+    # Prefer non-archived live items; highest rerun_attempt, then box attempt.
+    matches.sort(key=lambda i: (rerun_attempt_of(i), int(i.attempt or 0), i.item_id))
     return matches[-1]
+
+
+def is_failed_rerun_without_result(item: Optional[ItemRecord], epoch: int) -> bool:
+    """True when a prior rerun item died without PIT-RESULT (replaceable)."""
+    if item is None:
+        return False
+    meta = item.meta or {}
+    if not (item.rerun_of or meta.get('rerun') or rerun_attempt_of(item) >= RERUN_ATTEMPT):
+        return False
+    epoch_dir = life_root() / 'epochs' / str(int(epoch))
+    if (epoch_dir / 'PIT-RESULT.json').is_file():
+        return False
+    if item.state in (ItemState.ABORTED, ItemState.FAILED):
+        return True
+    if item.state is ItemState.RELEASED:
+        # Exhausted abort → RELEASED; RERUN-ACTIVE still marks an unfinished rerun.
+        if (epoch_dir / 'RERUN-ACTIVE.json').is_file():
+            return True
+        if item.last_error or meta.get('aborted') or item.decision in ('no_decision',):
+            return True
+    return False
+
+
+def next_rerun_attempt(item: Optional[ItemRecord]) -> int:
+    """Next SAMPLE/plan_seed attempt: 2 for first rerun, else prior+1."""
+    cur = rerun_attempt_of(item)
+    if cur < RERUN_ATTEMPT:
+        return RERUN_ATTEMPT
+    return cur + 1
+
+
+def _verify_batch_path_sha(
+    batch_path: Path,
+    turn: Mapping[str, Any],
+) -> str:
+    """Require batch_path exists and sha256 == K1-TURN.file_sha256.
+
+    When ``batch_path`` is the epoch dir (k1-turn ingest), verify the miner
+    free-file under ``ff/<hotkey>.json``. When it is a file, hash that file.
+    """
+    want = turn.get('file_sha256')
+    if not isinstance(want, str) or len(want) != 64:
+        raise RerunError('K1-TURN.file_sha256 missing')
+    if not batch_path.exists():
+        raise RerunError('batch_path missing: %s' % batch_path)
+    if batch_path.is_dir():
+        bf = batch_file_for_turn(batch_path, turn)
+        if bf is None:
+            raise RerunError(
+                'miner batch file missing under batch_path %s' % batch_path
+            )
+        got = _sha_file(bf)
+    else:
+        got = _sha_file(batch_path)
+    if got != want:
+        raise RerunError('batch_path sha256 != K1-TURN.file_sha256')
+    return want
+
+
+def copy_rerun_batch_meta(
+    old_item: Optional[ItemRecord],
+    *,
+    epoch: int,
+    turn: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Copy batch_path/epoch_dir/ticket_path/ingest_source; verify before queue."""
+    old_meta = dict(old_item.meta or {}) if old_item is not None else {}
+    epoch_dir = life_root() / 'epochs' / str(int(epoch))
+    batch_path = old_meta.get('batch_path') or str(epoch_dir)
+    epoch_dir_s = old_meta.get('epoch_dir') or str(epoch_dir)
+    ticket_path = old_meta.get('ticket_path')
+    ingest_source = old_meta.get('ingest_source') or 'k1-turn'
+    turn_doc = turn
+    if turn_doc is None:
+        raw = _rj(epoch_dir / 'K1-TURN.json')
+        if not isinstance(raw, Mapping):
+            raise RerunError('K1-TURN missing; cannot verify batch_path')
+        turn_doc = raw
+    _verify_batch_path_sha(Path(str(batch_path)), turn_doc)
+    if not Path(str(epoch_dir_s)).exists():
+        raise RerunError('epoch_dir missing: %s' % epoch_dir_s)
+    out: Dict[str, Any] = {
+        'batch_path': str(batch_path),
+        'epoch_dir': str(epoch_dir_s),
+        'ingest_source': ingest_source,
+    }
+    if ticket_path:
+        out['ticket_path'] = str(ticket_path)
+    return out
 
 
 def _iter_greens_rows(greens: Any) -> List[Mapping[str, Any]]:
@@ -293,9 +406,14 @@ def preflight(
                 if got != want:
                     reasons.append('batch sha256 != K1-TURN.file_sha256')
 
-    # Already have an active attempt-2 / pending request handled elsewhere.
-    if item is not None and int(item.attempt or 0) >= RERUN_ATTEMPT and item.state is ItemState.QUEUED:
-        reasons.append('attempt-%d item already queued' % RERUN_ATTEMPT)
+    # Active (non-terminal) rerun item already queued / in flight.
+    # ABORTED / FAILED / RELEASED without PIT-RESULT → replaceable; ok.
+    if item is not None and rerun_attempt_of(item) >= RERUN_ATTEMPT:
+        if item.state is ItemState.QUEUED or item.state in RENTED_STATES:
+            reasons.append(
+                'rerun attempt-%d item already active (%s)'
+                % (rerun_attempt_of(item), item.state.value)
+            )
 
     ok = not reasons
     return RerunCheck(
@@ -330,13 +448,22 @@ def write_rerun_request(
     if not check.ok:
         raise RerunError('refuse rerun e%d: %s' % (int(epoch), '; '.join(check.reasons)))
     path = request_path(root, int(epoch))
+    replace = is_failed_rerun_without_result(check.item, int(epoch))
+    next_attempt = next_rerun_attempt(check.item) if replace else RERUN_ATTEMPT
     if path.is_file():
         existing = _rj(path) or {}
-        if existing.get('status') in ('requested', 'consumed'):
+        status = existing.get('status')
+        if status == 'requested':
             raise RerunError(
                 'RERUN-REQUEST already exists for e%d (status=%s)'
-                % (int(epoch), existing.get('status'))
+                % (int(epoch), status)
             )
+        if status == 'consumed' and not replace:
+            raise RerunError(
+                'RERUN-REQUEST already exists for e%d (status=%s)'
+                % (int(epoch), status)
+            )
+        # consumed + replaceable failed rerun → overwrite for attempt N+1.
     at = float(now if now is not None else time.time())
     doc = {
         'epoch': int(epoch),
@@ -345,6 +472,8 @@ def write_rerun_request(
         'status': 'requested',
         'requested_at': at,
         'preflight': check.as_dict(),
+        'rerun_attempt': int(next_attempt),
+        'replace_failed_rerun': bool(replace),
     }
     _wj(path, doc, 0o600)
     return doc
@@ -519,6 +648,7 @@ def write_rerun_active(
     *,
     item_id: str,
     rerun_of: Optional[str] = None,
+    rerun_attempt: int = RERUN_ATTEMPT,
 ) -> Path:
     """Marker that ingest skips without freeing max_pending (PIT-RESULT absent)."""
     path = life_root() / 'epochs' / str(int(epoch)) / 'RERUN-ACTIVE.json'
@@ -526,11 +656,28 @@ def write_rerun_active(
         'status': 'rerun-active',
         'epoch': int(epoch),
         'item_id': item_id,
-        'attempt': RERUN_ATTEMPT,
+        'attempt': int(rerun_attempt),
+        'rerun_attempt': int(rerun_attempt),
         'rerun_of': rerun_of,
         'at': time.time(),
     }, 0o600)
     return path
+
+
+def archive_failed_rerun_sample(
+    epoch: int,
+    *,
+    failed_attempt: int,
+) -> Optional[Dict[str, Any]]:
+    """Move live SAMPLE/COMMIT from a failed rerun into attempt-N/ (audit keep)."""
+    gate_dir = gate_epochs_root() / str(int(epoch))
+    dest = gate_dir / ('attempt-%d' % int(failed_attempt))
+    hashes: Dict[str, Any] = {}
+    for name in ('SAMPLE.private.json', 'COMMIT.json', 'DECISION.json', 'EVALUATED.private.json'):
+        meta = _archive_file(gate_dir / name, dest)
+        if meta:
+            hashes[name] = meta
+    return hashes or None
 
 
 def _load_current_round() -> Dict[str, Any]:
@@ -563,17 +710,41 @@ def enqueue_rerun_item(
     sample: Mapping[str, Any],
     operator: str,
     reason: str,
+    rerun_attempt: int = RERUN_ATTEMPT,
 ) -> ItemRecord:
-    """Create attempt=2 QUEUED item with priority; not a new K1 turn."""
-    turn = _rj(life_root() / 'epochs' / str(int(epoch)) / 'K1-TURN.json') or {}
-    uid = int((old_item.uid if old_item else turn.get('uid')) or 0)
+    """Create a QUEUED rerun item with priority; not a new K1 turn.
+
+    ``rerun_attempt`` drives SAMPLE / plan_seed / item_id (a2, a3, …).
+    Box-retry ``attempt`` always starts at 0 and does not count toward
+    MAX_ATTEMPTS until the box fails and the controller increments it.
+    """
+    turn_raw = _rj(life_root() / 'epochs' / str(int(epoch)) / 'K1-TURN.json') or {}
+    if not isinstance(turn_raw, Mapping):
+        turn_raw = {}
+    uid = int((old_item.uid if old_item else turn_raw.get('uid')) or 0)
     hotkey = (
         (old_item.hotkey_prefix if old_item else '')
-        or str(turn.get('hotkey') or '')[:16]
+        or str(turn_raw.get('hotkey') or '')[:16]
     )
     reg = int(old_item.registration_index if old_item else epoch)
     old_id = old_item.item_id if old_item else None
-    item_id = 'pit-rerun-e%d-a%d' % (int(epoch), RERUN_ATTEMPT)
+    ra = int(rerun_attempt)
+    if ra < RERUN_ATTEMPT:
+        raise RerunError('rerun_attempt must be >= %d' % RERUN_ATTEMPT)
+    item_id = 'pit-rerun-e%d-a%d' % (int(epoch), ra)
+    batch_meta = copy_rerun_batch_meta(old_item, epoch=int(epoch), turn=turn_raw)
+    meta = {
+        'rerun': True,
+        'rerun_attempt': ra,
+        'rerun_operator': operator,
+        'rerun_reason': reason,
+        'rerun_round_id': sample.get('round_id'),
+        'rerun_plan_seed': sample.get('plan_seed'),
+        'k1_turn_reuse': True,  # not a new K1 submission turn
+        **batch_meta,
+    }
+    # Box attempt starts at 0 — independent of rerun_attempt / MAX_ATTEMPTS budget.
+    box_attempt = 0
     rec = ItemRecord(
         item_id=item_id,
         registration_index=reg,
@@ -581,18 +752,11 @@ def enqueue_rerun_item(
         uid=uid,
         hotkey_prefix=hotkey,
         state=ItemState.QUEUED,
-        attempt=RERUN_ATTEMPT,
+        attempt=box_attempt,
         priority=RERUN_PRIORITY,
         rerun_of=old_id,
         shadow=bool(ctl.config.is_shadow()) if getattr(ctl, 'config', None) else True,
-        meta={
-            'rerun': True,
-            'rerun_operator': operator,
-            'rerun_reason': reason,
-            'rerun_round_id': sample.get('round_id'),
-            'rerun_plan_seed': sample.get('plan_seed'),
-            'k1_turn_reuse': True,  # not a new K1 submission turn
-        },
+        meta=meta,
     )
     if hasattr(ctl, 'enqueue'):
         rec = ctl.enqueue(
@@ -601,10 +765,10 @@ def enqueue_rerun_item(
             uid=uid,
             hotkey_prefix=hotkey,
             item_id=item_id,
-            attempt=RERUN_ATTEMPT,
+            attempt=box_attempt,
             priority=RERUN_PRIORITY,
             rerun_of=old_id,
-            meta=rec.meta,
+            meta=meta,
         )
     else:
         ctl.items.append(rec)
@@ -623,7 +787,11 @@ def consume_rerun_request(
     round_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Host path under pit.lock: archive → SAMPLE → enqueue attempt 2.
+    """Host path under pit.lock: archive → SAMPLE → enqueue rerun item.
+
+    First rerun archives attempt-1 and enqueues rerun_attempt=2.
+    Replacing an ABORTED/FAILED rerun without PIT-RESULT archives the failed
+    SAMPLE into attempt-N/ and enqueues rerun_attempt=N+1 with a fresh seed.
 
     If archive already succeeded (RERUN.json with hashes) but SAMPLE/enqueue
     did not, resume without rewriting hashes. Never clobber a partial archive.
@@ -645,11 +813,57 @@ def consume_rerun_request(
             raise RerunError('refuse consume e%d: %s' % (int(epoch), '; '.join(check.reasons)))
 
     old_item = check.item
+    replace = is_failed_rerun_without_result(old_item, int(epoch))
+    target_attempt = int(req.get('rerun_attempt') or 0) or next_rerun_attempt(old_item)
+    if replace and target_attempt < RERUN_ATTEMPT + 1:
+        target_attempt = next_rerun_attempt(old_item)
+
     if old_item is not None:
         ctl.items = [i for i in list(ctl.items) if i.item_id != old_item.item_id]
 
     archived = _archive_already_present(int(epoch), store)
-    if archived is not None:
+    failed_sample_archive: Optional[Dict[str, Any]] = None
+    if replace:
+        if archived is None:
+            raise RerunError(
+                'replace-failed-rerun e%d requires existing attempt-1 RERUN.json'
+                % int(epoch)
+            )
+        archive = archived
+        # Keep attempt-1 audit; park the failed attempt's SAMPLE/COMMIT.
+        failed_n = rerun_attempt_of(old_item) or RERUN_ATTEMPT
+        failed_sample_archive = archive_failed_rerun_sample(
+            int(epoch), failed_attempt=failed_n,
+        )
+        # Archive the failed item record under attempt-N/.
+        if old_item is not None:
+            item_arch = rerun_dir(store.root, int(epoch)) / ('attempt-%d' % failed_n)
+            src = store.items_dir / ('%s.json' % old_item.item_id)
+            if src.is_file():
+                item_arch.mkdir(parents=True, exist_ok=True)
+                dest = item_arch / ('%s.json' % old_item.item_id)
+                if not dest.exists():
+                    shutil.move(str(src), str(dest))
+            q = [x for x in store.queue() if x != old_item.item_id]
+            _wj(store.queue_path(), q, 0o600)
+        # Extend RERUN.json with replace history (never rewrite attempt-1 hashes).
+        rr_root = rerun_dir(store.root, int(epoch))
+        hist = list(archive.get('replace_history') or [])
+        hist.append({
+            'failed_rerun_attempt': failed_n,
+            'failed_item_id': old_item.item_id if old_item else None,
+            'next_rerun_attempt': target_attempt,
+            'sample_archive': failed_sample_archive,
+            'at': float(now if now is not None else time.time()),
+        })
+        archive = dict(archive)
+        archive['replace_history'] = hist
+        archive['attempt_next'] = target_attempt
+        _wj(rr_root / 'RERUN.json', archive, 0o600)
+        gate_rr = gate_epochs_root() / str(int(epoch)) / 'RERUN.json'
+        if gate_rr.is_file():
+            _wj(gate_rr, archive, 0o600)
+    elif archived is not None:
         archive = archived
         if old_item is None and archive.get('old_item_id'):
             # Reconstruct minimal pointer for enqueue meta.
@@ -659,6 +873,18 @@ def consume_rerun_request(
                 epoch=int(epoch),
                 state=ItemState.RELEASED,
             )
+            # Restore batch meta from archived item json when available.
+            arch_item = (
+                rerun_dir(store.root, int(epoch)) / 'attempt-1'
+                / ('%s.json' % archive['old_item_id'])
+            )
+            if arch_item.is_file():
+                adoc = _rj(arch_item)
+                if isinstance(adoc, Mapping) and isinstance(adoc.get('meta'), Mapping):
+                    old_item.meta = dict(adoc['meta'])
+                    for key in ('uid', 'hotkey_prefix', 'registration_index'):
+                        if adoc.get(key) is not None:
+                            setattr(old_item, key, adoc[key])
     else:
         archive = archive_attempt1(
             int(epoch), store=store, item=old_item, now=now,
@@ -666,30 +892,38 @@ def consume_rerun_request(
 
     gate_dir = gate_epochs_root() / str(int(epoch))
     sample_path = gate_dir / 'SAMPLE.private.json'
-    if sample_path.is_file():
+    if sample_path.is_file() and not replace:
         sample = _rj(sample_path)
-        if not isinstance(sample, Mapping) or int(sample.get('attempt') or 0) < RERUN_ATTEMPT:
-            raise RerunError('live SAMPLE present but not attempt-%d' % RERUN_ATTEMPT)
+        if not isinstance(sample, Mapping) or int(sample.get('attempt') or 0) < target_attempt:
+            raise RerunError('live SAMPLE present but not attempt-%d' % target_attempt)
         sample = dict(sample)
     else:
+        # replace archives SAMPLE first; first-rerun resume may still need write.
+        if sample_path.is_file() and replace:
+            # Should have been archived; refuse to clobber if still present.
+            raise RerunError(
+                'SAMPLE.private.json still present after failed-rerun archive'
+            )
         sample = write_fresh_sample(
             int(epoch),
-            attempt=RERUN_ATTEMPT,
+            attempt=target_attempt,
             round_provider=round_provider,
         )
 
-    # Idempotent enqueue: reuse existing attempt-2 item if present.
-    existing = [
-        i for i in list(ctl.items)
-        if int(i.epoch) == int(epoch) and int(i.attempt or 0) >= RERUN_ATTEMPT
-    ]
+    def _is_active_target(i: ItemRecord) -> bool:
+        if int(i.epoch) != int(epoch):
+            return False
+        if rerun_attempt_of(i) != target_attempt:
+            return False
+        # Only reuse a live/queued item for this attempt — never an aborted one.
+        return i.state is ItemState.QUEUED or i.state in RENTED_STATES
+
+    # Idempotent enqueue: reuse existing active target-attempt item if present.
+    existing = [i for i in list(ctl.items) if _is_active_target(i)]
     if existing:
         new_item = existing[0]
     else:
-        on_disk = [
-            i for i in store.list_items()
-            if int(i.epoch) == int(epoch) and int(i.attempt or 0) >= RERUN_ATTEMPT
-        ]
+        on_disk = [i for i in store.list_items() if _is_active_target(i)]
         if on_disk:
             new_item = on_disk[0]
             if all(i.item_id != new_item.item_id for i in ctl.items):
@@ -703,16 +937,17 @@ def consume_rerun_request(
                 sample=sample,
                 operator=str(req.get('operator') or ''),
                 reason=str(req.get('reason') or ''),
+                rerun_attempt=target_attempt,
             )
 
     # Separate marker: ingest skips; PIT-RESULT stays absent for max_pending.
     epoch_dir = life_root() / 'epochs' / str(int(epoch))
-    if not (epoch_dir / 'RERUN-ACTIVE.json').is_file():
-        write_rerun_active(
-            int(epoch),
-            item_id=new_item.item_id,
-            rerun_of=old_item.item_id if old_item else archive.get('old_item_id'),
-        )
+    write_rerun_active(
+        int(epoch),
+        item_id=new_item.item_id,
+        rerun_of=old_item.item_id if old_item else archive.get('old_item_id'),
+        rerun_attempt=target_attempt,
+    )
     if (epoch_dir / 'PIT-RESULT.json').is_file():
         # Must not hide the rerun from backpressure / k1 readers.
         raise RerunError(
@@ -728,7 +963,10 @@ def consume_rerun_request(
         'new_item_id': new_item.item_id,
         'sample_round_id': sample.get('round_id'),
         'plan_seed': sample.get('plan_seed'),
-        'resumed': archived is not None,
+        'rerun_attempt': target_attempt,
+        'box_attempt': int(new_item.attempt or 0),
+        'replace_failed_rerun': bool(replace),
+        'resumed': archived is not None and not replace,
     })
     _wj(path, done, 0o600)
     return done

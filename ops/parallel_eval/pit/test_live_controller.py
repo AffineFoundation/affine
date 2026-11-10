@@ -109,7 +109,8 @@ class TestLiveController(unittest.TestCase):
         cfg = load_pit_config({'pit': {'enabled': True, 'mode': 'live', 'cutover': True}})
         self.assertEqual(cfg.max_boxes, 5)
         self.assertEqual(cfg.master_upload, 'after_green')
-        self.assertEqual(cfg.gpu_order, ('B300',))
+        self.assertEqual(cfg.gpu_order[0], 'B300')
+        self.assertIn('RTX5090', cfg.gpu_order)
         self.assertEqual(cfg.price_ceiling_usd_h, 56.0)
         self.assertTrue(cfg.may_write_live_artifacts())
         self.assertTrue(cfg.cutover_active())
@@ -162,12 +163,21 @@ class TestLiveController(unittest.TestCase):
         ctl.tick()
         self.assertEqual(ctl.rented_count(), 5)
 
-    def test_gpu_fallback_refused(self):
+    def test_gpu_order_accepts_allowed_fallback(self):
+        cfg = load_pit_config({
+            'pit': {
+                'enabled': True, 'mode': 'live',
+                'gpu_order': ['B300', 'RTX5090', 'B200'],
+            },
+        })
+        self.assertEqual(cfg.gpu_order, ('B300', 'RTX5090', 'B200'))
+
+    def test_gpu_order_unknown_refused(self):
         with self.assertRaises(ValueError):
             load_pit_config({
                 'pit': {
                     'enabled': True, 'mode': 'live',
-                    'gpu_order': ['B300', 'B200'],
+                    'gpu_order': ['B300', 'A100'],
                 },
             })
 

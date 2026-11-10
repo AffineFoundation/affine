@@ -315,8 +315,9 @@ def work_prep(name):
         if not d:
             _set(name, state="failed", why="rent failed / no supply / cap", prep_ok=False); return
         _set(name, state="booting", pod=d, gpu=d.get("gpu"), price_h=d.get("price_h"))
-        if "5090" in str(d.get("gpu") or "").upper():
-            raise ValueError("5090 eval nodes are forbidden")
+        gpu_cls = str(d.get("gpu") or "").upper()
+        if gpu_cls and not any(a in gpu_cls for a in ("B300", "RTX5090", "5090", "B200", "H200", "H100")):
+            raise ValueError("unsupported eval GPU class: %s" % (d.get("gpu"),))
         P = pod_of(d)
         for _ in range(30):
             try:

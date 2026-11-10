@@ -19,6 +19,8 @@ from unittest import mock
 
 LIVE = Path(__file__).resolve().parents[1] / 'live'
 
+from ops.parallel_eval.pit.gpu_policy import pick_best_offer as _PICK_BEST_OFFER
+
 
 def _load_live(name: str, *, inject: dict | None = None):
     path = LIVE / ('%s.py' % name)
@@ -40,7 +42,7 @@ def _load_live(name: str, *, inject: dict | None = None):
 def _fake_pe_common(**overrides):
     m = types.ModuleType('pe_common')
     m.PREFIX = 'affine-pe-'
-    m.ALLOWED_GPUS = ('B300', 'B200', 'H200', 'H100')
+    m.ALLOWED_GPUS = ('B300', 'RTX5090', 'B200', 'H200', 'H100')
     m.NEVER_NAMES = ()
     m.MAX_EVAL_NODES = 5
     m.ST = Path('/tmp/pe-common-st')
@@ -50,7 +52,9 @@ def _fake_pe_common(**overrides):
     m.wj = lambda p, obj, mode=0o600: None
     m.lium = lambda *a, **k: (1, '', 'unused')
     m.lium_ls = lambda g: []
-    m.gpu_order = lambda: ('B300', 'B200', 'H200', 'H100')
+    m.gpu_order = lambda: ('B300', 'RTX5090', 'B200', 'H200', 'H100')
+    m.REQUIRED_GPU_COUNT = 8
+    m.pick_best_offer = _PICK_BEST_OFFER
     m.our_pods = lambda ps=None: []
     m.GATE_CODE = Path('/tmp/missing-gate-code')
     m.HELDOUT = Path('/tmp/missing-heldout')
@@ -194,7 +198,8 @@ class TestLiveRentSignature(unittest.TestCase):
         from ops.parallel_eval.pit.pe_rent import RentService
         rent = RentService(require_host=True, host_rent=host_rent, max_boxes=2, max_eval_nodes=5)
         out = rent.rent(item_id='f' * 32, epoch=1, attempt=1)
-        self.assertEqual(recorded[0]['gpu'], 'B300')
+        # gpu=None → host pick_node uses B300-first-then-cheapest allow-list.
+        self.assertIsNone(recorded[0]['gpu'])
         self.assertEqual(recorded[0]['ttl'], '4h')
         self.assertEqual(recorded[0]['max_eval_nodes'], 5)
         self.assertTrue(str(recorded[0]['name']).startswith(PREFIX))

@@ -9,7 +9,7 @@ import signal
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .bench_publish import format_node_gpu
 from .binding import select_next_queued
@@ -25,12 +25,14 @@ from .rerun import (
     archive_attempt1,
     consume_pending_requests,
     consume_rerun_request,
+    is_failed_rerun_without_result,
     preflight,
+    rerun_attempt_of,
     rerun_cand_seed,
     write_fresh_sample,
     write_rerun_request,
 )
-from .state import ItemRecord, ItemState
+from .state import ItemRecord, ItemState, apply_transition
 
 
 HEAD = 'a' * 64
@@ -131,10 +133,17 @@ class _Env:
         }))
 
     def make_item(self, e: int, *, state: ItemState = ItemState.RELEASED, paid: bool = False) -> ItemRecord:
+        ed = self.epoch_dir(e)
         item = ItemRecord(
             item_id='item-e%d' % e, registration_index=e, epoch=e,
             uid=7, hotkey_prefix=HOTKEY[:16], state=state,
             bound_head=HEAD, candidate_id=CAND, attempt=1, paid=paid,
+            meta={
+                'batch_path': str(ed),
+                'epoch_dir': str(ed),
+                'ticket_path': str(ed / 'K1-TURN.json'),
+                'ingest_source': 'k1-turn',
+            },
         )
         self.store.save_item(item)
         return item
@@ -344,9 +353,16 @@ class TestRerunHappyPath(unittest.TestCase):
         new_items = [i for i in ctl.items if i.item_id != old.item_id]
         self.assertEqual(len(new_items), 1)
         nxt = new_items[0]
-        self.assertEqual(nxt.attempt, 2)
+        # Box-retry attempt starts at 0; SAMPLE/plan_seed use meta.rerun_attempt.
+        self.assertEqual(nxt.attempt, 0)
+        self.assertEqual((nxt.meta or {}).get('rerun_attempt'), RERUN_ATTEMPT)
+        self.assertEqual(nxt.item_id, 'pit-rerun-e%d-a%d' % (e, RERUN_ATTEMPT))
         self.assertEqual(nxt.priority, RERUN_PRIORITY)
         self.assertEqual(nxt.rerun_of, old.item_id)
+        self.assertEqual((nxt.meta or {}).get('batch_path'), str(self.fx.epoch_dir(e)))
+        self.assertEqual((nxt.meta or {}).get('epoch_dir'), str(self.fx.epoch_dir(e)))
+        self.assertEqual((nxt.meta or {}).get('ingest_source'), 'k1-turn')
+        self.assertTrue((nxt.meta or {}).get('ticket_path'))
 
     def test_refuse_rewrite_when_archive_exists(self):
         e = 1062
@@ -387,7 +403,8 @@ class TestRerunHappyPath(unittest.TestCase):
         )
         rerun = ItemRecord(
             item_id='rerun', registration_index=9999, epoch=1060,
-            state=ItemState.QUEUED, priority=RERUN_PRIORITY, attempt=2,
+            state=ItemState.QUEUED, priority=RERUN_PRIORITY, attempt=0,
+            meta={'rerun': True, 'rerun_attempt': RERUN_ATTEMPT},
         )
         nxt = select_next_queued([older, rerun], rented=0, max_boxes=2)
         self.assertIsNotNone(nxt)
@@ -531,6 +548,178 @@ class TestRerunHappyPath(unittest.TestCase):
         self.assertEqual(failed_doc.get('status'), 'failed')
         good_req = self.fx.pit / 'rerun' / ('RERUN-REQUEST-e%d.json' % e)
         self.assertEqual(json.loads(good_req.read_text()).get('status'), 'consumed')
+
+
+class TestRerunBatchPathAndReplace(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fx = _Env()
+
+    def tearDown(self) -> None:
+        self.fx.close()
+
+    def _ok_epoch(self, e: int) -> ItemRecord:
+        self.fx.write_turn_and_batch(e)
+        self.fx.write_sample_decision(e, paid=False)
+        (self.fx.epoch_dir(e) / 'PIT-RESULT.json').write_text(json.dumps({
+            'status': 'pit-result', 'decision': 'green_fresh',
+        }))
+        (self.fx.epoch_dir(e) / 'PIT-DISPATCHED.json').write_text(json.dumps({
+            'epoch': e, 'status': 'pit-dispatched',
+        }))
+        return self.fx.make_item(e, state=ItemState.RELEASED, paid=False)
+
+    def test_enqueue_copies_batch_meta_and_box_attempt_zero(self):
+        e = 1060
+        old = self._ok_epoch(e)
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='batch meta', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+        out = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
+        nxt = next(i for i in ctl.items if i.item_id == out['new_item_id'])
+        self.assertEqual(nxt.attempt, 0)
+        self.assertEqual(rerun_attempt_of(nxt), 2)
+        self.assertEqual(nxt.meta['batch_path'], str(self.fx.epoch_dir(e)))
+        self.assertFalse(str(nxt.meta['batch_path']).startswith('batch-handle:'))
+
+    def test_replace_aborted_rerun_creates_attempt_3(self):
+        e = 1062
+        old = self._ok_epoch(e)
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='first', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+        first = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
+        a2 = next(i for i in ctl.items if i.item_id == first['new_item_id'])
+        self.assertEqual(rerun_attempt_of(a2), 2)
+        # Simulate live ABORTED/exhausted with no PIT-RESULT.
+        a2 = apply_transition(a2, ItemState.ABORTED, reason='synthetic-batch-handle')
+        a2 = apply_transition(a2, ItemState.RELEASED, reason='aborted-release')
+        a2.last_error = 'refuse synthetic batch-handle; pass real K1/epoch path'
+        a2.meta = dict(a2.meta or {}, aborted=True)
+        self.fx.store.save_item(a2)
+        ctl.items = [a2]
+        self.assertTrue(is_failed_rerun_without_result(a2, e))
+        # Second CLI request (replace) + consume → attempt 3, fresh seed.
+        seed_a2 = first['plan_seed']
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='replace aborted a2', store_root=self.fx.pit,
+        )
+        second = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
+        self.assertTrue(second.get('replace_failed_rerun'))
+        self.assertEqual(second.get('rerun_attempt'), 3)
+        self.assertEqual(second.get('box_attempt'), 0)
+        a3 = next(i for i in ctl.items if i.item_id == second['new_item_id'])
+        self.assertEqual(a3.item_id, 'pit-rerun-e%d-a3' % e)
+        self.assertEqual(a3.attempt, 0)
+        self.assertEqual(rerun_attempt_of(a3), 3)
+        self.assertNotEqual(second['plan_seed'], seed_a2)
+        self.assertEqual(
+            second['plan_seed'],
+            rerun_cand_seed(self.fx.round_seed, e, 3),
+        )
+        # Attempt-1 audit preserved; failed a2 SAMPLE archived.
+        self.assertTrue((self.fx.pit / 'rerun' / ('e%d' % e) / 'RERUN.json').is_file())
+        self.assertTrue((self.fx.gate / str(e) / 'attempt-1' / 'DECISION.json').is_file())
+        self.assertTrue((self.fx.gate / str(e) / 'attempt-2' / 'SAMPLE.private.json').is_file())
+        sm = json.loads((self.fx.gate / str(e) / 'SAMPLE.private.json').read_text())
+        self.assertEqual(sm['attempt'], 3)
+        self.assertEqual(sm['indices'], ROUND_INDICES)
+
+    def test_controller_train_uses_real_batch_path_not_synthetic(self):
+        """Rerun item must survive HostBoxIO's synthetic batch-handle refuse.
+
+        Drives Controller._run_box → BoxRunner → real HostBoxIO.train_v834e
+        check (not ScriptedBoxIO). After the check, train is stubbed so we
+        do not need a live pod.
+        """
+        from ops.parallel_eval.live import pe_box as B
+
+        e = 1065
+        old = self._ok_epoch(e)
+        # HostBoxIO resolves TRAINING-JOB from the epoch dir.
+        (self.fx.epoch_dir(e) / 'TRAINING-JOB.json').write_text(json.dumps({
+            'payload': {
+                'manifest': {'payload': {'checkpoint': {'id': HEAD, 'files': {}}}},
+            },
+        }))
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='hostboxio', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+        out = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
+        item = next(i for i in ctl.items if i.item_id == out['new_item_id'])
+        item.bound_head = HEAD
+        item.bound_master_digest = 'm' * 64
+        item.bound_plan_seed = out['plan_seed']
+        item.state = ItemState.PROVISIONING
+        item.box_id = 'box-test'
+        item.meta = dict(item.meta or {}, train_gpu='B300', eval_gpu='B300')
+
+        seen: dict[str, Any] = {}
+
+        class _HostIO(B.HostBoxIO):
+            def download_head(self, head: str) -> str:
+                return 'r2://head/%s' % head
+
+            def download_master(self, head: str, expected_digest: str) -> str:
+                return 'r2://master/%s:%s' % (head, expected_digest)
+
+            def train_v834e(self, **kwargs: Any) -> Mapping[str, Any]:
+                # Run the real refuse check first (the bug under test).
+                batch_handle = kwargs.get('batch_handle')
+                if str(batch_handle).startswith('batch-handle:'):
+                    raise B.BoxIOError(
+                        'refuse synthetic batch-handle; pass real K1/epoch path '
+                        '(E1041-class divergence risk vs live trainer)'
+                    )
+                seen['batch_handle'] = batch_handle
+                seen['epoch_dir'] = kwargs.get('epoch_dir')
+                # Short-circuit after the check — no pod / full train required.
+                return {
+                    'candidate_id': 'c' * 64,
+                    'candidate_path': '/tmp/cand',
+                    'candidate_master_path': '/tmp/master',
+                    'candidate_sha256': 'c' * 64,
+                    'candidate_master_digest': 'd' * 64,
+                    'train_gpu': 'B300',
+                    'defer_candidate_upload': True,
+                    'candidate_on_box': True,
+                    'training_report': {'ok': True},
+                    'training_report_summary': {'ok': True},
+                }
+
+            def probe_result_fixture(self) -> Mapping[str, Any]:
+                # Allow BoxRunner's non-host eval path after train succeeds.
+                # planned = GATE_N_DRAWN * GATE_K_CAND = 1000 * 8.
+                return {
+                    'ok': True, 'z': 2.0, 'n': 1000, 'eval_gpu': 'B300',
+                    'partial': False, 'samples': 8000, 'planned_samples': 8000,
+                }
+
+            def upload_master(self, **kwargs: Any) -> Mapping[str, Any]:
+                return {'ok': True}
+
+            def upload_candidate(self, **kwargs: Any) -> Mapping[str, Any]:
+                return {'ok': True}
+
+        ctl.box_io_factory = _HostIO
+        ctl.lane.require_host = False
+        ctl.lane.host_run_probe = None
+        ctl.lane.host_boot = None
+        ctl.lane.serve = lambda *a, **k: {'ok': True}
+        ctl.lane.boot = lambda *a, **k: {'ok': True}
+
+        # Drive the same path live uses: Controller._run_box → HostBoxIO.train_v834e.
+        updated, note = ctl._run_box(item)
+        self.assertEqual(note, 'box-complete')
+        self.assertEqual(seen.get('batch_handle'), str(self.fx.epoch_dir(e)))
+        self.assertFalse(str(seen.get('batch_handle') or '').startswith('batch-handle:'))
+        self.assertEqual(seen.get('epoch_dir'), str(self.fx.epoch_dir(e)))
+        self.assertEqual(updated.candidate_id, 'c' * 64)
 
 
 class TestLedgerReconcile(unittest.TestCase):

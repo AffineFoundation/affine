@@ -156,6 +156,13 @@ def build_decision_doc(
             merge_blocked=bool(item.merge_blocked or getattr(item, 'stranded', False)),
             stranded=bool(getattr(item, 'stranded', False) or item.merge_blocked),
             fresh=False if terminal else item.fresh,
+            # Cross-hardware audit: record GPU class on every DECISION.
+            train_gpu=(item.meta or {}).get('train_gpu') or scored.get('train_gpu'),
+            eval_gpu=(item.meta or {}).get('eval_gpu') or scored.get('eval_gpu'),
+            gpu=(item.meta or {}).get('train_gpu')
+                or (item.meta or {}).get('eval_gpu')
+                or scored.get('train_gpu')
+                or scored.get('eval_gpu'),
         ),
     )
     if terminal:

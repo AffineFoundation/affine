@@ -209,9 +209,9 @@ def gpu_type_of(pod_or_meta: Any) -> Optional[str]:
         return None
     if isinstance(pod_or_meta, str):
         text = pod_or_meta.upper()
-        for name in ('B300', 'B200', 'H200', 'H100', 'A100', '5090'):
+        for name in ('RTX5090', 'B300', 'B200', 'H200', 'H100', 'A100', '5090'):
             if name in text:
-                return name
+                return 'RTX5090' if name == '5090' else name
         return pod_or_meta
     if isinstance(pod_or_meta, Mapping):
         for key in ('gpu', 'gpu_model', 'gpu_name', 'train_gpu', 'eval_gpu'):

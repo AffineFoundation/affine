@@ -79,6 +79,9 @@ def _pit_hermetic_paths(tmp_path, monkeypatch):
             )
         if any(_is_under(resolved, root) for root in allowed_roots):
             return
+        # Torch/dill open os.devnull during import (r+b); not a host leak.
+        if resolved == Path(os.devnull).resolve() or str(resolved) in ('/dev/null', 'nul'):
+            return
         raise AssertionError(
             'hermetic guard: path %s is outside tmp_path/tempfile' % resolved
         )

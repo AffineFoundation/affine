@@ -1,7 +1,8 @@
 """PIT configuration. Defaults match DESIGN §12 / BRIEF §1.8 / SPEC §3–§4.
 
 On-demand rental is a hard rule, not a config option. Live mode is authorized
-with box_cap default 5, B300 pin, $56/h ceiling, masters after GREEN only.
+with box_cap default 5, B300-first then cheapest allowed GPU under $56/h,
+masters after GREEN only.
 
 Live ROOT path (owner 2026-11-09): ``root_mode=delegated_host`` only.
 ``per_round`` remains an unused alternative and is refused in live.
@@ -12,11 +13,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Optional
 
 from . import (
+    ALLOWED_GPUS,
     GATE_HEAD_ROLLOUTS,
     GATE_K_CAND,
     GATE_MAX_TOKENS,
     GATE_N_DRAWN,
-    GPU_PINNED,
+    GPU_ORDER,
     MAX_ATTEMPTS,
     MAX_BOXES_LIVE,
     MAX_BOXES_SHADOW,
@@ -44,7 +46,7 @@ class PitConfig:
     max_pending: Optional[int] = None
     master_upload: str = MASTER_UPLOAD_AFTER_GREEN
     baseline: str = BASELINE_OPTION_A
-    gpu_order: tuple = GPU_PINNED
+    gpu_order: tuple = GPU_ORDER
     max_attempts: int = MAX_ATTEMPTS
     decision_timeout_seconds: int = 21000
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
@@ -180,8 +182,17 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         raise ValueError('price_ceiling_usd_h cannot exceed %.1f' % PRICE_CEILING_USD_H)
     if float(cfg.price_ceiling_usd_h) <= 0:
         raise ValueError('price_ceiling_usd_h must be > 0')
-    if tuple(cfg.gpu_order) != GPU_PINNED:
-        raise ValueError('item/baseline GPU pin is B300 only; refuse gpu_order=%r' % (cfg.gpu_order,))
+    order = tuple(cfg.gpu_order)
+    if not order:
+        raise ValueError('gpu_order must be non-empty')
+    if len(set(order)) != len(order):
+        raise ValueError('gpu_order must not contain duplicates')
+    bad = [g for g in order if g not in ALLOWED_GPUS]
+    if bad:
+        raise ValueError(
+            'gpu_order entries must be in %s; refuse %r'
+            % (list(ALLOWED_GPUS), bad)
+        )
     if cfg.k_cand != GATE_K_CAND:
         raise ValueError('refuse gate math change: k_cand')
     if cfg.head_rollouts != GATE_HEAD_ROLLOUTS:

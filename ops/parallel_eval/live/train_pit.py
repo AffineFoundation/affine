@@ -25,6 +25,17 @@ from subnet.mimo_runtime import MimoRuntime
 from subnet.mimo_grpo.config import TrainerConfig
 from subnet.mimo_grpo.optimizer import CPUAdamW
 import subnet.mimo_training_worker as worker
+# <100 GiB GPUs (RTX5090 32 GiB): offload FP32 accumulator to CPU (ZeRO-style).
+# CPUAdamW masters/Adam already live on CPU; math unchanged.
+try:
+    from ops.parallel_eval.pit.train_shard import configure_low_mem_train
+    _mem = None
+    if torch.cuda.is_available():
+        _mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    _low = configure_low_mem_train(_mem)
+    ev('low-mem-policy', **{k: _low[k] for k in _low})
+except Exception as _ex:
+    ev('low-mem-policy-skip', err=str(_ex)[:200])
 config = TrainerConfig(**tcfg['settings']); assert config.document() == tcfg
 runtime = MimoRuntime.load(str(IN / 'actor' / head['id']), head, manifest['payload']['mimo_runtime'], device='cuda', trainable=True); ev('actor-loaded')
 opt = CPUAdamW(runtime.model.named_parameters(), config, input_checkpoint=head['id']); opt.global_step = step; ev('optimizer-built', step=step)

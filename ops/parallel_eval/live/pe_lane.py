@@ -196,7 +196,11 @@ def fetch_ckpt(P, cid, files=None):
     return dict(seconds=round(time.time() - t0, 1), bytes=int(out[-1]) if out and out[-1].isdigit() else None, ckpt=cid)
 
 def serve(P, cid, gmu="0.9", max_num_seqs=512):
-    """Exact live max_num_seqs=512; no low-memory/5090 variant."""
+    """Exact live max_num_seqs=512 on every allowed GPU (incl. RTX5090).
+
+    Do not re-enable max_num_seqs_5090=64 — KV pressure just schedules fewer
+    concurrent seqs; results stay equivalent.
+    """
     if int(max_num_seqs) != 512:
         raise ValueError("PE live replica requires MAX_SEQS=512")
     out = P.run("MAX_SEQS=%d python3 %s/podctl.py serve %s %s" % (int(max_num_seqs), PODD, cid, gmu), timeout=900)
@@ -323,8 +327,9 @@ def shard_node(job, att, C, files, box):
         box["d"] = d
         if not d:
             box.update(status="skipped", why="rent failed"); return
-        if "5090" in str(d.get("gpu") or "").upper():
-            raise ValueError("5090 eval nodes are forbidden")
+        gpu_cls = str(d.get("gpu") or "").upper()
+        if gpu_cls and not any(a in gpu_cls for a in ("B300", "RTX5090", "5090", "B200", "H200", "H100")):
+            raise ValueError("unsupported eval GPU class: %s" % (d.get("gpu"),))
         P2 = pod_of(d)
         for _ in range(30):
             try:
@@ -430,8 +435,8 @@ def run_lane(job):
         st["fetch_s"] = finfo.get("seconds")
         st.update(status="serving"); beat()
         gpu = (d.get("gpu") or job.get("gpu") or "").upper()
-        if "5090" in gpu:
-            raise ValueError("5090 eval nodes are forbidden")
+        if gpu and not any(a in gpu for a in ("B300", "RTX5090", "5090", "B200", "H200", "H100")):
+            raise ValueError("unsupported eval GPU class: %s" % gpu)
         mns = int(job.get("max_num_seqs") or 512)
         if mns != 512:
             raise ValueError("PE live replica requires MAX_SEQS=512")

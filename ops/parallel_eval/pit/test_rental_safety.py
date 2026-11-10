@@ -30,7 +30,7 @@ class TestRentalSafety(unittest.TestCase):
     def test_host_rent_adapter_args(self):
         calls = []
 
-        def host_rent(name, ttl, *, gpu, max_eval_nodes):
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
             calls.append(dict(name=name, ttl=ttl, gpu=gpu, max_eval_nodes=max_eval_nodes))
             return dict(
                 id='pod-1', name=name, gpu='B300', price_h=40.0,
@@ -40,14 +40,15 @@ class TestRentalSafety(unittest.TestCase):
         rent = RentService(host_rent=host_rent, max_boxes=2)
         rent.rent(item_id='b' * 32, epoch=2, attempt=1)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]['gpu'], 'B300')
+        # Picker chooses: host receives gpu=None (full allow-list order).
+        self.assertIsNone(calls[0]['gpu'])
         self.assertEqual(calls[0]['ttl'], '4h')
         self.assertEqual(calls[0]['name'], '%s2-a1' % PREFIX)
 
     def test_price_ceiling_releases_before_ledger(self):
         released = []
 
-        def host_rent(name, ttl, *, gpu, max_eval_nodes):
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
             return dict(id='p99', name=name, gpu='B300', price_h=80.0, no_backup=True)
 
         def host_release(name_or_id, reason='done'):
@@ -63,8 +64,9 @@ class TestRentalSafety(unittest.TestCase):
     def test_wrong_gpu_releases_before_ledger(self):
         released = []
 
-        def host_rent(name, ttl, *, gpu, max_eval_nodes):
-            return dict(id='h200-1', name=name, gpu='H200', price_h=30.0, no_backup=True)
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
+            # A100 is not in the allow-list.
+            return dict(id='a100-1', name=name, gpu='A100', price_h=30.0, no_backup=True)
 
         def host_release(name_or_id, reason='done'):
             released.append((name_or_id, reason))
@@ -76,10 +78,22 @@ class TestRentalSafety(unittest.TestCase):
         self.assertEqual(rent.active_count(), 0)
         self.assertEqual(released[0][1], 'rent-gpu-mismatch')
 
+    def test_rtx5090_under_ceiling_accepted(self):
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
+            return dict(
+                id='rtx-1', name=name, gpu='RTX5090', price_h=5.5,
+                auto_backup_disabled=True,
+            )
+
+        rent = RentService(host_rent=host_rent, max_boxes=2)
+        out = rent.rent(item_id='f' * 32, epoch=3, attempt=1)
+        self.assertEqual(out.get('gpu'), 'RTX5090')
+        self.assertEqual(rent.active_count(), 1)
+
     def test_no_backup_required(self):
         released = []
 
-        def host_rent(name, ttl, *, gpu, max_eval_nodes):
+        def host_rent(name, ttl, *, gpu=None, max_eval_nodes=None):
             return dict(id='nb-1', name=name, gpu='B300', price_h=30.0)
 
         def host_release(name_or_id, reason='done'):
