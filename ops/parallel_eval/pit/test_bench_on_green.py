@@ -18,6 +18,7 @@ from .bench_box import (
     BENCH_BOX_GIT_REF,
     BENCH_STAGES,
     MemBenchBoxStore,
+    RemoteBenchBoxStore,
     job_dir_for,
     setup_command,
 )
@@ -28,7 +29,7 @@ from .bench_job import (
     build_bench_rent_service,
     build_bench_service,
 )
-from .bench_publish import results_root, write_results
+from .bench_publish import format_node_gpu, node_record, results_root, write_results
 from .config import load_pit_config
 
 
@@ -233,11 +234,51 @@ class TestFetchInputsPushed(unittest.TestCase):
         )
         self.assertTrue(receipt['ok'])
         self.assertEqual(receipt['n_files'], 2)
+        self.assertEqual(receipt.get('urls_via'), 'stdin')
         self.assertNotIn('urls', receipt)
         self.assertIsNotNone(store.read_text('%s/descriptor.json' % jd))
         self.assertIsNotNone(store.read_text('%s/urls.private.json' % jd))
         # Receipt must not contain URL strings.
         self.assertNotIn('http', json.dumps(receipt))
+        # URLs rode write_text_stdin; descriptor may use write_text.
+        methods = {w['path']: w['method'] for w in store.write_log}
+        self.assertEqual(methods['%s/urls.private.json' % jd], 'write_text_stdin')
+        self.assertEqual(methods['%s/descriptor.json' % jd], 'write_text')
+
+    def test_urls_private_stdin_not_in_ssh_argv(self):
+        """Remote store must put urls.private.json on stdin (inp=), never argv."""
+        calls: List[Dict[str, Any]] = []
+
+        class _Pod:
+            def run(self, cmd, inp=None, timeout=60, check=False, **_k):
+                calls.append({'cmd': cmd, 'inp': inp, 'timeout': timeout})
+                return ''
+
+        store = RemoteBenchBoxStore(pod=_Pod())
+        jd = '/data/bench/jobs/%s' % H0[:16]
+        receipt = push_fetch_inputs(
+            store, jd, head=H0, files=FILES,
+            resolve_fn=_resolve, presign_fn=_presign,
+        )
+        self.assertEqual(receipt.get('urls_via'), 'stdin')
+        # Find the stdin put for urls.private.json.
+        url_puts = [
+            c for c in calls
+            if c.get('inp') is not None and 'urls.private.json' in c['cmd']
+        ]
+        self.assertEqual(len(url_puts), 1, calls)
+        put = url_puts[0]
+        self.assertIsInstance(put['inp'], (bytes, bytearray))
+        body = put['inp'].decode()
+        self.assertIn('example.invalid', body)
+        self.assertIn('X-Amz-Signature', body)
+        # URLs must not appear in the ssh command string (process list).
+        self.assertNotIn('example.invalid', put['cmd'])
+        self.assertNotIn('X-Amz-Signature', put['cmd'])
+        self.assertNotIn('deadbeef', put['cmd'])
+        self.assertIn('cat >', put['cmd'])
+        # Descriptor may still use heredoc write_text (no secrets).
+        self.assertTrue(any('descriptor.json' in c['cmd'] for c in calls))
 
 
 class TestTickNonBlocking(unittest.TestCase):
@@ -488,6 +529,55 @@ class TestWriteResultsForPublishFleet(unittest.TestCase):
             pub = json.loads((root / 'bench' / H0 / 'publish.json').read_text())
             self.assertTrue(pub.get('landed'))
             self.assertNotIn('urls', pub)
+
+    def test_node_gpu_record_avoids_question_mark(self):
+        self.assertEqual(format_node_gpu('B300', gpu_count=8), '8xB300')
+        self.assertEqual(format_node_gpu('8xH200'), '8xH200')
+        self.assertEqual(
+            format_node_gpu(None, rent_meta={'gpu_model': 'B300', 'gpu_count': 8}),
+            '8xB300',
+        )
+        rec = node_record(
+            box_id='box-1', box_name='affine-pe-bench-abc-a1',
+            gpu='B300', rent_meta={'gpu_count': 8},
+        )
+        self.assertEqual(rec['gpu'], '8xB300')
+        self.assertEqual(rec['lium_id'], 'box-1')
+        self.assertEqual(rec['pod'], 'affine-pe-bench-abc-a1')
+
+    def test_landed_result_includes_node_gpu(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            results = root / 'pub-results'
+            store = MemBenchBoxStore(default_ticks=1)
+
+            def rent(**kw: Any) -> Dict[str, Any]:
+                return {
+                    'box_id': 'box-gpu-1',
+                    'name': kw['name'],
+                    'price_usd_h': 35.0,
+                    'gpu': 'B300',
+                    'gpu_model': 'B300',
+                    'gpu_count': 8,
+                    'auto_backup_disabled': True,
+                }
+
+            svc = _svc(root, store=store, rent_fn=rent, results_dir=str(results))
+            svc.runner.rent_fn = rent
+            _released_wrap(svc)
+            _enqueue(svc)
+            _drive_done(svc, store)
+            mid = 'king-' + H0[:16]
+            landed = results / 'results' / mid / 'math500.json'
+            row = json.loads(landed.read_text())
+            self.assertIn('node', row)
+            self.assertEqual(row['node']['gpu'], '8xB300')
+            self.assertEqual(row['node']['lium_id'], 'box-gpu-1')
+            # publish_fleet _gpu(r) must not fall back to '?'.
+            self.assertNotEqual(row['node'].get('gpu'), '?')
+            self.assertTrue(row['node']['gpu'])
+            local = json.loads((root / 'bench' / H0 / 'results' / 'RESULT.json').read_text())
+            self.assertEqual(local['node']['gpu'], '8xB300')
 
 
 class TestRentOverCeilingWaits(unittest.TestCase):

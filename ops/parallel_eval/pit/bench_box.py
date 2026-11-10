@@ -402,6 +402,31 @@ class RemoteBenchBoxStore:
     def write_text(self, path: str, text: str) -> None:
         self._store().write_text(path, text)
 
+    def write_text_stdin(self, path: str, text: str, *, mode: str = '600') -> None:
+        """Write via ssh stdin (``inp=``) — content never appears in argv/process lists.
+
+        Same shape as the item path's ``pe_box.put`` / fetch ``inp=blob``.
+        """
+        data = text.encode() if isinstance(text, str) else bytes(text)
+        if not data.endswith(b'\n'):
+            data += b'\n'
+        parent = path.rsplit('/', 1)[0] if '/' in path else '.'
+        # Command names the destination only; payload rides on stdin.
+        self.pod.run(
+            'mkdir -p %s && umask 077 && cat > %s.tmp && chmod %s %s.tmp && mv %s.tmp %s'
+            % (
+                shlex.quote(parent),
+                shlex.quote(path),
+                shlex.quote(mode),
+                shlex.quote(path),
+                shlex.quote(path),
+                shlex.quote(path),
+            ),
+            inp=data,
+            timeout=120,
+            check=True,
+        )
+
     def remove(self, path: str) -> None:
         self._store().remove(path)
 
@@ -445,6 +470,7 @@ class MemBenchBoxStore:
     pending: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     default_ticks: int = 2
     launch_log: list = field(default_factory=list)
+    write_log: list = field(default_factory=list)
     fail_stage: Optional[str] = None  # when set, that stage exits without marker
 
     def ensure_dir(self, job_dir: str) -> None:
@@ -463,6 +489,14 @@ class MemBenchBoxStore:
 
     def write_text(self, path: str, text: str) -> None:
         self.files[path] = text
+        self.write_log.append({'method': 'write_text', 'path': path, 'n': len(text)})
+
+    def write_text_stdin(self, path: str, text: str, *, mode: str = '600') -> None:
+        # Hermetic stand-in for ssh stdin put — records the channel, never argv.
+        self.files[path] = text if text.endswith('\n') else text + '\n'
+        self.write_log.append({
+            'method': 'write_text_stdin', 'path': path, 'n': len(text), 'mode': mode,
+        })
 
     def remove(self, path: str) -> None:
         self.files.pop(path, None)

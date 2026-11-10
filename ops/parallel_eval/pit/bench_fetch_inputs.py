@@ -141,8 +141,15 @@ def push_fetch_inputs(
     desc_path = '%s/descriptor.json' % job_dir.rstrip('/')
     urls_path = '%s/urls.private.json' % job_dir.rstrip('/')
     store.write_text(desc_path, json.dumps(descriptor, indent=1, sort_keys=True) + '\n')
-    # 0600 semantics are on-box; store.write_text content must never be logged.
-    store.write_text(urls_path, json.dumps(urls, indent=1, sort_keys=True) + '\n')
+    # URLs via stdin (item-path ``inp=``), never a heredoc/argv — so they never
+    # appear in process lists. Mode 0600 on the box.
+    urls_blob = json.dumps(urls, indent=1, sort_keys=True) + '\n'
+    put = getattr(store, 'write_text_stdin', None)
+    if not callable(put):
+        raise RuntimeError(
+            'store missing write_text_stdin; refuse putting urls.private.json on argv'
+        )
+    put(urls_path, urls_blob, mode='600')
     return {
         'ok': True,
         'head': head,
@@ -150,5 +157,6 @@ def push_fetch_inputs(
         'names': sorted(flat.keys()),
         'descriptor_path': desc_path,
         'urls_path': urls_path,
+        'urls_via': 'stdin',
         # Explicitly absent: urls
     }

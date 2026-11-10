@@ -37,7 +37,7 @@ from .bench_box import (
     MemBenchBoxStore,
 )
 from .bench_fetch_inputs import flatten_files, push_fetch_inputs
-from .bench_publish import write_results
+from .bench_publish import node_record, write_results
 from .box_job import STATUS_NEED_LAUNCH
 from .pe_rent import RentError, RentService
 
@@ -467,19 +467,48 @@ class BenchJobService:
         except Exception as exc:
             return 'log_tail failed: %s' % str(exc)[:200]
 
-    def _publish(self, head: str, result: Mapping[str, Any]) -> Dict[str, Any]:
+    def _node_for_job(self, job: JobRecord) -> Dict[str, Any]:
+        rent = job.meta.get('rent') or {}
+        return node_record(
+            box_id=job.box_id,
+            box_name=job.box_name,
+            gpu=job.gpu or rent.get('gpu') or rent.get('gpu_model'),
+            rent_meta=rent if isinstance(rent, Mapping) else None,
+        )
+
+    def _publish(
+        self,
+        head: str,
+        result: Mapping[str, Any],
+        *,
+        node: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
         # Keep a copy under pit_state/bench/<head>/; land into publish_fleet results dir.
         local = self._dir(head) / 'results'
         local.mkdir(parents=True, exist_ok=True)
-        _wj(local / 'RESULT.json', dict(result))
+        payload = dict(result)
+        if node:
+            payload['node'] = dict(node)
+            enriched = []
+            for row in list(payload.get('results') or []):
+                if isinstance(row, Mapping):
+                    r = dict(row)
+                    r.setdefault('node', dict(node))
+                    enriched.append(r)
+                else:
+                    enriched.append(row)
+            payload['results'] = enriched
+        _wj(local / 'RESULT.json', payload)
         if self.publish_fn is not None:
             out = dict(self.publish_fn(
-                head=head, result=result, results_dir_path=self.results_dir,
+                head=head, result=payload, results_dir_path=self.results_dir,
+                node=node,
             ))
         else:
             out = dict(write_results(
-                head=head, result=result,
+                head=head, result=payload,
                 results_dir_path=self.results_dir, now=self.now_fn(),
+                node=node,
             ))
         # Never rewrite website/benchmarks.json from PIT.
         if out.get('path') and str(out.get('path')).endswith('benchmarks.json'):
@@ -629,7 +658,8 @@ class BenchJobService:
                     'job_log_tail': self._capture_log_tail(job),
                 }
             try:
-                merge = self._publish(job.subject, result)
+                node = self._node_for_job(job)
+                merge = self._publish(job.subject, result, node=node)
             except Exception as exc:
                 tail = self._capture_log_tail(job)
                 job.meta['job_log_tail'] = tail
