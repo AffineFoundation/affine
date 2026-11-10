@@ -16,10 +16,7 @@ from unittest import mock
 
 import boto3
 
-try:
-    from moto import mock_aws
-except ImportError:  # pragma: no cover
-    mock_aws = None  # type: ignore
+from moto import mock_aws
 
 from ops.parallel_eval.live import pe_artifact_upload as AU
 from ops.parallel_eval.live import pe_box
@@ -29,14 +26,11 @@ C = 'c' * 64
 M = 'd' * 64
 BUCKET = 'affine-pit-moto-test'
 
-_SKIP_NO_MOTO = unittest.skipIf(mock_aws is None, 'moto not installed')
-
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-@_SKIP_NO_MOTO
 class TestMotoR2KeySemantics(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
