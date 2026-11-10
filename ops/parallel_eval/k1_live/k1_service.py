@@ -36,6 +36,7 @@ TICK, CHAIN_EVERY, QUEUE_N, PAYEES = 60, 300, 8, 10   # free-file (pt898u): publ
 FF_FLAG = FLAG.parent / 'FF.json'
 FF_READY = Path('/home/const/subnet120-rewrite/state/root-audits/20261030-free-file/state/FF-READY.json')
 GRANTS = Path('/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/staged/K1-GRANTS.json')
+INFRA = FLAG.parent / 'K1-INFRA-CREDITS.json'
 
 
 def open_grants(chain, ts):
@@ -251,6 +252,16 @@ def pass_rates(e, dec, ev):
 
 def verdicts(chain):
     """-> list of per-turn records (epoch order) with verdict."""
+    # Jacob 2026-11-10 11:00 CR: staged infra credits → pay-only GREEN.
+    try:
+        from ops.parallel_eval.k1_live.infra_credits import (
+            apply_infra_credit, credit_for_epoch, load_infra_credits,
+        )
+        infra_doc = load_infra_credits(INFRA)
+    except Exception:
+        apply_infra_credit = None
+        credit_for_epoch = None
+        infra_doc = {'enabled': False, 'credits': []}
     out = []
     f = rj(FLAG) or {}
     start = int(f.get('from_epoch', 10 ** 9))
@@ -267,9 +278,12 @@ def verdicts(chain):
             pg = rj(d / 'PROMOTION-GATE.json') or {}
             # PIT terminal blocked (no candidate / incomplete master): never last-10
             # GREEN credit; chart shows blocked; settlement stays pending_operator.
+            # Infra credits may still force green for pay (credit_final) without
+            # touching DECISION / HEAD-CHAIN / APPLY.
             blocked_dec = dec.get('decision') in (
                 'blocked_no_candidate', 'blocked_incomplete_master', 'no_sample',
-            ) or dec.get('settlement') == 'pending_operator'
+                'lost_infra',
+            ) or dec.get('settlement') in ('pending_operator', 'infra_loss_no_head')
             if blocked_dec:
                 ev = dec.get('evaluated') or {}
                 chart = dec.get('chart_status') or dec.get('decision') or 'blocked'
@@ -294,6 +308,13 @@ def verdicts(chain):
                     rec['artifacts'] = '/k1/turns/%d/turn.json' % e
                 if (WEB / 'gate' / 'reveal' / ('%d.json' % e)).exists():
                     rec['gate_reveal'] = '/gate/reveal/%d.json' % e
+                # Infra credit may still force pay-green on blocked/lost_infra.
+                if apply_infra_credit and credit_for_epoch:
+                    credit = credit_for_epoch(infra_doc, e)
+                    if credit is not None:
+                        rec = apply_infra_credit(
+                            rec, turn=t, decision=dec, credit=credit, log_fn=log,
+                        )
                 out.append(rec)
                 continue
             v = dec.get('decision') if dec.get('decision') in ('green', 'red') else None
@@ -338,6 +359,15 @@ def verdicts(chain):
                 rec['artifacts'] = '/k1/turns/%d/turn.json' % e
             if (WEB / 'gate' / 'reveal' / ('%d.json' % e)).exists():
                 rec['gate_reveal'] = '/gate/reveal/%d.json' % e
+            # Infra credit (match-all identity + z>1) → green + credited_infra_loss.
+            # Once credit_final, a later rerun only affects HEAD — pay stays green.
+            if apply_infra_credit and credit_for_epoch:
+                credit = credit_for_epoch(infra_doc, e)
+                if credit is not None:
+                    rec = apply_infra_credit(
+                        rec, turn=t, decision=dict(dec, evaluated=ev), credit=credit,
+                        log_fn=log,
+                    )
         out.append(rec)
     return out
 

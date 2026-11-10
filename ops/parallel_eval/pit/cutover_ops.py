@@ -176,6 +176,60 @@ def assert_no_mid_probe(pe_state: Path) -> None:
         raise MidProbeError('live lane mid-probe; refuse stopping pe_controller: %s' % '; '.join(busy[:8]))
 
 
+def apply_busy_check(items: List[Any], *, now: Optional[float] = None) -> List[str]:
+    """Clean-window install check: waiting GREENs are BUSY.
+
+    Exclude items in green-apply-backoff with a dead box, or ``lost_infra``.
+    Those must not block installs forever.
+    """
+    import time as _time
+    at = float(now if now is not None else _time.time())
+    busy: List[str] = []
+    for item in items or []:
+        decision = str(getattr(item, 'decision', None) or '').lower()
+        meta = dict(getattr(item, 'meta', None) or {})
+        if decision == 'lost_infra' or meta.get('lost_infra'):
+            continue
+        if decision not in ('green_fresh', 'green', 'green_waiting'):
+            continue
+        if meta.get('head_advanced'):
+            continue
+        # green-apply-backoff + dead box ⇒ not busy for install.
+        retry_at = meta.get('apply_retry_at')
+        box_id = getattr(item, 'box_id', None)
+        if retry_at is not None and not box_id:
+            continue
+        if retry_at is not None and float(retry_at) > at and not box_id:
+            continue
+        if meta.get('green_apply_pending') or decision == 'green_waiting':
+            busy.append(
+                'e%s %s decision=%s' % (
+                    getattr(item, 'epoch', '?'),
+                    getattr(item, 'item_id', '?')[:12],
+                    decision,
+                )
+            )
+            continue
+        if decision in ('green_fresh', 'green') and not meta.get('head_advanced'):
+            busy.append(
+                'e%s %s decision=%s awaiting-apply' % (
+                    getattr(item, 'epoch', '?'),
+                    getattr(item, 'item_id', '?')[:12],
+                    decision,
+                )
+            )
+    return busy
+
+
+def assert_apply_not_busy(items: List[Any], *, now: Optional[float] = None) -> None:
+    busy = apply_busy_check(items, now=now)
+    if busy:
+        raise MidProbeError(
+            'GREEN awaiting apply; refuse clean-window install: %s'
+            % '; '.join(busy[:8])
+        )
+
+
 def warm_off_path(pe_state: Path) -> Path:
     return pe_state / 'WARM-OFF'
 

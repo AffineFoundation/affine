@@ -65,20 +65,24 @@ BLOCKED_DECISIONS = frozenset({
 })
 
 # Terminal non-GREEN settlements: never last-10 payout / HEAD / bench.
+# lost_infra stays paid for K1 credit but never last-10 / HEAD.
 TERMINAL_SETTLEMENT_DECISIONS = frozenset({
     *BLOCKED_DECISIONS,
     'no_sample',
+    'lost_infra',
 })
 
 
 def map_pit_decision(decision: Optional[str]) -> str:
     d = (decision or '').lower()
-    if d in ('green_fresh', 'green_stale', 'green'):
+    if d in ('green_fresh', 'green_stale', 'green', 'green_waiting'):
         return 'green'
     if d == 'red':
         return 'red'
     if d in ('no_decision', ''):
         return 'no_decision'
+    if d == 'lost_infra':
+        return 'lost_infra'
     if d in TERMINAL_SETTLEMENT_DECISIONS:
         return d
     return d

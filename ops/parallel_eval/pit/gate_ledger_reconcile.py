@@ -9,6 +9,8 @@ Rules:
   * Pre-PE / non-PIT ledger rows are left untouched.
   * A PIT GREEN is ``promoted`` only when a HEAD-CHAIN row exists for its candidate.
   * Archived attempt-1 decisions are ``superseded`` (never listed as promoted).
+  * Infra-credited GREENs (``K1-INFRA-CREDITS.json`` match) show ``credited_infra_loss``
+    on the public ledger (fixes e1062 mislabeled ``promoted``).
 """
 from __future__ import annotations
 
@@ -80,6 +82,7 @@ def wrap_ledger_entry(
     is_pit: bool,
     chain_candidates: set,
     archived: bool,
+    infra_credited: bool = False,
 ) -> Optional[Mapping[str, Any]]:
     """Live-patch semantics: wrap ``entry`` output.
 
@@ -95,11 +98,17 @@ def wrap_ledger_entry(
         out['superseded'] = True
         return out
     if out.get('decision') == 'green':
-        if out.get('candidate') in chain_candidates:
+        if infra_credited or out.get('credited_infra_loss') or out.get('verdict') == 'credited_infra_loss':
+            out['verdict'] = 'credited_infra_loss'
+            out['reconcile'] = 'infra-credit'
+            out['credited_infra_loss'] = True
+            out.pop('superseded', None)
+        elif out.get('candidate') in chain_candidates:
             out['verdict'] = 'promoted'
             out['reconcile'] = 'head-chain'
             out.pop('superseded', None)
         else:
+            # e1062-class: GREEN without HEAD-CHAIN is not promoted.
             out['verdict'] = 'rejected'
             out['reconcile'] = 'green-without-head-chain'
             out.pop('superseded', None)
@@ -112,6 +121,7 @@ def reconcile_entry(
     chain_candidates: set,
     archived: bool,
     is_pit: bool = False,
+    infra_credited: bool = False,
 ) -> Dict[str, Any]:
     """Return a corrected ledger entry (does not mutate input).
 
@@ -123,6 +133,7 @@ def reconcile_entry(
         is_pit=is_pit,
         chain_candidates=chain_candidates,
         archived=archived,
+        infra_credited=infra_credited,
     )
     assert wrapped is not None
     return dict(wrapped)
@@ -145,7 +156,7 @@ def reconcile_ledger(
     chain = _rj(Path(head_chain_path)) or {}
     cands = head_chain_candidates(chain if isinstance(chain, Mapping) else {})
     fixed: List[dict] = []
-    n_promoted = n_rejected = n_superseded = n_untouched = 0
+    n_promoted = n_rejected = n_superseded = n_credited = n_untouched = 0
     for ent in rows:
         ep = int(ent.get('epoch') or -1)
         is_pit = epoch_is_pit(Path(life_epochs), ep)
@@ -153,6 +164,7 @@ def reconcile_ledger(
         before = dict(ent)
         row = reconcile_entry(
             ent, chain_candidates=cands, archived=archived, is_pit=is_pit,
+            infra_credited=bool(ent.get('credited_infra_loss')),
         )
         fixed.append(row)
         if not is_pit:
@@ -163,6 +175,8 @@ def reconcile_ledger(
             n_promoted += 1
         elif v == 'superseded':
             n_superseded += 1
+        elif v == 'credited_infra_loss':
+            n_credited += 1
         else:
             n_rejected += 1
         # Keep silence on unused before.
@@ -184,6 +198,7 @@ def reconcile_ledger(
             'promoted': n_promoted,
             'rejected': n_rejected,
             'superseded': n_superseded,
+            'credited_infra_loss': n_credited,
             'untouched_non_pit': n_untouched,
         },
         'reconciled_at': time.time(),
@@ -198,11 +213,13 @@ def reconcile_rows(
     chain_candidates: Optional[set] = None,
     archived_epochs: Optional[set] = None,
     pit_epochs: Optional[Set[int]] = None,
+    infra_credited_epochs: Optional[Set[int]] = None,
 ) -> List[Dict[str, Any]]:
     """Pure helper for tests."""
     cands = set(chain_candidates or ())
     archived = set(archived_epochs or ())
     pit = set(pit_epochs or ())
+    credited = set(infra_credited_epochs or ())
     out = []
     for ent in rows:
         ep = int(ent.get('epoch') or -1)
@@ -211,5 +228,6 @@ def reconcile_rows(
             chain_candidates=cands,
             archived=ep in archived,
             is_pit=ep in pit,
+            infra_credited=ep in credited or bool(ent.get('credited_infra_loss')),
         ))
     return out

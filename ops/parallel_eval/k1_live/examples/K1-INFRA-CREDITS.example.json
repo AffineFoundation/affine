@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "enabled": true,
+  "note": "Jacob 2026-11-10 11:00 CR: GREENs lost to infra are credited for pay directly. Host fills real rows for e1060/665, e1062/847, e1065/681, e1073/898 — this file is format-only.",
+  "credits": [
+    {
+      "epoch": 0,
+      "uid": 0,
+      "hotkey": "5REPLACE_WITH_SS58",
+      "reg_block": 0,
+      "candidate": "0000000000000000000000000000000000000000000000000000000000000000",
+      "evidence_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "z": 1.01,
+      "note": "example only — not a live credit"
+    }
+  ]
+}

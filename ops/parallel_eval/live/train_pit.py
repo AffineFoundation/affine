@@ -15,10 +15,23 @@ W = Path('/workspace/affine-mimo-trainer-prod'); SRC = W / 'source-final-v823u'
 
 
 def _select_host() -> Path:
-    """host-v834e by default; host-v834f only when present and sharded mode is required."""
+    """host-v834e by default; host-v834f only when sharded mode is authorized.
+
+    Fail closed:
+      * host-v834e missing when non-sharded path is required;
+      * ``PIT_ZERO3`` set without ``allow_sharded_gpus`` (PROMOTION-GATE).
+    """
     v834e = W / 'host-v834e'
     v834f = W / 'host-v834f'
     force = os.environ.get('PIT_ZERO3', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    allow = os.environ.get('PIT_ALLOW_SHARDED_GPUS', '').strip().lower() in (
+        '1', 'true', 'yes', 'on',
+    )
+    if force and not allow:
+        raise SystemExit(
+            'PIT_ZERO3 set but allow_sharded_gpus/PIT_ALLOW_SHARDED_GPUS is false '
+            '(fail closed — refuse host-v834f without PROMOTION-GATE)'
+        )
     low = False
     if not force:
         try:
@@ -27,9 +40,14 @@ def _select_host() -> Path:
                 low = float(mem) < 100.0
         except ValueError:
             low = False
-    if v834f.is_dir() and (force or low):
+    want_sharded = bool(force or low) and allow
+    if want_sharded:
+        if not v834f.is_dir():
+            raise SystemExit('host-v834f required for sharded mode but missing (fail closed)')
         return v834f
-    return v834e if v834e.is_dir() else v834f
+    if not v834e.is_dir():
+        raise SystemExit('host-v834e missing (fail closed)')
+    return v834e
 
 
 HOST = _select_host()

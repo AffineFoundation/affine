@@ -1353,75 +1353,100 @@ def _receipt_from_sparse_train_marker(
     )
 
 
-def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any]:
-    """Upload bf16 + fp32 right after train (before eval). Fail soft — keep defer.
+class EarlyUploadError(BoxIOError):
+    """Fail-closed: bf16+fp32 must upload before eval; keep the box and alert."""
 
-    APPLY must later succeed from the uploaded copy without ssh when this works.
+
+def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any]:
+    """Upload bf16 + fp32 right after train (before eval). Fail closed after 3 tries.
+
+    Streams fp32 box→R2 (no host staging). APPLY later verifies against R2 using
+    the host-recorded ``candidate_master_digest``. Never soft-fails into eval.
     """
+    from ops.parallel_eval.live.pe_artifact_upload import EARLY_UPLOAD_RETRIES
+
     out = dict(receipt)
     cid = str(out.get('candidate_id') or '')
     if len(cid) != 64:
-        return out
+        raise EarlyUploadError('early upload needs candidate_id hex64')
     if out.get('artifacts_uploaded') and out.get('live_apply_seed'):
+        # Still must not skip APPLY-time verify; seed is a hint only.
         return out
     files = dict(out.get('candidate_files') or {})
     master_dig = str(out.get('candidate_master_digest') or '')
-    try:
-        if not files:
-            raise BoxIOError('early upload needs candidate_files')
-        if len(master_dig) != 64:
-            raise BoxIOError('early upload needs candidate_master_digest')
-        cand_up = upload_candidate_from_box(
-            P,
-            candidate_id=cid,
-            files=files,
-            box_candidate_dir=out.get('box_candidate_dir'),
-        )
-        master_up = upload_master_from_box(
-            P,
-            candidate_id=cid,
-            master_digest=master_dig,
-            bf16_sha256=cid,
-            box_master_dir=out.get('box_master_dir'),
-            store_entry=str(
-                ((out.get('report_doc') or {}).get('optimizer') or {})
-                .get('sgd', {})
-                .get('fp32_master', {})
-                .get('output_store_entry')
-                or out.get('output_store_entry')
-                or ''
-            ),
-        )
-        if not master_up.get('complete') and not int(master_up.get('shard_count') or 0):
-            raise BoxIOError('early upload master incomplete')
-        seed = {
-            'candidate_verified': True,
-            'master_verified': True,
-            'master_complete': True,
-            'detail': {
-                'candidate': cid,
-                'early_upload': True,
-                'candidate_upload': {
-                    k: cand_up.get(k) for k in ('ok', 'path', 'verified') if k in cand_up
+    if not files:
+        raise EarlyUploadError('early upload needs candidate_files')
+    if len(master_dig) != 64:
+        raise EarlyUploadError('early upload needs host-recorded candidate_master_digest')
+    last_err: Exception | None = None
+    for attempt in range(1, int(EARLY_UPLOAD_RETRIES) + 1):
+        try:
+            cand_up = upload_candidate_from_box(
+                P,
+                candidate_id=cid,
+                files=files,
+                box_candidate_dir=out.get('box_candidate_dir'),
+                pending=True,
+            )
+            master_up = upload_master_from_box(
+                P,
+                candidate_id=cid,
+                master_digest=master_dig,
+                bf16_sha256=cid,
+                box_master_dir=out.get('box_master_dir'),
+                store_entry=str(
+                    ((out.get('report_doc') or {}).get('optimizer') or {})
+                    .get('sgd', {})
+                    .get('fp32_master', {})
+                    .get('output_store_entry')
+                    or out.get('output_store_entry')
+                    or ''
+                ),
+                pending=True,
+            )
+            if not master_up.get('complete') and not int(master_up.get('shard_count') or 0):
+                raise EarlyUploadError('early upload master incomplete')
+            seed = {
+                'candidate_verified': True,
+                'master_verified': True,
+                'master_complete': True,
+                'pending': True,
+                'detail': {
+                    'candidate': cid,
+                    'early_upload': True,
+                    'host_master_digest': master_dig,
+                    'attempt': attempt,
+                    'candidate_upload': {
+                        k: cand_up.get(k) for k in ('ok', 'path', 'verified') if k in cand_up
+                    },
+                    'master_publish': {
+                        k: master_up.get(k)
+                        for k in (
+                            'shard_count', 'complete', 'index', 'box_master_dir',
+                            'pending', 'transport',
+                        )
+                        if k in master_up
+                    },
                 },
-                'master_publish': {
-                    k: master_up.get(k)
-                    for k in ('shard_count', 'complete', 'index', 'box_master_dir')
-                    if k in master_up
-                },
-            },
-        }
-        out['artifacts_uploaded'] = True
-        out['defer_candidate_upload'] = False
-        out['candidate_on_box'] = False
-        out['live_apply_seed'] = seed
-        out['artifact_transport'] = 'uploaded-after-train'
-        out['early_upload'] = seed['detail']
-    except Exception as exc:
-        out['early_upload_error'] = str(exc)[:400]
-        out['defer_candidate_upload'] = True
-        out['candidate_on_box'] = True
-    return out
+            }
+            out['artifacts_uploaded'] = True
+            out['artifacts_pending'] = True
+            out['defer_candidate_upload'] = False
+            out['candidate_on_box'] = False
+            out['live_apply_seed'] = seed
+            out['artifact_transport'] = 'uploaded-after-train-pending'
+            out['early_upload'] = seed['detail']
+            # Host-recorded digest is authoritative for APPLY verify.
+            out['candidate_master_digest'] = master_dig
+            return out
+        except Exception as exc:
+            last_err = exc
+            out['early_upload_error'] = 'attempt-%d:%s' % (attempt, str(exc)[:300])
+            time.sleep(1 if attempt < EARLY_UPLOAD_RETRIES else 0)
+    raise EarlyUploadError(
+        'early upload failed after %d attempts: %s'
+        % (EARLY_UPLOAD_RETRIES, str(last_err)[:300])
+    )
 
 
 def _r2_local_mirror() -> Optional[Path]:
@@ -1482,14 +1507,36 @@ def upload_candidate_from_box(
     candidate_id: str,
     files: Mapping[str, str],
     box_candidate_dir: Optional[str] = None,
+    pending: bool = True,
 ) -> Mapping[str, Any]:
-    """GREEN only: box PUTs files to scoped R2 URLs; host verifies sha256 from R2/mirror."""
+    """Box PUTs bf16 files to scoped R2 URLs; host verifies sha256 from R2/mirror.
+
+    ``pending=True`` (default): private ``pit-pending/`` prefix until APPLY promotes.
+    """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
     if not files:
         raise BoxIOError('candidate files missing for R2 upload')
     box_dir = box_candidate_dir or (KDIR + '/' + candidate_id)
-    urls = presign_put_urls(candidate_id, files)
+    # Prefer pending prefix for pre-APPLY uploads (RED-safe).
+    if pending:
+        try:
+            from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix, r2_local_mirror
+            mirror = r2_local_mirror()
+            if mirror is not None:
+                urls = {}
+                base = mirror / pending_r2_prefix(candidate_id) / 'model'
+                base.mkdir(parents=True, exist_ok=True)
+                for name in files:
+                    dest = base / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    urls[name] = 'file://' + str(dest)
+            else:
+                urls = dict(presign_put_urls(candidate_id, files))
+        except Exception:
+            urls = dict(presign_put_urls(candidate_id, files))
+    else:
+        urls = dict(presign_put_urls(candidate_id, files))
     missing = [n for n in files if n not in urls]
     if missing:
         raise BoxIOError('presign PUT missing urls for %s' % missing[:5])
@@ -1535,9 +1582,22 @@ rm -f %s
     # Host verifies sha256 from R2 / local mirror (never trust the box alone).
     verified: dict[str, str] = {}
     mirror = _r2_local_mirror()
+    pending_model_root = None
+    if pending and mirror is not None:
+        try:
+            from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix
+            pending_model_root = mirror / pending_r2_prefix(candidate_id) / 'model'
+        except Exception:
+            pending_model_root = None
     for name, expected in files.items():
         if mirror is not None:
-            path = mirror / candidate_id / name
+            path = None
+            if pending_model_root is not None:
+                cand = pending_model_root / name
+                if cand.is_file():
+                    path = cand
+            if path is None:
+                path = mirror / candidate_id / name
             if not path.is_file():
                 raise BoxIOError('R2 mirror missing after PUT: %s' % name)
             got = _sha256_file(path)
@@ -1573,6 +1633,7 @@ rm -f %s
         'uploaded_at': time.time(),
         'source': 'pit-box-r2-put',
         'transport': 'presigned-put',
+        'pending': bool(pending),
     }
     (dst / 'UPLOAD.json').write_text(json.dumps(receipt, indent=1, sort_keys=True) + '\n')
     (dst / 'CHECKPOINT.json').write_text(json.dumps({
@@ -2026,86 +2087,39 @@ def upload_master_from_box(
     bf16_sha256: str = '',
     box_master_dir: Optional[str] = None,
     store_entry: str = '',
+    pending: bool = True,
 ) -> Mapping[str, Any]:
-    """GREEN: box → R2 for every fp32 master shard; write complete index entry."""
+    """Box→R2 stream for every fp32 master shard (no host staging of 35+ GB).
+
+    ``master_digest`` is the host-recorded digest from train.done / report —
+    never replaced by the box's meta.json. Default ``pending=True`` writes a
+    private pending index; APPLY promotes to the live public index.
+    """
+    from ops.parallel_eval.live.pe_artifact_upload import (
+        ArtifactUploadError,
+        stream_upload_master_from_box,
+    )
+
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
     digest = str(master_digest or '').strip()
     if len(digest) != 64:
-        raise BoxIOError('master_digest must be hex64')
+        raise BoxIOError('master_digest must be hex64 (host-recorded)')
     box_dir = box_master_dir or _resolve_box_master_dir(
         P, master_digest=digest, store_entry=store_entry,
     )
-    # Inventory shards on the box (name + sha256 + bytes).
-    inv_raw = P.run(
-        "python3 - <<'PY'\n"
-        "import hashlib, json, os\n"
-        "root = %r\n"
-        "out = {}\n"
-        "for dirpath, _, files in os.walk(root):\n"
-        "    for name in files:\n"
-        "        path = os.path.join(dirpath, name)\n"
-        "        rel = os.path.relpath(path, root)\n"
-        "        h = hashlib.sha256()\n"
-        "        with open(path, 'rb') as f:\n"
-        "            for b in iter(lambda: f.read(1 << 20), b''):\n"
-        "                h.update(b)\n"
-        "        out[rel.replace(os.sep, '/')] = dict(sha256=h.hexdigest(), bytes=os.path.getsize(path))\n"
-        "print(json.dumps(out, sort_keys=True))\n"
-        "PY" % box_dir,
-        timeout=1800, check=True,
-    )
     try:
-        inv = json.loads(inv_raw.strip().splitlines()[-1])
-    except Exception as exc:
-        raise BoxIOError('box master inventory parse failed: %s' % str(exc)[:200]) from exc
-    if not isinstance(inv, dict) or not inv:
-        raise BoxIOError('box master inventory empty at %s' % box_dir)
-    _assert_master_tree_complete(inv)
-
-    # Stage on host via scp (binary-safe) then publish; keeps verify local.
-    dst = _upload_root() / candidate_id / 'fp32-master'
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.mkdir(parents=True, exist_ok=True)
-    for rel in sorted(inv):
-        local = dst / rel
-        local.parent.mkdir(parents=True, exist_ok=True)
-        _scp_from(P, '%s/%s' % (box_dir.rstrip('/'), rel), local, timeout=3600)
-        got = _sha256_file(local)
-        if got != inv[rel]['sha256']:
-            raise BoxIOError('master shard sha mismatch after scp: %s' % rel)
-
-    files_meta = _master_files_meta_from_dir(dst, candidate_id=candidate_id)
-    _assert_master_tree_complete(files_meta)
-    # Prefer meta.json digest when present.
-    meta_p = dst / 'meta.json'
-    if meta_p.is_file():
-        try:
-            md = str((json.loads(meta_p.read_text()) or {}).get('master_digest') or '')
-            if len(md) == 64:
-                digest = md
-        except Exception:
-            pass
-    bf16 = str(bf16_sha256 or candidate_id)
-    _publish_fp32_master_objects(candidate_id, dst, files_meta)
-    idx_path = _write_master_index(
-        candidate_id=candidate_id, bf16=bf16, digest=digest, files_meta=files_meta,
-    )
-    return dict(
-        ok=True,
-        path=str(dst),
-        candidate_id=candidate_id,
-        master_digest=digest,
-        index=str(idx_path),
-        published=True,
-        box_master_dir=box_dir,
-        shard_count=sum(
-            1 for n in files_meta
-            if str(n).endswith('.safetensors') or str(n).endswith('.bin')
-        ),
-        complete=True,
-    )
+        return stream_upload_master_from_box(
+            P,
+            candidate_id=candidate_id,
+            master_digest=digest,
+            bf16_sha256=str(bf16_sha256 or candidate_id),
+            box_master_dir=box_dir,
+            put=put,
+            pending=pending,
+        )
+    except ArtifactUploadError as exc:
+        raise BoxIOError(str(exc)) from exc
 
 
 def upload_master(

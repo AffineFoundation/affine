@@ -35,7 +35,14 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from .cutover_apply import head_chain_has_candidate
 from .durable import DurableStore, pit_state_root
 from .life_paths import pe_state_root
-from .state import ItemRecord, ItemState, RENTED_STATES
+from .state import (
+    ItemRecord,
+    ItemState,
+    RENTED_STATES,
+    apply_transition,
+    can_transition,
+    holds_rental,
+)
 
 RERUN_PRIORITY = 1_000_000
 # First sanctioned GREEN rerun (attempt-1 = original). Box-retry ``item.attempt``
@@ -1027,14 +1034,204 @@ def decision_archived(epoch: int) -> bool:
     return (gate_dir / 'attempt-1' / 'DECISION.json').is_file()
 
 
+def cancel_request_path(root: Path, epoch: int) -> Path:
+    return root / 'rerun' / ('CANCEL-REQUEST-e%d.json' % int(epoch))
+
+
+def write_cancel_request(
+    *,
+    epoch: int,
+    operator: str,
+    reason: str,
+    store_root: Optional[Path] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Operator CANCEL-REQUEST: drop a pending/released rerun item cleanly."""
+    if not operator or not str(operator).strip():
+        raise RerunError('operator required')
+    if not reason or not str(reason).strip():
+        raise RerunError('reason required')
+    root = Path(store_root) if store_root else pit_state_root()
+    store = DurableStore(root)
+    items = [i for i in (store.list_items() or []) if int(i.epoch) == int(epoch)]
+    if not items:
+        raise RerunError('no PIT item for epoch %d' % int(epoch))
+    # Prefer active rerun / queued attempt-2+.
+    target = None
+    for it in items:
+        if int(getattr(it, 'priority', 0) or 0) >= RERUN_PRIORITY or rerun_attempt_of(it) >= RERUN_ATTEMPT:
+            target = it
+            break
+    if target is None:
+        items.sort(key=lambda i: float((i.meta or {}).get('decided_at_mono') or 0), reverse=True)
+        target = items[0]
+    if target.state not in (ItemState.QUEUED, ItemState.RELEASED, ItemState.FAILED, ItemState.ABORTED, ItemState.NO_DECISION):
+        if holds_rental(target) or target.state in RENTED_STATES:
+            raise RerunError(
+                'refuse cancel e%d: item still holds a box (state=%s)'
+                % (int(epoch), target.state.value)
+            )
+    path = cancel_request_path(root, int(epoch))
+    if path.is_file():
+        existing = _rj(path) or {}
+        if existing.get('status') in ('requested', 'consumed'):
+            raise RerunError(
+                'CANCEL-REQUEST already exists for e%d (status=%s)'
+                % (int(epoch), existing.get('status'))
+            )
+    at = float(now if now is not None else time.time())
+    doc = {
+        'epoch': int(epoch),
+        'operator': str(operator).strip(),
+        'reason': str(reason).strip(),
+        'status': 'requested',
+        'requested_at': at,
+        'item_id': target.item_id,
+        'state': target.state.value,
+        'decision': target.decision,
+    }
+    _wj(path, doc, 0o600)
+    return doc
+
+
+def consume_cancel_request(
+    path: Path,
+    *,
+    store: DurableStore,
+    ctl: Any,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Host path under pit.lock: drop the named rerun item from the queue."""
+    doc = _rj(path) or {}
+    if doc.get('status') != 'requested':
+        return {'ok': False, 'error': 'not-requested', 'path': str(path)}
+    epoch = int(doc['epoch'])
+    at = float(now if now is not None else time.time())
+    item = None
+    for it in list(ctl.items):
+        if it.item_id == doc.get('item_id') or int(it.epoch) == epoch:
+            item = it
+            break
+    if item is None:
+        doc['status'] = 'refused'
+        doc['refused_at'] = at
+        doc['error'] = 'item-missing'
+        _wj(path, doc, 0o600)
+        return {'ok': False, 'error': 'item-missing', 'epoch': epoch}
+    if holds_rental(item) or item.state in RENTED_STATES:
+        doc['status'] = 'refused'
+        doc['refused_at'] = at
+        doc['error'] = 'still-rented'
+        _wj(path, doc, 0o600)
+        return {'ok': False, 'error': 'still-rented', 'epoch': epoch}
+
+    # Terminalize: leave audit + remove from active queue.
+    meta = dict(item.meta or {})
+    meta.update({
+        'rerun_cancelled': True,
+        'rerun_cancelled_at': at,
+        'rerun_cancel_operator': str(doc.get('operator') or '')[:120],
+        'rerun_cancel_reason': str(doc.get('reason') or '')[:400],
+        'gate_emit_ready': True,
+    })
+    if item.state is ItemState.QUEUED and can_transition(item, ItemState.ABORTED):
+        item = apply_transition(
+            item, ItemState.ABORTED, reason='rerun-cancel',
+            updates={
+                'decision': item.decision or 'no_decision',
+                'paid': False,
+                'meta': meta,
+            },
+        )
+    elif item.state is ItemState.DECIDED and can_transition(item, ItemState.RELEASED):
+        item = apply_transition(
+            item, ItemState.RELEASED, reason='rerun-cancel',
+            updates={'box_id': None, 'box_name': None, 'meta': meta},
+        )
+    else:
+        item.meta = meta
+    ctl.items = [item if i.item_id == item.item_id else i for i in ctl.items]
+    if hasattr(ctl, '_persist'):
+        ctl._persist(item)
+    else:
+        store.save_item(item)
+
+    audit = {
+        'epoch': epoch,
+        'item_id': item.item_id,
+        'operator': doc.get('operator'),
+        'reason': doc.get('reason'),
+        'cancelled_at': at,
+        'state': item.state.value,
+        'decision': item.decision,
+    }
+    audit_dir = store.root / 'rerun' / ('e%d' % epoch)
+    _wj(audit_dir / 'CANCEL.json', audit, 0o600)
+    # Drop RERUN-ACTIVE so re-ingest is allowed again.
+    active = store.root / 'RERUN-ACTIVE.json'
+    try:
+        if active.is_file():
+            adoc = _rj(active) or {}
+            if int(adoc.get('epoch') or -1) == epoch:
+                active.unlink()
+    except Exception:
+        pass
+    # Clear pending RERUN-REQUEST if still requested.
+    try:
+        rp = request_path(store.root, epoch)
+        if rp.is_file():
+            rdoc = _rj(rp) or {}
+            if rdoc.get('status') == 'requested':
+                rdoc['status'] = 'cancelled'
+                rdoc['cancelled_at'] = at
+                _wj(rp, rdoc, 0o600)
+    except Exception:
+        pass
+    doc['status'] = 'consumed'
+    doc['consumed_at'] = at
+    doc['audit'] = audit
+    _wj(path, doc, 0o600)
+    return {'ok': True, 'epoch': epoch, 'item_id': item.item_id, 'note': 'cancelled'}
+
+
+def consume_pending_cancels(*, store: DurableStore, ctl: Any) -> List[Dict[str, Any]]:
+    root = store.root / 'rerun'
+    if not root.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for path in sorted(root.glob('CANCEL-REQUEST-e*.json')):
+        doc = _rj(path) or {}
+        if doc.get('status') != 'requested':
+            continue
+        try:
+            out.append(consume_cancel_request(path, store=store, ctl=ctl))
+        except Exception as exc:
+            out.append({'ok': False, 'path': str(path), 'error': str(exc)[:300]})
+    return out
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(prog='python -m ops.parallel_eval.pit.rerun')
     p.add_argument('--epoch', type=int, required=True)
     p.add_argument('--operator', required=True)
     p.add_argument('--reason', required=True)
     p.add_argument('--dry-run', action='store_true', help='preflight only; do not write request')
+    p.add_argument('--cancel', action='store_true', help='write CANCEL-REQUEST instead of RERUN-REQUEST')
     args = p.parse_args(list(argv) if argv is not None else None)
     try:
+        if args.cancel:
+            if args.dry_run:
+                print(json.dumps({
+                    'dry_run': True, 'cancel': True, 'epoch': int(args.epoch),
+                }, indent=1, sort_keys=True))
+                return 0
+            doc = write_cancel_request(
+                epoch=int(args.epoch),
+                operator=str(args.operator),
+                reason=str(args.reason),
+            )
+            print(json.dumps(doc, indent=1, sort_keys=True, default=str))
+            return 0
         check = preflight(int(args.epoch))
         if args.dry_run:
             print(json.dumps({'dry_run': True, **check.as_dict()}, indent=1, sort_keys=True))

@@ -72,6 +72,13 @@ GPU_BUSY_KILL_RETRY_MAX = 1
 # GREEN apply (upload/verify) failure: keep the box and retry with backoff.
 GREEN_APPLY_BACKOFF_S = 30.0
 GREEN_APPLY_BACKOFF_CAP_S = 300.0
+# After 30m of failed apply without a verified uploaded master (or Lium gone),
+# declare lost_infra: stays paid, no HEAD, releases first-GREEN slot.
+try:
+    from .lost_infra import GREEN_APPLY_LOST_INFRA_S as GREEN_APPLY_LOST_INFRA_S
+except Exception:  # pragma: no cover
+    GREEN_APPLY_LOST_INFRA_S = 30 * 60
+BOX_PING_INTERVAL_S = 60.0
 # Live baseline Pending: keep box + candidate; retry score with backoff; alert after 2h.
 BASELINE_WAIT_BACKOFF_S = 30.0
 BASELINE_WAIT_BACKOFF_CAP_S = 300.0
@@ -567,6 +574,11 @@ class Controller:
             return self._run_box_async(item)
         if item.state in (ItemState.TRAINING, ItemState.SEALED, ItemState.SERVING, ItemState.PROBING):
             # Worker in flight or re-adopted after restart — wait / resume.
+            if item.box_id:
+                try:
+                    self.ping_box_liveness(item)
+                except Exception:
+                    pass
             return self._poll_box_worker(item)
         if item.state is ItemState.RESULT:
             return apply_transition(item, ItemState.SCORED, reason='result-stored', updates={'result_stored': True}), 'scored'
@@ -699,11 +711,19 @@ class Controller:
         # Persist the full pe_rent dict so pe_lane.serve/run_probe get a real pod handle.
         meta['pod'] = {
             k: out.get(k) for k in (
-                'id', 'box_id', 'name', 'ip', 'port', 'huid', 'gpu', 'price_h',
-                'price_usd_h', 'price_per_hour', 'ssh_command', 'executor',
+                'id', 'box_id', 'name', 'ip', 'port', 'ssh_port', 'huid', 'gpu',
+                'price_h', 'price_usd_h', 'price_per_hour', 'ssh_command',
+                'executor', 'tier', 'offer_type', 'type', 'market',
             ) if out.get(k) is not None
         }
         meta['pod']['id'] = meta['pod'].get('id') or out.get('box_id')
+        # Record Lium tier (spot/secure); do not change selection.
+        tier = (
+            out.get('tier') or out.get('offer_type') or out.get('type')
+            or out.get('market') or meta['pod'].get('tier')
+        )
+        if tier:
+            meta['lium_tier'] = str(tier).lower()
         provisioned = apply_transition(
             renting, ItemState.PROVISIONING, reason='rented',
             updates={
@@ -836,8 +856,17 @@ class Controller:
             return self._run_box_async(item)
         return item, 'box-worker-wait'
 
+    @staticmethod
+    def _lium_row_unreachable(row: Mapping[str, Any]) -> bool:
+        """Lium 'Node is not reachable' ⇒ treat as box lost."""
+        blob = ' '.join(
+            str(row.get(k) or '')
+            for k in ('status', 'state', 'message', 'error', 'note', 'detail')
+        ).lower()
+        return 'node is not reachable' in blob or 'not reachable' in blob
+
     def _box_still_in_lium(self, item: ItemRecord) -> bool:
-        """True when the item's box is still visible in lium (or listing unavailable)."""
+        """True when the item's box is still visible/reachable in lium."""
         if not item.box_id:
             return False
         if self.rent.list_pods is None:
@@ -846,7 +875,9 @@ class Controller:
             return bool((item.meta or {}).get('pod'))
         try:
             rows = list(self.rent.list_pods() or [])
-        except Exception:
+        except Exception as exc:
+            if 'node is not reachable' in str(exc).lower():
+                return False
             return True
         box_id = str(item.box_id)
         box_name = str(item.box_name or '')
@@ -855,10 +886,15 @@ class Controller:
                 continue
             bid = str(row.get('id') or row.get('box_id') or '')
             name = str(row.get('name') or row.get('pod_name') or '')
-            if bid and bid == box_id:
-                return True
-            if name and (name == box_id or (box_name and name == box_name)):
-                return True
+            matched = (
+                (bid and bid == box_id)
+                or (name and (name == box_id or (box_name and name == box_name)))
+            )
+            if not matched:
+                continue
+            if self._lium_row_unreachable(row):
+                return False
+            return True
         return False
 
     @staticmethod
@@ -1201,24 +1237,202 @@ class Controller:
         )
 
     def _staleness_reference_head(self) -> str:
+        """Real chain HEAD for stale classification.
+
+        First-GREEN slot ownership is tracked separately via
+        ``_unapplied_first_green_leader``; lost_infra / waiting greens never
+        own the slot.
+        """
         if self.current_head is None:
             raise TransitionError('no current_head')
-        if not self.config.is_live():
-            return self.current_head
-        leaders: List[tuple[float, str]] = []
+        return self.current_head
+
+    def _unapplied_first_green_leader(
+        self, *, exclude_id: Optional[str] = None,
+    ) -> Optional[ItemRecord]:
+        leaders: List[tuple[float, ItemRecord]] = []
         for rec in self.items:
+            if exclude_id and rec.item_id == exclude_id:
+                continue
             if rec.decision != 'green_fresh' or not rec.candidate_id:
                 continue
             if rec.state is not ItemState.DECIDED:
                 continue
-            gat = (rec.meta or {}).get('decided_at_mono')
+            meta = rec.meta or {}
+            if meta.get('lost_infra') or meta.get('head_advanced'):
+                continue
+            gat = meta.get('decided_at_mono')
             if gat is None:
                 continue
-            leaders.append((float(gat), rec.candidate_id))
+            leaders.append((float(gat), rec))
         if not leaders:
-            return self.current_head
+            return None
         leaders.sort(key=lambda row: row[0])
         return leaders[0][1]
+
+    def _should_declare_lost_infra(self, item: ItemRecord) -> bool:
+        if self._candidate_upload_complete(item):
+            return False
+        decision = (item.decision or '').lower()
+        if decision not in ('green_fresh', 'green'):
+            return False
+        if (item.meta or {}).get('lost_infra') or decision == 'lost_infra':
+            return False
+        # Lium no longer lists the box (or Node is not reachable).
+        if item.box_id and not self._box_still_in_lium(item):
+            return True
+        if not item.box_id and not self._candidate_upload_complete(item):
+            # Already released / gone without upload.
+            since = (item.meta or {}).get('green_apply_since') or (item.meta or {}).get('decided_at_mono')
+            if since is not None and (
+                float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S)
+            ):
+                return True
+            return True
+        since = (item.meta or {}).get('green_apply_since') or (item.meta or {}).get('decided_at_mono')
+        if since is None:
+            return False
+        return float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S)
+
+    def declare_lost_infra(
+        self,
+        item: ItemRecord,
+        *,
+        reason: str,
+        operator: str = 'host',
+    ) -> tuple[ItemRecord, str]:
+        from .lost_infra import stamp_item_lost_infra
+        now = float(self.now_fn())
+        updated = stamp_item_lost_infra(
+            item, reason=reason, now=now, operator=operator,
+        )
+        # Alert
+        try:
+            root = pit_state_root()
+            alert = root / 'LOST-INFRA.json'
+            alert.write_text(json.dumps({
+                'item_id': updated.item_id,
+                'epoch': updated.epoch,
+                'candidate_id': updated.candidate_id,
+                'bound_head': updated.bound_head,
+                'reason': reason[:400],
+                'operator': operator,
+                'at': now,
+            }, indent=1, sort_keys=True) + '\n')
+        except Exception:
+            pass
+        # Release box if held.
+        if updated.box_id:
+            try:
+                released, _note = self._release(updated, reason='lost-infra:%s' % reason[:80])
+                updated = released
+            except Exception:
+                # Force-clear box_id if release refuses unverified (should be rare).
+                meta = self._stamp_released_box_id(updated)
+                updated.meta = meta
+                updated.box_id = None
+                updated.box_name = None
+        self._persist(updated)
+        # Promote earliest same-head waiter with verified master.
+        self._promote_earliest_waiter(updated)
+        # Emit path
+        updated.meta = dict(updated.meta or {}, gate_emit_ready=True)
+        self._seal_decision_log(updated)
+        if updated.state is ItemState.DECIDED and can_transition(updated, ItemState.RELEASED):
+            updated = apply_transition(
+                updated, ItemState.RELEASED, reason='lost-infra-release',
+                updates={'box_id': None, 'box_name': None},
+            )
+            self._persist(updated)
+        return updated, 'lost-infra'
+
+    def _promote_earliest_waiter(self, lost: ItemRecord) -> Optional[ItemRecord]:
+        waiters = [
+            r for r in self.items
+            if r.decision == 'green_waiting'
+            and r.bound_head == lost.bound_head
+            and r.state is ItemState.DECIDED
+            and self._candidate_upload_complete(r)
+        ]
+        if not waiters:
+            return None
+        waiters.sort(key=lambda r: float((r.meta or {}).get('decided_at_mono') or 0))
+        w = waiters[0]
+        meta = dict(w.meta or {})
+        meta.pop('waiting_on_leader', None)
+        meta['promoted_from_waiting'] = True
+        meta['promoted_after_lost'] = lost.item_id
+        w.decision = 'green_fresh'
+        w.fresh = True
+        w.merge_blocked = False
+        w.stranded = False
+        w.paid = True
+        w.meta = meta
+        self._persist(w)
+        return w
+
+    def _release_waiters_as_stale(self, leader: ItemRecord) -> None:
+        for rec in list(self.items):
+            if rec.decision != 'green_waiting':
+                continue
+            if rec.bound_head != leader.bound_head:
+                continue
+            if rec.item_id == leader.item_id:
+                continue
+            rec.decision = 'green_stale'
+            rec.fresh = False
+            rec.merge_blocked = True
+            rec.stranded = True
+            meta = dict(rec.meta or {})
+            meta['stale_after_leader_applied'] = leader.item_id
+            meta.pop('waiting_on_leader', None)
+            rec.meta = meta
+            self._persist(rec)
+            try:
+                self._destroy_and_release(rec, reason='green_stale-after-leader')
+            except Exception:
+                pass
+
+    def ping_box_liveness(self, item: ItemRecord) -> Dict[str, Any]:
+        """TCP ping pod ip:ssh_port; append to item timeline (every ~60s)."""
+        import socket
+        meta = dict(item.meta or {})
+        last = float(meta.get('box_ping_at') or 0)
+        now = float(self.now_fn())
+        if last and (now - last) < float(BOX_PING_INTERVAL_S):
+            return dict(meta.get('box_ping_last') or {})
+        pod = meta.get('pod') or {}
+        host = pod.get('ip') or pod.get('host')
+        port = pod.get('ssh_port') or pod.get('port') or 22
+        row: Dict[str, Any] = {'at': now, 'event': 'box_ping', 'ok': False}
+        if host:
+            t0 = time.time()
+            try:
+                with socket.create_connection((str(host), int(port)), timeout=1.0):
+                    row['ok'] = True
+            except Exception as exc:
+                row['error'] = str(exc)[:200]
+            row['ms'] = round((time.time() - t0) * 1000.0, 1)
+            row['host'] = str(host)
+            row['port'] = int(port)
+        timeline = list(meta.get('timeline') or [])
+        timeline.append(row)
+        meta['timeline'] = timeline[-200:]
+        meta['box_ping_at'] = now
+        meta['box_ping_last'] = row
+        item.meta = meta
+        return row
+
+    def _record_lium_tier(self, item: ItemRecord, pod: Any) -> None:
+        meta = dict(item.meta or {})
+        row = pod if isinstance(pod, Mapping) else getattr(pod, '__dict__', {}) or {}
+        tier = (
+            row.get('tier') or row.get('offer_type') or row.get('type')
+            or row.get('market') or row.get('reliability')
+        )
+        if tier:
+            meta['lium_tier'] = str(tier).lower()
+        item.meta = meta
 
     def _decide(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         bundle = self._probe_bundle_from_item(item)
@@ -1335,6 +1549,32 @@ class Controller:
         # Hard rule: REDs earn nothing.
         if updated.decision == 'red' and updated.paid:
             raise TransitionError('RED must not be paid (last-10-GREEN rule)')
+
+        # Same-head waiter: an earlier unapplied first-GREEN still owns the slot.
+        if updated.decision == 'green_fresh':
+            leader = self._unapplied_first_green_leader(exclude_id=updated.item_id)
+            if (
+                leader is not None
+                and leader.bound_head
+                and leader.bound_head == updated.bound_head
+                and leader.decision in ('green_fresh', 'green')
+                and not (leader.meta or {}).get('lost_infra')
+                and not (leader.meta or {}).get('head_advanced')
+            ):
+                meta_w = dict(updated.meta or {})
+                meta_w['waiting_on_leader'] = leader.item_id
+                meta_w['decided_at_mono'] = decided_at
+                updated.decision = 'green_waiting'
+                updated.fresh = False
+                updated.merge_blocked = False
+                updated.stranded = False
+                updated.paid = True
+                updated.meta = meta_w
+            else:
+                meta_l = dict(updated.meta or {})
+                meta_l['green_apply_since'] = decided_at
+                meta_l['decided_at_mono'] = decided_at
+                updated.meta = meta_l
 
         # Keep host score (incl. heldout) for gate emit after verify.
         updated.meta = dict(updated.meta or {}, scored=dict(scored))
@@ -1872,6 +2112,10 @@ class Controller:
             self.current_head_epoch = int(self.current_head_epoch) + 1
             if self.on_green_fresh is not None:
                 self.on_green_fresh(item)
+            try:
+                self._release_waiters_as_stale(item)
+            except Exception:
+                pass
             self._persist(item)
             return self._release(item, reason='green_fresh-applied')
 
@@ -1898,11 +2142,50 @@ class Controller:
         # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish.
         # Never take this path for unverified GREEN — that would drop C on the box.
         decision = (item.decision or '').lower()
+        if decision == 'lost_infra':
+            item.meta = dict(item.meta or {}, gate_emit_ready=True)
+            self._seal_decision_log(item)
+            return self._destroy_and_release(item, reason='lost_infra')
+        if decision == 'green_waiting':
+            if item.box_id:
+                try:
+                    self.ping_box_liveness(item)
+                except Exception:
+                    pass
+            # Wait until promoted (leader lost_infra) or demoted stale (leader applied).
+            return item, 'green-waiting'
+        if decision in ('green_fresh', 'green') and item.box_id:
+            try:
+                self.ping_box_liveness(item)
+            except Exception:
+                pass
+            # Lium unreachable / gone: apply from upload if complete, else lost_infra.
+            if not self._box_still_in_lium(item):
+                if self._candidate_upload_complete(item):
+                    # Drop box handle; APPLY uses R2 upload (no ssh).
+                    meta = self._stamp_released_box_id(item)
+                    item.meta = meta
+                    item.box_id = None
+                    item.box_name = None
+                    self._persist(item)
+                elif self._should_declare_lost_infra(item):
+                    return self.declare_lost_infra(
+                        item, reason='lium-unreachable-no-upload',
+                    )
+                else:
+                    # Treat as lost immediately when Lium says unreachable.
+                    return self.declare_lost_infra(
+                        item, reason='lium-node-not-reachable',
+                    )
+            elif self._should_declare_lost_infra(item):
+                return self.declare_lost_infra(
+                    item, reason='green-apply-timeout-no-upload',
+                )
         if (
             self.config.is_live()
             and item.decision
             and not item.box_id
-            and decision not in ('green_fresh', 'green')
+            and decision not in ('green_fresh', 'green', 'green_waiting')
             and (item.meta or {}).get('decision_emitted') is not True
         ):
             item.meta = dict(item.meta or {}, gate_emit_ready=True)
@@ -2011,6 +2294,10 @@ class Controller:
                 self.current_head_epoch = int(self.current_head_epoch) + 1
                 if self.on_green_fresh is not None:
                     self.on_green_fresh(item)
+                try:
+                    self._release_waiters_as_stale(item)
+                except Exception:
+                    pass
             if result.destroyed_box_state or item.decision != 'green_fresh':
                 return self._destroy_and_release(item, reason=item.decision or 'decided')
             return self._release(item, reason='green_fresh-applied')
@@ -2049,6 +2336,14 @@ class Controller:
                 )
             except Exception as exc:
                 item.meta = dict(item.meta or {}, destroy_error=str(exc)[:200])
+        # RED / stale: GC private pending R2 artifacts (best-effort).
+        decision = (item.decision or '').lower()
+        if decision in ('red', 'green_stale') and item.candidate_id:
+            try:
+                from ops.parallel_eval.live.pe_artifact_upload import gc_pending_artifacts
+                gc_pending_artifacts(str(item.candidate_id))
+            except Exception:
+                pass
         return self._release(item, reason=reason)
 
     def _release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:

@@ -44,7 +44,8 @@ from .queue_ingest import (
     write_ingest_alert,
     write_pit_result,
 )
-from .rerun import consume_pending_requests
+from .lost_infra import consume_pending_lost_infra
+from .rerun import consume_pending_cancels, consume_pending_requests
 
 
 def _rj(path: Path, default=None):
@@ -353,13 +354,17 @@ def tick_once(
     plan = plan_cutover(ctl.config)
     if not dry_run:
         write_host_heartbeat(store.root)
-    # Sanctioned GREEN reruns: consume RERUN-REQUEST under pit.lock only.
+    # Sanctioned GREEN reruns / cancels / lost_infra: consume under pit.lock only.
     # CLI never archives/edits items; the host owns mutation.
     summary_rerun: list = []
+    summary_cancel: list = []
+    summary_lost: list = []
     if not dry_run and ctl.config.may_run():
         try:
             with store.locked():
                 summary_rerun = consume_pending_requests(store=store, ctl=ctl)
+                summary_cancel = consume_pending_cancels(store=store, ctl=ctl)
+                summary_lost = consume_pending_lost_infra(store=store, ctl=ctl)
         except Exception as exc:
             summary_rerun = [{'ok': False, 'error': str(exc)[:300]}]
             print(
@@ -404,7 +409,8 @@ def tick_once(
         return {'dry_run': True, 'items': len(ctl.items), 'plan': plan.as_dict(), 'ingest': ingest}
 
     summary: dict[str, Any] = {
-        'plan': plan.as_dict(), 'advanced': [], 'ingest': ingest, 'rerun': summary_rerun,
+        'plan': plan.as_dict(), 'advanced': [], 'ingest': ingest,
+        'rerun': summary_rerun, 'cancel': summary_cancel, 'lost_infra': summary_lost,
     }
     # Under cutover the PE controller does not run pe_live.tick — PIT must drive
     # pending GREENS → APPLY ready → record_applied (HEAD-CHAIN + hash-sync).

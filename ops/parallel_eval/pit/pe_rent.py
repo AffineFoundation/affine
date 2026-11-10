@@ -44,6 +44,9 @@ NEVER_NAME_PREFIXES = (
     'affine-baseline-',  # baseline jobs use their own prefix; never claim as PIT
 )
 
+# Fakepass harness boxes: live host ignores them and they do not count against cap.
+PREFIX_FAKEPASS = 'affine-pe-pit-fakepass-'
+
 PIT_LIVE_TTL = '4h'
 # Preferred first class; pick_node falls back to cheaper allowed classes.
 PIT_LIVE_GPU = 'B300'
@@ -57,12 +60,18 @@ def is_shadow_pit_name(name: str) -> bool:
     return isinstance(name, str) and name.startswith(PREFIX_SHADOW)
 
 
+def is_fakepass_name(name: str) -> bool:
+    return isinstance(name, str) and name.startswith(PREFIX_FAKEPASS)
+
+
 def is_live_pit_name(name: str) -> bool:
     # PREFIX_SHADOW is a longer sub-prefix of PREFIX_LIVE — exclude it.
+    # Fakepass harness boxes are also excluded from the live host cap.
     return (
         isinstance(name, str)
         and name.startswith(PREFIX_LIVE)
         and not is_shadow_pit_name(name)
+        and not is_fakepass_name(name)
     )
 
 

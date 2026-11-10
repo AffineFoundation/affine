@@ -278,86 +278,83 @@ class LiveApplicator:
             raise ApplyLiveError('live apply refused: verify_uploads is required (fail closed)')
         meta = item.meta or {}
         existing = dict(meta.get('live_apply') or {})
-        already = (
+        # Host-recorded digest at train.done — never trust box meta.json.
+        master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
+        cand_sha = meta.get('candidate_sha256')
+        if not master_digest or len(str(master_digest)) != 64:
+            raise ApplyLiveError(
+                'missing/invalid host-recorded master digest for GREEN verify (fail closed)'
+            )
+        if not cand_sha or len(str(cand_sha)) != 64:
+            raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
+        master_pub: Dict[str, Any] = {}
+        already_uploaded = bool(
             existing.get('candidate_verified')
             and existing.get('master_verified')
-            and existing.get('master_complete') is not False
-            and master_index_is_complete(cand)
+            and (meta.get('artifacts_uploaded') or existing.get('detail', {}).get('early_upload'))
         )
-        master_pub: Dict[str, Any] = {}
-        verified: Dict[str, Any]
-        if already:
-            verified = {
-                'candidate_ok': True,
-                'master_ok': True,
-                'master_complete': True,
-                'skipped_upload': True,
-            }
-        else:
-            # GREEN only: transfer candidate (prefer box → R2 scoped presigned PUT).
-            # RED / stale paths never call upload — box is released without the 18 GB scp.
-            if self.upload_candidate is not None:
-                # Pass candidate_path once (pe_box.upload_candidate also accepts path=).
-                self.upload_candidate(
-                    candidate_id=cand,
-                    candidate_path=meta.get('candidate_path') or '',
-                    path=meta.get('candidate_path') or '',
-                    pod=meta.get('pod'),
-                    files=meta.get('candidate_files') or meta.get('files'),
-                    box_candidate_dir=meta.get('box_candidate_dir'),
-                    candidate_on_box=meta.get('candidate_on_box'),
-                    defer_candidate_upload=meta.get('defer_candidate_upload'),
-                )
-            master_digest = meta.get('candidate_master_digest') or meta.get('master_digest')
-            cand_sha = meta.get('candidate_sha256')
-            if not master_digest or len(str(master_digest)) != 64:
-                raise ApplyLiveError('missing/invalid master digest for GREEN verify (fail closed)')
-            if not cand_sha or len(str(cand_sha)) != 64:
-                raise ApplyLiveError('missing/invalid bf16 candidate sha for GREEN verify (fail closed)')
-            # Publish real fp32 master shards to R2 + complete PIT_FP32_MASTER_INDEX
-            # entry BEFORE verify / HEAD advance. Digest-only trees fail closed.
-            if self.upload_master is not None:
-                master_pub = dict(self.upload_master(
-                    candidate_id=cand,
-                    path=meta.get('candidate_master_path') or '',
-                    master_digest=str(master_digest),
-                    bf16_sha256=cand,
-                    pod=meta.get('pod'),
-                    box_master_dir=meta.get('box_master_dir'),
-                    candidate_on_box=meta.get('candidate_on_box'),
-                    defer_candidate_upload=meta.get('defer_candidate_upload'),
-                    store_entry=meta.get('output_store_entry') or '',
-                ) or {})
-                if not master_pub.get('complete') and not master_pub.get('shard_count'):
-                    # Older stubs may omit flags — still require index completeness below.
-                    pass
+        # Upload only when not already on R2; ALWAYS verify against R2 afterward
+        # (never skip verify on an early-upload record — aae897c1 review C).
+        if not already_uploaded and self.upload_candidate is not None:
+            self.upload_candidate(
+                candidate_id=cand,
+                candidate_path=meta.get('candidate_path') or '',
+                path=meta.get('candidate_path') or '',
+                pod=meta.get('pod'),
+                files=meta.get('candidate_files') or meta.get('files'),
+                box_candidate_dir=meta.get('box_candidate_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+            )
+        if not already_uploaded and self.upload_master is not None:
+            master_pub = dict(self.upload_master(
+                candidate_id=cand,
+                path=meta.get('candidate_master_path') or '',
+                master_digest=str(master_digest),
+                bf16_sha256=cand,
+                pod=meta.get('pod'),
+                box_master_dir=meta.get('box_master_dir'),
+                candidate_on_box=meta.get('candidate_on_box'),
+                defer_candidate_upload=meta.get('defer_candidate_upload'),
+                store_entry=meta.get('output_store_entry') or '',
+            ) or {})
+        # Promote private pending master index → public live index on APPLY.
+        try:
+            from ops.parallel_eval.live.pe_artifact_upload import promote_pending_master_to_live
+            promote_pending_master_to_live(candidate_id=cand, digest=str(master_digest))
+        except Exception as exc:
+            # If already public/complete, continue; else fail closed.
+            if not master_index_is_complete(cand):
+                raise ApplyLiveError(
+                    'fp32 pending→live promote failed for %s: %s'
+                    % (cand[:12], str(exc)[:200])
+                ) from exc
+        if not master_index_is_complete(cand):
             published_complete = bool(
                 master_pub.get('complete') and int(master_pub.get('shard_count') or 0) > 0
             )
-            if not published_complete and not master_index_is_complete(cand):
+            if not published_complete:
                 raise ApplyLiveError(
                     'fp32 master index incomplete for %s (need weight shards; fail closed)'
                     % cand[:12]
                 )
-            receipt = _upload_receipt_dir(cand)
-            cand_path = str(receipt) if receipt is not None else None
-            # Never pass a box: marker into local verify — only host receipts / trees.
-            raw_path = meta.get('candidate_path')
-            if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
-                cand_path = raw_path
-            verified = verify_green_uploads(
-                self.verify_uploads,
-                candidate_id=cand,
-                candidate_sha256=str(cand_sha),
-                master_digest=str(master_digest),
-                candidate_path=cand_path,
-                master_path=str(meta.get('candidate_master_path') or '') or None,
-            )
-            if not verified.get('master_ok'):
-                raise ApplyLiveError('fp32 master hash verify failed (fail closed)')
-            # Require shard-aware verify when the verifier surfaces completeness.
-            if verified.get('master_complete') is False:
-                raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
+        receipt = _upload_receipt_dir(cand)
+        cand_path = str(receipt) if receipt is not None else None
+        raw_path = meta.get('candidate_path')
+        if cand_path is None and isinstance(raw_path, str) and not raw_path.startswith('box:'):
+            cand_path = raw_path
+        verified = verify_green_uploads(
+            self.verify_uploads,
+            candidate_id=cand,
+            candidate_sha256=str(cand_sha),
+            master_digest=str(master_digest),
+            candidate_path=cand_path,
+            master_path=str(meta.get('candidate_master_path') or '') or None,
+        )
+        if not verified.get('master_ok') or not verified.get('candidate_ok'):
+            raise ApplyLiveError('upload verify failed (fail closed)')
+        if verified.get('master_complete') is False:
+            raise ApplyLiveError('fp32 master shard verify incomplete (fail closed)')
         files = meta.get('candidate_files') or meta.get('files') or (meta.get('checkpoint') or {}).get('files')
         ckpt = dict(id=cand)
         if files:
@@ -457,6 +454,14 @@ class LiveApplicator:
                 reason=decision,
             )
             destroyed = True
+        # RED / stale: GC private pending R2 artifacts so host disk / pending
+        # index never accumulate (aae897c1 review B).
+        if decision == 'red' and item.candidate_id:
+            try:
+                from ops.parallel_eval.live.pe_artifact_upload import gc_pending_artifacts
+                gc_pending_artifacts(str(item.candidate_id))
+            except Exception:
+                pass
         return LiveApplyResult(
             applied=False,
             decision=decision,
