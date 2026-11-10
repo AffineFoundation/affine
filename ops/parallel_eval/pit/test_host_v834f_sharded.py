@@ -182,6 +182,28 @@ class TestAdmittedHostUntouched(unittest.TestCase):
                 os.environ['PIT_ZERO3'] = saved
 
 
+class TestMasterOwnership(unittest.TestCase):
+    """The fp32 master is not sharded. Ranks 1..W-1 cannot save one: their process has neither a master nor the
+    code that writes one. Only the launcher in the trainer process (rank 0) loads, steps and saves it."""
+
+    def test_the_sharded_module_never_touches_the_master_or_the_disk(self):
+        source = (STAGE / 'v835_zero3.py').read_text()
+        tree = ast.parse(source)
+        body = source.replace(ast.get_docstring(tree, clean=False), '')
+        self.assertLess(len(body), len(source))
+        for needle in ('_fp32', 'masters', 'mimo_host_trainer_v83', 'save_file', 'save_pretrained', 'torch.save',
+                       'write_text', 'write_bytes', 'open('):
+            self.assertNotIn(needle, body, needle)
+
+    def test_a_helper_rank_loads_the_dp_engine_files_only(self):
+        tree = ast.parse((STAGE / 'v835_zero3.py').read_text())
+        helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'helper_main')
+        loaded = sorted(node.args[1].value for node in ast.walk(helper)
+                        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'load'
+                        and len(node.args) == 2)
+        self.assertEqual(loaded, ['v8211_batched.py', 'v83_dp.py', 'v83_fast_kernels.py', 'v83_kernels_policy.py'])
+
+
 class TestTrainPit(unittest.TestCase):
     def setUp(self):
         self.src = TRAIN_PIT.read_text()

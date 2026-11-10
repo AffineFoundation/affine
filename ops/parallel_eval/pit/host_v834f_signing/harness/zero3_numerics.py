@@ -66,7 +66,7 @@ def enter(src, hostdir):
     sys.path[:0] = [str(src), str(hostdir)]
     torch.set_num_threads(1)
     # as the trainer and its helper ranks do on the box: the declared training kernels read as the pinned None
-    fixture.load_module('v83_kernels_policy', hostdir / 'v83_kernels_policy.py').allow()
+    fixture.load_module('v83_kernels_policy', Path(hostdir) / 'v83_kernels_policy.py').allow()
 
 
 def worker(rank, world, port, work, dtype, seed, offload, queue):
