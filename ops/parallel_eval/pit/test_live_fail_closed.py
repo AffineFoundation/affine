@@ -22,6 +22,7 @@ class TestLiveFailClosed(unittest.TestCase):
         self.td = Path(tempfile.mkdtemp())
         self._env = {
             'PE_STATE': str(self.td / 'pe'),
+            'LIFE_ROOT': str(self.td / 'life'),
             'PE_LIFE': str(self.td / 'life'),
             'PE_LIFE_STATE': str(self.td / 'life'),
             'PIT_STATE': str(self.td / 'pe' / 'pit'),

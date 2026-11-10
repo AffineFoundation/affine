@@ -31,6 +31,7 @@ class TestShadowController(unittest.TestCase):
         # never read real /home/const epochs (e.g. epoch 10).
         self._env = {
             'PE_STATE': str(self.pe),
+            'LIFE_ROOT': str(self.life),
             'PE_LIFE': str(self.life),
             'PE_LIFE_STATE': str(self.life),
             'PIT_STATE': str(self.pe / 'pit'),

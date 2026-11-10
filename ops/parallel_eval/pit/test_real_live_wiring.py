@@ -234,6 +234,7 @@ class TestRealLiveWiring(unittest.TestCase):
             'PE_STATE': str(self.state),
             'PE_ST': str(self.state),
             'PIT_STATE': str(self.state / 'pit'),
+            'LIFE_ROOT': str(self.life),
             'PE_LIFE': str(self.life),
             'LIUM': str(self.bin / 'lium'),
             'HOME': str(self.root),

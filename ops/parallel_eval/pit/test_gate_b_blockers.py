@@ -119,13 +119,14 @@ class TestRoundIdFromSample(unittest.TestCase):
         self.gate_ep.mkdir(parents=True)
         os.environ['PE_GATE_EP'] = str(self.gate_ep)
         os.environ['PE_STATE'] = str(self.td / 'pe')
+        os.environ['LIFE_ROOT'] = str(self.td / 'life')
         os.environ['PE_LIFE'] = str(self.td / 'life')
         os.environ['PIT_STATE'] = str(self.td / 'pe' / 'pit')
         (self.td / 'pe' / 'pit').mkdir(parents=True)
         (self.td / 'life').mkdir(parents=True)
 
     def tearDown(self):
-        for k in ('PE_GATE_EP', 'PE_STATE', 'PE_LIFE', 'PIT_STATE'):
+        for k in ('PE_GATE_EP', 'PE_STATE', 'LIFE_ROOT', 'PE_LIFE', 'PIT_STATE'):
             os.environ.pop(k, None)
 
     def test_bind_uses_sample_round_id_not_fixture(self):
@@ -278,6 +279,9 @@ class TestCutoverLifecycleIngestE2E(unittest.TestCase):
         }))
         self.env = {
             'PE_LIFE_STATE': str(self.life),
+            # LIFE_ROOT must match PE_LIFE: conftest may seed an empty LIFE_ROOT
+            # that otherwise wins over PE_LIFE in queue_ingest._life_root().
+            'LIFE_ROOT': str(self.life),
             'PE_LIFE': str(self.life),
             'PE_STATE': str(self.pe),
             'PIT_STATE': str(self.pe / 'pit'),
