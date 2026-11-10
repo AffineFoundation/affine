@@ -6,9 +6,8 @@ The CLI never edits item / gate / lifecycle files directly.
 
 Refuse unless ALL hold:
   * item released, or no PIT-RESULT and no live box
-  * never applied (not in HEAD-CHAIN / APPLY / GREENS applied)
-  * nothing paid
-  * candidate not in HEAD-CHAIN
+  * never settled/applied (HEAD-CHAIN / APPLY / GREENS state=applied /
+    consumed K1 join or payout) — ``item.paid`` alone is not settlement
   * miner batch file exists and sha256 == K1-TURN ``file_sha256``
 
 Reruns bind the CURRENT round/head (Jacob): SAMPLE uses the round's frozen
@@ -120,6 +119,52 @@ def find_item_for_epoch(items: Sequence[ItemRecord], epoch: int) -> Optional[Ite
     return matches[-1]
 
 
+def _iter_greens_rows(greens: Any) -> List[Mapping[str, Any]]:
+    """Live GREENS.json is a list of rows; keep dict ``pending``/``applied`` support."""
+    rows: List[Mapping[str, Any]] = []
+    if isinstance(greens, list):
+        for row in greens:
+            if isinstance(row, Mapping):
+                rows.append(row)
+        return rows
+    if isinstance(greens, Mapping):
+        for key in ('pending', 'applied', 'rows', 'items'):
+            for row in greens.get(key) or []:
+                if isinstance(row, Mapping):
+                    rows.append(row)
+        # Flat dict of candidate → row.
+        if not rows:
+            for val in greens.values():
+                if isinstance(val, Mapping) and val.get('candidate'):
+                    rows.append(val)
+    return rows
+
+
+def _greens_candidate_applied(greens: Any, candidate_id: str) -> bool:
+    """True only when a GREENS row for candidate has ``state == 'applied'``."""
+    if not candidate_id:
+        return False
+    for row in _iter_greens_rows(greens):
+        if row.get('candidate') != candidate_id:
+            continue
+        if row.get('state') == 'applied':
+            return True
+    return False
+
+
+def _k1_join_consumed(epoch: int) -> bool:
+    for key in ('K1_JOINS', 'K1_STATE'):
+        root = os.environ.get(key)
+        if not root:
+            continue
+        join = Path(root) / ('%d.json' % int(epoch))
+        if not join.is_file():
+            join = Path(root) / 'joins' / ('%d.json' % int(epoch))
+        if join.is_file():
+            return True
+    return False
+
+
 def batch_file_for_turn(epoch_dir: Path, turn: Mapping[str, Any]) -> Optional[Path]:
     """Miner free-file snapshot: ``epochs/<e>/ff/<hotkey>.json``."""
     hotkey = turn.get('hotkey')
@@ -208,7 +253,7 @@ def preflight(
         candidate_id = candidate_id or decision.get('candidate')
         bound_head = bound_head or decision.get('head')
 
-    # Never applied / not in HEAD-CHAIN.
+    # Real settlement / apply only — not item.paid (run_host sets that on every GREEN).
     if candidate_id and head_chain_has_candidate(str(candidate_id)):
         reasons.append('candidate is in HEAD-CHAIN (already applied)')
     apply_ready = pe_state_root() / 'apply'
@@ -219,40 +264,18 @@ def preflight(
                 if doc.get('state') in ('applied', 'ready', 'APPLY'):
                     reasons.append('candidate has APPLY artifact (%s)' % p.name)
                     break
-    greens = _rj(pe_state_root() / 'GREENS.json') or {}
-    for row in (greens.get('pending') or []) + (greens.get('applied') or []):
-        if isinstance(row, Mapping) and row.get('candidate') == candidate_id:
-            if row.get('state') == 'applied' or row.get('applied'):
-                reasons.append('candidate listed applied in GREENS.json')
-                break
+    greens_raw = _rj(pe_state_root() / 'GREENS.json')
+    if candidate_id and _greens_candidate_applied(greens_raw, str(candidate_id)):
+        reasons.append('candidate listed applied in GREENS.json')
 
-    # Nothing paid: item flag, finalized settlement, or consumed K1 join.
-    # A green DECISION.paid alone is not enough — lost GREENs may carry that
-    # flag without ever settling; refuse only when settlement completed.
-    if item is not None and item.paid:
-        reasons.append('item.paid is true')
-    finalized = epoch_dir / 'FINALIZED.json'
-    promo = epoch_dir / 'PROMOTION-GATE.json'
-    promo_doc = _rj(promo) if promo.is_file() else None
-    settled = finalized.is_file() or (
-        isinstance(promo_doc, Mapping)
-        and (promo_doc.get('applied') or promo_doc.get('decision') in ('applied', 'green'))
-    )
-    if isinstance(decision, Mapping) and decision.get('paid') is True and settled:
-        reasons.append('DECISION.paid with FINALIZED/PROMOTION-GATE settlement')
-    for key in ('K1_JOINS', 'K1_STATE'):
-        root = os.environ.get(key)
-        if not root:
-            continue
-        join = Path(root) / ('%d.json' % int(epoch))
-        if not join.is_file():
-            join = Path(root) / 'joins' / ('%d.json' % int(epoch))
-        if join.is_file():
-            reasons.append('K1 join exists (turn already consumed)')
-            break
+    # Consumed K1 join / payout record for the epoch.
+    if _k1_join_consumed(int(epoch)):
+        reasons.append('K1 join exists (turn already consumed)')
+    payout = epoch_dir / 'PAYOUT.json'
+    if payout.is_file():
+        reasons.append('PAYOUT.json present (epoch already paid out)')
 
     # Jacob: reruns bind the CURRENT round/head — do not refuse on head move.
-    # Candidate-in-HEAD-CHAIN is already refused above.
 
     # Batch file sha == K1-TURN file_sha256.
     batch_path = None
@@ -717,6 +740,7 @@ def consume_pending_requests(
     ctl: Any,
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
+    """Consume each pending RERUN-REQUEST; one failure must not stall the tick."""
     root = store.root / 'rerun'
     if not root.is_dir():
         return []
@@ -725,11 +749,37 @@ def consume_pending_requests(
         doc = _rj(path)
         if not isinstance(doc, Mapping) or doc.get('status') != 'requested':
             continue
-        epoch = int(doc['epoch'])
+        try:
+            epoch = int(doc['epoch'])
+        except (TypeError, ValueError, KeyError) as exc:
+            failed = dict(doc)
+            failed.update({
+                'status': 'failed',
+                'error': 'malformed RERUN-REQUEST epoch: %s' % str(exc)[:200],
+                'failed_at': time.time(),
+            })
+            try:
+                _wj(path, failed, 0o600)
+            except Exception:
+                pass
+            out.append({'ok': False, 'error': failed['error'], 'path': str(path)})
+            continue
         try:
             out.append(consume_rerun_request(epoch, store=store, ctl=ctl, **kwargs))
-        except RerunError as exc:
-            out.append({'epoch': epoch, 'ok': False, 'error': str(exc)[:400]})
+        except Exception as exc:
+            # Broad catch: AttributeError on GREENS shape etc. must not kill the tick.
+            err = str(exc)[:400]
+            try:
+                failed = dict(doc)
+                failed.update({
+                    'status': 'failed',
+                    'error': err,
+                    'failed_at': time.time(),
+                })
+                _wj(path, failed, 0o600)
+            except Exception:
+                pass
+            out.append({'epoch': epoch, 'ok': False, 'error': err})
     return out
 
 

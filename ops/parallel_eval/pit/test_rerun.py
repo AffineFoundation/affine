@@ -171,24 +171,62 @@ class TestRerunRefusals(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertTrue(any('HEAD-CHAIN' in r for r in check.reasons))
 
-    def test_refuse_when_paid_settled(self):
-        e = 1065
+    def test_accept_lost_green_with_item_paid_no_settlement(self):
+        """BLOCKER 2: run_host sets item.paid on GREEN; that alone must not refuse."""
+        e = 1060
         self.fx.write_turn_and_batch(e)
-        self.fx.write_sample_decision(e, paid=True)
-        self.fx.make_item(e, state=ItemState.RELEASED, paid=False)
-        (self.fx.epoch_dir(e) / 'FINALIZED.json').write_text('{}')
+        # No DECISION (e1060 shape); item.paid=True like run_host emit.
+        self.fx.make_item(e, state=ItemState.RELEASED, paid=True)
+        (self.fx.pe / 'GREENS.json').write_text(json.dumps([
+            {
+                'epoch': e, 'candidate': CAND, 'head': HEAD,
+                'state': 'blocked_incomplete_master',
+                'apply_blocked': 'incomplete_master',
+            },
+        ]))
         check = preflight(e, store=self.fx.store)
-        self.assertFalse(check.ok)
-        self.assertTrue(any('paid' in r.lower() or 'FINALIZED' in r for r in check.reasons))
+        self.assertTrue(check.ok, check.reasons)
 
-    def test_refuse_item_paid_flag(self):
+    def test_refuse_real_k1_join_settlement(self):
         e = 1065
         self.fx.write_turn_and_batch(e)
         self.fx.write_sample_decision(e, paid=False)
         self.fx.make_item(e, state=ItemState.RELEASED, paid=True)
+        (self.fx.k1_joins / '1065.json').write_text(json.dumps({'epoch': e, 'verdict': 'green'}))
         check = preflight(e, store=self.fx.store)
         self.assertFalse(check.ok)
-        self.assertTrue(any('item.paid' in r for r in check.reasons))
+        self.assertTrue(any('K1 join' in r for r in check.reasons))
+
+    def test_greens_list_applied_refuses(self):
+        """BLOCKER 1: live GREENS.json is a list; state=applied must refuse."""
+        e = 1062
+        self.fx.write_turn_and_batch(e)
+        self.fx.write_sample_decision(e)
+        self.fx.make_item(e, state=ItemState.RELEASED, paid=True)
+        (self.fx.pe / 'GREENS.json').write_text(json.dumps([
+            {
+                'epoch': e, 'candidate': CAND, 'head': HEAD,
+                'state': 'applied', 'green_at': 1.0,
+            },
+        ]))
+        check = preflight(e, store=self.fx.store)
+        self.assertFalse(check.ok)
+        self.assertTrue(any('GREENS' in r for r in check.reasons))
+
+    def test_greens_list_blocked_incomplete_allows(self):
+        e = 1062
+        self.fx.write_turn_and_batch(e)
+        self.fx.write_sample_decision(e)
+        self.fx.make_item(e, state=ItemState.RELEASED, paid=True)
+        (self.fx.pe / 'GREENS.json').write_text(json.dumps([
+            {
+                'epoch': e, 'candidate': CAND, 'head': HEAD,
+                'state': 'blocked_incomplete_master',
+                'apply_blocked': 'incomplete_master',
+            },
+        ]))
+        check = preflight(e, store=self.fx.store)
+        self.assertTrue(check.ok, check.reasons)
 
     def test_head_moved_still_allowed(self):
         """Jacob: reruns bind CURRENT head — head move is not a refuse."""
@@ -437,7 +475,7 @@ class TestRerunHappyPath(unittest.TestCase):
         self.assertEqual(sm['indices'], ROUND_INDICES)
 
     def test_consume_under_store_locked_no_deadlock(self):
-        """BLOCKER 1: consume must not re-take pit.lock via store.enqueue()."""
+        """Consume must not re-take pit.lock via store.enqueue()."""
         e = 1060
         old = self._ok_epoch(e)
         write_rerun_request(
@@ -463,6 +501,36 @@ class TestRerunHappyPath(unittest.TestCase):
         self.assertEqual(out[0].get('status'), 'consumed')
         new_id = out[0]['new_item_id']
         self.assertIn(new_id, self.fx.store.queue())
+
+    def test_malformed_request_does_not_stall_tick(self):
+        """BLOCKER 1: one bad RERUN-REQUEST is marked failed; others still consume."""
+        bad = self.fx.pit / 'rerun' / 'RERUN-REQUEST-e9999.json'
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.write_text(json.dumps({
+            'status': 'requested',
+            # Missing / non-int epoch → malformed.
+            'epoch': 'not-an-int',
+            'operator': 'x', 'reason': 'bad',
+        }))
+        e = 1065
+        old = self._ok_epoch(e)
+        # Live list-shaped GREENS must not AttributeError.
+        (self.fx.pe / 'GREENS.json').write_text(json.dumps([
+            {'epoch': e, 'candidate': CAND, 'state': 'blocked_incomplete_master'},
+        ]))
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='good', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+        with self.fx.store.locked():
+            out = consume_pending_requests(store=self.fx.store, ctl=ctl)
+        self.assertTrue(any(r.get('ok') is False for r in out), out)
+        self.assertTrue(any(r.get('status') == 'consumed' for r in out), out)
+        failed_doc = json.loads(bad.read_text())
+        self.assertEqual(failed_doc.get('status'), 'failed')
+        good_req = self.fx.pit / 'rerun' / ('RERUN-REQUEST-e%d.json' % e)
+        self.assertEqual(json.loads(good_req.read_text()).get('status'), 'consumed')
 
 
 class TestLedgerReconcile(unittest.TestCase):
