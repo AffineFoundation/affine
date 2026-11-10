@@ -67,8 +67,11 @@ def _item_needs_box(item) -> bool:
     decision = (item.decision or '').lower()
     if decision in ('green_fresh', 'green'):
         return not _uploads_verified(item)
-    if decision in ('red', 'green_stale', 'no_decision'):
-        # Decision known and not a deferred-upload GREEN — box may be reaped after release.
+    if decision in (
+        'red', 'green_stale', 'no_decision',
+        'blocked_no_candidate', 'blocked_incomplete_master',
+    ):
+        # Terminal / known non-apply decisions — box may be reaped after release.
         return bool(item.box_id) and item.state.value not in ('released',)
     # Not yet decided: keep the box.
     return item.state.value not in ('queued',)
@@ -377,11 +380,23 @@ def tick_once(
         # Miner-credit marker: queue_ingest skips once PIT-RESULT exists.
         epoch_dir = _epoch_dir_for_item(item)
         if epoch_dir:
+            pit_decision = str(item.decision or 'no_decision')
+            extra = {
+                'paid': bool(item.paid) and pit_decision not in (
+                    'blocked_no_candidate', 'blocked_incomplete_master',
+                ),
+                'z': item.z if item.z is not None else (scored.get('evaluated') or {}).get('z'),
+                'evaluated': dict(scored.get('evaluated') or {}),
+                'probe': dict(scored.get('probe') or {}),
+            }
+            if pit_decision in ('blocked_no_candidate', 'blocked_incomplete_master'):
+                extra['settlement'] = 'pending_operator'
+                extra['paid'] = False
             write_pit_result(
                 Path(epoch_dir),
-                decision=str(item.decision or 'no_decision'),
+                decision=pit_decision,
                 item_id=item.item_id,
-                extra={'paid': bool(item.paid), 'z': item.z},
+                extra=extra,
             )
         store.decisions.append(
             epoch=item.epoch,
@@ -452,6 +467,9 @@ def _gate_emit_ready(item) -> bool:
     Do not treat bare ``decided`` as ready — that races emit before box release.
     ``gate_emit_ready`` is set in ``_finish_decision`` (after apply, with release).
     Recovery: decided+released with last_error still emits so turns/PIT-RESULT finish.
+
+    Terminal blocked decisions (``blocked_no_candidate``, ``blocked_incomplete_master``)
+    must emit DECISION + PIT-RESULT so lifecycle pending slots free; they never apply.
     """
     d = item.decision
     if not d:
@@ -464,6 +482,13 @@ def _gate_emit_ready(item) -> bool:
             and apply.get('master_verified')
             and apply.get('candidate_verified')
         )
+    if d in ('blocked_no_candidate', 'blocked_incomplete_master'):
+        if meta.get('gate_emit_ready'):
+            return True
+        # Terminal NO_DECISION / RELEASED blocked rows always emit (free pending).
+        if item.state.value in ('no_decision', 'released') and not meta.get('decision_emitted'):
+            return True
+        return False
     if d in ('green_stale', 'red', 'no_decision'):
         if meta.get('gate_emit_ready'):
             return True

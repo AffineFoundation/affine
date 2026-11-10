@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
 
-from .decision_emit import GATE_VERSION, _cr, map_pit_decision
+from .decision_emit import BLOCKED_DECISIONS, GATE_VERSION, _cr, map_pit_decision
 
 HELDOUT_REQUIRED_KEYS = frozenset({
     'round_id',
@@ -296,6 +296,7 @@ class HostGateWriter:
         reasons_list = list(reasons or [])
         _assert_public(self._bv, evaluated, reasons_list, heldout)
         gate_decision = map_pit_decision(decision)
+        blocked = gate_decision in BLOCKED_DECISIONS
         # Resolve ALL side-effect deps BEFORE any epoch artifact write.
         R = self._rounds()
         need_k1 = bool(no_decision or gate_decision == 'no_decision')
@@ -306,6 +307,10 @@ class HostGateWriter:
             )
         now = time.time()
         rid = str(heldout['round_id'])
+        pe_meta = dict(parallel_eval_meta)
+        if blocked:
+            pe_meta.setdefault('settlement', 'pending_operator')
+            pe_meta.setdefault('blocked', gate_decision)
         dec = dict(
             version=self.gate_version,
             epoch=int(epoch),
@@ -318,7 +323,7 @@ class HostGateWriter:
             evaluated=dict(evaluated),
             reasons=reasons_list,
             heldout=dict(heldout),
-            parallel_eval=dict(parallel_eval_meta),
+            parallel_eval=pe_meta,
             no_decision=bool(no_decision or gate_decision == 'no_decision'),
             merge_blocked=bool(merge_blocked),
             chart_status=(
@@ -327,6 +332,10 @@ class HostGateWriter:
             red_credit='zero',
             source='pit',
         )
+        if blocked:
+            # Terminal non-GREEN: free pending via DECISION; never payout / HEAD.
+            dec['settlement'] = 'pending_operator'
+            dec['paid'] = False
         if grant is not None:
             dec['k1_grant'] = grant
         epoch_dir = self.epochs_root / str(int(epoch))
@@ -496,8 +505,13 @@ class RecordingGateWriter:
         reasons_list = list(reasons or [])
         _assert_public(self._bv, evaluated, reasons_list, heldout)
         gate_decision = map_pit_decision(decision)
+        blocked = gate_decision in BLOCKED_DECISIONS
         now = time.time()
         rid = str(heldout['round_id'])
+        pe_meta = dict(parallel_eval_meta)
+        if blocked:
+            pe_meta.setdefault('settlement', 'pending_operator')
+            pe_meta.setdefault('blocked', gate_decision)
         dec = dict(
             version=GATE_VERSION,
             epoch=int(epoch),
@@ -510,12 +524,16 @@ class RecordingGateWriter:
             evaluated=dict(evaluated),
             reasons=reasons_list,
             heldout=dict(heldout),
-            parallel_eval=dict(parallel_eval_meta),
+            parallel_eval=pe_meta,
             plan_seed=plan_seed,
             no_decision=bool(no_decision or gate_decision == 'no_decision'),
             merge_blocked=bool(merge_blocked),
             source='pit',
+            chart_status=gate_decision,
         )
+        if blocked:
+            dec['settlement'] = 'pending_operator'
+            dec['paid'] = False
         epoch_dir = self.epochs_root / str(int(epoch))
         decision_path = epoch_dir / 'DECISION.json'
         if decision_path.exists():
@@ -543,6 +561,7 @@ class RecordingGateWriter:
                 parallel_eval=True,
             ),
         )
+        # Blocked / red / no_decision never close the heldout round as GREEN.
         if gate_decision == 'green' and not merge_blocked and not dec['no_decision']:
             if not self.closed(rid):
                 self.close(rid, 'green e%d (pit test)' % epoch, epoch)

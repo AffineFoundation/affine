@@ -255,6 +255,8 @@ class TestBaselinePendingKeepBox(unittest.TestCase):
         self.assertEqual(updated.decision, 'blocked_no_candidate')
         self.assertFalse(updated.paid)
         self.assertEqual((updated.meta or {}).get('blocked'), 'no_candidate')
+        self.assertTrue((updated.meta or {}).get('gate_emit_ready'))
+        self.assertEqual((updated.meta or {}).get('settlement'), 'pending_operator')
 
     def test_green_stale_box_id_blocks_no_apply_gate_or_bench(self):
         """e1065-like: box_id present but released → blocked_no_candidate; no side effects."""
@@ -290,7 +292,9 @@ class TestBaselinePendingKeepBox(unittest.TestCase):
         self.assertEqual(updated.state, ItemState.NO_DECISION)
         self.assertEqual(updated.decision, 'blocked_no_candidate')
         self.assertFalse(updated.paid)
-        self.assertFalse((updated.meta or {}).get('gate_emit_ready'))
+        # Terminal emit must be allowed so DECISION/PIT-RESULT free the pending slot.
+        self.assertTrue((updated.meta or {}).get('gate_emit_ready'))
+        self.assertEqual((updated.meta or {}).get('settlement'), 'pending_operator')
         self.assertFalse((updated.meta or {}).get('green_apply_pending'))
         self.assertEqual(applies, [])
         self.assertEqual(benches, [])

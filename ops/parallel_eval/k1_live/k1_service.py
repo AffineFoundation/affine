@@ -265,6 +265,34 @@ def verdicts(chain):
         if t.get('status') == 'turn':
             dec = rj(GATE / str(e) / 'DECISION.json') or {}
             pg = rj(d / 'PROMOTION-GATE.json') or {}
+            # PIT terminal blocked (no candidate / incomplete master): never last-10
+            # GREEN credit; chart shows blocked; settlement stays pending_operator.
+            blocked_dec = dec.get('decision') in (
+                'blocked_no_candidate', 'blocked_incomplete_master',
+            ) or dec.get('settlement') == 'pending_operator'
+            if blocked_dec:
+                ev = dec.get('evaluated') or {}
+                rec.update(
+                    verdict='blocked',
+                    candidate=dec.get('candidate'),
+                    z=ev.get('z'),
+                    n=ev.get('n'),
+                    cap=ev.get('c_cap_rate'),
+                    h_pass=ev.get('h_pass'),
+                    c_pass=ev.get('c_pass'),
+                    decided_at_cr=dec.get('decided_at_cr'),
+                    chart_status=dec.get('chart_status') or dec.get('decision') or 'blocked',
+                    settlement=dec.get('settlement') or 'pending_operator',
+                )
+                rec.update(pass_rates(e, dec, ev))
+                kd = rj(d / 'TRAIN-DISPATCH-K1.json') or {}
+                rec['task_indices'] = sorted({int(x['index']) for x in ((kd.get('payload') or kd).get('selected') or []) if 'index' in x}) or None
+                if (WEB / 'k1' / 'turns' / str(e) / 'turn.json').exists():
+                    rec['artifacts'] = '/k1/turns/%d/turn.json' % e
+                if (WEB / 'gate' / 'reveal' / ('%d.json' % e)).exists():
+                    rec['gate_reveal'] = '/gate/reveal/%d.json' % e
+                out.append(rec)
+                continue
             v = dec.get('decision') if dec.get('decision') in ('green', 'red') else None
             if v is None and pg.get('decision') in ('green', 'red'): v = pg['decision']
             ev = dec.get('evaluated') or {}

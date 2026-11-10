@@ -400,11 +400,17 @@ class Controller:
         return item, 'noop'
 
     def _occupies_box_slot(self, item: ItemRecord) -> bool:
-        """True when this item still consumes a max_boxes slot (blocks new binds)."""
+        """True when this item still consumes a max_boxes slot (blocks new binds).
+
+        Only live rented boxes count for in-pipeline states: SCORED/wait-baseline
+        with ``box_id is None`` (box released after upload, still waiting to score)
+        must not block e1067/e1068 from renting. BOUND / retry waiters still occupy
+        so oldest-first bind capping stays intact.
+        """
         if item.state is ItemState.BOUND:
             return True
         if item.state in RENTED_STATES:
-            return True
+            return bool(item.box_id)
         if item.state is ItemState.RETRY_WAIT:
             return True
         if item.state is ItemState.FAILED and item.attempt <= self.config.max_attempts:
@@ -1582,18 +1588,29 @@ class Controller:
     def _block_green_no_candidate(
         self, item: ItemRecord, scored: Mapping[str, Any],
     ) -> tuple[ItemRecord, str]:
-        """GREEN but candidate gone (e1065): terminal blocked, never apply."""
+        """GREEN but candidate gone (e1065): terminal blocked, never apply.
+
+        Sets ``gate_emit_ready`` so run_host writes DECISION + PIT-RESULT with
+        ``settlement=pending_operator`` (frees lifecycle pending; no payout/HEAD).
+        """
         meta = dict(item.meta or {})
-        meta['scored'] = dict(scored)
+        scored_doc = dict(scored)
+        meta['scored'] = scored_doc
         meta['blocked'] = 'no_candidate'
         meta['blocked_like'] = 'blocked_incomplete_master'
-        meta['gate_emit_ready'] = False
+        meta['gate_emit_ready'] = True
         meta['green_apply_pending'] = False
+        meta['settlement'] = 'pending_operator'
         for key in (
             'baseline_wait_since', 'baseline_wait_next_at', 'baseline_wait_note',
             'baseline_wait_alerted', 'baseline_wait_logged_note', 'baseline_wait_retries',
         ):
             meta.pop(key, None)
+        z_val = scored_doc.get('z')
+        if z_val is None:
+            z_val = (scored_doc.get('evaluated') or {}).get('z')
+        if z_val is None:
+            z_val = item.z
         updated = apply_transition(
             item, ItemState.NO_DECISION, reason='green-no-candidate',
             updates={
@@ -1602,6 +1619,7 @@ class Controller:
                 'result_stored': True,
                 'fresh': False,
                 'merge_blocked': False,
+                'z': float(z_val) if z_val is not None else None,
                 'meta': meta,
             },
         )
@@ -1613,7 +1631,11 @@ class Controller:
                 'item_id': item.item_id,
                 'epoch': item.epoch,
                 'candidate_id': item.candidate_id,
-                'note': 'GREEN with no box/candidate — terminal block, never apply',
+                'z': updated.z,
+                'note': (
+                    'GREEN with no box/candidate — terminal block; emit DECISION/'
+                    'PIT-RESULT settlement=pending_operator; never apply'
+                ),
             }, default=str),
             flush=True,
         )
