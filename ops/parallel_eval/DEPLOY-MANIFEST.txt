@@ -37,8 +37,6 @@ ops/parallel_eval/pit/prior_job.py
 ops/parallel_eval/pit/queue_ingest.py
 ops/parallel_eval/pit/run_host.py
 #   ↑ writes PE_STATE/pit/HOST-HEARTBEAT.json each tick (mining discovery cutover liveness)
-ops/publish_mimo_public_discovery.py
-#   ↑ under pit.cutover / WARM-OFF accepts PIT heartbeat instead of PE controller PID
 ops/parallel_eval/pit/shadow.py
 ops/parallel_eval/pit/shadow_compare.py
 ops/parallel_eval/pit/signer.py

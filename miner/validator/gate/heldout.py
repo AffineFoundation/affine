@@ -16,6 +16,7 @@ GREEN closes the round: seed, S, the baseline blocks and every candidate's per-t
 While a round is open nothing per-task (and nothing that reveals |S ∩ batch|, such as n or batch overlap) is published.
 Pure functions + private-state helpers; the gate service owns all pod I/O."""
 from __future__ import annotations
+import fcntl
 import hashlib, json, os, time
 from pathlib import Path
 
@@ -312,15 +313,28 @@ class Rounds:
         return b if isinstance(b, dict) and b.get('per_task') else None
 
     def turn_add(self, rid, rec):
-        with open(self.d(rid) / 'TURNS.private.jsonl', 'a') as fh: fh.write(json.dumps(rec, sort_keys=True) + '\n')
-        os.chmod(self.d(rid) / 'TURNS.private.jsonl', 0o600)
+        # Exclusive lock: affine-promotion-gate and PIT host may append concurrently
+        # under cutover (same ST/heldout). Without flock, interleaved writes corrupt
+        # TURNS.private.jsonl. Both sides use this Rounds class.
+        path = self.d(rid) / 'TURNS.private.jsonl'
+        self.d(rid).mkdir(parents=True, exist_ok=True, mode=0o700)
+        with open(path, 'a') as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                fh.write(json.dumps(rec, sort_keys=True) + '\n')
+                fh.flush()
+                os.fsync(fh.fileno())
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        os.chmod(path, 0o600)
 
     def turns(self, rid):
         out = []
         try:
-            for l in open(self.d(rid) / 'TURNS.private.jsonl'):
-                try: out.append(json.loads(l))
-                except Exception: pass
+            with open(self.d(rid) / 'TURNS.private.jsonl') as fh:
+                for l in fh:
+                    try: out.append(json.loads(l))
+                    except Exception: pass
         except FileNotFoundError: pass
         return out
 

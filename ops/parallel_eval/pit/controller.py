@@ -12,10 +12,13 @@ after SEALED (SPEC D3). Lifecycle never waits on these decisions.
 """
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from . import PREFIX_LIVE, PREFIX_SHADOW
@@ -25,6 +28,7 @@ from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .cutover import plan_cutover
 from .decisions import DecisionLog
+from .durable import item_from_dict, item_to_dict, pit_state_root
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentError, RentService, bind_host_rent_service
 from .pe_score import score as pit_score
@@ -282,16 +286,24 @@ class Controller:
                         'box_id': advanced.box_id,
                     })
             except PromoteRefused as exc:
-                failed = self._fail_and_release(item, 'promote-refused:%s' % str(exc)[:200])
+                failed = self._fail_and_release(
+                    item, 'promote-refused:%s' % str(exc)[:200],
+                )
                 self._replace(failed)
-                actions.append({'op': 'no_decision', 'item_id': item.item_id, 'error': str(exc)[:200]})
-            except (
-                ApplyLiveError, Fp32MasterError, RentError, ShadowWriteError,
-                TransitionError, TypeError, ValueError, RuntimeError,
-            ) as exc:
+                actions.append({
+                    'op': 'no_decision', 'item_id': item.item_id,
+                    'error': str(exc)[:200],
+                })
+            except Exception as exc:
+                # Isolate per item: one failure must never abort the tick for peers
+                # (e.g. e1056 still evaluating while e1055 post-decision retries).
                 failed = self._fail_and_release(item, str(exc)[:300])
                 self._replace(failed)
-                actions.append({'op': 'fail', 'item_id': item.item_id, 'error': str(exc)[:200], 'rentals': self.rented_count()})
+                actions.append({
+                    'op': 'fail', 'item_id': item.item_id,
+                    'error': str(exc)[:200], 'rentals': self.rented_count(),
+                    'exc_type': type(exc).__name__,
+                })
 
         return {
             'ok': True,
@@ -415,6 +427,37 @@ class Controller:
             except Exception:
                 pass
 
+    def _worker_result_path(self, item_id: str) -> Path:
+        return pit_state_root() / 'items' / ('%s.worker-result.json' % item_id)
+
+    def _save_worker_result(self, item_id: str, payload: Mapping[str, Any]) -> Path:
+        """Atomically persist finished train+eval before advancing to decided."""
+        path = self._worker_result_path(item_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc = dict(payload)
+        item = doc.get('item')
+        if isinstance(item, ItemRecord):
+            doc['item'] = item_to_dict(item)
+        tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        return path
+
+    def _load_worker_result(self, item_id: str) -> Optional[dict]:
+        path = self._worker_result_path(item_id)
+        try:
+            raw = json.loads(path.read_text())
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        item_raw = raw.get('item')
+        if isinstance(item_raw, dict):
+            raw = dict(raw)
+            raw['item'] = item_from_dict(item_raw)
+        return raw
+
     def _run_box_async(self, item: ItemRecord) -> tuple[ItemRecord, str]:
         """Start one worker thread per item (up to cap); durable so restarts re-adopt.
 
@@ -429,6 +472,9 @@ class Controller:
             done = self._worker_out.pop(item.item_id, None)
         if done is not None:
             return self._apply_worker_result(item, done)
+        disk = self._load_worker_result(item.item_id)
+        if disk is not None:
+            return self._apply_worker_result(item, disk)
         # Snapshot stays PROVISIONING for BoxRunner; controller view moves to TRAINING.
         snapshot = item
         working = apply_transition(item, ItemState.TRAINING, reason='box-worker-start')
@@ -442,6 +488,15 @@ class Controller:
                     snap = apply_transition(snap, ItemState.PROVISIONING, reason='worker-entry')
                 updated, note = self._run_box(snap)
                 payload = dict(ok=True, item=updated, note=note)
+                # Persist BEFORE in-memory handoff so a restart never re-runs train+probe.
+                try:
+                    self._save_worker_result(snap.item_id, payload)
+                except Exception as persist_exc:
+                    payload = dict(
+                        ok=False,
+                        error='worker-result-persist:%s' % str(persist_exc)[:200],
+                        item_id=snap.item_id,
+                    )
             except Exception as exc:
                 payload = dict(ok=False, error=str(exc)[:400], item_id=snap.item_id)
             with self._worker_lock:
@@ -465,7 +520,11 @@ class Controller:
             return self._apply_worker_result(item, done)
         if thr is not None and thr.is_alive():
             return item, 'box-worker-running'
-        # No live worker after restart: re-adopt the box and re-run train+probe.
+        disk = self._load_worker_result(item.item_id)
+        if disk is not None:
+            return self._apply_worker_result(item, disk)
+        # No live worker and no durable result after restart: re-adopt the box
+        # and re-run train+probe.
         if item.box_id and (item.meta or {}).get('pod'):
             meta = dict(item.meta or {})
             meta.pop('probe_bundle', None)
@@ -484,10 +543,23 @@ class Controller:
 
     def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
         if not done.get('ok'):
-            return self._fail_and_release(item, 'box-worker:%s' % (done.get('error') or 'failed')), 'box-worker-fail'
+            return (
+                self._fail_and_release(
+                    item, 'box-worker:%s' % (done.get('error') or 'failed'),
+                ),
+                'box-worker-fail',
+            )
         updated = done.get('item')
         if not isinstance(updated, ItemRecord):
             return self._fail_and_release(item, 'box-worker:bad-result'), 'box-worker-fail'
+        # Ensure durable result exists before any decided transition consumes it.
+        try:
+            self._save_worker_result(item.item_id, done)
+        except Exception as exc:
+            return (
+                self._fail_and_release(item, 'worker-result-persist:%s' % str(exc)[:200]),
+                'box-worker-fail',
+            )
         self._persist(updated)
         return updated, str(done.get('note') or 'box-complete')
 
@@ -741,12 +813,37 @@ class Controller:
         item.meta = dict(item.meta or {}, decision_log_pending=False)
 
     def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        # Recovery (e1055): decided + box already gone + DECISION already on disk.
+        # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish
+        # without re-running apply or changing the decision.
+        if (
+            self.config.is_live()
+            and item.decision
+            and not item.box_id
+            and (item.meta or {}).get('decision_emitted') is not True
+        ):
+            item.meta = dict(item.meta or {}, gate_emit_ready=True)
+            self._seal_decision_log(item)
+            if item.state is ItemState.DECIDED and can_transition(item, ItemState.RELEASED):
+                return apply_transition(
+                    item, ItemState.RELEASED, reason='post-decision-recovery',
+                    updates={'box_id': None, 'box_name': None},
+                ), 'post-decision-recovery'
+            return item, 'post-decision-recovery'
         if self.config.is_live() and self.live_applicator is not None:
             scored = dict((item.meta or {}).get('scored') or {'decision': item.decision})
             try:
                 result = self.live_applicator.apply(item, scored=scored)
             except ApplyLiveError as exc:
                 item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300])
+                # Keep RED / stranded stale GREEN (e1055 recovery). Never keep an
+                # unverified green_fresh — that must become unpaid no_decision.
+                if item.decision in ('red', 'green_stale'):
+                    item.meta['gate_emit_ready'] = True
+                    self._seal_decision_log(item)
+                    return self._destroy_and_release(
+                        item, reason='apply-failed-keep-decision:%s' % str(exc)[:80],
+                    )
                 released = apply_transition(
                     item,
                     ItemState.RELEASED,
@@ -771,7 +868,8 @@ class Controller:
             if result.destroyed_box_state or item.decision != 'green_fresh':
                 return self._destroy_and_release(item, reason=item.decision or 'decided')
             return self._release(item, reason='green_fresh-applied')
-        # Shadow: just release; state already destroyed conceptually.
+        # Shadow / live without applicator: release; still mark emit ready for RED.
+        item.meta = dict(item.meta or {}, gate_emit_ready=True)
         if item.decision and item.decision != 'green_fresh':
             return self._destroy_and_release(item, reason=item.decision)
         return self._release(item, reason='decided')
@@ -787,12 +885,17 @@ class Controller:
         return self._release(item, reason=reason)
 
     def _release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
-        if item.box_id and holds_rental(item) or item.box_id:
-            try:
-                self.rent.release(item.box_id, reason=reason)
-            except Exception:
-                if item.box_id in self.rent.ledger.active:
-                    self.rent.ledger.release(item.box_id, reason='force-%s' % reason, at=self.now_fn())
+        if item.box_id and (holds_rental(item) or item.box_id):
+            # Skip rent.release when already out of the active ledger (idempotent
+            # decided-item retries must not grow history).
+            if item.box_id in self.rent.ledger.active:
+                try:
+                    self.rent.release(item.box_id, reason=reason)
+                except Exception:
+                    if item.box_id in self.rent.ledger.active:
+                        self.rent.ledger.release(
+                            item.box_id, reason='force-%s' % reason, at=self.now_fn(),
+                        )
         if item.state is ItemState.RELEASED:
             return item, 'already-released'
         if can_transition(item, ItemState.RELEASED):
@@ -806,11 +909,17 @@ class Controller:
         return item, 'release-noop'
 
     def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Always return an ItemRecord (never a (item, note) tuple)."""
         if item.state is ItemState.DECIDED:
             item.last_error = reason
-            return self._destroy_and_release(item, reason=reason)
+            # Post-decision failures (e.g. destroy TypeError, emit deps) must still
+            # clear the box and surface gate_emit_ready so later ticks finish
+            # turns / PIT-RESULT without changing the decision.
+            released, _note = self._destroy_and_release(item, reason=reason)
+            released.meta = dict(released.meta or {}, gate_emit_ready=True)
+            return released
         next_attempt = item.attempt + 1
-        if item.box_id:
+        if item.box_id and item.box_id in self.rent.ledger.active:
             try:
                 self.rent.release(item.box_id, reason='fail:%s' % reason[:60])
             except Exception:

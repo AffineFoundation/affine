@@ -21,7 +21,7 @@ from . import PREFIX_LIVE, PREFIX_SHADOW
 from .box import BoxIO, ScriptedBoxIO
 from .config import PitConfig, load_pit_config
 from .decision_emit import gate_epochs_root
-from .gate_writer import HostGateWriter
+from .gate_writer import HostGateWriter, build_host_rounds
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentService, _bind_offer_precheck, bind_host_rent_service
 from .pe_score import call_live_host_score
@@ -484,9 +484,19 @@ def build_live_host_bundle(
             result=kwargs.get('result') or {},
         )
 
+    rounds = None
+    if cfg.is_live():
+        # Explicit rounds= — same construction as gate_service.rounds()
+        # (heldout.Rounds under HG_GATE_STATE/PE_GATE_STATE/PE_HELDOUT).
+        rounds = build_host_rounds(
+            gate_state=extra.get('gate_state_root') or os.environ.get('HG_GATE_STATE')
+            or os.environ.get('PE_GATE_STATE'),
+            heldout=extra.get('heldout_root') or os.environ.get('PE_HELDOUT'),
+        )
     gate_writer = HostGateWriter(
         epochs_root=gate_epochs_root(extra.get('gate_epochs_root')),
         shadow=bool(cfg.is_shadow()),
+        rounds=rounds,
     )
 
     pe_apply_accept = None

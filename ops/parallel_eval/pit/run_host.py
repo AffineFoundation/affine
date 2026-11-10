@@ -32,7 +32,7 @@ from .controller import Controller
 from .cutover import plan_cutover
 from .decision_emit import emit_decision, gate_epochs_root
 from .durable import DurableStore, pit_state_root
-from .gate_writer import HostGateWriter
+from .gate_writer import GateWriteError, HostGateWriter, build_host_rounds
 from .host_wiring import LiveWiringError, build_live_host_bundle
 from .pe_score import nest_heldout_fields
 from .queue_ingest import (
@@ -221,20 +221,46 @@ def tick_once(
         item.meta['scored'] = scored
         # HostGateWriter requires a complete heldout block — never silently skip.
         if not (scored.get('heldout') or {}).get('set_size'):
-            raise RuntimeError(
-                'heldout.set_size missing after nest_heldout_fields '
-                '(epoch=%s decision=%s); refuse silent DECISION skip'
-                % (item.epoch, item.decision)
+            print(
+                json.dumps({
+                    'component': 'pit-run-host',
+                    'level': 'error',
+                    'event': 'emit_heldout_incomplete',
+                    'epoch': item.epoch,
+                    'decision': item.decision,
+                }),
+                file=sys.stderr,
+                flush=True,
             )
-        gw = HostGateWriter(
-            epochs_root=gate_epochs_root(),
-            shadow=ctl.config.is_shadow(),
-        )
-        path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
+            continue
+        try:
+            gw = HostGateWriter(
+                epochs_root=gate_epochs_root(),
+                shadow=ctl.config.is_shadow(),
+                rounds=build_host_rounds(),
+            )
+            path = emit_decision(item, scored=scored, gate_writer=gw, config=ctl.config)
+        except (GateWriteError, RuntimeError, ValueError, OSError) as exc:
+            # Keep decision_emitted unset so later ticks retry (e1055 recovery).
+            print(
+                json.dumps({
+                    'component': 'pit-run-host',
+                    'level': 'error',
+                    'event': 'emit_decision_failed',
+                    'epoch': item.epoch,
+                    'item_id': item.item_id,
+                    'error': str(exc)[:400],
+                }),
+                file=sys.stderr,
+                flush=True,
+            )
+            item.meta = dict(item.meta or {}, last_emit_error=str(exc)[:300])
+            store.save_item(item)
+            continue
         if path:
             summary['advanced'].append({'epoch': item.epoch, 'decision': str(path)})
         # Miner-credit marker: queue_ingest skips once PIT-RESULT exists.
-        epoch_dir = (item.meta or {}).get('epoch_dir')
+        epoch_dir = _epoch_dir_for_item(item)
         if epoch_dir:
             write_pit_result(
                 Path(epoch_dir),
@@ -259,24 +285,51 @@ def tick_once(
         )
         store.persist_decisions()
         item.meta['decision_emitted'] = True
+        # Once the decision is written, ensure the box is released (idempotent).
+        if item.box_id:
+            released, _note = ctl._release(item, reason='post-emit')
+            ctl._replace(released)
+            item = released
         store.save_item(item)
     return summary
 
 
+def _epoch_dir_for_item(item) -> Optional[str]:
+    meta = item.meta or {}
+    if meta.get('epoch_dir'):
+        return str(meta['epoch_dir'])
+    for key in ('LIFE_ROOT', 'PE_LIFE'):
+        root = os.environ.get(key)
+        if root:
+            return str(Path(root) / 'epochs' / str(int(item.epoch)))
+    return None
+
+
 def _gate_emit_ready(item) -> bool:
-    """True when it is safe to write DECISION.json for this item."""
+    """True when it is safe to write DECISION.json for this item.
+
+    Do not treat bare ``decided`` as ready — that races emit before box release.
+    ``gate_emit_ready`` is set in ``_finish_decision`` (after apply, with release).
+    Recovery: decided+released with last_error still emits so turns/PIT-RESULT finish.
+    """
     d = item.decision
     if not d:
         return False
     meta = item.meta or {}
     if d == 'green_fresh':
         apply = meta.get('live_apply') or {}
-        return bool(apply.get('applied') and apply.get('master_verified') and apply.get('candidate_verified'))
-    if d in ('green_stale', 'red', 'no_decision'):
-        # Terminal or post-finish; green_stale/red may emit from DECIDED after finish started.
-        return bool(meta.get('gate_emit_ready')) or item.state.value in (
-            'released', 'no_decision', 'decided',
+        return bool(
+            apply.get('applied')
+            and apply.get('master_verified')
+            and apply.get('candidate_verified')
         )
+    if d in ('green_stale', 'red', 'no_decision'):
+        if meta.get('gate_emit_ready'):
+            return True
+        # e1055-style recovery: already released, decision known, emit unfinished.
+        if item.state.value == 'released' and not meta.get('decision_emitted'):
+            return True
+        return False
     return False
 
 

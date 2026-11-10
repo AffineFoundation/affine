@@ -2,6 +2,10 @@
 
 All live ``DECISION.json`` / ``EVALUATED.private.json`` writes go through a
 ``GateWriter``. Shadow mode refuses every write.
+
+Rounds / K1 grants must be wired explicitly (or resolved fail-closed). Never
+write EVALUATED/DECISION before dependencies resolve — a mid-write failure must
+not leave a half-published GREEN.
 """
 from __future__ import annotations
 
@@ -30,6 +34,12 @@ HELDOUT_REQUIRED_KEYS = frozenset({
     'sigma_run_floor',
     'baseline_done_at_cr',
 })
+
+# Core identity for idempotent re-emit. Timestamps / notices / reason text may
+# differ on retry (e1055 recovery) without meaning a different verdict.
+_DECISION_IDENTITY_KEYS = (
+    'epoch', 'head', 'candidate', 'decision', 'no_decision', 'merge_blocked',
+)
 
 
 class GateWriteError(RuntimeError):
@@ -61,8 +71,148 @@ def _wj(path: Path, obj: Any, mode: int = 0o600) -> None:
     os.replace(tmp, path)
 
 
+def _rj(path: Path, default=None):
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return default
+
+
+def _log(**kw):
+    kw = dict(kw)
+    kw['at'] = round(time.time(), 1)
+    kw['at_cr'] = _cr(kw['at'])
+    print(json.dumps(kw, default=str), flush=True)
+
+
 def _assert_public(bv: Any, evaluated: Mapping[str, Any], reasons: Any, heldout: Mapping[str, Any]) -> None:
     bv.assert_public(dict(evaluated=evaluated, reasons=reasons, heldout=heldout), True)
+
+
+def gate_state_root(explicit: Optional[str] = None) -> Path:
+    """Gate private state root (parent of ``epochs/`` and ``heldout/``).
+
+    Env (first match): ``HG_GATE_STATE``, ``PE_GATE_STATE``, or parent of
+    ``PE_GATE_EP``. No hardcoded host paths.
+    """
+    if explicit:
+        return Path(explicit)
+    for key in ('HG_GATE_STATE', 'PE_GATE_STATE'):
+        env = os.environ.get(key)
+        if env:
+            return Path(env)
+    ep = os.environ.get('PE_GATE_EP')
+    if ep:
+        return Path(ep).parent
+    raise GateWriteError(
+        'gate state root unset: set HG_GATE_STATE or PE_GATE_STATE '
+        '(or PE_GATE_EP pointing at <gate-state>/epochs)'
+    )
+
+
+def heldout_root(explicit: Optional[str] = None) -> Path:
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get('PE_HELDOUT')
+    if env:
+        return Path(env)
+    return gate_state_root() / 'heldout'
+
+
+def _import_gate_service():
+    """Import gate_service when present on PYTHONPATH (host promotion-gate code).
+
+    Side effects if imported from ``ops.promotion_gate.gate_service``: module-level
+    ``sys.path`` insert and default path constants. Prefer an explicit
+    ``rounds=`` / ``build_host_rounds()`` construction from env instead.
+    """
+    errors = []
+    for name in (
+        'gate_service',
+        'ops.promotion_gate.gate_service',
+        'miner.validator.gate.gate_service',
+    ):
+        try:
+            return importlib.import_module(name)
+        except ImportError as exc:
+            errors.append('%s: %s' % (name, exc))
+    return None
+
+
+def build_host_rounds(
+    *,
+    gate_state: Optional[str | Path] = None,
+    heldout: Optional[str | Path] = None,
+) -> Any:
+    """Build ``heldout.Rounds`` the way ``gate_service.rounds()`` does.
+
+    Prefer constructing ``Rounds(ST/'heldout', wj, rj, log, cr)`` from env so
+    we do not need to import gate_service (host-path side effects). Fall back to
+    ``gate_service.rounds()`` when that module is importable.
+    """
+    # Fallback first only when the operator has already put gate_service on the
+    # path AND we cannot resolve a heldout root from env — otherwise build local.
+    root: Optional[Path] = None
+    try:
+        root = heldout_root(str(heldout) if heldout is not None else None)
+    except GateWriteError:
+        root = None
+    if root is None and gate_state is not None:
+        root = Path(gate_state) / 'heldout'
+
+    if root is not None:
+        HO = None
+        for name in ('heldout', 'miner.validator.gate.heldout'):
+            try:
+                HO = importlib.import_module(name)
+                break
+            except ImportError:
+                continue
+        if HO is not None and hasattr(HO, 'Rounds'):
+            return HO.Rounds(root, _wj, _rj, _log, _cr)
+
+    mod = _import_gate_service()
+    if mod is not None:
+        factory = getattr(mod, 'rounds', None)
+        if callable(factory):
+            return factory()
+
+    raise GateWriteError(
+        'host heldout rounds() unavailable: need heldout.Rounds + '
+        'HG_GATE_STATE/PE_GATE_STATE/PE_HELDOUT (or importable gate_service.rounds)'
+    )
+
+
+def _resolve_k1_grant_fn(
+    explicit: Optional[Callable[[int, str], Any]],
+    *,
+    required: bool,
+) -> Optional[Callable[[int, str], Any]]:
+    if explicit is not None:
+        return explicit
+    mod = _import_gate_service()
+    if mod is not None:
+        for attr in ('_k1_grant_no_decision', 'k1_grant_no_decision', '_grant_no_decision'):
+            fn = getattr(mod, attr, None)
+            if callable(fn):
+                return fn
+    if required:
+        raise GateWriteError(
+            'k1 grant fn unavailable: pass k1_grant_fn= or put gate_service '
+            '(_k1_grant_no_decision) on PYTHONPATH'
+        )
+    return None
+
+
+def _decision_identity(doc: Mapping[str, Any]) -> dict:
+    out = {k: doc.get(k) for k in _DECISION_IDENTITY_KEYS}
+    ev = doc.get('evaluated') or {}
+    out['evaluated_z'] = ev.get('z') if isinstance(ev, Mapping) else None
+    return out
+
+
+def _same_decision(existing: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    return _decision_identity(existing) == _decision_identity(new)
 
 
 @runtime_checkable
@@ -95,21 +245,6 @@ class GateWriter(Protocol):
         ...
 
 
-def _resolve_k1_grant_fn(explicit: Optional[Callable[[int, str], Any]]) -> Optional[Callable[[int, str], Any]]:
-    if explicit is not None:
-        return explicit
-    for name in ('gate_service', 'ops.promotion_gate.gate_service'):
-        try:
-            mod = importlib.import_module(name)
-        except ImportError:
-            continue
-        for attr in ('_k1_grant_no_decision', 'k1_grant_no_decision', '_grant_no_decision'):
-            fn = getattr(mod, attr, None)
-            if callable(fn):
-                return fn
-    return None
-
-
 @dataclass
 class HostGateWriter:
     """Writes through host gate modules when available (BV.assert_public, R.turn_add)."""
@@ -123,20 +258,19 @@ class HostGateWriter:
 
     def __post_init__(self) -> None:
         self._bv = self.baseline_v1 if self.baseline_v1 is not None else _load_baseline_v1()
-        self._k1_grant = _resolve_k1_grant_fn(self.k1_grant_fn)
+        # Do not silently bind a missing k1 grant — resolve fail-closed when needed.
 
     def _rounds(self):
         if self.rounds is not None:
             return self.rounds
-        for name in ('heldout', 'miner.validator.gate.heldout'):
-            try:
-                mod = importlib.import_module(name)
-            except ImportError:
-                continue
-            factory = getattr(mod, 'rounds', None)
-            if callable(factory):
-                return factory()
-        raise GateWriteError('host heldout rounds() unavailable')
+        # Fail closed: never invent a no-op rounds. Prefer explicit rounds= from
+        # host_wiring / run_host; fall back to build_host_rounds / gate_service.
+        return build_host_rounds()
+
+    def _k1_grant(self, epoch: int, why: str) -> Any:
+        fn = _resolve_k1_grant_fn(self.k1_grant_fn, required=True)
+        assert fn is not None
+        return fn(epoch, why)
 
     def _refuse_shadow(self) -> None:
         if self.shadow:
@@ -162,6 +296,14 @@ class HostGateWriter:
         reasons_list = list(reasons or [])
         _assert_public(self._bv, evaluated, reasons_list, heldout)
         gate_decision = map_pit_decision(decision)
+        # Resolve ALL side-effect deps BEFORE any epoch artifact write.
+        R = self._rounds()
+        need_k1 = bool(no_decision or gate_decision == 'no_decision')
+        grant = None
+        if need_k1:
+            grant = self._k1_grant(
+                epoch, '; '.join(reasons_list) if reasons_list else 'no_decision',
+            )
         now = time.time()
         rid = str(heldout['round_id'])
         dec = dict(
@@ -185,36 +327,81 @@ class HostGateWriter:
             red_credit='zero',
             source='pit',
         )
-        if dec['no_decision']:
-            grant = self._k1_grant(epoch, '; '.join(reasons_list) if reasons_list else 'no_decision') if self._k1_grant else None
-            if grant is not None:
-                dec['k1_grant'] = grant
+        if grant is not None:
+            dec['k1_grant'] = grant
         epoch_dir = self.epochs_root / str(int(epoch))
-        _wj(epoch_dir / 'EVALUATED.private.json', dict(evaluated=dec['evaluated']), 0o600)
         decision_path = epoch_dir / 'DECISION.json'
+        if decision_path.exists():
+            existing = _rj(decision_path)
+            if not isinstance(existing, Mapping):
+                raise GateWriteError(
+                    'existing DECISION.json unreadable for epoch %d' % int(epoch)
+                )
+            if not _same_decision(existing, dec):
+                raise GateWriteError(
+                    'conflicting DECISION.json for epoch %d '
+                    '(refuse overwrite of different decision)' % int(epoch)
+                )
+            # Identical content: idempotent re-emit. Still ensure turn/close.
+            self._turn_and_maybe_close(
+                R, rid=rid, dec=existing if isinstance(existing, dict) else dec,
+                plan_seed=plan_seed, gate_decision=gate_decision,
+                merge_blocked=merge_blocked,
+            )
+            return decision_path
+        _wj(epoch_dir / 'EVALUATED.private.json', dict(evaluated=dec['evaluated']), 0o600)
         _wj(decision_path, dec, 0o600)
-        R = self._rounds()
-        z_val = (dec['evaluated'] or {}).get('z')
-        R.turn_add(
-            rid,
-            dict(
-                epoch=int(epoch),
-                candidate=candidate,
-                decision=gate_decision,
-                z=z_val,
-                plan_seed=plan_seed,
-                batch=[],
-                evaluated=dec['evaluated'],
-                reasons=dec['reasons'],
-                decided_at=dec['decided_at'],
-                prior_v1=True,
-                parallel_eval=True,
-            ),
+        self._turn_and_maybe_close(
+            R, rid=rid, dec=dec, plan_seed=plan_seed,
+            gate_decision=gate_decision, merge_blocked=merge_blocked,
         )
-        if gate_decision == 'green' and not merge_blocked and not dec['no_decision']:
+        return decision_path
+
+    def _turn_and_maybe_close(
+        self,
+        R: Any,
+        *,
+        rid: str,
+        dec: Mapping[str, Any],
+        plan_seed: str,
+        gate_decision: str,
+        merge_blocked: bool,
+    ) -> None:
+        z_val = (dec.get('evaluated') or {}).get('z')
+        epoch = int(dec['epoch'])
+        candidate = str(dec.get('candidate') or '')
+        # Skip duplicate turn rows for the same epoch+candidate+decision.
+        try:
+            prior = list(R.turns(rid) or [])
+        except Exception:
+            prior = []
+        already = any(
+            int(t.get('epoch', -1)) == epoch
+            and str(t.get('candidate') or '') == candidate
+            and str(t.get('decision') or '') == gate_decision
+            for t in prior
+            if isinstance(t, Mapping)
+        )
+        if not already:
+            R.turn_add(
+                rid,
+                dict(
+                    epoch=epoch,
+                    candidate=candidate,
+                    decision=gate_decision,
+                    z=z_val,
+                    plan_seed=plan_seed,
+                    batch=[],
+                    evaluated=dec.get('evaluated'),
+                    reasons=dec.get('reasons'),
+                    decided_at=dec.get('decided_at'),
+                    prior_v1=True,
+                    parallel_eval=True,
+                ),
+            )
+        if gate_decision == 'green' and not merge_blocked and not dec.get('no_decision'):
             if not R.closed(rid):
                 R.close(rid, 'green e%d (candidate %s, pit)' % (epoch, candidate[:12]), epoch)
-        return decision_path
 
     def write_no_decision(
         self,
@@ -225,7 +412,8 @@ class HostGateWriter:
         why: str,
     ) -> Path:
         self._refuse_shadow()
-        grant = self._k1_grant(epoch, why) if self._k1_grant else None
+        # Resolve grant BEFORE writing DECISION.json.
+        grant = self._k1_grant(epoch, why)
         heldout = dict(round_id='', no_decision=True)
         now = time.time()
         dec = dict(
@@ -244,11 +432,18 @@ class HostGateWriter:
             chart_status='no_decision',
             red_credit='zero',
             source='pit',
+            k1_grant=grant,
         )
-        if grant is not None:
-            dec['k1_grant'] = grant
         epoch_dir = self.epochs_root / str(int(epoch))
         decision_path = epoch_dir / 'DECISION.json'
+        if decision_path.exists():
+            existing = _rj(decision_path)
+            if isinstance(existing, Mapping) and _same_decision(existing, dec):
+                return decision_path
+            if isinstance(existing, Mapping):
+                raise GateWriteError(
+                    'conflicting DECISION.json for epoch %d' % int(epoch)
+                )
         _wj(decision_path, dec, 0o600)
         return decision_path
 
@@ -322,8 +517,14 @@ class RecordingGateWriter:
             source='pit',
         )
         epoch_dir = self.epochs_root / str(int(epoch))
-        _wj(epoch_dir / 'EVALUATED.private.json', dict(evaluated=dec['evaluated']), 0o600)
         decision_path = epoch_dir / 'DECISION.json'
+        if decision_path.exists():
+            existing = _rj(decision_path)
+            if isinstance(existing, Mapping) and _same_decision(existing, dec):
+                return decision_path
+            if isinstance(existing, Mapping):
+                raise GateWriteError('conflicting DECISION.json for epoch %d' % int(epoch))
+        _wj(epoch_dir / 'EVALUATED.private.json', dict(evaluated=dec['evaluated']), 0o600)
         _wj(decision_path, dec, 0o600)
         z_val = (dec['evaluated'] or {}).get('z')
         self.turn_add(

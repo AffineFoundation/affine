@@ -140,10 +140,14 @@ class RentalLedger:
         self.history.append(dict(op='rent', box_id=box_id, item_id=item_id, name=name, at=at))
 
     def release(self, box_id: str, *, reason: str, at: float) -> None:
-        meta = self.active.pop(box_id, None)
+        # Idempotent: skip when already out of active (decided-item retries /
+        # restarts must not grow history with duplicate release rows).
+        if box_id not in self.active:
+            return
+        meta = self.active.pop(box_id)
         self.history.append(dict(
             op='release', box_id=box_id, reason=reason, at=at,
-            item_id=None if meta is None else meta.get('item_id'),
+            item_id=meta.get('item_id'),
         ))
 
     def save(self, path: str) -> None:
@@ -377,9 +381,9 @@ class RentService:
 
     def release(self, box_id: str, *, reason: str = 'done') -> Dict[str, Any]:
         at = float(self.now_fn())
-        name_hint = ''
-        if box_id in self.ledger.active:
-            name_hint = str(self.ledger.active[box_id].get('name') or '')
+        if box_id not in self.ledger.active:
+            return dict(ok=True, box_id=box_id, already_released=True, reason=reason, at=at)
+        name_hint = str(self.ledger.active[box_id].get('name') or '')
         if self.host_release is not None:
             try:
                 self._host_release(box_id, reason=reason)

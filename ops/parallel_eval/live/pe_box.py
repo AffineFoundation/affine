@@ -1233,7 +1233,9 @@ def box_io_factory() -> HostBoxIO:
     return HostBoxIO()
 
 
-def destroy_box_state(*, box_id: str, reason: str = 'done') -> Mapping[str, Any]:
+def destroy_box_state(*, box_id: str, reason: str = 'done', **_ignored) -> Mapping[str, Any]:
+    # Accept/ignore extra kwargs (e.g. candidate_id from apply_live) so PIT
+    # destroy calls never TypeError on the live pe_box signature.
     return dict(ok=True, box_id=box_id, reason=reason)
 
 

@@ -9,6 +9,10 @@ Environment=LIFE_ROOT=%h/REPLACE_ME/training-lifecycle-root
 Environment=PE_LIFE=%h/REPLACE_ME/training-lifecycle-root
 Environment=PE_LIFE_STATE=%h/REPLACE_ME/pe-life-state
 Environment=PE_STATE=%h/REPLACE_ME/parallel-cutover/state
+# Gate private state (epochs/ + heldout/); required for HostGateWriter rounds/turn_add.
+Environment=HG_GATE_STATE=%h/REPLACE_ME/promotion-gate/state
+Environment=PE_GATE_EP=%h/REPLACE_ME/promotion-gate/state/epochs
+Environment=PE_HELDOUT=%h/REPLACE_ME/promotion-gate/state/heldout
 Environment=PE_SYNC_EXPECTED_HASH=%h/REPLACE_ME/sync_expected_hash.py
 Environment=AFFINE_PIT_HOST_KEY_FILE=%h/REPLACE_ME/pit-host.key
 Environment=AFFINE_PIT_HOST_CERT_FILE=%h/REPLACE_ME/pit-host.cert.json

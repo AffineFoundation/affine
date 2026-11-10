@@ -79,7 +79,11 @@ def destroy_box_state(
     candidate_id: Optional[str],
     reason: str,
 ) -> Dict[str, Any]:
-    return dict(destroy_fn(box_id=box_id, candidate_id=candidate_id, reason=reason))
+    """Call host destroy; live pe_box.destroy_box_state has no candidate_id."""
+    try:
+        return dict(destroy_fn(box_id=box_id, candidate_id=candidate_id, reason=reason))
+    except TypeError:
+        return dict(destroy_fn(box_id=box_id, reason=reason))
 
 
 def verify_green_uploads(
