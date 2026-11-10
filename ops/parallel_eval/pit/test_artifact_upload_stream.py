@@ -179,10 +179,14 @@ class TestFakepassIsolation(unittest.TestCase):
     def test_sandbox_under_tmp(self):
         from ops.parallel_eval.pit import fakepass as FP
         paths = FP.make_sandbox('testisol')
-        self.assertTrue(str(paths['root']).startswith('/tmp'))
-        self.assertTrue((paths['root'] / 'FAKEPASS-ISOLATION.json').is_file())
-        doc = json.loads((paths['root'] / 'FAKEPASS-ISOLATION.json').read_text())
-        self.assertFalse(doc['opens_live_ledger'])
+        try:
+            self.assertTrue(str(paths['root']).startswith('/tmp'))
+            self.assertTrue((paths['root'] / 'FAKEPASS-ISOLATION.json').is_file())
+            doc = json.loads((paths['root'] / 'FAKEPASS-ISOLATION.json').read_text())
+            self.assertFalse(doc['opens_live_ledger'])
+        finally:
+            FP.cleanup_sandbox(paths)
+        self.assertFalse(paths['root'].exists())
 
     def test_fake_result_never_promotes(self):
         from ops.parallel_eval.pit import fakepass as FP
