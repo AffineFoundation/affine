@@ -233,6 +233,10 @@ def _epoch_dir_ready(epoch_dir: Path) -> bool:
         return False
     if (epoch_dir / 'PIT-RESULT.json').is_file():
         return False
+    # Sanctioned rerun in flight: do not re-enqueue. PIT-RESULT stays absent so
+    # max_pending / backpressure still count the epoch.
+    if (epoch_dir / 'RERUN-ACTIVE.json').is_file():
+        return False
     if (epoch_dir / 'FINALIZED.json').is_file():
         # After lifecycle finalize: only PIT-DISPATCHED epochs remain for PIT.
         if not (epoch_dir / 'PIT-DISPATCHED.json').is_file():

@@ -5,7 +5,9 @@ Owned by PIT (PR #96). Live ``affine-gate-ledger`` runs a different file
 ``artifacts/gate_ledger_live_patch.py`` for the minimal operator patch.
 
 Rules:
-  * A PE epoch is ``promoted`` only when a HEAD-CHAIN row exists for its candidate.
+  * Apply HEAD-CHAIN promotion checks ONLY to PIT epochs (``PIT-DISPATCHED.json``).
+  * Pre-PE / non-PIT ledger rows are left untouched.
+  * A PIT GREEN is ``promoted`` only when a HEAD-CHAIN row exists for its candidate.
   * Archived attempt-1 decisions are ``superseded`` (never listed as promoted).
 """
 from __future__ import annotations
@@ -14,7 +16,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 
 def _rj(path: Path, default=None):
@@ -67,14 +69,25 @@ def epoch_decision_archived(gate_epochs: Path, epoch: int) -> bool:
     return (Path(gate_epochs) / str(int(epoch)) / 'attempt-1' / 'DECISION.json').is_file()
 
 
+def epoch_is_pit(life_epochs: Path, epoch: int) -> bool:
+    """True when lifecycle marked the epoch as PIT-owned (PIT-DISPATCHED)."""
+    return (Path(life_epochs) / str(int(epoch)) / 'PIT-DISPATCHED.json').is_file()
+
+
 def reconcile_entry(
     ent: Mapping[str, Any],
     *,
     chain_candidates: set,
     archived: bool,
+    is_pit: bool = False,
 ) -> Dict[str, Any]:
-    """Return a corrected ledger entry (does not mutate input)."""
+    """Return a corrected ledger entry (does not mutate input).
+
+    Non-PIT rows are returned unchanged so pre-PE history keeps its verdicts.
+    """
     out = dict(ent)
+    if not is_pit:
+        return out
     cand = out.get('candidate')
     decision = out.get('decision')
     if archived:
@@ -87,7 +100,7 @@ def reconcile_entry(
             out['verdict'] = 'promoted'
             out['reconcile'] = 'head-chain'
         else:
-            # GREEN decision without HEAD-CHAIN — not actually promoted.
+            # PIT GREEN without HEAD-CHAIN — not actually promoted (e.g. e1062).
             out['verdict'] = 'rejected'
             out['reconcile'] = 'green-without-head-chain'
             out['promoted_refused'] = True
@@ -102,22 +115,31 @@ def reconcile_ledger(
     ledger_path: Path,
     head_chain_path: Path,
     gate_epochs: Path,
+    life_epochs: Path,
     out_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Rewrite ledger rows with HEAD-CHAIN / archive reconcile.
+    """Rewrite ledger rows with PIT-only HEAD-CHAIN / archive reconcile.
 
     Writes ``out_path`` (default: sibling ``LEDGER.reconciled.jsonl``) and a
-    summary JSON. Never deletes the original ledger.
+    summary JSON. Never deletes the original ledger. Pre-PE rows unchanged.
     """
     rows = load_jsonl(Path(ledger_path))
     chain = _rj(Path(head_chain_path)) or {}
     cands = head_chain_candidates(chain if isinstance(chain, Mapping) else {})
     fixed: List[dict] = []
-    n_promoted = n_rejected = n_superseded = 0
+    n_promoted = n_rejected = n_superseded = n_untouched = 0
     for ent in rows:
-        archived = epoch_decision_archived(Path(gate_epochs), int(ent.get('epoch') or -1))
-        row = reconcile_entry(ent, chain_candidates=cands, archived=archived)
+        ep = int(ent.get('epoch') or -1)
+        is_pit = epoch_is_pit(Path(life_epochs), ep)
+        archived = epoch_decision_archived(Path(gate_epochs), ep) if is_pit else False
+        before = dict(ent)
+        row = reconcile_entry(
+            ent, chain_candidates=cands, archived=archived, is_pit=is_pit,
+        )
         fixed.append(row)
+        if not is_pit:
+            n_untouched += 1
+            continue
         v = row.get('verdict')
         if v == 'promoted':
             n_promoted += 1
@@ -125,6 +147,8 @@ def reconcile_ledger(
             n_superseded += 1
         else:
             n_rejected += 1
+        # Keep silence on unused before.
+        del before
     dest = Path(out_path) if out_path else Path(ledger_path).with_name('LEDGER.reconciled.jsonl')
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name('.%s.tmp' % dest.name)
@@ -142,6 +166,7 @@ def reconcile_ledger(
             'promoted': n_promoted,
             'rejected': n_rejected,
             'superseded': n_superseded,
+            'untouched_non_pit': n_untouched,
         },
         'reconciled_at': time.time(),
     }
@@ -154,10 +179,12 @@ def reconcile_rows(
     *,
     chain_candidates: Optional[set] = None,
     archived_epochs: Optional[set] = None,
+    pit_epochs: Optional[Set[int]] = None,
 ) -> List[Dict[str, Any]]:
     """Pure helper for tests."""
     cands = set(chain_candidates or ())
     archived = set(archived_epochs or ())
+    pit = set(pit_epochs or ())
     out = []
     for ent in rows:
         ep = int(ent.get('epoch') or -1)
@@ -165,5 +192,6 @@ def reconcile_rows(
             ent,
             chain_candidates=cands,
             archived=ep in archived,
+            is_pit=ep in pit,
         ))
     return out

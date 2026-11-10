@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 """Minimal patch for the LIVE affine-gate-ledger unit file.
 
-Target (outside this repo):
-  /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/gate_ledger.py
+Target: the file the live ``affine-gate-ledger`` unit already runs
+(``20261026-promotion-gate/code/gate_ledger.py``). Do NOT apply this to the
+PR rule-text copies under ``ops/zbar_flat`` / ``ops/green_only_reveal`` in a
+way that diverges them.
 
-Do NOT apply this to the PR copies under ops/zbar_flat or ops/green_only_reveal
-in a way that diverges their rule-text role. Operator ports this into the live
-unit only.
+What it changes (PIT epochs only):
+  * GREEN ⇒ ``promoted`` only when HEAD-CHAIN (via the live file's existing
+    ``PE_ST``) lists the candidate.
+  * Archived ``attempt-1/DECISION.json`` with no live DECISION ⇒ ``superseded``.
+  * Pre-PE / non-PIT rows keep their existing verdicts untouched.
 
-What it changes:
-  1. ``entry()`` — GREEN ⇒ ``promoted`` only when HEAD-CHAIN lists the candidate;
-     archived ``attempt-1/DECISION.json`` ⇒ ``verdict=superseded``.
-  2. ``tick()`` — when rewriting/appending, re-stamp existing GREEN rows that
-     lack HEAD-CHAIN as rejected (append a reconcile correction line once).
+Result for the lost GREENs: e1062 becomes ``rejected`` now; once archived by
+a sanctioned rerun it becomes ``superseded``.
 
-Apply by hand (or `python3 artifacts/gate_ledger_live_patch.py --print` to
-stdout the snippet). This file is documentation + snippet, not an auto-editor
-of the live host.
+Print the snippet with ``python3 -m ops.parallel_eval.pit.artifacts.gate_ledger_live_patch``.
+This file is documentation + snippet, not an auto-editor of the live host.
 """
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Snippet to splice into live gate_ledger.py (after the existing helpers).
+# Snippet to splice into live gate_ledger.py (replace ``entry``).
+# Assumes the live module already defines PE_ST, EP, LIFE, rj, mtime, cr,
+# manifest_window, pre_probe — do not invent host-path fallbacks here.
 # ---------------------------------------------------------------------------
 
 LIVE_SNIPPET = r'''
 # --- PIT sanctioned-rerun reconcile (2026-11-10) ---------------------------
-HEAD_CHAIN = Path(os.environ.get('PE_STATE') or '/home/const/subnet120-rewrite/state/parallel-eval') / 'HEAD-CHAIN.json'
+# HEAD-CHAIN lives under the live unit's existing PE_ST (never invent a path).
+HEAD_CHAIN = PE_ST / 'HEAD-CHAIN.json'
 
 
 def _head_chain_candidates():
@@ -48,10 +51,13 @@ def _decision_archived(e):
     return (EP / str(e) / 'attempt-1' / 'DECISION.json').exists()
 
 
+def _is_pit_epoch(e):
+    return (LIFE / 'epochs' / str(e) / 'PIT-DISPATCHED.json').exists()
+
+
 def entry(e):
     d = EP / str(e); dec = rj(d / 'DECISION.json')
     archived = _decision_archived(e)
-    # Prefer live DECISION; if only the archive remains, read it as superseded.
     if (not dec or dec.get('decision') not in ('green', 'red')) and archived:
         dec = rj(d / 'attempt-1' / 'DECISION.json')
     if not dec or dec.get('decision') not in ('green', 'red'):
@@ -61,12 +67,19 @@ def entry(e):
     tl = rj(d / 'TIMELINE.json') or {}
     ev = dec.get('evaluated') or {}
     start, deadline = manifest_window(e)
-    if archived and not (d / 'DECISION.json').exists():
+    is_pit = _is_pit_epoch(e)
+    if is_pit and archived and not (d / 'DECISION.json').exists():
         verdict = 'superseded'
-    elif dec['decision'] == 'green':
-        verdict = 'promoted' if dec.get('candidate') in _head_chain_candidates() else 'rejected'
+        reconcile = 'archived-attempt'
+    elif is_pit and dec['decision'] == 'green':
+        if dec.get('candidate') in _head_chain_candidates():
+            verdict = 'promoted'; reconcile = 'head-chain'
+        else:
+            verdict = 'rejected'; reconcile = 'green-without-head-chain'
     else:
-        verdict = 'rejected'
+        # Non-PIT (pre-PE) history: keep the classic green→promoted mapping.
+        verdict = 'promoted' if dec['decision'] == 'green' else 'rejected'
+        reconcile = 'pre-pit' if not is_pit else ('red' if dec['decision'] == 'red' else 'head-chain')
     return dict(
         epoch=e, head=dec['head'], candidate=dec['candidate'], decision=dec['decision'], verdict=verdict,
         applied=applied.get('decision'), mode=dec.get('mode'),
@@ -86,10 +99,9 @@ def entry(e):
                                         run_start=tl.get('run_start'), end=tl.get('run_done')),
                         decided_at=dec.get('decided_at'), finalized=mtime(life / 'FINALIZED.json')),
         decided_at_cr=dec.get('decided_at_cr'), timing_s=dec.get('timing'),
-        reconcile=('archived-attempt' if verdict == 'superseded' else
-                   ('head-chain' if verdict == 'promoted' else
-                    ('green-without-head-chain' if dec['decision'] == 'green' else 'red'))),
-        superseded=(verdict == 'superseded'))
+        reconcile=reconcile,
+        superseded=(verdict == 'superseded'),
+        pit=is_pit)
 # --- end PIT reconcile snippet --------------------------------------------
 '''
 
@@ -99,8 +111,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--print', action='store_true', help='print the live snippet')
     args = p.parse_args()
-    if args.print or True:
-        print(LIVE_SNIPPET)
+    print(LIVE_SNIPPET)
     return 0
 
 

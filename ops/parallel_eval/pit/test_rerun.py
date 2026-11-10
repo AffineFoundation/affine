@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sanctioned PIT GREEN rerun: refusals, archive, fresh seed, priority, ledger, GPU."""
+"""Sanctioned PIT GREEN rerun: refusals, archive, frozen indices, ledger, GPU."""
 from __future__ import annotations
 
 import hashlib
@@ -8,14 +8,15 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .bench_publish import format_node_gpu
 from .binding import select_next_queued
 from .controller import Controller
 from .durable import DurableStore
-from .gate_ledger_reconcile import reconcile_entry, reconcile_rows
+from .gate_ledger_reconcile import reconcile_rows
 from .gate_writer import GateWriteError, HostGateWriter
+from .queue_ingest import _epoch_dir_ready
 from .rerun import (
     RERUN_ATTEMPT,
     RERUN_PRIORITY,
@@ -24,7 +25,6 @@ from .rerun import (
     consume_rerun_request,
     preflight,
     rerun_cand_seed,
-    rerun_draw_seed,
     write_fresh_sample,
     write_rerun_request,
 )
@@ -35,6 +35,7 @@ HEAD = 'a' * 64
 CAND = 'b' * 64
 OTHER = 'c' * 64
 HOTKEY = '5TestHotkeyXXXX'
+ROUND_INDICES = [3, 7, 11, 15, 19, 23, 27, 31, 35, 39]
 
 
 def _sha(data: bytes) -> str:
@@ -65,19 +66,16 @@ class _Env:
         }
         self._prev = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
-        # Current head chain = HEAD (unchanged).
         (self.pe / 'HEAD-CHAIN.json').write_text(json.dumps({
             'head': HEAD, 'applied': [{'candidate': HEAD, 'new_head': HEAD}],
         }))
-        # Current round with seed + indices + tiny PI for fresh draw.
-        rid = 'round-test-1'
+        rid = 'r20261110T065516Z-22a385fd'
         round_dir = self.heldout / rid
         round_dir.mkdir(parents=True, exist_ok=True)
-        pi = {('task-%d' % i): 0.5 for i in range(20)}
-        (round_dir / 'PI.private.json').write_text(json.dumps({'pi': pi, 'env': {t: 'math' for t in pi}}))
         (round_dir / 'ROUND.private.json').write_text(json.dumps({
             'id': rid, 'head': HEAD, 'seed': 'r' * 64,
-            'indices': list(range(10)), 'n': 10,
+            'indices': list(ROUND_INDICES), 'n': len(ROUND_INDICES),
+            'ids': ['task-%d' % i for i in ROUND_INDICES],
             'cfg': {'probe_env': 'math'},
         }))
         (self.heldout / 'CURRENT.json').write_text(json.dumps({'id': rid}))
@@ -120,8 +118,8 @@ class _Env:
     def write_sample_decision(self, e: int, *, decision: str = 'green', paid: bool = False) -> None:
         gd = self.gate_dir(e)
         (gd / 'SAMPLE.private.json').write_text(json.dumps({
-            'epoch': e, 'head': HEAD, 'round_id': self.round_id,
-            'indices': list(range(10)), 'seed': 's' * 64, 'attempt': 1,
+            'epoch': e, 'head': HEAD, 'round_id': 'old-round',
+            'indices': [1, 2, 3], 'seed': 's' * 64, 'attempt': 1,
         }))
         (gd / 'COMMIT.json').write_text(json.dumps({'epoch': e, 'head': HEAD}))
         (gd / 'EVALUATED.private.json').write_text(json.dumps({'evaluated': {'z': 2.0}}))
@@ -190,7 +188,8 @@ class TestRerunRefusals(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertTrue(any('item.paid' in r for r in check.reasons))
 
-    def test_refuse_head_moved(self):
+    def test_head_moved_still_allowed(self):
+        """Jacob: reruns bind CURRENT head — head move is not a refuse."""
         e = 1060
         self.fx.write_turn_and_batch(e)
         self.fx.write_sample_decision(e)
@@ -198,9 +197,13 @@ class TestRerunRefusals(unittest.TestCase):
         (self.fx.pe / 'HEAD-CHAIN.json').write_text(json.dumps({
             'head': OTHER, 'applied': [{'candidate': OTHER, 'new_head': OTHER}],
         }))
+        # Round also tracks current head.
+        rd = self.fx.heldout / self.fx.round_id / 'ROUND.private.json'
+        doc = json.loads(rd.read_text())
+        doc['head'] = OTHER
+        rd.write_text(json.dumps(doc))
         check = preflight(e, store=self.fx.store)
-        self.assertFalse(check.ok)
-        self.assertTrue(any('head moved' in r for r in check.reasons))
+        self.assertTrue(check.ok, check.reasons)
 
     def test_refuse_batch_sha_mismatch(self):
         e = 1060
@@ -238,6 +241,9 @@ class TestRerunHappyPath(unittest.TestCase):
         (self.fx.epoch_dir(e) / 'PIT-RESULT.json').write_text(json.dumps({
             'status': 'pit-result', 'decision': 'green_fresh',
         }))
+        (self.fx.epoch_dir(e) / 'PIT-DISPATCHED.json').write_text(json.dumps({
+            'epoch': e, 'status': 'pit-dispatched',
+        }))
         return self.fx.make_item(e, state=ItemState.RELEASED, paid=False)
 
     def test_cli_writes_request_not_items(self):
@@ -249,21 +255,26 @@ class TestRerunHappyPath(unittest.TestCase):
         self.assertEqual(doc['status'], 'requested')
         req = self.fx.pit / 'rerun' / ('RERUN-REQUEST-e%d.json' % e)
         self.assertTrue(req.is_file())
-        # CLI must not archive / move item.
         self.assertTrue((self.fx.pit / 'items' / ('%s.json' % item.item_id)).is_file())
         self.assertTrue((self.fx.gate / str(e) / 'DECISION.json').is_file())
 
-    def test_fresh_seed_differs_from_attempt1(self):
-        e = 1062
-        s1 = hashlib.sha256(
+    def test_rerun_indices_match_current_round_frozen_list(self):
+        """BLOCKER 1: SAMPLE indices == CURRENT round frozen list; seed ≠ attempt 1."""
+        e = 1060
+        self._ok_epoch(e)
+        # Archive first so write_fresh_sample can place SAMPLE.
+        store = self.fx.store
+        item = store.list_items()[0]
+        archive_attempt1(e, store=store, item=item)
+        sample = write_fresh_sample(e, attempt=2)
+        self.assertEqual(sample['indices'], ROUND_INDICES)
+        self.assertEqual(sample['round_id'], self.fx.round_id)
+        self.assertEqual(sample['seed'], self.fx.round_seed)
+        classic = hashlib.sha256(
             ('%s:prior-baseline:cand:%d' % (self.fx.round_seed, e)).encode()
         ).hexdigest()
-        s2 = rerun_cand_seed(self.fx.round_seed, e, RERUN_ATTEMPT)
-        self.assertNotEqual(s1, s2)
-        d1 = 'x' * 64  # placeholder
-        d2 = rerun_draw_seed(self.fx.round_seed, e, RERUN_ATTEMPT)
-        self.assertEqual(len(d2), 64)
-        self.assertNotEqual(d2, s1)
+        self.assertEqual(sample['plan_seed'], rerun_cand_seed(self.fx.round_seed, e, 2))
+        self.assertNotEqual(sample['plan_seed'], classic)
 
     def test_archive_and_consume(self):
         e = 1065
@@ -273,45 +284,62 @@ class TestRerunHappyPath(unittest.TestCase):
         )
         ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
         ctl.items = [old]
-
-        def fake_draw(pi, seed):
-            # Deterministic subset of pi keys from seed.
-            keys = sorted(pi.keys())
-            n = 5
-            off = int(seed[:8], 16) % max(1, len(keys) - n)
-            return keys[off:off + n]
-
-        out = consume_rerun_request(
-            e, store=self.fx.store, ctl=ctl, draw_fn=fake_draw,
-        )
+        out = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
         self.assertEqual(out['status'], 'consumed')
-        # Archive contents.
         gate_arch = self.fx.gate / str(e) / 'attempt-1'
         for name in ('SAMPLE.private.json', 'DECISION.json', 'EVALUATED.private.json', 'COMMIT.json'):
             self.assertTrue((gate_arch / name).is_file(), name)
         self.assertTrue((self.fx.life / 'epochs' / str(e) / 'attempt-1' / 'PIT-RESULT.json').is_file())
         self.assertTrue((self.fx.pit / 'rerun' / ('e%d' % e) / 'attempt-1' / ('%s.json' % old.item_id)).is_file())
         self.assertFalse((self.fx.gate / str(e) / 'DECISION.json').exists())
-        # Fresh SAMPLE attempt 2.
         sm = json.loads((self.fx.gate / str(e) / 'SAMPLE.private.json').read_text())
         self.assertEqual(sm['attempt'], 2)
-        self.assertTrue(sm.get('rerun'))
+        self.assertEqual(sm['indices'], ROUND_INDICES)
         self.assertEqual(sm['plan_seed'], rerun_cand_seed(self.fx.round_seed, e, 2))
-        classic = hashlib.sha256(
-            ('%s:prior-baseline:cand:%d' % (self.fx.round_seed, e)).encode()
-        ).hexdigest()
-        self.assertNotEqual(sm['plan_seed'], classic)
-        # New item.
+        # RERUN-ACTIVE present; PIT-RESULT absent (backpressure still counts).
+        ed = self.fx.life / 'epochs' / str(e)
+        self.assertTrue((ed / 'RERUN-ACTIVE.json').is_file())
+        self.assertFalse((ed / 'PIT-RESULT.json').exists())
+        self.assertFalse(_epoch_dir_ready(ed))  # ingest skips via RERUN-ACTIVE
         new_items = [i for i in ctl.items if i.item_id != old.item_id]
         self.assertEqual(len(new_items), 1)
         nxt = new_items[0]
         self.assertEqual(nxt.attempt, 2)
         self.assertEqual(nxt.priority, RERUN_PRIORITY)
         self.assertEqual(nxt.rerun_of, old.item_id)
-        self.assertEqual(nxt.state, ItemState.QUEUED)
-        # RERUN.json hashes.
+
+    def test_refuse_rewrite_when_archive_exists(self):
+        e = 1062
+        old = self._ok_epoch(e)
+        archive_attempt1(e, store=self.fx.store, item=old)
+        with self.assertRaises(RerunError) as ctx:
+            archive_attempt1(e, store=self.fx.store, item=None)
+        self.assertIn('refuse rewrite', str(ctx.exception))
+        # Hashes preserved.
         rr = json.loads((self.fx.pit / 'rerun' / ('e%d' % e) / 'RERUN.json').read_text())
         self.assertIn('DECISION.json', rr['hashes']['gate'])
+
+    def test_resume_after_archive_without_rewriting_hashes(self):
+        e = 1060
+        old = self._ok_epoch(e)
+        write_rerun_request(
+            epoch=e, operator='jacob', reason='resume', store_root=self.fx.pit,
+        )
+        ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
+        ctl.items = [old]
+        # Archive only, simulate draw failure before SAMPLE.
+        archive = archive_attempt1(e, store=self.fx.store, item=old)
+        ctl.items = []
+        hashes_before = json.dumps(archive['hashes'], sort_keys=True)
+        out = consume_rerun_request(e, store=self.fx.store, ctl=ctl)
+        self.assertTrue(out.get('resumed'))
+        hashes_after = json.dumps(
+            json.loads((self.fx.pit / 'rerun' / ('e%d' % e) / 'RERUN.json').read_text())['hashes'],
+            sort_keys=True,
+        )
+        self.assertEqual(hashes_before, hashes_after)
+        sm = json.loads((self.fx.gate / str(e) / 'SAMPLE.private.json').read_text())
+        self.assertEqual(sm['indices'], ROUND_INDICES)
 
     def test_priority_binds_ahead_of_registration_index(self):
         older = ItemRecord(
@@ -332,7 +360,6 @@ class TestRerunHappyPath(unittest.TestCase):
         item = store.list_items()[0]
         archive_attempt1(e, store=store, item=item)
         self.assertFalse((self.fx.gate / str(e) / 'DECISION.json').exists())
-        self.assertTrue((self.fx.gate / str(e) / 'attempt-1' / 'DECISION.json').is_file())
 
         class _Rounds:
             def __init__(self):
@@ -377,8 +404,6 @@ class TestRerunHappyPath(unittest.TestCase):
             plan_seed='p' * 64, parallel_eval_meta={'source': 'pit'},
         )
         self.assertTrue(path.is_file())
-        # Live conflicting DECISION (different identity) must still refuse —
-        # even when attempt-1 archive exists.
         (self.fx.gate / str(e) / 'DECISION.json').write_text(json.dumps({
             'epoch': e, 'head': HEAD, 'candidate': CAND, 'decision': 'red',
             'no_decision': False, 'merge_blocked': False, 'evaluated': {'z': 0},
@@ -399,46 +424,65 @@ class TestRerunHappyPath(unittest.TestCase):
         write_rerun_request(epoch=e, operator='jacob', reason='x', store_root=self.fx.pit)
         ctl = Controller.from_flag({'pit': {'enabled': True, 'mode': 'shadow', 'max_boxes': 2}})
         ctl.items = list(self.fx.store.list_items())
-        consume_rerun_request(
-            e, store=self.fx.store, ctl=ctl,
-            draw_fn=lambda pi, seed: sorted(pi.keys())[:4],
-        )
+        consume_rerun_request(e, store=self.fx.store, ctl=ctl)
         self.assertFalse((self.fx.gate / str(e) / 'DECISION.json').exists())
         archived = json.loads(
             (self.fx.gate / str(e) / 'attempt-1' / 'DECISION.json').read_text()
         )
         self.assertEqual(archived['candidate'], old_dec['candidate'])
-        # Fresh SAMPLE must not point at archived decision.
         sm = json.loads((self.fx.gate / str(e) / 'SAMPLE.private.json').read_text())
         self.assertEqual(sm['attempt'], 2)
+        self.assertEqual(sm['indices'], ROUND_INDICES)
 
 
 class TestLedgerReconcile(unittest.TestCase):
-    def test_green_without_head_chain_not_promoted(self):
+    def test_pit_green_without_head_chain_rejected(self):
         rows = reconcile_rows(
             [{'epoch': 1062, 'candidate': CAND, 'decision': 'green', 'verdict': 'promoted'}],
             chain_candidates=set(),
             archived_epochs=set(),
+            pit_epochs={1062},
         )
         self.assertEqual(rows[0]['verdict'], 'rejected')
         self.assertEqual(rows[0]['reconcile'], 'green-without-head-chain')
 
-    def test_green_with_head_chain_promoted(self):
+    def test_pit_green_with_head_chain_promoted(self):
         rows = reconcile_rows(
             [{'epoch': 1062, 'candidate': CAND, 'decision': 'green', 'verdict': 'promoted'}],
             chain_candidates={CAND},
             archived_epochs=set(),
+            pit_epochs={1062},
         )
         self.assertEqual(rows[0]['verdict'], 'promoted')
 
-    def test_archived_attempt_superseded(self):
+    def test_archived_pit_attempt_superseded(self):
         rows = reconcile_rows(
             [{'epoch': 1060, 'candidate': CAND, 'decision': 'green', 'verdict': 'promoted'}],
             chain_candidates={CAND},
             archived_epochs={1060},
+            pit_epochs={1060},
         )
         self.assertEqual(rows[0]['verdict'], 'superseded')
         self.assertTrue(rows[0]['superseded'])
+
+    def test_pre_pe_promoted_rows_untouched(self):
+        """BLOCKER 2: pre-PE promoted history must not flip without PIT-DISPATCHED."""
+        pre = [
+            {'epoch': 100, 'candidate': 'd' * 64, 'decision': 'green', 'verdict': 'promoted'},
+            {'epoch': 200, 'candidate': 'e' * 64, 'decision': 'green', 'verdict': 'promoted'},
+            {'epoch': 271, 'candidate': 'f' * 64, 'decision': 'green', 'verdict': 'promoted'},
+        ]
+        rows = reconcile_rows(
+            pre + [{'epoch': 1062, 'candidate': CAND, 'decision': 'green', 'verdict': 'promoted'}],
+            chain_candidates=set(),  # empty HEAD-CHAIN
+            archived_epochs=set(),
+            pit_epochs={1062},  # only e1062 is PIT
+        )
+        self.assertEqual(rows[0]['verdict'], 'promoted')
+        self.assertEqual(rows[1]['verdict'], 'promoted')
+        self.assertEqual(rows[2]['verdict'], 'promoted')
+        self.assertNotIn('reconcile', rows[0])
+        self.assertEqual(rows[3]['verdict'], 'rejected')
 
 
 class TestGpuFallback(unittest.TestCase):

@@ -6,15 +6,19 @@ The CLI never edits item / gate / lifecycle files directly.
 
 Refuse unless ALL hold:
   * item released, or no PIT-RESULT and no live box
-  * never applied (not in HEAD-CHAIN / APPLY)
+  * never applied (not in HEAD-CHAIN / APPLY / GREENS applied)
   * nothing paid
-  * gate head unchanged since original bind; candidate not in HEAD-CHAIN
+  * candidate not in HEAD-CHAIN
   * miner batch file exists and sha256 == K1-TURN ``file_sha256``
 
+Reruns bind the CURRENT round/head (Jacob): SAMPLE uses the round's frozen
+task list; only the candidate plan seed is fresh per attempt.
+
 On accept: archive attempt-1 (SAMPLE/DECISION/EVALUATED/COMMIT, PIT-RESULT,
-old item), write ``RERUN.json`` with hashes, fresh prior_gate draw on the
-CURRENT round with seed from (round, epoch, attempt), enqueue attempt=2 with
-``priority`` so it binds ahead of registration-index FIFO. Not a new K1 turn.
+old item), write ``RERUN.json`` with hashes, write SAMPLE on the CURRENT round
+with frozen indices + attempt plan seed, enqueue attempt=2 with ``priority``.
+Not a new K1 turn. ``RERUN-ACTIVE.json`` (not PIT-RESULT) blocks re-ingest so
+max_pending still counts the epoch.
 """
 from __future__ import annotations
 
@@ -30,9 +34,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from .cutover_apply import head_chain_has_candidate
-from .durable import DurableStore, item_from_dict, pit_state_root
+from .durable import DurableStore, pit_state_root
 from .life_paths import pe_state_root
-from .queue_ingest import write_pit_result
 from .state import ItemRecord, ItemState, RENTED_STATES
 
 RERUN_PRIORITY = 1_000_000
@@ -69,10 +72,6 @@ def _sha_file(path: Path) -> Optional[str]:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except Exception:
         return None
-
-
-def _sha_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def life_root() -> Path:
@@ -112,23 +111,6 @@ def request_path(store_root: Path, epoch: int) -> Path:
     return Path(store_root) / 'rerun' / ('RERUN-REQUEST-e%d.json' % int(epoch))
 
 
-def current_head_id() -> Optional[str]:
-    try:
-        chain = _rj(pe_state_root() / 'HEAD-CHAIN.json') or {}
-    except Exception:
-        chain = {}
-    if isinstance(chain, Mapping):
-        head = chain.get('head') or chain.get('current_head')
-        if isinstance(head, str) and len(head) == 64:
-            return head
-        applied = chain.get('applied') or []
-        if applied and isinstance(applied[-1], Mapping):
-            cand = applied[-1].get('new_head') or applied[-1].get('candidate')
-            if isinstance(cand, str) and len(cand) == 64:
-                return cand
-    return None
-
-
 def find_item_for_epoch(items: Sequence[ItemRecord], epoch: int) -> Optional[ItemRecord]:
     matches = [i for i in items if int(i.epoch) == int(epoch)]
     if not matches:
@@ -147,37 +129,11 @@ def batch_file_for_turn(epoch_dir: Path, turn: Mapping[str, Any]) -> Optional[Pa
     return path if path.is_file() else None
 
 
-def rerun_draw_seed(round_seed: str, epoch: int, attempt: int) -> str:
-    return hashlib.sha256(
-        ('%s:prior-baseline:rerun-draw:%d:%d' % (round_seed, int(epoch), int(attempt))).encode()
-    ).hexdigest()
-
-
 def rerun_cand_seed(round_seed: str, epoch: int, attempt: int) -> str:
     """Fresh candidate plan seed — never equals attempt-1 ``cand_seed(seed, epoch)``."""
     return hashlib.sha256(
         ('%s:prior-baseline:cand:%d:attempt:%d' % (round_seed, int(epoch), int(attempt))).encode()
     ).hexdigest()
-
-
-def _default_prior_draw(pi: Mapping[str, Any], seed: str) -> List[str]:
-    try:
-        import baseline_v1 as BV  # type: ignore
-        return list(BV.draw(dict(pi), seed))
-    except Exception as exc:
-        raise RerunError('prior_gate/baseline_v1.draw unavailable: %s' % str(exc)[:200]) from exc
-
-
-def _probe_index(task_id: str, cfg: Optional[Mapping[str, Any]] = None) -> int:
-    try:
-        import baseline_v1 as BV  # type: ignore
-        return int(BV.probe_index(task_id, cfg))
-    except Exception:
-        # Hermetic fallback: stable int from task id digits / hash.
-        digits = ''.join(c for c in str(task_id) if c.isdigit())
-        if digits:
-            return int(digits) % 10_000_000
-        return int(hashlib.sha256(str(task_id).encode()).hexdigest()[:8], 16) % 10_000_000
 
 
 @dataclass
@@ -295,24 +251,8 @@ def preflight(
             reasons.append('K1 join exists (turn already consumed)')
             break
 
-    # Head unchanged since original bind; candidate not in HEAD-CHAIN (above).
-    head_now = current_head_id()
-    if bound_head and head_now and bound_head != head_now:
-        # Head may have advanced via OTHER candidates; refuse only when the
-        # original bind head is no longer the gate/chain head *and* we cannot
-        # confirm the gate SAMPLE head still matches bind. SAMPLE.head is the
-        # authoritative bind-time head.
-        sample_head = sample.get('head') if isinstance(sample, Mapping) else None
-        if sample_head and sample_head != bound_head:
-            reasons.append('gate SAMPLE head diverged from bound head')
-        # If SAMPLE still names the bind head but chain head moved via another
-        # GREEN, still refuse — rebinding must use CURRENT head via fresh SAMPLE.
-        # Operator intent: "gate head is unchanged since the original bind".
-        if sample_head and head_now and sample_head != head_now:
-            reasons.append(
-                'gate/chain head moved since original bind (%s -> %s)'
-                % (str(sample_head)[:12], str(head_now)[:12])
-            )
+    # Jacob: reruns bind the CURRENT round/head — do not refuse on head move.
+    # Candidate-in-HEAD-CHAIN is already refused above.
 
     # Batch file sha == K1-TURN file_sha256.
     batch_path = None
@@ -398,6 +338,27 @@ def _archive_file(src: Path, dest_dir: Path) -> Optional[Dict[str, str]]:
     return {'path': str(dest), 'sha256': _sha_file(dest) or ''}
 
 
+def _archive_already_present(epoch: int, store: DurableStore) -> Optional[Dict[str, Any]]:
+    """Return existing RERUN.json when attempt-1 archive is durable; else None."""
+    rr_root = rerun_dir(store.root, int(epoch))
+    gate_arch = gate_epochs_root() / str(int(epoch)) / 'attempt-1'
+    rr_path = rr_root / 'RERUN.json'
+    if rr_path.is_file():
+        doc = _rj(rr_path)
+        if isinstance(doc, Mapping) and doc.get('hashes'):
+            return dict(doc)
+        raise RerunError(
+            'RERUN.json exists for e%d but hashes are empty/corrupt — refuse rewrite'
+            % int(epoch)
+        )
+    if gate_arch.is_dir() and any(gate_arch.iterdir()):
+        raise RerunError(
+            'attempt-1/ already exists for e%d without RERUN.json — refuse rewrite'
+            % int(epoch)
+        )
+    return None
+
+
 def archive_attempt1(
     epoch: int,
     *,
@@ -405,7 +366,17 @@ def archive_attempt1(
     item: Optional[ItemRecord],
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Move gate/lifecycle/item artifacts into attempt-1/; write RERUN.json hashes."""
+    """Move gate/lifecycle/item artifacts into attempt-1/; write RERUN.json hashes.
+
+    Refuses to rewrite when ``RERUN.json`` or ``attempt-1/`` already exists
+    (preserves audit hashes if a later step fails).
+    """
+    existing = _archive_already_present(int(epoch), store)
+    if existing is not None:
+        raise RerunError(
+            'archive already present for e%d — refuse rewrite of RERUN.json hashes'
+            % int(epoch)
+        )
     life = life_root()
     gate_dir = gate_epochs_root() / str(int(epoch))
     epoch_dir = life / 'epochs' / str(int(epoch))
@@ -434,7 +405,6 @@ def archive_attempt1(
                 'path': str(dest),
                 'sha256': _sha_file(dest) or '',
             }
-        # Drop from controller memory is host's job; remove queue entry.
         q = [x for x in store.queue() if x != item.item_id]
         _wj(store.queue_path(), q, 0o600)
     at = float(now if now is not None else time.time())
@@ -455,10 +425,14 @@ def write_fresh_sample(
     epoch: int,
     *,
     attempt: int = RERUN_ATTEMPT,
-    draw_fn: Optional[Callable[[Mapping[str, Any], str], Sequence[str]]] = None,
     round_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Fresh prior_gate draw on the CURRENT round; seed from (round, epoch, attempt)."""
+    """SAMPLE on the CURRENT round's frozen task list; fresh attempt plan seed.
+
+    Head baseline is built once per round over the frozen indices — a rerun
+    must reuse those indices so z compares candidate and head on the same tasks.
+    Only ``plan_seed`` (candidate sampling) is derived from (round, epoch, attempt).
+    """
     if round_provider is not None:
         round_doc = dict(round_provider())
     else:
@@ -470,42 +444,23 @@ def write_fresh_sample(
     head = str(round_doc.get('head') or '')
     if len(head) != 64:
         raise RerunError('current round head missing')
-    draw_seed = rerun_draw_seed(round_seed, int(epoch), int(attempt))
+    indices = [int(x) for x in (round_doc.get('indices') or [])]
+    if not indices:
+        raise RerunError('current round has no frozen indices')
     plan = rerun_cand_seed(round_seed, int(epoch), int(attempt))
-    # Never equal the attempt-1 cand_seed(seed, epoch).
     classic = hashlib.sha256(
         ('%s:prior-baseline:cand:%d' % (round_seed, int(epoch))).encode()
     ).hexdigest()
     if plan == classic:
         raise RerunError('rerun cand_seed collided with attempt-1 seed')
-
-    pi = round_doc.get('pi')
-    if not isinstance(pi, Mapping):
-        pi_path = heldout_root() / rid / 'PI.private.json'
-        pi = _rj(pi_path)
-    if not isinstance(pi, Mapping) or not pi.get('pi'):
-        # Fall back: reuse round indices but still tag fresh plan_seed/attempt.
-        # Prefer real prior draw when PI is present.
-        ids = None
-        indices = list(round_doc.get('indices') or [])
-        if not indices:
-            raise RerunError('current round has no indices/PI for fresh draw')
-    else:
-        drawer = draw_fn or _default_prior_draw
-        pi_map = pi.get('pi') if 'pi' in pi and isinstance(pi.get('pi'), Mapping) else pi
-        ids = list(drawer(pi_map, draw_seed))
-        cfg = round_doc.get('cfg') or (pi.get('cfg') if isinstance(pi, Mapping) else None)
-        indices = [_probe_index(t, cfg if isinstance(cfg, Mapping) else None) for t in ids]
-
-    if not indices:
-        raise RerunError('fresh draw produced empty indices')
     at = time.time()
     sample = {
         'version': 'pit-rerun-v1',
         'epoch': int(epoch),
         'head': head,
-        'seed': draw_seed,  # draw seed handle (not round secret)
-        'indices': [int(x) for x in indices],
+        # Round seed (same as prior_gate SAMPLE) — not a per-attempt task redraw.
+        'seed': round_seed,
+        'indices': indices,
         'drawn_at': at,
         'heldout': True,
         'prior_v1': True,
@@ -513,10 +468,9 @@ def write_fresh_sample(
         'attempt': int(attempt),
         'plan_seed': plan,
         'rerun': True,
-        'ids': list(ids) if ids is not None else None,
+        'ids': list(round_doc['ids']) if round_doc.get('ids') is not None else None,
     }
     gate_dir = gate_epochs_root() / str(int(epoch))
-    # Refuse clobbering a non-archived SAMPLE.
     live = gate_dir / 'SAMPLE.private.json'
     if live.is_file():
         raise RerunError('SAMPLE.private.json still present (archive attempt-1 first)')
@@ -531,9 +485,29 @@ def write_fresh_sample(
         'rerun': True,
         'drawn_at': at,
         'plan_seed': plan,
+        'commitment': round_doc.get('draw_commitment') or round_doc.get('commitment'),
     }
     _wj(gate_dir / 'COMMIT.json', commit, 0o644)
     return sample
+
+
+def write_rerun_active(
+    epoch: int,
+    *,
+    item_id: str,
+    rerun_of: Optional[str] = None,
+) -> Path:
+    """Marker that ingest skips without freeing max_pending (PIT-RESULT absent)."""
+    path = life_root() / 'epochs' / str(int(epoch)) / 'RERUN-ACTIVE.json'
+    _wj(path, {
+        'status': 'rerun-active',
+        'epoch': int(epoch),
+        'item_id': item_id,
+        'attempt': RERUN_ATTEMPT,
+        'rerun_of': rerun_of,
+        'at': time.time(),
+    }, 0o600)
+    return path
 
 
 def _load_current_round() -> Dict[str, Any]:
@@ -621,59 +595,106 @@ def consume_rerun_request(
     *,
     store: DurableStore,
     ctl: Any,
-    draw_fn: Optional[Callable[..., Sequence[str]]] = None,
     round_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Host path under pit.lock: archive → fresh SAMPLE → enqueue attempt 2."""
+    """Host path under pit.lock: archive → SAMPLE → enqueue attempt 2.
+
+    If archive already succeeded (RERUN.json with hashes) but SAMPLE/enqueue
+    did not, resume without rewriting hashes. Never clobber a partial archive.
+    """
     path = request_path(store.root, int(epoch))
     req = _rj(path)
     if not isinstance(req, Mapping) or req.get('status') != 'requested':
         raise RerunError('no pending RERUN-REQUEST for e%d' % int(epoch))
     check = preflight(int(epoch), store=store, items=list(ctl.items))
     if not check.ok:
-        req = dict(req)
-        req['status'] = 'refused'
-        req['refused_at'] = float(now if now is not None else time.time())
-        req['refuse_reasons'] = list(check.reasons)
-        _wj(path, req, 0o600)
-        raise RerunError('refuse consume e%d: %s' % (int(epoch), '; '.join(check.reasons)))
+        # Allow resume when archive already landed (preflight may see no item).
+        archived = _archive_already_present(int(epoch), store)
+        if archived is None:
+            req = dict(req)
+            req['status'] = 'refused'
+            req['refused_at'] = float(now if now is not None else time.time())
+            req['refuse_reasons'] = list(check.reasons)
+            _wj(path, req, 0o600)
+            raise RerunError('refuse consume e%d: %s' % (int(epoch), '; '.join(check.reasons)))
 
     old_item = check.item
-    # Remove old item from controller memory before archive.
     if old_item is not None:
         ctl.items = [i for i in list(ctl.items) if i.item_id != old_item.item_id]
 
-    archive = archive_attempt1(
-        int(epoch), store=store, item=old_item, now=now,
-    )
-    sample = write_fresh_sample(
-        int(epoch),
-        attempt=RERUN_ATTEMPT,
-        draw_fn=draw_fn,
-        round_provider=round_provider,
-    )
-    new_item = enqueue_rerun_item(
-        epoch=int(epoch),
-        store=store,
-        ctl=ctl,
-        old_item=old_item,
-        sample=sample,
-        operator=str(req.get('operator') or ''),
-        reason=str(req.get('reason') or ''),
-    )
-    # Placeholder so queue_ingest cannot re-enqueue the epoch while attempt 2 runs.
-    # Overwritten by the normal emit path when attempt 2 finishes.
-    write_pit_result(
-        life_root() / 'epochs' / str(int(epoch)),
-        decision='rerun_active',
-        item_id=new_item.item_id,
-        extra={
-            'attempt': RERUN_ATTEMPT,
-            'rerun': True,
-            'rerun_of': old_item.item_id if old_item else None,
-        },
-    )
+    archived = _archive_already_present(int(epoch), store)
+    if archived is not None:
+        archive = archived
+        if old_item is None and archive.get('old_item_id'):
+            # Reconstruct minimal pointer for enqueue meta.
+            old_item = ItemRecord(
+                item_id=str(archive['old_item_id']),
+                registration_index=int(epoch),
+                epoch=int(epoch),
+                state=ItemState.RELEASED,
+            )
+    else:
+        archive = archive_attempt1(
+            int(epoch), store=store, item=old_item, now=now,
+        )
+
+    gate_dir = gate_epochs_root() / str(int(epoch))
+    sample_path = gate_dir / 'SAMPLE.private.json'
+    if sample_path.is_file():
+        sample = _rj(sample_path)
+        if not isinstance(sample, Mapping) or int(sample.get('attempt') or 0) < RERUN_ATTEMPT:
+            raise RerunError('live SAMPLE present but not attempt-%d' % RERUN_ATTEMPT)
+        sample = dict(sample)
+    else:
+        sample = write_fresh_sample(
+            int(epoch),
+            attempt=RERUN_ATTEMPT,
+            round_provider=round_provider,
+        )
+
+    # Idempotent enqueue: reuse existing attempt-2 item if present.
+    existing = [
+        i for i in list(ctl.items)
+        if int(i.epoch) == int(epoch) and int(i.attempt or 0) >= RERUN_ATTEMPT
+    ]
+    if existing:
+        new_item = existing[0]
+    else:
+        on_disk = [
+            i for i in store.list_items()
+            if int(i.epoch) == int(epoch) and int(i.attempt or 0) >= RERUN_ATTEMPT
+        ]
+        if on_disk:
+            new_item = on_disk[0]
+            if all(i.item_id != new_item.item_id for i in ctl.items):
+                ctl.items.append(new_item)
+        else:
+            new_item = enqueue_rerun_item(
+                epoch=int(epoch),
+                store=store,
+                ctl=ctl,
+                old_item=old_item,
+                sample=sample,
+                operator=str(req.get('operator') or ''),
+                reason=str(req.get('reason') or ''),
+            )
+
+    # Separate marker: ingest skips; PIT-RESULT stays absent for max_pending.
+    epoch_dir = life_root() / 'epochs' / str(int(epoch))
+    if not (epoch_dir / 'RERUN-ACTIVE.json').is_file():
+        write_rerun_active(
+            int(epoch),
+            item_id=new_item.item_id,
+            rerun_of=old_item.item_id if old_item else archive.get('old_item_id'),
+        )
+    if (epoch_dir / 'PIT-RESULT.json').is_file():
+        # Must not hide the rerun from backpressure / k1 readers.
+        raise RerunError(
+            'PIT-RESULT.json present during active rerun e%d — refuse '
+            '(use RERUN-ACTIVE only)' % int(epoch)
+        )
+
     done = dict(req)
     done.update({
         'status': 'consumed',
@@ -682,6 +703,7 @@ def consume_rerun_request(
         'new_item_id': new_item.item_id,
         'sample_round_id': sample.get('round_id'),
         'plan_seed': sample.get('plan_seed'),
+        'resumed': archived is not None,
     })
     _wj(path, done, 0o600)
     return done

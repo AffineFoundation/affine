@@ -547,6 +547,13 @@ def tick_once(
                 item_id=item.item_id,
                 extra=extra,
             )
+            # Attempt-2 settle: drop RERUN-ACTIVE so max_pending frees via PIT-RESULT.
+            active = Path(epoch_dir) / 'RERUN-ACTIVE.json'
+            if active.is_file():
+                try:
+                    active.unlink()
+                except OSError:
+                    pass
         store.decisions.append(
             epoch=item.epoch,
             uid=item.uid,

@@ -133,17 +133,10 @@ cand_seed_for_epoch = plan_seed_for_epoch
 def indices_for_epoch(epoch: int) -> List[int]:
     """Host-private task indices for the epoch's bound round (fail closed)."""
     sm = _sample_for_epoch(int(epoch))
-    sm_idx = sm.get('indices')
-    # Sanctioned rerun (attempt≥2): SAMPLE holds a fresh prior_gate draw that
-    # may differ from the round's frozen indices — use SAMPLE as source of truth.
-    if int(sm.get('attempt') or 1) >= 2 and sm_idx is not None:
-        idx = [int(x) for x in sm_idx]
-        if not idx:
-            raise RoundSeedError('empty rerun indices for epoch %s' % epoch)
-        return idx
     rid = str(sm['round_id'])
     r = _round_private(rid)
     idx = list(r['indices'])
+    sm_idx = sm.get('indices')
     if sm_idx is not None and list(sm_idx) != idx:
         raise RoundSeedError('round draw != epoch sample for e%s' % epoch)
     if not idx:
