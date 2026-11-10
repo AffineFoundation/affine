@@ -7,6 +7,11 @@ host-v834e — same call and admitted host-file digests as 27701370.
 
 Sharded path (host-v834f): separate ROOT-admitted package. Until Jacob ROOT-signs that
 admission, host-v834f is absent on the box and this script stays on host-v834e.
+On host-v834f the launcher's own v835_zero3 module decides the mode: ``activate(host)`` (never ``None``)
+turns PIT_ZERO3 on for <100 GiB GPUs, and ``host.install`` then starts every helper rank through the
+v835_zero3 entry, cuts the micro-batch token budget and installs the sharded (FSDP) update. This script
+keeps the same calls: the actor it loads stays the optimizer / publication copy (moved to the CPU by the
+sharded update), so CPUAdamW and the published checkpoint see the host-v834e parameter names.
 """
 import json, os, sys, time, importlib.util
 from pathlib import Path
@@ -67,14 +72,17 @@ rd = lambda n: json.loads((IN / n).read_text())
 head = {k: v for k, v in rd('head.descriptor.json').items() if k in ('id', 'files')}
 manifest = rd('manifest.json'); dispatch = rd('dispatch.json'); tcfg = rd('train_config.json'); step = int(rd('meta.json')['optimizer_step'])
 assert dispatch['signature'] and dispatch['signer'] != 'SHADOW-UNSIGNED'
-# ZeRO-3 activate only on the sharded host, and only when sharded mode is active.
+# Sharded host only: the mode is decided on the launcher's own v835_zero3 module (digest-checked above), with the
+# launcher itself, so that install() below starts the helpers the same way.
 z3 = None
-if HOST.name == 'host-v834f' and (HOST / 'v835_zero3.py').is_file():
-    zspec = importlib.util.spec_from_file_location('v835_zero3', HOST / 'v835_zero3.py')
-    z3 = importlib.util.module_from_spec(zspec); sys.modules['v835_zero3'] = z3; zspec.loader.exec_module(z3)
-    pol = z3.activate(None)
+if HOST.name == 'host-v834f':
+    z3 = host.zero3()
+    pol = z3.activate(host)
     ev('zero3-policy', **{k: pol[k] for k in pol})
 info = host.install(cfg, start_dp=True); ev('native-installed', dp_world=info.get('dp_world') if isinstance(info, dict) else None)
+sharded = bool(z3 is not None and z3.enabled())
+assert sharded == bool(info.get('zero3')), 'launcher and v835_zero3 disagree on the sharded mode (fail closed)'
+if sharded: ev('zero3-installed', dp_world=info['dp_world'], dp_token_budget=info['dp_token_budget'])
 import torch
 from subnet.mimo_runtime import MimoRuntime
 from subnet.mimo_grpo.config import TrainerConfig
@@ -82,26 +90,27 @@ from subnet.mimo_grpo.optimizer import CPUAdamW
 import subnet.mimo_training_worker as worker
 config = TrainerConfig(**tcfg['settings']); assert config.document() == tcfg
 runtime = MimoRuntime.load(str(IN / 'actor' / head['id']), head, manifest['payload']['mimo_runtime'], device='cuda', trainable=True); ev('actor-loaded')
-world = int(cfg['engine'].get('dp_world') or 8)
-token_budget = int(cfg['engine'].get('dp_token_budget') or cfg['engine'].get('token_budget') or 69632)
-if z3 is not None and (z3.zero3_enabled() or z3.needs_zero3()):
+e = cfg['engine']
+# The micro-batch token budget the update runs with: the signed engine value, or the sharded cut the launcher applied.
+token_budget = int(info['dp_token_budget']) if sharded else e['token_budget']
+if sharded:
+    # Early refusal on what the sharded update keeps on a GPU for this model. The update itself then re-checks the
+    # real plan and measures one zero-weight step on every rank before it produces any gradient.
     try:
-        pref = z3.preflight_for_runtime(runtime, world=world, token_budget=token_budget)
-        ev('vram-preflight-ok', **{k: pref[k] for k in pref})
+        pref = z3.preflight_for_runtime(runtime, world=e['dp_world'], token_budget=token_budget)
+        ev('vram-preflight-ok', **{k: pref[k] for k in ('certain_gib', 'estimate_gib', 'limit_gib', 'per_gpu_gib', 'tokens', 'world', 'logit_chunk', 'offload_inputs', 'offload_host_gib')})
     except z3.VramPreflightError as ex:
         ev('vram-preflight-refuse', error=str(ex)[:300])
         raise
-    runtime.model = z3.wrap_fsdp(runtime.model, local_rank=0)
-    ev('fsdp-wrapped', sharding='FULL_SHARD')
 opt = CPUAdamW(runtime.model.named_parameters(), config, input_checkpoint=head['id']); opt.global_step = step; ev('optimizer-built', step=step)
 prepared = worker.prepare_signed_dispatch(manifest, dispatch, authority=cfg['authority'], documents_root=str(IN / 'docs'), runtime=runtime, optimizer_step=step)
 groups, binding = prepared['groups'], prepared['binding']
 mr = max(len(t.tokens) for g in groups for t in g.trajectories); mc = max(len(g.prompt) + len(t.tokens) for g in groups for t in g.trajectories)
 ev('signed-dispatch-prepared', groups=len(groups), rollouts=sum(len(g.trajectories) for g in groups), max_response_tokens=mr, max_context_tokens=mc)
-e = cfg['engine']
-report = sys.modules['v824_batched'].train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=None, engine=e['batched_engine'], token_budget=e['token_budget'], max_rows=e['max_rows'])
+report = sys.modules['v824_batched'].train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=None, engine=e['batched_engine'], token_budget=token_budget, max_rows=e['max_rows'])
 ev('native-grpo-complete', status=report.get('status'), optimizer_step=report.get('optimizer_step'), trained_rollouts=report.get('trained_rollouts'), trained_tokens=report.get('trained_tokens'),
    preparation_seconds=report.get('preparation_seconds'), optimizer_seconds=report.get('optimizer_seconds'), preclip=report.get('preclip_gradient_norm'), loss=report.get('objective_loss'))
+if sharded: ev('zero3-microbatch', **report['microbatch'])     # token budget, steps and every rank's measured peak
 OUT.mkdir(parents=True, exist_ok=True)
 off = sys.modules['v8210_optimizer_offpath']; staged = off.stage_for_publication_model_only(runtime, opt, report, str(OUT), workers=e['stage_workers']); staged = staged[0] if isinstance(staged, tuple) else staged
 (OUT / 'descriptor.json').write_text(json.dumps(dict(id=staged['output_checkpoint'], files=staged['checkpoint_files'])))

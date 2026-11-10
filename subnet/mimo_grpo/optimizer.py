@@ -33,27 +33,13 @@ def _write_json(path, value):
 
 
 class FP32Accumulator:
-    def __init__(self, named_parameters, *, buffer_device=None):
-        """Accumulate grads in FP32.
-
-        ``buffer_device``: when set (e.g. ``'cpu'``), keep the FP32 accumulator
-        off the GPU. Same math as the default (buffers follow each parameter's
-        device). Used on <100 GiB GPUs so a full 9B FP32 copy does not OOM
-        32 GiB cards; CPUAdamW masters/optimizer already live on CPU.
-        """
+    def __init__(self, named_parameters):
         self.parameters = tuple((name, p) for name, p in named_parameters if p.requires_grad)
         if not self.parameters or len({name for name, _ in self.parameters}) != len(self.parameters):
             raise ValueError('unique nonempty trainable parameter inventory')
         if len({id(p) for _, p in self.parameters}) != len(self.parameters):
             raise ValueError('duplicate trainable parameter object')
-        self.buffer_device = buffer_device
-        if buffer_device is None:
-            self.buffers = {name: torch.zeros_like(p, dtype=torch.float32) for name, p in self.parameters}
-        else:
-            self.buffers = {
-                name: torch.zeros(p.shape, dtype=torch.float32, device=buffer_device)
-                for name, p in self.parameters
-            }
+        self.buffers = {name: torch.zeros_like(p, dtype=torch.float32) for name, p in self.parameters}
         self.microsteps = 0
         self.clipped = False
 
@@ -66,11 +52,7 @@ class FP32Accumulator:
                 raise ValueError('missing/dense gradient inventory: ' + name)
         with torch.no_grad():
             for name, parameter in self.parameters:
-                grad = parameter.grad
-                if self.buffer_device is not None and grad.device != self.buffers[name].device:
-                    self.buffers[name].add_(grad.detach().to(self.buffers[name].device, dtype=torch.float32))
-                else:
-                    self.buffers[name].add_(grad)
+                self.buffers[name].add_(parameter.grad)
                 parameter.grad = None
         self.microsteps += 1
 

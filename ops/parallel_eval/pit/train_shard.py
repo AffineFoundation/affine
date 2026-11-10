@@ -1,37 +1,49 @@
-"""Low-memory / ZeRO-3 train helpers for <100 GiB GPUs (RTX5090 32 GiB).
+"""Host-side view of the sharded (ZeRO-3) trainer for GPUs below 100 GiB (8x RTX5090, 32 GiB each).
 
-The on-box path that actually runs is ``miner/validator/trainer-v834e/v835_zero3.py``
-shipped as part of trainer-host-v834f. This module mirrors the public API for
-host-side tests and config (needs_optimizer_shard, numeric equivalence, preflight).
+The code that runs on the box is ``host_v834f_signing/stage/v835_zero3.py``, a HOST_FILE of host-v834f. It is not
+part of ``miner/validator/trainer-v834e`` (that tree stays byte-identical to the ROOT-admitted host-v834e).
+
+This module gives the PIT host: the threshold predicate, the one environment switch the box trainer reads
+(``PIT_ZERO3``), the box module's memory model, and two checks that run the real stage code in real processes on
+the CPU (torch FSDP over gloo). ``PIT_FP32_ACCUM_DEVICE`` and ``PIT_LOW_MEM_SHARD`` no longer exist: nothing reads
+them, so they cannot change any behaviour.
 """
 from __future__ import annotations
 
-import importlib.util
+import json
 import os
+import socket
+import subprocess
+import sys
+import tempfile
+import types
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional
 
 from . import LOW_MEM_GPU_GIB
 
-PIT_LOW_MEM_ENV = 'PIT_LOW_MEM_SHARD'
-PIT_ACCUM_DEVICE_ENV = 'PIT_FP32_ACCUM_DEVICE'
 PIT_ZERO3_ENV = 'PIT_ZERO3'
+SIGNING = Path(__file__).resolve().parent / 'host_v834f_signing'
+STAGE_V835 = SIGNING / 'stage' / 'v835_zero3.py'
+NUMERICS = SIGNING / 'harness' / 'zero3_numerics.py'
 
 
 def _load_v835():
-    root = Path(__file__).resolve().parents[3]
-    path = root / 'miner' / 'validator' / 'trainer-v834e' / 'v835_zero3.py'
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location('v835_zero3_host', path)
-    mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
+    """The box module, read from the stage for its policy constants and memory model (needs torch).
+
+    Compiled from source here: the import system would leave a bytecode file in stage/, and the signer refuses a
+    stage that holds any file the reviewed manifest does not list.
+    """
+    if not STAGE_V835.is_file():
+        raise RuntimeError('v835_zero3.py missing from host_v834f_signing/stage')
+    module = types.ModuleType('v835_zero3_host')
+    module.__file__ = str(STAGE_V835)
+    exec(compile(STAGE_V835.read_bytes(), str(STAGE_V835), 'exec'), module.__dict__)
+    return module
 
 
 def needs_optimizer_shard(per_gpu_mem_gib: Optional[float]) -> bool:
-    """True when a full per-GPU FP32 master/accumulator will not fit."""
+    """True when one GPU cannot hold the unsharded update (bf16 actor + bf16 gradient + fp32 accumulator)."""
     if per_gpu_mem_gib is None:
         return False
     try:
@@ -55,121 +67,77 @@ def detect_per_gpu_mem_gib() -> Optional[float]:
     env = per_gpu_mem_gib_from_env()
     if env is not None:
         return env
-    z = _load_v835()
-    if z is not None:
-        return z.per_gpu_mem_gib()
-    return None
+    return _load_v835().per_gpu_mem_gib()
 
 
 def configure_low_mem_train(per_gpu_mem_gib: Optional[float] = None) -> Mapping[str, Any]:
-    """Set process env for the on-box trainer; return the chosen policy."""
+    """Set or clear ``PIT_ZERO3`` for the box trainer of this process tree; return the chosen policy."""
     mem = per_gpu_mem_gib if per_gpu_mem_gib is not None else detect_per_gpu_mem_gib()
     shard = needs_optimizer_shard(mem)
     if shard:
-        os.environ[PIT_LOW_MEM_ENV] = '1'
-        os.environ[PIT_ACCUM_DEVICE_ENV] = 'cpu'
         os.environ[PIT_ZERO3_ENV] = '1'
     else:
-        os.environ.pop(PIT_LOW_MEM_ENV, None)
-        os.environ.pop(PIT_ACCUM_DEVICE_ENV, None)
         os.environ.pop(PIT_ZERO3_ENV, None)
-    return {
-        'per_gpu_mem_gib': mem,
-        'low_mem_shard': shard,
-        'zero3': shard,
-        'fp32_accum_device': 'cpu' if shard else None,
-        'threshold_gib': float(LOW_MEM_GPU_GIB),
-    }
+    return {'per_gpu_mem_gib': mem, 'zero3': shard, 'threshold_gib': float(LOW_MEM_GPU_GIB)}
 
 
-def fp32_accum_device_from_env() -> Optional[str]:
-    if os.environ.get(PIT_ZERO3_ENV) in ('1', 'true', 'True', 'yes'):
-        return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
-    if os.environ.get(PIT_LOW_MEM_ENV) in ('1', 'true', 'True', 'yes'):
-        return os.environ.get(PIT_ACCUM_DEVICE_ENV) or 'cpu'
-    return os.environ.get(PIT_ACCUM_DEVICE_ENV) or None
-
-
-def shard_param_names(
-    names: Sequence[str],
-    *,
-    rank: int,
-    world_size: int,
-) -> List[str]:
-    """ZeRO-2 style ownership: rank ``i`` owns names where hash % world == i."""
-    if world_size < 1:
-        raise ValueError('world_size must be >= 1')
-    if not (0 <= int(rank) < int(world_size)):
-        raise ValueError('rank out of range')
-    if world_size == 1:
-        return list(names)
-    owned = []
-    for name in names:
-        h = sum(ord(c) for c in name) % int(world_size)
-        if h == int(rank):
-            owned.append(name)
-    if not owned and names:
-        owned.append(names[int(rank) % len(names)])
-    return owned
-
-
-def estimate_peak_gib(**kwargs) -> Mapping[str, float]:
-    z = _load_v835()
-    if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
-    return z.estimate_peak_gib(**kwargs)
+def estimate_peak_gib(**kwargs) -> Mapping[str, Any]:
+    """Per-GPU peak of one sharded micro-batch (see v835_zero3.estimate_peak_gib). ``n_params`` scales the 9B
+    geometry when no loaded model inventory is given."""
+    module = _load_v835()
+    inv = kwargs.pop('inv', None) or module.scaled_inventory(kwargs.pop('n_params', 9.4e9))
+    kwargs.pop('n_params', None)
+    return module.estimate_peak_gib(inv, **kwargs)
 
 
 def preflight_or_raise(**kwargs) -> Mapping[str, Any]:
-    z = _load_v835()
-    if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
-    return z.preflight_or_raise(**kwargs)
+    return _load_v835().preflight_or_raise(**kwargs)
 
 
-def numeric_equivalence_step(
-    *,
-    shapes: Sequence[Tuple[int, ...]] = ((8, 8), (4,)),
-    clip: float = 1.0,
-    seed: int = 0,
-) -> Mapping[str, Any]:
-    """Compare default GPU-buffer path vs CPU-offload path on a tiny model."""
-    import torch
-    from subnet.mimo_grpo.optimizer import FP32Accumulator
-
-    torch.manual_seed(seed)
-    params_a = []
-    params_b = []
-    for i, shape in enumerate(shapes):
-        p = torch.nn.Parameter(torch.randn(shape, dtype=torch.bfloat16))
-        params_a.append(('p%d' % i, p))
-        params_b.append(('p%d' % i, p.clone().detach().requires_grad_(True)))
-
-    for (_, a), (_, b) in zip(params_a, params_b):
-        g = torch.randn_like(a, dtype=torch.float32)
-        a.grad = g.to(dtype=a.dtype)
-        b.grad = g.to(dtype=b.dtype).clone()
-
-    acc_a = FP32Accumulator(params_a)
-    acc_b = FP32Accumulator(params_b, buffer_device='cpu')
-    acc_a.capture()
-    acc_b.capture()
-    n_a = acc_a.clip(clip)
-    n_b = acc_b.clip(clip)
-    diffs = []
-    for name, _ in params_a:
-        diffs.append(float((acc_a.buffers[name].cpu() - acc_b.buffers[name].cpu()).abs().max()))
-    return {
-        'max_abs_diff': max(diffs) if diffs else 0.0,
-        'norm_a': n_a,
-        'norm_b': n_b,
-        'norm_diff': abs(n_a - n_b),
-    }
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return int(sock.getsockname()[1])
 
 
-def numeric_equivalence_zero3(**kwargs) -> Mapping[str, Any]:
-    """Tiny-model single-GPU vs sharded ZeRO-3-style update (final bf16 must match)."""
-    z = _load_v835()
-    if z is None:
-        raise RuntimeError('v835_zero3.py missing from trainer-v834e')
-    return z.numeric_equivalence_tiny(**kwargs)
+def run_numerics(*, world: int, dtype: str, seed: int = 0, timeout: float = 900.0, offload_inputs: bool = False,
+                 work: Optional[Path] = None) -> Mapping[str, Any]:
+    """Run ``harness/zero3_numerics.py``: ``world`` processes shard a tiny production-class model with the stage's
+    own code and one gradient is compared with the v8.3.4e definition. Returns the tool's JSON result.
+
+    ``offload_inputs``: every rank keeps its checkpointed layer inputs behind the stage's host-memory hooks.
+    ``work``: keep the tool's files there (the gathered gradient is ``result['gradient_file']``); by default they
+    go to a scratch directory that is removed.
+    """
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
+    env.pop(PIT_ZERO3_ENV, None)
+    with tempfile.TemporaryDirectory(prefix='zero3-numerics-') as scratch:
+        argv = [sys.executable, '-B', str(NUMERICS), '--world', str(world), '--dtype', dtype, '--seed', str(seed),
+                '--port', str(_free_port()), '--work', str(work or scratch)]
+        if offload_inputs:
+            argv.append('--offload-inputs')
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    lines = [line for line in proc.stdout.splitlines() if line.startswith('{')]
+    if not lines:
+        raise RuntimeError('zero3_numerics produced no result (rc %s): %s' % (proc.returncode, proc.stderr[-2000:]))
+    result = json.loads(lines[-1])
+    result['returncode'] = proc.returncode
+    return result
+
+
+def numeric_equivalence_step(*, seed: int = 0) -> Mapping[str, Any]:
+    """One gradient in the production precision (bf16 forward, fp32 reduction) at world 2: the fp32 gradient the
+    sharded path hands to the optimizer against the v8.3.4e accumulator built from the same autograd gradients."""
+    result = dict(run_numerics(world=2, dtype='bfloat16', seed=seed))
+    if not result.get('ok'):
+        raise RuntimeError('sharded bf16 gradient check failed: %s' % json.dumps(result)[:1500])
+    reduction = result['reduction']
+    result.update(max_abs_diff=reduction['max_abs_diff'],
+                  norm_diff=reduction['rel_diff'] * reduction['gradient_norm'])
+    return result
+
+
+def numeric_equivalence_zero3(*, seed: int = 0, world: int = 8) -> Mapping[str, Any]:
+    """The sharded gradient of ``world`` ranks against one unsharded process, in fp32 (the precision in which the
+    CPU kernels are reproducible between processes; see harness/zero3_numerics.py)."""
+    return run_numerics(world=world, dtype='float32', seed=seed)
