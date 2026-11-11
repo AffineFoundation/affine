@@ -32,6 +32,8 @@ Options for the gradient comparison of the sharded update with the unsharded one
   --max-rows N        sharded: at most N rollouts in one micro-batch (dp_max_rows of the fixture's signed engine)
   --turn JSON         the `train` block of the dispatch (lr, step_mult, knobs), read by the launcher's own
                       ff_trainer.train_params as the installed prepare_signed_dispatch reads it
+  --derail-threshold X  the job's derail threshold instead of the published -3.0 (the tiny random model gives its
+                      own tokens a mean log-prob near -4.2, so -9.0 means: no rollout derails)
   --capture-gradient  keep the accumulated fp32 gradient as it is before the clip, in <run>/gradient.pt. The
                       unsharded run keeps the whole gradient, a sharded run keeps what rank 0 holds: its dim-0
                       shard of the sum over every rank (the whole tensor in a one-rank world).
@@ -252,6 +254,7 @@ def main(argv=None):
     ap.add_argument('--max-rows', type=int, default=None, help='sharded: rollouts per micro-batch (signed dp_max_rows)')
     ap.add_argument('--turn', default=None, help='JSON `train` block of the dispatch: lr, step_mult, knobs')
     ap.add_argument('--capture-gradient', action='store_true', help='keep the fp32 gradient before the clip (gradient.pt)')
+    ap.add_argument('--derail-threshold', type=float, default=None, help='derail threshold of the job settings')
     a = ap.parse_args(argv)
     if a.observe and (a.mode != 'sharded' or a.world != 1):
         ap.error('--observe runs its control forward on rank 0 alone: it needs --mode sharded --world 1')
@@ -325,7 +328,10 @@ def main(argv=None):
     result['fp32_accumulator_signature'] = str(inspect.signature(FP32Accumulator.__init__))
     torch.set_num_threads(2)
     runtime = MimoRuntime.load(str(head), descriptor, spec, device='cpu', trainable=True, allow_fixture=True)
-    config = TrainerConfig(**fixture.trainer_settings())
+    settings = fixture.trainer_settings()
+    if a.derail_threshold is not None:
+        settings['derail_threshold'] = a.derail_threshold
+    config = TrainerConfig(**settings)
     step = 7
     opt = CPUAdamW(runtime.model.named_parameters(), config, input_checkpoint=descriptor['id'])
     opt.global_step = step

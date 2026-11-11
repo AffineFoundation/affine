@@ -32,7 +32,7 @@ from safetensors.torch import load_file
 from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
 
 from ops.parallel_eval.live import pe_artifact_upload
-from ops.parallel_eval.pit import train_shard
+from ops.parallel_eval.pit import compare_train_reports, train_shard
 from subnet.storage import canonical, sha
 
 REPO = Path(__file__).resolve().parents[3]
@@ -1101,6 +1101,84 @@ class TestGradientParityWithTheUnshardedTrainer(unittest.TestCase):
         self.assertGreater(apart, 0.5)
         apart, _ = self.distance(self.gradient['w2-knobs'], self.gradient['w2'])
         self.assertGreater(apart, 0.5)
+
+
+class TestCompareTrainReports(unittest.TestCase):
+    """compare_train_reports on real update reports of the fixture batch: the unsharded update, the sharded update
+    of the same job, and the unsharded update of a job whose derail mask is off (threshold -9.0 against -3.0)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp(prefix='v834f-compare-'))
+        cls.addClassCleanup(shutil.rmtree, cls.work, True)
+        common = ('--capped-tokens', '110', '--capture-gradient')
+        for tag, mode, args, env in (
+                (None, 'prepare', (), child_env()),
+                ('derail', 'reference', common, child_env()),
+                ('no-derail', 'reference', common + ('--derail-threshold', '-9.0'), child_env()),
+                ('sharded', 'sharded', common + ('--world', '2', '--port', str(free_port())), child_env(PIT_PER_GPU_MEM_GIB='32'))):
+            proc, _ = run_driver(cls.work, mode, *(args + (('--tag', tag) if tag else ())), env=env)
+            if proc.returncode != 0:
+                raise AssertionError('%s failed (rc %s):\n%s\n%s' % (tag or mode, proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:]))
+        cls.path = {tag: cls.work / tag / 'report.private.json' for tag in ('derail', 'no-derail', 'sharded')}
+        cls.report = {tag: json.loads(path.read_text()) for tag, path in cls.path.items()}
+
+    def test_two_packings_of_one_job_show_no_difference(self):
+        out = compare_train_reports.compare(self.report['derail'], self.report['sharded'])
+        self.assertEqual(out['inputs_different'], {})
+        self.assertEqual([m['engine'] for m in out['microbatch']], ['padded', 'packed-zero3-v835'])
+        self.assertEqual((out['rollouts']['shared'], out['rollouts']['only_a'], out['rollouts']['only_b']), (9, 0, 0))
+        self.assertEqual((out['rollouts']['different'], out['rollouts']['different_mask']), (0, 0))
+        self.assertEqual(out['rollouts']['same_kept_tokens'], 9)
+        self.assertLess(out['rollouts']['old_logprob_mean_abs_difference']['max'], 1e-6)
+        self.assertEqual(out['top'], [])
+        self.assertAlmostEqual(out['totals']['preclip_gradient_norm']['ratio'], 1.0, delta=1e-6)
+        self.assertEqual(out['weight_model']['different_mask_share'], [0, 0])
+        self.assertAlmostEqual(out['weight_model']['modelled_norm_ratio'], 1.0, places=12)
+        self.assertAlmostEqual(out['weight_model']['modelled_cosine'], 1.0, places=12)
+
+    def test_a_different_derail_cut_is_found_and_weighed(self):
+        out = compare_train_reports.compare(self.report['no-derail'], self.report['sharded'])
+        self.assertEqual(out['inputs_different'], {'config.settings.derail_threshold': [-9.0, -3.0]})
+        self.assertEqual(out['totals']['derailed_rollouts'], dict(a=0, b=1, ratio=None))
+        self.assertEqual((out['totals']['loss_tokens']['a'], out['totals']['loss_tokens']['b']), (277, 263))
+        rollouts = out['rollouts']
+        self.assertEqual((rollouts['different'], rollouts['different_mask'], rollouts['same_kept_tokens']), (1, 1, 8))
+        self.assertEqual(rollouts['different_by_field'], dict(derail_index=1, loss_tokens=1, support_outside_tokens=1,
+                                                              advantage=0, stop=0, tokens=0))
+        self.assertLess(rollouts['old_logprob_mean_abs_difference']['max'], 1e-6)    # the other 8 rollouts: the same forward
+        (row,) = out['top']
+        self.assertEqual((row['derail_index'], row['loss_tokens'], row['stop']), ([None, 31], [110, 96], ['max_tokens'] * 2))
+        self.assertLess(row['pg_tokens'][1], row['pg_tokens'][0])
+        self.assertGreater(row['weight_share'][1], row['weight_share'][0])          # fewer tokens: a larger share of the gradient
+        self.assertEqual(out['weight_model']['different_mask_share'], row['weight_share'])
+        # the model against the two real gradients (both unsharded and whole): same batch, with and without the cut
+        with_cut = torch.load(str(self.work / 'derail' / 'gradient.pt'))
+        without = torch.load(str(self.work / 'no-derail' / 'gradient.pt'))
+        norm = lambda g: float(torch.sqrt(sum(t.double().pow(2).sum() for t in g.values())))
+        cosine = float(sum((with_cut[n].double() * without[n].double()).sum() for n in with_cut)) / (norm(with_cut) * norm(without))
+        self.assertLess(cosine, 0.999)                                              # one rollout of nine moved the gradient
+        self.assertAlmostEqual(out['weight_model']['modelled_cosine'], cosine, delta=2e-3)
+        self.assertAlmostEqual(out['weight_model']['measured_norm_ratio'], norm(with_cut) / norm(without), delta=1e-6)
+
+    def test_command_line(self):
+        def run(*argv):
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(compare_train_reports.main(list(argv)), 0)
+            return stream.getvalue()
+        text = run(str(self.path['no-derail']), str(self.path['sharded']))
+        self.assertIn('DIFFERENT config.settings.derail_threshold: -9.0 | -3.0', text)
+        self.assertIn('with another mask: 1 (derail_index 1, loss_tokens 1, support_outside_tokens 1)', text)
+        self.assertIn('derail_index None | 31, loss tokens 110 | 96', text)
+        same = run(str(self.path['derail']), str(self.path['sharded']))
+        self.assertIn('the same batch, checkpoint, fp32 master, settings and turn parameters', same)
+        self.assertIn('with another mask: 0', same)
+        self.assertEqual(json.loads(run(str(self.path['derail']), str(self.path['sharded']), '--json'))['rollouts']['different'], 0)
+
+    def test_refuses_a_report_without_an_update(self):
+        with self.assertRaises(ValueError):
+            compare_train_reports.compare(dict(status='no-update'), self.report['sharded'])
 
 
 class TestShardedFailures(unittest.TestCase):
