@@ -41,6 +41,7 @@ C = 'f' * 64
 HEAD = 'a' * 64
 HEAD_BF16 = 'b' * 64
 HEAD_MASTER = 'c' * 64
+LIVE_HEAD = '7' * 64
 BUCKET = 'affine-fakepass-moto'
 _SKIP_NO_MOTO = unittest.skipIf(mock_aws is None, 'moto not installed')
 
@@ -55,7 +56,8 @@ def _wj(path: Path, doc) -> Path:
     return path
 
 
-def _epoch(life: Path, n: int, *, head: str = HEAD, signed: bool = True, finalized: bool = True) -> Path:
+def _epoch(life: Path, n: int, *, head: str = HEAD, signed: bool = True) -> Path:
+    """One lifecycle epoch. Live finalizes every epoch as no-update right after training."""
     ep = life / 'epochs' / str(n)
     _wj(ep / 'TRAINING-JOB.json', {'payload': {
         'manifest': {'payload': {'checkpoint': {'id': head, 'files': {'model.safetensors': '1' * 64}}}},
@@ -64,27 +66,61 @@ def _epoch(life: Path, n: int, *, head: str = HEAD, signed: bool = True, finaliz
     _wj(ep / 'TRAIN-DISPATCH-FF.json', {
         'signature': 'sig' if signed else '',
         'signer': 'ROOT' if signed else 'SHADOW-UNSIGNED',
+        'payload': {'epoch': 'run-e%06d' % n, 'checkpoint': head},
     })
-    if finalized:
-        _wj(ep / 'FINALIZED.json', {'payload': {'input_checkpoint': head}})
+    _wj(ep / 'FINALIZED.json', {'payload': {'input_checkpoint': head, 'result': {'status': 'no-update'}}})
     return ep
 
 
+def _public_turn(turns: Path, ep: Path, *, decision: str, candidate: str = C) -> Path:
+    """The public record of one decided epoch, in the shape k1_transparency.publish_ff_turn writes.
+
+    The batch file is published for a GREEN only; a RED keeps it private.
+    """
+    n = int(ep.name)
+    head = json.loads((ep / 'TRAINING-JOB.json').read_text())['payload']['manifest']['payload']['checkpoint']['id']
+    green = decision == 'green'
+    return _wj(turns / str(n) / 'turn.json', {
+        'schema': 'sn120-k1-transparency-v1',
+        'epoch': n,
+        'format': 'affine-batch-v2',
+        'promoted': green,
+        'decision': {'decision': decision, 'head': head, 'candidate': candidate, 'decided_at': 1000.0 + n,
+                     'mode': 'live', 'z_min': 1.0, 'z_inclusive': False},
+        'batch': ({'published': True, 'url': '/k1/turns/%d/batch.json' % n, 'sha256': '5' * 64, 'bytes': 1}
+                  if green else {'published': False, 'note': 'RED: the miner file stays private.'}),
+        'dispatch': {
+            'envelope_file_sha256': _sha((ep / 'TRAIN-DISPATCH-FF.json').read_bytes()),
+            'signer': 'ROOT',
+            'header': {'checkpoint': head, 'epoch': 'run-e%06d' % n},
+        },
+        'candidate': {'id': candidate, 'promoted': green},
+    })
+
+
 def _live_fixture(root: Path) -> Dict[str, str]:
-    """Read-only stand-in for the host live tree (CURRENT, epochs, M(H) index, BUNDLE)."""
+    """Read-only stand-in for the host live tree and the public record.
+
+    Epoch 10 trained from HEAD and went GREEN: its candidate LIVE_HEAD is the
+    live head now, and its batch is public. Epochs 11-13 train from LIVE_HEAD:
+    11 is unsigned, 12 is decided RED (private batch), 13 is still in flight.
+    Epoch 9 is an older GREEN whose input master is not published.
+    """
     life = root / 'live-life'
     pe = root / 'live-pe'
     idx = root / 'live-fp32-master'
+    turns = root / 'live-web' / 'k1' / 'turns'
     _wj(life / 'CURRENT.json', {
-        'epoch_index': 13,
-        'checkpoint': {'id': HEAD},
+        'epoch_index': 14,
+        'checkpoint': {'id': LIVE_HEAD},
         'optimizer_step': 52,
-        'checkpoint_authorization': {'input': 'genesis', 'id': HEAD},
+        'checkpoint_authorization': {'input': HEAD, 'id': LIVE_HEAD},
     })
-    _epoch(life, 10)
-    _epoch(life, 11, signed=False)
-    _epoch(life, 12, finalized=False)
-    _epoch(life, 9, head='9' * 64)
+    _public_turn(turns, _epoch(life, 9, head='9' * 64), decision='green', candidate=HEAD)
+    _public_turn(turns, _epoch(life, 10), decision='green', candidate=LIVE_HEAD)
+    _public_turn(turns, _epoch(life, 11, head=LIVE_HEAD, signed=False), decision='green')
+    _public_turn(turns, _epoch(life, 12, head=LIVE_HEAD), decision='red')
+    _epoch(life, 13, head=LIVE_HEAD)
     _wj(idx / ('%s.json' % HEAD), {
         'bf16_sha256': HEAD_BF16,
         'master_digest': HEAD_MASTER,
@@ -95,7 +131,12 @@ def _live_fixture(root: Path) -> Dict[str, str]:
         'meta_json': {'r2_key': 'fp32-master/h/meta.json'},
     })
     _wj(pe / 'BUNDLE.json', {'bundle': 'probe'})
-    return {'PE_LIFE': str(life), 'PE_STATE': str(pe), 'PIT_FP32_MASTER_INDEX': str(idx)}
+    return {'PE_LIFE': str(life), 'PE_STATE': str(pe), 'PIT_FP32_MASTER_INDEX': str(idx),
+            'PIT_PUBLIC_TURNS': str(turns)}
+
+
+def _offline(url: str) -> bytes:
+    raise OSError('offline: %s' % url)
 
 
 @contextlib.contextmanager
@@ -333,24 +374,99 @@ class TestRealModeIsReal(unittest.TestCase):
 
 
 class TestRealLiveSources(unittest.TestCase):
-    def test_newest_finalized_signed_epoch_bound_to_head(self):
+    def _refusal(self, env, **kw) -> str:
+        with self.assertRaises(FP.FakepassError) as ctx:
+            R.resolve_live_sources(env, fetch=_offline, **kw)
+        return str(ctx.exception)
+
+    def test_picks_newest_decided_public_epoch_not_the_live_head_epoch(self):
         with tempfile.TemporaryDirectory() as td:
             env = _live_fixture(Path(td))
-            src = R.resolve_live_sources(env)
-            self.assertEqual(src.head, HEAD)
+            src = R.resolve_live_sources(env, fetch=_offline)
+            # Epochs 13 (in flight), 12 (RED) and 11 (unsigned) train from the live head: all skipped.
             self.assertEqual(src.epoch, 10)
+            self.assertEqual(src.head, HEAD)
+            self.assertEqual(src.live_head, LIVE_HEAD)
+            self.assertEqual(src.decision['decision'], 'green')
+            self.assertEqual(src.decision['candidate'], LIVE_HEAD)
             self.assertEqual(src.master_digest, HEAD_MASTER)
             self.assertEqual(src.head_bf16, HEAD_BF16)
             self.assertTrue(src.master_index_origin.endswith('%s.json' % HEAD))
-            self.assertEqual(len(src.provenance), 4)
+            turn = Path(env['PIT_PUBLIC_TURNS']) / '10' / 'turn.json'
+            self.assertEqual(src.public_turn_origin, str(turn))
+            self.assertEqual(src.provenance[str(turn)], _sha(turn.read_bytes()))
+            self.assertEqual(len(src.provenance), 5)
 
-    def test_explicit_epoch_must_be_signed_and_bound(self):
+    def test_explicit_epoch_must_be_signed_decided_and_public(self):
         with tempfile.TemporaryDirectory() as td:
             env = _live_fixture(Path(td))
-            for bad in (11, 9):
-                with self.assertRaises(FP.FakepassError):
-                    R.resolve_live_sources(env, epoch=bad)
-            self.assertEqual(R.resolve_live_sources(env, epoch=12).epoch, 12)
+            self.assertEqual(R.resolve_live_sources(env, epoch=10, fetch=_offline).epoch, 10)
+            self.assertIn('ROOT-signed', self._refusal(env, epoch=11))
+            self.assertIn('decided red: the batch is not published', self._refusal(env, epoch=12))
+            self.assertIn('no public turn record', self._refusal(env, epoch=13))
+            self.assertIn('M(H) unpublished', self._refusal(env, epoch=9))
+            self.assertIn('ROOT-signed', self._refusal(env, epoch=77))
+
+    def test_public_record_must_name_the_local_signed_dispatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            turn = Path(env['PIT_PUBLIC_TURNS']) / '10' / 'turn.json'
+            good = json.loads(turn.read_text())
+            for label, edit in (
+                ('does not name the local signed dispatch', lambda d: d['dispatch'].update(envelope_file_sha256='0' * 64)),
+                ('names epoch 12', lambda d: d.update(epoch=12)),
+                ('no final decision', lambda d: d['decision'].update(decision='pending')),
+                ('the batch is not published', lambda d: d['batch'].update(published='yes')),
+            ):
+                doc = json.loads(json.dumps(good))
+                edit(doc)
+                _wj(turn, doc)
+                self.assertIn(label, self._refusal(env, epoch=10))
+            turn.write_text('not json')
+            self.assertIn('not a JSON object', self._refusal(env, epoch=10))
+            # No usable epoch is left: the automatic pick refuses and points at --epoch.
+            why = self._refusal(env)
+            self.assertIn('no decided public epoch', why)
+            self.assertIn('--epoch', why)
+            self.assertIn('e9: M(H) unpublished', why)
+
+    def test_public_record_falls_back_to_public_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            turns = Path(env.pop('PIT_PUBLIC_TURNS'))
+            urls = {R.PUBLIC_TURN_URL % int(p.parent.name): p.read_bytes() for p in turns.glob('*/turn.json')}
+            seen = []
+
+            def fetch(url):
+                seen.append(url)
+                if url not in urls:
+                    raise OSError('404')
+                return urls[url]
+
+            src = R.resolve_live_sources(env, fetch=fetch)
+            self.assertEqual(src.epoch, 10)
+            self.assertEqual(src.public_turn_origin, R.PUBLIC_TURN_URL % 10)
+            # Unsigned epoch 11 costs no lookup; the M(H) index is local.
+            self.assertEqual(seen, [R.PUBLIC_TURN_URL % n for n in (13, 12, 10)])
+            self.assertEqual(src.provenance[R.PUBLIC_TURN_URL % 10], _sha(urls[R.PUBLIC_TURN_URL % 10]))
+
+    def test_automatic_pick_bounds_public_lookups(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            life = Path(env['PE_LIFE'])
+            env.pop('PIT_PUBLIC_TURNS')
+            for n in range(14, 14 + R.PUBLIC_SCAN_LIMIT + 5):
+                _epoch(life, n, head=LIVE_HEAD)
+            seen = []
+
+            def fetch(url):
+                seen.append(url)
+                raise OSError('404')
+
+            with self.assertRaises(FP.FakepassError) as ctx:
+                R.resolve_live_sources(env, fetch=fetch)
+            self.assertEqual(len(seen), R.PUBLIC_SCAN_LIMIT)
+            self.assertIn('newest %d signed epochs' % R.PUBLIC_SCAN_LIMIT, str(ctx.exception))
 
     def test_index_falls_back_to_public_url(self):
         with tempfile.TemporaryDirectory() as td:
@@ -395,6 +511,8 @@ class TestRealLiveSources(unittest.TestCase):
                 self.assertEqual(cur['checkpoint']['id'], HEAD)
                 self.assertEqual(cur['epoch_index'], 10)
                 self.assertEqual(cur['optimizer_step'], 50)
+                # The live authorization names LIVE_HEAD; it does not follow the run to the earlier HEAD.
+                self.assertIsNone(cur['checkpoint_authorization'])
                 chain = json.loads((paths['pe'] / 'HEAD-CHAIN.json').read_text())
                 self.assertEqual(chain, {'genesis': HEAD, 'applied': []})
                 flag = json.loads(staged['flag'].read_text())
@@ -1007,7 +1125,7 @@ class TestRealApplyChainHermetic(unittest.TestCase):
             self.run_.gc_r2()
             self.assertEqual(self._keys(R.run_r2_prefix(self.RUN) + '/'), [])
         live_life = Path(self.live_env['PE_LIFE'])
-        self.assertEqual(json.loads((live_life / 'CURRENT.json').read_text())['checkpoint']['id'], HEAD)
+        self.assertEqual(json.loads((live_life / 'CURRENT.json').read_text())['checkpoint']['id'], LIVE_HEAD)
 
     def test_missing_pending_meta_json_object_blocks_promote_and_head(self):
         with _fresh_live_modules(), R.swapped_environ(self.env):

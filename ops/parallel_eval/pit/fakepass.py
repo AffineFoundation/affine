@@ -699,6 +699,8 @@ def _real_live_roots(base: List[Path], src: 'REAL.LiveSources') -> List[Path]:
     roots.append(src.bundle_json.parent)
     if not src.master_index_origin.startswith('http'):
         roots.append(Path(src.master_index_origin).parent)
+    if src.public_turn_origin and not src.public_turn_origin.startswith('http'):
+        roots.append(Path(src.public_turn_origin).parent.parent)
     return roots
 
 
@@ -774,7 +776,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument('--real', action='store_true',
                    help='real rent/train/upload/serve/apply on an affine-pe-pit-fakepass-* box')
     p.add_argument('--epoch', type=int, default=None,
-                   help='REAL: finalized live epoch bound to HEAD (default: newest)')
+                   help='REAL: a decided epoch whose batch is public (default: the newest one)')
     p.add_argument('--sever-after-green', action='store_true',
                    help='ssh to box fails rc=255; APPLY must succeed from upload')
     p.add_argument('--restart-host-mid-eval', action='store_true',
