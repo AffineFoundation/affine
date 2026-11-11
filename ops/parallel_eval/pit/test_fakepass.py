@@ -566,6 +566,69 @@ class TestRealRentPolicy(unittest.TestCase):
             R.make_fakepass_host_rent(_FakeRent({'B300': 1.0}))('affine-pe-live-1')
 
 
+@contextlib.contextmanager
+def _lium_fixture_module(fake: _FakeRent, pods=()) -> Iterator[types.ModuleType]:
+    """Importable stand-in for the host Lium rental module (the external boundary)."""
+    mod = types.ModuleType('fixture_lium_pe_rent')
+    mod.pick_node = fake.pick_node
+    mod.rent = fake.rent
+    mod.release = fake.release
+    mod.our_pods = lambda ps=None: list(pods)
+    sys.modules[mod.__name__] = mod
+    try:
+        yield mod
+    finally:
+        sys.modules.pop(mod.__name__, None)
+
+
+class TestRealRentNoteCallback(unittest.TestCase):
+    """Nov 10 real-box fakepass: the rent note callback received ``event`` twice."""
+
+    RUN = 'rentnote'
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        live_env = _live_fixture(Path(td.name))
+        live_roots = FP.live_roots_from_env(live_env)
+        self.paths = FP.make_sandbox(self.RUN, live_roots=live_roots)
+        self.addCleanup(FP.cleanup_sandbox, self.paths)
+        src = R.resolve_live_sources(live_env)
+        staged = R.stage_live_sources(src, self.paths)
+        env = R.real_env_for_sandbox(FP.env_for_sandbox(self.paths, self.RUN), self.paths)
+        self.run_ = R.RealFakepass(
+            run_id=self.RUN, paths=self.paths, env=env, live_roots=live_roots,
+            sources=src, staged=staged,
+        )
+
+    def _timeline(self):
+        return [json.loads(line) for line in self.run_.log_path.read_text().splitlines()]
+
+    def test_rent_through_real_service_writes_one_rent_attempt_row(self):
+        fake = _FakeRent({'B300': 30.0})
+        with _lium_fixture_module(fake) as mod:
+            svc = self.run_.build_rent(mod)
+            out = svc.rent(item_id=self.run_.item_id, epoch=self.run_.sources.epoch, attempt=0)
+        self.assertEqual(out['gpu'], 'B300')
+        self.assertTrue(is_fakepass_name(out['name']))
+        # One paid rental: the TypeError signature fallback must not run.
+        self.assertEqual(len([c for c in fake.calls if c[0] == 'rent']), 1)
+        rows = [r for r in self._timeline() if r['event'] == 'rent_attempt']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['gpu'], 'B300')
+        self.assertEqual(rows[0]['offer_price_h'], 30.0)
+        self.assertEqual(rows[0]['phase'], self.run_.phase.value)
+
+    def test_note_contract_is_positional_event(self):
+        seen = []
+
+        def note(event, **extra):
+            seen.append((event, extra))
+
+        R.make_fakepass_host_rent(_FakeRent({'B300': 30.0}), note=note)(PREFIX_FAKEPASS + 'n1')
+        self.assertEqual(seen, [('rent_attempt', {'gpu': 'B300', 'offer_price_h': 30.0})])
+
+
 class _CapturePod:
     def __init__(self, out='OK'):
         self.cmds = []

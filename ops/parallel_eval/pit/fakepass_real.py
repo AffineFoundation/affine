@@ -563,9 +563,13 @@ def make_fakepass_host_rent(
     order: Sequence[str] = FAKEPASS_GPU_ORDER,
     ceiling: float = float(PRICE_CEILING_USD_H),
     ttl: str = RENT_TTL,
-    note: Callable[..., None] = lambda **_: None,
+    note: Callable[..., None] = lambda _event, **_extra: None,
 ) -> Callable[..., Mapping[str, Any]]:
-    """B300, then B200, then H200 — each only if an 8-GPU offer is under ceiling."""
+    """B300, then B200, then H200 — each only if an 8-GPU offer is under ceiling.
+
+    ``note(event, **fields)``: the event name is positional, so a timeline
+    writer whose first parameter is ``event`` cannot receive it twice.
+    """
     order = tuple(order)
     if any(g not in FAKEPASS_GPU_ORDER for g in order):
         _die('fakepass rents only %s (got %s)' % (FAKEPASS_GPU_ORDER, order))
@@ -583,7 +587,7 @@ def make_fakepass_host_rent(
             if not row or got_g != g:
                 tried.append({'gpu': g, 'skip': 'no 8x%s offer <= $%.2f/h' % (g, ceiling)})
                 continue
-            note(event='rent_attempt', gpu=g, offer_price_h=row.get('price_per_hour'))
+            note('rent_attempt', gpu=g, offer_price_h=row.get('price_per_hour'))
             out = rent_mod.rent(name, ttl, gpu=g)
             if not out:
                 tried.append({'gpu': g, 'skip': 'lium up failed'})
@@ -886,13 +890,16 @@ class RealFakepass:
         self._note('sandbox_ready', run_id=self.run_id, root=str(root), live_sources=self.sources.as_dict(),
                    module_roots=bound, trainer_host=self.host_check)
 
+    def build_rent(self, rent_mod: Any) -> RentService:
+        return build_rent_service(
+            rent_mod, ledger_path=self.paths['pe'] / 'fakepass-rent-ledger.json',
+            note=self._note,
+        )
+
     def phase_rent(self) -> None:
         self._advance(FakepassPhase.RENT)
         mods = self._require_mods()
-        self.rent = build_rent_service(
-            mods.rent, ledger_path=self.paths['pe'] / 'fakepass-rent-ledger.json',
-            note=lambda **kw: self._note('rent', **kw),
-        )
+        self.rent = self.build_rent(mods.rent)
         try:
             out = self.rent.rent(item_id=self.item_id, epoch=self.sources.epoch, attempt=0)
         except RentError as exc:
