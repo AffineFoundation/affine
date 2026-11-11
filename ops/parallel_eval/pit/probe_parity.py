@@ -147,12 +147,11 @@ def load_side(doc: Mapping[str, Any], *, tag: Optional[str] = None, default_tag:
     if doc.get('version') == PS.SIDE_VERSION:
         result, serve = doc.get('result'), doc.get('serve') or {}
         side = dict(tag=tag or doc.get('tag'), plan=doc.get('plan'), layout=serve.get('layout'), serve_s=serve.get('serve_s'),
-                    score_changing=list(serve.get('score_changing') or []), gpus=serve.get('gpus'))
+                    gpus=serve.get('gpus'))
     elif isinstance(doc.get('envs'), Mapping) and 'checkpoint_id' in doc:
         result = doc
         serve = doc.get('serve_layout') or {}       # the eval stage of a shadow box adds this to its probe result
-        side = dict(tag=tag, plan=None, layout=serve.get('layout'), serve_s=serve.get('serve_s'),
-                    score_changing=list(serve.get('score_changing') or []), gpus=serve.get('gpus'))
+        side = dict(tag=tag, plan=None, layout=serve.get('layout'), serve_s=serve.get('serve_s'), gpus=serve.get('gpus'))
     else:
         raise ParityError('not a side record and not a probe result')
     if not isinstance(result, Mapping) or not isinstance(result.get('envs'), Mapping):
@@ -288,7 +287,7 @@ def compare(doc_a: Mapping[str, Any], doc_b: Mapping[str, Any], *, tag_a: Option
 
     def about(side: Mapping[str, Any]) -> Dict[str, Any]:
         keys = ('tag', 'layout', 'gpus', 'replicas', 'partial', 'samples', 'planned_samples', 'wall_seconds',
-                'rollouts_per_min', 'serve_s', 'score_changing')
+                'rollouts_per_min', 'serve_s')
         return dict({k: side[k] for k in keys}, tasks=len(side['cells']),
                     mean_out_tokens=_mean_tokens(side['cells'].values()))
 
@@ -324,9 +323,9 @@ def render(report: Mapping[str, Any], *, top: int = 20) -> str:
         lay = side.get('layout') or {}
         if not lay:
             return 'layout not recorded'
-        return '%s: %s GPU per replica, vLLM %s, max-num-seqs %s, gmu %s, prefix caching %s, KV cache %s' % (
+        return '%s: %s GPU per replica, vLLM %s, max-num-seqs %s, gmu %s, prefix caching %s' % (
             lay.get('name'), lay.get('gpus_per_replica'), lay.get('vllm_version'), lay.get('max_num_seqs'),
-            lay.get('gpu_memory_utilization'), 'on' if lay.get('prefix_caching') else 'off', lay.get('kv_cache_dtype'))
+            lay.get('gpu_memory_utilization'), 'on' if lay.get('prefix_caching') else 'off')
 
     lines = [
         'probe parity of checkpoint %s, seed %s' % (str(report['checkpoint_id'])[:16], report['seed']),
@@ -335,9 +334,6 @@ def render(report: Mapping[str, Any], *, top: int = 20) -> str:
         'verdict: %s' % report['verdict'],
     ]
     lines += ['  - %s' % reason for reason in report['reasons']]
-    for side in (a, b):
-        if side.get('score_changing'):
-            lines.append('  note: %s runs a score-changing layout (%s)' % (side['tag'], '; '.join(side['score_changing'])))
     lines.append('tasks compared: %d (only in A: %d, only in B: %d)' % (
         report['tasks_compared'], report['tasks_only_a'], report['tasks_only_b']))
     lines.append('%-12s %9s %9s %9s %7s' % ('rate', 'A', 'B', 'B - A', 'z'))
@@ -388,7 +384,7 @@ def build_plan(checkpoint: str, indices: Sequence[int], seed: str, *, harness: M
 
 def run_side(pod: Any, *, checkpoint: str, plan: Mapping[str, Any], layout: Any, work_dir: str,
              tag: Optional[str] = None, root: str = PL.BOX_ROOT, box_args: Sequence[str] = (),
-             allow_score_changing: bool = False, poll_s: float = 30.0, timeout_s: Optional[float] = None,
+             poll_s: float = 30.0, timeout_s: Optional[float] = None,
              sleep: Callable[[float], None] = time.sleep) -> Dict[str, Any]:
     """Run one side on a box and return its record. ``pod.run`` runs a shell command on the box.
 
@@ -405,8 +401,6 @@ def run_side(pod: Any, *, checkpoint: str, plan: Mapping[str, Any], layout: Any,
     store.write_text(layout_path, json.dumps(layout.as_dict(), sort_keys=True) + '\n')
     words = ['python3', tool, '--root', root, *box_args, 'side', '--checkpoint', checkpoint, '--plan', plan_path,
              '--layout', layout_path, '--out', out_path, '--tag', tag]
-    if allow_score_changing:
-        words.append('--allow-score-changing')
     pid = store.launch_detached(side_dir, stage='parity-side', command=' '.join(shlex.quote(w) for w in words))
     deadline = time.time() + (timeout_s or PL.ProbePlan((layout,)).eval_timeout_s())
     while True:
@@ -451,8 +445,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rs.add_argument('--tag', help='name of this side; default is the layout name')
     rs.add_argument('--work-dir', default='/workspace/pst/probe-parity', help='directory on the box')
     rs.add_argument('--out', required=True, help='where the side record goes on this host')
-    rs.add_argument('--allow-score-changing', action='store_true',
-                    help='run a layout that changes scores (FP8 KV cache), to measure it; never for a gate decision')
 
     cp = sub.add_parser('compare', help='compare two side records')
     cp.add_argument('a', help='side record or probe result of the reference layout')
@@ -483,7 +475,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 raise ParityError('%s is not a usable box handle' % args.pod)
             layout = _read(args.layout) if Path(args.layout).is_file() else args.layout
             record = run_side(pod, checkpoint=_read(args.plan)['checkpoint_id'], plan=_read(args.plan), layout=layout,
-                              work_dir=args.work_dir, tag=args.tag, allow_score_changing=args.allow_score_changing)
+                              work_dir=args.work_dir, tag=args.tag)
             Path(args.out).write_text(json.dumps(record, sort_keys=True) + '\n')
             print(json.dumps(dict(out=args.out, status=record['status'], samples=record['result'].get('samples'),
                                   partial=record['result'].get('partial'))))

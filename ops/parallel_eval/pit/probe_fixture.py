@@ -9,8 +9,7 @@ small stand-ins:
 * ``nvidia-smi``: prints the GPUs the test asks for;
 * ``vllm``: a server with the vLLM command line and the three HTTP routes the
   probe uses. An answer is a fixed function of (prompt, request seed), so the
-  same task and seed give the same answer under every layout. Only an FP8 KV
-  cache changes answers, as on a real box;
+  same task and seed give the same answer under every layout;
 * the evaluator source: one text environment where the answer ``7`` passes.
 """
 from __future__ import annotations
@@ -81,7 +80,6 @@ with open(os.path.join(state, 'started.jsonl'), 'a') as f:
                                 'VLLM_LOGGING_LEVEL', 'HF_HUB_OFFLINE', 'VLLM_NO_USAGE_STATS', 'DO_NOT_TRACK')})) + '\n')
 if any(flag in flags for flag in control.get('fail_if', [])):
     print('fake vllm: cannot start with %%s' %% control['fail_if'], file=sys.stderr); sys.exit(3)
-fp8 = str(flags.get('--kv-cache-dtype', 'auto')).startswith('fp8')
 OPEN_T, CLOSE_T, EOS = 248068, 248069, 248046
 
 def unit(text): return int(hashlib.sha256(text.encode()).hexdigest()[:12], 16) / 16.0 ** 12
@@ -102,7 +100,7 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         if control.get('delay_ms'): time.sleep(control['delay_ms'] / 1000.0)
         prompt = json.dumps(req['prompt'])
-        rate = 0.15 + 0.7 * unit('task:' + prompt) + float(control.get('bias', 0.0)) - (0.3 if fp8 else 0.0)
+        rate = 0.15 + 0.7 * unit('task:' + prompt) + float(control.get('bias', 0.0))
         ok = unit('%%s:%%s' %% (prompt, req['seed'])) < rate
         self._send(dict(choices=[dict(token_ids=[OPEN_T, 5, CLOSE_T, 7 if ok else 8, EOS], finish_reason='stop', stop_reason=EOS)]))
     def log_message(self, *a): pass

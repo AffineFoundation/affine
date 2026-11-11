@@ -239,7 +239,7 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         for gpu, spec in cfg.probe_layouts.items():
             if gpu != 'default' and gpu not in ALLOWED_GPUS:
                 raise ValueError('probe_layouts keys must be "default" or in %s; refuse %r' % (list(ALLOWED_GPUS), gpu))
-            layouts = plan_from(spec).check_gate()
+            layouts = plan_from(spec)
             if not cfg.is_shadow() and not layouts.is_live():
                 raise ValueError('refuse gate change: only shadow mode may serve the probe with another layout (%s)' % gpu)
     if cfg.baseline != BASELINE_OPTION_A:

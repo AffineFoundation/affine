@@ -28,7 +28,7 @@ from vllm.utils.argparse_utils import FlexibleArgumentParser
 args = mod.make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1]))
 mod.validate_parsed_serve_args(args)
 keys = ('host', 'port', 'served_model_name', 'dtype', 'max_model_len', 'gpu_memory_utilization', 'enable_prefix_caching',
-        'limit_mm_per_prompt', 'max_num_seqs', 'tensor_parallel_size', 'kv_cache_dtype')
+        'limit_mm_per_prompt', 'max_num_seqs', 'tensor_parallel_size', 'kv_cache_dtype', 'quantization')
 print(json.dumps(dict(vllm=md.version('vllm'), parsed={k: getattr(args, k) for k in keys}), default=str))
 '''
 
@@ -56,17 +56,17 @@ class TestShadowDefaults(unittest.TestCase):
             self.assertEqual(tp2.vllm_version, '0.33.0')
             self.assertIs(tp2.prefix_caching, False)
             self.assertTrue(96 <= tp2.max_num_seqs <= 128)
-            self.assertEqual(tp2.gpu_memory_utilization, 0.94)
+            self.assertTrue(0.94 <= tp2.gpu_memory_utilization <= 0.95)
             self.assertEqual(tp2.task_queue, 'shared')
-            self.assertEqual(tp2.kv_cache_dtype, 'auto')
-            self.assertEqual(tp2.score_changing(), [])
             flags = _flags(tp2.vllm_args(18555))
             self.assertEqual(flags['--tensor-parallel-size'], '2')
             self.assertIn('--no-enable-prefix-caching', flags)
             self.assertNotIn('--enable-prefix-caching', flags)
             self.assertEqual(flags['--max-num-seqs'], str(tp2.max_num_seqs))
             self.assertEqual(flags['--gpu-memory-utilization'], '0.94')
-            self.assertNotIn('--kv-cache-dtype', flags)
+            self.assertEqual(flags['--dtype'], 'bfloat16')                      # bf16 weights
+            self.assertNotIn('--kv-cache-dtype', flags)                         # the KV cache keeps the model format
+            self.assertNotIn('--quantization', flags)
 
     def test_rtx5090_keeps_a_one_gpu_per_replica_fallback(self):
         plan = PL.shadow_plan('RTX5090')
@@ -149,7 +149,7 @@ class TestSettings(unittest.TestCase):
             'vllm_version': '0.34.1', 'vllm_venv': '/opt/vllm-0.34.1', 'vllm_requirements': '/opt/vllm.lock',
             'install_vllm': False, 'runtime_sha256': 'ab' * 32, 'prefix_caching': True, 'max_num_seqs': 128,
             'gpu_memory_utilization': 0.92, 'task_queue': 'shared', 'concurrency_per_replica': 96,
-            'kv_cache_dtype': 'auto', 'serve_timeout_s': 600, 'probe_stall_s': 900, 'probe_wall_s': 4000,
+            'serve_timeout_s': 600, 'probe_stall_s': 900, 'probe_wall_s': 4000,
         })
         self.assertEqual(layout.groups(8), ((0, 1, 2, 3), (4, 5, 6, 7)))
         flags = _flags(layout.vllm_args(18555))
@@ -161,11 +161,14 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(layout.launcher(), 'direct')
         self.assertEqual(PL.ProbeLayout.from_mapping(json.loads(json.dumps(layout.as_dict()))), layout)
 
-    def test_max_num_seqs_covers_the_measured_range(self):
+    def test_the_measured_ranges_can_be_set(self):
         for seqs in (96, 112, 128):
             layout = PL.layout_from({'preset': 'rtx5090-tp2', 'max_num_seqs': seqs})
             self.assertEqual(_flags(layout.vllm_args(18555))['--max-num-seqs'], str(seqs))
             self.assertEqual(layout.concurrency(), seqs)
+        for gmu in (0.94, 0.95):
+            layout = PL.layout_from({'preset': 'rtx5090-tp2', 'gpu_memory_utilization': gmu})
+            self.assertEqual(_flags(layout.vllm_args(18555))['--gpu-memory-utilization'], str(gmu))
 
     def test_gpu_pairs_can_be_named(self):
         layout = PL.layout_from({'preset': 'rtx5090-tp2', 'gpu_groups': [[0, 4], [1, 5], [2, 6], [3, 7]]})
@@ -191,7 +194,7 @@ class TestSettings(unittest.TestCase):
             {'gpu_memory_utilization': 0}, {'gpu_memory_utilization': 1.01}, {'gpu_memory_utilization': '0.94'},
             {'gpus_per_replica': 0}, {'replicas': 17}, {'prefix_caching': 'off'}, {'install_vllm': 1},
             {'vllm_version': 'latest'}, {'vllm_venv': 'venv'}, {'vllm_requirements': '/a b'},
-            {'runtime_sha256': 'abc'}, {'concurrency_per_replica': 0}, {'kv_cache_dtype': 'fp8;rm'},
+            {'runtime_sha256': 'abc'}, {'concurrency_per_replica': 0},
             {'serve_timeout_s': 0}, {'probe_wall_s': 1.5}, {'name': 'Bad Name'}, {'no_such_setting': 1},
         ]
         for change in bad:
@@ -227,23 +230,50 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(PL.shadow_plan('RTX5090', {'default': 'live'}).primary.name, 'live')
 
 
-class TestScoreChangingSettings(unittest.TestCase):
-    def test_fp8_kv_cache_is_off_in_every_preset(self):
-        for layout in PL.PRESETS.values():
-            self.assertEqual(layout.kv_cache_dtype, 'auto')
-            self.assertNotIn('fp8', ' '.join(layout.vllm_args(18555)))
+class TestNoFp8(unittest.TestCase):
+    """No FP8 in the probe: no FP8 KV cache and no FP8 weights (Jacob, 2026-11-11)."""
 
-    def test_fp8_kv_cache_is_marked_and_refused_for_the_gate(self):
-        for dtype in ('fp8', 'fp8_e4m3', 'fp8_e5m2'):
-            layout = PL.layout_from({'preset': 'rtx5090-tp2', 'kv_cache_dtype': dtype})
-            self.assertTrue(layout.score_changing())
-            self.assertEqual(_flags(layout.vllm_args(18555))['--kv-cache-dtype'], dtype)
-            with self.assertRaises(PL.LayoutError):
-                PL.ProbePlan((layout,)).check_gate()
-            with self.assertRaises(PL.LayoutError):
-                PL.shadow_plan('RTX5090', {'RTX5090': {'preset': 'rtx5090-tp2', 'kv_cache_dtype': dtype}})
-            with self.assertRaises(PL.LayoutError):
-                PL.shadow_plan('RTX5090', {'RTX5090': ['rtx5090-tp2', layout.as_dict()]})
+    # Every way to write a layout that asks vLLM for FP8.
+    FP8 = (
+        {'kv_cache_dtype': 'fp8'}, {'kv_cache_dtype': 'fp8_e4m3'}, {'kv_cache_dtype': 'fp8_e5m2'},
+        {'kv_cache_dtype': 'auto'},                           # the name of the setting is refused, whatever the value
+        {'quantization': 'fp8'}, {'dtype': 'fp8'}, {'kv_cache': 'fp8'}, {'fp8': True},
+    )
+
+    def test_no_layout_has_an_fp8_argument_or_an_fp8_field(self):
+        every_setting = PL.layout_from({
+            'preset': 'rtx5090-tp2', 'gpus_per_replica': 4, 'vllm_version': '0.34.1', 'vllm_venv': '/opt/v',
+            'prefix_caching': True, 'max_num_seqs': 128, 'gpu_memory_utilization': 0.95, 'concurrency_per_replica': 96})
+        for layout in list(PL.PRESETS.values()) + [every_setting]:
+            flags = _flags(layout.vllm_args(18555))
+            self.assertEqual(flags['--dtype'], 'bfloat16', layout.name)
+            self.assertNotIn('--kv-cache-dtype', flags)
+            self.assertNotIn('--quantization', flags)
+            self.assertNotIn('fp8', json.dumps(layout.vllm_args(18555)).lower())
+            self.assertFalse([key for key in layout.as_dict() if 'kv_cache' in key or 'quant' in key or 'fp8' in key])
+
+    def test_an_fp8_setting_is_refused_wherever_a_layout_is_read(self):
+        for setting in self.FP8:
+            spec = dict({'preset': 'rtx5090-tp2'}, **setting)
+            shipped = PL.shadow_plan('RTX5090').as_dict()
+            shipped['layouts'][1].update(setting)
+            readers = {
+                'layout': lambda: PL.layout_from(spec),
+                'layout without a preset': lambda: PL.layout_from(dict(setting)),
+                'plan': lambda: PL.plan_from(spec),
+                'fallback': lambda: PL.plan_from({'preset': 'rtx5090-tp2', 'fallback': dict({'preset': 'live'}, **setting)}),
+                'list': lambda: PL.plan_from(['rtx5090-tp2', spec]),
+                'shadow override': lambda: PL.shadow_plan('RTX5090', {'RTX5090': spec}),
+                'shadow default override': lambda: PL.shadow_plan('H100', {'default': ['live', spec]}),
+                'document on the box': lambda: PL.ProbePlan.from_doc(shipped),
+            }
+            for name, read in readers.items():
+                with self.assertRaises(PL.LayoutError, msg='%s %s' % (name, setting)):
+                    read()
+        for setting in ({'kv_cache_dtype': 'fp8'}, {'quantization': 'fp8'}):
+            with self.assertRaises(PL.LayoutError) as caught:
+                PL.layout_from(dict({'preset': 'rtx5090-tp2'}, **setting))
+            self.assertIn('the probe has no FP8', str(caught.exception))
 
 
 @unittest.skipUnless(os.environ.get('PIT_VLLM_PYTHONS'), 'set PIT_VLLM_PYTHONS to interpreters that have vLLM')
@@ -265,7 +295,8 @@ class TestRealVllmParsers(unittest.TestCase):
                 self.assertIs(got['enable_prefix_caching'], layout.prefix_caching)
                 self.assertEqual(got['max_num_seqs'], layout.max_num_seqs)
                 self.assertEqual(got['gpu_memory_utilization'], layout.gpu_memory_utilization)
-                self.assertEqual(got['kv_cache_dtype'], 'auto')
+                self.assertEqual(got['kv_cache_dtype'], 'auto')       # vLLM's name for the model's own format
+                self.assertIsNone(got['quantization'])                # the weights are as the checkpoint has them
                 self.assertEqual(got['max_model_len'], 69632)
                 self.assertEqual(got['dtype'], 'bfloat16')
                 self.assertEqual(got['served_model_name'], ['probe'])

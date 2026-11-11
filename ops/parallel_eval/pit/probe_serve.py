@@ -55,10 +55,12 @@ LAYOUTS_NAME = 'probe-layouts.json'
 # RemoteBoxJobStore.write_text sends a file inside one shell argument (Linux limit: 131072 bytes).
 MAX_SHIP_BYTES = 100_000
 
+# The only vLLM arguments a replica may run with. A replica with another argument fails the proof. That keeps FP8
+# out of the probe: --kv-cache-dtype (FP8 KV cache) and --quantization (FP8 weights) are not in this list.
 ALLOWED_FLAGS = (
     '--host', '--port', '--served-model-name', '--dtype', '--max-model-len', '--gpu-memory-utilization',
     '--enable-prefix-caching', '--no-enable-prefix-caching', '--limit-mm-per-prompt', '--max-num-seqs',
-    '--tensor-parallel-size', '--kv-cache-dtype',
+    '--tensor-parallel-size',
 )
 SWITCHES = ('--enable-prefix-caching', '--no-enable-prefix-caching')
 
@@ -397,7 +399,6 @@ def argv_mismatch(layout: PL.ProbeLayout, argv: Sequence[str], *, ckpt: str, por
     want('--max-num-seqs', layout.max_num_seqs)
     want('--gpu-memory-utilization', layout.gpu_memory_utilization, number=True)
     want('--tensor-parallel-size', layout.gpus_per_replica, default='1')
-    want('--kv-cache-dtype', layout.kv_cache_dtype, default=PL.KV_CACHE_GATE)
     try:
         if json.loads(flags.get('--limit-mm-per-prompt') or 'null') != json.loads(PL.LIMIT_MM):
             bad.append('--limit-mm-per-prompt is %s' % flags.get('--limit-mm-per-prompt'))
@@ -407,8 +408,6 @@ def argv_mismatch(layout: PL.ProbeLayout, argv: Sequence[str], *, ckpt: str, por
     if on == off or on != layout.prefix_caching:
         bad.append('prefix caching is %s, the layout needs %s' % (
             'on' if on and not off else 'off' if off and not on else 'unclear', 'on' if layout.prefix_caching else 'off'))
-    if not layout.score_changing() and any('fp8' in a for a in argv):
-        bad.append('fp8 in the arguments')
     return bad
 
 
@@ -491,7 +490,7 @@ def serve_one(layout: PL.ProbeLayout, cid: str, box: Box) -> Dict[str, Any]:
     replicas = verify(layout, cid, box, groups)
     return dict(
         layout=layout.as_dict(), launcher=layout.launcher(), replicas=replicas, gpu_groups=groups, serve_s=serve_s,
-        concurrency_per_replica=layout.concurrency(), score_changing=layout.score_changing(),
+        concurrency_per_replica=layout.concurrency(),
         runtime={k: v for k, v in rt.items() if k != 'packages'}, packages=rt['packages'], gpus=gpu_names(),
     )
 
@@ -576,7 +575,7 @@ def eval_job(job_dir: str, cid: str, plan_path: str, layouts_path: str, box: Box
         _write_json(os.path.join(job_dir, 'RESULT.json'), doc)
 
     try:
-        plan = PL.ProbePlan.from_doc(json.loads(Path(layouts_path).read_text())).check_gate()
+        plan = PL.ProbePlan.from_doc(json.loads(Path(layouts_path).read_text()))
         probe_plan = json.loads(Path(plan_path).read_text())
         wait_gpus_free(box)
         record = serve(plan, cid, box)
@@ -600,11 +599,8 @@ def plan_identity(plan: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def side(out_path: str, cid: str, plan_path: str, layout: PL.ProbeLayout, box: Box, *,
-         tag: Optional[str] = None, allow_score_changing: bool = False) -> Dict[str, Any]:
+         tag: Optional[str] = None) -> Dict[str, Any]:
     """One side of a head-vs-head parity run: serve ``cid`` under one layout, run the plan, stop, write the record."""
-    why = layout.score_changing()
-    if why and not allow_score_changing:
-        raise ServeError('layout %r changes scores (%s); pass --allow-score-changing to measure it' % (layout.name, '; '.join(why)))
     probe_plan = json.loads(Path(plan_path).read_text())
     if probe_plan.get('checkpoint_id') != cid:
         raise ServeError('the plan is for checkpoint %s' % str(probe_plan.get('checkpoint_id'))[:12])
@@ -711,8 +707,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sd.add_argument('--layout', required=True)
     sd.add_argument('--out', required=True, help='where the side record goes')
     sd.add_argument('--tag', default=None, help='name of this side; default is the layout name')
-    sd.add_argument('--allow-score-changing', action='store_true',
-                    help='run a layout that changes scores (FP8 KV cache); never for a gate decision')
     a = ap.parse_args(argv)
     box = _box(a)
     if a.cmd == 'start':
@@ -724,8 +718,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if a.cmd == 'eval':
         return eval_job(a.job_dir, a.candidate, a.plan, a.layouts, box)
-    doc = side(a.out, a.checkpoint, a.plan, _layout_file(a.layout), box, tag=a.tag,
-               allow_score_changing=a.allow_score_changing)
+    doc = side(a.out, a.checkpoint, a.plan, _layout_file(a.layout), box, tag=a.tag)
     print(json.dumps(dict(out=a.out, status=doc['status'], samples=doc['result'].get('samples'),
                           partial=doc['result'].get('partial'), layout=doc['serve']['layout']['name'])))
     return 0

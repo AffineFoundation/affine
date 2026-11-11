@@ -46,7 +46,6 @@ class TestDefault5090Layout(BoxCase):
         self.assertEqual(record['launcher'], 'direct')
         self.assertEqual(record['gpu_groups'], [[0, 1], [2, 3], [4, 5], [6, 7]])
         self.assertEqual(record['failed_layouts'], [])
-        self.assertEqual(record['score_changing'], [])
         self.assertEqual(record['runtime']['venv'], str(self.v033))
         self.assertEqual(record['runtime']['runtime_sha256'], hashlib.sha256(b'vllm==0.33.0\n').hexdigest())
         self.assertEqual(record['gpus'], [PF.GPU_NAME] * 8)
@@ -66,6 +65,8 @@ class TestDefault5090Layout(BoxCase):
             self.assertEqual(flags['--gpu-memory-utilization'], '0.94')
             self.assertEqual((flags['--dtype'], flags['--max-model-len']), ('bfloat16', '69632'))
             self.assertNotIn('--kv-cache-dtype', flags)
+            self.assertNotIn('--quantization', flags)
+            self.assertNotIn('fp8', json.dumps(server['argv']).lower())
             for key, value in SERVE_SH_ENV.items():       # what the live serve.sh exports
                 self.assertEqual(server['env'][key], value)
             caches.add(server['env']['VLLM_CACHE_ROOT'])
@@ -213,14 +214,22 @@ class TestVerify(BoxCase):
             PS.verify(one, self.cid, self.box, one.groups(4))
         self.assertIn('--tensor-parallel-size is 2, the layout needs 1', str(caught.exception))
 
-    def test_an_fp8_kv_cache_never_passes_as_a_gate_layout(self):
-        fp8 = PL.layout_from({'preset': 'rtx5090-tp2', 'kv_cache_dtype': 'fp8'})
-        groups = self.start(fp8)
-        self.assertEqual({flags_of(s)['--kv-cache-dtype'] for s in self.alive()}, {'fp8'})
-        with self.assertRaises(PS.ServeError) as caught:
-            PS.verify(PL.PRESETS['rtx5090-tp2'], self.cid, self.box, groups)
-        self.assertIn('--kv-cache-dtype is fp8, the layout needs auto', str(caught.exception))
-        self.assertIn('fp8 in the arguments', str(caught.exception))
+    def test_replicas_that_run_with_an_fp8_argument_never_pass(self):
+        """No layout can ask for FP8. Replicas that run with it all the same do not pass as any layout."""
+        tp2 = PL.PRESETS['rtx5090-tp2']
+        for flag in ('--kv-cache-dtype', '--quantization'):
+            # A vLLM build that adds the FP8 argument to every server it starts.
+            venv = self.tmp / ('venv-fp8%s' % flag)
+            (venv / 'bin').mkdir(parents=True)
+            script = venv / 'bin' / 'vllm'
+            script.write_text('#!/bin/sh\nexec %s "$@" %s fp8\n' % (self.v033 / 'bin' / 'vllm', flag))
+            script.chmod(0o755)
+            groups = PS.launch(tp2, self.cid, self.box, str(venv))
+            PS.wait_ready(tp2, self.cid, self.box, len(groups))
+            self.assertEqual([flags_of(s)[flag] for s in self.alive()], ['fp8', 'fp8'])
+            with self.assertRaises(PS.ServeError) as caught:
+                PS.verify(tp2, self.cid, self.box, groups)
+            self.assertIn('vLLM argument outside the layout: %r' % flag, str(caught.exception))
 
     def test_a_server_that_reports_another_version_is_refused(self):
         self.fb.control(report_version='0.31.9')
@@ -231,14 +240,22 @@ class TestVerify(BoxCase):
     def test_flags_outside_the_layouts_are_refused(self):
         ok = ['/v/bin/python', '/v/bin/vllm', 'serve', '/ckpt/x'] + PL.PRESETS['rtx5090-tp2'].vllm_args(18555)
         self.assertEqual(PS.argv_mismatch(PL.PRESETS['rtx5090-tp2'], ok, ckpt='/ckpt/x', port=18555), [])
-        for extra in (['--kv-cache-dtype', 'fp8'], ['--quantization', 'fp8'], ['--max-num-seqs', '512'],
-                      ['--enable-prefix-caching'], ['--seed', '1'], ['--port']):
+        for extra in (['--max-num-seqs', '512'], ['--enable-prefix-caching'], ['--seed', '1'], ['--port']):
             with self.subTest(extra=extra):
                 try:
                     bad = PS.argv_mismatch(PL.PRESETS['rtx5090-tp2'], ok + extra, ckpt='/ckpt/x', port=18555)
                 except PS.ServeError:
                     continue
                 self.assertTrue(bad)
+        # FP8 in any form: the KV cache, the weights, the short flag, flag=value, or the value 'auto'.
+        for extra in (['--kv-cache-dtype', 'fp8'], ['--kv-cache-dtype', 'fp8_e4m3'], ['--kv-cache-dtype=fp8'],
+                      ['--kv-cache-dtype', 'auto'], ['--quantization', 'fp8'], ['--quantization=fp8'], ['-q', 'fp8']):
+            for layout in PL.PRESETS.values():
+                argv = ['/v/bin/python', '/v/bin/vllm', 'serve', '/ckpt/x'] + layout.vllm_args(18555) + extra
+                with self.assertRaises(PS.ServeError, msg='%s %s' % (layout.name, extra)) as caught:
+                    PS.argv_mismatch(layout, argv, ckpt='/ckpt/x', port=18555)
+                self.assertIn('vLLM argument outside the layout', str(caught.exception))
+        self.assertFalse([flag for flag in PS.ALLOWED_FLAGS if 'kv-cache' in flag or 'quant' in flag])
         self.assertTrue(PS.argv_mismatch(PL.PRESETS['rtx5090-tp2'], ok, ckpt='/ckpt/y', port=18555))
         self.assertTrue(PS.argv_mismatch(PL.PRESETS['rtx5090-tp2'], ok, ckpt='/ckpt/x', port=18556))
         with self.assertRaises(PS.ServeError):
@@ -321,13 +338,17 @@ class TestEvalJob(BoxCase):
         self.assertIn('no layout of the plan serves', marker['error'])
         self.assertNotIn('probe_result', marker)
 
-    def test_a_score_changing_plan_is_refused_before_anything_serves(self):
-        fp8 = PL.ProbePlan((PL.layout_from({'preset': 'rtx5090-tp2', 'kv_cache_dtype': 'fp8'}),))
-        job = self.job(fp8, self.probe_plan())
-        self.assertEqual(self.run_eval(job), 1)
-        marker = json.loads((job / 'markers' / 'eval.done').read_text())
-        self.assertIn('changes scores', marker['error'])
-        self.assertEqual(self.fb.started(), [])
+    def test_a_plan_on_the_box_that_asks_for_fp8_is_refused_before_anything_serves(self):
+        for setting in ({'kv_cache_dtype': 'fp8'}, {'quantization': 'fp8'}):
+            job = self.job(PL.shadow_plan('RTX5090'), self.probe_plan())
+            doc = json.loads((job / PS.LAYOUTS_NAME).read_text())
+            doc['layouts'][0].update(setting)
+            (job / PS.LAYOUTS_NAME).write_text(json.dumps(doc))
+            self.assertEqual(self.run_eval(job), 1)
+            marker = json.loads((job / 'markers' / 'eval.done').read_text())
+            self.assertEqual((marker['ok'], marker['status']), (False, 'failed'))
+            self.assertIn('the probe has no FP8', marker['error'])
+            self.assertEqual(self.fb.started(), [])
 
     def test_a_probe_past_its_wall_limit_is_closed_as_partial(self):
         self.fb.control(delay_ms=4000)

@@ -67,8 +67,10 @@ class TestConfig(unittest.TestCase):
 
     def test_settings_that_must_not_serve_are_refused_at_load(self):
         for layouts in (
-            {'RTX5090': {'preset': 'rtx5090-tp2', 'kv_cache_dtype': 'fp8'}},          # changes scores
+            {'RTX5090': {'preset': 'rtx5090-tp2', 'kv_cache_dtype': 'fp8'}},          # no FP8 KV cache
             {'RTX5090': ['rtx5090-tp2', {'preset': 'rtx5090-1gpu', 'kv_cache_dtype': 'fp8_e4m3'}]},
+            {'RTX5090': {'preset': 'rtx5090-tp2', 'quantization': 'fp8'}},            # no FP8 weights
+            {'default': {'preset': 'live', 'quantization': 'fp8'}},
             {'RTX5090': {'preset': 'rtx5090-tp2', 'task_queue': 'per_replica'}},
             {'RTX5090': {'preset': 'rtx5090-tp2', 'dtype': 'float16'}},               # a gate constant, not a setting
             {'RTX5090': {'preset': 'rtx5090-tp2', 'max_model_len': 32768}},
@@ -78,6 +80,8 @@ class TestConfig(unittest.TestCase):
         ):
             with self.assertRaises(ValueError, msg=str(layouts)):
                 shadow(probe_layouts=layouts)
+            with self.assertRaises(ValueError, msg=str(layouts)):
+                live(probe_layouts=layouts)
 
 
 class _Store:

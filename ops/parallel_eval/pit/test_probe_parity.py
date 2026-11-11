@@ -234,23 +234,39 @@ class TestSidesOnTheBox(BoxCase):
         self.assertEqual(report['b']['layout']['gpus_per_replica'], 2)
         self.assertIn('rtx5090-tp2: 2 GPU per replica, vLLM 0.33.0, max-num-seqs 112', PP.render(report))
 
-    def test_a_score_changing_layout_runs_only_on_request_and_is_found(self):
-        fp8 = {'preset': 'rtx5090-tp2', 'name': 'tp2-fp8', 'kv_cache_dtype': 'fp8'}
-        with self.assertRaises(PS.ServeError) as caught:
-            self.side(fp8)
-        self.assertIn('changes scores', str(caught.exception))
-        self.assertEqual(self.fb.started(), [])
-
+    def test_servers_that_give_other_scores_are_found(self):
         self.plan = PP.build_plan(self.cid, list(range(120)), 'parity-seed', harness=HARNESS)
         self.plan['grade_workers'] = 2
         self.plan_path.write_text(json.dumps(self.plan))
-        a = self.side('rtx5090-tp2')
-        b = self.side(fp8, allow_score_changing=True)
+        a = self.side('rtx5090-tp2', tag='a')
+        self.fb.control(bias=-0.3)                            # the servers of side B pass every task less often
+        b = self.side('rtx5090-tp2', tag='b')
         report = PP.compare(a, b)
         self.assertEqual(report['verdict'], 'different')
         self.assertLess(report['rates']['pass']['z'], -3)
-        self.assertTrue(report['b']['score_changing'])
-        self.assertIn('runs a score-changing layout', PP.render(report))
+
+    def test_fp8_cannot_be_a_side(self):
+        """No FP8 in the probe, and no switch to measure it: the layout is refused before anything reaches the box."""
+        commands = []
+        pod = self.pod()
+        send = pod.run
+        pod.run = lambda cmd, *args, **kwargs: commands.append(cmd) or send(cmd, *args, **kwargs)
+        for setting in ({'kv_cache_dtype': 'fp8'}, {'quantization': 'fp8'}):
+            fp8 = dict({'preset': 'rtx5090-tp2', 'name': 'tp2-fp8'}, **setting)
+            # The host side of the harness.
+            with self.assertRaises(PL.LayoutError) as caught:
+                PP.run_side(pod, checkpoint=self.cid, plan=self.plan, layout=fp8, work_dir=str(self.tmp / 'parity'),
+                            root=str(self.fb.root), box_args=self.box.args()[2:], poll_s=0.2)
+            self.assertIn('the probe has no FP8', str(caught.exception))
+            # The tool on the box, with a layout file that someone wrote by hand.
+            layout_file = self.tmp / 'fp8-layout.json'
+            layout_file.write_text(json.dumps(fp8))
+            with self.assertRaises(PL.LayoutError):
+                PS.main([*self.box.args(), 'side', '--checkpoint', self.cid, '--plan', str(self.plan_path),
+                         '--layout', str(layout_file), '--out', str(self.tmp / 'side-fp8.json')])
+        self.assertEqual((commands, self.fb.started()), ([], []))
+        self.assertFalse((self.tmp / 'parity').exists())
+        self.assertFalse((self.tmp / 'side-fp8.json').exists())
 
     def test_a_side_never_resumes_an_earlier_run(self):
         self.side('rtx5090-tp2', tag='t1')
@@ -311,6 +327,16 @@ class TestCommandLine(unittest.TestCase):
                                   '--harness', str(self.tmp / 'harness.json'), '--out', str(self.tmp / 'p3.json'))
         self.assertEqual(code, 0)
         self.assertEqual(json.loads((self.tmp / 'p3.json').read_text())['envs'][0]['indices'], [5, 9, 2])
+
+    def test_no_command_has_a_switch_for_a_layout_that_changes_scores(self):
+        side = ['--checkpoint', CID, '--plan', 'p.json', '--layout', 'rtx5090-tp2', '--out', 'side.json']
+        run_side = ['run-side', '--pod', 'pod.json', '--plan', 'p.json', '--layout', 'rtx5090-tp2', '--out', 'side.json']
+        for main, argv in ((PS.main, ['side'] + side), (PP.main, run_side)):
+            for switch in ('--allow-score-changing', '--kv-cache-dtype=fp8', '--quantization=fp8'):
+                with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()) as err:
+                    main(argv + [switch])
+                self.assertEqual(caught.exception.code, 2)
+                self.assertIn('unrecognized arguments: %s' % switch, err.getvalue())
 
     def test_plan_needs_tasks_and_the_public_harness(self):
         base = ('plan', '--checkpoint', CID, '--seed', 's', '--out', str(self.tmp / 'p.json'))

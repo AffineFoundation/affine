@@ -25,16 +25,19 @@ A layout holds the settings that change speed. None of them may change scores:
                             requests in flight.
 ``concurrency_per_replica`` requests the client keeps in flight per replica.
                             ``None`` is ``max_num_seqs``.
-``kv_cache_dtype``          number format of the KV cache. ``auto`` is the
-                            model's own format (bf16). Every other value
-                            changes scores.
 ``serve_timeout_s``         longest wait for all replicas to answer.
 ``probe_stall_s``           longest time without a finished sample.
 ``probe_wall_s``            longest probe. After it the run is closed as
                             partial, and a partial probe never decides.
 
 The gate constants are not settings and no layout can change them: bf16
-weights, a 69632 token window, loopback only, no image or video input.
+weights, a KV cache in the model's own format (bf16), a 69632 token window,
+loopback only, no image or video input.
+
+There is no FP8 in the probe: no FP8 weights and no FP8 KV cache (Jacob,
+2026-11-11). FP8 changes what a server computes, so it is not a speed
+setting. No layout has a setting for it, and ``probe_serve.py`` does not
+accept a server that runs with an FP8 argument.
 
 This file imports nothing from the repository. ``probe_serve.py`` copies it to
 the box and imports it there.
@@ -55,7 +58,8 @@ SERVED_MODEL = 'probe'
 GATE_DTYPE = 'bfloat16'
 GATE_MAX_MODEL_LEN = 69632
 LIMIT_MM = '{"image":0,"video":0}'
-KV_CACHE_GATE = 'auto'
+# vLLM names for the number format of the KV cache and of the weights. The probe keeps both in bf16.
+NO_FP8_SETTINGS = ('kv_cache_dtype', 'quantization')
 
 LIVE_VLLM_VERSION = '0.32.0'
 LIVE_MAX_NUM_SEQS = 512
@@ -97,7 +101,6 @@ class ProbeLayout:
     gpu_memory_utilization: float = LIVE_GMU
     task_queue: str = 'shared'
     concurrency_per_replica: Optional[int] = None
-    kv_cache_dtype: str = KV_CACHE_GATE
     serve_timeout_s: int = 900
     probe_stall_s: int = 1200
     probe_wall_s: int = 5400
@@ -136,8 +139,6 @@ class ProbeLayout:
         cpr = self.concurrency_per_replica
         if cpr is not None and (not _is_int(cpr) or not 1 <= cpr <= MAX_CLIENT_CONCURRENCY):
             bad.append('concurrency_per_replica must be 1..%d or null' % MAX_CLIENT_CONCURRENCY)
-        if not isinstance(self.kv_cache_dtype, str) or not re.fullmatch(r'[a-z0-9_]+', self.kv_cache_dtype):
-            bad.append('kv_cache_dtype must be a vLLM cache dtype name')
         for field in ('serve_timeout_s', 'probe_stall_s', 'probe_wall_s'):
             value = getattr(self, field)
             if not _is_int(value) or value < 1:
@@ -169,7 +170,7 @@ class ProbeLayout:
         live_code = (
             self.gpus_per_replica == 1 and self.replicas is None and self.gpu_groups is None
             and self.prefix_caching and self.vllm_version == LIVE_VLLM_VERSION
-            and self.vllm_venv is None and self.kv_cache_dtype == KV_CACHE_GATE
+            and self.vllm_venv is None
         )
         return 'podctl' if live_code else 'direct'
 
@@ -212,15 +213,7 @@ class ProbeLayout:
         ]
         if self.gpus_per_replica > 1:
             args += ['--tensor-parallel-size', str(self.gpus_per_replica)]
-        if self.kv_cache_dtype != KV_CACHE_GATE:
-            args += ['--kv-cache-dtype', self.kv_cache_dtype]
         return args
-
-    def score_changing(self) -> List[str]:
-        """Why this layout changes scores; empty when it does not."""
-        if self.kv_cache_dtype != KV_CACHE_GATE:
-            return ['kv_cache_dtype %s: the KV cache is not in the model format (bf16)' % self.kv_cache_dtype]
-        return []
 
     def serving(self) -> Dict[str, Any]:
         """The settings that decide what the servers compute and how they are fed."""
@@ -245,6 +238,10 @@ class ProbeLayout:
         if not isinstance(raw, Mapping):
             raise LayoutError('a probe layout must be a mapping, got %s' % type(raw).__name__)
         fields = {f.name for f in dataclasses.fields(cls)}
+        fp8 = sorted(set(raw) & set(NO_FP8_SETTINGS))
+        if fp8:
+            raise LayoutError('%s is not a probe layout setting: the probe has no FP8, its weights and its KV cache '
+                              'stay bf16' % ', '.join(fp8))
         unknown = sorted(set(raw) - fields)
         if unknown:
             raise LayoutError('unknown probe layout setting: %s' % ', '.join(unknown))
@@ -320,14 +317,6 @@ class ProbePlan:
         """True when the untouched live serve path is this plan."""
         return len(self.layouts) == 1 and self.primary.is_live()
 
-    def check_gate(self) -> 'ProbePlan':
-        """Refuse a plan that changes scores. A gate probe calls this; a parity run may skip it."""
-        for layout in self.layouts:
-            why = layout.score_changing()
-            if why:
-                raise LayoutError('probe layout %r changes scores: %s' % (layout.name, '; '.join(why)))
-        return self
-
     def eval_timeout_s(self) -> int:
         """Upper bound for serve plus probe on the box, for the host's wait."""
         install = INSTALL_TIMEOUT_S if any(l.install_vllm and l.launcher() == 'direct' for l in self.layouts) else 0
@@ -381,10 +370,10 @@ def shadow_plan(gpu: Any, overrides: Optional[Mapping[str, Any]] = None) -> Prob
     overrides = overrides or {}
     cls = gpu_class_of(gpu)
     if cls is not None and cls in overrides:
-        return plan_from(overrides[cls]).check_gate()
+        return plan_from(overrides[cls])
     if 'default' in overrides:
-        return plan_from(overrides['default']).check_gate()
-    return plan_from(list(SHADOW_DEFAULTS.get(cls or '', ('live',)))).check_gate()
+        return plan_from(overrides['default'])
+    return plan_from(list(SHADOW_DEFAULTS.get(cls or '', ('live',))))
 
 
 def dumps(plan: ProbePlan) -> str:
