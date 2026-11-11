@@ -195,6 +195,10 @@ class ListOnlySource:
     def list(self):
         return self._inner.list()
 
+    def expected(self):
+        # For the auditor of the harness.
+        return self._inner.expected()
+
     def __getattr__(self, name):
         raise AssertionError('the controller called source.%s' % name)
 

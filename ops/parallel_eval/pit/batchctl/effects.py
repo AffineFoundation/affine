@@ -94,6 +94,7 @@ class Effects:
         fences: Callable[[], FenceView],
         lease: Callable[[int], Optional[LeaseView]],
         done_batch: Callable[[str], Optional[C.Batch]],
+        known_refs: Callable[[], Mapping[str, Tuple[str, str]]],
         alert: Callable[[str, str], None],
     ):
         self.cfg = cfg
@@ -108,6 +109,7 @@ class Effects:
         self._fences = fences
         self._lease = lease
         self._done_batch = done_batch
+        self._known_refs = known_refs
         self._alert = alert
 
     def run(self, op: Any) -> List[Any]:
@@ -164,6 +166,8 @@ class Effects:
             refs = list(self.source.list())
         except SourceError:
             return []
+        # batch id -> (miner, reference) of the batch that has this id.
+        known = dict(self._known_refs())
         events: List[Any] = []
         for ref in refs:
             ok = (
@@ -171,12 +175,15 @@ class Effects:
                 and isinstance(ref.miner, str) and 0 < len(ref.miner) <= 128
                 and isinstance(ref.ref, str) and len(ref.ref) <= 1024
             )
-            if ok:
+            if ok and known.setdefault(ref.batch_id, (ref.miner, ref.ref)) == (ref.miner, ref.ref):
                 events.append(C.Arrived(ref.batch_id, ref.miner, ref.ref))
-            else:
-                # A batch that cannot be admitted is recorded, never dropped.
-                shown = repr((ref.batch_id, ref.miner, ref.ref))
-                events.append(C.Rejected(sha256_hex(shown.encode()), 'bad_batch_ref:%s' % shown[:120]))
+                continue
+            # A batch that cannot be admitted is recorded, never dropped. An
+            # id names one batch for ever: the same id with another miner or
+            # another reference is a second batch, and it is refused.
+            reason = 'batch_id_reused' if ok else 'bad_batch_ref'
+            shown = repr((ref.batch_id, ref.miner, ref.ref))
+            events.append(C.Rejected(sha256_hex(shown.encode()), '%s:%s' % (reason, shown[:120])))
         return events
 
     # -- genesis -------------------------------------------------------------

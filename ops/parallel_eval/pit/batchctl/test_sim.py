@@ -56,7 +56,7 @@ def scenario_for(seed: int) -> Scenario:
     rng = random.Random(seed * 1000003 + 17)
     return Scenario(
         batches=rng.randint(1, 7),
-        bad_refs=rng.choice((0, 0, 1, 3)),
+        bad_refs=rng.choice((0, 0, 2, 5)),
         max_boxes=rng.randint(1, 4),
         max_infra_failures=rng.randint(1, 3),
         green_pct=rng.choice((0, 30, 60, 90, 100)),
@@ -67,6 +67,7 @@ def scenario_for(seed: int) -> Scenario:
         crash_rate=rng.choice((0.0, 0.002, 0.01, 0.03)),
         crash_budget=rng.choice((0, 3, 10)),
         apply_verify=rng.choice((E.APPLY_VERIFY_SHA256, E.APPLY_VERIFY_ETAG)),
+        source_forgets=rng.random() < 0.5,
         chaos_steps=rng.choice((200, 500, 900)),
         max_jump_s=rng.choice((5.0, 40.0, 120.0)),
     )
@@ -116,9 +117,16 @@ def test_all_greens_on_one_head_are_paid_and_one_is_applied(tmp_path):
 
 def test_bad_batch_references_are_recorded_and_do_not_block_the_queue(tmp_path):
     for seed in range(20):
-        report = run(tmp_path, seed, Scenario(batches=4, bad_refs=3)).report
-        assert report.kinds['batch_rejected'] == 3
+        harness = run(tmp_path, seed, Scenario(batches=4, bad_refs=5, source_forgets=seed % 2 == 0))
+        report, world = harness.report, harness.world
+        assert report.kinds['batch_rejected'] == 5
         assert sum(report.outcomes.values()) == 4 and set(report.outcomes) <= TERMINAL
+        records, _valid = J.scan(bytes(world.files.files[world.journal_path].data))
+        reasons = sorted(rec['b']['reason'].split(':')[0] for rec in records if rec['t'] == 'batch_rejected')
+        assert reasons == ['bad_batch_ref'] * 4 + ['batch_id_reused']
+        # The batch keeps its first owner. The second use of its id is on record.
+        first = harness.ctl.state.batch('b000')
+        assert (first.miner, first.ref) == ('miner0', 'ref-0')
 
 
 def test_dry_gpu_classes_fall_through_to_the_next_rung(tmp_path):
@@ -472,6 +480,14 @@ def test_harness_finds_a_finding_from_one_bad_read(tmp_path, monkeypatch):
         'a valid upload was called invalid', 'a valid uploaded state was not recognized',
         'the controller halted without a cause', 'a package with a valid result was rejected',
     ])
+
+
+def test_harness_finds_a_reused_batch_id_that_is_dropped_silently(tmp_path, monkeypatch):
+    monkeypatch.setattr(K.Controller, '_known_refs', lambda self: {})
+    expect_audit_failure(
+        tmp_path, Scenario(batches=4, bad_refs=2, source_forgets=True),
+        ['a refused batch reference was not recorded'],
+    )
 
 
 def test_harness_finds_an_apply_of_a_partial_state(tmp_path, monkeypatch):

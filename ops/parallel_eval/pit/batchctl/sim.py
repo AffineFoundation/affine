@@ -122,6 +122,8 @@ class Scenario:
     # A bug in the judge: ``transient`` or ``poison`` (see ``SimJudge``). An
     # operator fixes a poison bug after the controller has halted on it.
     judge_bug: Optional[str] = None
+    # The batch source stops listing a batch once it is admitted.
+    source_forgets: bool = False
     # Run the random scheduler first: effect results wait in a mailbox and
     # arrive in any order. Without it only the fair rounds run.
     chaos: bool = True
@@ -810,7 +812,30 @@ class FakeSource:
         self.w.point('source.list')
         if self.w.faults.roll('source.error'):
             raise SourceError('injected: listing failed')
-        return list(self.released)
+        refs = list(self.released)
+        if self.w.sc.source_forgets:
+            # The contract lets the source drop a batch once the controller
+            # has admitted it (durably).
+            state, _doomed = self.w.audit.durable()
+
+            def admitted(ref: BatchRef) -> bool:
+                batch = state.batch(ref.batch_id)
+                return batch is not None and (batch.miner, batch.ref) == (ref.miner, ref.ref)
+
+            refs = [ref for ref in refs if not admitted(ref)]
+        return refs
+
+    def expected(self) -> Tuple[Dict[str, Tuple[str, str]], Set[Tuple[str, str, str]]]:
+        """What a correct controller admits, and what it must record as
+        refused. The first reference that was released with an id owns it."""
+        admitted: Dict[str, Tuple[str, str]] = {}
+        refused: Set[Tuple[str, str, str]] = set()
+        for ref in self.released:
+            ok = is_safe_batch_id(ref.batch_id) and 0 < len(ref.miner) <= 128 and len(ref.ref) <= 1024
+            if ok and admitted.setdefault(ref.batch_id, (ref.miner, ref.ref)) == (ref.miner, ref.ref):
+                continue
+            refused.add((ref.batch_id, ref.miner, ref.ref))
+        return admitted, refused
 
 
 class SimJudge:
@@ -1313,13 +1338,15 @@ class Auditor:
         self.need(len(set(winners.values())) == len(winners), 'a batch was applied on two HEADs')
 
         # Batch conservation.
-        valid_ids = [ref.batch_id for ref in w.source.released if is_safe_batch_id(ref.batch_id)]
-        bad = [ref for ref in w.source.released if not is_safe_batch_id(ref.batch_id)]
-        self.need(set(seqs) == set(valid_ids), 'a batch was dropped or invented')
-        self.need(len(state.rejected) == len(bad), 'a bad batch reference was not recorded')
+        admitted, refused = w.source.expected()
+        self.need(set(seqs) == set(admitted), 'a batch was dropped or invented')
+        for batch_id, owner in admitted.items():
+            batch = state.batch(batch_id)
+            self.need((batch.miner, batch.ref) == owner, 'a batch runs for the miner or the reference of another')
+        self.need(len(state.rejected) == len(refused), 'a refused batch reference was not recorded')
         halted = state.halted is not None
         if not halted:
-            self.need(not state.active and len(state.done) == len(valid_ids), 'a batch is not terminal')
+            self.need(not state.active and len(state.done) == len(admitted), 'a batch is not terminal')
 
         # The chain in R2 and in the journal.
         ours = [body for who, body in self.pointers if who != 'foreign']
@@ -1485,7 +1512,12 @@ class Harness:
         self.todo: List[BatchRef] = [
             BatchRef('b%03d' % i, 'miner%d' % (i % 3), 'ref-%d' % i) for i in range(sc.batches)
         ]
-        bad = [BatchRef('bad id!', 'm'), BatchRef(GENESIS_BATCH, 'm'), BatchRef('../up', 'm'), BatchRef('ok', '')]
+        bad = [
+            BatchRef('bad id!', 'm'),
+            # The id of the first batch again, for another miner.
+            BatchRef('b000', 'miner-other', 'ref-of-another-batch'),
+            BatchRef(GENESIS_BATCH, 'm'), BatchRef('../up', 'm'), BatchRef('ok', ''),
+        ]
         for i in range(sc.bad_refs):
             self.todo.insert(min(len(self.todo), 1 + 2 * i), bad[i % len(bad)])
         self.mailbox: Dict[Tuple, List[Any]] = {}
@@ -1689,8 +1721,7 @@ class Harness:
             return not state.by_fence
         if state.head is None or state.pending is not None or state.active:
             return False
-        wanted = sum(1 for ref in w.source.released if is_safe_batch_id(ref.batch_id))
-        return len(state.done) == wanted
+        return len(state.done) == len(w.source.expected()[0])
 
     # -- run -----------------------------------------------------------------
 

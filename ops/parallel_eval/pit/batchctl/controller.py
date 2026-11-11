@@ -237,7 +237,7 @@ class Controller:
             store=self.store, providers=self.providers, agent=agent, source=source, judge=judge,
             clock=clock, timers=self.timers, layout=self.layout,
             fences=self._fence_view, lease=self._lease_view, done_batch=self._done_batch,
-            alert=self.alert,
+            known_refs=self._known_refs, alert=self.alert,
         )
         self.state = C.State()
         self.journal: Optional[Journal] = None
@@ -425,6 +425,12 @@ class Controller:
         with self._lock:
             self._check_alive()
             return self.state.done.get(batch_id)
+
+    def _known_refs(self) -> Dict[str, Tuple[str, str]]:
+        with self._lock:
+            self._check_alive()
+            every = list(self.state.active.values()) + list(self.state.done.values())
+            return {batch.batch_id: (batch.miner, batch.ref) for batch in every}
 
     def alert(self, code: str, detail: Any) -> None:
         with self._alert_lock:

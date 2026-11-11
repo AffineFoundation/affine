@@ -237,6 +237,11 @@ class BatchSource(Protocol):
 
         A batch must stay in the listing until the controller has admitted
         it. The controller ignores a batch that it knows already.
+
+        An id names one batch for ever. The first reference that the
+        controller sees with an id owns it. The same id with another miner
+        or another reference is recorded as refused and never runs. So the
+        source must bind an id to its miner and its content.
         """
 
 
