@@ -26,8 +26,15 @@ Rules the code keeps
   on the expected parent. Only the controller writes it.
 * A box writes only under ``staging/<batch>/<fence>/``. The fence is a number
   that is unique per lease. A box whose lease is gone cannot commit.
-* A batch keeps its queue position for life. A lost attempt is retried on a
-  fresh box. After N lost attempts the batch is credited as ``lost_infra``.
+* A batch has one base: the HEAD that its first box started from. Every box
+  runs to the end against that base. A HEAD that moves stops no box.
+* A decision is final. GREEN against its base is paid; it is applied only if
+  it is the first GREEN on a base that is still the HEAD. RED against its
+  base is forgotten: not paid, and never trained again. No batch is ever
+  trained on a newer HEAD.
+* A box that is lost before a decision is not a decision. The batch keeps its
+  queue position and gets a fresh box, on the same base. After N lost boxes
+  the batch is credited as ``lost_infra``.
 """
 
 VERSION = 'affine-batchctl-v1'

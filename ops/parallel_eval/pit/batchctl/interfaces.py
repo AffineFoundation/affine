@@ -178,6 +178,9 @@ class JobSpec:
     5. Write ``HEARTBEAT.json`` with a growing ``seq`` at least every
        ``heartbeat_every_s`` seconds.
     6. A second launch with the same ``fence`` must not start a second job.
+    7. ``base_state`` is the one base of this batch: the HEAD that its first
+       box started from. It can be older than the HEAD of this moment. The
+       job trains on exactly this state and never looks for a newer one.
     """
 
     run_id: str

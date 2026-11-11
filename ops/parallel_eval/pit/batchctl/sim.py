@@ -1086,7 +1086,7 @@ class Auditor:
         name = dst_rel.split('/')[-1]
         true = {
             item[0]: item[2]
-            for item in self.w.truth.state_files(batch.batch_id, batch.lease.base_state, parsed[1])
+            for item in self.w.truth.state_files(batch.batch_id, batch.base_state, parsed[1])
         }
         self.need(
             self.w.raw.objs.get(src) == true.get(name),
@@ -1119,7 +1119,7 @@ class Auditor:
         batch = self.durable()[0].leased(spec.fence)
         self.need(
             batch is not None and batch.phase is C.Phase.RUNNING and batch.lease.box_id == box_id
-            and batch.lease.base_state == spec.base_state and batch.batch_id == spec.batch_id,
+            and batch.base_state == spec.base_state and batch.batch_id == spec.batch_id,
             'launch without a durable binding of this box to this fence',
         )
 
