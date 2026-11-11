@@ -23,6 +23,7 @@ from ops.parallel_eval.live.pe_box import (
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
+from . import probe_serve
 from .box_job import STATUS_RUNNING
 from .config import GATE_DTYPE, PitConfig
 from .pe_lane import LaneService
@@ -369,16 +370,23 @@ class BoxRunner:
                 return probe_result, eg, record
 
             detached_cmd = None
+            eval_timeout_s = float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200)
             # Real pod: ship plan + launch box-side detached eval (setsid).
             if hasattr(getattr(box_job_ctrl, 'store', None), 'pod') and (
                 lane.require_host or lane.host_run_probe is not None
             ):
                 if idx_list is None:
                     raise TransitionError('indices list required for host run_probe')
+                layout_gpu = (
+                    gpu_type_of(eval_gpu) or gpu_type_of((record.meta or {}).get('eval_gpu')) or train_gpu
+                )
                 detached_cmd = self._arm_detached_eval(
                     box_job_ctrl, candidate_id=candidate_id,
-                    plan_handle=plan_handle, indices=idx_list,
+                    plan_handle=plan_handle, indices=idx_list, gpu=layout_gpu,
                 )
+                if not os.environ.get('PIT_EVAL_TIMEOUT_S'):
+                    # A layout with fallbacks or a longer probe limit needs a longer wait than the live 2 h.
+                    eval_timeout_s = max(eval_timeout_s, float(self.config.probe_plan(layout_gpu).eval_timeout_s()))
 
             # Host restart mid-eval: job.pid already live → poll, do not kill/relaunch.
             st0 = box_job_ctrl.status()
@@ -395,7 +403,7 @@ class BoxRunner:
                 detached_command=detached_cmd,
                 wait_for_marker=bool(detached_cmd) or already_running_eval,
                 poll_s=float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0),
-                timeout_s=float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200),
+                timeout_s=eval_timeout_s,
                 extra_kill_patterns=('vllm serve', 'podctl.py serve', 'pit-box-job-eval'),
             ))
         else:
@@ -452,12 +460,19 @@ class BoxRunner:
         candidate_id: str,
         plan_handle: str,
         indices: list,
+        gpu: Optional[str] = None,
     ) -> str:
         """Ship live-identical eval plan JSON onto the box; return detached command.
 
         Plan is built by ``pe_probe_plan.build_probe_plan`` — the same builder
         ``pe_lane.run_probe`` uses — so harness / manifest_projection cannot drift.
+
+        ``gpu`` selects the serving layouts (``PitConfig.probe_plan``). The live layout
+        returns the live command unchanged. Another layout (shadow only) keeps the live
+        clean-up and the live plan, and runs ``probe_serve.py eval`` in place of the live
+        driver; only the client load per replica follows the layout.
         """
+        layouts = self.config.probe_plan(gpu)
         harness = _load_public_harness()
         plan = build_probe_plan(
             candidate_id,
@@ -465,17 +480,28 @@ class BoxRunner:
             plan_handle,
             k=int(self.config.k_cand),
             max_tokens=int(self.config.max_output_tokens),
-            max_num_seqs=int(self.config.max_num_seqs),
+            max_num_seqs=int(self.config.max_num_seqs) if layouts.is_live() else layouts.primary.concurrency(),
             harness=harness,
         )
-        plan_path = '%s/eval-plan.json' % box_job_ctrl.job_dir.rstrip('/')
+        job_dir = box_job_ctrl.job_dir.rstrip('/')
+        plan_path = '%s/eval-plan.json' % job_dir
         box_job_ctrl.store.write_text(plan_path, json.dumps(plan, sort_keys=True) + '\n')
-        return detached_eval_command(
+        live_command = detached_eval_command(
             job_dir=box_job_ctrl.job_dir,
             candidate_id=candidate_id,
             plan_path=plan_path,
             podd=BOX_ROOT,
             max_num_seqs=int(self.config.max_num_seqs),
+        )
+        if layouts.is_live():
+            return live_command
+        probe_serve.ship(
+            box_job_ctrl.store.write_text, job_dir, layouts,
+            read_text=getattr(box_job_ctrl.store, 'read_text', None),
+        )
+        return probe_serve.detached_command(
+            preamble=probe_serve.live_preamble(live_command),
+            job_dir=job_dir, candidate_id=candidate_id, plan_path=plan_path, root=BOX_ROOT,
         )
 
 
