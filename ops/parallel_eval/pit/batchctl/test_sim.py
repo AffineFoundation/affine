@@ -250,6 +250,32 @@ def test_bad_batch_references_are_recorded_and_do_not_block_the_queue(tmp_path):
         assert (first.miner, first.ref) == ('miner0', 'ref-0')
 
 
+@pytest.mark.parametrize('halted', [False, True], ids=['running', 'halted'])
+@pytest.mark.parametrize('ref', [
+    S.BatchRef('late id!', 'm'), S.BatchRef('late', 'miner0', 'ref-late'),
+], ids=['refused', 'good'])
+def test_the_run_ends_only_after_the_controller_saw_the_last_reference(tmp_path, ref, halted):
+    # Seed 51812 of the random worlds: the last reference arrived after the
+    # last listing of the hostile part, and the run ended before the next
+    # listing. That was a gap in the harness, not in the controller.
+    harness = Harness(tmp_path, 3, Scenario(batches=2, chaos=False))
+    if halted:
+        # Someone else made the pointer first: the controller halts.
+        harness.world.foreign_pointer_write()
+    harness._boot()
+    harness.fair(60)
+    assert harness._quiescent() and (harness.ctl.state.halted == 'pointer_moved') == halted
+    harness.world.source.released.append(ref)
+    report = harness.finish()
+    admitted, refused = harness.world.source.expected()
+    if ref.batch_id in admitted:
+        # A halt holds new work. The batch waits in the queue; it is not lost.
+        phase = harness.ctl.state.batch(ref.batch_id).phase
+        assert phase is C.Phase.QUEUED if halted else phase in C.TERMINAL
+    else:
+        assert len(refused) == 1 and report.kinds['batch_rejected'] == 1
+
+
 def test_dry_gpu_classes_fall_through_to_the_next_rung(tmp_path):
     for seed in range(20):
         harness = run(tmp_path, seed, Scenario(batches=4, dry_rungs=3, chaos=False))

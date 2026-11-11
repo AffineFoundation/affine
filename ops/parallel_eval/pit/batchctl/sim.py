@@ -1862,14 +1862,21 @@ class Harness:
         w.faults.quiet = True
         w.crashing = False
         rounds = 0
+        # The end: nothing is left to do, and one full fair round after that
+        # wrote no journal record. Without that last round, the run can end
+        # before the controller has seen the last batch reference.
+        idle = False
         while True:
             try:
                 self._operator()
-                if self._quiescent():
+                if idle and self._quiescent():
                     break
+                before = self.ctl.journal.count
                 self._fair_round()
+                idle = self.ctl.journal.count == before
             except SimCrash:
                 self._restart()
+                idle = False
             rounds += 1
             if rounds > sc.max_rounds:
                 w.audit.fail('not every batch became terminal in %d fair rounds: %s' % (
