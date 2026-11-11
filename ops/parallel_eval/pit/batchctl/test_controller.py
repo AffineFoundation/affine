@@ -289,6 +289,26 @@ def test_a_journal_of_other_settings_is_refused(tmp_path):
     controller_on(harness, root).open().close()
 
 
+def test_a_journal_of_another_version_is_refused(tmp_path, monkeypatch):
+    # A journal that was written under the rules of v1 (one base per batch)
+    # is never replayed under the rules of v2 (one base per box).
+    assert K.VERSION == 'affine-batchctl-v2'
+    harness = Harness(tmp_path, 4, Scenario(batches=2, chaos=False))
+    with monkeypatch.context() as patch:
+        patch.setattr(K, 'VERSION', 'affine-batchctl-v1')
+        harness.run()
+        assert journal_records(harness)[0]['b']['version'] == 'affine-batchctl-v1'
+    root = StateRoot.open(harness.root_path, harness.run_id)
+    before = dict(harness.world.raw.objs)
+    count = len(journal_records(harness))
+    refused = controller_on(harness, root)
+    with pytest.raises(K.ControllerError, match='version'):
+        refused.open()
+    # The refused start wrote nothing: not to the journal and not to R2.
+    assert refused.journal is None
+    assert len(journal_records(harness)) == count and harness.world.raw.objs == before
+
+
 def test_an_open_controller_cannot_be_opened_again(tmp_path):
     harness = Harness(tmp_path, 4, Scenario(batches=1, chaos=False))
     harness._boot()
