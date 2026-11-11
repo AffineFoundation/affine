@@ -181,6 +181,36 @@ def test_layout_keys():
     assert lay.parse_staging_key(lay.staging_root + 'b1') is None
 
 
+@pytest.mark.parametrize('fence', ['\u00b2', '\u0663', '1' * 19, '9' * 5000, '-1', '1.0', ' 1', ''])
+def test_a_staging_key_from_outside_never_makes_the_parser_fail(fence):
+    # ``str.isdigit`` is true for digits that ``int`` refuses, and ``int``
+    # refuses a very long number. Neither may reach ``int``.
+    lay = L.Layout('shadow/batchctl/run1/')
+    assert lay.parse_staging_key('%sb1/%s/x' % (lay.staging_root, fence)) is None
+
+
+DEEP = b'[' * 200000 + b']' * 200000
+
+
+def test_json_that_is_nested_too_deep_is_a_plain_invalid_document():
+    # The parser of the standard library raises RecursionError here. A box
+    # must not be able to raise an error that the controller does not expect.
+    with pytest.raises(RecursionError):
+        json.loads(DEEP)
+    with pytest.raises(ValueError):
+        L.load_json(DEEP)
+    with pytest.raises(L.PackageInvalid) as err:
+        L.parse_complete(DEEP, batch_id='b1', fence=5, base_state=H4)
+    assert str(err.value) == 'complete_not_json'
+    with pytest.raises(ValueError):
+        L.parse_head(DEEP[:L.MAX_HEAD_BYTES])
+    with pytest.raises(ValueError):
+        L.parse_heartbeat(DEEP, fence=7)
+    nested = b'{"a":' * 100000 + b'1' + b'}' * 100000
+    with pytest.raises(ValueError):
+        L.load_json(nested)
+
+
 @pytest.mark.parametrize('prefix', ['', '/abs/', 'no-slash', 'a//b/'])
 def test_layout_rejects_bad_prefix(prefix):
     with pytest.raises(ValueError):

@@ -33,6 +33,8 @@ HEX64 = re.compile(r'[0-9a-f]{64}')
 SAFE_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 SAFE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}')
 META_KEY = re.compile(r'[a-z][a-z0-9_]{0,63}')
+# ASCII digits only, and short: ``int`` must never fail on a key from outside.
+STAGING_FENCE = re.compile(r'[0-9]{1,18}')
 
 SCHEMA_COMPLETE = 'affine-batchctl-complete-v1'
 SCHEMA_STATE = 'affine-batchctl-state-v1'
@@ -93,6 +95,19 @@ def _need(cond: bool, reason: str) -> None:
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def load_json(raw: bytes) -> Any:
+    """Parse JSON that came from outside. Every failure is a ``ValueError``.
+
+    A document that is nested too deep makes the parser raise
+    ``RecursionError``. Bytes from a box must never be able to do more than
+    fail the package, so that error is turned into a ``ValueError`` here.
+    """
+    try:
+        return json.loads(raw)
+    except RecursionError:
+        raise ValueError('json_too_deep') from None
 
 
 @dataclass(frozen=True)
@@ -193,8 +208,8 @@ def parse_complete(
     """Validate ``COMPLETE.json`` against the lease that owns the prefix."""
     _need(len(raw) <= MAX_COMPLETE_BYTES, 'complete_too_large')
     try:
-        doc = json.loads(raw)
-    except (ValueError, UnicodeDecodeError):
+        doc = load_json(raw)
+    except ValueError:
         raise PackageInvalid('complete_not_json') from None
     _need(isinstance(doc, dict), 'complete_not_object')
     _need(set(doc) == {'schema', 'batch_id', 'fence', 'base_state', 'result', 'state'}, 'complete_keys')
@@ -282,7 +297,7 @@ class HeadPointer:
 
 def parse_head(raw: bytes) -> HeadPointer:
     """Parse the pointer. Raises ``ValueError`` on anything unexpected."""
-    doc = json.loads(raw)
+    doc = load_json(raw)
     if not isinstance(doc, dict) or set(doc) != {'schema', 'seq', 'link', 'state'}:
         raise ValueError('head pointer keys')
     if doc['schema'] != SCHEMA_HEAD or not _is_int(doc['seq']) or doc['seq'] < 0:
@@ -303,7 +318,7 @@ def heartbeat_body(*, fence: int, seq: int, stage: str = '') -> bytes:
 
 def parse_heartbeat(raw: bytes, *, fence: int) -> int:
     """Return the heartbeat sequence. Raises ``ValueError`` on anything else."""
-    doc = json.loads(raw)
+    doc = load_json(raw)
     if not isinstance(doc, dict) or doc.get('schema') != SCHEMA_HEARTBEAT:
         raise ValueError('heartbeat schema')
     if doc.get('fence') != fence or not _is_int(doc.get('seq')) or doc['seq'] < 0:
@@ -376,6 +391,6 @@ class Layout:
         if not key.startswith(root):
             return None
         parts = key[len(root):].split('/')
-        if len(parts) < 3 or not parts[1].isdigit():
+        if len(parts) < 3 or STAGING_FENCE.fullmatch(parts[1]) is None:
             return None
         return parts[0], int(parts[1])
