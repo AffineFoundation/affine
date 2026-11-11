@@ -24,6 +24,9 @@ QUICK = {
     'coarse-3-batches-1-fault': dict(batches=3, max_boxes=2, faults=1, coarse=True),
     'coarse-2-batches-foreign-pointer-write': dict(
         batches=2, max_boxes=2, faults=2, foreign_writes=1, coarse=True),
+    'full-1-batch-fault-report': dict(batches=1, max_boxes=1, faults=2, fault_reports=1),
+    'coarse-2-batches-fault-report': dict(
+        batches=2, max_boxes=2, faults=2, fault_reports=1, coarse=True),
 }
 
 DEEP_CONFIGS = {
@@ -37,6 +40,8 @@ DEEP_CONFIGS = {
     'coarse-3-batches-2-faults': dict(batches=3, max_boxes=2, faults=2, coarse=True),
     'coarse-3-batches-3-boxes-2-faults': dict(batches=3, max_boxes=3, faults=2, coarse=True),
     'coarse-4-batches-1-fault': dict(batches=4, max_boxes=2, faults=1, coarse=True),
+    'coarse-3-batches-2-faults-fault-report': dict(
+        batches=3, max_boxes=2, faults=2, fault_reports=1, coarse=True),
 }
 
 
@@ -54,7 +59,7 @@ def test_every_reachable_state_keeps_the_invariants(name):
         outcomes.update(tally.split(','))
     # The search is not empty-handed: each outcome is really reached.
     assert {'applied', 'red', 'credited'} <= outcomes
-    if 'foreign' in name:
+    if 'foreign' in name or 'fault-report' in name:
         assert 'halted' in outcomes
     if QUICK[name]['faults'] >= 2:
         assert 'lost_infra' in outcomes

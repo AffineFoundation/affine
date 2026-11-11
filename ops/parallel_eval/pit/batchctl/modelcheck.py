@@ -112,6 +112,7 @@ class ModelConfig:
     spurious_expiries: int = 2
     duplicates: int = 2
     foreign_writes: int = 0
+    fault_reports: int = 0
     green: bool = True
     red: bool = True
     lose_results: bool = True
@@ -132,6 +133,7 @@ class Budget(NamedTuple):
     expiry: int
     dup: int
     foreign: int
+    fault: int
 
     def has(self, kind: str) -> bool:
         return self.total > 0 and getattr(self, kind) > 0
@@ -212,7 +214,7 @@ def never_again(core: C.State, msg: Any) -> bool:
 class World:
     __slots__ = (
         'core', 'boxes', 'staging', 'pointer', 'chain', 'canon', 'published', 'msgs',
-        'arrived', 'budget', 'gens', 'diverged',
+        'arrived', 'budget', 'gens', 'diverged', 'faulted',
     )
 
     def __init__(self) -> None:
@@ -225,9 +227,10 @@ class World:
         self.published: frozenset = frozenset()
         self.msgs: frozenset = frozenset()
         self.arrived = 0
-        self.budget = Budget(0, 0, 0, 0, 0, 0, 0)
+        self.budget = Budget(0, 0, 0, 0, 0, 0, 0, 0)
         self.gens: Dict[Tuple[int, int], int] = {}
         self.diverged = False
+        self.faulted = False
 
     def clone(self) -> 'World':
         other = World.__new__(World)
@@ -243,6 +246,7 @@ class World:
         other.budget = self.budget
         other.gens = dict(self.gens)
         other.diverged = self.diverged
+        other.faulted = self.faulted
         return other
 
     def key(self) -> Tuple:
@@ -256,7 +260,7 @@ class World:
             tuple(sorted(repr(m) for m in self.msgs)),
             self.arrived, tuple(self.budget),
             tuple(sorted(self.gens.items())),
-            self.diverged,
+            self.diverged, self.faulted,
         )
 
 
@@ -286,6 +290,7 @@ class Model:
         w.budget = Budget(
             self.mc.faults, self.mc.rent_faults, self.mc.box_deaths, self.mc.corrupt_uploads,
             self.mc.spurious_expiries, self.mc.duplicates, self.mc.foreign_writes,
+            self.mc.fault_reports,
         )
         return w
 
@@ -461,6 +466,14 @@ class Model:
             w2.diverged = True
             w2.budget = w.budget.spend('foreign')
             out.append(('foreign-pointer-write', False, w2, []))
+
+        # An effect finds durable data that is wrong and reports a fault.
+        if w.budget.has('fault') and core.halted is None and core.head is not None:
+            w2 = w.clone()
+            recs = C.step(cfg, w2.core, C.Fault('injected'))
+            w2.faulted = True
+            w2.budget = w.budget.spend('fault')
+            out.append(('fault-report', False, w2, recs))
 
         if self.mc.coarse:
             for _label, _fair, nxt, recs in out:
@@ -770,7 +783,15 @@ class Model:
     def sink_problem(self, w: World) -> Optional[str]:
         core = w.core
         if core.halted is not None:
-            return None if w.diverged else 'halted without a foreign pointer write'
+            if not (w.diverged or w.faulted):
+                return 'halted without a foreign pointer write or a fault report'
+            # A halt stops new work only. Every lease that ran went on to a
+            # decision or a retry, and the boxes and staging are cleaned up.
+            if core.by_fence or w.msgs or w.boxes or w.staging:
+                return 'leases, results, boxes or staging left at a halted sink'
+            if core.doomed or core.dirty or core.unpublished:
+                return 'housekeeping left at a halted sink'
+            return None
         if core.active:
             return 'batches not terminal: %s' % sorted(
                 (b.batch_id, b.phase.value) for b in core.active.values()

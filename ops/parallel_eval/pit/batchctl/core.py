@@ -35,6 +35,10 @@ HEAD epoch state machine
 ``APPLYING`` is never aborted. It ends only when the pointer in R2 holds the
 new link. Any other pointer value halts the controller (fail-stop).
 
+A halt blocks new leases, new credits and new apply intents. Leases that run
+already go on to a decision, so no GREEN is lost while the controller waits
+for an operator.
+
 Events may arrive late, twice, or out of order. ``decide`` checks every event
 against the fence, the phase and the rent try of the current state, and drops
 what does not fit. The model checker explores exactly this function.
@@ -452,6 +456,17 @@ class GenesisVerified:
 
 
 @dataclass(frozen=True)
+class Fault:
+    """An effect found durable data that must never be wrong, and it is wrong
+    (for example the manifest of the HEAD state does not match its id).
+
+    The controller stops new work (fail-stop) until an operator resumes it.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class Resume:
     note: str
 
@@ -722,6 +737,11 @@ def decide(cfg: CoreConfig, state: State, ev: Any) -> Optional[Record]:
             'link_id': link, 'result_sha': None, 'fence': GENESIS_FENCE,
             'evidence': [list(item) for item in ev.evidence],
         }
+
+    if kind is Fault:
+        if state.halted is not None:
+            return None
+        return 'halted', {'reason': ev.reason, 'seq': None}
 
     if kind is Resume:
         if state.halted is None:

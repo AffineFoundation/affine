@@ -313,6 +313,21 @@ def test_divergence_halts_and_resume_is_explicit():
     assert sim.applied() == ['applied']
 
 
+def test_fault_report_halts_new_work_but_not_running_leases():
+    sim = Sim(batches=3)
+    f0, f1 = sim.start(), sim.start()
+    assert sim.kinds(C.Fault('base manifest does not match its id')) == ['halted']
+    assert sim.kinds(C.Fault('again')) == []
+    assert sim.s.halted == 'base manifest does not match its id'
+    # No new lease, no credit and no apply intent while halted.
+    assert sim.kinds(C.Tick()) == []
+    assert sim.green(f0) == ['decided'] and sim.red(f1) == ['decided']
+    assert sim.phase('b0') is C.Phase.GREEN and sim.s.pending is None
+    assert sim.kinds(C.Resume('operator fixed it')) == ['resumed', 'apply_intent']
+    assert sim.applied() == ['applied']
+    assert sim.kinds(C.Tick()) == ['lease_issued']
+
+
 def test_plan_lists_the_effects_of_each_phase():
     sim = Sim(batches=1)
     fence = sim.ev(C.Tick())[0][1]['fence']
@@ -413,6 +428,7 @@ def _random_event(rng, sim):
         lambda: C.Published('b%d' % rng.randint(0, 5)),
         lambda: C.GenesisVerified('S0', EVIDENCE),
         lambda: C.Resume('go'),
+        lambda: C.Fault('bad data'),
         lambda: C.Rejected('d%d' % rng.randint(0, 3), 'bad id'),
     ]
     return rng.choice(choices)()
