@@ -23,6 +23,7 @@ from ops.parallel_eval.live.pe_box import (
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
+from . import early_stop
 from . import probe_serve
 from .box_job import STATUS_RUNNING
 from .config import GATE_DTYPE, PitConfig
@@ -76,6 +77,9 @@ class BoxRunner:
     io: BoxIO
     lane: Optional[LaneService] = None
     root_pubkey_hex: Optional[str] = None
+    # The host scorer of this item's round: probe result -> official estimate. The controller sets it only when
+    # the config turns the RED-only early stop on. None (the default) means the probe is never watched or stopped.
+    early_stop_score: Optional[Callable[[Dict[str, Any]], Any]] = None
 
     def start_box_identity(self) -> EphemeralBoxKey:
         return generate_ephemeral_box_key()
@@ -132,9 +136,14 @@ class BoxRunner:
         if box_job_ctrl is not None:
             prior = box_job_ctrl.resume_or_fetch()
             if prior and prior.get('probe_result') and prior.get('candidate_id'):
-                return _bundle_from_box_result(
+                record, bundle = _bundle_from_box_result(
                     record, prior, box_key=box_key, train_gpu=train_gpu, eval_gpu=eval_gpu,
                 )
+                self._settle_early_stop(
+                    box_job_ctrl, bundle.probe_result, candidate_id=bundle.candidate_id,
+                    plan_handle=plan_handle, indices=indices,
+                )
+                return record, bundle
 
         train_receipt: Dict[str, Any]
         training_report: Dict[str, Any]
@@ -350,11 +359,16 @@ class BoxRunner:
             }
 
         eval_marker: Dict[str, Any] = {}
+        monitor: Optional[early_stop.Monitor] = None
         if box_job_ctrl is not None:
             # Prefer resume: if RESULT already written by a prior detached eval, use it.
             prior = box_job_ctrl.resume_or_fetch()
             if prior and prior.get('probe_result') and prior.get('candidate_id'):
                 probe_result = dict(prior['probe_result'])
+                self._settle_early_stop(
+                    box_job_ctrl, probe_result, candidate_id=candidate_id,
+                    plan_handle=plan_handle, indices=idx_list,
+                )
                 eg = (
                     gpu_type_of(eval_gpu)
                     or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
@@ -398,6 +412,10 @@ class BoxRunner:
             def _host_forbidden() -> Mapping[str, Any]:
                 raise RuntimeError('host must not sync-run eval when detached path is armed')
 
+            if detached_cmd is not None:
+                monitor = self._early_stop_monitor(
+                    box_job_ctrl, candidate_id=candidate_id, plan_handle=plan_handle, indices=idx_list,
+                )
             eval_marker = dict(box_job_ctrl.run_stage_once(
                 'eval',
                 _host_eval_runner if detached_cmd is None else _host_forbidden,
@@ -406,6 +424,7 @@ class BoxRunner:
                 poll_s=float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0),
                 timeout_s=eval_timeout_s,
                 extra_kill_patterns=('vllm serve', 'podctl.py serve', 'pit-box-job-eval'),
+                on_poll=monitor.poll if monitor is not None else None,
             ))
         else:
             eval_marker = dict(_host_eval_runner())
@@ -414,6 +433,8 @@ class BoxRunner:
         if not isinstance(probe_raw, Mapping):
             raise TransitionError('eval marker missing probe_result')
         probe_result = dict(probe_raw)
+        if monitor is not None:
+            monitor.settle(probe_result)
         eg = (
             gpu_type_of(eval_gpu)
             or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
@@ -453,6 +474,42 @@ class BoxRunner:
             except Exception:
                 pass
         return probe_result, eg, record
+
+    def _early_stop_monitor(
+        self,
+        box_job_ctrl: Any,
+        *,
+        candidate_id: str,
+        plan_handle: str,
+        indices: Optional[Any],
+    ) -> Optional[early_stop.Monitor]:
+        """The RED-only early-stop monitor of this item's detached probe run. None when the early stop is off."""
+        pod = getattr(getattr(box_job_ctrl, 'store', None), 'pod', None)
+        if not self.config.early_stop.enabled or self.early_stop_score is None or pod is None or not indices:
+            return None
+        return early_stop.for_box(
+            self.config.early_stop, pod, root=BOX_ROOT,
+            run_name=build_probe_plan(candidate_id, [], plan_handle)['run_name'],
+            tasks_total=len(indices), score=self.early_stop_score,
+        )
+
+    def _settle_early_stop(
+        self,
+        box_job_ctrl: Any,
+        probe_result: Dict[str, Any],
+        *,
+        candidate_id: str,
+        plan_handle: str,
+        indices: Optional[Any],
+    ) -> None:
+        """A partial probe result that was read back from the box (host restart) gets its stop record from the stream."""
+        if not probe_result.get('partial') or probe_result.get('early_stop'):
+            return
+        monitor = self._early_stop_monitor(
+            box_job_ctrl, candidate_id=candidate_id, plan_handle=plan_handle, indices=indices,
+        )
+        if monitor is not None:
+            monitor.settle(probe_result)
 
     def _arm_detached_eval(
         self,

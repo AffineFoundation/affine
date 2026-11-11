@@ -28,7 +28,9 @@ A layout holds the settings that change speed. None of them may change scores:
 ``serve_timeout_s``         longest wait for all replicas to answer.
 ``probe_stall_s``           longest time without a finished sample.
 ``probe_wall_s``            longest probe. After it the run is closed as
-                            partial, and a partial probe never decides.
+                            partial. A partial probe never gives GREEN. It
+                            gives RED only through the RED-only early stop,
+                            which is off unless the config turns it on.
 
 The gate constants are not settings and no layout can change them: bf16
 weights, a KV cache in the model's own format (bf16), a 69632 token window,

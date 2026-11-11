@@ -29,6 +29,7 @@ from . import (
     TRAIN_OUTPUT_TOKENS,
     TRAINER_FALLBACK_HOURS,
 )
+from .early_stop import EarlyStop
 from .probe_layout import ProbePlan, plan_from, shadow_plan
 from .signer import ALT_ROOT_MODE, LIVE_ROOT_MODE
 
@@ -70,6 +71,9 @@ class PitConfig:
     # None keeps the defaults: RTX5090 serves TP2 on vLLM 0.33.0 with a one-GPU-per-replica fallback, and every
     # other class serves the live layout. No layout may change scores, and live mode serves the live layout only.
     probe_layouts: Optional[Mapping[str, Any]] = None
+    # RED-only early stop of the probe (early_stop.py). OFF in shadow and in live. Only the explicit flag
+    # {"early_stop": {"enabled": true}} turns it on. A stop can give RED and nothing else.
+    early_stop: EarlyStop = EarlyStop()
     # Cutover (SPEC §7 step 6): trainer stays 24h as hot fallback; lanes/warm off.
     cutover: bool = False
     revert: bool = False
@@ -91,6 +95,10 @@ class PitConfig:
     # Root for publish_fleet input (`$BENCH_RESULTS_DIR`); no host-path default.
     bench_results_dir: Optional[str] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.early_stop, EarlyStop):
+            object.__setattr__(self, 'early_stop', EarlyStop.from_mapping(self.early_stop))
 
     @property
     def box_cap(self) -> int:
@@ -162,7 +170,7 @@ def load_pit_config(parallel_eval: Optional[Mapping[str, Any]] = None) -> PitCon
         'gpu_order', 'allow_sharded_gpus', 'max_attempts', 'decision_timeout_seconds',
         'price_ceiling_usd_h',
         'k_cand', 'head_rollouts', 'n_drawn', 'max_output_tokens', 'train_output_tokens',
-        'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'probe_layouts', 'cutover', 'revert',
+        'max_num_seqs', 'dtype', 'z_strict_gt', 'no_fp8', 'probe_layouts', 'early_stop', 'cutover', 'revert',
         'trainer_fallback_hours', 'disable_warm_pool', 'disable_standing_lanes',
         'disable_trainer_dequeue', 'disable_lium_auto_backup', 'full_redo_after_sealed',
         'reds_earn', 'root_mode', 'pe_rent_module', 'pe_lane_module', 'pe_score_module',
