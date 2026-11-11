@@ -71,6 +71,7 @@ class ObjectStore(Protocol):
     """A strongly consistent object store with conditional writes.
 
     ``etag`` is an opaque string that changes when the bytes of a key change.
+    An adapter proves the rules below with ``storecheck.check_store``.
     """
 
     def get(self, key: str, *, max_bytes: int) -> Blob:
