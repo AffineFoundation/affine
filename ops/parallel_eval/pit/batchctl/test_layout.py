@@ -193,3 +193,56 @@ def test_layout_rejects_bad_prefix(prefix):
 ])
 def test_safe_batch_id(value, ok):
     assert L.is_safe_batch_id(value) is ok
+
+
+def test_a_trailing_newline_never_passes_a_name_check():
+    assert not L.is_safe_batch_id('b1\n')
+    assert not L.is_hex64(H1 + '\n')
+    assert not L.is_hex64('AB' * 32)
+    doc = manifest_doc()
+    doc['objects'][0]['name'] += '\n'
+    with pytest.raises(L.PackageInvalid):
+        L.parse_manifest(doc, batch_id='b1', parent=H4)
+    doc = manifest_doc()
+    doc['meta']['step\n'] = 1
+    with pytest.raises(L.PackageInvalid):
+        L.parse_manifest(doc, batch_id='b1', parent=H4)
+    doc = manifest_doc()
+    doc['objects'][0]['sha256'] += '\n'
+    with pytest.raises(L.PackageInvalid):
+        L.parse_manifest(doc, batch_id='b1', parent=H4)
+
+
+def test_heartbeat_roundtrip_and_fence_binding():
+    lay = L.Layout('shadow/batchctl/run1/')
+    assert lay.staging_heartbeat('b1', 7) == lay.staging_prefix('b1', 7) + 'HEARTBEAT.json'
+    assert lay.parse_staging_key(lay.staging_heartbeat('b1', 7)) == ('b1', 7)
+    raw = L.heartbeat_body(fence=7, seq=3, stage='train')
+    assert L.parse_heartbeat(raw, fence=7) == 3
+    assert len(raw) < L.MAX_HEARTBEAT_BYTES
+    # The heartbeat of another fence renews nothing.
+    with pytest.raises(ValueError):
+        L.parse_heartbeat(raw, fence=8)
+
+
+@pytest.mark.parametrize('raw', [
+    b'', b'not json', b'[]', b'7', b'{}',
+    canonical({'schema': 'other', 'fence': 7, 'seq': 1}),
+    canonical({'schema': L.SCHEMA_HEARTBEAT, 'fence': 7}),
+    canonical({'schema': L.SCHEMA_HEARTBEAT, 'fence': 7, 'seq': -1}),
+    canonical({'schema': L.SCHEMA_HEARTBEAT, 'fence': 7, 'seq': '1'}),
+    canonical({'schema': L.SCHEMA_HEARTBEAT, 'fence': 7, 'seq': True}),
+    canonical({'schema': L.SCHEMA_HEARTBEAT, 'fence': '7', 'seq': 1}),
+])
+def test_bad_heartbeat_is_rejected(raw):
+    with pytest.raises(ValueError):
+        L.parse_heartbeat(raw, fence=7)
+
+
+def test_run_binding_names_the_journal():
+    lay = L.Layout('shadow/batchctl/run1/')
+    assert lay.run == 'shadow/batchctl/run1/RUN.json'
+    one = L.run_body(run_id='run1', journal_id=H1)
+    assert one == L.run_body(run_id='run1', journal_id=H1)
+    assert one != L.run_body(run_id='run1', journal_id=H2)
+    assert json.loads(one) == {'schema': L.SCHEMA_RUN, 'run_id': 'run1', 'journal': H1}

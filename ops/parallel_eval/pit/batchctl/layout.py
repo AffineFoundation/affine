@@ -9,6 +9,7 @@ Layout under one root prefix
 ``results/<sha256>.json``              batch result. The key is its sha256.
 ``outcomes/<batch_id>.json``           final outcome of a batch. Written once.
 ``staging/<batch_id>/<fence>/...``     the only place a box may write.
+``RUN.json``                           binds the prefix to one journal. Written once.
 
 A box uploads ``obj/<name>`` files and ``result.json`` under its staging
 prefix, then ``COMPLETE.json`` last. The controller reads nothing from a
@@ -27,16 +28,19 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ...durable import canonical
 
-HEX64 = re.compile(r'^[0-9a-f]{64}$')
-SAFE_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
-SAFE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$')
-META_KEY = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
+# Used with ``fullmatch`` only: ``$`` would also accept a trailing newline.
+HEX64 = re.compile(r'[0-9a-f]{64}')
+SAFE_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+SAFE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}')
+META_KEY = re.compile(r'[a-z][a-z0-9_]{0,63}')
 
 SCHEMA_COMPLETE = 'affine-batchctl-complete-v1'
 SCHEMA_STATE = 'affine-batchctl-state-v1'
 SCHEMA_LINK = 'affine-batchctl-link-v1'
 SCHEMA_HEAD = 'affine-batchctl-head-v1'
 SCHEMA_OUTCOME = 'affine-batchctl-outcome-v1'
+SCHEMA_HEARTBEAT = 'affine-batchctl-heartbeat-v1'
+SCHEMA_RUN = 'affine-batchctl-run-v1'
 
 ROLE_FP32_MASTER = 'fp32_master'
 ROLE_BF16_WEIGHTS = 'bf16_weights'
@@ -51,6 +55,7 @@ META_FP32_MASTER_DIGEST = 'fp32_master_digest'
 MAX_COMPLETE_BYTES = 1 << 20
 MAX_RESULT_BYTES = 64 << 20
 MAX_HEAD_BYTES = 1 << 16
+MAX_HEARTBEAT_BYTES = 1 << 12
 MAX_OBJECTS = 4096
 MAX_OBJECT_BYTES = 1 << 44
 MAX_META_KEYS = 64
@@ -69,13 +74,13 @@ def sha256_hex(data: bytes) -> str:
 
 
 def is_hex64(value: Any) -> bool:
-    return isinstance(value, str) and HEX64.match(value) is not None
+    return isinstance(value, str) and HEX64.fullmatch(value) is not None
 
 
 def is_safe_batch_id(value: Any) -> bool:
     return (
         isinstance(value, str)
-        and SAFE_ID.match(value) is not None
+        and SAFE_ID.fullmatch(value) is not None
         and '..' not in value
         and value not in RESERVED_BATCH_IDS
     )
@@ -146,7 +151,7 @@ def parse_manifest(doc: Any, *, batch_id: str, parent: Optional[str]) -> StateMa
         _need(isinstance(item, dict), 'object_not_object')
         _need(set(item) == {'name', 'role', 'sha256', 'size'}, 'object_keys')
         name, role, sha, size = item['name'], item['role'], item['sha256'], item['size']
-        _need(isinstance(name, str) and SAFE_NAME.match(name) is not None and '..' not in name, 'object_name')
+        _need(isinstance(name, str) and SAFE_NAME.fullmatch(name) is not None and '..' not in name, 'object_name')
         _need(name not in seen, 'object_name_duplicate')
         seen.add(name)
         _need(role in ROLES, 'object_role')
@@ -159,7 +164,7 @@ def parse_manifest(doc: Any, *, batch_id: str, parent: Optional[str]) -> StateMa
     meta = doc['meta']
     _need(isinstance(meta, dict) and len(meta) <= MAX_META_KEYS, 'manifest_meta')
     for key, value in meta.items():
-        _need(isinstance(key, str) and META_KEY.match(key) is not None, 'meta_key')
+        _need(isinstance(key, str) and META_KEY.fullmatch(key) is not None, 'meta_key')
         ok = (isinstance(value, str) and len(value) <= 256) or _is_int(value)
         _need(ok, 'meta_value')
     # The next trainer run refuses to start without this digest. A state that
@@ -291,6 +296,27 @@ def outcome_body(fields: Mapping[str, Any]) -> bytes:
     return canonical(dict(fields, schema=SCHEMA_OUTCOME))
 
 
+def heartbeat_body(*, fence: int, seq: int, stage: str = '') -> bytes:
+    """What a box writes while it works. ``seq`` must grow with each write."""
+    return canonical({'schema': SCHEMA_HEARTBEAT, 'fence': fence, 'seq': seq, 'stage': stage})
+
+
+def parse_heartbeat(raw: bytes, *, fence: int) -> int:
+    """Return the heartbeat sequence. Raises ``ValueError`` on anything else."""
+    doc = json.loads(raw)
+    if not isinstance(doc, dict) or doc.get('schema') != SCHEMA_HEARTBEAT:
+        raise ValueError('heartbeat schema')
+    if doc.get('fence') != fence or not _is_int(doc.get('seq')) or doc['seq'] < 0:
+        raise ValueError('heartbeat fence or seq')
+    return doc['seq']
+
+
+def run_body(*, run_id: str, journal_id: str) -> bytes:
+    """Binds an R2 prefix to one journal. ``journal_id`` is the hash of the
+    first journal record, so a new journal can never take over the prefix."""
+    return canonical({'schema': SCHEMA_RUN, 'run_id': run_id, 'journal': journal_id})
+
+
 class Layout:
     """Key builder for one root prefix."""
 
@@ -302,6 +328,10 @@ class Layout:
     @property
     def head(self) -> str:
         return self.prefix + 'HEAD.json'
+
+    @property
+    def run(self) -> str:
+        return self.prefix + 'RUN.json'
 
     def link(self, link: str) -> str:
         return '%slinks/%s.json' % (self.prefix, link)
@@ -333,6 +363,9 @@ class Layout:
 
     def staging_result(self, batch_id: str, fence: int) -> str:
         return self.staging_prefix(batch_id, fence) + 'result.json'
+
+    def staging_heartbeat(self, batch_id: str, fence: int) -> str:
+        return self.staging_prefix(batch_id, fence) + 'HEARTBEAT.json'
 
     def staging_object(self, batch_id: str, fence: int, name: str) -> str:
         return '%sobj/%s' % (self.staging_prefix(batch_id, fence), name)
