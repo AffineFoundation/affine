@@ -21,6 +21,12 @@ modes
              gradient that zero3_numerics.py gathered from FSDP ranks in bf16 (<work>/sharded-gradient.pt). The
              saved candidate master is then loaded with the admitted host-v834e _fp32_load.
 
+--observe (sharded mode, rank 0) puts pass-through instruments on the staged code and adds what they saw to the
+result. Every instrumented function runs unchanged; see observe(). It answers three questions about memory that
+only show on a real GPU as an out-of-memory error: does a full-size original Parameter outlive the fully_shard call
+that replaced it, does backward keep the recomputed logits of the head chunks, and does the zero-weight probe step
+run the backward of the real loss. --logit-chunk lowers rank 0's head chunk so that one micro-batch has several.
+
 Every run has its own fp32 master store, <work>/<run>/fp32-master, so an entry there was written by that run.
 The launcher splits a master into files of 4 GiB; the tiny master is 142 kB, so the harness lowers that one
 constant (FP32_SHARD_BYTES) to make the same code write several files.
@@ -29,7 +35,9 @@ train_pit.py itself is not run here: it needs the box paths, a signed dispatch a
 a stand-in. The result is written to <work>/<mode>/result.json.
 """
 import argparse
+import collections
 import dataclasses
+import gc
 import inspect
 import json
 import os
@@ -37,6 +45,8 @@ import shutil
 import sys
 import time
 import types
+import warnings
+import weakref
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -57,6 +67,101 @@ def plan_probe(dp):
     return dict(bins=bins, largest_bin_tokens=max(14000 * len(batch) for batches in assign for batch in batches))
 
 
+def observe(z3, B):
+    """Wrap four staged functions of rank 0 so that each call is recorded and then runs unchanged. -> the record.
+
+    shard   after every real fully_shard(unit): how many of the unit's original trainable Parameters are alive.
+            FSDP has replaced each of them by this rank's shard, so a live one is a full-size tensor that some
+            reference still pins.
+    head    when backward reaches the decoder output (Actor._head_done; every head chunk is done by then): how
+            many fp32 [tokens, vocab] tensors are alive. They are recomputed logits that the head checkpoint holds.
+    nodes   the autograd nodes that the backward of each zero-weight probe step and of each real step ran.
+    """
+    # torch imports only now: the closure is on sys.path and install() has patched it (train_pit order)
+    import torch
+    from torch.distributed.tensor import DTensor
+    seen = dict(shard=[], head=[], nodes=[], tag=None)
+
+    def sizes(items):
+        return [[len(prompt), len(output)] for prompt, output in items]
+
+    real_shard = z3.fully_shard
+
+    def fully_shard(module, **kwargs):
+        originals = [weakref.ref(p) for p in module.parameters() if p.requires_grad and not isinstance(p, DTensor)]
+        out = real_shard(module, **kwargs)
+        gc.collect()
+        seen['shard'].append(dict(unit=type(module).__name__, originals=len(originals),
+                                  alive=sum(ref() is not None for ref in originals)))
+        return out
+    z3.fully_shard = fully_shard
+
+    real_done = z3.Actor._head_done
+
+    def _head_done(self, grad):
+        gc.collect()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')        # the scan touches deprecated module attributes
+            logits = sum(1 for obj in gc.get_objects() if isinstance(obj, torch.Tensor) and obj.dtype == torch.float32
+                         and obj.dim() == 2 and obj.shape[1] == self.inv['vocab'])
+        seen['head'].append(dict(phase=seen['tag'] or ('step' if self.accumulate else 'probe'), logits_alive=logits))
+        return real_done(self, grad)
+    z3.Actor._head_done = _head_done
+
+    def recorded(kind, call, items_of):
+        def run(*args, **kwargs):
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
+                out = call(*args, **kwargs)
+            prefix = 'autograd::engine::evaluate_function: '
+            nodes = collections.Counter(e.name[len(prefix):] for e in profile.events() if e.name.startswith(prefix))
+            seen['nodes'].append(dict(kind=kind, items=items_of(*args), nodes=dict(nodes)))
+            return out
+        return run
+    z3.Actor.null_step = recorded('probe', z3.Actor.null_step, lambda actor, module, items: sizes(items))
+    B._gradient_pass = recorded('step', B._gradient_pass, lambda runtime, rows, plan, *rest: sizes(
+        (rows[i]['group'].prompt, rows[i]['rollout'].tokens) for batch in plan for i in batch))
+    return seen
+
+
+def head_control(z3, B, stock, seen, items, support):
+    """The same micro-batch and the same loss on log_q twice on the sharded actor: with the forward of the stock
+    v8211_batched file (log_p keeps its graph) and with the staged sharded forward. -> what the two runs kept alive
+    in backward (recorded by observe()), and whether their values and gradients are the same bits."""
+    import torch      # after install(), as everywhere in this file
+    actor = z3.WORLD['actor']
+
+    def run(tag, forward):
+        actor.clear()
+        seen['tag'] = tag
+        try:
+            with torch.enable_grad():
+                outs = forward()
+            weights = [torch.linspace(0.5, 1.5, len(log_q)) for _, log_q, _ in outs]
+            torch.stack([(w * log_q).sum() for w, (_, log_q, _) in zip(weights, outs)]).sum().backward()
+            actor.end_step()
+        finally:
+            seen['tag'] = None
+        gradients = {name: actor.shard_grad(name).clone() for name, _ in actor.names}
+        values = [tuple(t.detach().clone() for t in out) for out in outs]
+        attached = [bool(out[0].requires_grad) for out in outs]
+        actor.clear()
+        return gradients, values, attached
+
+    def stock_forward():        # what the sharded forward did before the head-memory fix: begin the step, stock outputs
+        actor.begin_step()
+        return stock(actor.runtime, items, gradients=True, engine='padded', logit_chunk=z3.LOGIT_CHUNK, support=support)
+    want_g, want_v, want_attached = run('control-stock', stock_forward)
+    got_g, got_v, got_attached = run('control-staged', lambda: B.batched_log_probs(
+        actor.runtime, items, gradients=True, engine='packed', logit_chunk=z3.LOGIT_CHUNK, support=support))
+    return dict(
+        items=[[len(prompt), len(output)] for prompt, output in items], logit_chunk=z3.LOGIT_CHUNK,
+        head_chunks=-(-sum(len(output) for _, output in items) // z3.LOGIT_CHUNK),
+        stock_log_p_attached=want_attached, staged_log_p_attached=got_attached,
+        values_equal=all(torch.equal(a, b) for want, got in zip(want_v, got_v) for a, b in zip(want, got)),
+        gradient_tensors=len(want_g), gradient_nonzero=sum(bool(g.abs().sum() > 0) for g in want_g.values()),
+        gradients_equal=list(want_g) == list(got_g) and all(torch.equal(want_g[n], got_g[n]) for n in want_g))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--work', required=True)
@@ -70,7 +175,11 @@ def main(argv=None):
     ap.add_argument('--fake-peak', default=None, choices=('first-over', 'always-over'),
                     help='there is no GPU here: stand in for the GPU memory rank 0 measures in the probe step. '
                          'first-over = over the limit until its layer inputs are on the host; always-over = always')
+    ap.add_argument('--observe', action='store_true', help='sharded: record what rank 0 keeps alive (see observe())')
+    ap.add_argument('--logit-chunk', type=int, default=None, help='sharded: head tokens per lm_head call on rank 0')
     a = ap.parse_args(argv)
+    if a.observe and (a.mode != 'sharded' or a.world != 1):
+        ap.error('--observe runs its control forward on rank 0 alone: it needs --mode sharded --world 1')
     work = Path(a.work).resolve()
     src = fixture.source_root(work / 'src')
     sharded = a.mode == 'sharded'
@@ -114,7 +223,10 @@ def main(argv=None):
             except RuntimeError as x:
                 result['activate_none'] = 'refused: %s' % x
         result['policy'] = z3.activate(host)
+        if a.logit_chunk:
+            z3.LOGIT_CHUNK = a.logit_chunk
     info = host.install(cfg, start_dp=sharded)
+    seen = observe(z3, sys.modules['v824_batched']) if a.observe else None
     result['install'] = dict(dp_world=info['dp_world'], zero3=info.get('zero3'), dp_token_budget=info.get('dp_token_budget'))
     dp = sys.modules['v83_dp']
     helpers = dp.STATE.get('helpers') or []
@@ -221,6 +333,12 @@ def main(argv=None):
         record_stages=sorted({r.get('stage') for r in records}),
         trajectory_loss_records=sum(r.get('stage') == 'trajectory-loss' for r in records),
         masked_records=sum(r.get('stage') == 'masked-unresolved' for r in records))
+    if a.observe:
+        stock = fixture.load_module('v8211_stock', hostdir / 'v8211_batched.py').batched_log_probs
+        items = [(g.prompt, t.tokens) for g in groups for t in g.trajectories][:3]
+        control = head_control(z3, B, stock, seen, items, B.SUPPORT_RENORM)
+        result['observed'] = dict(shard=seen['shard'], head=seen['head'], nodes=seen['nodes'], control=control,
+                                  logit_chunk=z3.LOGIT_CHUNK, vocab=z3.WORLD['actor'].inv['vocab'])
     if sharded:
         dp._bcast(dict(op='stop'))
         result['helper_returncodes'] = [h.wait(timeout=60) for h in helpers]

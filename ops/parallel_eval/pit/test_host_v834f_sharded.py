@@ -847,6 +847,50 @@ class TestMasterAtProductionPrecision(unittest.TestCase):
         self.assertNotEqual(out['output_master_digest'], out['output_store_entry']) # master digest != weights digest here
 
 
+class TestRealBoxFindings(unittest.TestCase):
+    """Memory faults the first real 8x RTX 5090 run of the sharded trainer found (2026-11-11). A GPU shows each of
+    them as an out-of-memory error. Here one real sharded update runs on the staged files in a one-rank world, and
+    rank 0 carries the pass-through instruments of harness/zero3_e2e.py (observe()): they count what is still
+    alive at fixed points, and the staged code runs unchanged. The head chunk is 3 tokens so that one micro-batch
+    has several head chunks, as a real one has."""
+
+    # autograd nodes of one head chunk and of the split of its outputs: the log_q branch (top-k, log-softmax) and
+    # the log_p branch (gather, logsumexp)
+    HEAD_NODES = ('TopkBackward0', 'LogSoftmaxBackward0', 'LogsumexpBackward0', 'GatherBackward0', 'SqueezeBackward1',
+                  'CatBackward0', 'SplitWithSizesBackward0')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp(prefix='v834f-observed-'))
+        cls.addClassCleanup(shutil.rmtree, cls.work, True)
+        for mode, args, env in (('prepare', (), child_env()),
+                                ('sharded', ('--world', '1', '--port', str(free_port()), '--observe', '--logit-chunk', '3'),
+                                 child_env(PIT_PER_GPU_MEM_GIB='32'))):
+            proc, _ = run_driver(cls.work, mode, *args, env=env)
+            if proc.returncode != 0:
+                raise AssertionError('%s failed (rc %s):\n%s\n%s' % (mode, proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:]))
+        cls.out = json.loads((cls.work / 'sharded' / 'result.json').read_text())
+        cls.seen = cls.out['observed']
+
+    def chunks(self, items):
+        return -(-sum(output for _, output in items) // self.seen['logit_chunk'])
+
+    def test_the_observed_run_is_one_real_update(self):
+        self.assertEqual(self.out['status'], 'updated')
+        self.assertEqual(self.out['microbatch']['engine'], 'packed-zero3-v835')
+        self.assertEqual(self.out['microbatch']['logit_chunk'], 3)
+        self.assertEqual(self.seen['vocab'], 64)
+
+    def test_no_original_parameter_outlives_the_fully_shard_call_that_replaced_it(self):
+        """Finding 1. A reference to an original Parameter keeps its full-size tensor after fully_shard has put this
+        rank's shard in its place. On the box that was every decoder layer after its fp32 upcast: 17.1 -> 30.0 GiB."""
+        units = self.seen['shard']
+        self.assertEqual([unit['unit'] for unit in units],
+                         ['FSDPQwen3_5DecoderLayer'] * 4 + ['FSDPEmbedding', 'FSDPLinear', 'FSDPQwen3_5Model'])
+        self.assertTrue(all(unit['originals'] >= 1 for unit in units))              # the instrument watched every unit
+        self.assertEqual([unit['alive'] for unit in units], [0] * len(units))
+
+
 class TestShardedFailures(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

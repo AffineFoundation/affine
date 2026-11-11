@@ -5,13 +5,13 @@ c5c2c213da42bcd9eec35c8085c4992b6a7f9ba067ba53b8425e9613eb531b50  ./trainer-host
 83a7de7216a853f621c8b5466d9333010e16740afbb6744cdc223ac3b8f03ed2  ./trainer-host-v834f/patched/mimo_grpo.service.py
 f117848fae3d0827a618e06adae66da562480f99f249a23c91365d209189a217  ./trainer-host-v834f/patched/mimo_grpo.transaction.py
 ef3f94b24e0cc6cbbf40fa7825cba3e114080ef10746587b365ffaeb941d92c8  ./trainer-host-v834f/patched/mimo_training_worker.py
-3f8282e6dd705860c89779124fd67a3b50c5b83441e4d602d2d4543d0e749f57  ./trainer-host-v834f/trainer-config.public.json
+453b0a37b4eb850ccb8273a55bdd92424071a7504af7dfa57ee2a60656fba524  ./trainer-host-v834f/trainer-config.public.json
 8ffd0bfe099df15479d7591a1a23c28a7578f78fd5c3d1fc164695611fae21ad  ./trainer-host-v834f/v8210_optimizer_offpath.py
 ad7596e2ffe8e01f7554ccf78795b2c26038c03020cae2e90a5684e0b7622a60  ./trainer-host-v834f/v8211_batched.py
 be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2  ./trainer-host-v834f/v824_optimizer_fast.py
 1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e  ./trainer-host-v834f/v824_publication_fast.py
 1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426  ./trainer-host-v834f/v824_staging_fast.py
-2dc9c2f8ed70a921aecfe1cfb4e24927acf3e6ac6acfd5fcaf028d155064b2f1  ./trainer-host-v834f/v835_zero3.py
+e948d5f8c36196af83379e47209c1dd2e97490652d1e166362bfeb418313850a  ./trainer-host-v834f/v835_zero3.py
 e0f1056bd04b4bb3e11534b421f9229d78322b4d4f9c313f3ba1cc36c247279c  ./trainer-host-v834f/v83_dp.py
 e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4  ./trainer-host-v834f/v83_fast_kernels.py
 ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2  ./trainer-host-v834f/v83_kernels_policy.py

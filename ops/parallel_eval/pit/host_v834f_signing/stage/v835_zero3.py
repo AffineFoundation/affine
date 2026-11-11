@@ -369,13 +369,16 @@ class Actor:
         native = MixedPrecisionPolicy(param_dtype=self.compute_dtype, reduce_dtype=torch.float32, cast_forward_inputs=False)
         frozen = {p for p in self.root.parameters() if not p.requires_grad}
         for child in list(self.root.children()) + [m for m in self.model.children() if m is not self.root and m is not self.head]:
-            params = list(child.parameters())
-            if params and not any(p.requires_grad for p in params):
+            # Only the flags are kept. A list of the child's Parameters would still be bound when the units below
+            # are sharded: fully_shard replaces a Parameter by this rank's shard, and the full-size tensor of the
+            # original (after the fp32 upcast: twice the bf16 size) is freed only when nothing else refers to it.
+            trainable = [p.requires_grad for p in child.parameters()]
+            if trainable and not any(trainable):
                 child.to('cpu')       # frozen and outside the text forward (vision tower): keep it off the GPU
 
         def fp32(module):             # exact upcast: the shards and their gradients are fp32, the forward stays bf16
-            for p in module.parameters():
-                if p.requires_grad and p.dtype != torch.float32:
+            for p in module.parameters():       # p is local to this call: it must not outlive it (see above)
+                if p.requires_grad and not isinstance(p, DTensor) and p.dtype != torch.float32:
                     p.data = p.data.to(torch.float32)
 
         def sum_reduce(module):
@@ -396,9 +399,7 @@ class Actor:
         self.head.set_requires_gradient_sync(False, recurse=False)
         self.head.set_reshard_after_backward(False, recurse=False)
         # root (model.model): the remaining trainable parameters (final norm); frozen ones stay unmanaged
-        for p in self.root.parameters():
-            if p.requires_grad and not isinstance(p, DTensor) and p.dtype != torch.float32:
-                p.data = p.data.to(torch.float32)
+        fp32(self.root)               # the units sharded above are DTensors by now and are skipped
         fully_shard(self.root, mesh=mesh, mp_policy=native, offload_policy=offload, ignored_params=frozen)
         sum_reduce(self.root)
         for unit in self.layers + [self.embed, self.head, self.root]:
