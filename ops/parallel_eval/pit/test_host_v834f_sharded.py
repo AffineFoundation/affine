@@ -917,6 +917,38 @@ class TestRealBoxFindings(unittest.TestCase):
         self.assertEqual((control['gradient_tensors'], control['gradient_nonzero']), (56, 56))
         self.assertTrue(control['gradients_equal'])                                 # every fp32 gradient shard, bit for bit
 
+    def test_the_probe_step_runs_the_backward_of_the_real_loss(self):
+        """Finding 3. The probe step is the memory measurement before the real steps (null_step). It also summed
+        log_p, so its backward ran the log_p branch and freed what the real step keeps: it read about 4.5 GiB low
+        on the box."""
+        probes = [n for n in self.seen['nodes'] if n['kind'] == 'probe']
+        self.assertEqual(len(probes), 1)
+        probe = probes[0]
+        real = next(n for n in self.seen['nodes'] if n['kind'] == 'step' and n['items'] == probe['items'])
+        chunks = self.chunks(probe['items'])
+        self.assertEqual((probe['items'], chunks), ([[3, 25], [3, 29]], 18))
+        self.assertEqual((real['nodes']['TopkBackward0'], real['nodes']['LogSoftmaxBackward0']), (chunks, chunks))
+        self.assertNotIn('LogsumexpBackward0', real['nodes'])                       # the real loss never differentiates log_p
+        self.assertEqual({node: probe['nodes'].get(node, 0) for node in self.HEAD_NODES},
+                         {node: real['nodes'].get(node, 0) for node in self.HEAD_NODES})
+        first = self.seen['head'][:2]                    # the probe, then the real step on the same micro-batch
+        self.assertEqual([h['phase'] for h in first], ['probe', 'step'])
+        self.assertEqual(first[0]['logits_alive'], first[1]['logits_alive'])
+
+    def test_the_probe_step_follows_the_loss_and_not_the_forward(self):
+        """Finding 3, the rule itself. The probe step runs on the stock forward, whose log_p keeps its graph, next
+        to a loss on log_q on that same forward. It must run the same head backward and hold the same logits. A
+        probe that sums every output with a graph runs the log_p branch too and holds none of them."""
+        nodes = {n['kind']: n['nodes'] for n in self.seen['nodes'] if n['kind'].startswith('control-')}
+        held = {h['phase']: h['logits_alive'] for h in self.seen['head'] if h['phase'].startswith('control-')}
+        chunks = self.seen['control']['head_chunks']
+        self.assertEqual((nodes['control-stock']['TopkBackward0'], nodes['control-stock']['LogSoftmaxBackward0']), (chunks, chunks))
+        self.assertNotIn('LogsumexpBackward0', nodes['control-stock'])
+        self.assertEqual({node: nodes['control-probe'].get(node, 0) for node in self.HEAD_NODES},
+                         {node: nodes['control-stock'].get(node, 0) for node in self.HEAD_NODES})
+        self.assertGreaterEqual(held['control-stock'], chunks)
+        self.assertEqual(held['control-probe'], held['control-stock'])
+
 
 class TestShardedFailures(unittest.TestCase):
     @classmethod

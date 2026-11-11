@@ -510,8 +510,11 @@ class Actor:
         with torch.enable_grad():
             outs = B.batched_log_probs(self.runtime, items, gradients=True, engine='packed', logit_chunk=LOGIT_CHUNK,
                                        support=B.SUPPORT_RENORM)
-        terms = [t.sum() for out in outs for t in (out if isinstance(out, tuple) else (out,))
-                 if t.is_floating_point() and t.requires_grad]
+        # What the real loss differentiates (v8211_batched._gradient_pass with KL off): log_q under support
+        # renormalisation, log_p without it. The probe step measures memory with this method, so it must run that
+        # backward and no other: the backward of a log_p the loss never uses frees tensors the real step keeps.
+        terms = [(out[1] if isinstance(out, tuple) else out).sum() for out in outs]
+        _need(all(t.requires_grad for t in terms), 'the zero-weight step must differentiate what the loss differentiates')
         total = torch.stack(terms).sum()
         if not torch.isfinite(total):
             raise ValueError('non-finite forward in a zero-weight step')

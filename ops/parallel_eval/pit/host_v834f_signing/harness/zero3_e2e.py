@@ -67,6 +67,26 @@ def plan_probe(dp):
     return dict(bins=bins, largest_bin_tokens=max(14000 * len(batch) for batches in assign for batch in batches))
 
 
+NODE = 'autograd::engine::evaluate_function: '         # the profiler's name for one autograd node that backward ran
+
+
+def _sizes(items):
+    return [[len(prompt), len(output)] for prompt, output in items]
+
+
+def _recorded(seen, kind, call, items_of):
+    """-> call, which also adds the autograd nodes that ran during it to seen['nodes']."""
+    import torch      # after install(), as everywhere in this file
+
+    def run(*args, **kwargs):
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
+            out = call(*args, **kwargs)
+        nodes = collections.Counter(e.name[len(NODE):] for e in profile.events() if e.name.startswith(NODE))
+        seen['nodes'].append(dict(kind=seen['tag'] or kind, items=items_of(*args), nodes=dict(nodes)))
+        return out
+    return run
+
+
 def observe(z3, B):
     """Wrap four staged functions of rank 0 so that each call is recorded and then runs unchanged. -> the record.
 
@@ -81,10 +101,6 @@ def observe(z3, B):
     import torch
     from torch.distributed.tensor import DTensor
     seen = dict(shard=[], head=[], nodes=[], tag=None)
-
-    def sizes(items):
-        return [[len(prompt), len(output)] for prompt, output in items]
-
     real_shard = z3.fully_shard
 
     def fully_shard(module, **kwargs):
@@ -108,37 +124,33 @@ def observe(z3, B):
         return real_done(self, grad)
     z3.Actor._head_done = _head_done
 
-    def recorded(kind, call, items_of):
-        def run(*args, **kwargs):
-            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
-                out = call(*args, **kwargs)
-            prefix = 'autograd::engine::evaluate_function: '
-            nodes = collections.Counter(e.name[len(prefix):] for e in profile.events() if e.name.startswith(prefix))
-            seen['nodes'].append(dict(kind=kind, items=items_of(*args), nodes=dict(nodes)))
-            return out
-        return run
-    z3.Actor.null_step = recorded('probe', z3.Actor.null_step, lambda actor, module, items: sizes(items))
-    B._gradient_pass = recorded('step', B._gradient_pass, lambda runtime, rows, plan, *rest: sizes(
+    z3.Actor.null_step = _recorded(seen, 'probe', z3.Actor.null_step, lambda actor, module, items: _sizes(items))
+    B._gradient_pass = _recorded(seen, 'step', B._gradient_pass, lambda runtime, rows, plan, *rest: _sizes(
         (rows[i]['group'].prompt, rows[i]['rollout'].tokens) for batch in plan for i in batch))
     return seen
 
 
 def head_control(z3, B, stock, seen, items, support):
     """The same micro-batch and the same loss on log_q twice on the sharded actor: with the forward of the stock
-    v8211_batched file (log_p keeps its graph) and with the staged sharded forward. -> what the two runs kept alive
-    in backward (recorded by observe()), and whether their values and gradients are the same bits."""
+    v8211_batched file (log_p keeps its graph) and with the staged sharded forward. Then the staged zero-weight
+    probe step on the stock forward. -> what the runs kept alive in backward and which nodes they ran (recorded
+    by observe() under control-stock, control-staged and control-probe), and whether the values and the gradients
+    of the first two are the same bits."""
     import torch      # after install(), as everywhere in this file
     actor = z3.WORLD['actor']
 
     def run(tag, forward):
-        actor.clear()
-        seen['tag'] = tag
-        try:
+        def step():
             with torch.enable_grad():
                 outs = forward()
             weights = [torch.linspace(0.5, 1.5, len(log_q)) for _, log_q, _ in outs]
             torch.stack([(w * log_q).sum() for w, (_, log_q, _) in zip(weights, outs)]).sum().backward()
             actor.end_step()
+            return outs
+        actor.clear()
+        seen['tag'] = tag
+        try:
+            outs = _recorded(seen, tag, step, lambda: _sizes(items))()
         finally:
             seen['tag'] = None
         gradients = {name: actor.shard_grad(name).clone() for name, _ in actor.names}
@@ -153,8 +165,17 @@ def head_control(z3, B, stock, seen, items, support):
     want_g, want_v, want_attached = run('control-stock', stock_forward)
     got_g, got_v, got_attached = run('control-staged', lambda: B.batched_log_probs(
         actor.runtime, items, gradients=True, engine='packed', logit_chunk=z3.LOGIT_CHUNK, support=support))
+    # The probe step must differentiate what the loss differentiates, whatever the forward hands back: here a
+    # log_p that keeps its graph. Its state is the one _probe() sets.
+    attached = types.SimpleNamespace(batched_log_probs=lambda *args, **kwargs: stock_forward(), SUPPORT_RENORM=support)
+    seen['tag'], actor.accumulate = 'control-probe', False
+    try:
+        actor.null_step(attached, items)
+    finally:
+        seen['tag'], actor.accumulate = None, True
+    actor.clear()
     return dict(
-        items=[[len(prompt), len(output)] for prompt, output in items], logit_chunk=z3.LOGIT_CHUNK,
+        items=_sizes(items), logit_chunk=z3.LOGIT_CHUNK,
         head_chunks=-(-sum(len(output) for _, output in items) // z3.LOGIT_CHUNK),
         stock_log_p_attached=want_attached, staged_log_p_attached=got_attached,
         values_equal=all(torch.equal(a, b) for want, got in zip(want_v, got_v) for a, b in zip(want, got)),
