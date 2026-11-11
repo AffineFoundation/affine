@@ -32,7 +32,7 @@ from ops.parallel_eval.live import pe_artifact_upload as AU
 from ops.parallel_eval.live import pe_box
 from ops.parallel_eval.pit import fakepass as FP
 from ops.parallel_eval.pit import fakepass_real as R
-from ops.parallel_eval.pit.fakepass_sandbox import SANDBOX_REBIND
+from ops.parallel_eval.pit.fakepass_sandbox import SANDBOX_REBIND, lium_credential_source
 from ops.parallel_eval.pit.pe_rent import PREFIX_FAKEPASS, RentError, is_fakepass_name
 
 
@@ -456,6 +456,25 @@ class TestRealEnvAndPreflight(unittest.TestCase):
             with self.assertRaises(FP.FakepassError):
                 R.preflight_real(dict(base, PIT_BUNDLE_JSON=str(Path(td) / 'missing')))
 
+    def test_preflight_accepts_standard_lium_config_ini(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _wj(Path(td) / 'life.json', {'bucket': {}})
+            ini = Path(td) / '.lium' / 'config.ini'
+            ini.parent.mkdir()
+            ini.write_text('[api]\napi_key = sk_fixture_key\n')
+            env = {
+                'HOME': td, 'PATH': os.environ.get('PATH', ''),
+                'PIT_LIFE_CFG': str(cfg), 'PIT_BUNDLE_JSON': str(cfg),
+                'PIT_V834E_RELEASE': str(Path(td) / 'no-release'),
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                # Past the credential gate: the next refusal is the trainer host dir.
+                with self.assertRaisesRegex(FP.FakepassError, 'trainer-host-v834e dir missing'):
+                    R.preflight_real(os.environ)
+                ini.write_text('[api]\napi_key =\n')
+                with self.assertRaisesRegex(FP.FakepassError, 'Lium credentials missing'):
+                    R.preflight_real(os.environ)
+
     def test_import_live_modules_binds_sandbox_roots(self):
         paths = self._sandbox('renv3')
         with tempfile.TemporaryDirectory() as td:
@@ -469,6 +488,63 @@ class TestRealEnvAndPreflight(unittest.TestCase):
             with self.assertRaises(FP.FakepassError):
                 R.import_live_modules()
         self.assertNotEqual(os.environ.get('PIT_FAKEPASS_MODE'), 'real')
+
+
+class TestLiumCredentialSources(unittest.TestCase):
+    """Nov 10: preflight refused a host that only has the standard ~/.lium/config.ini."""
+
+    KEY = 'sk_fixture_not_a_real_key'
+
+    def _home(self, ini=None) -> str:
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        if ini is not None:
+            cfg = Path(td.name) / '.lium' / 'config.ini'
+            cfg.parent.mkdir()
+            cfg.write_text(ini)
+        return td.name
+
+    def test_standard_config_ini_api_key(self):
+        env = {'HOME': self._home('[api]\napi_key = %s\n' % self.KEY)}
+        self.assertEqual(lium_credential_source(env), 'config.ini:[api] api_key')
+        self.assertTrue(FP.has_lium_credentials(env))
+
+    def test_env_keys_follow_cli_order(self):
+        home = self._home('[api]\napi_key = %s\n' % self.KEY)
+        self.assertEqual(
+            lium_credential_source({'HOME': home, 'LIUM_API_KEY': 'a', 'LIUM_API_API_KEY': 'b'}),
+            'env:LIUM_API_API_KEY',
+        )
+        self.assertEqual(lium_credential_source({'HOME': home, 'LIUM_API_KEY': 'a'}), 'env:LIUM_API_KEY')
+
+    def test_stored_default_workspace_key(self):
+        ini = '[workspaces]\nactive = Team\n\n[workspace.team]\napi_key = %s\n' % self.KEY
+        self.assertEqual(
+            lium_credential_source({'HOME': self._home(ini)}),
+            'config.ini:[workspace.team] api_key',
+        )
+
+    def test_requested_workspace_needs_its_own_saved_key(self):
+        ini = '[api]\napi_key = %s\n\n[workspace.team]\napi_key = %s\n' % (self.KEY, self.KEY)
+        home = self._home(ini)
+        self.assertEqual(
+            lium_credential_source({'HOME': home, 'LIUM_WORKSPACE': 'Team'}),
+            'config.ini:[workspace.team] api_key',
+        )
+        # The CLI refuses here instead of using another workspace's key.
+        self.assertIsNone(lium_credential_source({'HOME': home, 'LIUM_WORKSPACE': 'other', 'LIUM_API_KEY': 'a'}))
+
+    def test_keyless_or_broken_config_is_not_a_credential(self):
+        for ini in ('', '[api]\napi_key =\n', '[ssh]\nkey_path = ~/.ssh/id_ed25519\n', 'not an ini file\n'):
+            env = {'HOME': self._home(ini)}
+            self.assertIsNone(lium_credential_source(env), ini)
+            self.assertFalse(FP.has_lium_credentials(env), ini)
+        self.assertFalse(FP.has_lium_credentials({'HOME': self._home()}))
+
+    def test_label_never_contains_the_key(self):
+        home = self._home('[api]\napi_key = %s\n' % self.KEY)
+        for env in ({'HOME': home}, {'HOME': home, 'LIUM_API_KEY': self.KEY}):
+            self.assertNotIn(self.KEY, lium_credential_source(env))
 
 
 class TestRealAdmittedHost(unittest.TestCase):
