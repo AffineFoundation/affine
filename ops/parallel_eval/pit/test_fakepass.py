@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -582,6 +583,74 @@ class TestRealAdmittedHost(unittest.TestCase):
         doc = json.loads(R.ADMITTED_MANIFEST.read_text())
         self.assertIn('v83_dp.py', doc['host_files'])
         self.assertFalse(any('zero3' in k for k in doc['host_files']))
+
+
+class TestTrainerHostEnvEqualsSignedDefault(unittest.TestCase):
+    """Nov 10: PIT_TRAINER_HOST naming the signed default was refused as an overlay."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.root = Path(td.name)
+        self.release = self.root / 'release-v834e-signed'
+        self.signed = self.release / 'trainer-host-v834e'
+        # The real admitted host files; the committed manifest pins their bytes.
+        shutil.copytree(R.REPO / 'miner' / 'validator' / 'trainer-v834e', self.signed)
+        (self.signed / R.ROOT_ADMISSION).write_text('{}\n')
+        cfg = _wj(self.root / 'life.json', {'bucket': {}})
+        self.env = {
+            'HOME': str(self.root), 'PATH': os.environ.get('PATH', ''), 'LIUM_API_KEY': 'x',
+            'PIT_LIFE_CFG': str(cfg), 'PIT_BUNDLE_JSON': str(cfg),
+            'PIT_V834E_RELEASE': str(self.release),
+        }
+
+    def _preflight(self, **extra):
+        with mock.patch.dict(os.environ, dict(self.env, **extra), clear=True):
+            return R.preflight_real(os.environ)
+
+    def test_unset_and_equal_ship_the_same_admitted_dir(self):
+        base = self._preflight()
+        self.assertEqual(base['trainer_host_env'], [])
+        self.assertEqual(base['lium_credentials'], 'env:LIUM_API_KEY')
+        for key in R.TRAINER_HOST_ENV:
+            out = self._preflight(**{key: str(self.signed)})
+            self.assertEqual(out['host_dir'], base['host_dir'])
+            self.assertEqual(out['admitted_files'], base['admitted_files'])
+            self.assertEqual(out['trainer_host_env'], [key])
+            self.assertFalse(out['overlay'])
+
+    def test_symlink_and_dotted_spellings_of_the_signed_default_are_equal(self):
+        link = self.root / 'link-to-signed'
+        link.symlink_to(self.signed)
+        for spelling in (link, self.release / '.' / 'trainer-host-v834e', str(self.signed) + '/'):
+            self.assertTrue(self._preflight(PIT_TRAINER_HOST=str(spelling))['admitted_files'])
+
+    def test_any_other_dir_still_refuses(self):
+        copy = self.root / 'byte-identical-copy'
+        shutil.copytree(self.signed, copy)
+        for bad in (copy, self.release, self.root / 'missing', '1'):
+            with self.assertRaisesRegex(FP.FakepassError, 'overlay', msg=str(bad)):
+                self._preflight(PIT_TRAINER_HOST=str(bad))
+
+    def test_equal_path_never_skips_the_admitted_inventory_check(self):
+        for mutate, why in (
+            (lambda h: (h / 'v83_dp.py').write_bytes(b'patched\n'), 'drifted'),
+            (lambda h: (h / 'v835_zero3.py').write_text('# overlay\n'), 'non-admitted overlay'),
+            (lambda h: (h / R.ROOT_ADMISSION).unlink(), 'ROOT-ADMITTED'),
+        ):
+            mutate(self.signed)
+            with self.assertRaisesRegex(FP.FakepassError, why):
+                self._preflight(PIT_TRAINER_HOST=str(self.signed))
+            shutil.rmtree(self.signed)
+            shutil.copytree(R.REPO / 'miner' / 'validator' / 'trainer-v834e', self.signed)
+            (self.signed / R.ROOT_ADMISSION).write_text('{}\n')
+
+    def test_other_overlay_switches_refuse_next_to_an_equal_trainer_host(self):
+        others = [k for k in R.OVERLAY_ENV if k not in R.TRAINER_HOST_ENV]
+        self.assertTrue(others)
+        for key in others:
+            with self.assertRaisesRegex(FP.FakepassError, 'overlay', msg=key):
+                self._preflight(PIT_TRAINER_HOST=str(self.signed), **{key: '1'})
 
 
 class _FakeRent:

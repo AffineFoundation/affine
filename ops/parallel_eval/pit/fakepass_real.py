@@ -69,6 +69,7 @@ from .fakepass_sandbox import (
     fake_green_fresh_stamp,
     fake_result_doc,
     has_lium_credentials,
+    lium_credential_source,
     liveness_loop,
     phase_diagnostics,
     tcp_ping,
@@ -109,6 +110,8 @@ OVERLAY_ENV = (
     'PIT_TRAIN_PIT_PY', 'PIT_ZERO3', 'PIT_ALLOW_SHARDED_GPUS',
     'AFFINE_FP32_BOOTSTRAP_OVERRIDE',
 )
+# Allowed only when the value resolves to the signed default trainer host dir.
+TRAINER_HOST_ENV = ('PIT_TRAINER_HOST', 'AFFINE_TRAINER_HOST')
 # Modules that bind live roots from os.environ at import time.
 LIVE_BOUND_MODULES = (
     'pe_common', 'pe_rent', 'pe_lane', 'pe_apply', 'pe_gate_hook',
@@ -464,6 +467,19 @@ def check_admitted_trainer_host(host_dir: Path, manifest: Path = ADMITTED_MANIFE
     return {'host_dir': str(host_dir), 'admitted_files': len(expected), 'overlay': False}
 
 
+def names_signed_trainer_host(value: str) -> bool:
+    """True when ``value`` resolves to the signed default trainer host dir.
+
+    Naming the signed default explicitly ships the same bytes as leaving the
+    variable unset, so it is not an overlay. Any other dir still refuses, and
+    ``check_admitted_trainer_host`` runs on whichever dir ships.
+    """
+    try:
+        return Path(value).resolve(strict=True) == pe_box._signed_trainer_host_dir().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+
+
 def preflight_real(env: Mapping[str, str]) -> Dict[str, Any]:
     """Refuse REAL unless credentials exist and no injection/overlay seam is set."""
     if not has_lium_credentials(env):
@@ -471,14 +487,20 @@ def preflight_real(env: Mapping[str, str]) -> Dict[str, Any]:
     seams = sorted(k for k in INJECTION_ENV if env.get(k))
     if seams:
         _die('real mode refuses test-injection env: %s' % seams)
-    overlays = sorted(k for k in OVERLAY_ENV if env.get(k))
+    overlays = sorted(
+        k for k in OVERLAY_ENV
+        if env.get(k) and not (k in TRAINER_HOST_ENV and names_signed_trainer_host(env[k]))
+    )
     if overlays:
         _die('real mode refuses trainer overlay / sharded env: %s' % overlays)
     for key in ('PIT_LIFE_CFG', 'PIT_BUNDLE_JSON'):
         v = env.get(key)
         if not v or not Path(v).is_file():
             _die('real mode requires %s (host file)' % key)
-    return check_admitted_trainer_host(pe_box._trainer_host_dir())
+    out = check_admitted_trainer_host(pe_box._trainer_host_dir())
+    out['trainer_host_env'] = sorted(k for k in TRAINER_HOST_ENV if env.get(k))
+    out['lium_credentials'] = lium_credential_source(env)
+    return out
 
 
 @contextlib.contextmanager

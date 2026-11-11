@@ -129,6 +129,11 @@ def _trainer_host_dir() -> Path:
         cand = repo / 'miner' / 'validator' / 'trainer-v834e'
         if cand.is_dir() and (cand / 'mimo_host_trainer_v83.py').is_file():
             return cand
+    return _signed_trainer_host_dir()
+
+
+def _signed_trainer_host_dir() -> Path:
+    """trainer-host-v834e inside the signed release; ignores every trainer override."""
     rel = _v834e_release()
     cand = rel / 'trainer-host-v834e'
     return cand if cand.is_dir() else rel
