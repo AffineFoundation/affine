@@ -295,6 +295,19 @@ def make_box(tmp: Path, *, gpus: int = 8, live_vllm: str = '0.32.0') -> FakeBox:
     return box
 
 
+class LocalPod:
+    """The SSH link to a box, replaced by bash on this machine."""
+
+    def __init__(self, env: Dict[str, str]) -> None:
+        self.env = env
+
+    def run(self, cmd: str, timeout: float = 60, check: bool = False, **kwargs: Any) -> str:
+        proc = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, timeout=timeout, env=self.env)
+        if check and proc.returncode != 0:
+            raise RuntimeError('rc=%d %s' % (proc.returncode, proc.stderr[-300:]))
+        return proc.stdout
+
+
 class BoxCase(unittest.TestCase):
     """A test with one local box. ``GPUS`` is how many GPUs the box reports."""
 
@@ -324,3 +337,8 @@ class BoxCase(unittest.TestCase):
     def alive(self) -> List[Dict[str, Any]]:
         """Servers of this box that still run."""
         return [server for server in self.fb.started() if PS.running(server['pid'])]
+
+    def pod(self) -> LocalPod:
+        """This box as the host reaches it: ``python3`` is this interpreter, ``pgrep`` and ``nvidia-smi`` are the box's."""
+        return LocalPod({'PATH': '%s:%s:/usr/bin:/bin' % (self.fb.bin, os.path.dirname(sys.executable)),
+                         'HOME': str(self.tmp)})

@@ -2,10 +2,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -164,26 +161,12 @@ class TestArmDetachedEval(unittest.TestCase):
         self.assertEqual(shadow().probe_plan('B300').eval_timeout_s(), 7200)     # the live wait is unchanged
 
 
-class _LocalPod:
-    """The SSH link to a box, replaced by bash on this machine."""
-
-    def __init__(self, env):
-        self.env = env
-
-    def run(self, cmd, timeout=60, check=False, **kwargs):
-        proc = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, timeout=timeout, env=self.env)
-        if check and proc.returncode != 0:
-            raise RuntimeError('rc=%d %s' % (proc.returncode, proc.stderr[-300:]))
-        return proc.stdout
-
-
 class TestHostBoxProtocol(BoxCase):
     """The real host job controller and the real remote store drive the tool on a local box."""
 
     def setUp(self):
         super().setUp()
-        env = {'PATH': '%s:%s:/usr/bin:/bin' % (self.fb.bin, os.path.dirname(sys.executable)), 'HOME': str(self.tmp)}
-        self.store = RemoteBoxJobStore(_LocalPod(env))
+        self.store = RemoteBoxJobStore(self.pod())
         self.ctrl = BoxJobController(store=self.store, item_id='e1-item', job_root=str(self.tmp / 'pit-jobs'))
 
     def arm(self, layouts, probe_plan):
