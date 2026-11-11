@@ -520,6 +520,8 @@ class ApplyOp:
     result_sha: Optional[str]
     fence: int
     evidence: Tuple
+    # The state of the HEAD that this apply replaces, as the journal has it.
+    parent_state: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -1076,6 +1078,7 @@ def plan(cfg: CoreConfig, state: State) -> List[Any]:
         ops.append(ApplyOp(
             pending.batch_id, pending.seq, pending.state_id, pending.link_id,
             pending.parent_link, pending.result_sha, pending.fence, pending.evidence,
+            state.head.state_id if state.head is not None else None,
         ))
     for box_id in sorted(state.doomed):
         ops.append(DestroyOp(box_id, state.doomed[box_id]))

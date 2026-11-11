@@ -10,8 +10,9 @@ Rules that every effect keeps
   and reads the world first, so a repeated effect never does harm.
 * An event says only what was read back from R2 or from the provider after
   the change. A request that "probably worked" is not evidence.
-* Bytes that differ from what a hash names are reported only after a second
-  read gave the same wrong digest. One bad read is a retry, not a finding.
+* A finding (an object is missing, is too large, or has wrong bytes) is
+  reported only after a second read gave the same answer as the first. One
+  bad read is a retry, not a finding.
 * A staging object is hashed first and then copied only while it still has
   the etag that was hashed. So a canonical key can only ever hold bytes that
   matched the manifest.
@@ -20,20 +21,19 @@ Rules that every effect keeps
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Callable, FrozenSet, List, Mapping, Optional, Set, Tuple
 
 from . import core as C
 from .guard import box_name, parse_box_name
 from .interfaces import (
-    BatchSource, BoxAgent, BoxError, BoxInfo, Clock, JobSpec, Judge, JudgeInvalid, NotFound,
+    BatchSource, Blob, BoxAgent, BoxError, BoxInfo, Clock, JobSpec, Judge, JudgeInvalid, NotFound,
     ObjectStore, Provider, ProviderError, RentUnavailable, SourceError, StoreError, TooLarge,
     VERDICT_GREEN, VERDICT_RED,
 )
 from .layout import (
-    GENESIS_BATCH, MAX_COMPLETE_BYTES, MAX_HEAD_BYTES, MAX_HEARTBEAT_BYTES, Layout,
-    PackageInvalid, StateManifest, head_body, is_safe_batch_id, link_body, outcome_body,
+    GENESIS_BATCH, MAX_COMPLETE_BYTES, MAX_HEAD_BYTES, MAX_HEARTBEAT_BYTES, HeadPointer, Layout,
+    Package, StateManifest, head_body, is_safe_batch_id, link_body, load_json, outcome_body,
     parse_complete, parse_head, parse_heartbeat, parse_manifest, sha256_hex,
 )
 from .timers import Timers
@@ -42,6 +42,7 @@ APPLY_VERIFY_SHA256 = 'sha256'
 APPLY_VERIFY_ETAG = 'etag'
 
 OK, RETRY, INVALID, FAULT = 'ok', 'retry', 'invalid', 'fault'
+MISSING, TOO_LARGE = 'missing', 'too_large'
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,59 @@ class Effects:
             return None
         except StoreError:
             return RETRY
+
+    def _same_again(self, key: str, first: Any) -> bool:
+        """True when a second ``_digest`` gives the same answer as the first.
+
+        Only two equal answers make a finding: that the object is missing,
+        or that it has other bytes.
+        """
+        again = self._digest(key)
+        return again is not RETRY and again == first
+
+    def _fetch(self, key: str, max_bytes: int) -> Tuple[str, Optional[Blob]]:
+        """One read of a small object: (OK, blob), or (MISSING, None),
+        (TOO_LARGE, None) or (RETRY, None)."""
+        try:
+            return OK, self.store.get(key, max_bytes=max_bytes)
+        except NotFound:
+            return MISSING, None
+        except TooLarge:
+            return TOO_LARGE, None
+        except StoreError:
+            return RETRY, None
+
+    def _doc(
+        self, key: str, max_bytes: int, parse: Callable[[Blob], Any], *, root: bool = False,
+    ) -> Tuple[str, Any]:
+        """Read a small object and parse it.
+
+        Returns (OK, value), (RETRY, None) or (INVALID, reason). ``parse``
+        raises ``ValueError`` with the reason when the bytes are wrong.
+        INVALID needs two reads that gave the same bytes, or the same
+        absence.
+
+        ``root``: nothing that the controller knows already (a hash, the
+        journal) says what the bytes must be. Then OK needs two equal reads
+        too, so that one bad read can never become a durable decision.
+        """
+        first = self._fetch(key, max_bytes)
+        status, blob = first
+        if status == RETRY:
+            return RETRY, None
+        value, reason = None, None
+        if status == OK:
+            try:
+                value = parse(blob)
+            except ValueError as exc:
+                reason = str(exc)
+        else:
+            reason = status
+        if reason is None and not root:
+            return OK, value
+        if self._fetch(key, max_bytes) != first:
+            return RETRY, None
+        return (OK, value) if reason is None else (INVALID, reason)
 
     def _still(self, fence: int, phase: C.Phase, *, try_no: Optional[int] = None,
                box_id: Optional[str] = None) -> bool:
@@ -279,20 +333,25 @@ class Effects:
     def launch(self, op: C.LaunchOp) -> List[Any]:
         if not self._still(op.fence, C.Phase.RUNNING, box_id=op.box_id):
             return []
-        key = self.layout.state_manifest(op.base_state)
-        try:
-            blob = self.store.get(key, max_bytes=MAX_COMPLETE_BYTES)
-        except (NotFound, TooLarge):
-            return [C.Fault('base_manifest_missing')]
-        except StoreError:
+
+        def base_manifest(blob: Blob) -> StateManifest:
+            if sha256_hex(blob.data) != op.base_state:
+                raise ValueError('mismatch')
+            try:
+                doc = load_json(blob.data)
+                return parse_manifest(doc, batch_id=doc.get('batch_id'), parent=doc.get('parent'))
+            except (ValueError, AttributeError):
+                raise ValueError('invalid') from None
+
+        status, manifest = self._doc(
+            self.layout.state_manifest(op.base_state), MAX_COMPLETE_BYTES, base_manifest,
+        )
+        if status == RETRY:
             return []
-        if sha256_hex(blob.data) != op.base_state:
-            return [C.Fault('base_manifest_mismatch')]
-        try:
-            doc = json.loads(blob.data)
-            manifest = parse_manifest(doc, batch_id=doc.get('batch_id'), parent=doc.get('parent'))
-        except (ValueError, AttributeError):
-            return [C.Fault('base_manifest_invalid')]
+        if status != OK:
+            # The base is the HEAD (or the pending HEAD). Its manifest was
+            # verified before, so this must never happen.
+            return [C.Fault('base_manifest_%s' % manifest)]
         spec = JobSpec(
             run_id=self.cfg.run_id,
             batch_id=op.batch_id,
@@ -369,33 +428,34 @@ class Effects:
         lay = self.layout
         if not self._still(op.fence, C.Phase.SETTLING):
             return []
-        try:
-            raw = self.store.get(
-                lay.staging_complete(op.batch_id, op.fence), max_bytes=MAX_COMPLETE_BYTES,
-            ).data
-        except NotFound:
-            return [C.SettleInvalid(op.fence, 'complete_missing')]
-        except TooLarge:
-            return [C.SettleInvalid(op.fence, 'complete_too_large')]
-        except StoreError:
-            return []
-        try:
-            pkg = parse_complete(raw, batch_id=op.batch_id, fence=op.fence, base_state=op.base_state)
-        except PackageInvalid as exc:
-            return [C.SettleInvalid(op.fence, str(exc))]
 
-        try:
-            result = self.store.get(
-                lay.staging_result(op.batch_id, op.fence), max_bytes=pkg.result_size,
-            ).data
-        except NotFound:
-            return [C.SettleInvalid(op.fence, 'result_missing')]
-        except TooLarge:
-            return [C.SettleInvalid(op.fence, 'result_mismatch')]
-        except StoreError:
+        def package(blob: Blob) -> Package:
+            return parse_complete(
+                blob.data, batch_id=op.batch_id, fence=op.fence, base_state=op.base_state,
+            )
+
+        # ``COMPLETE.json`` names the hashes of everything else in the
+        # package, and nothing names the hash of ``COMPLETE.json``.
+        status, pkg = self._doc(
+            lay.staging_complete(op.batch_id, op.fence), MAX_COMPLETE_BYTES, package, root=True,
+        )
+        if status == RETRY:
             return []
-        if len(result) != pkg.result_size or sha256_hex(result) != pkg.result_sha:
-            return [C.SettleInvalid(op.fence, 'result_mismatch')]
+        if status != OK:
+            reason = 'complete_%s' % pkg if pkg in (MISSING, TOO_LARGE) else pkg
+            return [C.SettleInvalid(op.fence, reason)]
+
+        def exact(blob: Blob) -> bytes:
+            if len(blob.data) != pkg.result_size or sha256_hex(blob.data) != pkg.result_sha:
+                raise ValueError('mismatch')
+            return blob.data
+
+        status, result = self._doc(lay.staging_result(op.batch_id, op.fence), pkg.result_size, exact)
+        if status == RETRY:
+            return []
+        if status != OK:
+            reason = 'result_missing' if result == MISSING else 'result_mismatch'
+            return [C.SettleInvalid(op.fence, reason)]
 
         # The result becomes durable under its own hash before any verdict.
         stored = self._store_once(lay.result(pkg.result_sha), result)
@@ -462,14 +522,6 @@ class Effects:
             return FAULT, 'state_manifest_conflict'
         return OK, tuple(evidence)
 
-    def _same_again(self, key: str, first: Any) -> bool:
-        """True when a second read gives the same digest as the first.
-
-        Only two equal reads make a mismatch definite.
-        """
-        again = self._digest(key)
-        return again is not RETRY and again is not None and again == first
-
     def _adopt_object(self, src: str, dst: str, size: int, sha: str) -> Tuple[str, Any]:
         want = (size, sha)
         have = self._digest(dst)
@@ -488,12 +540,10 @@ class Effects:
         staged = self._digest(src)
         if staged is RETRY:
             return RETRY, None
-        if staged is None:
-            return INVALID, 'object_missing'
-        if (staged.size, staged.sha256) != want:
-            if self._same_again(src, staged):
-                return INVALID, 'object_mismatch'
-            return RETRY, None
+        if staged is None or (staged.size, staged.sha256) != want:
+            if not self._same_again(src, staged):
+                return RETRY, None
+            return INVALID, 'object_missing' if staged is None else 'object_mismatch'
         try:
             # Copy exactly the bytes that were hashed, or nothing.
             self.store.copy(src, dst, src_etag=staged.etag)
@@ -518,20 +568,20 @@ class Effects:
         Returns (OK, evidence), (RETRY, None) or (INVALID, reason).
         """
         lay = self.layout
-        try:
-            blob = self.store.get(lay.state_manifest(state_id), max_bytes=MAX_COMPLETE_BYTES)
-        except NotFound:
-            return INVALID, 'manifest_missing'
-        except TooLarge:
-            return INVALID, 'manifest_too_large'
-        except StoreError:
+
+        def state_manifest(blob: Blob) -> StateManifest:
+            if sha256_hex(blob.data) != state_id:
+                raise ValueError('mismatch')
+            try:
+                return parse_manifest(load_json(blob.data), batch_id=batch_id, parent=parent)
+            except ValueError as exc:
+                raise ValueError('invalid:%s' % exc) from None
+
+        status, manifest = self._doc(lay.state_manifest(state_id), MAX_COMPLETE_BYTES, state_manifest)
+        if status == RETRY:
             return RETRY, None
-        if sha256_hex(blob.data) != state_id:
-            return INVALID, 'manifest_mismatch'
-        try:
-            manifest = parse_manifest(json.loads(blob.data), batch_id=batch_id, parent=parent)
-        except ValueError as exc:
-            return INVALID, 'manifest_invalid:%s' % exc
+        if status != OK:
+            return INVALID, 'manifest_%s' % manifest
         known = {item[0]: item for item in evidence}
         out = []
         for ref in manifest.objects:
@@ -548,12 +598,11 @@ class Effects:
             have = self._digest(key)
             if have is RETRY:
                 return RETRY, None
-            if have is None:
-                return INVALID, 'object_missing:%s' % ref.name
-            if (have.size, have.sha256) != (ref.size, ref.sha256):
+            if have is None or (have.size, have.sha256) != (ref.size, ref.sha256):
                 if not self._same_again(key, have):
                     return RETRY, None
-                return INVALID, 'object_mismatch:%s' % ref.name
+                why = 'object_missing' if have is None else 'object_mismatch'
+                return INVALID, '%s:%s' % (why, ref.name)
             out.append((ref.name, ref.size, ref.sha256, have.etag))
         return OK, tuple(out)
 
@@ -565,36 +614,39 @@ class Effects:
         def diverged(why: str) -> List[Any]:
             return [C.ApplyDiverged(op.seq, op.link_id, why)]
 
-        try:
-            blob = self.store.get(lay.head, max_bytes=MAX_HEAD_BYTES)
-        except NotFound:
-            blob = None
-        except TooLarge:
-            return diverged('pointer_too_large')
-        except StoreError:
-            return []
-        parent_state = None
-        if blob is not None:
+        def pointer_of(blob: Blob) -> Tuple[HeadPointer, Blob]:
             try:
                 pointer = parse_head(blob.data)
             except ValueError:
-                return diverged('pointer_unreadable')
+                raise ValueError('pointer_unreadable') from None
             if pointer.link == op.link_id:
                 if pointer.seq != op.seq or pointer.state_id != op.state_id:
-                    return diverged('pointer_inconsistent')
+                    raise ValueError('pointer_inconsistent')
+            elif op.parent_link is None or pointer.link != op.parent_link or pointer.seq != op.seq - 1:
+                raise ValueError('pointer_moved')
+            elif pointer.state_id != op.parent_state:
+                raise ValueError('pointer_inconsistent')
+            return pointer, blob
+
+        # A pointer that does not fit halts the controller. Like every other
+        # finding, that answer needs two equal reads (``_doc``).
+        status, found = self._doc(lay.head, MAX_HEAD_BYTES, pointer_of)
+        if status == RETRY:
+            return []
+        blob = None
+        if status == OK:
+            pointer, blob = found
+            if pointer.link == op.link_id:
                 return [C.ApplyDone(op.seq, op.link_id)]
-            if op.parent_link is None or pointer.link != op.parent_link or pointer.seq != op.seq - 1:
-                return diverged('pointer_moved')
-            parent_state = pointer.state_id
-        elif op.parent_link is not None:
-            return diverged('pointer_missing')
+        elif found != MISSING or op.parent_link is not None:
+            return diverged('pointer_%s' % found if found in (MISSING, TOO_LARGE) else found)
 
         # Verify the new HEAD in R2 right before the swap: the manifest, every
         # state file by size and sha256, and the batch result.
         status, detail = self._verify_state(
             op.state_id,
             batch_id=op.batch_id if op.batch_id is not None else GENESIS_BATCH,
-            parent=parent_state,
+            parent=op.parent_state,
             evidence=op.evidence,
             full=self.cfg.apply_verify == APPLY_VERIFY_SHA256,
         )
@@ -607,9 +659,7 @@ class Effects:
             have = self._digest(key)
             if have is RETRY:
                 return []
-            if have is None:
-                return diverged('result_unverified')
-            if have.sha256 != op.result_sha:
+            if have is None or have.sha256 != op.result_sha:
                 if not self._same_again(key, have):
                     return []
                 return diverged('result_unverified')

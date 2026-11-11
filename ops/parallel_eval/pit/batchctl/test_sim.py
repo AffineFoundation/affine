@@ -473,12 +473,45 @@ def test_harness_finds_a_copy_without_digest_check(tmp_path, monkeypatch):
     expect_audit_failure(tmp_path, FAULTY, ['copied bytes that the manifest does not name'])
 
 
-def test_harness_finds_a_finding_from_one_bad_read(tmp_path, monkeypatch):
-    # One wrong digest is taken as proof that the object is wrong.
+BAD_READS = dataclasses.replace(FAULTY, fault_rate=0.2, fault_budget=200)
+ONE_READ_FINDINGS = [
+    'a valid upload was called invalid', 'a valid uploaded state was not recognized',
+    'the controller halted without a cause', 'a package with a valid result was rejected',
+]
+
+
+def test_harness_finds_a_finding_from_one_bad_digest(tmp_path, monkeypatch):
+    # One wrong digest, or one "missing", is taken as proof about the object.
     monkeypatch.setattr(E.Effects, '_same_again', lambda self, key, first: True)
-    expect_audit_failure(tmp_path, dataclasses.replace(FAULTY, fault_rate=0.2, fault_budget=200), [
-        'a valid upload was called invalid', 'a valid uploaded state was not recognized',
-        'the controller halted without a cause', 'a package with a valid result was rejected',
+    expect_audit_failure(tmp_path, BAD_READS, ONE_READ_FINDINGS)
+
+
+def test_harness_finds_a_finding_from_one_bad_read_of_a_document(tmp_path, monkeypatch):
+    # One read is taken as the truth: for a finding, and for a document that
+    # no hash names in advance.
+    def doc(self, key, max_bytes, parse, root=False):
+        status, blob = self._fetch(key, max_bytes)
+        if status == E.RETRY:
+            return E.RETRY, None
+        if status != E.OK:
+            return E.INVALID, status
+        try:
+            return E.OK, parse(blob)
+        except ValueError as exc:
+            return E.INVALID, str(exc)
+
+    monkeypatch.setattr(E.Effects, '_doc', doc)
+    expect_audit_failure(tmp_path, BAD_READS, ONE_READ_FINDINGS)
+
+
+def test_harness_finds_a_package_that_is_trusted_after_one_read(tmp_path, monkeypatch):
+    # Findings still need two reads, but ``COMPLETE.json`` is believed at once.
+    real = E.Effects._doc
+    monkeypatch.setattr(
+        E.Effects, '_doc', lambda self, key, max_bytes, parse, root=False: real(self, key, max_bytes, parse),
+    )
+    expect_audit_failure(tmp_path, BAD_READS, ONE_READ_FINDINGS + [
+        'the decision names a state the box did not make', 'the decision names another result',
     ])
 
 

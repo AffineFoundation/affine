@@ -11,7 +11,8 @@ fakes do what the real parts can do on a bad day:
   leaves a file out, writes ``COMPLETE.json`` too early or for another fence;
 * a store or provider request is lost, or is applied and its answer is lost,
   or lands much later (even after the controller that sent it is dead), or
-  lands twice; one read of a digest gives a wrong value;
+  lands twice; one read gives wrong bytes, a wrong digest, or says that an
+  object is missing when it is there;
 * a rental makes no box, a late box, two boxes, the wrong GPU, or a price
   above the ceiling; a listing misses a box;
 * an effect result is delivered late, twice, or never;
@@ -136,7 +137,7 @@ class Scenario:
 # that are passed very often get a low weight, so that the fault budget also
 # reaches the rare sites (one roll per box, per rental, per launch).
 FAULT_WEIGHTS = {
-    'store.read_error': 0.25, 'store.bad_digest': 0.25,
+    'store.read_error': 0.25, 'store.bad_read': 0.25,
     'provider.list_error': 0.25, 'provider.list_misses_a_box': 0.25,
     'journal.short_write': 0.25, 'source.error': 0.25, 'box.put': 0.4,
     'box': 5.0, 'rent': 3.0, 'launch': 3.0, 'destroy': 3.0, 'chaos': 2.0,
@@ -455,6 +456,7 @@ class ControllerStore:
     def __init__(self, world: 'World'):
         self.w = world
         self.raw = world.raw
+        self.last_bad: Optional[str] = None
 
     def _read(self, name: str, fn: Callable[[], Any]) -> Any:
         self.w.point('store.%s.before' % name)
@@ -463,6 +465,18 @@ class ControllerStore:
         out = fn()
         self.w.point('store.%s.after' % name)
         return out
+
+    def _bad_read(self, key: str) -> Optional[str]:
+        """One read of an object that is there goes wrong: the answer is
+        ``missing`` or ``wrong``. The object itself is as it was, and the
+        next read of the same key is right."""
+        if self.last_bad == key:
+            self.last_bad = None
+            return None
+        if not self.w.faults.roll('store.bad_read'):
+            return None
+        self.last_bad = key
+        return self.w.rng.choice(('missing', 'wrong', 'wrong'))
 
     def _write(self, name: str, fn: Callable[[], Any]) -> Any:
         self.w.point('store.%s.before' % name)
@@ -481,15 +495,30 @@ class ControllerStore:
         return out
 
     def get(self, key: str, *, max_bytes: int) -> Blob:
-        return self._read('get', lambda: self.raw.get(key, max_bytes=max_bytes))
+        out = self._read('get', lambda: self.raw.get(key, max_bytes=max_bytes))
+        bad = self._bad_read(key)
+        if bad == 'missing':
+            raise NotFound(key)
+        if bad == 'wrong':
+            rng = self.w.rng
+            data = bytearray(out.data)
+            if data and rng.random() < 0.5:
+                data[rng.randrange(len(data))] ^= 1 << rng.randrange(8)
+            else:
+                del data[rng.randrange(len(data) + 1):]
+                data += b'\x00' if bytes(data) == out.data else b''
+            return Blob(bytes(data), out.etag)
+        return out
 
     def head(self, key: str) -> Optional[ObjectInfo]:
         return self._read('head', lambda: self.raw.head(key))
 
     def digest(self, key: str) -> Digest:
         out = self._read('digest', lambda: self.raw.digest(key))
-        if self.w.faults.roll('store.bad_digest'):
-            # One read that went wrong. The object itself is as it was.
+        bad = self._bad_read(key)
+        if bad == 'missing':
+            raise NotFound(key)
+        if bad == 'wrong':
             wrong = sha256_hex(b'bad read %d' % self.w.rng.getrandbits(32))
             return Digest(out.size, wrong, out.etag)
         return out

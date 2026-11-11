@@ -311,6 +311,9 @@ class Controller:
             pass
         bound = self.store.get(self.layout.run, max_bytes=MAX_HEAD_BYTES).data
         if bound != body:
+            # One bad read is not a finding. The start fails and is repeated.
+            if self.store.get(self.layout.run, max_bytes=MAX_HEAD_BYTES).data != bound:
+                raise StoreError('two reads of the run binding differ')
             raise ControllerError('the R2 prefix is bound to another journal')
 
     def close(self) -> None:
@@ -535,18 +538,18 @@ class Controller:
         a call that hangs for ever cannot keep a dead process alive.
         """
         results: 'queue.Queue[Tuple[int, Any, Any]]' = queue.Queue()
-        tokens = itertools.count(1)
-        # key -> (token, op, start time). At most one worker per key.
+        tickets = itertools.count(1)
+        # key -> (ticket, op, start time). At most one worker per key.
         inflight: Dict[Tuple, Tuple[int, Any, float]] = {}
         # Workers that were given up and have not come back.
         hung: Dict[int, Tuple] = {}
 
-        def work(token: int, op: Any) -> None:
+        def work(ticket: int, op: Any) -> None:
             try:
                 out: Any = self.attempt(op)
             except BaseException as exc:  # fatal: handed to the loop below
                 out = exc
-            results.put((token, op, out))
+            results.put((ticket, op, out))
 
         while not stop.is_set():
             self.tick()
@@ -556,24 +559,24 @@ class Controller:
                     continue
                 if len(inflight) + len(hung) >= self.config.max_workers:
                     break
-                token = next(tokens)
-                inflight[key] = (token, op, self._now())
+                ticket = next(tickets)
+                inflight[key] = (ticket, op, self._now())
                 threading.Thread(
-                    target=work, args=(token, op), daemon=True, name='batchctl-%s' % key[0],
+                    target=work, args=(ticket, op), daemon=True, name='batchctl-%s' % key[0],
                 ).start()
             try:
                 item = results.get(timeout=idle_s)
             except queue.Empty:
                 item = None
             while item is not None:
-                token, op, out = item
+                ticket, op, out = item
                 key = op_key(op)
-                if key in inflight and inflight[key][0] == token:
+                if key in inflight and inflight[key][0] == ticket:
                     del inflight[key]
                 # A worker that was given up can still come back. Its events
                 # are facts like any other: the core checks each one against
                 # the fence and the phase.
-                hung.pop(token, None)
+                hung.pop(ticket, None)
                 if isinstance(out, BaseException):
                     raise out
                 for event in out:
@@ -584,13 +587,13 @@ class Controller:
                     item = None
             now = self._now()
             for key in list(inflight):
-                token, op, started = inflight[key]
+                ticket, op, started = inflight[key]
                 if now - started <= self._patience(op):
                     continue
                 # The call did not keep its own timeout. Free the key, so the
                 # same work can start again on a new worker.
                 del inflight[key]
-                hung[token] = key
+                hung[ticket] = key
                 self.alert('effect_watchdog', key)
                 if type(op) is C.RentOp:
                     # Move on to the next rung. If a box shows up later, it
