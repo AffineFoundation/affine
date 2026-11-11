@@ -51,6 +51,7 @@ EPOCH, RID, SEED = 10, 'round-1', 'p' * 64
 ON = ES.EarlyStop(enabled=True)
 # The files of the PIT package that may name the early stop. A config file, an install script or a test fixture
 # that starts to name it fails ``test_nothing_else_names_the_flag``.
+MODULE_PATH = 'ops/parallel_eval/pit/early_stop.py'
 MAY_NAME_THE_FLAG = {'early_stop.py', 'test_early_stop.py', 'config.py', 'box.py', 'controller.py', 'decision_emit.py'}
 
 
@@ -360,6 +361,8 @@ class TestSettings(unittest.TestCase):
                     text = path.read_text()
                 except (UnicodeDecodeError, OSError):
                     continue
+                # A file list can hold the path of the module. A path cannot set the flag.
+                text = '\n'.join(line for line in text.splitlines() if line.strip() != MODULE_PATH)
                 if 'early_stop' in text:
                     named.add('/'.join(parts))
         self.assertEqual(named, {'ops/parallel_eval/pit/' + name for name in MAY_NAME_THE_FLAG})
