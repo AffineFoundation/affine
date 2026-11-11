@@ -625,6 +625,13 @@ class Controller:
             first = min(queued, key=lambda b: b.seq).batch_id if queued else None
             renting = sum(1 for b in state.active.values() if b.phase is C.Phase.RENTING)
             running = len(state.live_box_ids())
+            newest = state.base()
+            # Batches without a decision whose base is no longer the newest
+            # HEAD. Each can still be paid. None can be applied.
+            on_old_base = sum(
+                1 for b in state.active.values()
+                if b.decision is None and b.base_seq is not None and b.base_seq < newest[1]
+            )
             cost = self.timers.cost(now)
             cost['max_cost_usd'] = self.config.max_cost_usd
             cost['new_rentals_on_hold'] = self._hold()
@@ -647,6 +654,7 @@ class Controller:
                     'rejected': len(state.rejected),
                     'by_phase': dict(sorted(phases.items())),
                     'first_queued': first,
+                    'on_old_base': on_old_base,
                 },
                 'boxes': {
                     'max_boxes': self.config.core.max_boxes,

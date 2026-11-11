@@ -25,6 +25,13 @@ fakes do what the real parts can do on a bad day:
 ``Auditor`` checks the invariants against the fake world's ground truth,
 not against what the controller believes. Some checks run at the moment of
 an action (for example at each pointer move). The rest run at the end.
+
+The base rule is checked from three sides. What the controller sends: every
+box of a batch gets the base of the first box. What the journal says: a
+batch gets a new box only after its last box was lost before a decision, and
+it gets one decision. What is true in the fake world: the verdict and the
+payout are the ones against that first base, and no box is lost in a world
+that has no fault.
 """
 from __future__ import annotations
 
@@ -988,6 +995,8 @@ class Auditor:
         self.first: Optional[str] = None
         self.pointers: List[Tuple[str, bytes]] = []
         self.applied: List[str] = []
+        # batch id -> the base of the first job that was sent for the batch.
+        self.first_base: Dict[str, Tuple[str, int]] = {}
         self.foreign = False
         self.durable_floor = b''
         self.kinds: Dict[str, int] = {}
@@ -1117,10 +1126,18 @@ class Auditor:
 
     def controller_launch(self, box_id: str, spec: JobSpec) -> None:
         batch = self.durable()[0].leased(spec.fence)
+        base = (spec.base_state, spec.base_seq)
         self.need(
             batch is not None and batch.phase is C.Phase.RUNNING and batch.lease.box_id == box_id
-            and batch.base_state == spec.base_state and batch.batch_id == spec.batch_id,
+            and (batch.base_state, batch.base_seq) == base and batch.batch_id == spec.batch_id
+            and batch.attempts == spec.attempt,
             'launch without a durable binding of this box to this fence',
+        )
+        # The base rule, as the boxes see it: every box of a batch gets the
+        # base of its first box, also when the HEAD moved in the meantime.
+        self.need(
+            self.first_base.setdefault(spec.batch_id, base) == base,
+            'a fresh box was sent to another base than the first box of its batch',
         )
 
     # -- checks at the moment R2 changes ------------------------------------
@@ -1200,6 +1217,9 @@ class Auditor:
         bases: Dict[int, Tuple[str, int]] = {}
         observed: Set[int] = set()
         decided: Dict[int, Dict[str, Any]] = {}
+        decided_batches: Set[str] = set()
+        leases: Dict[str, int] = collections.Counter()
+        first_bound: Dict[str, Tuple[str, int]] = {}
         invalid: Set[int] = set()
         greens: Dict[int, List[Tuple[int, str]]] = collections.defaultdict(list)
         intents: Dict[int, str] = {}
@@ -1214,6 +1234,24 @@ class Auditor:
                 queued = [b for b in state.active.values() if b.phase is C.Phase.QUEUED]
                 first = min(queued, key=lambda b: b.seq)
                 self.need(first.batch_id == body['batch_id'], 'a lease went to a batch that is not first in the queue')
+                # A batch runs again for one reason only: its last box was
+                # lost before a decision. The count is made here, from the
+                # records, and not taken from the state.
+                leases[body['batch_id']] += 1
+                self.need(
+                    body['batch_id'] not in decided_batches
+                    and leases[body['batch_id']] == len(failures[body['batch_id']]) + 1 == body['attempt'],
+                    'a batch got a new box, but its last box was not lost before a decision',
+                )
+            elif kind == 'box_bound':
+                base = (body['base_state'], body['base_seq'])
+                if body['batch_id'] not in first_bound:
+                    self.need(base == state.base(), 'the first box of a batch did not get the HEAD of that moment')
+                    first_bound[body['batch_id']] = base
+                self.need(
+                    base == first_bound[body['batch_id']],
+                    'a fresh box got another base than the first box of its batch',
+                )
             elif kind == 'credited':
                 # A GREEN is paid without an apply for one of three reasons.
                 decision = state.active[body['batch_id']].decision
@@ -1275,18 +1313,30 @@ class Auditor:
             elif kind == 'attempt_failed':
                 failures[body['batch_id']].append(body['fence'])
                 self.need(body['fence'] in bound, 'an attempt without a box counted as an infra failure')
+                self.need(
+                    body['reason'] in ('box_gone', 'lease_expired') or body['reason'].startswith('invalid_upload:'),
+                    'an attempt ended for a reason that is not an infra loss: %s' % body['reason'],
+                )
                 if body['reason'].startswith('invalid_upload'):
                     invalid.add(body['fence'])
             elif kind == 'decided':
+                self.need(body['batch_id'] not in decided_batches, 'a batch was decided twice')
+                decided_batches.add(body['batch_id'])
                 decided[body['fence']] = body
                 if body['verdict'] == C.VERDICT_GREEN and body['state_id'] is not None:
                     greens[body['base_seq']].append((body['order'], body['batch_id']))
             elif kind == 'applied' and body['batch_id'] is not None:
+                self.need(
+                    first_bound[body['batch_id']][1] == body['seq'] - 1,
+                    'a batch was applied on a HEAD that is not its base',
+                )
                 winners[body['seq'] - 1] = body['batch_id']
                 journal_applied.append(body['batch_id'])
             for batch in list(state.active.values()) + list(state.done.values()):
                 self.need(batch.seq == seqs[batch.batch_id], 'a batch lost its queue position')
         self.need(state.key() == ctl.state.key(), 'the state in memory is not the journal')
+        for batch_id, base in self.first_base.items():
+            self.need(first_bound.get(batch_id) == base, 'a box was sent to a base that the journal does not name')
 
         # Ground truth of every decision.
         for fence, body in decided.items():
@@ -1299,6 +1349,11 @@ class Auditor:
             )
             self.need(package.result_ok, 'a decision was made from an invalid package')
             self.need(body['verdict'] == package.verdict, 'the verdict differs from the truth')
+            self.need(
+                bases[fence] == first_bound[body['batch_id']]
+                and body['verdict'] == w.truth.verdict(body['batch_id'], first_bound[body['batch_id']][0]),
+                'the verdict is not the verdict against the first base of the batch',
+            )
             self.need(body['result_sha'] == package.result_sha, 'the decision names another result')
             self.need(
                 raw.objs.get(lay.result(body['result_sha'])) is not None,
@@ -1352,6 +1407,20 @@ class Auditor:
                 self.need(green, 'credited without a GREEN verdict')
             if batch.phase is C.Phase.APPLIED:
                 self.need(batch_id in self.applied, 'journal says applied, R2 never moved')
+            if fields is not None:
+                base = first_bound.get(batch_id, (None, None))
+                self.need(
+                    (fields['base_state'], fields['base_seq']) == base,
+                    'the outcome names another base than the first box of the batch got',
+                )
+                # Paid: GREEN against its own base, or lost by the infra.
+                paid = batch.phase is C.Phase.LOST_INFRA or (
+                    batch.decision is not None and w.truth.verdict(batch_id, base[0]) == C.VERDICT_GREEN
+                )
+                self.need(
+                    fields['payout_list'] == paid and (batch.phase is C.Phase.APPLIED) == fields['applied'],
+                    'the payout does not follow the verdict against the base of the batch',
+                )
             if fields is not None and batch_id not in state.unpublished:
                 self.need(
                     raw.objs.get(lay.outcome(batch_id)) == outcome_body(fields),
@@ -1407,6 +1476,13 @@ class Auditor:
                 else:
                     self.need(box.alive, 'a box of someone else was destroyed')
         self.need(not raw.list(lay.staging_root), 'staging is not empty at the end')
+        if not harness.sc.chaos and not w.faults.used and not w.tampered:
+            # Every part of this world worked and got its turn. So no box was
+            # lost, whatever the HEAD did in the meantime.
+            self.need(
+                not kinds['attempt_failed'],
+                'an attempt ended without a decision in a world that had no fault',
+            )
         status = ctl.status()
         self.need(status['cost']['boxes_alive'] == 0 and status['boxes']['slots_in_use'] == 0, 'status counts boxes at the end')
         self.need(status['cost']['usd_spent_estimate'] >= 0, 'status has no cost')
