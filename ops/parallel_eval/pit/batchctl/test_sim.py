@@ -116,7 +116,8 @@ def test_all_greens_on_one_head_are_paid_and_one_is_applied(tmp_path):
 
 
 # ----------------------------------------------------------------------------
-# The base rule: one base per batch, and no way back after a decision
+# The base rule: one base per box (the newest HEAD when the box is bound),
+# and no way back after a decision
 # ----------------------------------------------------------------------------
 
 def box_of(harness: Harness, batch_id: str) -> S.SimBox:
@@ -144,20 +145,28 @@ def records_of(harness: Harness, batch_id: str):
     return [(rec['t'], rec['b']) for rec in records if rec['b'].get('batch_id') == batch_id]
 
 
-@pytest.mark.parametrize('green', [True, False], ids=['green-on-its-base', 'red-on-its-base'])
-@pytest.mark.parametrize('lost', [False, True], ids=['slow-box', 'lost-box'])
-def test_a_batch_on_an_old_head_is_paid_or_forgotten_and_never_trained_on_the_new_head(
-        tmp_path, monkeypatch, lost, green):
+def jobs_of(harness: Harness, batch_id: str):
+    """(attempt, base state, base seq) of every job that a box of the batch got."""
+    return sorted(
+        (box.job.spec.attempt, box.job.spec.base_state, box.job.spec.base_seq)
+        for provider in harness.world.providers.values() for box in provider.boxes.values()
+        if box.job is not None and box.job.spec.batch_id == batch_id
+    )
+
+
+def old_head_world(tmp_path, monkeypatch, green_on_genesis: bool):
+    """Two batches on HEAD 0. The box of b000 is slow, and b001 moves the HEAD.
+
+    b001 is GREEN. b000 has one verdict against the first HEAD and the
+    opposite verdict against every later HEAD.
+    """
     harness = Harness(tmp_path, 11, Scenario(batches=2, max_boxes=2, chaos=False))
     genesis = harness.config.genesis_state
-    world = harness.world
 
     def verdict(self, batch_id, base_state):
-        # b001 is GREEN. b000 has one verdict against the first HEAD and the
-        # opposite verdict against every later HEAD.
         if batch_id == 'b001':
             return C.VERDICT_GREEN
-        return C.VERDICT_GREEN if (base_state == genesis) == green else C.VERDICT_RED
+        return C.VERDICT_GREEN if (base_state == genesis) == green_on_genesis else C.VERDICT_RED
 
     monkeypatch.setattr(S.Truth, 'verdict', verdict)
     harness._boot()
@@ -166,7 +175,6 @@ def test_a_batch_on_an_old_head_is_paid_or_forgotten_and_never_trained_on_the_ne
     assert [state.batch(b).phase for b in ('b000', 'b001')] == [C.Phase.RUNNING] * 2
     assert harness.ctl.status()['batches']['on_old_base'] == 0
 
-    # The box of b000 is slow. In the meantime b001 is GREEN and moves the HEAD.
     slow = box_of(harness, 'b000')
     for _ in range(40):
         rounds(harness, 1, held=[slow])
@@ -174,39 +182,34 @@ def test_a_batch_on_an_old_head_is_paid_or_forgotten_and_never_trained_on_the_ne
             break
     batch = state.batch('b000')
     assert state.head.seq == 1 and state.batch('b001').phase is C.Phase.APPLIED
-    # The moving HEAD did not stop the box, and it did not change the base.
+    # The moving HEAD did not stop the box, and it did not change its base.
     assert batch.phase is C.Phase.RUNNING and slow.alive and box_of(harness, 'b000') is slow
-    assert (batch.base_state, batch.base_seq) == (genesis, 0)
+    assert (batch.lease.base_state, batch.lease.base_seq) == (genesis, 0)
     assert harness.ctl.status()['batches']['on_old_base'] == 1
+    return harness, slow
 
-    if lost:
-        # The box dies before a decision: an infra loss. (The auditor must
-        # know that the world had a fault.)
-        slow.alive = False
-        world.faults.used['test.kill_box'] += 1
+
+@pytest.mark.parametrize('green', [True, False], ids=['green-on-its-base', 'red-on-its-base'])
+def test_a_box_on_an_old_head_runs_to_its_end_and_its_batch_is_paid_or_forgotten(
+        tmp_path, monkeypatch, green):
+    harness, _slow = old_head_world(tmp_path, monkeypatch, green_on_genesis=green)
+    world, genesis = harness.world, harness.config.genesis_state
     report = harness.finish()
 
     mine = records_of(harness, 'b000')
     kinds = [kind for kind, _body in mine]
-    boxes = 2 if lost else 1
-    assert kinds.count('lease_issued') == kinds.count('box_bound') == boxes
-    assert kinds.count('attempt_failed') == boxes - 1 and kinds.count('decided') == 1
-    # Every box of the batch got the first HEAD, also the box that was rented
-    # after the HEAD moved.
-    assert {(b['base_state'], b['base_seq']) for kind, b in mine if kind == 'box_bound'} == {(genesis, 0)}
-    jobs = sorted(
-        (box.job.spec.attempt, box.job.spec.base_state, box.job.spec.base_seq)
-        for provider in world.providers.values() for box in provider.boxes.values()
-        if box.job is not None and box.job.spec.batch_id == 'b000'
-    )
-    assert jobs == [(attempt, genesis, 0) for attempt in range(1, boxes + 1)]
+    # One box and one decision. The batch is never trained on the new HEAD.
+    assert kinds.count('lease_issued') == kinds.count('box_bound') == kinds.count('decided') == 1
+    assert 'attempt_failed' not in kinds
+    assert [(b['base_state'], b['base_seq']) for kind, b in mine if kind == 'box_bound'] == [(genesis, 0)]
+    assert jobs_of(harness, 'b000') == [(1, genesis, 0)]
     # The decision is the last word: the settlement and the clean-up follow.
     assert set(kinds[kinds.index('decided') + 1:]) <= {'credited', 'staging_cleared', 'outcome_published'}
 
     # b000 never became HEAD: the chain is genesis and b001.
     assert report.head_seq == 1 and harness.ctl.state.batch('b000').head_seq is None
     out = json.loads(world.raw.objs[world.layout.outcome('b000')])
-    assert (out['base_state'], out['base_seq'], out['attempts'], out['infra_failures']) == (genesis, 0, boxes, boxes - 1)
+    assert (out['base_state'], out['base_seq'], out['attempts'], out['infra_failures']) == (genesis, 0, 1, 0)
     assert out['applied'] is False and out['head_seq'] is None
     if green:
         # GREEN against its own base: paid, not applied.
@@ -217,6 +220,67 @@ def test_a_batch_on_an_old_head_is_paid_or_forgotten_and_never_trained_on_the_ne
         # though it is GREEN against the new HEAD.
         assert (out['outcome'], out['credit'], out['payout_list']) == ('red', None, False)
     assert harness.ctl.status()['batches']['on_old_base'] == 0
+
+
+@pytest.mark.parametrize('green', [True, False], ids=['green-on-the-newest-head', 'red-on-the-newest-head'])
+def test_a_fresh_box_after_an_infra_loss_trains_on_the_newest_head(tmp_path, monkeypatch, green):
+    # The verdict against the first HEAD is the opposite one. No box ever
+    # reports it: the only box on that HEAD is lost before a decision.
+    harness, slow = old_head_world(tmp_path, monkeypatch, green_on_genesis=not green)
+    world, genesis = harness.world, harness.config.genesis_state
+    state = harness.ctl.state
+    newest = state.head.state_id
+    assert newest != genesis
+
+    # The box dies before a decision: an infra loss. (The auditor must know
+    # that the world had a fault.)
+    slow.alive = False
+    world.faults.used['test.kill_box'] += 1
+    for _ in range(40):
+        rounds(harness, 1)
+        lease = state.batch('b000').lease
+        if lease is not None and lease.fence != slow.job.spec.fence and lease.base_seq is not None:
+            break
+    # The fresh box is bound to the newest HEAD, not to the base of the lost
+    # box. No box is on an old base any more.
+    batch = state.batch('b000')
+    assert batch.phase is C.Phase.RUNNING and (batch.attempts, batch.infra_failures) == (2, 1)
+    assert (batch.lease.base_state, batch.lease.base_seq) == (newest, 1)
+    assert harness.ctl.status()['batches']['on_old_base'] == 0
+    report = harness.finish()
+
+    mine = records_of(harness, 'b000')
+    kinds = [kind for kind, _body in mine]
+    assert kinds.count('lease_issued') == kinds.count('box_bound') == 2
+    assert kinds.count('attempt_failed') == 1 and kinds.count('decided') == 1
+    # Each box got the newest HEAD of its own moment, and its job named it.
+    assert [(b['base_state'], b['base_seq']) for kind, b in mine if kind == 'box_bound'] == [(genesis, 0), (newest, 1)]
+    assert jobs_of(harness, 'b000') == [(1, genesis, 0), (2, newest, 1)]
+    decision = next(b for kind, b in mine if kind == 'decided')
+    assert (decision['base_state'], decision['base_seq']) == (newest, 1)
+    # The decision is the last word: no lease and no box after it.
+    assert set(kinds[kinds.index('decided') + 1:]) <= {
+        'apply_intent', 'applied', 'staging_cleared', 'outcome_published',
+    }
+
+    out = json.loads(world.raw.objs[world.layout.outcome('b000')])
+    assert (out['base_state'], out['base_seq'], out['attempts'], out['infra_failures']) == (newest, 1, 2, 1)
+    if green:
+        # GREEN against the newest HEAD, and the first GREEN on it: applied.
+        assert report.head_seq == 2 and harness.ctl.state.batch('b000').head_seq == 2
+        assert (out['outcome'], out['credit'], out['payout_list']) == ('applied', 'green', True)
+        assert out['applied'] is True and out['head_seq'] == 2
+        # The state in R2 was trained on the HEAD that it replaced.
+        pointer = parse_head(world.raw.objs[world.layout.head])
+        assert pointer.state_id == out['state_id']
+        assert world.truth.manifest_of(pointer.state_id).parent == newest
+    else:
+        # RED against the newest HEAD: forgotten. The GREEN that the lost box
+        # would have had against the first HEAD does not count: no box made
+        # that decision.
+        assert report.head_seq == 1 and harness.ctl.state.batch('b000').head_seq is None
+        assert (out['outcome'], out['credit'], out['payout_list']) == ('red', None, False)
+        assert out['applied'] is False and out['head_seq'] is None
 
 
 def test_no_box_is_lost_and_no_batch_runs_twice_when_the_head_moves(tmp_path):
@@ -849,21 +913,83 @@ def test_harness_finds_a_lease_out_of_queue_order(tmp_path, monkeypatch):
     expect_audit_failure(tmp_path, Scenario(batches=6, max_boxes=1), ['not first in the queue'])
 
 
-@pytest.mark.parametrize('watch_launch', [True, False], ids=['seen-at-the-launch', 'seen-in-the-journal'])
-def test_harness_finds_a_fresh_box_that_trains_on_the_new_head(tmp_path, monkeypatch, watch_launch):
-    # The rule before the base rule: after an infra loss, the fresh box takes
-    # the HEAD of its own moment.
-    monkeypatch.setattr(C, '_base_of', lambda state, batch: state.base())
-    if watch_launch:
-        needles = ['a fresh box was sent to another base than the first box of its batch']
+def _one_base_per_batch(monkeypatch) -> None:
+    """Seed the rule that the newest-HEAD rule replaced: after an infra loss
+    the fresh box takes the base of the lost box.
+
+    The seeded rule is a pure function of the journal state, as the real one
+    is: the base of the lost box is kept in the note of its batch.
+    """
+    real = C._EVOLVE['attempt_failed']
+
+    def keep_base(state, b):
+        batch = state.active[b['batch_id']]
+        base = (batch.lease.base_state, batch.lease.base_seq)
+        real(state, b)
+        if not b['terminal']:
+            batch.note = 'base %s %d' % base
+
+    def old_rule(state, batch):
+        if batch.note and batch.note.startswith('base '):
+            _tag, state_id, seq = batch.note.split(' ')
+            return state_id, int(seq)
+        return state.base()
+
+    monkeypatch.setitem(C._EVOLVE, 'attempt_failed', keep_base)
+    monkeypatch.setattr(C, '_base_of', old_rule)
+
+
+@pytest.mark.parametrize('watch_r2', [True, False], ids=['seen-against-r2', 'seen-in-the-journal'])
+def test_harness_finds_a_fresh_box_that_trains_on_the_base_of_the_lost_box(tmp_path, monkeypatch, watch_r2):
+    _one_base_per_batch(monkeypatch)
+    if watch_r2:
+        # At the moment that the binding is durable, R2 holds a newer HEAD.
+        needles = ['a box was bound to a base that is not the newest HEAD']
     else:
-        monkeypatch.setattr(S.Auditor, 'controller_launch', lambda self, box_id, spec: None)
-        needles = ['a fresh box got another base than the first box of its batch']
+        monkeypatch.setattr(S.Auditor, '_bound', lambda self, body: self.bound_seen.add(body['fence']))
+        needles = ['a box did not get the newest HEAD of the moment it was bound']
     expect_audit_failure(tmp_path, FAULTY, needles)
 
 
-@pytest.mark.parametrize('keep_base', [False, True], ids=['on-the-new-head', 'on-its-base'])
-def test_harness_finds_a_red_on_an_old_head_that_is_trained_again(tmp_path, monkeypatch, keep_base):
+def test_harness_finds_a_box_that_ignores_the_apply_in_progress(tmp_path, monkeypatch):
+    # A box is bound to the HEAD of the journal while a newer HEAD is pending.
+    monkeypatch.setattr(C, '_base_of', lambda state, batch: (state.head.state_id, state.head.seq))
+    expect_audit_failure(tmp_path, CLEAN, [
+        'a box was bound to a base that is not the newest HEAD',
+        'a box did not get the newest HEAD of the moment it was bound',
+    ])
+
+
+@pytest.mark.parametrize('watch_launch', [True, False], ids=['seen-at-the-launch', 'seen-after-the-launch'])
+def test_harness_finds_a_job_that_follows_the_head_after_its_box_was_bound(tmp_path, monkeypatch, watch_launch):
+    # The job is sent to the newest HEAD of the moment it is sent, not to the
+    # base that the journal bound the box to.
+    real = C.plan
+
+    def plan(cfg, state):
+        ops = []
+        for op in real(cfg, state):
+            if type(op) is C.LaunchOp:
+                base_state, base_seq = state.base()
+                op = dataclasses.replace(op, base_state=base_state, base_seq=base_seq)
+            ops.append(op)
+        return ops
+
+    monkeypatch.setattr(K.C, 'plan', plan)
+    if watch_launch:
+        needles = ['a box was sent to another base than the base it was bound to']
+    else:
+        # The box trains on a base that the journal does not name for it.
+        # Its package is valid, but the controller cannot accept it.
+        monkeypatch.setattr(S.Auditor, 'controller_launch', lambda self, box_id, spec: None)
+        needles = [
+            'one box got two different jobs', 'a valid upload was called invalid',
+            'a package with a valid result was rejected',
+        ]
+    expect_audit_failure(tmp_path, FAULTY, needles)
+
+
+def test_harness_finds_a_red_on_an_old_head_that_is_trained_again(tmp_path, monkeypatch):
     # The batch is not forgotten: it goes back to the queue, one time.
     def change(real, cfg, state, ev):
         rec = real(cfg, state, ev)
@@ -876,19 +1002,17 @@ def test_harness_finds_a_red_on_an_old_head_that_is_trained_again(tmp_path, monk
 
     def requeue(state, b):
         # The seeded rule covers its tracks: every guard of the core passes.
+        # The base ends with the lease, so the next box gets the newest HEAD.
         batch = state.active[b['batch_id']]
         batch.phase = C.Phase.QUEUED
         batch.note = 'again'
         batch.attempts = batch.infra_failures
-        if not keep_base:
-            batch.base_state = batch.base_seq = None
         C._end_lease(state, batch)
 
     _patch_decide(monkeypatch, change)
     monkeypatch.setitem(C._EVOLVE, 'requeued', requeue)
     expect_audit_failure(tmp_path, CLEAN, [
-        'a batch got a new box, but its last box was not lost before a decision' if keep_base
-        else 'a fresh box was sent to another base than the first box of its batch',
+        'a batch got a new box, but its last box was not lost before a decision',
     ])
 
 
@@ -902,7 +1026,7 @@ def test_harness_finds_a_box_that_is_stopped_when_the_head_moves(tmp_path, monke
         if type(ev) is C.Tick:
             for fence in sorted(state.by_fence):
                 batch = state.leased(fence)
-                if batch.phase is C.Phase.RUNNING and batch.base_seq < state.base()[1]:
+                if batch.phase is C.Phase.RUNNING and batch.lease.base_seq < state.base()[1]:
                     return C._fail(cfg, batch, reason)
         return real(cfg, state, ev)
 

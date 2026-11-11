@@ -5,6 +5,7 @@ The quick configurations run in every test run. The deep ones need
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 
@@ -186,17 +187,107 @@ def test_checker_catches_a_second_apply_on_the_same_head(monkeypatch):
     )
 
 
-# The base rule. The first three tests seed the rules that the base rule
-# replaced; the last two break the payout of an outcome.
+# The base rule. The first tests seed the rules that the base rule replaced
+# or forbids; the last ones break the payout or the base of an outcome.
 
-def test_checker_catches_a_retry_that_trains_on_the_new_head(monkeypatch):
-    # After an infra loss the fresh box takes the HEAD of its own moment.
-    monkeypatch.setattr(C, '_base_of', lambda state, batch: state.base())
+def test_checker_catches_a_fresh_box_that_trains_on_the_base_of_the_lost_box(monkeypatch):
+    # The rule that the newest-HEAD rule replaced: one base per batch. After
+    # an infra loss the fresh box takes the base of the lost box. The seeded
+    # rule is a pure function of the journal state, as the real one is: the
+    # base of the lost box is kept in the note of its batch.
+    real = C._EVOLVE['attempt_failed']
+
+    def keep_base(state, b):
+        batch = state.active[b['batch_id']]
+        base = (batch.lease.base_state, batch.lease.base_seq)
+        real(state, b)
+        if not b['terminal']:
+            batch.note = 'base %s %d' % base
+
+    def old_rule(state, batch):
+        if batch.note and batch.note.startswith('base '):
+            _tag, state_id, seq = batch.note.split(' ')
+            return state_id, int(seq)
+        return state.base()
+
+    monkeypatch.setitem(C._EVOLVE, 'attempt_failed', keep_base)
+    monkeypatch.setattr(C, '_base_of', old_rule)
     report = _expect_violation(
-        dict(batches=2, max_boxes=2, faults=1, coarse=True), 'a later box of a batch got another base',
+        dict(batches=2, max_boxes=2, faults=1, coarse=True),
+        'a box did not get the newest HEAD of the moment it was bound',
     )
-    assert any(label.startswith('box-dies') or 'expir' in label for label in report.trace)
-    assert 'apply-cas' in report.trace
+    # The counterexample needs both: a box that was lost, and a HEAD that
+    # moved (or is about to move) before the fresh box was bound.
+    assert any(
+        label.startswith(('box-dies', 'box-corrupt')) or 'expir' in label for label in report.trace
+    )
+    assert report.trace.count('rent-ok') >= 3 and 'settle' in report.trace
+
+
+def test_checker_catches_a_box_that_ignores_the_apply_in_progress(monkeypatch):
+    # A box is bound to the HEAD of the journal while a newer HEAD is pending.
+    monkeypatch.setattr(C, '_base_of', lambda state, batch: (state.head.state_id, state.head.seq))
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'a box did not get the newest HEAD of the moment it was bound',
+    )
+
+
+def test_checker_catches_a_job_that_follows_the_head_after_its_box_was_bound(monkeypatch):
+    # The job is sent to the newest HEAD of the moment it is sent, not to the
+    # base that the box was bound to.
+    real = C.plan
+
+    def bad(cfg, state):
+        ops = []
+        for op in real(cfg, state):
+            if type(op) is C.LaunchOp:
+                base_state, base_seq = state.base()
+                op = dataclasses.replace(op, base_state=base_state, base_seq=base_seq)
+            ops.append(op)
+        return ops
+
+    monkeypatch.setattr(C, 'plan', bad)
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'the plan sends a box to a base that is not the base it was bound to',
+    )
+
+
+def test_checker_catches_a_decision_against_another_base_than_the_base_of_its_box(monkeypatch):
+    # The verdict is recorded against the newest HEAD of the moment of the
+    # decision. A state that was trained on an old HEAD can then be applied
+    # on top of the new one.
+    real_decide = C.decide
+    real_decided = C._EVOLVE['decided']
+
+    def bad(cfg, state, ev):
+        rec = real_decide(cfg, state, ev)
+        if rec is not None and rec[0] == 'decided':
+            base_state, base_seq = state.base()
+            return rec[0], dict(rec[1], base_state=base_state, base_seq=base_seq)
+        return rec
+
+    def loose(state, b):
+        # The seeded rule covers its tracks: the core's own guard passes.
+        lease = state.leased(b['fence']).lease
+        lease.base_state, lease.base_seq = b['base_state'], b['base_seq']
+        real_decided(state, b)
+
+    monkeypatch.setattr(C, 'decide', bad)
+    monkeypatch.setitem(C._EVOLVE, 'decided', loose)
+    # Two checks see it. Which one is first depends on the verdict: the
+    # outcome of a RED is written in the same step as its decision.
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'a decision was made against a base that is not the base of its box',
+        'pays or names the wrong thing',
+    )
+    # Without RED packages the decision check alone must see it.
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True, red=False),
+        'a decision was made against a base that is not the base of its box',
+    )
 
 
 def test_checker_catches_a_stale_red_that_goes_back_to_the_queue(monkeypatch):
@@ -217,7 +308,6 @@ def test_checker_catches_a_stale_red_that_goes_back_to_the_queue(monkeypatch):
         batch = state.active[b['batch_id']]
         batch.phase = C.Phase.QUEUED
         batch.attempts = batch.infra_failures
-        batch.base_state = batch.base_seq = None
         C._end_lease(state, batch)
 
     monkeypatch.setattr(C, 'decide', bad)
@@ -236,7 +326,7 @@ def test_checker_catches_a_box_that_is_stopped_when_the_head_moves(monkeypatch):
         if type(ev) is C.Tick:
             for fence in sorted(state.by_fence):
                 batch = state.leased(fence)
-                if batch.phase is C.Phase.RUNNING and batch.base_seq < state.base()[1]:
+                if batch.phase is C.Phase.RUNNING and batch.lease.base_seq < state.base()[1]:
                     return C._fail(cfg, batch, 'stale_base')
         return real(cfg, state, ev)
 
@@ -252,7 +342,6 @@ def _requeue_green(state, b):
     batch.phase = C.Phase.QUEUED
     batch.decision = None
     batch.attempts = batch.infra_failures
-    batch.base_state = batch.base_seq = None
 
 
 def test_checker_catches_a_stale_green_that_trains_again(monkeypatch):
@@ -344,6 +433,24 @@ def test_checker_catches_an_outcome_that_names_the_new_head_as_base(monkeypatch)
 
     monkeypatch.setattr(C, 'outcome_fields', bad)
     _expect_violation(dict(batches=2, max_boxes=2, faults=0, coarse=True), 'pays or names the wrong thing')
+
+
+def test_checker_catches_an_outcome_that_names_a_base_no_box_decided_on(monkeypatch):
+    # Each box of a batch that ends as lost_infra had its own base. None of
+    # them made a decision, so the outcome must not name one.
+    real = C.outcome_fields
+
+    def bad(batch):
+        fields = real(batch)
+        if batch.phase is C.Phase.LOST_INFRA:
+            fields['base_seq'], fields['base_state'] = 0, M.GENESIS_STATE
+        return fields
+
+    monkeypatch.setattr(C, 'outcome_fields', bad)
+    _expect_violation(
+        dict(batches=1, max_boxes=1, faults=2, coarse=True),
+        'the outcome of lost_infra pays or names the wrong thing',
+    )
 
 
 def test_checker_catches_wrong_queue_order(monkeypatch):

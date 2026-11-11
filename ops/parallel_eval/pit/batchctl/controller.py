@@ -626,11 +626,12 @@ class Controller:
             renting = sum(1 for b in state.active.values() if b.phase is C.Phase.RENTING)
             running = len(state.live_box_ids())
             newest = state.base()
-            # Batches without a decision whose base is no longer the newest
-            # HEAD. Each can still be paid. None can be applied.
+            # Boxes that still run on a base that is no longer the newest
+            # HEAD. Each batch can still be paid. None can be applied.
             on_old_base = sum(
                 1 for b in state.active.values()
-                if b.decision is None and b.base_seq is not None and b.base_seq < newest[1]
+                if b.lease is not None and b.lease.base_seq is not None
+                and b.lease.base_seq < newest[1]
             )
             cost = self.timers.cost(now)
             cost['max_cost_usd'] = self.config.max_cost_usd

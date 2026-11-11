@@ -349,9 +349,9 @@ class Effects:
         if status == RETRY:
             return []
         if status != OK:
-            # The base was the HEAD (or the pending HEAD) when the first box
-            # of this batch was bound. Its manifest was verified then, and no
-            # state is ever changed or deleted, so this must never happen.
+            # The base was the HEAD (or the pending HEAD) when this box was
+            # bound. Its manifest was verified before that, and no state is
+            # ever changed or deleted, so this must never happen.
             return [C.Fault('base_manifest_%s' % manifest)]
         spec = JobSpec(
             run_id=self.cfg.run_id,

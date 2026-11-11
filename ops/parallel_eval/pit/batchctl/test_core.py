@@ -122,7 +122,7 @@ def test_running_attempt_is_not_cancelled_when_head_moves():
     sim.green(f1)
     sim.applied()
     batch = sim.s.batch('b0')
-    assert batch.phase is C.Phase.RUNNING and batch.lease.fence == f0 and batch.base_seq == 0
+    assert batch.phase is C.Phase.RUNNING and batch.lease.fence == f0 and batch.lease.base_seq == 0
     assert batch.infra_failures == 0
 
 
@@ -135,20 +135,38 @@ def move_head(sim, batch_id='b1'):
     assert sim.s.head.seq == before + 1
 
 
-def test_the_first_box_sets_the_base_and_no_event_before_it_does():
+def bases_of(sim, batch_id):
+    """The base of every box of the batch, in the order of the journal."""
+    return [
+        (b['base_state'], b['base_seq']) for kind, b in sim.log
+        if kind == 'box_bound' and b['batch_id'] == batch_id
+    ]
+
+
+def test_a_box_gets_its_base_when_it_is_bound_and_not_before():
     sim = Sim(batches=1)
     batch = sim.s.batch('b0')
-    assert batch.base_seq is None and batch.base_state is None
     fence = sim.ev(C.Tick())[0][1]['fence']
     sim.ev(C.RentFailed(fence, 0, 'unavailable'))
     # A lease and a rent try are not a start: no box, no base.
-    assert batch.base_seq is None
+    assert batch.lease.base_seq is None and batch.lease.base_state is None
     rec = sim.ev(C.RentOk(fence, 1, 'box', 'p'))[0]
     assert rec[0] == 'box_bound' and (rec[1]['base_state'], rec[1]['base_seq']) == ('S0', 0)
-    assert (batch.base_state, batch.base_seq) == ('S0', 0)
+    assert (batch.lease.base_state, batch.lease.base_seq) == ('S0', 0)
 
 
-def test_retry_after_an_infra_loss_trains_on_the_same_base_when_head_moved():
+def test_the_base_is_the_head_when_the_box_is_bound_not_when_the_lease_was_issued():
+    sim = Sim(batches=2)
+    # b0 waits for a box. In the meantime b1 moves the HEAD.
+    waiting = sim.ev(C.Tick())[0][1]['fence']
+    sim.start()
+    move_head(sim)
+    head = sim.s.head
+    rec = sim.ev(C.RentOk(waiting, 0, 'late-box', 'p'))[0]
+    assert rec[0] == 'box_bound' and (rec[1]['base_state'], rec[1]['base_seq']) == (head.state_id, 1)
+
+
+def test_retry_after_an_infra_loss_trains_on_the_newest_head():
     sim = Sim(batches=2, cfg=C.CoreConfig(2, 3, LADDER))
     f0 = sim.start()
     sim.start()
@@ -156,41 +174,87 @@ def test_retry_after_an_infra_loss_trains_on_the_same_base_when_head_moved():
     assert sim.kinds(C.Polled(f0, gone=True)) == ['attempt_failed']
     move_head(sim)
     batch = sim.s.batch('b0')
-    assert batch.phase is C.Phase.QUEUED and (batch.base_state, batch.base_seq) == ('S0', 0)
-    # The fresh box gets the base of the first box, not the new HEAD.
+    head = sim.s.head
+    # The base ended with the lost box. The batch waits without one.
+    assert batch.phase is C.Phase.QUEUED and batch.lease is None and head.seq == 1
+    # The fresh box gets the newest HEAD, not the base of the lost box.
     recs = sim.ev(C.Tick())
     fence = recs[0][1]['fence']
     assert recs[0][0] == 'lease_issued' and recs[0][1]['attempt'] == 2 and fence != f0
     bound = sim.ev(C.RentOk(fence, 0, 'fresh-box', 'p'))[0]
-    assert bound[0] == 'box_bound' and (bound[1]['base_state'], bound[1]['base_seq']) == ('S0', 0)
+    assert bound[0] == 'box_bound'
+    assert (bound[1]['base_state'], bound[1]['base_seq']) == (head.state_id, 1)
     launch = [o for o in C.plan(sim.cfg, sim.s) if isinstance(o, C.LaunchOp)][0]
-    assert (launch.base_state, launch.base_seq, launch.attempt) == ('S0', 0, 2)
+    assert (launch.base_state, launch.base_seq, launch.attempt) == (head.state_id, 1, 2)
     sim.ev(C.Launched(fence))
-    # GREEN against its own base: paid, and not applied on the HEAD that moved.
-    assert sim.green(fence) == ['decided', 'credited']
-    assert batch.phase is C.Phase.CREDITED and batch.note == 'stale_base'
-    assert sim.s.head.seq == 1 and sim.s.pending is None
+    sim.ev(C.Polled(fence, complete=True))
+    assert [o for o in C.plan(sim.cfg, sim.s) if isinstance(o, C.SettleOp)] == [
+        C.SettleOp(fence, 'b0', head.state_id),
+    ]
+    # GREEN against the newest HEAD, and the first one on it: applied.
+    assert sim.green(fence) == ['decided', 'apply_intent']
+    assert sim.applied() == ['applied']
+    assert batch.phase is C.Phase.APPLIED and sim.s.head.seq == 2
     out = C.outcome_fields(batch)
-    assert out['payout_list'] and not out['applied'] and out['base_seq'] == 0 and out['attempts'] == 2
+    assert out['payout_list'] and out['applied'] and out['head_seq'] == 2
+    assert (out['base_state'], out['base_seq']) == (head.state_id, 1)
+    assert (out['attempts'], out['infra_failures']) == (2, 1)
+    assert bases_of(sim, 'b0') == [('S0', 0), (head.state_id, 1)]
 
 
-def test_retry_keeps_the_base_through_every_infra_loss():
-    sim = Sim(batches=2, cfg=C.CoreConfig(2, 3, LADDER))
+def test_red_after_an_infra_loss_is_red_against_the_newest_head_and_is_forgotten():
+    sim = Sim(batches=3, cfg=C.CoreConfig(2, 3, LADDER))
     f0 = sim.start()
     sim.start()
-    sim.ev(C.Polled(f0, gone=True))
+    sim.ev(C.Polled(f0, expired=True))
     move_head(sim)
-    for _ in range(2):
-        fence = sim.start()
-        assert (sim.s.batch('b0').base_state, sim.s.batch('b0').base_seq) == ('S0', 0)
-        sim.ev(C.Polled(fence, expired=True))
+    head = sim.s.head
+    fence = sim.start()
+    assert sim.red(fence) == ['decided']
+    batch = sim.s.batch('b0')
+    assert batch.phase is C.Phase.RED and 'b0' in sim.s.done
+    out = C.outcome_fields(batch)
+    assert out['outcome'] == 'red' and out['credit'] is None and not out['payout_list']
+    assert (out['base_state'], out['base_seq'], out['attempts']) == (head.state_id, 1, 2)
+    # Forgotten: the next lease goes to b2, and b0 never gets a box again.
+    assert [b['batch_id'] for kind, b in sim.ev(C.Tick()) if kind == 'lease_issued'] == ['b2']
+    assert sim.kinds(C.Tick()) == []
+
+
+def test_each_fresh_box_takes_the_newest_head_of_its_own_moment():
+    sim = Sim(batches=3, cfg=C.CoreConfig(2, 3, LADDER))
+    states = ['S0']
+    fence = sim.start()
+    sim.start()
+    sim.ev(C.Polled(fence, gone=True))
+    move_head(sim, 'b1')
+    states.append(sim.s.head.state_id)
+    # b0 is first in the queue again. Its second box is bound on HEAD 1.
+    fence = sim.start()
+    sim.start()
+    sim.ev(C.Polled(fence, expired=True))
+    move_head(sim, 'b2')
+    states.append(sim.s.head.state_id)
+    fence = sim.start()
+    sim.ev(C.Polled(fence, complete=True))
+    sim.ev(C.SettleInvalid(fence, 'object_mismatch'))
     batch = sim.s.batch('b0')
     assert batch.phase is C.Phase.LOST_INFRA and batch.infra_failures == 3
+    assert bases_of(sim, 'b0') == [(states[0], 0), (states[1], 1), (states[2], 2)]
     out = C.outcome_fields(batch)
-    # The miner is credited, and the outcome names the HEAD the batch started from.
-    assert out['credit'] == 'lost_infra' and out['payout_list'] and out['base_seq'] == 0
-    bases = {(b['base_state'], b['base_seq']) for kind, b in sim.log if kind == 'box_bound' and b['batch_id'] == 'b0'}
-    assert bases == {('S0', 0)}
+    # The miner is credited. No box decided the batch, so the outcome names
+    # no base.
+    assert out['credit'] == 'lost_infra' and out['payout_list']
+    assert out['base_seq'] is None and out['base_state'] is None and out['attempts'] == 3
+
+
+def test_retry_without_a_head_move_gets_the_same_head_again():
+    sim = Sim(batches=1, cfg=C.CoreConfig(1, 3, LADDER))
+    fence = sim.start()
+    sim.ev(C.Polled(fence, gone=True))
+    fence = sim.start()
+    assert bases_of(sim, 'b0') == [('S0', 0), ('S0', 0)]
+    assert sim.green(fence) == ['decided', 'apply_intent']
 
 
 def test_red_on_a_stale_head_is_forgotten():
@@ -240,7 +304,7 @@ def test_a_decided_batch_never_returns_to_the_queue(verdict):
             C.evolve(sim.s.clone(), kind, body)
 
 
-def test_evolve_refuses_a_box_on_a_second_base():
+def test_evolve_refuses_a_fresh_box_on_the_base_of_the_lost_box():
     sim = Sim(batches=2, cfg=C.CoreConfig(2, 3, LADDER))
     f0 = sim.start()
     sim.start()
@@ -252,9 +316,30 @@ def test_evolve_refuses_a_box_on_a_second_base():
         'tier': '', 'price': 0.0, 'name': '',
     }
     head = sim.s.head
+    # The journal cannot bind the fresh box to the HEAD that the lost box had.
     with pytest.raises(C.CoreError):
-        C.evolve(sim.s.clone(), 'box_bound', dict(body, base_state=head.state_id, base_seq=head.seq))
-    C.evolve(sim.s.clone(), 'box_bound', dict(body, base_state='S0', base_seq=0))
+        C.evolve(sim.s.clone(), 'box_bound', dict(body, base_state='S0', base_seq=0))
+    C.evolve(sim.s.clone(), 'box_bound', dict(body, base_state=head.state_id, base_seq=head.seq))
+
+
+def test_evolve_refuses_a_decision_against_another_base_than_the_base_of_its_box():
+    sim = Sim(batches=2, cfg=C.CoreConfig(2, 3, LADDER))
+    f0 = sim.start()
+    sim.start()
+    sim.ev(C.Polled(f0, gone=True))
+    move_head(sim)
+    head = sim.s.head
+    fence = sim.start()
+    sim.ev(C.Polled(fence, complete=True))
+    body = {
+        'batch_id': 'b0', 'fence': fence, 'verdict': 'red', 'state_id': None, 'result_sha': 'r',
+        'order': None, 'evidence': [],
+    }
+    # The fresh box trained on the newest HEAD. A verdict against the base
+    # of the lost box is not its verdict.
+    with pytest.raises(C.CoreError):
+        C.evolve(sim.s.clone(), 'decided', dict(body, base_state='S0', base_seq=0))
+    C.evolve(sim.s.clone(), 'decided', dict(body, base_state=head.state_id, base_seq=head.seq))
 
 
 def test_evolve_refuses_a_first_box_on_a_base_that_is_not_the_head():
@@ -288,7 +373,7 @@ def test_new_attempt_binds_the_pending_head_and_waits_for_it():
     assert sim.s.pending is not None
     f1 = sim.start()
     batch = sim.s.batch('b1')
-    assert batch.base_seq == 1 and batch.base_state == sim.s.pending.state_id
+    assert batch.lease.base_seq == 1 and batch.lease.base_state == sim.s.pending.state_id
     # GREEN on the pending HEAD waits; it is not credited and not applied yet.
     assert sim.green(f1) == ['decided']
     assert sim.phase('b1') is C.Phase.GREEN
@@ -299,6 +384,24 @@ def test_new_attempt_binds_the_pending_head_and_waits_for_it():
     assert sim.phase('b1') is C.Phase.APPLYING and sim.phase('b2') is C.Phase.CREDITED
     assert sim.applied() == ['applied']
     assert sim.s.head.seq == 2 and sim.s.head.state_id == 'S%d' % f1
+
+
+def test_fresh_box_after_an_infra_loss_binds_the_pending_head():
+    sim = Sim(batches=2, cfg=C.CoreConfig(2, 3, LADDER))
+    f0, f1 = sim.start(), sim.start()
+    sim.ev(C.Polled(f0, gone=True))
+    # b1 is GREEN. Its apply is in progress: the pointer has not moved yet.
+    assert sim.green(f1) == ['decided', 'apply_intent']
+    pending = sim.s.pending
+    assert sim.s.head.seq == 0 and pending.seq == 1
+    fence = sim.start()
+    lease = sim.s.batch('b0').lease
+    assert (lease.base_state, lease.base_seq) == (pending.state_id, 1)
+    # GREEN on the pending HEAD waits for that apply, and then it is applied.
+    assert sim.green(fence) == ['decided']
+    assert sim.applied() == ['applied', 'apply_intent']
+    assert sim.applied() == ['applied']
+    assert sim.phase('b0') is C.Phase.APPLIED and sim.s.head.seq == 2
 
 
 def test_red_is_final_and_unpaid():
@@ -327,7 +430,7 @@ def test_failed_attempt_keeps_queue_position_and_goes_first():
     assert sim.kinds(C.Polled(f0, gone=True)) == ['attempt_failed']
     batch = sim.s.batch('b0')
     assert batch.phase is C.Phase.QUEUED and batch.seq == 0 and batch.infra_failures == 1
-    assert (batch.base_state, batch.base_seq) == ('S0', 0)
+    assert batch.lease is None
     recs = sim.ev(C.Tick())
     assert recs[0][1]['batch_id'] == 'b0' and recs[0][1]['fence'] == f0 + 1 and recs[0][1]['attempt'] == 2
 
@@ -610,17 +713,30 @@ def test_random_events_never_break_the_core_and_replay_is_exact(seed):
             if batch.decision is not None:
                 assert batch.decision.verdict == C.VERDICT_GREEN
         for batch in list(s.active.values()) + list(s.done.values()):
-            # One base for life, and a new box only after an infra loss.
-            if batch.base_seq is not None:
-                base = (batch.base_state, batch.base_seq)
-                assert bases.setdefault(batch.batch_id, base) == base
-            else:
-                assert batch.batch_id not in bases
+            # One base for the life of a box, and a new box only after an
+            # infra loss.
+            lease = batch.lease
+            if lease is not None:
+                has_box = batch.phase in (C.Phase.RUNNING, C.Phase.SETTLING)
+                assert (lease.base_seq is not None) == has_box
+                if has_box:
+                    base = (lease.base_state, lease.base_seq)
+                    assert bases.setdefault(lease.fence, base) == base
+            if batch.decision is not None:
+                decision = batch.decision
+                assert bases[decision.fence] == (decision.base_state, decision.base_seq)
             waits = batch.phase is C.Phase.QUEUED or batch.phase is C.Phase.LOST_INFRA
             assert batch.attempts == batch.infra_failures + (0 if waits else 1)
+    # Every box got the newest HEAD of the moment it was bound, and every
+    # decision names the base of its own box.
+    newest = None
     for kind, body in sim.log:
-        if kind in ('box_bound', 'decided'):
-            assert (body['base_state'], body['base_seq']) == bases[body['batch_id']]
+        if kind == 'apply_intent':
+            newest = (body['state_id'], body['seq'])
+        elif kind == 'box_bound':
+            assert (body['base_state'], body['base_seq']) == newest == bases[body['fence']]
+        elif kind == 'decided':
+            assert (body['base_state'], body['base_seq']) == bases[body['fence']]
     assert sim.replayed().key() == sim.s.key()
     for cut in range(0, len(sim.log), 7):
         partial = C.State()

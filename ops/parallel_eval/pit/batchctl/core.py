@@ -29,10 +29,12 @@ Batch state machine
 
 The base rule
 -------------
-A batch has one base: the HEAD (or the pending HEAD) at the moment that its
-first box was bound. The base never changes.
+A box has one base: the newest HEAD at the moment that the box is bound to
+its batch (the pending HEAD if an apply is in progress, else the HEAD). The
+base of a box never changes. The base of a batch is the base of the box
+that decides it.
 
-* A box runs its batch to the end against that base. A HEAD that moves in the
+* A box runs its batch to the end against its base. A HEAD that moves in the
   meantime stops no box.
 * A decision is final. A decided batch never runs again, on any HEAD. No path
   leads from a decision back to the queue.
@@ -42,9 +44,9 @@ first box was bound. The base never changes.
 * RED against its base: the batch is forgotten. It is final, it is not paid,
   and it never runs again.
 * An infra loss is not a decision: the box was lost before one. The batch
-  waits for a fresh box, keeps its place in the queue, and trains on the same
-  base again, also when the HEAD moved in the meantime. After N such losses
-  it is credited as ``lost_infra``.
+  waits for a fresh box and keeps its place in the queue. The fresh box takes
+  the newest HEAD of its own moment, not the base of the lost box. After N
+  such losses the batch is credited as ``lost_infra``.
 
 HEAD epoch state machine
 ------------------------
@@ -175,9 +177,17 @@ class Decision(NamedTuple):
 
 
 class Lease:
-    """One attempt of one batch. ``fence`` is unique for the life of the run."""
+    """One attempt of one batch. ``fence`` is unique for the life of the run.
 
-    __slots__ = ('fence', 'try_no', 'rung', 'box_id', 'provider', 'launched')
+    ``base_state`` and ``base_seq`` name the state that the box of this lease
+    trains on. They are set once, when the box is bound. The base lives on
+    the lease and not on the batch, so it ends with its box: a fresh box
+    after an infra loss cannot take it over.
+    """
+
+    __slots__ = (
+        'fence', 'try_no', 'rung', 'box_id', 'provider', 'launched', 'base_state', 'base_seq',
+    )
 
     def __init__(self, fence: int, try_no: int = 0, rung: int = 0):
         self.fence = fence
@@ -186,22 +196,29 @@ class Lease:
         self.box_id: Optional[str] = None
         self.provider: Optional[str] = None
         self.launched = False
+        self.base_state: Optional[str] = None
+        self.base_seq: Optional[int] = None
 
     def copy(self) -> 'Lease':
         other = Lease(self.fence, self.try_no, self.rung)
         other.box_id = self.box_id
         other.provider = self.provider
         other.launched = self.launched
+        other.base_state = self.base_state
+        other.base_seq = self.base_seq
         return other
 
     def key(self) -> Tuple:
-        return (self.fence, self.try_no, self.rung, self.box_id, self.provider, self.launched)
+        return (
+            self.fence, self.try_no, self.rung, self.box_id, self.provider, self.launched,
+            self.base_state, self.base_seq,
+        )
 
 
 class Batch:
     __slots__ = (
         'batch_id', 'seq', 'miner', 'ref', 'phase', 'infra_failures', 'attempts',
-        'lease', 'decision', 'note', 'head_seq', 'base_state', 'base_seq',
+        'lease', 'decision', 'note', 'head_seq',
     )
 
     def __init__(self, batch_id: str, seq: int, miner: str, ref: str):
@@ -216,10 +233,6 @@ class Batch:
         self.decision: Optional[Decision] = None
         self.note: Optional[str] = None
         self.head_seq: Optional[int] = None
-        # The one base of this batch. The first box sets it. It lives on the
-        # batch and not on the lease, so no later box can get another one.
-        self.base_state: Optional[str] = None
-        self.base_seq: Optional[int] = None
 
     def copy(self) -> 'Batch':
         other = Batch(self.batch_id, self.seq, self.miner, self.ref)
@@ -230,8 +243,6 @@ class Batch:
         other.decision = self.decision
         other.note = self.note
         other.head_seq = self.head_seq
-        other.base_state = self.base_state
-        other.base_seq = self.base_seq
         return other
 
     def key(self) -> Tuple:
@@ -239,7 +250,7 @@ class Batch:
             self.batch_id, self.seq, self.miner, self.ref, self.phase.value,
             self.infra_failures, self.attempts,
             self.lease.key() if self.lease is not None else None,
-            self.decision, self.note, self.head_seq, self.base_state, self.base_seq,
+            self.decision, self.note, self.head_seq,
         )
 
 
@@ -312,8 +323,8 @@ class State:
         return out
 
     def base(self) -> Optional[Tuple[str, int]]:
-        """The state that the first box of a batch trains on: the pending
-        HEAD if one exists, else the HEAD.
+        """The newest HEAD: the pending HEAD if one exists, else the HEAD.
+        A box that is bound now trains on this state.
 
         A pending apply is never aborted and its state is already verified in
         R2, so it is the next HEAD for certain.
@@ -584,14 +595,12 @@ def _box_known(state: State, box_id: str) -> bool:
 
 
 def _base_of(state: State, batch: Batch) -> Optional[Tuple[str, int]]:
-    """The state that a box of this batch trains on.
+    """The state that a box trains on when it is bound to ``batch`` now.
 
-    The first box takes the HEAD of this moment. Every later box takes the
-    same state, also when the HEAD moved in the meantime: a batch never
-    trains on a second base.
+    It is the newest HEAD of this moment, for a first box and for a fresh
+    box after an infra loss alike. The earlier boxes of the batch play no
+    part: the base of a lost box is not used again.
     """
-    if batch.base_seq is not None:
-        return batch.base_state, batch.base_seq
     return state.base()
 
 
@@ -701,7 +710,7 @@ def decide(cfg: CoreConfig, state: State, ev: Any) -> Optional[Record]:
         return 'decided', {
             'batch_id': batch.batch_id, 'fence': ev.fence, 'verdict': ev.verdict,
             'state_id': ev.state_id if has_state else None, 'result_sha': ev.result_sha,
-            'base_state': batch.base_state, 'base_seq': batch.base_seq,
+            'base_state': batch.lease.base_state, 'base_seq': batch.lease.base_seq,
             'order': state.next_order if green else None,
             'evidence': [list(item) for item in ev.evidence] if has_state else [],
             'note': ev.note,
@@ -801,8 +810,8 @@ def resolve(cfg: CoreConfig, state: State) -> Optional[Record]:
     * base is the HEAD, an apply is pending  -> credited (paid, not applied).
     * base is the pending HEAD               -> wait for that apply to finish.
 
-    No rule here sends a batch back to the queue. A batch whose base is old
-    is never trained again on the new HEAD.
+    No rule here sends a batch back to the queue. A decided batch whose base
+    is old is never trained again on the new HEAD.
     """
     if state.halted is not None or state.head is None:
         return None
@@ -912,13 +921,15 @@ def _ev_box_bound(state: State, b: Mapping[str, Any]) -> None:
     if b['try'] != batch.lease.try_no or _box_known(state, b['box_id']):
         raise CoreError('bad box binding for fence %r' % (b['fence'],))
     if (b['base_state'], b['base_seq']) != _base_of(state, batch):
-        raise CoreError('a box must train on the one base of its batch: %r' % (batch.batch_id,))
+        raise CoreError(
+            'a box must train on the newest HEAD of the moment it is bound: %r' % (batch.batch_id,)
+        )
     _move(batch, 'box_bound', Phase.RUNNING)
     lease = batch.lease
     lease.box_id = b['box_id']
     lease.provider = b['provider']
-    batch.base_state = b['base_state']
-    batch.base_seq = b['base_seq']
+    lease.base_state = b['base_state']
+    lease.base_seq = b['base_seq']
 
 
 def _ev_job_launched(state: State, b: Mapping[str, Any]) -> None:
@@ -951,8 +962,9 @@ def _ev_attempt_failed(state: State, b: Mapping[str, Any]) -> None:
 
 def _ev_decided(state: State, b: Mapping[str, Any]) -> None:
     batch = _leased(state, b)
-    if b['base_state'] != batch.base_state or b['base_seq'] != batch.base_seq:
-        raise CoreError('decision base differs from the base of the batch %r' % (batch.batch_id,))
+    lease = batch.lease
+    if b['base_state'] != lease.base_state or b['base_seq'] != lease.base_seq:
+        raise CoreError('decision base differs from the base of its box: %r' % (batch.batch_id,))
     green = b['verdict'] == VERDICT_GREEN
     if green:
         if b['order'] != state.next_order:
@@ -1109,11 +1121,11 @@ def plan(cfg: CoreConfig, state: State) -> List[Any]:
             if not lease.launched:
                 ops.append(LaunchOp(
                     fence, batch.batch_id, batch.attempts, lease.box_id, lease.provider,
-                    batch.base_state, batch.base_seq, batch.ref,
+                    lease.base_state, lease.base_seq, batch.ref,
                 ))
             ops.append(PollOp(fence, batch.batch_id, lease.box_id, lease.provider))
         elif batch.phase is Phase.SETTLING:
-            ops.append(SettleOp(fence, batch.batch_id, batch.base_state))
+            ops.append(SettleOp(fence, batch.batch_id, lease.base_state))
     pending = state.pending
     if pending is not None and state.halted is None:
         ops.append(ApplyOp(
@@ -1132,7 +1144,12 @@ def plan(cfg: CoreConfig, state: State) -> List[Any]:
 
 def outcome_fields(batch: Batch) -> Dict[str, Any]:
     """The published outcome of a terminal batch. A pure function of the
-    journal, so a repeated publish writes the same bytes."""
+    journal, so a repeated publish writes the same bytes.
+
+    ``base_seq`` and ``base_state`` name the base of the box that made the
+    decision. A batch that ends without a decision (``lost_infra``) names
+    no base: each of its boxes had its own.
+    """
     if batch.phase not in TERMINAL:
         raise CoreError('outcome of a batch that is not terminal')
     decision = batch.decision
@@ -1146,8 +1163,8 @@ def outcome_fields(batch: Batch) -> Dict[str, Any]:
         'credit': credit,
         'applied': batch.phase is Phase.APPLIED,
         'head_seq': batch.head_seq,
-        'base_seq': batch.base_seq,
-        'base_state': batch.base_state,
+        'base_seq': decision.base_seq if decision is not None else None,
+        'base_state': decision.base_state if decision is not None else None,
         'state_id': decision.state_id if decision is not None else None,
         'result_sha': decision.result_sha if decision is not None else None,
         'fence': decision.fence if decision is not None else None,

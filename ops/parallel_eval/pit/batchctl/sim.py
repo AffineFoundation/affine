@@ -27,11 +27,14 @@ not against what the controller believes. Some checks run at the moment of
 an action (for example at each pointer move). The rest run at the end.
 
 The base rule is checked from three sides. What the controller sends: every
-box of a batch gets the base of the first box. What the journal says: a
-batch gets a new box only after its last box was lost before a decision, and
-it gets one decision. What is true in the fake world: the verdict and the
-payout are the ones against that first base, and no box is lost in a world
-that has no fault.
+job that a box gets names the one base that the journal bound that box to.
+What the journal says: every box, the first of its batch or a fresh one
+after an infra loss, is bound to the newest HEAD of that moment; a batch
+gets a new box only after its last box was lost before a decision, and it
+gets one decision. What is true in the fake world: at the moment that a
+binding becomes durable, its base is not older than the HEAD that R2 holds;
+the verdict and the payout are the ones against the base of the box that
+made the decision; and no box is lost in a world that has no fault.
 """
 from __future__ import annotations
 
@@ -240,6 +243,7 @@ class MemOps(FileOps):
         self.w.point('journal.fsync.before')
         target = self.files[self.fds[fd]]
         target.synced = len(target.data)
+        self.w.audit.journal_synced()
         self.w.point('journal.fsync.after')
 
     def close(self, fd: int) -> None:
@@ -260,6 +264,7 @@ class MemOps(FileOps):
     def fsync_dir(self, path: Path) -> None:
         self.w.point('journal.dirsync.before')
         self.renames.clear()
+        self.w.audit.journal_synced()
         self.w.point('journal.dirsync.after')
 
     def durable(self, path: str) -> bytes:
@@ -334,6 +339,7 @@ class DiskOps(MemOps):
         self.real.fsync(self.real_fds[fd])
         target = self.files[self.fds[fd]]
         target.synced = len(target.data)
+        self.w.audit.journal_synced()
         self.w.point('journal.fsync.after')
 
     def close(self, fd: int) -> None:
@@ -360,6 +366,7 @@ class DiskOps(MemOps):
         self.w.point('journal.dirsync.before')
         self.real.fsync_dir(path)
         self.renames.clear()
+        self.w.audit.journal_synced()
         self.w.point('journal.dirsync.after')
 
     def crash(self, rng: random.Random, power_loss: bool) -> None:
@@ -995,8 +1002,10 @@ class Auditor:
         self.first: Optional[str] = None
         self.pointers: List[Tuple[str, bytes]] = []
         self.applied: List[str] = []
-        # batch id -> the base of the first job that was sent for the batch.
-        self.first_base: Dict[str, Tuple[str, int]] = {}
+        # fence -> the base that the job of that box named when it was sent.
+        self.sent_base: Dict[int, Tuple[str, int]] = {}
+        # Fences whose binding was checked against R2 when it became durable.
+        self.bound_seen: Set[int] = set()
         self.foreign = False
         self.durable_floor = b''
         self.kinds: Dict[str, int] = {}
@@ -1027,10 +1036,47 @@ class Auditor:
             for line in bytes(target.data[done:target.synced]).split(b'\n'):
                 if line:
                     rec = json.loads(line)
+                    if rec['t'] == 'box_bound':
+                        self._bound(rec['b'])
                     C.evolve(state, rec['t'], rec['b'])
                     doomed.update(state.doomed)
         self._cache = (target, target.synced, state, doomed)
         return state, doomed
+
+    def journal_synced(self) -> None:
+        """The file system calls this at each moment that journal bytes
+        become durable, so that every new record is seen at that moment."""
+        self.durable()
+
+    def _bound(self, body: Dict[str, Any]) -> None:
+        """A box is durably bound to its base right now.
+
+        The base rule against the truth of R2, and not against the journal:
+        the base is not older than the HEAD that R2 holds at this moment.
+        It can be one step newer, when an apply is in progress. This holds
+        for the first box of a batch and for a fresh box after an infra
+        loss. The journal is read again from its start after some crashes,
+        so each fence is checked once, when its binding is first durable.
+        """
+        if body['fence'] in self.bound_seen:
+            return
+        self.bound_seen.add(body['fence'])
+        if self.foreign:
+            return
+        raw = self.w.raw.objs.get(self.w.layout.head)
+        self.need(raw is not None, 'a box was bound before R2 had a HEAD')
+        pointer = parse_head(raw)
+        self.need(
+            body['base_seq'] == pointer.seq + 1
+            or (body['base_seq'], body['base_state']) == (pointer.seq, pointer.state_id),
+            'a box was bound to a base that is not the newest HEAD: R2 held HEAD %d, the base is %d'
+            % (pointer.seq, body['base_seq']),
+        )
+        problem = self.w.truth.state_problem(body['base_state'])
+        self.need(
+            problem is None or self.w.tampered,
+            'a box was bound to a base that R2 does not hold in full: %s' % problem,
+        )
 
     # -- checks at the moment the controller acts ---------------------------
 
@@ -1095,7 +1141,7 @@ class Auditor:
         name = dst_rel.split('/')[-1]
         true = {
             item[0]: item[2]
-            for item in self.w.truth.state_files(batch.batch_id, batch.base_state, parsed[1])
+            for item in self.w.truth.state_files(batch.batch_id, batch.lease.base_state, parsed[1])
         }
         self.need(
             self.w.raw.objs.get(src) == true.get(name),
@@ -1129,16 +1175,17 @@ class Auditor:
         base = (spec.base_state, spec.base_seq)
         self.need(
             batch is not None and batch.phase is C.Phase.RUNNING and batch.lease.box_id == box_id
-            and (batch.base_state, batch.base_seq) == base and batch.batch_id == spec.batch_id
-            and batch.attempts == spec.attempt,
+            and batch.batch_id == spec.batch_id and batch.attempts == spec.attempt,
             'launch without a durable binding of this box to this fence',
         )
-        # The base rule, as the boxes see it: every box of a batch gets the
-        # base of its first box, also when the HEAD moved in the meantime.
+        # The base rule, as the boxes see it: a box has one base, the one
+        # that the journal bound it to. Every send of its job names that
+        # base, also when the HEAD moved in the meantime.
         self.need(
-            self.first_base.setdefault(spec.batch_id, base) == base,
-            'a fresh box was sent to another base than the first box of its batch',
+            (batch.lease.base_state, batch.lease.base_seq) == base,
+            'a box was sent to another base than the base it was bound to',
         )
+        self.need(self.sent_base.setdefault(spec.fence, base) == base, 'one box was sent to two bases')
 
     # -- checks at the moment R2 changes ------------------------------------
 
@@ -1217,9 +1264,13 @@ class Auditor:
         bases: Dict[int, Tuple[str, int]] = {}
         observed: Set[int] = set()
         decided: Dict[int, Dict[str, Any]] = {}
-        decided_batches: Set[str] = set()
+        # batch id -> the fence of the box that made its one decision.
+        decided_by: Dict[str, int] = {}
         leases: Dict[str, int] = collections.Counter()
-        first_bound: Dict[str, Tuple[str, int]] = {}
+        # The newest HEAD at each point of the journal, taken from the apply
+        # intents alone and not from the state: (state, seq) of the last one.
+        newest: Optional[Tuple[str, int]] = None
+        chain: Dict[int, str] = {}
         invalid: Set[int] = set()
         greens: Dict[int, List[Tuple[int, str]]] = collections.defaultdict(list)
         intents: Dict[int, str] = {}
@@ -1239,18 +1290,19 @@ class Auditor:
                 # records, and not taken from the state.
                 leases[body['batch_id']] += 1
                 self.need(
-                    body['batch_id'] not in decided_batches
+                    body['batch_id'] not in decided_by
                     and leases[body['batch_id']] == len(failures[body['batch_id']]) + 1 == body['attempt'],
                     'a batch got a new box, but its last box was not lost before a decision',
                 )
             elif kind == 'box_bound':
-                base = (body['base_state'], body['base_seq'])
-                if body['batch_id'] not in first_bound:
-                    self.need(base == state.base(), 'the first box of a batch did not get the HEAD of that moment')
-                    first_bound[body['batch_id']] = base
+                # The base rule in the journal. Every box is bound to the
+                # newest HEAD of that moment: the first box of a batch, and a
+                # fresh box after an infra loss. No box takes over the base
+                # of the box before it.
+                self.need(body['fence'] not in bases, 'a box was bound twice')
                 self.need(
-                    base == first_bound[body['batch_id']],
-                    'a fresh box got another base than the first box of its batch',
+                    (body['base_state'], body['base_seq']) == newest,
+                    'a box did not get the newest HEAD of the moment it was bound',
                 )
             elif kind == 'credited':
                 # A GREEN is paid without an apply for one of three reasons.
@@ -1295,6 +1347,9 @@ class Auditor:
             self.need(state.slots_in_use() <= cfg.max_boxes, 'more boxes in use than max_boxes')
             if kind == 'batch_admitted':
                 seqs[body['batch_id']] = body['seq']
+            elif kind == 'apply_intent':
+                newest = (body['state_id'], body['seq'])
+                chain[body['seq']] = body['state_id']
             elif kind == 'box_bound':
                 self.need(body['box_id'] not in bound.values(), 'one box was bound to two fences')
                 bound[body['fence']] = body['box_id']
@@ -1320,23 +1375,27 @@ class Auditor:
                 if body['reason'].startswith('invalid_upload'):
                     invalid.add(body['fence'])
             elif kind == 'decided':
-                self.need(body['batch_id'] not in decided_batches, 'a batch was decided twice')
-                decided_batches.add(body['batch_id'])
+                self.need(body['batch_id'] not in decided_by, 'a batch was decided twice')
+                decided_by[body['batch_id']] = body['fence']
                 decided[body['fence']] = body
                 if body['verdict'] == C.VERDICT_GREEN and body['state_id'] is not None:
                     greens[body['base_seq']].append((body['order'], body['batch_id']))
             elif kind == 'applied' and body['batch_id'] is not None:
+                # The base of the box that made the decision is the HEAD
+                # that this apply replaced: the same state, not only the
+                # same number.
                 self.need(
-                    first_bound[body['batch_id']][1] == body['seq'] - 1,
-                    'a batch was applied on a HEAD that is not its base',
+                    bases.get(decided_by.get(body['batch_id'])) == (chain[body['seq'] - 1], body['seq'] - 1),
+                    'a batch was applied on a HEAD that is not the base of its box',
                 )
                 winners[body['seq'] - 1] = body['batch_id']
                 journal_applied.append(body['batch_id'])
             for batch in list(state.active.values()) + list(state.done.values()):
                 self.need(batch.seq == seqs[batch.batch_id], 'a batch lost its queue position')
         self.need(state.key() == ctl.state.key(), 'the state in memory is not the journal')
-        for batch_id, base in self.first_base.items():
-            self.need(first_bound.get(batch_id) == base, 'a box was sent to a base that the journal does not name')
+        for fence, base in self.sent_base.items():
+            self.need(bases.get(fence) == base, 'a box was sent to a base that the journal does not name for it')
+        self.need(self.bound_seen == set(bases), 'a binding was not seen at the moment it became durable')
 
         # Ground truth of every decision.
         for fence, body in decided.items():
@@ -1350,9 +1409,8 @@ class Auditor:
             self.need(package.result_ok, 'a decision was made from an invalid package')
             self.need(body['verdict'] == package.verdict, 'the verdict differs from the truth')
             self.need(
-                bases[fence] == first_bound[body['batch_id']]
-                and body['verdict'] == w.truth.verdict(body['batch_id'], first_bound[body['batch_id']][0]),
-                'the verdict is not the verdict against the first base of the batch',
+                body['verdict'] == w.truth.verdict(body['batch_id'], bases[fence][0]),
+                'the verdict is not the verdict against the base of the box that made it',
             )
             self.need(body['result_sha'] == package.result_sha, 'the decision names another result')
             self.need(
@@ -1408,18 +1466,22 @@ class Auditor:
             if batch.phase is C.Phase.APPLIED:
                 self.need(batch_id in self.applied, 'journal says applied, R2 never moved')
             if fields is not None:
-                base = first_bound.get(batch_id, (None, None))
+                # The base of a batch is the base of the box that decided
+                # it. A batch that no box decided (lost_infra) has none.
+                by = decided_by.get(batch_id)
+                base = bases[by] if by is not None else (None, None)
+                self.need((batch.decision is None) == (by is None), 'the state and the journal differ on a decision')
                 self.need(
                     (fields['base_state'], fields['base_seq']) == base,
-                    'the outcome names another base than the first box of the batch got',
+                    'the outcome names another base than the base of the box that decided the batch',
                 )
-                # Paid: GREEN against its own base, or lost by the infra.
+                # Paid: GREEN against the base of its box, or lost by the infra.
                 paid = batch.phase is C.Phase.LOST_INFRA or (
-                    batch.decision is not None and w.truth.verdict(batch_id, base[0]) == C.VERDICT_GREEN
+                    by is not None and w.truth.verdict(batch_id, base[0]) == C.VERDICT_GREEN
                 )
                 self.need(
                     fields['payout_list'] == paid and (batch.phase is C.Phase.APPLIED) == fields['applied'],
-                    'the payout does not follow the verdict against the base of the batch',
+                    'the payout does not follow the verdict against the base of the box that decided the batch',
                 )
             if fields is not None and batch_id not in state.unpublished:
                 self.need(
