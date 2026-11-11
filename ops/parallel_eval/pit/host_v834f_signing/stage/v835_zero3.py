@@ -813,9 +813,18 @@ def make_train_update(dp, B, FK):
             raise ValueError('inference runtime cannot train')
         actor.begin_step()
         if actor.cuda:
-            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
-        # CPU fixture profiles only: the stock transformers forward (no CUDA kernels), same loss code
-        return stock(runtime, items, gradients=gradients, engine='padded', logit_chunk=LOGIT_CHUNK, support=support)
+            outs = FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        else:   # CPU fixture profiles only: the stock transformers forward (no CUDA kernels), same loss code
+            outs = stock(runtime, items, gradients=gradients, engine='padded', logit_chunk=LOGIT_CHUNK, support=support)
+        if gradients and support is not None:
+            # The sharded update has no KL term (_update refuses one), so the loss differentiates log_q only and
+            # reads log_p as a number. A log_p that keeps its graph keeps the log_p branch of every head chunk,
+            # and backward never runs that branch. The non-reentrant checkpoint then holds the fp32 logits it
+            # recomputed for the branch until the whole backward is over: 0.95 GiB per chunk of 1024 tokens with
+            # the 9B vocabulary, for every chunk of the micro-batch at once. Detached, log_p has the same values
+            # and no graph: the branch is gone before backward starts and nothing is stored for it.
+            outs = [(log_p.detach(), log_q, inside) for log_p, log_q, inside in outs]
+        return outs
 
     def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
                         reference_runtime=None, engine='packed', token_budget=36864, max_rows=64, logit_chunk=2048,
@@ -840,6 +849,7 @@ def _update(dp, B, FK, runtime, optimizer, groups, binding, config, guard, recor
         raise RuntimeError('the sharded DP world was stopped (%s); restart the trainer' % WORLD['dead'])
     dp.PRE.validate(runtime, optimizer, groups, binding, config, reference_runtime)
     if reference_runtime is not None or config.kl_coefficient > 0:
+        # also what lets the sharded forward hand log_p to the loss without its graph (make_train_update.log_probs)
         raise ValueError('the sharded update has no KL reference pass (v8.3.4: KL is off)')
     agg_config, loss_scale, aggregation = B.loss_aggregation(config)
     timings = {} if timings is None else timings

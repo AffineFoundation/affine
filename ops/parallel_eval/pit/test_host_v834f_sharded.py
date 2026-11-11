@@ -890,6 +890,33 @@ class TestRealBoxFindings(unittest.TestCase):
         self.assertTrue(all(unit['originals'] >= 1 for unit in units))              # the instrument watched every unit
         self.assertEqual([unit['alive'] for unit in units], [0] * len(units))
 
+    def test_backward_holds_no_recomputed_logits_of_the_head_chunks(self):
+        """Finding 2. With KL off the loss differentiates log_q only. A log_p that keeps its graph makes the
+        non-reentrant head checkpoint hold the fp32 logits it recomputed, for every chunk of the micro-batch, until
+        backward is over: 22.65 GiB on one rank of the box for a bin of 32770 tokens."""
+        held = [h['logits_alive'] for h in self.seen['head'] if h['phase'] == 'step']
+        real = [n for n in self.seen['nodes'] if n['kind'] == 'step' and n['items']]
+        self.assertEqual(len(held), len(real))                                      # one count for each real micro-batch
+        self.assertEqual(len(held), self.out['microbatch']['steps'])
+        self.assertGreaterEqual(max(self.chunks(n['items']) for n in real), 18)     # with many head chunks in one of them
+        self.assertEqual(held, [0] * len(held))
+
+    def test_the_stock_forward_holds_them_and_gives_the_same_bits(self):
+        """The control of finding 2, on the same sharded actor and the same micro-batch: the forward of the stock
+        v8211_batched file (log_p keeps its graph) against the staged sharded forward, with one fixed loss on log_q.
+        The count of the stock run proves that the instrument sees the fault. The values and the gradient shards
+        prove that the fix changes no number."""
+        control = self.seen['control']
+        held = {h['phase']: h['logits_alive'] for h in self.seen['head'] if h['phase'].startswith('control-')}
+        self.assertEqual((control['items'], control['head_chunks']), ([[6, 19], [3, 25], [3, 12]], 19))
+        self.assertGreaterEqual(held['control-stock'], control['head_chunks'])      # at least the logits of every chunk
+        self.assertEqual(held['control-staged'], 0)
+        self.assertEqual(control['stock_log_p_attached'], [True] * 3)
+        self.assertEqual(control['staged_log_p_attached'], [False] * 3)
+        self.assertTrue(control['values_equal'])                                    # log_p, log_q and the support mask
+        self.assertEqual((control['gradient_tensors'], control['gradient_nonzero']), (56, 56))
+        self.assertTrue(control['gradients_equal'])                                 # every fp32 gradient shard, bit for bit
+
 
 class TestShardedFailures(unittest.TestCase):
     @classmethod
