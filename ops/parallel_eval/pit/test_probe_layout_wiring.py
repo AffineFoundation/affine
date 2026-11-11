@@ -14,7 +14,8 @@ from ops.parallel_eval.pit import probe_layout as PL
 from ops.parallel_eval.pit import probe_serve as PS
 from ops.parallel_eval.pit.box import BOX_ROOT, BoxRunner
 from ops.parallel_eval.pit.box_job import BoxJobController, RemoteBoxJobStore
-from ops.parallel_eval.pit.probe_fixture import HARNESS, BoxCase
+from ops.parallel_eval.pit.probe_fixture import ENV_ID, HARNESS, BoxCase
+from ops.parallel_eval.pit.state import ItemState
 
 CID = 'c' * 64
 SEED = 'plan-seed-xyz'
@@ -241,6 +242,29 @@ class TestHostBoxProtocol(BoxCase):
         self.assertEqual((marker['ok'], marker['status']), (False, 'failed'))
         self.assertIn('no layout of the plan serves', marker['error'])
         self.assertNotIn('probe_result', marker)
+
+
+class TestEvalStageOnTheBox(BoxCase):
+    """``BoxRunner`` runs the eval stage of an item on a local box, and a host that restarts finds its result."""
+
+    def test_a_restarted_host_takes_the_result_from_the_box_and_serves_nothing(self):
+        tasks = list(range(16))
+        probe, record = self.eval_stage(shadow(), tasks)
+        self.assertIs(record.state, ItemState.RESULT)
+        self.assertEqual((probe['partial'], probe['samples'], len(probe['envs'][ENV_ID]['per_task'])), (False, 16 * 8, 16))
+        self.assertEqual(probe['serve_layout']['layout']['name'], 'rtx5090-tp2')
+        started = len(self.fb.started())
+        self.assertEqual(started, 2)                          # two TP2 replicas on the four GPUs of this box
+
+        # A host that starts again reads the result before it does anything else.
+        record, bundle = self.restarted_host(shadow(), tasks)
+        self.assertIs(record.state, ItemState.RESULT)
+        self.assertEqual((bundle.candidate_id, bundle.probe_result['envs']), (self.cid, probe['envs']))
+        # The box can also finish between that first look and the eval stage. The eval stage then takes the result.
+        again, record = self.eval_stage(shadow(), tasks)
+        self.assertEqual((record.state, record.meta['last_transition_reason']), (ItemState.RESULT, 'eval-resume-result'))
+        self.assertEqual(again['envs'], probe['envs'])
+        self.assertEqual(len(self.fb.started()), started)     # nothing served a second time
 
 
 if __name__ == '__main__':

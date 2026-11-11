@@ -14,6 +14,8 @@ small stand-ins:
 """
 from __future__ import annotations
 
+import contextlib
+import functools
 import json
 import os
 import socket
@@ -25,13 +27,19 @@ import unittest
 import venv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 from unittest import mock
 
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import probe_layout as PL
 from . import probe_serve as PS
+from .box import BoxRunner, ProbeBundle
+from .box_job import BoxJobController, RemoteBoxJobStore, controller_for_pod, job_dir_for
+from .config import PitConfig
+from .pe_lane import LaneService
+from .signer import generate_ephemeral_box_key
+from .state import ItemRecord, ItemState
 
 REPO = Path(__file__).resolve().parents[3]
 PINNED = REPO / 'miner' / 'validator' / 'probe'
@@ -43,6 +51,9 @@ HARNESS = {
     'mimo_answer_projection': {'mode': 'fixture'},
     'sampling_contract': {'n': 1},
 }
+# The binding of the item that the host runs on the box.
+ITEM = dict(registration_index=1, epoch=10, bound_head='a' * 64, bound_master_digest='b' * 64,
+            bound_round_id='round-1', bound_plan_seed='p' * 64)
 
 _SMI = r'''#!%(python)s
 import json, os, sys
@@ -340,3 +351,60 @@ class BoxCase(unittest.TestCase):
         """This box as the host reaches it: ``python3`` is this interpreter, ``pgrep`` and ``nvidia-smi`` are the box's."""
         return LocalPod({'PATH': '%s:%s:/usr/bin:/bin' % (self.fb.bin, os.path.dirname(sys.executable)),
                          'HOME': str(self.tmp)})
+
+    # ------------------------------------------------------------ the host's box runner on this box
+    def job_dir(self, item_id: str = 'e10-item') -> Path:
+        """The job directory of an item on this box."""
+        return Path(job_dir_for(item_id, job_root=str(self.tmp / 'pit-jobs')))
+
+    @contextlib.contextmanager
+    def _host_code_on_this_box(self) -> Iterator[None]:
+        """Tell the host code where this box is: its probe directory, its port, its job directory, the harness
+        file, and fewer grading processes than a rented box has. No other host code is replaced."""
+        def few_graders(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            return dict(build_probe_plan(*args, **kwargs), grade_workers=2)
+
+        with mock.patch('ops.parallel_eval.pit.box.BOX_ROOT', str(self.fb.root)), \
+                mock.patch('ops.parallel_eval.pit.box._load_public_harness', return_value=HARNESS), \
+                mock.patch('ops.parallel_eval.pit.box.build_probe_plan', few_graders), \
+                mock.patch.object(PS, 'detached_command',
+                                  functools.partial(PS.detached_command, box_args=self.box.args()[2:])), \
+                mock.patch('ops.parallel_eval.pit.box_job.controller_for_pod',
+                           functools.partial(controller_for_pod, job_root=str(self.tmp / 'pit-jobs'))), \
+                mock.patch.dict(os.environ, {'PIT_BOX_JOB_POLL_S': '0.2'}):
+            yield
+
+    @staticmethod
+    def _box_runner(config: PitConfig, **settings: Any) -> BoxRunner:
+        def never(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('the host must not run the probe itself')
+
+        return BoxRunner(config=config, io=None, lane=LaneService(host_run_probe=never), **settings)
+
+    def eval_stage(self, config: PitConfig, indices: Sequence[int], *, pod: Any = None, item_id: str = 'e10-item',
+                   **settings: Any) -> Tuple[Dict[str, Any], ItemRecord]:
+        """The eval stage of an item whose candidate is on this box, as ``BoxRunner`` runs it after training.
+
+        ``settings`` go to ``BoxRunner``. -> (probe result, item record).
+        """
+        pod = pod or self.pod()
+        ctrl = BoxJobController(store=RemoteBoxJobStore(pod), item_id=item_id, job_root=str(self.tmp / 'pit-jobs'))
+        ctrl.ensure_dir()
+        runner = self._box_runner(config, **settings)
+        record = ItemRecord(item_id=item_id, state=ItemState.SEALED, candidate_id=self.cid, sealed=True, **ITEM)
+        with self._host_code_on_this_box():
+            probe, _, record = runner._run_eval_stage(
+                record, box_job_ctrl=ctrl, lane=runner.lane, pod_handle=pod, candidate_id=self.cid,
+                plan_handle=ITEM['bound_plan_seed'], idx_list=list(indices), indices_count=len(indices),
+                train_gpu='RTX5090', eval_gpu='RTX5090', train_receipt={'candidate_id': self.cid},
+                training_report={}, box_key=generate_ephemeral_box_key(), master_upload={})
+        return probe, record
+
+    def restarted_host(self, config: PitConfig, indices: Sequence[int], *, pod: Any = None, item_id: str = 'e10-item',
+                       **settings: Any) -> Tuple[ItemRecord, ProbeBundle]:
+        """A host that starts again while this box holds the item: ``BoxRunner.run`` from the start."""
+        record = ItemRecord(item_id=item_id, state=ItemState.PROVISIONING, meta={'pod': pod or self.pod()}, **ITEM)
+        with self._host_code_on_this_box():
+            return self._box_runner(config, **settings).run(
+                record, batch_handle='batch:%s' % item_id, plan_handle=ITEM['bound_plan_seed'],
+                indices=list(indices), train_gpu='RTX5090', eval_gpu='RTX5090')

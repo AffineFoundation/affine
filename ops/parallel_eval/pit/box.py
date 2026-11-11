@@ -363,6 +363,7 @@ class BoxRunner:
                 )
                 probe_result['train_gpu'] = train_gpu
                 probe_result['eval_gpu'] = eg
+                record = apply_transition(record, ItemState.PROBING, reason='eval-resume-result')
                 record = apply_transition(
                     record, ItemState.RESULT, reason='eval-resume-result',
                     updates={'result_stored': True},
