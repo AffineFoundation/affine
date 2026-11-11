@@ -186,6 +186,166 @@ def test_checker_catches_a_second_apply_on_the_same_head(monkeypatch):
     )
 
 
+# The base rule. The first three tests seed the rules that the base rule
+# replaced; the last two break the payout of an outcome.
+
+def test_checker_catches_a_retry_that_trains_on_the_new_head(monkeypatch):
+    # After an infra loss the fresh box takes the HEAD of its own moment.
+    monkeypatch.setattr(C, '_base_of', lambda state, batch: state.base())
+    report = _expect_violation(
+        dict(batches=2, max_boxes=2, faults=1, coarse=True), 'a later box of a batch got another base',
+    )
+    assert any(label.startswith('box-dies') or 'expir' in label for label in report.trace)
+    assert 'apply-cas' in report.trace
+
+
+def test_checker_catches_a_stale_red_that_goes_back_to_the_queue(monkeypatch):
+    # A batch that is RED against an old HEAD trains again on the new HEAD.
+    real = C.decide
+
+    def bad(cfg, state, ev):
+        rec = real(cfg, state, ev)
+        if (
+            rec is not None and rec[0] == 'decided' and rec[1]['verdict'] == C.VERDICT_RED
+            and rec[1]['base_seq'] != state.base()[1]
+        ):
+            return 'requeued', {'batch_id': rec[1]['batch_id']}
+        return rec
+
+    def requeue(state, b):
+        # The seeded rule covers its tracks: the core's own guards all pass.
+        batch = state.active[b['batch_id']]
+        batch.phase = C.Phase.QUEUED
+        batch.attempts = batch.infra_failures
+        batch.base_state = batch.base_seq = None
+        C._end_lease(state, batch)
+
+    monkeypatch.setattr(C, 'decide', bad)
+    monkeypatch.setitem(C._EVOLVE, 'requeued', requeue)
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'a batch went back to the queue without an infra loss',
+    )
+
+
+def test_checker_catches_a_box_that_is_stopped_when_the_head_moves(monkeypatch):
+    # The controller gives up a healthy box as soon as its base is old.
+    real = C.decide
+
+    def bad(cfg, state, ev):
+        if type(ev) is C.Tick:
+            for fence in sorted(state.by_fence):
+                batch = state.leased(fence)
+                if batch.phase is C.Phase.RUNNING and batch.base_seq < state.base()[1]:
+                    return C._fail(cfg, batch, 'stale_base')
+        return real(cfg, state, ev)
+
+    monkeypatch.setattr(C, 'decide', bad)
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'an attempt ended without a decision, but the world had no fault',
+    )
+
+
+def _requeue_green(state, b):
+    batch = state.active[b['batch_id']]
+    batch.phase = C.Phase.QUEUED
+    batch.decision = None
+    batch.attempts = batch.infra_failures
+    batch.base_state = batch.base_seq = None
+
+
+def test_checker_catches_a_stale_green_that_trains_again(monkeypatch):
+    # A GREEN on an old HEAD is not credited: it trains again to be applied.
+    real = C.resolve
+
+    def bad(cfg, state):
+        rec = real(cfg, state)
+        if rec is not None and rec[0] == 'credited' and rec[1]['reason'] == 'stale_base':
+            return 'requeued', {'batch_id': rec[1]['batch_id']}
+        return rec
+
+    monkeypatch.setattr(C, 'resolve', bad)
+    monkeypatch.setitem(C._EVOLVE, 'requeued', _requeue_green)
+    _expect_violation(
+        dict(batches=2, max_boxes=2, faults=0, coarse=True),
+        'a batch went back to the queue without an infra loss',
+    )
+
+
+def test_checker_catches_a_waiting_green_that_trains_again(monkeypatch):
+    # Two GREENs wait for the pending HEAD that they trained on. One wins the
+    # apply. The other is not credited: it trains again, in a later step than
+    # its decision.
+    real_decide, real_resolve = C.decide, C.resolve
+    event = []
+
+    def spy(cfg, state, ev):
+        event[:] = [type(ev)]
+        return real_decide(cfg, state, ev)
+
+    def bad(cfg, state):
+        rec = real_resolve(cfg, state)
+        if (
+            rec is not None and rec[0] == 'credited' and rec[1]['reason'] == 'not_first'
+            and event == [C.ApplyDone]
+        ):
+            return 'requeued', {'batch_id': rec[1]['batch_id']}
+        return rec
+
+    monkeypatch.setattr(C, 'decide', spy)
+    monkeypatch.setattr(C, 'resolve', bad)
+    monkeypatch.setitem(C._EVOLVE, 'requeued', _requeue_green)
+    _expect_violation(
+        dict(batches=3, max_boxes=2, faults=0, coarse=True),
+        'a decided batch ran again or lost its decision',
+    )
+
+
+def test_checker_catches_a_second_box_without_an_infra_loss(monkeypatch):
+    # A lost box is not counted, so the batch can run for ever at no cost.
+    real = C._EVOLVE['attempt_failed']
+
+    def free_retry(state, b):
+        batch = state.active[b['batch_id']]
+        real(state, dict(b, infra_failures=batch.infra_failures + 1, terminal=False))
+        batch.infra_failures -= 1
+        batch.attempts -= 1
+
+    monkeypatch.setattr(C, '_fail', lambda cfg, batch, reason: ('attempt_failed', {
+        'batch_id': batch.batch_id, 'fence': batch.lease.fence, 'reason': reason,
+        'infra_failures': batch.infra_failures, 'terminal': False,
+    }))
+    monkeypatch.setitem(C._EVOLVE, 'attempt_failed', free_retry)
+    _expect_violation(
+        dict(batches=1, max_boxes=1, faults=1, coarse=True),
+        'a batch went back to the queue without an infra loss',
+    )
+
+
+@pytest.mark.parametrize('credit, needle', [
+    ({C.Phase.APPLIED: C.CREDIT_GREEN, C.Phase.LOST_INFRA: C.CREDIT_LOST_INFRA}, 'the outcome of credited'),
+    (dict(C.CREDIT, **{C.Phase.RED: C.CREDIT_GREEN}), 'the outcome of red'),
+    ({C.Phase.APPLIED: C.CREDIT_GREEN, C.Phase.CREDITED: C.CREDIT_GREEN}, 'the outcome of lost_infra'),
+])
+def test_checker_catches_a_wrong_payout(monkeypatch, credit, needle):
+    monkeypatch.setattr(C, 'CREDIT', credit)
+    _expect_violation(dict(batches=2, max_boxes=2, faults=2, coarse=True), needle)
+
+
+def test_checker_catches_an_outcome_that_names_the_new_head_as_base(monkeypatch):
+    real = C.outcome_fields
+
+    def bad(batch):
+        fields = real(batch)
+        if batch.note == 'stale_base':
+            fields['base_seq'] += 1
+        return fields
+
+    monkeypatch.setattr(C, 'outcome_fields', bad)
+    _expect_violation(dict(batches=2, max_boxes=2, faults=0, coarse=True), 'pays or names the wrong thing')
+
+
 def test_checker_catches_wrong_queue_order(monkeypatch):
     def newest(state):
         queued = [b for b in state.active.values() if b.phase is C.Phase.QUEUED]

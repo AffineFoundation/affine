@@ -26,6 +26,14 @@ What the world may do, in any order
   in flight; the journal state stays. A result is delivered twice.
 * Another writer moves the HEAD pointer (optional; checks the fail-stop).
 
+The base rule in the model
+--------------------------
+The world keeps its own record of the base that the first box of each batch
+was given (``World.bases``). The core is checked against that record, not
+against its own field. So the checker proves, and does not assume, that
+every later box of the batch gets the same base, that every decision and
+every apply uses it, and that no batch runs again after a decision.
+
 What is proven
 --------------
 Safety is checked on every reachable state and every transition. Liveness is
@@ -86,6 +94,12 @@ INVARIANTS = (
     'a GREEN result without a verified state is credited and never applied',
     'no lost GREEN: a GREEN decision always ends APPLIED or CREDITED',
     'RED only from a verified RED result; LOST_INFRA only after N infra failures',
+    'one base per batch: the first box gets the newest HEAD, and the base never changes',
+    'no retraining: every box of a batch, also after an infra loss, trains on that one base',
+    'no way back: a decision is final, and only an infra loss before a decision returns a batch to the queue',
+    'a batch gets a box only if it never had one or its last box was lost before a decision',
+    'a HEAD that moves stops no box: an attempt ends without a decision only after a fault in the world',
+    'every GREEN is on the payout list; a RED is not; LOST_INFRA is credited as lost_infra',
     'a decision uses only the package of the live fence (fencing)',
     'a package with a valid result is never rejected as invalid',
     'terminal outcomes never change; published outcomes match the journal',
@@ -214,11 +228,14 @@ def never_again(core: C.State, msg: Any) -> bool:
 class World:
     __slots__ = (
         'core', 'boxes', 'staging', 'pointer', 'chain', 'canon', 'published', 'msgs',
-        'arrived', 'budget', 'gens', 'diverged', 'faulted',
+        'arrived', 'budget', 'gens', 'diverged', 'faulted', 'bases',
     )
 
     def __init__(self) -> None:
         self.core = C.State()
+        # batch id -> (state, seq) that the first box of the batch was given.
+        # Written once per batch and never by the core.
+        self.bases: Dict[str, Tuple[str, int]] = {}
         self.boxes: Dict[str, int] = {}          # alive boxes: box_id -> job (0 none, 1 running, 2 done)
         self.staging: Dict[int, int] = {}        # fence -> complete package kind
         self.pointer: Optional[Tuple[int, str, str]] = None
@@ -247,6 +264,7 @@ class World:
         other.gens = dict(self.gens)
         other.diverged = self.diverged
         other.faulted = self.faulted
+        other.bases = dict(self.bases)
         return other
 
     def key(self) -> Tuple:
@@ -261,6 +279,7 @@ class World:
             self.arrived, tuple(self.budget),
             tuple(sorted(self.gens.items())),
             self.diverged, self.faulted,
+            tuple(sorted(self.bases.items())),
         )
 
 
@@ -366,6 +385,8 @@ class Model:
                 if ('rent', op.fence, op.try_no) not in busy:
                     self._rent(w, op, out)
             elif kind is C.LaunchOp:
+                if (op.base_state, op.base_seq) != w.bases.get(op.batch_id):
+                    raise ModelError('the plan sends a box to a base that is not the base of its batch')
                 if ('launch', op.fence) not in busy and op.box_id in w.boxes:
                     w2 = w.clone()
                     if w2.boxes[op.box_id] == 0:
@@ -375,6 +396,8 @@ class Model:
                 if ('poll', op.fence) not in busy:
                     self._poll(w, op, out)
             elif kind is C.SettleOp:
+                if op.base_state != w.bases[op.batch_id][0]:
+                    raise ModelError('the plan judges a batch against a base that is not its own')
                 if ('settle', op.fence) not in busy:
                     self._settle(w, op, out)
             elif kind is C.ApplyOp:
@@ -397,8 +420,7 @@ class Model:
             elif kind is C.PublishOp:
                 if ('publish', op.batch_id) not in busy:
                     w2 = w.clone()
-                    batch = core.done[op.batch_id]
-                    w2.published = w2.published | {(op.batch_id, batch.phase.value)}
+                    w2.published = w2.published | {self._outcome(core.done[op.batch_id])}
                     self._post(w2, C.Published(op.batch_id), 'publish', True, out, local=False)
 
         if not self.mc.coarse:
@@ -478,7 +500,31 @@ class Model:
         if self.mc.coarse:
             for _label, _fair, nxt, recs in out:
                 self._clean_up(nxt, recs)
+        for _label, _fair, nxt, recs in out:
+            for kind, body in recs:
+                if kind == 'box_bound':
+                    nxt.bases.setdefault(body['batch_id'], (body['base_state'], body['base_seq']))
         return [(label, fair, self._settled_world(nxt), recs) for label, fair, nxt, recs in out]
+
+    @staticmethod
+    def _outcome(batch: C.Batch) -> Tuple[str, str]:
+        """What the publish effect writes. The real outcome function is
+        checked here on every terminal batch that the search reaches."""
+        fields = C.outcome_fields(batch)
+        green = batch.decision is not None and batch.decision.verdict == C.VERDICT_GREEN
+        if green:
+            credit: Optional[str] = C.CREDIT_GREEN
+        elif batch.phase is C.Phase.LOST_INFRA:
+            credit = C.CREDIT_LOST_INFRA
+        else:
+            credit = None
+        if (
+            fields['credit'] != credit or fields['payout_list'] != (credit is not None)
+            or fields['applied'] != (batch.phase is C.Phase.APPLIED)
+            or (fields['base_state'], fields['base_seq']) != (batch.base_state, batch.base_seq)
+        ):
+            raise ModelError('the outcome of %s pays or names the wrong thing' % batch.phase.value)
+        return batch.batch_id, batch.phase.value
 
     @staticmethod
     def _open_try(core: C.State, fence: int, try_no: int) -> bool:
@@ -518,7 +564,7 @@ class Model:
                 recs.extend(C.step(cfg, core, C.StagingCleared(batch_id, fence)))
             elif core.unpublished:
                 batch_id = min(core.unpublished)
-                w.published = w.published | {(batch_id, core.done[batch_id].phase.value)}
+                w.published = w.published | {self._outcome(core.done[batch_id])}
                 recs.extend(C.step(cfg, core, C.Published(batch_id)))
             else:
                 orphans = self._orphans(w)
@@ -601,6 +647,8 @@ class Model:
             return
         if op.state_id not in w.canon:
             raise ModelError('the plan applies a state that was never verified')
+        if op.batch_id is not None and w.bases.get(op.batch_id) != (w.chain[-1][2], w.chain[-1][0]):
+            raise ModelError('the plan applies a batch whose base is not the HEAD')
         # Compare-and-swap succeeded: this is the only place the pointer moves.
         w2.pointer = (op.seq, op.link_id, op.state_id)
         w2.chain = w2.chain + ((op.seq, op.batch_id, op.state_id, op.link_id),)
@@ -641,7 +689,9 @@ class Model:
                 return 'an applied state was not trained on the HEAD it replaced'
         limit = self.cfg.max_infra_failures
         fences = []
+        lost = 0
         for batch in list(core.active.values()) + list(core.done.values()):
+            lost += batch.infra_failures
             phase = batch.phase
             decision = batch.decision
             green = decision is not None and decision.verdict == C.VERDICT_GREEN
@@ -673,8 +723,23 @@ class Model:
                 fences.append(batch.lease.fence)
             if phase is C.Phase.CREDITED and not self._beaten(core, batch):
                 return 'CREDITED, but no earlier GREEN took the HEAD after its base'
+            base = w.bases.get(batch.batch_id)
+            mine = None if batch.base_seq is None else (batch.base_state, batch.base_seq)
+            if mine != base:
+                return 'the base of a batch is not the base of its first box'
+            if decision is not None and (decision.base_state, decision.base_seq) != base:
+                return 'a decision was made against a base that is not the base of the batch'
+            if phase in (C.Phase.RUNNING, C.Phase.SETTLING) and base is None:
+                return 'a box runs without a base'
+            waits = phase is C.Phase.QUEUED or phase is C.Phase.LOST_INFRA
+            if batch.attempts != batch.infra_failures + (0 if waits else 1):
+                return 'a batch got a box without an infra loss before it'
         if len(fences) != len(set(fences)) or set(fences) != set(core.by_fence):
             return 'two leases share a fence'
+        # Each infra loss needs its own fault: a box that died, a deadline
+        # that passed, or a bad upload. A HEAD that moves is not one of them.
+        if lost > self.mc.faults - w.budget.total:
+            return 'an attempt ended without a decision, but the world had no fault'
         holding = sum(
             1 for b in core.active.values() if b.phase in (C.Phase.RENTING, C.Phase.RUNNING)
         )
@@ -710,11 +775,21 @@ class Model:
     def check_step(self, w: World, recs: List[C.Record], w2: World) -> Optional[str]:
         before = w.core
         after = w2.core
-        for kind, body in recs:
+        for index, (kind, body) in enumerate(recs):
             if kind == 'lease_issued':
                 queued = [b.seq for b in before.active.values() if b.phase is C.Phase.QUEUED]
                 if before.active[body['batch_id']].seq != min(queued):
                     return 'queue order violated'
+            elif kind == 'box_bound':
+                if index != 0:
+                    raise ModelError('box_bound is not the first record of its step')
+                base = (body['base_state'], body['base_seq'])
+                first = w.bases.get(body['batch_id'])
+                if first is not None:
+                    if base != first:
+                        return 'a later box of a batch got another base (retraining on a new HEAD)'
+                elif base != before.base() or base[1] < len(w.chain) - 1:
+                    return 'the first box of a batch did not get the newest HEAD'
             elif kind == 'decided':
                 fence = body['fence']
                 batch = before.leased(fence)
@@ -750,6 +825,16 @@ class Model:
             other = after.batch(batch_id)
             if other is None or other.seq != batch.seq or other.infra_failures < batch.infra_failures:
                 return 'a batch vanished or lost its queue position'
+            if batch.decision is not None and (
+                other.decision != batch.decision or other.attempts != batch.attempts
+                or other.lease is not None or other.phase is C.Phase.QUEUED
+            ):
+                return 'a decided batch ran again or lost its decision'
+            if other.phase is C.Phase.QUEUED and batch.phase is not C.Phase.QUEUED and (
+                batch.phase not in (C.Phase.RUNNING, C.Phase.SETTLING)
+                or other.infra_failures != batch.infra_failures + 1
+            ):
+                return 'a batch went back to the queue without an infra loss'
         if w2.chain[:len(w.chain)] != w.chain:
             return 'the chain was rewritten'
         if w.diverged and len(w2.chain) != len(w.chain):
