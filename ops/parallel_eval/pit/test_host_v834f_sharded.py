@@ -950,6 +950,159 @@ class TestRealBoxFindings(unittest.TestCase):
         self.assertEqual(held['control-probe'], held['control-stock'])
 
 
+class TestGradientParityWithTheUnshardedTrainer(unittest.TestCase):
+    """The full 8x RTX 5090 run of 2026-11-11 reported a preclip gradient norm 11% above the B300's on the same
+    batch. This is the check of the sharded arithmetic that a CPU can make: the same head, batch and loss through
+
+      reference   the admitted host-v834e files, unsharded: all 9 rollouts in ONE micro-batch
+      w1          host-v834f sharded, 1 rank, ONE rollout in each micro-batch (9 micro-batches)
+      w2, w3      host-v834f sharded, 2 and 3 ranks, 5 micro-batches spread over the ranks, with zero-weight steps
+
+    One rollout is capped, has a negative advantage and 110 tokens, so the derail mask cuts it to 96 tokens: its
+    per-token weight is then above that of every other rollout, as on the real batch. A loss that was normalised
+    for each micro-batch or each rank, or a rank that weighted its tokens in another way, would give another
+    gradient here. The second pair of runs has the loss knobs of a turn on (token-mean aggregation, group-normalised
+    and clipped advantages), which rank 0 sends to the helper ranks with the job.
+
+    Not covered: the CUDA kernels, bf16, and the 9B model. The fixture is fp32 with the stock forward, where a
+    rollout gives the same numbers in every packing. See fixture.py."""
+
+    CAPPED = 110
+    KNOBS = dict(loss_agg='token_mean', adv_center='group_norm', adv_clip=0.5)
+    RUNS = (('reference', 'reference', ()), ('w1', 'sharded', ('--world', '1', '--max-rows', '1')),
+            ('w2', 'sharded', ('--world', '2')), ('w3', 'sharded', ('--world', '3')),
+            ('reference-knobs', 'reference', ('--turn', json.dumps(dict(knobs=KNOBS)))),
+            ('w2-knobs', 'sharded', ('--world', '2', '--turn', json.dumps(dict(knobs=KNOBS)))))
+    SAME = ('tokens', 'loss_tokens', 'derail_index', 'support_outside_tokens', 'stop', 'outcome')
+    CLOSE = ('loss', 'advantage', 'prompt_weight', 'old_logprob_mean', 'support_logq_mean')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp(prefix='v834f-parity-'))
+        cls.addClassCleanup(shutil.rmtree, cls.work, True)
+        proc, _ = run_driver(cls.work, 'prepare')
+        if proc.returncode != 0:
+            raise AssertionError('prepare failed:\n%s' % proc.stderr[-3000:])
+        cls.report, cls.result, cls.gradient = {}, {}, {}
+        for tag, mode, args in cls.RUNS:
+            args = ('--tag', tag, '--capped-tokens', str(cls.CAPPED), '--capture-gradient') + args
+            if mode == 'sharded':
+                args += ('--port', str(free_port()))
+            proc, _ = run_driver(cls.work, mode, *args, env=child_env(PIT_PER_GPU_MEM_GIB='32') if mode == 'sharded' else child_env())
+            if proc.returncode != 0:
+                raise AssertionError('%s failed (rc %s):\n%s\n%s' % (tag, proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:]))
+            cls.report[tag] = json.loads((cls.work / tag / 'report.private.json').read_text())
+            cls.result[tag] = json.loads((cls.work / tag / 'result.json').read_text())
+            cls.gradient[tag] = torch.load(str(cls.work / tag / 'gradient.pt'))
+
+    PAIRS = (('reference', 'w1'), ('reference', 'w2'), ('reference', 'w3'), ('reference-knobs', 'w2-knobs'))
+
+    def rollouts(self, tag):
+        return {(row['task_id'], row['nonce']): row for row in self.report[tag]['trajectories']}
+
+    def update(self, tag):
+        """candidate fp32 master minus head fp32 master, as the run left them in its own store."""
+        fp = self.result[tag]['fp32']
+        store = self.work / tag / 'fp32-master'
+
+        def entry(name):
+            tensors = {}
+            for path in sorted((store / name).glob('*.safetensors')):
+                tensors.update(load_file(str(path)))
+            return tensors
+        head, candidate = entry(fp['input_bf16_sha256']), entry(fp['output_store_entry'])
+        self.assertEqual(list(head), list(candidate))
+        return {name: candidate[name].double() - head[name].double() for name in head}
+
+    @staticmethod
+    def distance(got, want):
+        """(|got - want| / |want|, cosine) over every tensor of `got`; `want` is cut to the rows `got` holds."""
+        want = {name: want[name][:got[name].shape[0]].double() for name in got}
+        got = {name: tensor.double() for name, tensor in got.items()}
+        norm = lambda tensors: float(torch.sqrt(sum(t.pow(2).sum() for t in tensors.values())))
+        dot = float(sum((got[name] * want[name]).sum() for name in got))
+        return norm({name: got[name] - want[name] for name in got}) / norm(want), dot / (norm(got) * norm(want))
+
+    def test_the_runs_pack_the_same_batch_in_different_ways(self):
+        micro = {tag: self.report[tag]['microbatch'] for tag in self.report}
+        self.assertEqual((micro['reference']['engine'], micro['reference']['count']), ('padded', 1))
+        self.assertEqual(self.report['reference']['trained_rollouts'], 9)
+        self.assertEqual((micro['w1']['world'], micro['w1']['count'], micro['w1']['steps']), (1, 9, 9))
+        self.assertEqual((micro['w2']['world'], micro['w2']['count'], micro['w2']['steps']), (2, 5, 3))
+        self.assertEqual((micro['w3']['world'], micro['w3']['count'], micro['w3']['steps']), (3, 5, 2))
+        for tag in ('w2', 'w3'):                                                    # every rank worked; one ran a zero-weight step
+            self.assertTrue(all(load > 0 for load in micro[tag]['rank_tokens']), micro[tag])
+            self.assertEqual(sum(rank['null_steps'] for rank in micro[tag]['ranks']), 1)
+        self.assertEqual(len({self.report[tag]['data_sha256'] for tag in self.report}), 1)
+
+    def test_the_derail_mask_cuts_the_capped_rollout_in_every_run(self):
+        for tag, report in self.report.items():
+            cut = [row for row in report['trajectories'] if row['derail_index'] is not None]
+            self.assertEqual(report['derailed_rollouts'], 1, tag)
+            self.assertEqual([(row['stop'], row['tokens'], row['derail_index'], row['loss_tokens']) for row in cut],
+                             [('max_tokens', self.CAPPED, 31, 96)], tag)                # window 32, tail 64
+            self.assertLess(cut[0]['advantage'], 0.0)
+
+    def test_every_rollout_has_the_numbers_of_the_unsharded_trainer(self):
+        for want_tag, got_tag in self.PAIRS:
+            want, got = self.rollouts(want_tag), self.rollouts(got_tag)
+            self.assertEqual(sorted(got), sorted(want))
+            self.assertEqual(len(want), 9)
+            for key, row in want.items():
+                for field in self.SAME:
+                    self.assertEqual(got[key][field], row[field], (got_tag, field))
+                for field in self.CLOSE:
+                    self.assertAlmostEqual(got[key][field], row[field], delta=1e-6 * max(1.0, abs(row[field])), msg=(got_tag, field))
+            for field in ('loss_tokens', 'trained_tokens', 'sampled_tokens', 'trained_rollouts', 'masked_rollouts'):
+                self.assertEqual(self.report[got_tag][field], self.report[want_tag][field], (got_tag, field))
+
+    def test_one_rollout_in_each_micro_batch_gives_the_gradient_of_one_micro_batch(self):
+        got, want = self.gradient['w1'], self.gradient['reference']
+        self.assertEqual(list(got), list(want))                                     # a one-rank shard is the whole tensor
+        self.assertEqual([tuple(t.shape) for t in got.values()], [tuple(t.shape) for t in want.values()])
+        self.assertEqual(len(want), 56)
+        apart, cosine = self.distance(got, want)
+        self.assertLess(apart, 1e-6)                                                # fp32 summation order: measured 8e-8
+        self.assertGreater(cosine, 1.0 - 1e-12)
+
+    def test_rank_0_holds_its_rows_of_the_sum_over_every_rank(self):
+        """In a world of W ranks rank 0 keeps the first 1/W of the rows of every tensor of the reduced gradient.
+        The micro-batches of the other ranks are in those rows too: the reduction sums over the ranks first."""
+        for want_tag, got_tag, world in (('reference', 'w2', 2), ('reference', 'w3', 3), ('reference-knobs', 'w2-knobs', 2)):
+            got, want = self.gradient[got_tag], self.gradient[want_tag]
+            self.assertEqual(list(got), list(want))
+            for name, shard in got.items():
+                self.assertEqual(tuple(shard.shape), (min(-(-want[name].shape[0] // world), want[name].shape[0]),) + tuple(want[name].shape[1:]), name)
+            apart, cosine = self.distance(got, want)
+            self.assertLess(apart, 1e-6, got_tag)
+            self.assertGreater(cosine, 1.0 - 1e-12, got_tag)
+
+    def test_norm_loss_and_update_of_every_packing(self):
+        for want_tag, got_tag in self.PAIRS:
+            want, got = self.report[want_tag], self.report[got_tag]
+            self.assertAlmostEqual(got['preclip_gradient_norm'], want['preclip_gradient_norm'],
+                                   delta=1e-6 * want['preclip_gradient_norm'], msg=got_tag)
+            self.assertAlmostEqual(got['objective_loss'], want['objective_loss'], delta=1e-6 * abs(want['objective_loss']), msg=got_tag)
+            # the step of every rank's rows: fp32 master of the candidate minus fp32 master of the head
+            apart, cosine = self.distance(self.update(got_tag), self.update(want_tag))
+            self.assertLess(apart, 1e-3, got_tag)                                   # measured 2e-6 .. 3e-5
+            self.assertGreater(cosine, 1.0 - 1e-6, got_tag)
+
+    def test_the_loss_knobs_of_the_turn_reach_every_rank(self):
+        want, got = self.report['reference-knobs'], self.report['w2-knobs']
+        for report in (want, got):
+            self.assertEqual(report['train_params']['knobs_applied'], dict(step=False, loss=True))
+            self.assertEqual({k: report['train_params']['knobs'][k] for k in self.KNOBS}, self.KNOBS)
+            self.assertLessEqual(max(abs(row['advantage']) for row in report['trajectories']), 0.5)
+        self.assertEqual(self.report['w2']['train_params']['knobs_applied'], dict(step=False, loss=False))
+        self.assertGreater(max(abs(row['advantage']) for row in self.report['w2']['trajectories']), 0.5)
+        # the knobs change the gradient by more than half of its size; the two knob runs agree as closely as the others
+        apart, _ = self.distance(self.gradient['reference-knobs'], self.gradient['reference'])
+        self.assertGreater(apart, 0.5)
+        apart, _ = self.distance(self.gradient['w2-knobs'], self.gradient['w2'])
+        self.assertGreater(apart, 0.5)
+
+
 class TestShardedFailures(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

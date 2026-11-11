@@ -27,6 +27,16 @@ only show on a real GPU as an out-of-memory error: does a full-size original Par
 that replaced it, does backward keep the recomputed logits of the head chunks, and does the zero-weight probe step
 run the backward of the real loss. --logit-chunk lowers rank 0's head chunk so that one micro-batch has several.
 
+Options for the gradient comparison of the sharded update with the unsharded one:
+  --capped-tokens N   the capped rollout of the batch gets N tokens, so that the derail mask cuts it
+  --max-rows N        sharded: at most N rollouts in one micro-batch (dp_max_rows of the fixture's signed engine)
+  --turn JSON         the `train` block of the dispatch (lr, step_mult, knobs), read by the launcher's own
+                      ff_trainer.train_params as the installed prepare_signed_dispatch reads it
+  --capture-gradient  keep the accumulated fp32 gradient as it is before the clip, in <run>/gradient.pt. The
+                      unsharded run keeps the whole gradient, a sharded run keeps what rank 0 holds: its dim-0
+                      shard of the sum over every rank (the whole tensor in a one-rank world).
+Every run also writes the update report as train_pit.py writes it: <run>/report.private.json.
+
 Every run has its own fp32 master store, <work>/<run>/fp32-master, so an entry there was written by that run.
 The launcher splits a master into files of 4 GiB; the tiny master is 142 kB, so the harness lowers that one
 constant (FP32_SHARD_BYTES) to make the same code write several files.
@@ -36,7 +46,6 @@ a stand-in. The result is written to <work>/<mode>/result.json.
 """
 import argparse
 import collections
-import dataclasses
 import gc
 import inspect
 import json
@@ -183,6 +192,47 @@ def head_control(z3, B, stock, seen, items, support):
         gradients_equal=list(want_g) == list(got_g) and all(torch.equal(want_g[n], got_g[n]) for n in want_g))
 
 
+def capture_unsharded_gradient(accumulator, path):
+    """Pass-through on the engine's accumulator: save the fp32 gradient the unsharded update hands to the clip."""
+    import torch      # after install(), as everywhere in this file
+    real = accumulator.clip
+
+    def clip(self, maximum):
+        torch.save({name: buffer.detach().clone() for name, buffer in self.buffers.items()}, str(path))
+        return real(self, maximum)
+    accumulator.clip = clip
+
+
+def capture_sharded_gradient(z3):
+    """Pass-through on rank 0's Actor.shard_grad. -> {name: the first shard read after the gradient steps}.
+    The probe step reads shards too, with `accumulate` off: those reads are not kept."""
+    seen, real = {}, z3.Actor.shard_grad
+
+    def shard_grad(self, name, params=None):
+        shard = real(self, name, params)
+        if self.accumulate and name not in seen:
+            seen[name] = shard.detach().to('cpu', copy=True)
+        return shard
+    z3.Actor.shard_grad = shard_grad
+    return seen
+
+
+def unsharded_engine(update, e):
+    """The unsharded reference runs under the admitted launcher's own turn wrappers (train_update_v833j ->
+    train_update_v833i): they apply the `train` block of the dispatch and force KL off. Under them the launcher
+    holds the v8.3 DP engine, which needs CUDA and a DP world. Its closure cell gets the update the wrappers name
+    `_original` instead: v8211_batched.train_update_batched of the same host files, on the padded engine."""
+    def cell(function, name):
+        return function.__closure__[function.__code__.co_freevars.index(name)]
+    original = update._original
+
+    def padded(runtime, optimizer, groups, binding, *, config, **kwargs):
+        kwargs.update(engine='padded', token_budget=e['token_budget'], max_rows=e['max_rows'])
+        return original(runtime, optimizer, groups, binding, config=config, **kwargs)
+    padded._original = original
+    cell(cell(update, 'train_update_v833i').cell_contents, 'dp_update').cell_contents = padded
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--work', required=True)
@@ -198,6 +248,10 @@ def main(argv=None):
                          'first-over = over the limit until its layer inputs are on the host; always-over = always')
     ap.add_argument('--observe', action='store_true', help='sharded: record what rank 0 keeps alive (see observe())')
     ap.add_argument('--logit-chunk', type=int, default=None, help='sharded: head tokens per lm_head call on rank 0')
+    ap.add_argument('--capped-tokens', type=int, default=None, help='tokens of the capped rollout (fixture.free_groups)')
+    ap.add_argument('--max-rows', type=int, default=None, help='sharded: rollouts per micro-batch (signed dp_max_rows)')
+    ap.add_argument('--turn', default=None, help='JSON `train` block of the dispatch: lr, step_mult, knobs')
+    ap.add_argument('--capture-gradient', action='store_true', help='keep the fp32 gradient before the clip (gradient.pt)')
     a = ap.parse_args(argv)
     if a.observe and (a.mode != 'sharded' or a.world != 1):
         ap.error('--observe runs its control forward on rank 0 alone: it needs --mode sharded --world 1')
@@ -227,6 +281,8 @@ def main(argv=None):
     meta = json.loads((work / 'head.json').read_text())
     descriptor, spec = meta['descriptor'], meta['spec']
     engine = dict(fixture.ENGINE_BLOCK, dp_world=a.world, dp_port=a.port)
+    if a.max_rows:
+        engine['dp_max_rows'] = a.max_rows
     cfg = host.checked(fixture.signed_config(host, hostdir, src, engine, TEST_SEED))
     result = dict(mode=a.mode, host_files=sorted(host.HOST_FILES), launcher=str(Path(host.__file__).resolve()))
     if a.mode in ('fp32-load', 'bf16-master'):
@@ -280,10 +336,23 @@ def main(argv=None):
     host._fp32_save(opt, bf, dict(version=host.FP32_VERSION, bf16_sha256=bf, master_digest=dig, tensor_sha256=per), (bf,), events.append)
     os.environ['AFFINE_FP32_EXPECTED_MASTER_HASH'] = dig
     ff = sys.modules['ff_trainer']
-    groups = fixture.free_groups(ff)
+    groups = fixture.free_groups(ff, capped_tokens=a.capped_tokens)
     binding = InputBinding('fixture-run', 'fixture-epoch', descriptor['id'], '0' * 64, step)
     B = sys.modules['v824_batched']
     e = cfg['engine']
+    if a.turn:
+        given = json.loads(a.turn)
+        defaults = dict(lr=e['sgd_lr'], kl=float(config.kl_coefficient))
+        knobs = dict(ff.KNOB_DEFAULTS, **given.get('knobs', {}))
+        train = dict(defaults, **{k: v for k, v in given.items() if k != 'knobs'})
+        train.update(knobs=knobs, defaults=defaults, given=sorted(set(given) - {'knobs'} | set(given.get('knobs', {}))))
+        host.TURN_PARAMS['params'] = ff.train_params(dict(train=train), binding)
+    captured = None
+    if a.capture_gradient:
+        if sharded:
+            captured = capture_sharded_gradient(z3)
+        else:
+            capture_unsharded_gradient(FP32Accumulator, out / 'gradient.pt')
     records = []
     calls = dict(n=0, failed=False)
     stores_seen = set()
@@ -320,15 +389,16 @@ def main(argv=None):
             if a.fake_peak:
                 z3._measured_peak = measured          # the same world, now without the stand-in measurement
             report = B.train_update_batched(runtime, opt, groups, binding, **kwargs)
-    else:   # the unsharded update: KL forced off as the host does, original engine, the host's CPUAdamW.step
-        cfg0 = dataclasses.replace(config, kl_coefficient=0., kl_reference_checkpoint='').validate()
-        opt.config = cfg0
+    else:   # the unsharded update: the launcher's turn wrappers, original engine, the host's CPUAdamW.step
         # install() put the CUDA-only packed forward on v824_batched; the padded forward is the same file's own function
         B.batched_log_probs = fixture.load_module('v8211_stock', hostdir / 'v8211_batched.py').batched_log_probs
-        report = B.train_update_batched._original(runtime, opt, groups, binding, config=cfg0, reference_runtime=None,
-                                                  engine='padded', token_budget=e['token_budget'], max_rows=e['max_rows'],
-                                                  guard=guard, record=records.append)
+        unsharded_engine(B.train_update_batched, e)
+        report = B.train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=None,
+                                        guard=guard, record=records.append)
     result['update_seconds'] = time.monotonic() - t0
+    (out / 'report.private.json').write_text(json.dumps(report, default=str))      # as train_pit.py writes it
+    if captured is not None:
+        torch.save(captured, str(out / 'gradient.pt'))
     off = sys.modules['v8210_optimizer_offpath']
     staged = off.stage_for_publication_model_only(runtime, opt, report, str(out / 'staged'), workers=e['stage_workers'])
     staged = staged[0] if isinstance(staged, tuple) else staged
