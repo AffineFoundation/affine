@@ -23,7 +23,9 @@ from . import journal as J
 from .guard import GuardedStore, StateRoot, parse_box_name, shadow_prefix
 from .interfaces import JudgeNotReady
 from .sim import ControllerStore, Harness, MemOps, Scenario
+from ... import pit as PIT
 from .. import PRICE_CEILING_USD_H
+from ..gpu_policy import effective_gpu_order
 from ..shadow import ShadowWriteError
 
 RUN = 'run0001'
@@ -131,6 +133,31 @@ def test_default_ladder_is_small_gpu_first_and_secure_before_spot():
     # Both are accepted settings.
     for ladder in (full, secure_first):
         config(core=C.CoreConfig(2, 2, ladder), allow_sharded_gpus=True)
+
+
+def test_a_shadow_run_can_name_its_own_gpu_list_and_the_live_default_stays():
+    ladder = K.ladder_for('lium', ('RTX5090',))
+    assert [(r.provider, r.gpu, r.tier) for r in ladder] == [('lium', 'RTX5090', 'secure'), ('lium', 'RTX5090', 'spot')]
+    assert [(r.gpu, r.tier) for r in K.ladder_for('lium', ('RTX5090', 'B300'), secure_first=True)] == [
+        ('RTX5090', 'secure'), ('B300', 'secure'), ('RTX5090', 'spot'), ('B300', 'spot')]
+    cfg = config(core=C.CoreConfig(2, 2, ladder), gpu_allow_list=('RTX5090',))
+    # The gate of the live lane is not opened by the list, and its default is not changed.
+    assert cfg.allow_sharded_gpus is False and PIT.ALLOW_SHARDED_GPUS_DEFAULT is False
+    assert 'RTX5090' not in effective_gpu_order() and K.default_ladder('lium') == K.ladder_for('lium', ('B300',))
+    # Without a list the gate still decides.
+    with pytest.raises(ValueError, match='gate'):
+        config(core=C.CoreConfig(2, 2, ladder))
+    with pytest.raises(ValueError, match='promotion gate'):
+        config(core=C.CoreConfig(2, 2, K.ladder_for('lium', ('B300', 'RTX5090'))))
+    # A class that is not in the list is not rented, and the list holds allowed classes only.
+    with pytest.raises(ValueError, match='not in gpu_allow_list'):
+        config(core=C.CoreConfig(2, 2, K.ladder_for('lium', ('RTX5090', 'B300'))), gpu_allow_list=('RTX5090',))
+    for bad in ((), ('RTX4090',), ('RTX5090', 'A100')):
+        with pytest.raises(ValueError, match='gpu_allow_list'):
+            config(core=C.CoreConfig(2, 2, ladder), gpu_allow_list=bad)
+    for bad in ((), ('RTX4090',), ('RTX5090', 'RTX5090')):
+        with pytest.raises(ValueError, match='gpus must be'):
+            K.ladder_for('lium', bad)
 
 
 def test_default_ladder_respects_the_promotion_gate():

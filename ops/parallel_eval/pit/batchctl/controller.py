@@ -26,7 +26,7 @@ import os
 import queue
 import threading
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from . import MODE_SHADOW, VERSION
 from . import core as C
@@ -74,6 +74,17 @@ def default_ladder(
     return tuple(C.Rung(provider, gpu, tier) for gpu in order for tier in LADDER_TIERS)
 
 
+def ladder_for(provider: str, gpus: Sequence[str], *, secure_first: bool = False) -> Tuple[C.Rung, ...]:
+    """The rental ladder of an explicit GPU list, in the order of the list;
+    secure before spot. For a run that sets ``Config.gpu_allow_list``."""
+    order = tuple(gpus)
+    if not order or len(set(order)) != len(order) or any(gpu not in ALLOWED_GPUS for gpu in order):
+        raise ValueError('gpus must be different GPU classes of the allowed set')
+    if secure_first:
+        return tuple(C.Rung(provider, gpu, tier) for tier in LADDER_TIERS for gpu in order)
+    return tuple(C.Rung(provider, gpu, tier) for gpu in order for tier in LADDER_TIERS)
+
+
 @dataclass(frozen=True)
 class Config:
     run_id: str
@@ -81,6 +92,11 @@ class Config:
     core: C.CoreConfig
     mode: str = MODE_SHADOW
     allow_sharded_gpus: bool = ALLOW_SHARDED_GPUS_DEFAULT
+    # The GPU classes that this run may rent, as an explicit list. None: the
+    # promotion gate of the PIT package decides (``allow_sharded_gpus``), as
+    # on the live lane. A list is a setting of this one shadow run. The live
+    # default is not read and not changed by it.
+    gpu_allow_list: Optional[Tuple[str, ...]] = None
     gpu_count: int = REQUIRED_GPU_COUNT
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
     # Rental.
@@ -122,7 +138,13 @@ class Config:
                 raise ValueError('ladder has a GPU class that is not allowed: %r' % (rung.gpu,))
             if rung.gpu not in gpus:
                 gpus.append(rung.gpu)
-        if effective_gpu_order(gpus, allow_sharded_gpus=self.allow_sharded_gpus) != tuple(gpus):
+        if self.gpu_allow_list is not None:
+            allowed = tuple(self.gpu_allow_list)
+            if not allowed or any(gpu not in ALLOWED_GPUS for gpu in allowed):
+                raise ValueError('gpu_allow_list has a GPU class that is not allowed')
+            if any(gpu not in allowed for gpu in gpus):
+                raise ValueError('ladder has a GPU class that is not in gpu_allow_list')
+        elif effective_gpu_order(gpus, allow_sharded_gpus=self.allow_sharded_gpus) != tuple(gpus):
             raise ValueError('ladder has a GPU class that the promotion gate blocks')
         if not 0 < self.price_ceiling_usd_h <= PRICE_CEILING_USD_H:
             raise ValueError('price ceiling must be above zero and not above the policy ceiling')
