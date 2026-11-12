@@ -11,7 +11,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from .. import ALLOW_SHARDED_GPUS_DEFAULT
+from .. import ALLOW_SHARDED_GPUS_DEFAULT, PRICE_CEILING_USD_H
 from ..shadow import ShadowWriteError
 from . import MODE_SHADOW
 from . import hostlink
@@ -65,14 +65,28 @@ def test_the_default_run_is_shadow_on_rtx5090_with_at_most_eight_boxes(tmp_path)
         ('lium', 'RTX5090', 'secure'), ('lium', 'RTX5090', 'spot')]
     assert config.core.max_boxes == lium.max_boxes == 8 and lium.gpu_count == config.gpu_count == 8
     assert lium.min_ram_gb == 300.0 and lium.gpus == ('RTX5090',) and lium.run_id == RUN
-    # The gate of the live lane stays closed.
-    assert config.allow_sharded_gpus is False and ALLOW_SHARDED_GPUS_DEFAULT is False
-    assert S.plan(config, lium)['r2_prefix'] == shadow_prefix(RUN)
+    # A 5090 run opens the sharded gate for itself. The default that the live lane reads stays closed.
+    assert config.allow_sharded_gpus is True and ALLOW_SHARDED_GPUS_DEFAULT is False
+    assert config.lease_ttl_s == 6 * 3600.0 and config.box_ttl_s == 8 * 3600.0
+    assert config.price_ceiling_usd_h == PRICE_CEILING_USD_H == 56.0
+    assert set(lium.never_names) >= {
+        'brave-shark-ec', 'noble-wolf-26', 'calm-matrix-56', 'noble-fox-5c', 'gentle-wolf-f6', 'noble-shark-d6'}
+    assert S.plan(config, lium)['r2_prefix'] == shadow_prefix(RUN) == 'pit-shadow/batchctl/%s/' % RUN
+
+
+def test_the_options_of_a_run(tmp_path):
+    config, lium = S.settings(args(
+        tmp_path, 'check', '--gpus', 'B300', '--price-ceiling-usd-h', '20', '--never-name', 'my-node-01',
+        '--lease-hours', '5', '--box-hours', '7'))
+    # A run without a sharded class leaves the gate closed.
+    assert config.allow_sharded_gpus is False and config.gpu_allow_list == ('B300',)
+    assert config.price_ceiling_usd_h == 20.0 and (config.lease_ttl_s, config.box_ttl_s) == (5 * 3600.0, 7 * 3600.0)
+    assert lium.never_names[-1] == 'my-node-01' and 'noble-fox-5c' in lium.never_names
 
 
 @pytest.mark.parametrize('more', [
     ('--max-boxes', '9'), ('--max-boxes', '0'), ('--gpus', 'RTX4090'), ('--gpus', ''), ('--gpus', 'RTX5090,RTX5090'),
-    ('--box-hours', '1'),
+    ('--box-hours', '1'), ('--price-ceiling-usd-h', '56.01'), ('--price-ceiling-usd-h', '0'),
 ])
 def test_bad_settings_are_refused(tmp_path, more):
     with pytest.raises(ValueError):
@@ -83,7 +97,8 @@ def test_there_is_no_mode_but_shadow():
     assert set(S.options(['check', '--run-id', RUN, '--state-root', 'x', '--bucket-config', 'y',
                           '--genesis-state', GENESIS]).__dict__) == {
         'command', 'run_id', 'state_root', 'bucket_config', 'genesis_state', 'gpus', 'max_boxes',
-        'max_infra_failures', 'max_cost_usd', 'lease_hours', 'box_hours', 'survey'}
+        'max_infra_failures', 'max_cost_usd', 'price_ceiling_usd_h', 'never_name', 'lease_hours', 'box_hours',
+        'survey'}
     with pytest.raises(SystemExit):
         S.options(['live', '--run-id', RUN, '--state-root', 'x', '--bucket-config', 'y', '--genesis-state', GENESIS])
 

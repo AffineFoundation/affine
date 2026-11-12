@@ -20,6 +20,9 @@ from .guard import (
     own_prefix, parse_box_name, shadow_prefix,
 )
 from ..shadow import ShadowWriteError
+from ..shadow_guard import R2_PREFIX as PIT_SHADOW_PREFIX
+from ..shadow_guard import ShadowGuard
+from ..shadow_guard import ShadowWriteError as PitShadowWriteError
 
 RUN = 'run0001'
 PREFIX = R2_SHADOW_ROOT + RUN + '/'
@@ -187,6 +190,15 @@ def test_bad_run_id_is_refused(run_id):
     for call in (lambda: shadow_prefix(run_id), lambda: own_prefix(run_id), lambda: GuardedStore(Recorder(), run_id)):
         with pytest.raises(ShadowWriteError):
             call()
+
+
+def test_the_prefix_of_a_run_is_inside_the_one_shadow_prefix_of_the_pit_package():
+    assert R2_SHADOW_ROOT == 'pit-shadow/batchctl/' and R2_SHADOW_ROOT.startswith(PIT_SHADOW_PREFIX)
+    assert shadow_prefix(RUN) == 'pit-shadow/batchctl/%s/' % RUN
+    guard = ShadowGuard(state_root=Path('/nonexistent-batchctl-root'))
+    guard.check_s3('PutObject', {'Bucket': 'b', 'Key': shadow_prefix(RUN) + 'HEAD.json'})
+    with pytest.raises(PitShadowWriteError):
+        guard.check_s3('PutObject', {'Bucket': 'b', 'Key': 'shadow/batchctl/%s/HEAD.json' % RUN})
 
 
 def test_a_prefix_that_is_not_a_shadow_prefix_is_refused():

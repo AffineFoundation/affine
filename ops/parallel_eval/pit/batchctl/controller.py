@@ -104,7 +104,7 @@ class Config:
     rent_backoff_s: float = 120.0
     box_ttl_s: float = 8 * 3600.0
     # Lease of a running box.
-    lease_ttl_s: float = 4 * 3600.0
+    lease_ttl_s: float = 6 * 3600.0
     heartbeat_grace_s: float = 1200.0
     heartbeat_every_s: float = 60.0
     renew_every_s: float = 300.0

@@ -134,6 +134,19 @@ def test_an_offer_that_must_not_be_touched_has_a_reason(row, reason):
     assert p.choose([row], gpu='RTX5090', tier='secure', max_price_usd_h=56.0) == []
 
 
+@pytest.mark.parametrize('word', [
+    'brave-shark-ec', 'noble-wolf-26', 'calm-matrix-56', 'noble-fox-5c', 'gentle-wolf-f6', 'noble-shark-d6',
+])
+def test_the_machines_of_other_work_are_never_rented_and_never_removed_by_default(word):
+    assert word in L.NEVER_NAMES_DEFAULT and L.LiumConfig(run_id=RUN, gpus=('RTX5090',)).never_names == L.NEVER_NAMES_DEFAULT
+    world = FakeLium().add(offer(word, price=1.0), offer('node-b', price=5.0))
+    p = provider(world)
+    assert p.why_not(offer(word), gpu='RTX5090', tier='secure', max_price_usd_h=56.0) == 'never_list'
+    assert p.why_not(offer('node-a', name=word), gpu='RTX5090', tier='secure', max_price_usd_h=56.0) == 'never_list'
+    # The cheaper node is protected: the rental takes the other one.
+    assert world.pods[rent(p).box_id]['huid'] == 'node-b'
+
+
 def test_ram_of_exactly_the_minimum_is_enough_and_the_highest_price_at_the_ceiling_too():
     world = FakeLium().add(offer('node-a', ram=300, price=7.0))
     assert rent(provider(world)).price_usd_h == 56.0

@@ -66,6 +66,11 @@ PRICE_KEYS = ('price_per_hour', 'price_h', 'price_usd_h')
 _SSH_PORT = re.compile(r'-p\s*(\d{1,5})\b')
 _CONFIG_COUNT = re.compile(r'\s*(\d{1,3})\s*[xX\u00d7]')
 _SSH_HOST = re.compile(r'root@([A-Za-z0-9.\-:]+)')
+# Machines of other work. A node or a pod whose name or node id holds one of
+# these words is never rented and never removed, whatever else is true of it.
+NEVER_NAMES_DEFAULT: Tuple[str, ...] = (
+    'brave-shark-ec', 'noble-wolf-26', 'calm-matrix-56', 'noble-fox-5c', 'gentle-wolf-f6', 'noble-shark-d6',
+)
 
 
 @dataclass(frozen=True)
@@ -78,7 +83,7 @@ class LiumConfig:
     min_disk_gb: float = 0.0
     min_download_mbps: float = 0.0
     ram_fields: Tuple[Tuple[str, float], ...] = RAM_FIELDS
-    never_names: Tuple[str, ...] = ()
+    never_names: Tuple[str, ...] = NEVER_NAMES_DEFAULT
     up_flags: Tuple[str, ...] = ('--verify-gpus', '--strict-gpus', '--no-volume-encryption', '--no-backup')
     nodes_per_rent: int = 1
     ls_timeout_s: float = 120.0
@@ -488,6 +493,6 @@ class LiumProvider:
 
 
 __all__ = [
-    'Cli', 'LiumConfig', 'LiumProvider', 'PROVIDER_NAME', 'RAM_FIELDS', 'TIERS',
+    'Cli', 'LiumConfig', 'LiumProvider', 'NEVER_NAMES_DEFAULT', 'PROVIDER_NAME', 'RAM_FIELDS', 'TIERS',
     'gpu_class', 'offer_price_usd_h', 'pod_price_usd_h', 'ram_gb', 'ssh_target',
 ]

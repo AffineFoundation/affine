@@ -40,9 +40,10 @@ from . import hostlink
 from .controller import Config, Controller, ladder_for
 from .guard import MARKER, StateRoot, check_outside_live, shadow_prefix
 from .interfaces import BatchRef, BoxError, JobSpec, JudgeNotReady
-from .lium import PROVIDER_NAME, LiumConfig, LiumProvider
+from .lium import NEVER_NAMES_DEFAULT, PROVIDER_NAME, LiumConfig, LiumProvider
 from .r2 import R2Store, client_from_bucket_config
 from .timers import SystemClock
+from .. import PRICE_CEILING_USD_H, SHARDED_GPUS
 
 # At most this many boxes at one time, whatever the options say.
 MAX_SHADOW_BOXES = 8
@@ -91,8 +92,12 @@ def options(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument('--max-boxes', type=int, default=MAX_SHADOW_BOXES)
     parser.add_argument('--max-infra-failures', type=int, default=3, help='lost boxes of one batch before it is given up')
     parser.add_argument('--max-cost-usd', type=float, default=None, help='stop new rentals above this cost')
-    parser.add_argument('--lease-hours', type=float, default=8.0, help='longest time of one job on a box')
-    parser.add_argument('--box-hours', type=float, default=10.0, help='lifetime that a rental gets')
+    parser.add_argument('--price-ceiling-usd-h', type=float, default=PRICE_CEILING_USD_H,
+                        help='highest price of one box per hour; never above the ceiling of the PIT policy')
+    parser.add_argument('--never-name', action='append', default=[],
+                        help='one more word of a node or pod that is never rented and never removed')
+    parser.add_argument('--lease-hours', type=float, default=6.0, help='longest time of one job on a box')
+    parser.add_argument('--box-hours', type=float, default=8.0, help='lifetime that a rental gets')
     parser.add_argument('--survey', action='store_true', help='check: also list the offers of each rung')
     return parser.parse_args(argv)
 
@@ -106,10 +111,15 @@ def settings(args: argparse.Namespace) -> Tuple[Config, LiumConfig]:
     )
     config = Config(
         run_id=args.run_id, genesis_state=args.genesis_state, core=core, mode=MODE_SHADOW, gpu_allow_list=gpus,
+        # A run that names a sharded class (RTX 5090, H100) opens the gate for itself.
+        # The default of the PIT package, which the live lane reads, stays closed.
+        allow_sharded_gpus=any(gpu in SHARDED_GPUS for gpu in gpus),
+        price_ceiling_usd_h=args.price_ceiling_usd_h,
         lease_ttl_s=args.lease_hours * 3600.0, box_ttl_s=args.box_hours * 3600.0, max_cost_usd=args.max_cost_usd,
     )
+    never = NEVER_NAMES_DEFAULT + tuple(word for word in args.never_name if word not in NEVER_NAMES_DEFAULT)
     lium = LiumConfig(run_id=args.run_id, gpus=gpus, max_boxes=args.max_boxes, gpu_count=config.gpu_count,
-                      min_ram_gb=MIN_RAM_GB)
+                      min_ram_gb=MIN_RAM_GB, never_names=never)
     return config, lium
 
 
@@ -139,7 +149,8 @@ def plan(config: Config, lium: LiumConfig) -> Dict[str, Any]:
         'mode': config.mode, 'run_id': config.run_id, 'r2_prefix': shadow_prefix(config.run_id),
         'genesis_state': config.genesis_state,
         'ladder': [[rung.provider, rung.gpu, rung.tier] for rung in config.core.ladder],
-        'gpu_allow_list': list(config.gpu_allow_list or ()), 'gpu_count': config.gpu_count,
+        'gpu_allow_list': list(config.gpu_allow_list or ()), 'allow_sharded_gpus': config.allow_sharded_gpus,
+        'gpu_count': config.gpu_count, 'never_names': list(lium.never_names),
         'max_boxes': config.core.max_boxes, 'min_ram_gb': lium.min_ram_gb,
         'price_ceiling_usd_h': config.price_ceiling_usd_h, 'max_cost_usd': config.max_cost_usd,
         'max_infra_failures': config.core.max_infra_failures,
