@@ -294,8 +294,10 @@ def put(P: Any, dest: str, data: bytes, mode: str = '644') -> None:
     if len(data) > 8 * 1024 * 1024:
         raise BoxIOError('refuse large put over ssh stdin (%d bytes); use put_tar/scp' % len(data))
     parent = str(Path(dest).parent)
+    # The temp name has the pid of the box shell in it: two starters that put the same file at one time
+    # do not write one temp file, and no mv fails because the other mv took the file.
     P.run(
-        "mkdir -p %s && cat > %s.tmp && chmod %s %s.tmp && mv %s.tmp %s" % (
+        "mkdir -p %s && cat > %s.tmp.$$ && chmod %s %s.tmp.$$ && mv %s.tmp.$$ %s" % (
             parent, dest, mode, dest, dest, dest,
         ),
         inp=bytes(data),
@@ -1894,6 +1896,8 @@ class HostBoxIO:
                 )
             except BoxJobError as exc:
                 raise BoxIOError('box train stage: %s' % exc) from exc
+            # 'adopted': a trainer of a different starter was alive (BUSY) or done. This call started nothing.
+            info['train-start'] = 'started' if ('train', 'started') in ctrl.starts else 'adopted'
 
         if not train_marker.get('ok') and not train_marker.get('checkpoint'):
             # Marker without checkpoint — fail closed (box wrote a failed marker).
