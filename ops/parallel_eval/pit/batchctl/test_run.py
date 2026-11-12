@@ -219,11 +219,19 @@ def test_a_shadow_command_enters_the_shadow_guard_before_any_work(host: Host, mo
     monkeypatch.setattr(tempfile, 'tempdir', str(scratch))
     assert shadow_guard.active() is None
     # No first state: the command stops. The guard is on all the same.
-    assert R.main(host.argv('check'), host.env()) == 2
+    env = host.env()
+    assert R.main(host.argv('check'), env) == 2
     assert 'no first state' in last_line(capsys)['error']
     guard = shadow_guard.active()
     assert guard is not None and guard.state_root == host.shadow.resolve() and guard.r2_prefixes == ('pit-shadow/',)
     assert R.run_prefix(RUN, MODE_SHADOW).startswith(guard.r2_prefixes)
+    # The box pipeline of this process writes R2 under the prefix of the run, and files under the shadow root.
+    own = R.run_prefix(RUN, MODE_SHADOW)
+    assert env['PIT_R2_OUTPUT_PREFIX'] == own
+    assert {env[name] for name in ('PIT_R2_PENDING_PREFIX', 'PIT_R2_FP32_PREFIX', 'PIT_R2_CKPT_PREFIX')} == {
+        own + 'pending', own + 'fp32-master', own + 'ckpts'}
+    for name in ('PIT_STATE', 'PIT_UPLOAD_ROOT', 'PIT_FP32_PENDING_INDEX'):
+        assert Path(env[name]).resolve().is_relative_to(host.shadow.resolve())
     # A file outside the shadow state root, and an R2 key outside the shadow prefix: both are refused.
     with pytest.raises(ShadowWriteError):
         (host.life / 'CURRENT.json').write_text('{}')

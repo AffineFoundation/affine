@@ -626,7 +626,9 @@ def enter_mode(args: argparse.Namespace, env: Optional[MutableMapping[str, str]]
         return
     # The ssh helper of the live lane keeps the host keys of the rented boxes there. Not a live root.
     known_hosts = Path.home() / '.lium' / 'known_hosts'
-    shadow_guard.enter_shadow(env, scratch=(tempfile.gettempdir(), str(known_hosts)))
+    # The R2 output prefix of the box pipeline in this process is the prefix of the run.
+    shadow_guard.enter_shadow(env, scratch=(tempfile.gettempdir(), str(known_hosts)),
+                              r2_prefix=run_prefix(args.run_id, MODE_SHADOW))
 
 
 # What stops a command before it starts work. Each one is reported in one line, with exit code 2.
