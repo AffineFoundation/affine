@@ -12,16 +12,19 @@ transport: one PUT for each file, and the host hashes what it reads back.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
 
 from ops.parallel_eval.live import pe_r2_multipart as R2MP
 
@@ -29,6 +32,16 @@ BOX_TOOL = Path(__file__).with_name('pe_r2_box_upload.py')
 BOX_UPLOAD_TIMEOUT_S = 7200
 # Fields of one file that the parallel upload records for the R2 copy and its check at APPLY.
 TRANSFER_FIELDS = ('etag', 'part_bytes', 'multipart', 'parts')
+# The output prefix says where one run writes in R2. Each write prefix of the pipeline has an environment
+# variable of its own. With an output prefix, it is the directory of this table under that prefix.
+OUTPUT_PREFIX_ENV = 'PIT_R2_OUTPUT_PREFIX'
+OUTPUT_PARTS = {
+    'PIT_R2_PENDING_PREFIX': 'pending',
+    'PIT_R2_FP32_PREFIX': 'fp32-master',
+    'PIT_R2_CKPT_PREFIX': 'ckpts',
+}
+_PREFIX_PART = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+_OUTPUT_PREFIX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('pit_r2_output_prefix', default=None)
 
 
 class ArtifactUploadError(RuntimeError):
@@ -36,6 +49,56 @@ class ArtifactUploadError(RuntimeError):
 
 
 EARLY_UPLOAD_RETRIES = 3
+
+
+def clean_output_prefix(prefix: Any) -> str:
+    """``prefix`` as the start of object keys, with one ``/`` at its end (``pit-shadow/batchctl/<run id>/``).
+
+    Each part starts with a letter or a digit and has letters, digits, ``.``, ``_`` and ``-`` only. Any other
+    prefix is refused: no key may leave the place that the caller named.
+    """
+    parts = prefix.rstrip('/').split('/') if isinstance(prefix, str) else []
+    if not parts or any(_PREFIX_PART.fullmatch(part) is None or '..' in part for part in parts):
+        raise ArtifactUploadError('R2 output prefix %r is not a plain key prefix' % (prefix,))
+    return '/'.join(parts) + '/'
+
+
+def output_prefix_env(prefix: Any) -> Dict[str, str]:
+    """The environment of a process that writes each R2 object under ``prefix``: the output prefix itself and
+    the three write prefixes ``<prefix>pending``, ``<prefix>fp32-master`` and ``<prefix>ckpts``."""
+    base = clean_output_prefix(prefix)
+    env = {OUTPUT_PREFIX_ENV: base}
+    env.update({name: base + part for name, part in OUTPUT_PARTS.items()})
+    return env
+
+
+@contextlib.contextmanager
+def output_prefix(prefix: Optional[str]) -> Iterator[Optional[str]]:
+    """Inside this block, each R2 key that the pipeline makes is under ``prefix``. ``None`` changes nothing.
+
+    The prefix is an argument of one caller. It holds for the thread (or the asyncio task) that entered the
+    block, so two box jobs of one process can write under two prefixes. A thread that starts inside the
+    block does not get it. It wins over the environment variables.
+    """
+    if prefix is None:
+        yield _OUTPUT_PREFIX.get()
+        return
+    token = _OUTPUT_PREFIX.set(clean_output_prefix(prefix))
+    try:
+        yield _OUTPUT_PREFIX.get()
+    finally:
+        _OUTPUT_PREFIX.reset(token)
+
+
+def r2_write_prefix(name: str, default: str) -> str:
+    """One write prefix of the pipeline, with no ``/`` at its end. ``name`` is its environment variable.
+
+    Order: the output prefix of the caller (``output_prefix``), then the variable, then ``default``.
+    """
+    base = _OUTPUT_PREFIX.get()
+    if base is not None:
+        return base + OUTPUT_PARTS[name]
+    return (os.environ.get(name) or default).rstrip('/')
 
 
 def _env_path(*names: str) -> Optional[Path]:
@@ -73,13 +136,11 @@ def open_life_bucket() -> Any:
 
 def pending_r2_prefix(candidate_id: str) -> str:
     """Isolated private prefix — never the live website/k1 path."""
-    base = (os.environ.get('PIT_R2_PENDING_PREFIX') or 'pit-pending').rstrip('/')
-    return '%s/%s' % (base, candidate_id)
+    return '%s/%s' % (r2_write_prefix('PIT_R2_PENDING_PREFIX', 'pit-pending'), candidate_id)
 
 
 def live_fp32_r2_prefix(candidate_id: str) -> str:
-    base = (os.environ.get('PIT_R2_FP32_PREFIX') or 'fp32-master').rstrip('/')
-    return '%s/%s' % (base, candidate_id)
+    return '%s/%s' % (r2_write_prefix('PIT_R2_FP32_PREFIX', 'fp32-master'), candidate_id)
 
 
 def pending_master_index_dir() -> Path:

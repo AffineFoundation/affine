@@ -24,6 +24,7 @@ from ops.parallel_eval.live import pe_box
 from ops.parallel_eval.live import pe_r2_box_upload as BOX
 from ops.parallel_eval.live import pe_r2_multipart as R2MP
 from ops.parallel_eval.live import pe_verify
+from ops.parallel_eval.pit import shadow_guard as SG
 from ops.parallel_eval.pit.r2_fixture import BUCKET, MIB, R2Server, ShellBox, sha256
 
 C = 'c' * 64            # candidate id
@@ -32,6 +33,7 @@ ENTRY = 'e' * 64        # name of the fp32 store entry on the box
 PART = 5 * MIB
 PENDING = 'pit-shadow/pending/%s' % C
 LIVE = 'fp32-master/%s' % C
+RUN = 'pit-shadow/batchctl/run1/'       # the output prefix that a controller gives
 
 
 class R2Case(unittest.TestCase):
@@ -439,6 +441,75 @@ class TestParallelCopy(R2Case):
         self.assertEqual(self.r2.keys(), [])
         self.assertEqual(self.r2.open_uploads(), ['pit-shadow/pending/%s/other' % ('f' * 64)])     # another candidate
         self.assertFalse((self.pending_index / ('%s.json' % C)).exists())
+
+
+class TestOutputPrefix(R2Case):
+    """The controller names one R2 prefix (the output prefix) and the box pipeline writes under it only."""
+
+    def master_keys(self, run):
+        return ['%spending/%s/%s' % (run, C, name) for name in self.master]
+
+    def candidate_keys(self, run):
+        return ['%spending/%s/model/%s' % (run, C, name) for name in self.cand]
+
+    def upload_candidate(self, output_prefix):
+        io = pe_box.HostBoxIO(output_prefix=output_prefix)
+        return io.upload_candidate(candidate_id=C, candidate_path='box:%s' % self.cand_dir, pod=self.box, files=self.files)
+
+    def test_the_upload_and_its_records_are_under_the_output_prefix(self):
+        with AU.output_prefix(RUN.rstrip('/')):
+            self.early_upload()
+            # A later step of the same caller (the clean-up) finds the objects.
+            self.assertEqual(sorted(self.r2.keys()), sorted(self.master_keys(RUN) + self.candidate_keys(RUN)))
+            self.assertEqual(sorted(e['r2_key'] for e in self.index()['files'].values()), sorted(self.master_keys(RUN)))
+            upload = json.loads((self.root / 'uploads' / C / 'UPLOAD.json').read_text())
+            self.assertEqual(sorted(o['r2_key'] for o in upload['objects'].values()), sorted(self.candidate_keys(RUN)))
+            self.assertTrue(AU.gc_pending_artifacts(C)['ok'])
+            self.assertEqual(self.r2.keys(), [])
+        # Outside the block the prefixes of the environment are back.
+        self.assertEqual((AU.pending_r2_prefix(C), AU.live_fp32_r2_prefix(C)), (PENDING, LIVE))
+
+    def test_the_box_pipeline_object_takes_the_output_prefix_as_its_argument(self):
+        out = self.upload_candidate(RUN)
+        self.assertTrue(out['ok'])
+        self.assertEqual(sorted(self.r2.keys()), sorted(self.candidate_keys(RUN)))
+        self.assertEqual(pe_box.box_io_factory(RUN.rstrip('/')).output_prefix, RUN)
+        self.assertIsNone(pe_box.box_io_factory().output_prefix)
+        for bad in ('', '/', 'pit-shadow//run1', '/pit-shadow/run1', 'pit-shadow/../fp32-master', 'pit-shadow/run 1', 7):
+            with self.assertRaises(AU.ArtifactUploadError, msg=repr(bad)):
+                pe_box.HostBoxIO(output_prefix=bad)
+
+    def test_two_box_jobs_of_one_process_write_under_two_prefixes(self):
+        seen, inside = {}, threading.Barrier(2)
+
+        def job(run):
+            with AU.output_prefix('pit-shadow/batchctl/%s' % run):
+                inside.wait(10)                             # the two jobs are in their blocks at one time
+                seen[run] = (AU.pending_r2_prefix(C), AU.live_fp32_r2_prefix(C), pe_box._ckpt_r2_prefix(C),
+                             pe_box._ckpt_r2_prefix(C, pending=True))
+
+        jobs = [threading.Thread(target=job, args=(run,)) for run in ('run1', 'run2')]
+        for one in jobs:
+            one.start()
+        for one in jobs:
+            one.join(20)
+        for run in ('run1', 'run2'):
+            base = 'pit-shadow/batchctl/%s/' % run
+            self.assertEqual(seen[run], (base + 'pending/' + C, base + 'fp32-master/' + C, base + 'ckpts/%s/model' % C,
+                                         base + 'pending/%s/model' % C))
+        self.assertEqual((AU.pending_r2_prefix(C), pe_box._ckpt_r2_prefix(C)), (PENDING, 'checkpoints/%s/model' % C))
+
+    def test_in_shadow_an_output_prefix_under_the_allowlist_works_and_any_other_writes_nothing(self):
+        self.addCleanup(SG.leave)
+        guard = SG.ShadowGuard(state_root=self.root, scratch=(tempfile.gettempdir(),)).activate()
+        self.assertTrue(self.upload_candidate(RUN)['ok'])
+        self.assertEqual(guard.denied, [])
+        before = sorted(self.r2.keys())
+        self.assertEqual(before, sorted(self.candidate_keys(RUN)))
+        for live in ('fp32-master/', 'pit-pending/', 'pit/batchctl/run1/', 'pit-shadowx/run1/'):
+            with self.assertRaises(SG.ShadowWriteError, msg=live):
+                self.upload_candidate(live)
+            self.assertEqual((sorted(self.r2.keys()), self.r2.open_uploads()), (before, []), live)
 
 
 if __name__ == '__main__':
