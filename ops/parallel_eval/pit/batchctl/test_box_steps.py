@@ -699,3 +699,151 @@ def test_no_outcome_without_the_result_of_the_probe(box):
     (box.work / 'probe' / 'RESULT.json').write_text('[]')
     with pytest.raises(S.StepError, match='is not valid'):
         S.outcome(box.cfg())
+
+
+# ----------------------------------------------------------------------------
+# HEAD blocks
+# ----------------------------------------------------------------------------
+
+HEAD_SEEDS = {0: 'seed-of-block-0', 2: 'seed-of-block-2'}
+
+
+def with_head(box):
+    """A lease that runs the HEAD blocks 0 and 2 after its own probe."""
+    actor, aux = box.pst / 'in' / 'actor' / BASE_CHECKPOINT, box.work / 'base'
+    actor.mkdir(parents=True)
+    aux.mkdir()
+    (actor / 'model-00001-of-00001.safetensors').write_bytes(b'head' * 100)
+    (actor / 'config.json').write_bytes(b'{}')
+    (aux / 'descriptor.json').write_text(json.dumps({'id': BASE_CHECKPOINT, 'files': {}}))
+    box.config['head'] = {
+        'weights': str(actor), 'descriptor': str(aux / 'descriptor.json'),
+        'blocks': {str(n): {'plan': str(box.work / 'private' / ('head-plan-%d.json' % n)),
+                            'result': str(box.work / ('head-%d' % n) / 'RESULT.json')} for n in HEAD_SEEDS},
+    }
+    box.probe_args['head'] = [{'block': n, 'plan_seed': seed, 'k': 4} for n, seed in HEAD_SEEDS.items()]
+    return collected(box)
+
+
+def head_probed(box, number, **changes):
+    doc = box.probed()
+    doc.update(candidate_id=BASE_CHECKPOINT)
+    doc.update(changes)
+    folder = box.work / ('head-%d' % number)
+    folder.mkdir(exist_ok=True)
+    (folder / 'RESULT.json').write_text(json.dumps(doc))
+    return doc
+
+
+def test_headplan_writes_the_plan_of_each_block_for_the_base_checkpoint(box):
+    with_head(box)
+    assert S.headplan(box.cfg()) == 'plans for 2 HEAD blocks of %s' % BASE_CHECKPOINT[:12]
+    build = live_builder()
+    for number, seed in HEAD_SEEDS.items():
+        plan = json.loads((box.work / 'private' / ('head-plan-%d.json' % number)).read_text())
+        assert plan == build(BASE_CHECKPOINT, INDICES, seed, k=4, max_tokens=65536, env_id=ENV_ID, max_num_seqs=112,
+                             harness=box.probe_args['harness'])
+        assert plan['checkpoint_id'] == BASE_CHECKPOINT and plan['envs'][0]['k'] == 4 and plan['seed'] == seed
+    served = box.ckpt / BASE_CHECKPOINT
+    assert sorted(path.name for path in served.iterdir()) == [
+        '.verified', 'config.json', 'model-00001-of-00001.safetensors']
+    assert json.loads((box.ckpt / (BASE_CHECKPOINT + '.descriptor.json')).read_text())['id'] == BASE_CHECKPOINT
+
+
+def test_headplan_needs_blocks_and_the_weights_of_the_base(box):
+    collected(box)
+    with pytest.raises(S.StepError, match='runs no HEAD block'):
+        S.headplan(box.cfg())
+    with_head_box = Trained(box.root / 'second')
+    with_head(with_head_box)
+    (with_head_box.work / 'base' / 'descriptor.json').unlink()
+    with pytest.raises(S.StepError, match='weights of the base are not on the box'):
+        S.headplan(with_head_box.cfg())
+
+
+def test_the_outcome_holds_each_head_block_under_masked_names(box):
+    with_head(box)
+    S.plan(box.cfg())
+    S.headplan(box.cfg())
+    probed = box.probed()
+    head_probed(box, 0)
+    assert S.outcome(box.cfg()) == 'probe ok for %s, HEAD blocks: 0 ok, 2 missing' % box.checkpoint[:12]
+    payload = box.outcome()['payload']
+    head = payload['head']
+    assert head['checkpoint_id'] == BASE_CHECKPOINT and [entry['block'] for entry in head['blocks']] == [0, 2]
+    first, second = head['blocks']
+    assert (first['k'], first['max_tokens'], first['status']) == (4, 65536, 'ok')
+    again = M.unmask(first['result'], KEY, {ENV_ID: INDICES})
+    assert again['envs'][ENV_ID]['per_task'] == probed['probe_result']['envs'][ENV_ID]['per_task']
+    assert second == {'block': 2, 'k': 4, 'max_tokens': 65536, 'status': 'missing'}
+    raw = (box.work / 'outcome.json').read_text()
+    for private in list(HEAD_SEEDS.values()) + [SEED, KEY]:
+        assert private not in raw
+
+
+@pytest.mark.parametrize('change, status', [
+    (dict(status='failed', ok=False, error='ServeError: no layout of the plan serves'), 'failed'),
+    (dict(candidate_id=OTHER), 'unusable'),
+    (dict(probe_result={'envs': {}}), 'unusable'),
+])
+def test_a_head_block_that_did_not_finish_never_stops_the_outcome_of_the_batch(box, change, status):
+    with_head(box)
+    box.probed()
+    head_probed(box, 0, **change)
+    (box.work / 'head-2').mkdir()
+    (box.work / 'head-2' / 'RESULT.json').write_text('{')
+    S.outcome(box.cfg())
+    payload = box.outcome()['payload']
+    assert payload['probe']['status'] == 'ok'
+    first, second = payload['head']['blocks']
+    assert first['status'] == status and 'result' not in first
+    assert second['status'] == 'unusable' and 'result' not in second
+
+
+def test_the_serve_record_gets_the_sampling_of_the_plan_when_the_bundle_has_no_manifest(box):
+    collected(box)
+    S.plan(box.cfg())
+    box.probed()
+    S.outcome(box.cfg())
+    harness = box.probe_args['harness']
+    want = {'harness': harness['harness'], 'sampling_contract': harness['sampling_contract']}
+    assert box.outcome()['payload']['probe']['result']['serve_layout']['sampling'] == want
+    # A serve record that names its sampling keeps it, whole.
+    doc = box.probed()
+    doc['probe_result']['serve_layout']['sampling'] = {'harness': 'of/the/bundle', 'sampling_contract': {'n': 1}}
+    (box.work / 'probe' / 'RESULT.json').write_text(json.dumps(doc))
+    S.outcome(box.cfg())
+    assert box.outcome()['payload']['probe']['result']['serve_layout']['sampling'] == {
+        'harness': 'of/the/bundle', 'sampling_contract': {'n': 1}}
+    # No plan and no manifest: the record says nothing, and the judge gives no verdict.
+    box.probed()
+    (box.work / 'private' / 'eval-plan.json').unlink()
+    S.outcome(box.cfg())
+    assert box.outcome()['payload']['probe']['result']['serve_layout']['sampling'] is None
+
+
+@pytest.mark.parametrize('change', [
+    lambda box: box.config['head'].pop('weights'),
+    lambda box: box.config['head'].update(descriptor='relative/descriptor.json'),
+    lambda box: box.config['head'].update(blocks={'x': {'plan': '/a/p', 'result': '/a/r'}}),
+    lambda box: box.config['head'].update(blocks={'1': {'plan': '/a/p'}}),
+    lambda box: box.config.update(head=[]),
+])
+def test_a_head_section_that_breaks_a_rule_is_refused(box, change):
+    with_head(box)
+    change(box)
+    box.write()
+    with pytest.raises(S.StepError, match='HEAD block'):
+        box.cfg()
+
+
+@pytest.mark.parametrize('head', [
+    'x', [{'block': -1, 'plan_seed': 's', 'k': 4}], [{'block': 0, 'plan_seed': '', 'k': 4}],
+    [{'block': 0, 'plan_seed': 's', 'k': 0}], [{'block': True, 'plan_seed': 's', 'k': 4}], [3],
+])
+def test_head_blocks_in_the_probe_arguments_that_break_a_rule_are_refused(box, head):
+    collected(box)
+    box.probe_args['head'] = head
+    box.write()
+    with pytest.raises(S.StepError, match='HEAD block'):
+        S.load_probe_args(box.cfg())

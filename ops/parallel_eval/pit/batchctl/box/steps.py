@@ -2,9 +2,10 @@
 """File work of one lease between the trainer and the probe. One file,
 standard library only. ``job.py`` runs each command as one step.
 
-    python3 steps.py collect --config steps.json
-    python3 steps.py plan    --config steps.json
-    python3 steps.py outcome --config steps.json
+    python3 steps.py collect  --config steps.json
+    python3 steps.py plan     --config steps.json
+    python3 steps.py headplan --config steps.json
+    python3 steps.py outcome  --config steps.json
 
 collect   After the train command. Training is done only if its log ends
           with ``rc=0`` and holds the ``done`` event. The fp32 master that
@@ -18,10 +19,15 @@ collect   After the train command. Training is done only if its log ends
 plan      Writes the probe plan for the new checkpoint. The plan is built
           by the plan builder of the live lane, from arguments that the
           host put into a private directory of the lease.
-outcome   After the probe. Writes what leaves the box: the counters of
-          every probed task and a summary of the training. A task is named
-          by a keyed hash, not by its id: which tasks a round holds stays
-          on the validator host. The key is in the private directory.
+headplan  Only on a lease that runs HEAD blocks. A HEAD block is one probe
+          run of the base checkpoint on the tasks of the round. Writes the
+          plan of each block and puts the weights of the base where the
+          probe server reads them.
+outcome   After the probes. Writes what leaves the box: the counters of
+          every probed task, a summary of the training, and what each HEAD
+          block gave. A task is named by a keyed hash, not by its id: which
+          tasks a round holds stays on the validator host. The key is in
+          the private directory.
 
 A command that fails exits with 1. ``job.py`` then writes no decision.
 """
@@ -48,6 +54,7 @@ ROLE_BF16, ROLE_FP32, ROLE_AUX = 'bf16_weights', 'fp32_master', 'aux'
 EXPECTED_MASTER_ENV = 'AFFINE_FP32_EXPECTED_MASTER_HASH'
 
 HEX64 = re.compile(r'[0-9a-f]{64}')
+BLOCK_NUMBER = re.compile(r'0|[1-9][0-9]{0,3}')
 SAFE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}')
 FIRST_SHARD = re.compile(r'model-00001-of-[0-9]+\.safetensors')
 EXIT_LINE = re.compile(r'rc=([0-9]+)')
@@ -92,6 +99,10 @@ def is_name(value):
 
 def is_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_path(value):
+    return isinstance(value, str) and value.startswith('/') and os.path.normpath(value) == value
 
 
 def read_json(path, what):
@@ -153,9 +164,15 @@ def load_config(path):
     need(isinstance(cfg.get('sharded'), bool), 'the steps config does not say if the update runs sharded')
     need(cfg.get('zero3_profile') is None or is_name(cfg['zero3_profile']), 'the steps config names no valid settings')
     for key in CONFIG_PATHS:
-        value = cfg.get(key)
-        need(isinstance(value, str) and value.startswith('/') and os.path.normpath(value) == value,
-             'the steps config has no absolute path for %s' % key)
+        need(is_path(cfg.get(key)), 'the steps config has no absolute path for %s' % key)
+    head = cfg.get('head')
+    if head is not None:
+        need(isinstance(head, dict) and is_path(head.get('weights')) and is_path(head.get('descriptor'))
+             and isinstance(head.get('blocks'), dict), 'the steps config has no valid HEAD block section')
+        for number, files in head['blocks'].items():
+            need(isinstance(number, str) and BLOCK_NUMBER.fullmatch(number) is not None and isinstance(files, dict)
+                 and is_path(files.get('plan')) and is_path(files.get('result')),
+                 'the steps config has a HEAD block that is not valid')
     return cfg
 
 
@@ -388,6 +405,12 @@ def load_probe_args(cfg):
     need(isinstance(args.get('mask_key'), str) and len(args['mask_key']) >= MIN_MASK_KEY,
          'the probe arguments name no mask key')
     need(args.get('harness') is None or isinstance(args['harness'], dict), 'the probe harness is not valid')
+    blocks = args.get('head')
+    need(blocks is None or isinstance(blocks, list), 'the HEAD blocks of the probe arguments are not valid')
+    for block in blocks or []:
+        need(isinstance(block, dict) and isinstance(block.get('block'), int) and not isinstance(block['block'], bool)
+             and block['block'] >= 0 and isinstance(block.get('plan_seed'), str) and block['plan_seed']
+             and is_count(block.get('k')), 'the probe arguments have a HEAD block that is not valid')
     return args
 
 
@@ -414,6 +437,31 @@ def plan(cfg):
     return 'plan for %s: %d tasks' % (candidate[:12], len(args['indices']))
 
 
+def headplan(cfg):
+    """The probe plans of the HEAD blocks of this lease. A HEAD block is one
+    probe run of the base checkpoint on the tasks of the round; the host makes
+    the baseline of the round from the blocks of several boxes. The weights of
+    the base go where the probe server reads them, as the live lane does."""
+    args = load_probe_args(cfg)
+    head = cfg.get('head')
+    need(head is not None and args.get('head'), 'this lease runs no HEAD block')
+    base = cfg['base_checkpoint']
+    need(os.path.isdir(head['weights']) and os.path.isfile(head['descriptor']),
+         'the weights of the base are not on the box')
+    place(head['weights'], cfg['ckpt'], base, head['descriptor'])
+    build = load_builder(cfg['plan_builder'])
+    for block in args['head']:
+        files = head['blocks'].get(str(block['block']))
+        need(files is not None, 'HEAD block %d has no files in the steps config' % block['block'])
+        built = build(
+            base, args['indices'], block['plan_seed'], k=block['k'], max_tokens=args['max_tokens'],
+            env_id=args['env_id'], max_num_seqs=args['max_num_seqs'], harness=args.get('harness'),
+        )
+        need(isinstance(built, dict) and built.get('checkpoint_id') == base, 'the plan is for another checkpoint')
+        write_json(files['plan'], built, 0o600)
+    return 'plans for %d HEAD blocks of %s' % (len(args['head']), base[:12])
+
+
 # ----------------------------------------------------------------------------
 # outcome
 # ----------------------------------------------------------------------------
@@ -429,9 +477,31 @@ def plain(doc):
         isinstance(value, (bool, int)) or (isinstance(value, float) and math.isfinite(value)))}
 
 
-def public_probe(result, key):
+def plan_sampling(plan):
+    """The harness and the sampling contract that a probe plan carries, in the
+    form of the serve record. None: the plan carries none."""
+    projection = plan.get('manifest_projection') if isinstance(plan, dict) else None
+    if not isinstance(projection, dict) or plan.get('harness') is None or projection.get('sampling_contract') is None:
+        return None
+    return {'harness': plan['harness'], 'sampling_contract': projection['sampling_contract']}
+
+
+def sampling_of(plan_path):
+    try:
+        return plan_sampling(read_json(plan_path, 'the probe plan'))
+    except StepError:
+        return None
+
+
+def public_probe(result, key, sampling=None):
     """What of a probe result leaves the box: numbers and flags, the layout
-    that served, and the counters of every task under its masked name."""
+    that served, and the counters of every task under its masked name.
+
+    The serve record says with which harness and sampling contract the probe
+    ran: the host compares that between a candidate and its baseline. The
+    probe tool reads them from the manifest of the probe bundle. A bundle
+    without a manifest gets them from the plan (``sampling``), and the worker
+    used that plan."""
     need(isinstance(result, dict) and isinstance(result.get('envs'), dict) and result['envs'],
          'the probe result has no environments')
     out = plain(result)
@@ -448,8 +518,38 @@ def public_probe(result, key):
     served = result.get('requests_per_replica')
     if isinstance(served, list):
         out['requests_per_replica'] = [count if is_count(count) else 0 for count in served]
-    if isinstance(result.get('serve_layout'), dict):
-        out['serve_layout'] = fits(brief(result['serve_layout']))
+    serve = result.get('serve_layout')
+    if isinstance(serve, dict):
+        kept = brief({name: value for name, value in serve.items() if name != 'sampling'})
+        kept['sampling'] = serve.get('sampling') if serve.get('sampling') is not None else sampling
+        try:
+            out['serve_layout'] = fits(kept)
+        except (ValueError, TypeError, RecursionError):
+            raise StepError('the serve record of the probe is not valid') from None
+    return out
+
+
+def head_blocks(cfg, args):
+    """What the HEAD blocks of this lease gave. A block that did not finish is
+    named with its status. It never stops the result of the batch."""
+    out = []
+    files_of = (cfg.get('head') or {}).get('blocks') or {}
+    for block in args.get('head') or []:
+        entry = {'block': block['block'], 'k': block['k'], 'max_tokens': args['max_tokens'], 'status': 'missing'}
+        files = files_of.get(str(block['block']))
+        try:
+            there = files is not None and os.path.isfile(files['result'])
+            result = read_json(files['result'], 'the result of a HEAD block') if there else None
+            if isinstance(result, dict) and isinstance(result.get('status'), str):
+                entry['status'] = result['status'][:40]
+                if result['status'] in PROBE_DONE:
+                    need(result.get('candidate_id') == cfg['base_checkpoint'], 'another checkpoint')
+                    entry['result'] = public_probe(result.get('probe_result'), args['mask_key'],
+                                                   sampling_of(files['plan']))
+        except StepError as exc:
+            entry = dict(entry, status='unusable', error=str(exc)[:200])
+            entry.pop('result', None)
+        out.append(entry)
     return out
 
 
@@ -460,18 +560,25 @@ def outcome(cfg):
     need(isinstance(result, dict), 'the result of the probe is not valid')
     need(result.get('status') in PROBE_DONE, 'the probe did not finish: %s' % str(result.get('error'))[:300])
     need(result.get('candidate_id') == candidate['candidate_id'], 'the probe ran on another checkpoint')
-    write_json(cfg['outcome'], {
-        'schema': BOX_OUTCOME_SCHEMA, 'outcome': OUTCOME_PROBED,
-        'payload': {
-            'candidate_id': candidate['candidate_id'],
-            'probe': {'status': result['status'], 'result': public_probe(result.get('probe_result'), args['mask_key'])},
-            'train': candidate['train'],
+    payload = {
+        'candidate_id': candidate['candidate_id'],
+        'probe': {
+            'status': result['status'],
+            'result': public_probe(result.get('probe_result'), args['mask_key'], sampling_of(cfg['plan'])),
         },
-    })
-    return 'probe %s for %s' % (result['status'], candidate['candidate_id'][:12])
+        'train': candidate['train'],
+    }
+    blocks = head_blocks(cfg, args)
+    if blocks:
+        payload['head'] = {'checkpoint_id': cfg['base_checkpoint'], 'blocks': blocks}
+    write_json(cfg['outcome'], {'schema': BOX_OUTCOME_SCHEMA, 'outcome': OUTCOME_PROBED, 'payload': payload})
+    said = 'probe %s for %s' % (result['status'], candidate['candidate_id'][:12])
+    if blocks:
+        said += ', HEAD blocks: ' + ', '.join('%d %s' % (entry['block'], entry['status']) for entry in blocks)
+    return said
 
 
-COMMANDS = {'collect': collect, 'plan': plan, 'outcome': outcome}
+COMMANDS = {'collect': collect, 'plan': plan, 'headplan': headplan, 'outcome': outcome}
 
 
 def main(argv):
