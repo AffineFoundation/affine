@@ -2,8 +2,8 @@
 """Forced-GREEN harness — fully isolated from live PIT/PE/LIFE.
 
 Jacob / aae897c1 review G: refuses to start unless isolated under /tmp with its
-own R2 prefix, sandbox indexes, and ``affine-pe-pit-fakepass-*`` box names that
-the live host ignores.
+own R2 prefix, sandbox indexes, and ``sn120-fakepass-pit-*`` box names that no
+live tool matches (live matches ``affine-*`` names).
 
 Modes:
 
@@ -70,6 +70,7 @@ from .fakepass_sandbox import (
     tcp_ping,
 )
 from .gpu_policy import effective_gpu_order
+from .isolated_rent import live_name_problem
 from .pe_rent import RentError, RentService, is_fakepass_name
 
 __all__ = [
@@ -338,6 +339,9 @@ class FakepassRun:
         scrub_denied_env(self.env)
         if not is_fakepass_name(BOX_NAME_PREFIX + 'x'):
             _die('BOX_NAME_PREFIX must be recognized by is_fakepass_name')
+        problem = live_name_problem(BOX_NAME_PREFIX)
+        if problem:
+            _die('BOX_NAME_PREFIX %s: %s' % (BOX_NAME_PREFIX, problem))
         self._note('sandbox_ready', run_id=self.run_id, root=str(self.paths['root']))
 
     def phase_rent(self) -> None:
@@ -699,6 +703,8 @@ def _real_live_roots(base: List[Path], src: 'REAL.LiveSources') -> List[Path]:
     roots.append(src.bundle_json.parent)
     if not src.master_index_origin.startswith('http'):
         roots.append(Path(src.master_index_origin).parent)
+    if src.public_turn_origin and not src.public_turn_origin.startswith('http'):
+        roots.append(Path(src.public_turn_origin).parent.parent)
     return roots
 
 
@@ -772,9 +778,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument('--simulate-local', action='store_true',
                    help='ScriptedBoxIO + synthetic rent (no Lium)')
     p.add_argument('--real', action='store_true',
-                   help='real rent/train/upload/serve/apply on an affine-pe-pit-fakepass-* box')
+                   help='real rent/train/upload/serve/apply on an sn120-fakepass-pit-* box')
     p.add_argument('--epoch', type=int, default=None,
-                   help='REAL: finalized live epoch bound to HEAD (default: newest)')
+                   help='REAL: a decided epoch whose batch is public (default: the newest one)')
     p.add_argument('--sever-after-green', action='store_true',
                    help='ssh to box fails rc=255; APPLY must succeed from upload')
     p.add_argument('--restart-host-mid-eval', action='store_true',

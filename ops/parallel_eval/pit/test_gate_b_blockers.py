@@ -3,7 +3,7 @@
 
 1. pe_lane.boot returns None — adapters must coerce.
 2. round_id from SAMPLE.private.json (refuse fixture default).
-3. shadow prefix affine-pe-pit-shadow-* releases via live pe_rent assert;
+3. shadow prefix sn120-shadow-pit-* is a name that live never matches;
    release verifies lium ps and alerts if still present.
 4. Lifecycle cutover writes JOB/DISPATCH/K1 + PIT-DISPATCHED, then queue_ingest
    picks FINALIZED+PIT-DISPATCHED epochs; decision writes PIT-RESULT; next epoch
@@ -191,24 +191,27 @@ class TestRoundIdFromSample(unittest.TestCase):
 
 
 class TestShadowReleasePrefix(unittest.TestCase):
-    def test_shadow_prefix_satisfies_live_affine_pe(self):
-        from ops.parallel_eval.pit import PREFIX_SHADOW as SH
-        self.assertTrue(SH.startswith('affine-pe-'))
-        self.assertTrue(SH.startswith('affine-pe-pit-shadow-'))
-        self.assertTrue(is_shadow_pit_name(SH + '10-a1'))
-        self.assertFalse(is_live_pit_name(SH + '10-a1'))
+    def test_shadow_prefix_is_not_a_live_name(self):
+        self.assertEqual(PREFIX_SHADOW, 'sn120-shadow-pit-')
+        self.assertFalse(PREFIX_SHADOW.startswith('affine-'))
+        self.assertTrue(is_shadow_pit_name(PREFIX_SHADOW + '10-a1'))
+        self.assertFalse(is_live_pit_name(PREFIX_SHADOW + '10-a1'))
         self.assertTrue(is_live_pit_name(PREFIX_LIVE + '10-a1'))
+        # The name that a shadow box had before: live PIT does not own such a box.
+        self.assertFalse(is_live_pit_name('affine-pe-pit-shadow-10-a1'))
+        self.assertFalse(is_shadow_pit_name('affine-pe-pit-shadow-10-a1'))
 
     def test_release_verifies_lium_ps_and_alerts(self):
-        """Live pe_rent.release asserts affine-pe-*; we verify pod is gone after."""
+        """The release of a shadow box is verified: the pod must be gone from lium ps."""
         live_ps = [{'id': 'pod-1', 'name': PREFIX_SHADOW + '7-a1'}]
         released = []
 
         def host_release(name_or_id, reason='done'):
-            # Mimic live pe_rent.release prefix assert.
-            assert str(name_or_id).startswith('affine-pe-') or any(
-                (p.get('name') or '').startswith('affine-pe-') for p in live_ps
-            ), 'live pe_rent.release prefix assert'
+            # Mimic the isolated release: it removes a pod of the shadow prefix only.
+            assert any(
+                (p.get('name') or '').startswith(PREFIX_SHADOW) and name_or_id in (p.get('id'), p.get('name'))
+                for p in live_ps
+            ), 'isolated release: not a shadow box'
             released.append((name_or_id, reason))
             # Bug shape: ledger thinks released but pod still in ps.
             # (We leave live_ps populated so verify fails.)
@@ -230,7 +233,7 @@ class TestShadowReleasePrefix(unittest.TestCase):
             list_pods=list_pods,
         )
         out = rent.rent(item_id='it1', epoch=7, attempt=1)
-        self.assertTrue(out['name'].startswith('affine-pe-pit-shadow-'))
+        self.assertEqual(out['name'], 'sn120-shadow-pit-7-a1')
         with self.assertRaises(RentError) as cm:
             rent.release(out['box_id'], reason='done')
         self.assertIn('release verify failed', str(cm.exception))

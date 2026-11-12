@@ -3,7 +3,7 @@
 Same inputs as live: round r (ids, PI, pool, cfg), round head BASELINE per_task, candidate per_task via PG._cells_by_task,
 tau by scoring_mode, z bar via PG.z_bar_for(PG.pv_of(flag)), cap_max from the live flag (PG.pv_of(flag)), min_scored/min_cover
 from the round cfg; probe-error guard via PEG.cell_error_rate (read-only: never writes into live epoch dirs)."""
-import json, sys
+import json, os, sys
 from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -12,10 +12,31 @@ sys.path.insert(0, str(GATE_CODE))
 import baseline_v1 as BV
 import prior_gate as PG
 import probe_error_guard as PEG
+
+_PIT_FILE = Path('ops') / 'parallel_eval' / 'pit' / 'shadow_compare.py'
+
+
+def _repo_root():
+    """The checkout that holds the PIT package (ops/parallel_eval/pit).
+
+    This file runs from two places: ``<repo>/ops/parallel_eval/live`` (git) and the code directory of a root audit
+    on the host (``<repo>/state/root-audits/<audit>/code``). The number of directories between this file and the
+    repo is not the same in the two places. Thus the search does not count directories. The order is: the checkout
+    that ``AFFINE_REPO`` names, each directory above this file, then ``REPO`` of pe_common.
+    """
+    here = Path(__file__).resolve()
+    named = [Path(value) for value in (os.environ.get('AFFINE_REPO'),) if value]
+    looked = named + list(here.parents) + [REPO]
+    for base in looked:
+        if (base / _PIT_FILE).is_file():
+            return base
+    raise ImportError('%s is not in AFFINE_REPO, not above %s and not in %s' % (_PIT_FILE, here.parent, REPO))
+
+
 try:
     from ops.parallel_eval.pit.shadow_compare import evaluate_shadow_pass
 except ImportError:  # script-mode / RA code dir without package layout
-    _REPO = Path(__file__).resolve().parents[3]
+    _REPO = _repo_root()
     if str(_REPO) not in sys.path:
         sys.path.insert(0, str(_REPO))
     from ops.parallel_eval.pit.shadow_compare import evaluate_shadow_pass
@@ -31,15 +52,62 @@ def round_baseline(rid, epoch=None, per_turn=False):
     return b
 
 
-def score(epoch, rid, result, flag=None):
-    """-> decision dict (BV.estimate output + meta). Raises Pending if the round baseline is not ready."""
+def _per_turn(pv):
+    return pv.get('scoring_mode') == 'same-run'
+
+
+def scoring_baseline(epoch, rid):
+    """The baseline that score() judges the candidate of this epoch against: the baseline of the round, or the
+    baseline of the turn when the round scores each turn against its own head run. {} when there is no round.
+    The PIT host reads the hardware and layout fingerprint from it before score() runs."""
+    r = rj(HELDOUT / rid / 'ROUND.private.json') or {}
+    if not r:
+        return {}
+    return round_baseline(rid, int(epoch), _per_turn(r['cfg']))
+
+
+def blocks_baseline(rid, blocks, *, rollouts, max_tokens, fingerprint, done_at):
+    """A baseline for score(baseline=...) from HEAD blocks that the caller holds.
+
+    ``blocks`` has one {task index: probe cell} for each block. They are merged the way prior_gate.ensure_baseline
+    merges the blocks of the round baseline: a task counts when each block graded it. ``rollouts`` is the number
+    of HEAD rollouts for each task over all blocks. ``max_tokens`` is the token cap that the blocks were probed
+    with: score() refuses a cap that is not the cap of the round. ``fingerprint`` is the stamp of the hardware and
+    layout of the boxes that probed the blocks (ops.parallel_eval.pit.probe_fingerprint)."""
+    r = rj(HELDOUT / rid / 'ROUND.private.json') or {}
+    if not r:
+        raise RuntimeError('round %s missing' % rid)
+    if not blocks:
+        raise RuntimeError('no head blocks for round %s' % rid)
+    pv = r['cfg']
+    merged = {}
+    for k in set().union(*[set(x) for x in blocks]):
+        cs = [x.get(k) for x in blocks]
+        if all(isinstance(c, dict) and c.get('n') for c in cs):
+            merged[k] = PG.HO.merge_cells(cs)
+    per_task = PG._cells_by_task(merged, pv)
+    hp = sum(v['c'] for v in per_task.values()) / max(1, sum(v['n'] for v in per_task.values()))
+    settings = dict(source='head-blocks', probe_fingerprint=fingerprint)
+    return dict(schema=BV.ROUND_SCHEMA, round=rid, epoch=None, per_task=per_task, tasks=len(per_task),
+                rollouts_per_task=int(rollouts), head_pass_raw=hp, settings=settings,
+                settings_hash=PG.HO.settings_hash(settings), source='head-blocks', max_tokens=int(max_tokens),
+                done_at=done_at, done_at_cr=cr(done_at), probe_fingerprint=fingerprint)
+
+
+def score(epoch, rid, result, flag=None, baseline=None):
+    """-> decision dict (BV.estimate output + meta). Raises Pending if the round baseline is not ready.
+
+    ``baseline``: judge against this baseline (see blocks_baseline) in place of the baseline file of the round.
+    It is a baseline of separate HEAD runs, so a round that scores each turn against its own HEAD run refuses it."""
     f = flag if flag is not None else (rj(FLAG) or {})
     r = rj(HELDOUT / rid / 'ROUND.private.json') or {}
     if not r:
         raise RuntimeError('round %s missing' % rid)
     pv = r['cfg']
-    per_turn = pv.get('scoring_mode') == 'same-run'
-    b = round_baseline(rid, epoch, per_turn)
+    per_turn = _per_turn(pv)
+    if baseline is not None and per_turn:
+        raise RuntimeError('round %s scores each turn against its own head run' % rid)
+    b = baseline if baseline is not None else round_baseline(rid, epoch, per_turn)
     bl = b.get('per_task')
     if not bl:
         raise Pending('baseline for round %s not ready' % rid)

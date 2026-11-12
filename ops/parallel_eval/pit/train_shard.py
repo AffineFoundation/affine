@@ -23,6 +23,7 @@ from typing import Any, Mapping, Optional
 from . import LOW_MEM_GPU_GIB
 
 PIT_ZERO3_ENV = 'PIT_ZERO3'
+PIT_ZERO3_PROFILE_ENV = 'PIT_ZERO3_PROFILE'      # names one set of sharded-update settings (v835_zero3.PROFILES)
 SIGNING = Path(__file__).resolve().parent / 'host_v834f_signing'
 STAGE_V835 = SIGNING / 'stage' / 'v835_zero3.py'
 NUMERICS = SIGNING / 'harness' / 'zero3_numerics.py'
@@ -101,21 +102,31 @@ def _free_port() -> int:
 
 
 def run_numerics(*, world: int, dtype: str, seed: int = 0, timeout: float = 900.0, offload_inputs: bool = False,
-                 work: Optional[Path] = None) -> Mapping[str, Any]:
+                 work: Optional[Path] = None, profile: Optional[str] = None,
+                 host_block_bytes: Optional[int] = None) -> Mapping[str, Any]:
     """Run ``harness/zero3_numerics.py``: ``world`` processes shard a tiny production-class model with the stage's
-    own code and one gradient is compared with the v8.3.4e definition. Returns the tool's JSON result.
+    own code and one gradient is compared with the sum that the settings of the run define. Returns the tool's
+    JSON result.
 
     ``offload_inputs``: every rank keeps its checkpointed layer inputs behind the stage's host-memory hooks.
     ``work``: keep the tool's files there (the gathered gradient is ``result['gradient_file']``); by default they
     go to a scratch directory that is removed.
+    ``profile``: the name of the settings (``v835_zero3.PROFILES``); None = the stage's default.
+    ``host_block_bytes``: size of one host block of the layer inputs; None = the stage's own size, which no
+    tensor of the tiny model reaches.
     """
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
-    env.pop(PIT_ZERO3_ENV, None)
+    for key in (PIT_ZERO3_ENV, PIT_ZERO3_PROFILE_ENV):
+        env.pop(key, None)
     with tempfile.TemporaryDirectory(prefix='zero3-numerics-') as scratch:
         argv = [sys.executable, '-B', str(NUMERICS), '--world', str(world), '--dtype', dtype, '--seed', str(seed),
                 '--port', str(_free_port()), '--work', str(work or scratch)]
         if offload_inputs:
             argv.append('--offload-inputs')
+        if profile:
+            argv += ['--profile', profile]
+        if host_block_bytes:
+            argv += ['--host-block-bytes', str(host_block_bytes)]
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
     lines = [line for line in proc.stdout.splitlines() if line.startswith('{')]
     if not lines:
@@ -125,10 +136,10 @@ def run_numerics(*, world: int, dtype: str, seed: int = 0, timeout: float = 900.
     return result
 
 
-def numeric_equivalence_step(*, seed: int = 0) -> Mapping[str, Any]:
-    """One gradient in the production precision (bf16 forward, fp32 reduction) at world 2: the fp32 gradient the
-    sharded path hands to the optimizer against the v8.3.4e accumulator built from the same autograd gradients."""
-    result = dict(run_numerics(world=2, dtype='bfloat16', seed=seed))
+def numeric_equivalence_step(*, seed: int = 0, profile: Optional[str] = None) -> Mapping[str, Any]:
+    """One gradient in the production precision (bf16 forward) at world 2: the fp32 gradient the sharded path
+    hands to the optimizer against the sum that the settings define, built from the same autograd gradients."""
+    result = dict(run_numerics(world=2, dtype='bfloat16', seed=seed, profile=profile))
     if not result.get('ok'):
         raise RuntimeError('sharded bf16 gradient check failed: %s' % json.dumps(result)[:1500])
     reduction = result['reduction']

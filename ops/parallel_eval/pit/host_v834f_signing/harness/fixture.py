@@ -171,8 +171,12 @@ def tiny_checkpoint(directory, *, layers=4):
     return descriptor, spec.to_dict()
 
 
-def free_groups(ff, *, groups=5, seed=11):
-    """Free-file groups as ff_trainer.prepare builds them: miner rewards, 1-3 rollouts, one capped rollout."""
+def free_groups(ff, *, groups=5, seed=11, capped_tokens=None):
+    """Free-file groups as ff_trainer.prepare builds them: miner rewards, 1-3 rollouts, one capped rollout.
+
+    The capped rollout has under 32 tokens, which is less than one derail window: the derail mask never cuts it.
+    `capped_tokens` gives it that many tokens instead (every other rollout keeps its tokens), so that the mask
+    has a full window to judge and a tail to keep."""
     import random
     rng = random.Random(seed)
     out = []
@@ -182,6 +186,9 @@ def free_groups(ff, *, groups=5, seed=11):
         for nonce in range(1 + (g % 3)):
             body = [rng.randrange(4, 64) for _ in range(rng.randrange(4, 30))]
             capped = g == 2 and nonce == 1
+            if capped and capped_tokens is not None:     # its own generator: the other rollouts stay as they are
+                more = random.Random(seed * 1000003 + capped_tokens)
+                body = [more.randrange(4, 64) for _ in range(capped_tokens)]
             stop = 'max_tokens' if capped else 'eos'
             reward = 0.0 if capped else float(nonce % 2 == 0)
             rows.append(ff.RewardedTrajectory(nonce=nonce, tokens=tuple(body if capped else body + [2]),

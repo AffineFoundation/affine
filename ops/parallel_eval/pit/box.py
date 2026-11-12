@@ -23,6 +23,8 @@ from ops.parallel_eval.live.pe_box import (
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS, GATE_N_DRAWN
+from . import early_stop
+from . import probe_serve
 from .box_job import STATUS_RUNNING
 from .config import GATE_DTYPE, PitConfig
 from .pe_lane import LaneService
@@ -75,6 +77,9 @@ class BoxRunner:
     io: BoxIO
     lane: Optional[LaneService] = None
     root_pubkey_hex: Optional[str] = None
+    # The host scorer of this item's round: probe result -> official estimate. The controller sets it only when
+    # the config turns the RED-only early stop on. None (the default) means the probe is never watched or stopped.
+    early_stop_score: Optional[Callable[[Dict[str, Any]], Any]] = None
 
     def start_box_identity(self) -> EphemeralBoxKey:
         return generate_ephemeral_box_key()
@@ -131,9 +136,14 @@ class BoxRunner:
         if box_job_ctrl is not None:
             prior = box_job_ctrl.resume_or_fetch()
             if prior and prior.get('probe_result') and prior.get('candidate_id'):
-                return _bundle_from_box_result(
+                record, bundle = _bundle_from_box_result(
                     record, prior, box_key=box_key, train_gpu=train_gpu, eval_gpu=eval_gpu,
                 )
+                self._settle_early_stop(
+                    box_job_ctrl, bundle.probe_result, candidate_id=bundle.candidate_id,
+                    plan_handle=plan_handle, indices=indices,
+                )
+                return record, bundle
 
         train_receipt: Dict[str, Any]
         training_report: Dict[str, Any]
@@ -349,11 +359,16 @@ class BoxRunner:
             }
 
         eval_marker: Dict[str, Any] = {}
+        monitor: Optional[early_stop.Monitor] = None
         if box_job_ctrl is not None:
             # Prefer resume: if RESULT already written by a prior detached eval, use it.
             prior = box_job_ctrl.resume_or_fetch()
             if prior and prior.get('probe_result') and prior.get('candidate_id'):
                 probe_result = dict(prior['probe_result'])
+                self._settle_early_stop(
+                    box_job_ctrl, probe_result, candidate_id=candidate_id,
+                    plan_handle=plan_handle, indices=idx_list,
+                )
                 eg = (
                     gpu_type_of(eval_gpu)
                     or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
@@ -362,6 +377,7 @@ class BoxRunner:
                 )
                 probe_result['train_gpu'] = train_gpu
                 probe_result['eval_gpu'] = eg
+                record = apply_transition(record, ItemState.PROBING, reason='eval-resume-result')
                 record = apply_transition(
                     record, ItemState.RESULT, reason='eval-resume-result',
                     updates={'result_stored': True},
@@ -369,16 +385,23 @@ class BoxRunner:
                 return probe_result, eg, record
 
             detached_cmd = None
+            eval_timeout_s = float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200)
             # Real pod: ship plan + launch box-side detached eval (setsid).
             if hasattr(getattr(box_job_ctrl, 'store', None), 'pod') and (
                 lane.require_host or lane.host_run_probe is not None
             ):
                 if idx_list is None:
                     raise TransitionError('indices list required for host run_probe')
+                layout_gpu = (
+                    gpu_type_of(eval_gpu) or gpu_type_of((record.meta or {}).get('eval_gpu')) or train_gpu
+                )
                 detached_cmd = self._arm_detached_eval(
                     box_job_ctrl, candidate_id=candidate_id,
-                    plan_handle=plan_handle, indices=idx_list,
+                    plan_handle=plan_handle, indices=idx_list, gpu=layout_gpu,
                 )
+                if not os.environ.get('PIT_EVAL_TIMEOUT_S'):
+                    # A layout with fallbacks or a longer probe limit needs a longer wait than the live 2 h.
+                    eval_timeout_s = max(eval_timeout_s, float(self.config.probe_plan(layout_gpu).eval_timeout_s()))
 
             # Host restart mid-eval: job.pid already live → poll, do not kill/relaunch.
             st0 = box_job_ctrl.status()
@@ -389,14 +412,19 @@ class BoxRunner:
             def _host_forbidden() -> Mapping[str, Any]:
                 raise RuntimeError('host must not sync-run eval when detached path is armed')
 
+            if detached_cmd is not None:
+                monitor = self._early_stop_monitor(
+                    box_job_ctrl, candidate_id=candidate_id, plan_handle=plan_handle, indices=idx_list,
+                )
             eval_marker = dict(box_job_ctrl.run_stage_once(
                 'eval',
                 _host_eval_runner if detached_cmd is None else _host_forbidden,
                 detached_command=detached_cmd,
                 wait_for_marker=bool(detached_cmd) or already_running_eval,
                 poll_s=float(os.environ.get('PIT_BOX_JOB_POLL_S') or 2.0),
-                timeout_s=float(os.environ.get('PIT_EVAL_TIMEOUT_S') or 7200),
+                timeout_s=eval_timeout_s,
                 extra_kill_patterns=('vllm serve', 'podctl.py serve', 'pit-box-job-eval'),
+                on_poll=monitor.poll if monitor is not None else None,
             ))
         else:
             eval_marker = dict(_host_eval_runner())
@@ -405,6 +433,8 @@ class BoxRunner:
         if not isinstance(probe_raw, Mapping):
             raise TransitionError('eval marker missing probe_result')
         probe_result = dict(probe_raw)
+        if monitor is not None:
+            monitor.settle(probe_result)
         eg = (
             gpu_type_of(eval_gpu)
             or gpu_type_of(probe_result.get('eval_gpu') or probe_result.get('gpu'))
@@ -445,6 +475,42 @@ class BoxRunner:
                 pass
         return probe_result, eg, record
 
+    def _early_stop_monitor(
+        self,
+        box_job_ctrl: Any,
+        *,
+        candidate_id: str,
+        plan_handle: str,
+        indices: Optional[Any],
+    ) -> Optional[early_stop.Monitor]:
+        """The RED-only early-stop monitor of this item's detached probe run. None when the early stop is off."""
+        pod = getattr(getattr(box_job_ctrl, 'store', None), 'pod', None)
+        if not self.config.early_stop.enabled or self.early_stop_score is None or pod is None or not indices:
+            return None
+        return early_stop.for_box(
+            self.config.early_stop, pod, root=BOX_ROOT,
+            run_name=build_probe_plan(candidate_id, [], plan_handle)['run_name'],
+            tasks_total=len(indices), score=self.early_stop_score,
+        )
+
+    def _settle_early_stop(
+        self,
+        box_job_ctrl: Any,
+        probe_result: Dict[str, Any],
+        *,
+        candidate_id: str,
+        plan_handle: str,
+        indices: Optional[Any],
+    ) -> None:
+        """A partial probe result that was read back from the box (host restart) gets its stop record from the stream."""
+        if not probe_result.get('partial') or probe_result.get('early_stop'):
+            return
+        monitor = self._early_stop_monitor(
+            box_job_ctrl, candidate_id=candidate_id, plan_handle=plan_handle, indices=indices,
+        )
+        if monitor is not None:
+            monitor.settle(probe_result)
+
     def _arm_detached_eval(
         self,
         box_job_ctrl: Any,
@@ -452,12 +518,19 @@ class BoxRunner:
         candidate_id: str,
         plan_handle: str,
         indices: list,
+        gpu: Optional[str] = None,
     ) -> str:
         """Ship live-identical eval plan JSON onto the box; return detached command.
 
         Plan is built by ``pe_probe_plan.build_probe_plan`` — the same builder
         ``pe_lane.run_probe`` uses — so harness / manifest_projection cannot drift.
+
+        ``gpu`` selects the serving layouts (``PitConfig.probe_plan``). The live layout
+        returns the live command unchanged. Another layout (shadow only) keeps the live
+        clean-up and the live plan, and runs ``probe_serve.py eval`` in place of the live
+        driver; only the client load per replica follows the layout.
         """
+        layouts = self.config.probe_plan(gpu)
         harness = _load_public_harness()
         plan = build_probe_plan(
             candidate_id,
@@ -465,17 +538,28 @@ class BoxRunner:
             plan_handle,
             k=int(self.config.k_cand),
             max_tokens=int(self.config.max_output_tokens),
-            max_num_seqs=int(self.config.max_num_seqs),
+            max_num_seqs=int(self.config.max_num_seqs) if layouts.is_live() else layouts.primary.concurrency(),
             harness=harness,
         )
-        plan_path = '%s/eval-plan.json' % box_job_ctrl.job_dir.rstrip('/')
+        job_dir = box_job_ctrl.job_dir.rstrip('/')
+        plan_path = '%s/eval-plan.json' % job_dir
         box_job_ctrl.store.write_text(plan_path, json.dumps(plan, sort_keys=True) + '\n')
-        return detached_eval_command(
+        live_command = detached_eval_command(
             job_dir=box_job_ctrl.job_dir,
             candidate_id=candidate_id,
             plan_path=plan_path,
             podd=BOX_ROOT,
             max_num_seqs=int(self.config.max_num_seqs),
+        )
+        if layouts.is_live():
+            return live_command
+        probe_serve.ship(
+            box_job_ctrl.store.write_text, job_dir, layouts,
+            read_text=getattr(box_job_ctrl.store, 'read_text', None),
+        )
+        return probe_serve.detached_command(
+            preamble=probe_serve.live_preamble(live_command),
+            job_dir=job_dir, candidate_id=candidate_id, plan_path=plan_path, root=BOX_ROOT,
         )
 
 

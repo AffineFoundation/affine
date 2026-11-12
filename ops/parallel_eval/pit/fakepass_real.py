@@ -2,10 +2,13 @@
 
 Only the eval verdict is fake. Everything else runs the production code:
 
-* live HEAD ``H``, its published fp32 master index ``M(H)`` and the newest
-  finalized epoch bound to ``H`` are read (never written) from the host;
-* a real ``affine-pe-pit-fakepass-*`` box is rented (B300, then B200, then
-  H200, each under the price ceiling; never sharded GPUs);
+* the newest epoch that is already decided and whose batch is public (or the
+  ``--epoch`` the operator names, under the same rule), the head ``H`` its
+  signed job trains from and the published fp32 master index ``M(H)`` are
+  read (never written); an epoch in flight or decided RED is never used;
+* a real ``sn120-fakepass-pit-*`` box is rented (B300, then B200, then
+  H200, each under the price ceiling; never sharded GPUs); no live tool
+  matches that name, so the rent path is ``isolated_rent``;
 * ``HostBoxIO.train_v834e`` trains on host-v834e (``host.checked``, admitted
   files byte-identical, no overlay) and ``_early_upload_artifacts`` streams
   bf16 + fp32 to real R2 under ``pit-fakepass/<run>/``;
@@ -69,12 +72,14 @@ from .fakepass_sandbox import (
     fake_green_fresh_stamp,
     fake_result_doc,
     has_lium_credentials,
+    lium_credential_source,
     liveness_loop,
     phase_diagnostics,
     tcp_ping,
 )
 from .gpu_policy import effective_gpu_order
-from .pe_rent import RentError, RentService, bind_host_rent_service, is_fakepass_name
+from .isolated_rent import IsolatedRentError, bind_isolated_rent, live_name_problem
+from .pe_rent import RentError, RentService, is_fakepass_name
 from .signer import FixtureRootSigner
 from .state import ItemRecord, ItemState
 
@@ -86,6 +91,9 @@ ROOT_ADMISSION = 'TRAINER-HOST.v8.3.3.ROOT-ADMITTED.private.json'
 HASH_SYNC_SRC = _HERE / 'fakepass_hash_sync.py'
 STEP2_SRC = _HERE / 'fakepass_step2_fp32.py'
 PUBLIC_MASTER_URL = 'https://affine.io/k1/fp32-master/%s.json'
+PUBLIC_TURN_URL = 'https://affine.io/k1/turns/%d/turn.json'
+# Most public-record lookups the automatic epoch pick makes before it refuses.
+PUBLIC_SCAN_LIMIT = 64
 
 FAKEPASS_GPU_ORDER = tuple(
     g for g in effective_gpu_order(allow_sharded_gpus=False) if g in ('B300', 'B200', 'H200')
@@ -109,6 +117,8 @@ OVERLAY_ENV = (
     'PIT_TRAIN_PIT_PY', 'PIT_ZERO3', 'PIT_ALLOW_SHARDED_GPUS',
     'AFFINE_FP32_BOOTSTRAP_OVERRIDE',
 )
+# Allowed only when the value resolves to the signed default trainer host dir.
+TRAINER_HOST_ENV = ('PIT_TRAINER_HOST', 'AFFINE_TRAINER_HOST')
 # Modules that bind live roots from os.environ at import time.
 LIVE_BOUND_MODULES = (
     'pe_common', 'pe_rent', 'pe_lane', 'pe_apply', 'pe_gate_hook',
@@ -238,6 +248,11 @@ def _http_get(url: str) -> bytes:
 
 @dataclass
 class LiveSources:
+    """Read-only inputs of one run.
+
+    ``head`` is the checkpoint the picked epoch trains from. A decided public
+    epoch was promoted, so ``head`` is an earlier head than ``live_head``.
+    """
     head: str
     epoch: int
     epoch_dir: Path
@@ -248,12 +263,18 @@ class LiveSources:
     current: Dict[str, Any]
     bundle_json: Path
     provenance: Dict[str, str] = field(default_factory=dict)
+    live_head: str = ''
+    decision: Dict[str, Any] = field(default_factory=dict)
+    public_turn_origin: str = ''
 
     def as_dict(self) -> Dict[str, Any]:
         return {
             'head': self.head,
+            'live_head': self.live_head,
             'epoch': self.epoch,
             'epoch_dir': str(self.epoch_dir),
+            'decision': dict(self.decision),
+            'public_turn_origin': self.public_turn_origin,
             'master_digest': self.master_digest,
             'head_bf16': self.head_bf16,
             'master_index_origin': self.master_index_origin,
@@ -262,45 +283,147 @@ class LiveSources:
         }
 
 
+@dataclass(frozen=True)
+class EpochPick:
+    epoch_dir: Path
+    head: str
+    decision: Dict[str, Any]
+    turn_origin: str
+    turn_sha256: str
+
+
 def _job_checkpoint(job_doc: Mapping[str, Any]) -> Mapping[str, Any]:
     payload = job_doc.get('payload') or {}
     return ((payload.get('manifest') or {}).get('payload') or {}).get('checkpoint') or {}
 
 
-def epoch_binds_head(epoch_dir: Path, head: str) -> bool:
-    """TRAINING-JOB trains from ``head`` and the dispatch is ROOT-signed."""
+def epoch_signed_head(epoch_dir: Path) -> Optional[str]:
+    """The head a complete, ROOT-signed epoch trains from; None when it is not one."""
     try:
         job = _rj(epoch_dir / 'TRAINING-JOB.json')
         disp = _rj(epoch_dir / 'TRAIN-DISPATCH-FF.json')
     except Exception:
-        return False
+        return None
     ck = _job_checkpoint(job)
     training = (job.get('payload') or {}).get('training') or {}
-    return bool(
-        ck.get('id') == head
+    signed = bool(
+        _hex64(ck.get('id'))
         and isinstance(ck.get('files'), Mapping)
         and disp.get('signature')
         and disp.get('signer') != 'SHADOW-UNSIGNED'
         and isinstance(training.get('config'), Mapping)
         and 'optimizer_step' in training
     )
+    return str(ck['id']) if signed else None
 
 
-def select_epoch(life: Path, head: str, epoch: Optional[int] = None) -> Path:
+def read_public_turn(
+    env: Mapping[str, str],
+    epoch: int,
+    *,
+    fetch: Callable[[str], bytes] = _http_get,
+) -> Tuple[Optional[bytes], str]:
+    """The published transparency record of one epoch, and where it came from.
+
+    ``PIT_PUBLIC_TURNS`` names a local copy of the public ``k1/turns`` tree;
+    without it the record is read from the public site. None = not published.
+    """
+    d = env.get('PIT_PUBLIC_TURNS') or env.get('AFFINE_PUBLIC_TURNS')
+    if d:
+        p = Path(d) / str(int(epoch)) / 'turn.json'
+        return (p.read_bytes() if p.is_file() else None), str(p)
+    url = PUBLIC_TURN_URL % int(epoch)
+    try:
+        return fetch(url), url
+    except Exception:
+        return None, url
+
+
+def public_decision(epoch_dir: Path, turn: Optional[bytes]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """(decision, '') when the published record shows a decided epoch with a public batch.
+
+    The transparency publisher writes the record only after the gate decision
+    is final, and it publishes the batch file only for a GREEN. The record
+    must name the sha256 of the local signed dispatch, so a record of another
+    dispatch cannot stand in for this epoch.
+    """
+    if turn is None:
+        return None, 'no public turn record (not decided, or not published yet)'
+    try:
+        doc = json.loads(turn)
+    except Exception:
+        doc = None
+    if not isinstance(doc, Mapping):
+        return None, 'public turn record is not a JSON object'
+    if doc.get('epoch') != int(epoch_dir.name):
+        return None, 'public turn record names epoch %r' % (doc.get('epoch'),)
+    dec = doc.get('decision') if isinstance(doc.get('decision'), Mapping) else {}
+    verdict = dec.get('decision')
+    if verdict not in ('green', 'red'):
+        return None, 'public turn record has no final decision'
+    batch = doc.get('batch') if isinstance(doc.get('batch'), Mapping) else {}
+    if batch.get('published') is not True:
+        return None, 'decided %s: the batch is not published' % verdict
+    disp = doc.get('dispatch') if isinstance(doc.get('dispatch'), Mapping) else {}
+    if disp.get('envelope_file_sha256') != _sha256_file(epoch_dir / 'TRAIN-DISPATCH-FF.json'):
+        return None, 'public turn record does not name the local signed dispatch'
+    return {
+        'decision': verdict,
+        'head': dec.get('head'),
+        'candidate': dec.get('candidate'),
+        'decided_at': dec.get('decided_at'),
+        'batch_sha256': batch.get('sha256'),
+    }, ''
+
+
+def select_epoch(
+    life: Path,
+    env: Mapping[str, str],
+    epoch: Optional[int] = None,
+    *,
+    fetch: Callable[[str], bytes] = _http_get,
+    accept: Callable[[EpochPick], str] = lambda _pick: '',
+) -> EpochPick:
+    """Pick a ROOT-signed epoch that is already decided and whose batch is public.
+
+    Without ``epoch`` this is the newest such epoch. With ``epoch`` it is that
+    epoch, under the same rule. An epoch in flight or decided RED is never
+    picked: its batch is private. ``accept`` returns a refusal reason for a
+    pick the caller cannot use ('' = usable).
+    """
     epochs = life / 'epochs'
+    lookups: List[int] = []
+
+    def examine(d: Path) -> Tuple[Optional[EpochPick], str]:
+        head = epoch_signed_head(d)
+        if head is None:
+            return None, 'no complete ROOT-signed TRAINING-JOB + TRAIN-DISPATCH-FF'
+        lookups.append(int(d.name))
+        turn, origin = read_public_turn(env, int(d.name), fetch=fetch)
+        decision, why = public_decision(d, turn)
+        if decision is None:
+            return None, '%s (%s)' % (why, origin)
+        pick = EpochPick(d, head, decision, origin, hashlib.sha256(turn or b'').hexdigest())
+        why = accept(pick)
+        return (None, why) if why else (pick, '')
+
     if epoch is not None:
-        d = epochs / str(int(epoch))
-        if not epoch_binds_head(d, head):
-            _die('epoch %s does not train from HEAD %s with a signed dispatch' % (epoch, head[:12]))
-        return d
+        pick, why = examine(epochs / str(int(epoch)))
+        if pick is None:
+            _die('epoch %d refused: %s' % (int(epoch), why))
+        return pick
     if not epochs.is_dir():
         _die('live epochs dir missing: %s' % epochs)
-    nums = sorted((int(p.name) for p in epochs.iterdir() if p.name.isdigit()), reverse=True)
-    for n in nums:
-        d = epochs / str(n)
-        if (d / 'FINALIZED.json').is_file() and epoch_binds_head(d, head):
-            return d
-    _die('no finalized epoch trains from HEAD %s with a signed TRAIN-DISPATCH-FF' % head[:12])
+    refused: List[str] = []
+    for n in sorted((int(p.name) for p in epochs.iterdir() if p.name.isdigit()), reverse=True):
+        if len(lookups) >= PUBLIC_SCAN_LIMIT:
+            break
+        pick, why = examine(epochs / str(n))
+        if pick is not None:
+            return pick
+        refused.append('e%d: %s' % (n, why))
+    _die('no decided public epoch among the newest %d signed epochs (%s); name one with --epoch' % (
+        len(lookups), '; '.join(refused[:6]) or 'no epochs'))
 
 
 def read_live_master_index(
@@ -332,17 +455,27 @@ def resolve_live_sources(
     if not cur_path.is_file():
         _die('live CURRENT.json missing: %s' % cur_path)
     current = _rj(cur_path)
-    head = str(((current.get('checkpoint') or {}).get('id')) or '')
-    if not _hex64(head):
+    live_head = str(((current.get('checkpoint') or {}).get('id')) or '')
+    if not _hex64(live_head):
         _die('live CURRENT.checkpoint.id is not hex64')
-    epoch_dir = select_epoch(life, head, epoch)
-    index, origin = read_live_master_index(env, head, fetch=fetch)
-    digest = str(index.get('master_digest') or '')
-    bf16 = str(index.get('bf16_sha256') or '')
-    if not _hex64(digest) or not _hex64(bf16):
-        _die('M(H) index for %s lacks master_digest/bf16_sha256' % head[:12])
-    if not isinstance(index.get('files'), Mapping) or not index['files']:
-        _die('M(H) index for %s has no files' % head[:12])
+    masters: Dict[str, Tuple[Dict[str, Any], str]] = {}
+
+    def master_refusal(pick: EpochPick) -> str:
+        # fp32 stays fail closed: an epoch without a complete published M(H) is not usable.
+        try:
+            index, origin = read_live_master_index(env, pick.head, fetch=fetch)
+        except FakepassError as exc:
+            return str(exc)
+        if not _hex64(index.get('master_digest')) or not _hex64(index.get('bf16_sha256')):
+            return 'M(H) index for %s lacks master_digest/bf16_sha256' % pick.head[:12]
+        if not isinstance(index.get('files'), Mapping) or not index['files']:
+            return 'M(H) index for %s has no files' % pick.head[:12]
+        masters[pick.head] = (dict(index), origin)
+        return ''
+
+    pick = select_epoch(life, env, epoch, fetch=fetch, accept=master_refusal)
+    epoch_dir, head = pick.epoch_dir, pick.head
+    index, origin = masters[head]
     bundle = live_pe_state(env) / 'BUNDLE.json'
     if not bundle.is_file():
         _die('live PE BUNDLE.json (probe bundle for pe_lane.push_bundle) missing: %s' % bundle)
@@ -352,17 +485,21 @@ def resolve_live_sources(
     }
     if not origin.startswith('http'):
         prov[origin] = _sha256_file(Path(origin))
+    prov[pick.turn_origin] = pick.turn_sha256
     return LiveSources(
         head=head,
         epoch=int(epoch_dir.name),
         epoch_dir=epoch_dir,
-        master_digest=digest,
-        head_bf16=bf16,
-        master_index=dict(index),
+        master_digest=str(index['master_digest']),
+        head_bf16=str(index['bf16_sha256']),
+        master_index=index,
         master_index_origin=origin,
         current=dict(current),
         bundle_json=bundle,
         provenance=prov,
+        live_head=live_head,
+        decision=dict(pick.decision),
+        public_turn_origin=pick.turn_origin,
     )
 
 
@@ -396,7 +533,10 @@ def stage_live_sources(src: LiveSources, paths: Mapping[str, Path]) -> Dict[str,
         'epoch_index': int(src.epoch),
         'checkpoint': {'id': src.head, 'files': dict(ck.get('files') or {})},
         'optimizer_step': int(job['training']['optimizer_step']),
-        'checkpoint_authorization': src.current.get('checkpoint_authorization'),
+        # The live authorization names the live head; it is not carried to an earlier head.
+        'checkpoint_authorization': (
+            src.current.get('checkpoint_authorization') if src.head == src.live_head else None
+        ),
     })
     _wj(paths['pe'] / 'HEAD-CHAIN.json', {'genesis': src.head, 'applied': []})
     (paths['pe'] / 'GREENS.json').write_text('[]\n')
@@ -464,6 +604,19 @@ def check_admitted_trainer_host(host_dir: Path, manifest: Path = ADMITTED_MANIFE
     return {'host_dir': str(host_dir), 'admitted_files': len(expected), 'overlay': False}
 
 
+def names_signed_trainer_host(value: str) -> bool:
+    """True when ``value`` resolves to the signed default trainer host dir.
+
+    Naming the signed default explicitly ships the same bytes as leaving the
+    variable unset, so it is not an overlay. Any other dir still refuses, and
+    ``check_admitted_trainer_host`` runs on whichever dir ships.
+    """
+    try:
+        return Path(value).resolve(strict=True) == pe_box._signed_trainer_host_dir().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+
+
 def preflight_real(env: Mapping[str, str]) -> Dict[str, Any]:
     """Refuse REAL unless credentials exist and no injection/overlay seam is set."""
     if not has_lium_credentials(env):
@@ -471,14 +624,20 @@ def preflight_real(env: Mapping[str, str]) -> Dict[str, Any]:
     seams = sorted(k for k in INJECTION_ENV if env.get(k))
     if seams:
         _die('real mode refuses test-injection env: %s' % seams)
-    overlays = sorted(k for k in OVERLAY_ENV if env.get(k))
+    overlays = sorted(
+        k for k in OVERLAY_ENV
+        if env.get(k) and not (k in TRAINER_HOST_ENV and names_signed_trainer_host(env[k]))
+    )
     if overlays:
         _die('real mode refuses trainer overlay / sharded env: %s' % overlays)
     for key in ('PIT_LIFE_CFG', 'PIT_BUNDLE_JSON'):
         v = env.get(key)
         if not v or not Path(v).is_file():
             _die('real mode requires %s (host file)' % key)
-    return check_admitted_trainer_host(pe_box._trainer_host_dir())
+    out = check_admitted_trainer_host(pe_box._trainer_host_dir())
+    out['trainer_host_env'] = sorted(k for k in TRAINER_HOST_ENV if env.get(k))
+    out['lium_credentials'] = lium_credential_source(env)
+    return out
 
 
 @contextlib.contextmanager
@@ -563,9 +722,17 @@ def make_fakepass_host_rent(
     order: Sequence[str] = FAKEPASS_GPU_ORDER,
     ceiling: float = float(PRICE_CEILING_USD_H),
     ttl: str = RENT_TTL,
-    note: Callable[..., None] = lambda **_: None,
+    note: Callable[..., None] = lambda _event, **_extra: None,
 ) -> Callable[..., Mapping[str, Any]]:
-    """B300, then B200, then H200 — each only if an 8-GPU offer is under ceiling."""
+    """B300, then B200, then H200 — each only if an 8-GPU offer is under ceiling.
+
+    ``rent_mod``: the rent path with ``pick_node``, ``rent`` and ``release``. For a
+    real run it is the ``IsolatedRent`` of the fakepass prefix: live ``pe_rent``
+    refuses a fakepass name.
+
+    ``note(event, **fields)``: the event name is positional, so a timeline
+    writer whose first parameter is ``event`` cannot receive it twice.
+    """
     order = tuple(order)
     if any(g not in FAKEPASS_GPU_ORDER for g in order):
         _die('fakepass rents only %s (got %s)' % (FAKEPASS_GPU_ORDER, order))
@@ -583,7 +750,7 @@ def make_fakepass_host_rent(
             if not row or got_g != g:
                 tried.append({'gpu': g, 'skip': 'no 8x%s offer <= $%.2f/h' % (g, ceiling)})
                 continue
-            note(event='rent_attempt', gpu=g, offer_price_h=row.get('price_per_hour'))
+            note('rent_attempt', gpu=g, offer_price_h=row.get('price_per_hour'))
             out = rent_mod.rent(name, ttl, gpu=g)
             if not out:
                 tried.append({'gpu': g, 'skip': 'lium up failed'})
@@ -615,10 +782,21 @@ def build_rent_service(rent_mod: Any, *, ledger_path: Path, note: Callable[..., 
         share_pe_cap=False,
         ledger_path=str(ledger_path),
     )
-    bind_host_rent_service(svc, module_path=rent_mod.__name__)
-    if svc.host_release is None or svc.list_pods is None:
-        _die('host pe_rent lacks release/list_pods')
-    svc.host_rent = make_fakepass_host_rent(rent_mod, note=note)
+    # Live rent, release and our_pods are for ``affine-pe-*`` names. The fakepass box has a
+    # name that live never matches: its rent path is isolated (own lock and pod ledger).
+    try:
+        isolated = bind_isolated_rent(
+            rent_mod,
+            prefix=BOX_NAME_PREFIX,
+            state_dir=Path(ledger_path).parent / 'isolated-rent',
+            gpu_order=FAKEPASS_GPU_ORDER,
+            price_ceiling=float(PRICE_CEILING_USD_H),
+        )
+    except IsolatedRentError as exc:
+        _die('fakepass rent path: %s' % exc)
+    svc.host_rent = make_fakepass_host_rent(isolated, note=note)
+    svc.host_release = isolated.release
+    svc.list_pods = isolated.pods
     svc.offer_precheck_fn = None
     return svc
 
@@ -881,18 +1059,24 @@ class RealFakepass:
         assert_env_sandboxed(self.env, root)
         if os.environ.get('PIT_FAKEPASS_MODE') != 'real':
             _die('REAL phases must run inside the swapped sandbox environ')
+        problem = live_name_problem(BOX_NAME_PREFIX)
+        if problem:
+            _die('BOX_NAME_PREFIX %s: %s' % (BOX_NAME_PREFIX, problem))
         self.mods = import_live_modules()
         bound = assert_live_modules_sandboxed(self.mods, root)
         self._note('sandbox_ready', run_id=self.run_id, root=str(root), live_sources=self.sources.as_dict(),
                    module_roots=bound, trainer_host=self.host_check)
 
+    def build_rent(self, rent_mod: Any) -> RentService:
+        return build_rent_service(
+            rent_mod, ledger_path=self.paths['pe'] / 'fakepass-rent-ledger.json',
+            note=self._note,
+        )
+
     def phase_rent(self) -> None:
         self._advance(FakepassPhase.RENT)
         mods = self._require_mods()
-        self.rent = build_rent_service(
-            mods.rent, ledger_path=self.paths['pe'] / 'fakepass-rent-ledger.json',
-            note=lambda **kw: self._note('rent', **kw),
-        )
+        self.rent = self.build_rent(mods.rent)
         try:
             out = self.rent.rent(item_id=self.item_id, epoch=self.sources.epoch, attempt=0)
         except RentError as exc:
@@ -941,8 +1125,12 @@ class RealFakepass:
         self.store_entry = str(fp.get('output_bf16') or '')
         self.receipt = receipt
         self.ctrl = controller_for_pod(self.pod, self.item_id)
+        # Evidence only: live trained the same head and batch. A different id is not
+        # a failure (the all-reduce order differs between GPU types).
+        live_candidate = self.sources.decision.get('candidate')
         self._note('train_done', candidate_id=cid, store_entry=self.store_entry,
-                   master_out=receipt.get('candidate_master_digest'), train_gpu=receipt.get('train_gpu'))
+                   master_out=receipt.get('candidate_master_digest'), train_gpu=receipt.get('train_gpu'),
+                   live_candidate=live_candidate, reproduces_live_candidate=bool(cid == live_candidate))
 
     def phase_early_upload(self) -> None:
         self._advance(FakepassPhase.EARLY_UPLOAD)

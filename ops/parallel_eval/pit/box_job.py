@@ -5,12 +5,17 @@ Host threads die on restart; box-side work must not. A job under
 On re-adopt the host inspects markers, resumes polling, or fetches the
 result — never re-runs a stage that already has a marker. Before launching
 a missing stage, any stale box-side duplicate for that job is killed.
+
+The start of a detached stage is idempotent. One starter at a time holds the
+start claim of the job directory (``start.claim``). A second starter does not
+kill and does not start: it adopts the job that is alive (BUSY) and polls it.
 """
 from __future__ import annotations
 
 import json
 import shlex
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, Set
 
@@ -21,6 +26,13 @@ STAGES: tuple[str, ...] = ('download', 'train', 'eval')
 STAGE_ALIASES: Dict[str, str] = {'probe': 'eval'}
 RESULT_NAME = 'RESULT.json'
 PID_NAME = 'job.pid'
+# The stage of the process in job.pid. A launch for a stage that is alive (BUSY) starts nothing.
+STAGE_NAME = 'job.stage'
+# The start claim: one starter at a time looks at the job, kills leftovers and starts a detached stage.
+CLAIM_NAME = 'start.claim'
+CLAIM_LOCK_NAME = 'start.flock'
+# A claim lives this long without a new claim of its owner. A starter that died holds the start for no longer.
+START_CLAIM_TTL_S = 300.0
 LOG_NAME = 'job.log'
 # Per-attempt logs: job.log.0, job.log.1, … (never truncate prior attempts).
 LOG_ATTEMPT_PREFIX = 'job.log.'
@@ -53,6 +65,10 @@ def result_path(job_dir: str) -> str:
 
 def pid_path(job_dir: str) -> str:
     return '%s/%s' % (job_dir.rstrip('/'), PID_NAME)
+
+
+def stage_path(job_dir: str) -> str:
+    return '%s/%s' % (job_dir.rstrip('/'), STAGE_NAME)
 
 
 def log_path(job_dir: str) -> str:
@@ -129,6 +145,9 @@ class BoxJobStatus:
 
 
 class BoxJobStore(Protocol):
+    # What the last ``launch_detached`` did: 'started', or 'busy' when the stage was alive and nothing started.
+    last_launch: Optional[str]
+
     def ensure_dir(self, job_dir: str) -> None: ...
     def read_text(self, path: str) -> Optional[str]: ...
     def write_text(self, path: str, text: str) -> None: ...
@@ -138,6 +157,8 @@ class BoxJobStore(Protocol):
     def kill_pids(self, pids: Sequence[int]) -> None: ...
     def pgrep(self, pattern: str) -> Sequence[int]: ...
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int: ...
+    def claim_start(self, job_dir: str, *, stage: str, owner: str, ttl_s: float, renew: bool = False) -> bool: ...
+    def release_start(self, job_dir: str, *, stage: str, owner: str) -> None: ...
 
 
 def _loads_json(text: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -177,6 +198,12 @@ def read_pid(store: BoxJobStore, job_dir: str) -> Optional[int]:
         return int(tok[0])
     except Exception:
         return None
+
+
+def read_stage(store: BoxJobStore, job_dir: str) -> Optional[str]:
+    """The stage that the last detached launch wrote into ``job.stage``. None when the file is not there."""
+    words = (store.read_text(stage_path(job_dir)) or '').split()
+    return words[0] if words else None
 
 
 def fetch_result(store: BoxJobStore, job_dir: str) -> Optional[Dict[str, Any]]:
@@ -231,6 +258,7 @@ def kill_stale_job(
                 store.kill_pids([p])
                 killed.append(p)
     store.remove(pid_path(job_dir))
+    store.remove(stage_path(job_dir))
     return killed
 
 
@@ -320,6 +348,10 @@ class BoxJobController:
     job_root: str = '/workspace/pst/pit-jobs'
     sleep_fn: Callable[[float], None] = time.sleep
     now_fn: Callable[[], float] = time.time
+    # The name of this starter in the start claim on the box. It has no host data in it.
+    owner: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # What each detached start did: (stage, 'started') or (stage, 'adopted').
+    starts: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
     _stage_retries: Dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     @property
@@ -454,6 +486,69 @@ class BoxJobController:
             )
         raise BoxJobError('detached stage %s exited without marker' % stage)
 
+    def _stage_live_or_done(self, stage: str) -> bool:
+        """True when the job of ``stage`` is alive on the box (BUSY), or the stage or the whole job is done."""
+        st = self.status()
+        if st.result is not None or stage in st.markers:
+            return True
+        if st.state != STATUS_RUNNING:
+            return False
+        # ``job.stage`` names the stage of the job that is alive. A job that the code before that file started
+        # has only the markers: the first stage without a marker is then the stage of the job.
+        return stage in (st.next_stage, read_stage(self.store, self.job_dir))
+
+    def _release_start(self, stage: str) -> None:
+        """Give the start claim back. A failure here is not an error of the start: the claim ends by its time."""
+        try:
+            self.store.release_start(self.job_dir, stage=stage, owner=self.owner)
+        except Exception:
+            pass
+
+    def _launch_once(
+        self,
+        stage: str,
+        command: str,
+        kill_patterns: Sequence[str],
+        *,
+        deadline: float,
+        poll_s: float,
+    ) -> bool:
+        """Start the detached job of ``stage`` unless a different starter has done it. True: this call started it.
+
+        Two starters can come here at one time: two host processes for one item, or a host that starts again
+        while its old thread is alive. Without a rule, each sees no job, kills the "stale" job of the other
+        and starts its own. The result was two trainers, or a trainer that was killed, and a fatal error.
+
+        The rule: a starter takes the start claim of the job directory on the box. With the claim it looks at
+        the job again, and only then kills leftovers and starts. A starter without the claim waits. When it
+        sees the job of the stage alive (BUSY) or done, it adopts that job: the caller polls it for the marker.
+        An adopted job is not an error. The claim of a starter that died ends after ``START_CLAIM_TTL_S``.
+        """
+        claim, held = self.store.claim_start, dict(stage=stage, owner=self.owner, ttl_s=START_CLAIM_TTL_S)
+        while True:
+            if claim(self.job_dir, **held):
+                try:
+                    if self._stage_live_or_done(stage):
+                        break
+                    self.kill_stale(extra_patterns=kill_patterns)
+                    # The kill can take longer than the claim lives. A starter that took the claim in that time
+                    # has looked at the box and can have a job alive. Start only if the claim never left us.
+                    if claim(self.job_dir, renew=True, **held):
+                        self.store.launch_detached(self.job_dir, stage=stage, command=command)
+                        if self.store.last_launch == 'busy':
+                            break
+                        self.starts.append((stage, 'started'))
+                        return True
+                finally:
+                    self._release_start(stage)
+            elif self._stage_live_or_done(stage):
+                break
+            if float(self.now_fn()) >= deadline:
+                raise BoxJobError('detached stage %s: a different starter holds the start claim and no job is alive' % stage)
+            self.sleep_fn(poll_s)
+        self.starts.append((stage, 'adopted'))
+        return False
+
     def run_stage_once(
         self,
         stage: str,
@@ -464,8 +559,16 @@ class BoxJobController:
         timeout_s: float = 7200.0,
         wait_for_marker: bool = False,
         extra_kill_patterns: Sequence[str] = (),
+        on_poll: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
         """Skip if marker exists; else kill stale, run (or detach+poll), then mark.
+
+        The start of a detached stage is idempotent (``_launch_once``): when two starters
+        come here at one time, one starts the job and the other adopts it. A job of this
+        stage that is alive (BUSY) is polled, not killed and not an error.
+
+        ``on_poll``, when given, runs before each sleep while the host waits for the
+        marker of a detached stage. It must not raise.
 
         When ``detached_command`` is set the stage runs on the box under
         setsid/nohup. The box (or ``runner`` after poll) must produce the stage
@@ -508,6 +611,8 @@ class BoxJobController:
                         return dict(st.result)
                     if st.state != STATUS_RUNNING:
                         break
+                    if on_poll is not None:
+                        on_poll()
                     self.sleep_fn(poll_s)
                 st = self.status()
                 if stage in st.markers:
@@ -533,10 +638,12 @@ class BoxJobController:
                     'vllm serve', 'podctl.py serve', 'podctl.py start-run',
                     'pit-box-job-eval', 'affine_gatepool',
                 ))
-            self.kill_stale(extra_patterns=kill_patterns)
+            if not detached_command:
+                self.kill_stale(extra_patterns=kill_patterns)
             if detached_command:
-                self.store.launch_detached(
-                    self.job_dir, stage=stage, command=detached_command,
+                # Idempotent start: a job of this stage that a different starter has alive is adopted.
+                self._launch_once(
+                    stage, detached_command, kill_patterns, deadline=deadline, poll_s=poll_s,
                 )
                 if wait_for_marker:
                     while float(self.now_fn()) < deadline:
@@ -552,6 +659,8 @@ class BoxJobController:
                                 if 'retry once' not in str(exc) or attempt >= 1:
                                     raise
                                 break  # for-loop: one same-box relaunch
+                        if on_poll is not None:
+                            on_poll()
                         self.sleep_fn(poll_s)
                     else:
                         raise BoxJobError('detached stage %s timed out' % stage)
@@ -586,6 +695,9 @@ class PodLike(Protocol):
 @dataclass
 class RemoteBoxJobStore:
     pod: PodLike
+    # How long a command waits for the start lock of the job directory on the box.
+    lock_wait_s: int = 30
+    last_launch: Optional[str] = field(default=None, init=False)
 
     def ensure_dir(self, job_dir: str) -> None:
         self.pod.run(
@@ -714,34 +826,99 @@ class RemoteBoxJobStore:
                 found.append(int(tok))
         return found
 
+    def _locked(self, job_dir: str, body: str) -> str:
+        """A shell command that runs ``body`` in the job directory, one process at a time (flock on the box).
+
+        ``body`` is a list of shell commands with no ``;`` at its end. The lock is on file descriptor 9 of the
+        shell and ends with the shell. When the lock does not come in ``lock_wait_s``, the answer is the line
+        ``LOCKBUSY`` and the body does not run.
+
+        ``flock`` is a part of util-linux, which each Ubuntu image has. A box without it runs the body with no
+        lock: the claim file is then the only rule.
+        """
+        # flock ends with 1 when the wait ended. Each other failure (a file system with no locks) is as a box
+        # without flock: the body runs.
+        return (
+            'mkdir -p {jd}/markers && cd {jd} && exec 9>{lock} && '
+            '{{ if command -v flock >/dev/null 2>&1; then flock -w {wait} 9; '
+            '[ $? -ne 1 ] || {{ echo LOCKBUSY; exit 0; }}; fi; }} && '
+            '{{ {body}; }}'
+        ).format(jd=shlex.quote(job_dir.rstrip('/')), lock=shlex.quote(CLAIM_LOCK_NAME), body=body,
+                 wait=int(self.lock_wait_s))
+
+    def claim_start(self, job_dir: str, *, stage: str, owner: str, ttl_s: float, renew: bool = False) -> bool:
+        """Take the start claim of the job directory for ``owner``. True: the claim is ours until its time ends.
+
+        The claim is the file ``start.claim`` with ``<owner> <stage> <time of the box>``. It is free when it is
+        not there, when it is ours, or when it is older than ``ttl_s`` seconds (its starter died). Only the clock
+        of the box is used. With ``renew`` the answer is True only when the claim in the file is ours now: a claim
+        that a different starter took, or took and gave back, is not renewed.
+        """
+        free = '[ "$1" = {owner} ]' if renew else '[ -z "$1" ] || [ "$1" = {owner} ] || [ $(( now - at )) -gt {ttl} ]'
+        body = (
+            'now=$(date +%s); set -- $(cat {claim} 2>/dev/null); '
+            'case "$3" in ""|*[!0-9]*) at=0;; *) at=$3;; esac; '
+            'if ' + free + '; then '
+            'echo {owner} {stage} $now > {claim} && echo CLAIMED; '
+            'else echo HELD "$1" "$2" $(( now - at )); fi'
+        ).format(claim=shlex.quote(CLAIM_NAME), owner=shlex.quote(str(owner)), stage=shlex.quote(str(stage)),
+                 ttl=int(float(ttl_s)))
+        out = self.pod.run(self._locked(job_dir, body), timeout=90, check=True)
+        lines = (out or '').strip().splitlines()
+        return bool(lines) and lines[-1].strip() == 'CLAIMED'
+
+    def release_start(self, job_dir: str, *, stage: str, owner: str) -> None:
+        """Give the start claim back if it is ours. It never removes the claim of a different starter."""
+        body = (
+            'set -- $(cat {claim} 2>/dev/null); if [ "$1" = {owner} ]; then rm -f {claim}; fi; true'
+        ).format(claim=shlex.quote(CLAIM_NAME), owner=shlex.quote(str(owner)))
+        self.pod.run(self._locked(job_dir, body), timeout=90, check=False)
+
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int:
+        """Start the stage as a detached process. Returns its pid.
+
+        The start is idempotent: if the process in ``job.pid`` is alive and ``job.stage`` names this stage,
+        the stage is BUSY. Nothing is started, the answer is the pid of that process, and ``last_launch`` is
+        ``'busy'``. A caller that wants a new process kills the old one first (``kill_stale_job``).
+        """
         # Tag process with pit-box-job so kill_stale / pgrep can find duplicates.
         # Per-attempt log: never truncate prior job.log.N; point job.log → latest.
         attempt = next_log_attempt(self, job_dir)
         log_n = 'job.log.%d' % int(attempt)
-        wrapped = (
-            'mkdir -p {jd}/markers; cd {jd}; '
-            'setsid nohup bash -c {cmd} > {log} 2>&1 < /dev/null & '
-            'echo $! > {pid}; '
+        body = (
+            'old=$(head -n 1 {pid} 2>/dev/null); case "$old" in ""|*[!0-9]*) old=;; esac; '
+            'if [ -n "$old" ] && kill -0 "$old" 2>/dev/null && [ "$(head -n 1 {stg} 2>/dev/null)" = {stage} ]; then '
+            'echo BUSY "$old"; else '
+            # File descriptor 9 is the start lock. The job does not get it: the lock ends with this shell.
+            'setsid nohup bash -c {cmd} > {log} 2>&1 < /dev/null 9>&- & new=$!; '
+            'echo {stage} > {stg}; echo "$new" > {pid}; '
             'ln -sfn {log} {link} 2>/dev/null || cp -f {log} {link} 2>/dev/null || true; '
-            'cat {pid}'
+            'echo STARTED "$new"; fi'
         ).format(
-            jd=shlex.quote(job_dir.rstrip('/')),
             cmd=shlex.quote(
                 'echo pit-box-job-%s; %s' % (stage, command)
             ),
             log=shlex.quote(log_n),
             link=shlex.quote(LOG_NAME),
             pid=shlex.quote(PID_NAME),
+            stg=shlex.quote(STAGE_NAME),
+            stage=shlex.quote(str(stage)),
         )
-        out = self.pod.run(wrapped, timeout=60, check=True)
+        out = self.pod.run(self._locked(job_dir, body), timeout=120, check=True)
         text = (out or '').strip().splitlines()
         if not text:
             raise BoxJobError('detached launch produced no pid')
+        words = text[-1].strip().split()
+        if words == ['LOCKBUSY']:
+            raise BoxJobError('detached launch: the start lock of the job directory did not come free')
         try:
-            return int(text[-1].strip().split()[0])
+            state, pid = words[0], int(words[1])
         except Exception as exc:
             raise BoxJobError('bad pid from launch: %r' % out) from exc
+        if state not in ('STARTED', 'BUSY'):
+            raise BoxJobError('bad pid from launch: %r' % out)
+        self.last_launch = state.lower()
+        return pid
 
 
 # ---------------------------------------------------------------------------
@@ -760,9 +937,26 @@ class MemBoxJobStore:
     # Artifact-recovery hooks for hermetic tests (no real shards).
     has_train_artifacts: bool = False
     train_recovery_payload: Optional[Dict[str, Any]] = None
+    # Start claims {job_dir: {'owner', 'stage', 'at'}}, with the same rule as the remote store.
+    claims: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    clock: Callable[[], float] = time.time
+    last_launch: Optional[str] = field(default=None, init=False)
 
     def ensure_dir(self, job_dir: str) -> None:
         return None
+
+    def claim_start(self, job_dir: str, *, stage: str, owner: str, ttl_s: float, renew: bool = False) -> bool:
+        held, now = self.claims.get(job_dir), float(self.clock())
+        ours = held is not None and held['owner'] == owner
+        if ours or (not renew and (held is None or now - float(held['at']) > float(ttl_s))):
+            self.claims[job_dir] = {'owner': owner, 'stage': stage, 'at': now}
+            return True
+        return False
+
+    def release_start(self, job_dir: str, *, stage: str, owner: str) -> None:
+        held = self.claims.get(job_dir)
+        if held is not None and held['owner'] == owner:
+            self.claims.pop(job_dir, None)
 
     def train_artifacts_present(self, job_dir: str) -> bool:
         if self.has_train_artifacts:
@@ -834,10 +1028,17 @@ class MemBoxJobStore:
         return found
 
     def launch_detached(self, job_dir: str, *, stage: str, command: str) -> int:
+        # The same rule as the remote store: a stage that is alive (BUSY) starts nothing.
+        old = read_pid(self, job_dir)
+        if old in self.alive_pids and read_stage(self, job_dir) == stage:
+            self.last_launch = 'busy'
+            return old
+        self.last_launch = 'started'
         pid = self.next_pid
         self.next_pid += 1
         self.alive_pids.add(pid)
-        self.files['%s/%s' % (job_dir.rstrip('/'), PID_NAME)] = str(pid)
+        self.files[pid_path(job_dir)] = str(pid)
+        self.files[stage_path(job_dir)] = str(stage)
         # Per-attempt log (no truncation of prior attempts); job.log → latest.
         attempt = next_log_attempt(self, job_dir)
         log_n = log_attempt_path(job_dir, attempt)

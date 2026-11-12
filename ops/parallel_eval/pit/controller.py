@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from . import PREFIX_LIVE, PREFIX_SHADOW
+from . import early_stop
 from .apply_live import ApplyLiveError, LiveApplicator, PromoteRefused
 from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
 from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
@@ -37,7 +38,7 @@ from .decisions import DecisionLog
 from .durable import item_from_dict, item_to_dict, pit_state_root
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentError, RentService, bind_host_rent_service
-from .pe_score import is_live_pending_exc
+from .pe_score import call_live_host_score, is_live_pending_exc
 from .pe_score import score as pit_score
 from .pe_score import score_epoch_shadow
 from .queue_ingest import training_job_checkpoint
@@ -1133,8 +1134,22 @@ class Controller:
         return updated, str(done.get('note') or 'box-complete')
 
 
+    def _early_stop_score(self, item: ItemRecord) -> Optional[Callable[[Dict[str, Any]], Any]]:
+        """The scorer for the RED-only early stop of this item's probe. None unless the config flag is on.
+
+        It is the scorer of ``_decide``: the official estimate against the full head baseline of the item's round.
+        """
+        if not self.config.early_stop.enabled or self.score_fn is None:
+            return None
+        score_fn, epoch = self.score_fn, int(item.epoch)
+        round_id = item.bound_round_id or self.current_round_id
+        return lambda result: call_live_host_score(score_fn, epoch=epoch, round_id=round_id, result=result)
+
     def _run_box(self, item: ItemRecord) -> tuple[ItemRecord, str]:
-        runner = BoxRunner(config=self.config, io=self.box_io_factory(), lane=self.lane)
+        runner = BoxRunner(
+            config=self.config, io=self.box_io_factory(), lane=self.lane,
+            early_stop_score=self._early_stop_score(item),
+        )
         box_key = generate_ephemeral_box_key()
         env = build_admission_envelope(
             box_key,
@@ -1480,13 +1495,23 @@ class Controller:
         if next_at is not None and float(self.now_fn()) < float(next_at):
             return item, 'wait-baseline'
 
-        probe = bundle.probe_result or {}
-        if probe.get('partial') or probe.get('timeout') or probe.get('incomplete'):
+        def incomplete() -> tuple[ItemRecord, str]:
             updated = apply_transition(
                 item, ItemState.NO_DECISION, reason='incomplete-probe',
                 updates={'decision': 'no_decision', 'result_stored': True, 'paid': False},
             )
             return updated, 'no_decision-incomplete'
+
+        probe = bundle.probe_result or {}
+        probe_result = bundle.probe_result
+        # Set only for a partial probe that the RED-only early stop ended (config flag, off by default).
+        stopped: Optional[early_stop.Stopped] = None
+        if probe.get('partial') or probe.get('timeout') or probe.get('incomplete'):
+            stopped = early_stop.stopped_cells(probe, self.config.early_stop)
+            if stopped is None:
+                return incomplete()
+            # Score the cells of the stop and nothing else. This branch ends in RED or in no decision.
+            probe_result = stopped.result(probe)
 
         try:
             if self.config.is_shadow() and self.live_decision_lookup is not None:
@@ -1494,7 +1519,7 @@ class Controller:
                 shadow_out = score_epoch_shadow(
                     epoch=item.epoch,
                     round_id=item.bound_round_id or self.current_round_id,
-                    box_result=bundle.probe_result,
+                    box_result=probe_result,
                     box_candidate_id=bundle.candidate_id,
                     box_head_id=item.bound_head or self.current_head,
                     live_decision=live,
@@ -1523,7 +1548,7 @@ class Controller:
                 scored = pit_score(
                     epoch=item.epoch,
                     round_id=item.bound_round_id or self.current_round_id,
-                    result=bundle.probe_result,
+                    result=probe_result,
                     candidate_id=bundle.candidate_id,
                     head_id=item.bound_head or self.current_head,
                     host_score=self.score_fn,
@@ -1548,6 +1573,13 @@ class Controller:
                     scored.get('pending_reason') or scored.get('reason') or 'baseline not ready'
                 )[:400],
             )
+        if stopped is not None:
+            verdict = early_stop.stop_verdict(scored, self.config.early_stop)
+            if verdict is None:
+                # The official estimate of the stopped cells is not a stop: the probe is only incomplete.
+                return incomplete()
+            scored = early_stop.stamp(scored, stopped, verdict, self.config.early_stop)
+            decision = 'red'
         if decision == 'no_decision':
             updated = apply_transition(
                 item, ItemState.NO_DECISION, reason='infra-no-decision',
@@ -1631,6 +1663,7 @@ class Controller:
                 paid=updated.paid,
                 decided_at=decided_at,
                 shadow=True,
+                extra=early_stop.log_extra(scored),
             )
             self._shadow_refuse_live_writes(updated)
             if updated.decision == 'green_fresh':
@@ -1659,6 +1692,7 @@ class Controller:
             paid=item.paid,
             decided_at=float((item.meta or {}).get('decided_at_mono') or self.now_fn()),
             shadow=False,
+            extra=early_stop.log_extra((item.meta or {}).get('scored')),
         )
         item.meta = dict(item.meta or {}, decision_log_pending=False)
 
@@ -2662,12 +2696,21 @@ class Controller:
                 raise ShadowWriteError('shadow guard failed to refuse %s' % action)
             except ShadowWriteError:
                 pass
+        # The guard is an allowlist: a file outside the shadow state root and a live R2 key are refused.
+        root = self.shadow.state_root
+        outside = Path(os.path.realpath(root)).parent if root else Path(os.sep)
         for name in ('DECISION.json', 'HEAD-CHAIN.json', 'CURRENT.json', 'WEIGHTS.json'):
             try:
-                self.shadow.check_path(name)
-                raise ShadowWriteError('shadow guard failed to refuse path %s' % name)
+                self.shadow.check_path(outside / name, kind=name)
             except ShadowWriteError:
-                pass
+                continue
+            raise ShadowWriteError('shadow guard failed to refuse path %s' % name)
+        for key in ('fp32-master/%s' % item.candidate_id, 'pit-pending/%s' % item.candidate_id, 'heads/current'):
+            try:
+                self.shadow.check_r2_key(key)
+            except ShadowWriteError:
+                continue
+            raise ShadowWriteError('shadow guard failed to refuse the R2 key %s' % key)
 
 
 HostController = Controller

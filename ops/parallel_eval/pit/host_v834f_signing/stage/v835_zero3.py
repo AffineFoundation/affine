@@ -10,8 +10,9 @@ parameters, gradients and gradient accumulators SHARDED over the v8.3 DP world:
              module and parameter names never change.
   precision  A layer's shards are the exact fp32 upcast of the bf16 actor and are all-gathered in bf16
              (MixedPrecisionPolicy.param_dtype), so every forward uses the bf16 weights bit for bit. Gradients are
-             bf16 from autograd, as in v8.3.4e, then SUM-reduced in fp32 and accumulated as fp32 shards
-             (reduce_dtype float32, divide factor 1): the v8.3.4e fp32 accumulator, sharded.
+             bf16 from autograd, as in v8.3.4e, and accumulate as fp32 shards (divide factor 1). The SUM over the
+             ranks of one step is taken in fp32 (reduce_dtype float32: the v8.3.4e fp32 accumulator, sharded) or,
+             for the decoder layers of the default settings, in bf16 with no upcast (see settings).
   head       lm_head runs once per logit chunk, a data-dependent number of calls, so hook-driven collectives would
              differ between ranks. It is all-gathered once per micro-batch and its bf16 gradient is SUM-reduced in
              fp32 by one explicit collective as soon as the head backward is complete. embed_tokens is gathered for
@@ -22,6 +23,12 @@ parameters, gradients and gradient accumulators SHARDED over the v8.3 DP world:
              the largest fixed item of a long micro-batch. A rank can keep them in host memory instead (bit-exact
              copies, no change to any collective). It does so when the estimate for the largest micro-batch of the
              job is near the limit, or when the measured probe step says the GPU needs it.
+  settings   What the real 8x RTX 5090 runs set is one named set of values (PROFILES). 'rtx5090-u6', the default, is
+             the operator's measured set: the fp32 layer shards stay on the GPU, layer inputs on the host are
+             page-locked, layer gradients are reduced in bf16, the next layer is all-gathered ahead in forward, the
+             token budget is 32768 and the gradient shards go to rank 0 over the data group. lm_head and the
+             embedding keep the fp32 reduction. 'reference-u2' is the set of the first full run, with every
+             gradient reduced in fp32. PIT_ZERO3_PROFILE names one of the two and can change no single value.
   optimizer  Unchanged and on rank 0: the fp32 shards are gathered into one full fp32 gradient on the CPU, then the
              v8.3.4e clip, CPUAdamW.step (fp32 head master) and publication run on rank 0's own unsharded bf16
              actor, which is kept on the CPU. Checkpoint files and keys therefore come from the same
@@ -36,6 +43,7 @@ parameters, gradients and gradient accumulators SHARDED over the v8.3 DP world:
 
 Nothing here runs unless PIT_ZERO3 is on. With it off the host-v834f launcher takes the unchanged v8.3.4e path.
 """
+import collections
 import dataclasses
 import importlib.util
 import json
@@ -56,8 +64,8 @@ from torch.distributed.tensor import DTensor
 
 HOST_VERSION = 'host-v834f'
 ZERO3_ENV = 'PIT_ZERO3'
+PROFILE_ENV = 'PIT_ZERO3_PROFILE'
 LOW_MEM_GPU_GIB = 100.0            # below this a GPU cannot hold the unsharded v8.3.4e update
-LOW_VRAM_TOKEN_BUDGET = 24576      # micro-batch token budget of the sharded path (one longer rollout still gets its own bin)
 LOGIT_CHUNK = 1024                 # head tokens per lm_head call (v8.3.4e: 4096): one fp32 logits tensor is 0.95 GiB instead of 3.8
 TARGET_PEAK_GIB = 28.0             # per-GPU limit enforced by the measured probe step
 TRAIN_MAX_CONTEXT = 36864          # = v8211_batched.TRAIN_MAX_CONTEXT: the longest single rollout a bin can hold
@@ -75,12 +83,13 @@ EST_LAYER_TENSORS = 48.0
 EST_HEAD_LOGITS = 5.0
 OFFLOAD_INPUTS_ABOVE = 0.75        # keep the layer inputs on the host when the estimate is above this share of the limit
 OFFLOADED_INPUT_TENSORS = 3        # hidden-state tensors still on the GPU when the layer inputs are on the host
+HOST_BLOCK_BYTES = 1 << 24         # page-locked layer inputs are kept in host blocks of this size (see _HostBlocks)
 EST_UNSHARDED_REFERENCE_GIB = 112.0   # reported v8.3.4e single-GPU peak of the 9B update (B300)
 
 MAX_PROBES = 3                     # measured probe steps per job (a rank may move its layer inputs to the host and measure again)
 GO, RETRY, REFUSE = 0, 1, 2        # one rank's verdict on a probe step; the world acts on the largest
 
-WORLD = dict(dead=None, helpers=(), actor=None)
+WORLD = dict(dead=None, helpers=(), actor=None, settings=None)
 
 
 class VramPreflightError(RuntimeError):
@@ -94,6 +103,62 @@ def _need(ok, why):
 
 def _event(event, **fields):
     print(json.dumps(dict(component='trainer-host-v834f', event=event, **fields), default=str), flush=True)
+
+
+# ---------------------------------------------------------------------------------------------- settings
+
+class Settings(collections.namedtuple('Settings', 'name token_budget offload_params pin_inputs layer_reduce prefetch gather')):
+    """The values of the sharded update that the real 8x RTX 5090 runs set. Every rank of a world runs one set,
+    and a set cannot change after it is made.
+
+    token_budget    micro-batch token budget (one longer rollout still gets its own bin)
+    offload_params  FSDP keeps the fp32 layer shards and their gradient shards in host memory
+    pin_inputs      layer inputs that a rank keeps on the host go to page-locked blocks
+    layer_reduce    SUM over the ranks of the layer gradients: 'float32', or 'native' = as autograd gave them (bf16)
+    prefetch        decoder layers all-gathered ahead of the running one in forward
+    gather          gradient shards go to rank 0 over the 'control' group (gloo, host memory) or the 'data' group
+                    (NCCL, GPU)
+    """
+    __slots__ = ()
+
+    def __new__(cls, *args, **values):
+        self = super().__new__(cls, *args, **values)
+        _need(isinstance(self.token_budget, int) and self.token_budget > 0, 'token_budget must be a positive integer')
+        _need(self.layer_reduce in ('float32', 'native'), 'layer_reduce: float32 or native')
+        _need(self.prefetch in (0, 1), 'prefetch: 0 or 1 (two layers ahead ran out of GPU memory on the RTX 5090)')
+        _need(self.gather in ('control', 'data'), 'gather: control or data')
+        return self
+
+
+PROFILES = {profile.name: profile for profile in (
+    # the operator's measured set for 8x RTX 5090 (run U6)
+    Settings(name='rtx5090-u6', token_budget=32768, offload_params=False, pin_inputs=True, layer_reduce='native',
+             prefetch=1, gather='data'),
+    # the set of the first full run on 8x RTX 5090 (run U2): every gradient is reduced in fp32
+    Settings(name='reference-u2', token_budget=24576, offload_params=True, pin_inputs=False, layer_reduce='float32',
+             prefetch=0, gather='control'),
+)}
+DEFAULT_PROFILE = 'rtx5090-u6'
+
+
+def settings():
+    """The settings of this process: the profile PIT_ZERO3_PROFILE names, or the default. The first call fixes
+    them. An unknown name is refused, so that a misspelled profile never runs as another one."""
+    if WORLD['settings'] is None:
+        name = os.environ.get(PROFILE_ENV, '').strip() or DEFAULT_PROFILE
+        _need(name in PROFILES, 'unknown %s %r (known: %s)' % (PROFILE_ENV, name, ', '.join(sorted(PROFILES))))
+        WORLD['settings'] = PROFILES[name]
+    return WORLD['settings']
+
+
+def _profile(profile):
+    """A Settings object from a Settings object, a profile name, or None (the settings of this process)."""
+    if profile is None:
+        return settings()
+    if isinstance(profile, Settings):
+        return profile
+    _need(profile in PROFILES, 'unknown profile %r (known: %s)' % (profile, ', '.join(sorted(PROFILES))))
+    return PROFILES[profile]
 
 
 # ---------------------------------------------------------------------------------------------- policy
@@ -124,7 +189,7 @@ def needs_zero3(mem_gib=None):
 
 def token_budget(engine_budget):
     """The micro-batch token budget the sharded plan uses (applied by the launcher to v83_dp.BUDGET)."""
-    return min(int(engine_budget), LOW_VRAM_TOKEN_BUDGET)
+    return min(int(engine_budget), settings().token_budget)
 
 
 def activate(host_mod):
@@ -136,15 +201,18 @@ def activate(host_mod):
     """
     mem = per_gpu_mem_gib()
     sharded = needs_zero3(mem)
+    profile = None
     if sharded:
         if host_mod is None or 'v835_zero3.py' not in getattr(host_mod, 'HOST_FILES', ()) \
                 or not callable(getattr(host_mod, 'zero3', None)):
             raise RuntimeError('sharded mode needs the host-v834f launcher module: activate(host)')
         if host_mod.zero3() is not sys.modules[__name__]:
             raise RuntimeError('activate() must be called on the launcher\'s own module: host.zero3().activate(host)')
+        profile = settings()          # an unknown profile name stops the trainer here, before install()
         os.environ[ZERO3_ENV] = '1'
     return dict(per_gpu_mem_gib=mem, zero3=sharded, host_version=HOST_VERSION, threshold_gib=LOW_MEM_GPU_GIB,
-                token_budget_cap=LOW_VRAM_TOKEN_BUDGET if sharded else None,
+                profile=profile._asdict() if sharded else None,
+                token_budget_cap=profile.token_budget if sharded else None,
                 logit_chunk=LOGIT_CHUNK if sharded else None, target_peak_gib=TARGET_PEAK_GIB if sharded else None,
                 backend=_backend() if sharded else None)
 
@@ -186,22 +254,36 @@ def scaled_inventory(n_params):
     return out
 
 
-def estimate_peak_gib(inv, *, tokens, world, logit_chunk=LOGIT_CHUNK, compute_bytes=2, offload_inputs=False):
+def estimate_peak_gib(inv, *, tokens, world, logit_chunk=LOGIT_CHUNK, compute_bytes=2, offload_inputs=False,
+                      profile=None):
     """Per-GPU peak of one sharded micro-batch of `tokens` tokens.
 
     `certain_gib` adds only tensors the design keeps alive by construction (exact sizes). `estimate_gib` adds the
     activation transients with the EST_* coefficients, which are counted from the code and not measured. The
     measured gate is the probe step of the update (see _run); this function refuses only what cannot fit.
     `offload_inputs`: the checkpointed layer inputs are in host memory (`offload_host_gib` per rank) instead.
+    `profile`: a Settings object or a profile name; None = the settings of this process.
     """
+    profile = _profile(profile)
     world = max(int(world), 1)
     hid = tokens * inv['hidden'] * compute_bytes / GIB               # one hidden-state tensor
-    kept = (inv['layers'] + 2) * hid                                 # checkpointing keeps every layer input, the final states and the selected states
-    saved = min(kept, OFFLOADED_INPUT_TENSORS * hid) if offload_inputs else kept
+    n_kept = inv['layers'] + 2                                       # checkpointing keeps every layer input, the final states and the selected states
+    n_saved = min(n_kept, OFFLOADED_INPUT_TENSORS) if offload_inputs else n_kept
+    saved = n_saved * hid
+    # one hidden-state tensor on the host: its own size, or whole page-locked blocks
+    blocks = -(-(tokens * inv['hidden'] * compute_bytes) // HOST_BLOCK_BYTES)
+    on_host = blocks * HOST_BLOCK_BYTES / GIB if profile.pin_inputs else hid
     unit = inv['layer_max'] * compute_bytes / GIB                    # one layer, compute dtype
+    unit32 = inv['layer_max'] * 4 / GIB                              # one layer, fp32
     head_w = inv['head'] * compute_bytes / GIB
     embed_w = inv['embed'] * compute_bytes / GIB
-    shards = (head_w + embed_w) / world                              # resident: the two unoffloaded shard sets
+    shards = (head_w + embed_w) / world                              # resident: the lm_head and embedding shards
+    if not profile.offload_params:                                   # and the fp32 layer shards with their fp32 gradient shards
+        shards += 2 * (inv['layer_sum'] + inv['other']) * 4 / GIB / world
+    if profile.layer_reduce == 'float32':
+        reduce_in, reduce_out = unit32, unit32 / world               # fp32 reduce-scatter input, fp32 output shard
+    else:
+        reduce_in, reduce_out = unit, (unit + unit32) / world        # both in the compute dtype, then the fp32 shard it becomes
     logits = min(logit_chunk, tokens) * inv['vocab'] * 4 / GIB       # one fp32 logits tensor
     total = sum(inv[k] for k in ('layer_sum', 'embed', 'head', 'other', 'frozen')) * compute_bytes / GIB
     phases = {
@@ -212,33 +294,34 @@ def estimate_peak_gib(inv, *, tokens, world, logit_chunk=LOGIT_CHUNK, compute_by
         # explicit lm_head reduction: weight + bf16 gradient + fp32 copy + fp32 shard
         'head-reduce': (shards + saved + 2 * head_w + 2 * head_w + 2 * head_w / world, 0.0),
         # one layer backward: this layer and the prefetched next one unsharded, bf16 gradient, the previous and
-        # the current fp32 reduce-scatter input, one fp32 output shard
-        'layer': (shards + saved + 2 * unit + unit + 4 * unit + 2 * unit / world, EST_LAYER_TENSORS * hid),
+        # the current reduce-scatter input, one output shard
+        'layer': (shards + saved + 2 * unit + unit + 2 * reduce_in + reduce_out, EST_LAYER_TENSORS * hid),
         # explicit embedding reduction after backward: dense bf16 gradient + fp32 copy + fp32 shard
         'embed-reduce': (shards + embed_w + 2 * embed_w + 2 * embed_w / world, 0.0),
     }
     certain = max(v[0] for v in phases.values())
     estimate = max(v[0] + v[1] for v in phases.values())
     return dict(certain_gib=certain, estimate_gib=estimate, peak_gib=estimate, tokens=int(tokens), world=world,
-                logit_chunk=int(logit_chunk), offload_inputs=bool(offload_inputs),
-                offload_host_gib=(kept - saved) if offload_inputs else 0.0,
+                logit_chunk=int(logit_chunk), offload_inputs=bool(offload_inputs), profile=profile.name,
+                offload_host_gib=(n_kept - n_saved) * on_host if offload_inputs else 0.0,
                 phases={k: dict(certain_gib=round(v[0], 3), estimate_gib=round(v[0] + v[1], 3)) for k, v in phases.items()},
                 coefficients=dict(layer_tensors=EST_LAYER_TENSORS, head_logits=EST_HEAD_LOGITS, measured=False))
 
 
-def host_ram_gib(inv, *, compute_bytes=2):
+def host_ram_gib(inv, *, compute_bytes=2, profile=None):
     """Host memory (CPU) of the sharded update, all ranks together, in GiB. Counted from the design, not measured.
 
     rank0_gib   the trainer process before a job: its unsharded actor and the whole fp32 master (as in v8.3.4e)
-    shards_gib  the fp32 parameter shards of the decoder layers (CPU offload)
+    shards_gib  the fp32 parameter shards of the decoder layers when FSDP keeps them on the host (else 0)
     step_gib    what a job adds: the fp32 gradient (in shards while it accumulates, then gathered on rank 0; a
                 shard is released when it is sent) and the fp32/fp64 temporaries of the optimizer step
     """
+    profile = _profile(profile)
     trainable = inv['layer_sum'] + inv['embed'] + inv['head'] + inv['other']
     largest = max(inv['embed'], inv['head'], inv['layer_max'])
     step = (trainable * 4 + largest * 20) / GIB
     rank0 = ((trainable + inv['frozen']) * compute_bytes + trainable * 4) / GIB
-    shards = (inv['layer_sum'] + inv['other']) * 4 / GIB
+    shards = (inv['layer_sum'] + inv['other']) * 4 / GIB if profile.offload_params else 0.0
     return dict(step_gib=step, rank0_gib=rank0, shards_gib=shards, total_gib=rank0 + shards + step)
 
 
@@ -247,7 +330,7 @@ def limit_gib(per_gpu_gib):
 
 
 def preflight_or_raise(*, per_gpu_gib, world=8, n_params=None, inv=None, token_budget=None, tokens=None,
-                       sharded=True, logit_chunk=LOGIT_CHUNK):
+                       sharded=True, logit_chunk=LOGIT_CHUNK, profile=None):
     """Refuse a configuration that cannot fit. The sharded branch models what the sharded update keeps on a GPU
     (not total / world); the unsharded branch is the reported v8.3.4e peak scaled by parameter count."""
     if per_gpu_gib is None:
@@ -260,12 +343,14 @@ def preflight_or_raise(*, per_gpu_gib, world=8, n_params=None, inv=None, token_b
         if peak > float(per_gpu_gib):
             raise VramPreflightError('unsharded update needs about %.1f GiB per GPU and exceeds VRAM %.1f GiB' % (peak, per_gpu_gib))
         return out
+    profile = _profile(profile)
     if tokens is None:      # worst micro-batch: the budget, or one rollout of the maximum training context
-        tokens = max(LOW_VRAM_TOKEN_BUDGET if token_budget is None else min(int(token_budget), LOW_VRAM_TOKEN_BUDGET), TRAIN_MAX_CONTEXT)
+        budget = profile.token_budget if token_budget is None else min(int(token_budget), profile.token_budget)
+        tokens = max(budget, TRAIN_MAX_CONTEXT)
     limit = limit_gib(per_gpu_gib)
-    out = estimate_peak_gib(inv, tokens=tokens, world=world, logit_chunk=logit_chunk)
+    out = estimate_peak_gib(inv, tokens=tokens, world=world, logit_chunk=logit_chunk, profile=profile)
     if out['estimate_gib'] > OFFLOAD_INPUTS_ABOVE * limit:           # near the limit: plan with the layer inputs on the host
-        out = estimate_peak_gib(inv, tokens=tokens, world=world, logit_chunk=logit_chunk, offload_inputs=True)
+        out = estimate_peak_gib(inv, tokens=tokens, world=world, logit_chunk=logit_chunk, offload_inputs=True, profile=profile)
     out.update(sharded=True, per_gpu_gib=float(per_gpu_gib), limit_gib=limit)
     if out['certain_gib'] > limit:
         raise VramPreflightError('sharded update keeps at least %.1f GiB on a GPU at %d tokens and exceeds VRAM limit %.1f GiB (card %.1f GiB, world %d)'
@@ -320,23 +405,66 @@ def _wire(tensor):
     return tensor if tensor.dtype == torch.float32 else tensor.view(torch.uint8)
 
 
+class _HostBlocks:
+    """Host memory for the layer inputs of one micro-batch, in blocks that every step of this rank uses again.
+
+    Page-locked memory makes the copies to and from the GPU direct. torch hands it out in powers of two and keeps
+    what is freed: a hidden-state tensor of 32770 tokens (256 MiB) would hold a 512 MiB block, and a tensor of
+    another size a block of its own. So a tensor is copied into blocks of one fixed size, and reset() makes every
+    block free again. Both copies wait until they are complete.
+    """
+
+    def __init__(self, pin):
+        self.pin, self.blocks, self.used, self.step = pin, [], 0, 0
+
+    def reset(self):
+        """A new micro-batch begins: the inputs of the last one are not needed any more."""
+        self.used, self.step = 0, self.step + 1
+
+    def store(self, tensor):
+        flat = tensor.detach().contiguous().view(-1).view(torch.uint8)
+        first = self.used
+        for offset in range(0, flat.numel(), HOST_BLOCK_BYTES):
+            if self.used == len(self.blocks):
+                self.blocks.append(torch.empty(HOST_BLOCK_BYTES, dtype=torch.uint8, pin_memory=self.pin))
+            piece = flat[offset:offset + HOST_BLOCK_BYTES]
+            self.blocks[self.used][:piece.numel()].copy_(piece)
+            self.used += 1
+        return tensor.device, tensor.dtype, tuple(tensor.shape), first, self.step
+
+    def load(self, packed):
+        device, dtype, shape, first, step = packed
+        _need(step == self.step, 'a layer input of an earlier micro-batch was asked for after its host blocks were used again')
+        out = torch.empty(shape, dtype=dtype, device=device)
+        flat = out.view(-1).view(torch.uint8)
+        for index, offset in enumerate(range(0, flat.numel(), HOST_BLOCK_BYTES)):
+            piece = flat[offset:offset + HOST_BLOCK_BYTES]
+            piece.copy_(self.blocks[first + index][:piece.numel()])
+        return out
+
+
 class _SavedInputsOnHost(torch.autograd.graph.saved_tensors_hooks):
     """Tensors autograd saves while this is active go to host memory and come back when backward asks for them.
 
     It is active around one checkpointed layer call. Inside that call the checkpoint replaces every saved tensor
     of the block by a placeholder, so the only tensor that reaches these hooks is what the checkpoint itself
     keeps for the recomputation: the layer input. The copies are bit-exact and no collective changes.
+    `blocks`: a _HostBlocks pool for the tensors that fill at least one block; None = every tensor gets an
+    ordinary host copy of its own.
     """
 
-    def __init__(self):
+    def __init__(self, blocks=None):
+        self.blocks = blocks
         super().__init__(self._pack, self._unpack)
 
-    @staticmethod
-    def _pack(tensor):
+    def _pack(self, tensor):
+        if self.blocks is not None and tensor.numel() * tensor.element_size() >= HOST_BLOCK_BYTES:
+            return self.blocks.store(tensor)
         return tensor.device, tensor.to('cpu', copy=True)
 
-    @staticmethod
-    def _unpack(packed):
+    def _unpack(self, packed):
+        if len(packed) != 2:
+            return self.blocks.load(packed)
         device, tensor = packed
         return tensor.to(device)
 
@@ -346,10 +474,12 @@ class Actor:
 
     def __init__(self, runtime, world, rank):
         self.runtime, self.model, self.world, self.rank = runtime, runtime.model, world, rank
+        self.settings = settings()
         self.root, self.embed, self.head, self.layers = _units(self.model)
         self.device = runtime.device
         self.cuda = self.device.type == 'cuda'
         self.compute_dtype = self.embed.weight.dtype
+        self.host_blocks = _HostBlocks(pin=self.cuda) if self.settings.pin_inputs else None
         self.inv = inventory(self.model)
         # canonical trainable inventory = the names and order CPUAdamW sees on the unsharded actor
         self.names = [(n, tuple(p.shape)) for n, p in self.model.named_parameters() if p.requires_grad]
@@ -365,17 +495,21 @@ class Actor:
     def _shard(self):
         """Apply FSDP to every unit. All ranks run this together: it issues collectives."""
         mesh = init_device_mesh(self.device.type, (self.world,))
-        offload = CPUOffloadPolicy(pin_memory=False) if self.cuda else OffloadPolicy()
-        native = MixedPrecisionPolicy(param_dtype=self.compute_dtype, reduce_dtype=torch.float32, cast_forward_inputs=False)
+        offload = CPUOffloadPolicy(pin_memory=False) if self.cuda and self.settings.offload_params else OffloadPolicy()
+        reduce_dtype = torch.float32 if self.settings.layer_reduce == 'float32' else self.compute_dtype
+        native = MixedPrecisionPolicy(param_dtype=self.compute_dtype, reduce_dtype=reduce_dtype, cast_forward_inputs=False)
         frozen = {p for p in self.root.parameters() if not p.requires_grad}
         for child in list(self.root.children()) + [m for m in self.model.children() if m is not self.root and m is not self.head]:
-            params = list(child.parameters())
-            if params and not any(p.requires_grad for p in params):
+            # Only the flags are kept. A list of the child's Parameters would still be bound when the units below
+            # are sharded: fully_shard replaces a Parameter by this rank's shard, and the full-size tensor of the
+            # original (after the fp32 upcast: twice the bf16 size) is freed only when nothing else refers to it.
+            trainable = [p.requires_grad for p in child.parameters()]
+            if trainable and not any(trainable):
                 child.to('cpu')       # frozen and outside the text forward (vision tower): keep it off the GPU
 
         def fp32(module):             # exact upcast: the shards and their gradients are fp32, the forward stays bf16
-            for p in module.parameters():
-                if p.requires_grad and p.dtype != torch.float32:
+            for p in module.parameters():       # p is local to this call: it must not outlive it (see above)
+                if p.requires_grad and not isinstance(p, DTensor) and p.dtype != torch.float32:
                     p.data = p.data.to(torch.float32)
 
         def sum_reduce(module):
@@ -387,6 +521,10 @@ class Actor:
             fp32(layer)
             fully_shard(layer, mesh=mesh, reshard_after_forward=True, mp_policy=native, offload_policy=offload)
             sum_reduce(layer)
+        if self.settings.prefetch:
+            # forward only: in backward FSDP by itself all-gathers the layer that runs next
+            for layer, ahead in zip(self.layers, self.layers[1:]):
+                layer.set_modules_to_forward_prefetch([ahead])
         # embedding: gathered for its one forward, not needed in backward; its gradient is reduced by end_step()
         fully_shard(self.embed, mesh=mesh, reshard_after_forward=True)
         self.embed.set_requires_gradient_sync(False, recurse=False)
@@ -396,9 +534,7 @@ class Actor:
         self.head.set_requires_gradient_sync(False, recurse=False)
         self.head.set_reshard_after_backward(False, recurse=False)
         # root (model.model): the remaining trainable parameters (final norm); frozen ones stay unmanaged
-        for p in self.root.parameters():
-            if p.requires_grad and not isinstance(p, DTensor) and p.dtype != torch.float32:
-                p.data = p.data.to(torch.float32)
+        fp32(self.root)               # the units sharded above are DTensors by now and are skipped
         fully_shard(self.root, mesh=mesh, mp_policy=native, offload_policy=offload, ignored_params=frozen)
         sum_reduce(self.root)
         for unit in self.layers + [self.embed, self.head, self.root]:
@@ -428,7 +564,7 @@ class Actor:
             def forward(*args, **kwargs):
                 if not self.offload_inputs:
                     return inner(*args, **kwargs)
-                with _SavedInputsOnHost():
+                with _SavedInputsOnHost(self.host_blocks):
                     return inner(*args, **kwargs)
             return forward
         for layer in self.layers:
@@ -460,6 +596,8 @@ class Actor:
     # -- one micro-batch step
 
     def begin_step(self):
+        if self.host_blocks is not None:
+            self.host_blocks.reset()
         self.head.unshard()
 
     def _root_output(self, module, args, output):
@@ -509,8 +647,11 @@ class Actor:
         with torch.enable_grad():
             outs = B.batched_log_probs(self.runtime, items, gradients=True, engine='packed', logit_chunk=LOGIT_CHUNK,
                                        support=B.SUPPORT_RENORM)
-        terms = [t.sum() for out in outs for t in (out if isinstance(out, tuple) else (out,))
-                 if t.is_floating_point() and t.requires_grad]
+        # What the real loss differentiates (v8211_batched._gradient_pass with KL off): log_q under support
+        # renormalisation, log_p without it. The probe step measures memory with this method, so it must run that
+        # backward and no other: the backward of a log_p the loss never uses frees tensors the real step keeps.
+        terms = [(out[1] if isinstance(out, tuple) else out).sum() for out in outs]
+        _need(all(t.requires_grad for t in terms), 'the zero-weight step must differentiate what the loss differentiates')
         total = torch.stack(terms).sum()
         if not torch.isfinite(total):
             raise ValueError('non-finite forward in a zero-weight step')
@@ -520,7 +661,8 @@ class Actor:
     # -- gradients
 
     def shard_grad(self, name, params=None):
-        """This rank's fp32 CPU shard of the accumulated gradient of one parameter (zeros when nothing arrived)."""
+        """This rank's fp32 shard of the accumulated gradient of one parameter (zeros when nothing arrived). It is
+        where the gradient accumulated: host memory, or this rank's device for a layer shard FSDP keeps there."""
         if name in self.acc:
             return self.acc[name]
         param = (params or dict(self.model.named_parameters()))[name]
@@ -529,23 +671,25 @@ class Actor:
             return torch.zeros(tuple(param.to_local().shape), dtype=torch.float32)
         local = grad.to_local()
         _need(local.dtype == torch.float32, 'fp32 gradient shard required: ' + name)
-        return local.to('cpu')
+        return local
 
     def gather(self, ctrl, buffers=None):
-        """Send every fp32 gradient shard to rank 0 (control group). Rank 0 fills `buffers` (full fp32, CPU).
-        A shard is released as soon as it is copied out, so host memory never holds the gradient twice."""
+        """Send every fp32 gradient shard to rank 0. Rank 0 fills `buffers` (full fp32, CPU). The shards travel
+        from host memory over the control group, or from this rank's device over the data group (settings.gather).
+        A shard is released as soon as it is copied out, so the gradient is never held twice."""
+        group, device = (None, self.device) if self.settings.gather == 'data' else (ctrl, torch.device('cpu'))
         params = dict(self.model.named_parameters())
         for name, shape in self.names:
             chunk, _, length = _dim0_rows(shape[0], self.world, self.rank)
             shard = self.shard_grad(name, params)
             _need(tuple(shard.shape) == (length,) + shape[1:], 'gradient shard geometry: ' + name)
-            wire = torch.zeros((chunk,) + shape[1:], dtype=torch.float32)
+            wire = torch.zeros((chunk,) + shape[1:], dtype=torch.float32, device=device)
             wire[:length].copy_(shard)
             del shard
             self.acc.pop(name, None)
             params[name].grad = None
             pieces = [torch.empty_like(wire) for _ in range(self.world)] if self.rank == 0 else None
-            dist.gather(wire, gather_list=pieces, dst=0, group=ctrl)
+            dist.gather(wire, gather_list=pieces, dst=0, group=group)
             if self.rank == 0:
                 full = buffers[name]
                 _need(tuple(full.shape) == shape and full.dtype == torch.float32, 'gradient buffer: ' + name)
@@ -705,20 +849,22 @@ def _run(B, dp, job, rows, rank, *, config, agg_config, loss_scale, active_rollo
     versions = B._versions(actor.model)
     # preflight on the real plan: the largest micro-batch of the job, this rank's card and host
     tokens = sum(len(p) + len(o) for p, o in _items(rows, job['probe']))
-    card, free, ram = _card_gib(), _mem_available_gib(), host_ram_gib(actor.inv)
+    profile = actor.settings
+    card, free, ram = _card_gib(), _mem_available_gib(), host_ram_gib(actor.inv, profile=profile)
     limit = None if card is None else limit_gib(card)
     # host memory the layer inputs of this micro-batch need when every rank keeps them on the host
-    on_host = world * estimate_peak_gib(actor.inv, tokens=tokens, world=world, offload_inputs=True)['offload_host_gib']
+    on_host = world * estimate_peak_gib(actor.inv, tokens=tokens, world=world, offload_inputs=True,
+                                        profile=profile)['offload_host_gib']
     room = free is None or free >= ram['step_gib'] + on_host
     error, fit = None, None
     try:
         if actor.cuda:
-            fit = preflight_or_raise(per_gpu_gib=card, world=world, inv=actor.inv, tokens=tokens)
+            fit = preflight_or_raise(per_gpu_gib=card, world=world, inv=actor.inv, tokens=tokens, profile=profile)
             if rank == 0 and free is not None and free < ram['step_gib']:
                 raise VramPreflightError('host memory: %.1f GiB available, the rank-0 gradient and optimizer step need %.1f GiB'
                                          % (free, ram['step_gib']))
             if rank == 0:
-                _event('zero3-preflight', tokens=tokens, certain_gib=round(fit['certain_gib'], 2),
+                _event('zero3-preflight', profile=profile.name, tokens=tokens, certain_gib=round(fit['certain_gib'], 2),
                        estimate_gib=round(fit['estimate_gib'], 2), limit_gib=fit['limit_gib'],
                        offload_inputs=bool(fit['offload_inputs'] and room), offload_host_gib=round(on_host, 1),
                        host_ram_gib={k: round(v, 1) for k, v in ram.items()}, mem_available_gib=free)
@@ -812,9 +958,18 @@ def make_train_update(dp, B, FK):
             raise ValueError('inference runtime cannot train')
         actor.begin_step()
         if actor.cuda:
-            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
-        # CPU fixture profiles only: the stock transformers forward (no CUDA kernels), same loss code
-        return stock(runtime, items, gradients=gradients, engine='padded', logit_chunk=LOGIT_CHUNK, support=support)
+            outs = FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        else:   # CPU fixture profiles only: the stock transformers forward (no CUDA kernels), same loss code
+            outs = stock(runtime, items, gradients=gradients, engine='padded', logit_chunk=LOGIT_CHUNK, support=support)
+        if gradients and support is not None:
+            # The sharded update has no KL term (_update refuses one), so the loss differentiates log_q only and
+            # reads log_p as a number. A log_p that keeps its graph keeps the log_p branch of every head chunk,
+            # and backward never runs that branch. The non-reentrant checkpoint then holds the fp32 logits it
+            # recomputed for the branch until the whole backward is over: 0.95 GiB per chunk of 1024 tokens with
+            # the 9B vocabulary, for every chunk of the micro-batch at once. Detached, log_p has the same values
+            # and no graph: the branch is gone before backward starts and nothing is stored for it.
+            outs = [(log_p.detach(), log_q, inside) for log_p, log_q, inside in outs]
+        return outs
 
     def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
                         reference_runtime=None, engine='packed', token_budget=36864, max_rows=64, logit_chunk=2048,
@@ -839,6 +994,7 @@ def _update(dp, B, FK, runtime, optimizer, groups, binding, config, guard, recor
         raise RuntimeError('the sharded DP world was stopped (%s); restart the trainer' % WORLD['dead'])
     dp.PRE.validate(runtime, optimizer, groups, binding, config, reference_runtime)
     if reference_runtime is not None or config.kl_coefficient > 0:
+        # also what lets the sharded forward hand log_p to the loss without its graph (make_train_update.log_probs)
         raise ValueError('the sharded update has no KL reference pass (v8.3.4: KL is off)')
     agg_config, loss_scale, aggregation = B.loss_aggregation(config)
     timings = {} if timings is None else timings
@@ -868,7 +1024,7 @@ def _update(dp, B, FK, runtime, optimizer, groups, binding, config, guard, recor
                support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
                actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
                spec=runtime.spec.to_dict(), assign=assign, steps=max(len(a) for a in assign), probe=probe,
-               null=[min(active, key=lambda i: (length(i), i))])
+               null=[min(active, key=lambda i: (length(i), i))], profile=settings().name)
     t = time.monotonic()
     dp._bcast(job)
     try:
@@ -930,7 +1086,7 @@ def _update(dp, B, FK, runtime, optimizer, groups, binding, config, guard, recor
         microbatch=dict(engine='packed-zero3-v835', token_budget=dp.BUDGET, max_rows=dp.MAX_ROWS, count=nbins, world=world,
                         rank_tokens=loads, steps=job['steps'], logit_chunk=LOGIT_CHUNK,
                         sharding='fsdp-fully-shard-reshard-after-forward', probe_tokens=sum(length(i) for i in probe),
-                        ranks=ranks),
+                        profile=WORLD['actor'].settings._asdict(), ranks=ranks),
         unresolved_filter=unresolved_filter,
         data_sha256=digest([dataclasses.asdict(group) for group in groups]),
         loss_aggregation=aggregation,
@@ -970,7 +1126,7 @@ def helper_main(rank, world, port, dp_path, source_root):
         dp.STATE.update(world=world, ctrl=ctrl, initialized=True)
         dp.install_fast_hash()
         make_train_update(dp, B, FK)      # installs the sharded forward on this rank's v824_batched
-        _event('helper-zero3', rank=rank, world=world, backend=_backend())
+        _event('helper-zero3', rank=rank, world=world, backend=_backend(), profile=settings().name)
     except BaseException as x:
         _fatal(rank, 'start', x)
     while True:
@@ -978,6 +1134,9 @@ def helper_main(rank, world, port, dp_path, source_root):
         if job is None or job.get('op') == 'stop':
             break
         try:
+            # ranks with different settings would issue different collectives: stop before the first one
+            _need(job.get('profile') == settings().name,
+                  'rank 0 runs the settings %r, this rank %r' % (job.get('profile'), settings().name))
             B.DROP_UNRESOLVED, B.LOSS_AGG_MODE, B.LOSS_SCALE = job['drop'], job['mode'], job['scale']
             B.SUPPORT_RENORM = job.get('support')
             B.KNOBS = job.get('knobs')
