@@ -18,6 +18,7 @@ import contextlib
 import functools
 import json
 import os
+import random
 import socket
 import stat
 import subprocess
@@ -181,13 +182,37 @@ def _script(path: Path, text: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+_ANY = random.SystemRandom()     # a test that seeds ``random`` must not give two test processes one block
+
+
+def _os_port_range() -> Tuple[int, int]:
+    """First and last port that the OS gives to a connection that goes out, and to a bind on port 0."""
+    try:
+        low, high = (int(field) for field in Path('/proc/sys/net/ipv4/ip_local_port_range').read_text().split())
+    except (OSError, ValueError):
+        low, high = 32768, 60999
+    return low, high
+
+
 def _free_port_block(count: int = 16) -> int:
+    """First port of ``count`` free ports in a row, outside the ports that the OS gives out.
+
+    The probe port of a rented box (``PORT`` of ``podctl.py``) is outside them too. Each request of the probe worker
+    takes a port from the OS and keeps it for 60 s after the request (TCP TIME_WAIT). A server that starts in that
+    time cannot bind that port: ``Address already in use``. A block inside the OS ports made a layout with more
+    replicas fail now and then.
+    """
+    low, high = _os_port_range()
+    first, end = max(((10000, low - count), (high + 1, 65536 - count)), key=lambda span: span[1] - span[0])
     for _ in range(200):
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0))
-            base = probe.getsockname()[1]
-        if base + count >= 65535:
-            continue
+        if end > first:
+            base = _ANY.randrange(first, end)
+        else:       # the OS gives out every port: a port from the OS is all there is
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                base = probe.getsockname()[1]
+            if base + count >= 65535:
+                continue
         socks = []
         try:
             for port in range(base, base + count):
