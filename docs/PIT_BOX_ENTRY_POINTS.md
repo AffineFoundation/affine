@@ -398,6 +398,70 @@ Rule: a candidate gets a decision only against a HEAD baseline with an equal
 fingerprint. A difference, or no fingerprint on one side, is `no_decision`. The
 scorer does not run.
 
+### Host tool: `probe_parity.py`
+
+It runs one checkpoint (HEAD) under two layouts with one plan, and compares the
+pass rate of each task. Side A is the reference. A delta is B minus A.
+
+```
+python -m ops.parallel_eval.pit.probe_parity plan --checkpoint <id> --seed <text> (--indices <file> | --tasks <n> --pool-size <n>) --out <file>
+python -m ops.parallel_eval.pit.probe_parity run-side --pod <file> --plan <file> --layout <name or file> --out <file>
+python -m ops.parallel_eval.pit.probe_parity compare <side A> <side B> [options]
+```
+
+`plan` writes the probe plan that the two sides run. `run-side` runs one layout
+on one box and writes a side record. `compare` reads two sides. A side is that
+record, or a probe result (`probe_result` of `RESULT.json`).
+
+Options of `compare`:
+
+| Option | Meaning |
+|--------|---------|
+| `--max-shift <fraction>` | the largest change of the mean pass rate that is still parity |
+| `--z-crit <number>` | a test beyond this value says that the layouts differ. Default 3. |
+| `--top <n>` | tasks in the text report. Default 20. |
+| `--out <file>` | write the full report as JSON |
+| `--train-a <file>`, `--train-b <file>` | the trainer report of each side, for the preclip gradient norm |
+
+Exit code of `compare`: 0 for the verdicts `parity` and
+`no_difference_detected`, 1 for `different`, 2 for `inconclusive`,
+`not_comparable` and an error.
+
+The preclip gradient norm is the size of the gradient of one trainer update,
+before the trainer limits it to `max_gradient_norm`. The report tracks it for
+the two sides. It is not a test: it does not change the verdict or the exit
+code.
+
+`--train-a` and `--train-b` take the trainer report of the update that the
+trainer of that side made (`report.private.json`), or a document that holds
+it: `TRAINING-RESULT.json` of a live epoch, the result of `train_v834e`, the
+training report on the host, or `markers/train.done`. The two updates must be
+of one batch. A document without a gradient norm is an error (exit code 2).
+
+The key `preclip` of the report:
+
+| Key | Meaning |
+|-----|---------|
+| `in_verdict` | always `false` |
+| `a`, `b` | the update of each side, or `null` when the side has no trainer report |
+| `ratio_b_over_a` | norm of B divided by norm of A |
+| `relative_difference` | the difference of the two norms, divided by the larger norm |
+| `shadow_tolerance` | the largest `relative_difference` that the shadow pass criterion permits (0.05) |
+| `within_shadow_tolerance` | `true` if `relative_difference` is not above `shadow_tolerance` |
+| `same_job` | `true`: the two updates start from one checkpoint, with one batch, at one optimizer step. `false`: one of these differs; `ratio_b_over_a`, `relative_difference` and `within_shadow_tolerance` are `null` then. `null`: the documents do not say. |
+| `differences` | names of the inputs that differ between the two updates (settings, turn parameters and fp32 master too) |
+
+Keys of `a` and `b`: `preclip_gradient_norm`, `max_gradient_norm`,
+`above_limit` (`true` if the norm is above `max_gradient_norm`), `engine`,
+`ranks` (processes of a sharded update), `status`, `objective_loss`,
+`trained_rollouts`, `masked_rollouts`, `trained_tokens`, `loss_tokens`,
+`derailed_rollouts`, `input_checkpoint`, `data_sha256`,
+`optimizer_step_before`, and `from_this_checkpoint` (`true` if the update
+starts from the checkpoint of the two sides).
+
+`ops/parallel_eval/pit/compare_train_reports.py` compares the same two trainer
+reports rollout by rollout.
+
 ## Upload
 
 ### Box command: `pe_r2_box_upload.py`

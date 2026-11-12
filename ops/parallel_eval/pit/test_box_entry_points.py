@@ -25,7 +25,8 @@ from ops.parallel_eval.live import pe_probe_plan
 from ops.parallel_eval.live import pe_r2_box_upload as BOX
 from ops.parallel_eval.pit import box as pit_box
 from ops.parallel_eval.pit import (
-    box_job, fakepass_sandbox, gpu_policy, pe_score, probe_fingerprint, probe_layout, probe_serve, queue_ingest, shadow,
+    box_job, fakepass_sandbox, gpu_policy, pe_score, probe_fingerprint, probe_layout, probe_parity, probe_serve,
+    queue_ingest, shadow,
 )
 
 DOC = (Path(__file__).resolve().parents[3] / 'docs' / 'PIT_BOX_ENTRY_POINTS.md').read_text()
@@ -219,6 +220,26 @@ class TestDocument(unittest.TestCase):
         self.assertEqual(probe_fingerprint.KEY, 'probe_fingerprint')
         # No FP8 in the probe: neither FP8 argument is one that a server can run with.
         self.assertFalse({'--kv-cache-dtype', '--quantization'} & set(probe_serve.ALLOWED_FLAGS))
+
+    def test_the_parity_tool_has_the_documented_command_line_and_preclip_keys(self):
+        code, out, _ = run_tool(probe_parity.main, ['--help'])
+        self.assertEqual(code, 0)
+        self.assertIn('{plan,run-side,compare}', out)
+        code, out, _ = run_tool(probe_parity.main, ['compare', '--help'])
+        self.assertEqual(code, 0)
+        options = sorted(set(re.findall(r'--[a-z][a-z-]+', out)) - {'--help'})
+        self.assertEqual(options, ['--max-shift', '--out', '--top', '--train-a', '--train-b', '--z-crit'])
+        self.assertEqual(probe_parity.EXIT, {'parity': 0, 'no_difference_detected': 0, 'different': 1,
+                                             'inconclusive': 2, 'not_comparable': 2})
+        side = {'checkpoint_id': DIGEST, 'seed': 's', 'envs': {'affine_gatepool': {'per_task': {'1': {'n': 8, 'c': 4}}}}}
+        report = probe_parity.compare(side, side, train_a={'preclip_gradient_norm': 1.0}, train_b={'gradient_norm': 2.0})
+        preclip = report['preclip']
+        self.assertEqual(sorted(preclip), ['a', 'b', 'differences', 'in_verdict', 'ratio_b_over_a', 'relative_difference',
+                                           'same_job', 'shadow_tolerance', 'within_shadow_tolerance'])
+        self.assertEqual((preclip['in_verdict'], preclip['ratio_b_over_a'], preclip['relative_difference'],
+                          preclip['shadow_tolerance'], preclip['within_shadow_tolerance']), (False, 2.0, 0.5, 0.05, False))
+        self.assertEqual(sorted(preclip['a']), sorted(preclip['b']))
+        self.assert_documented(options + sorted(probe_parity.EXIT) + ['preclip'] + sorted(preclip) + sorted(preclip['a']))
 
     def test_a_failed_probe_writes_the_documented_marker_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:
