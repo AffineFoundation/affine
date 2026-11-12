@@ -557,7 +557,7 @@ def test_a_batch_gets_a_box_when_its_round_is_drawn_and_the_job_of_the_lease_sta
     # One box of the run, on the secure tier, with the name of the shadow mode.
     ups = host.lium.verbs('up')
     assert len(ups) == 1 and ups[0][1] == 'node-a' and host.lium.names() == [box_name(RUN, 1, 0, MODE_SHADOW)]
-    assert host.lium.names()[0].startswith('affine-bctl-shadow-') and not host.lium.verbs('rm')
+    assert host.lium.names()[0].startswith('sn120-shadow-bctl-') and not host.lium.verbs('rm')
     # The box is prepared as the serial lane does it, and one job of the lease starts on it.
     assert host.calls.names() == ['pod_of', 'boot', 'probe_bundle', 'trainer_bundle', 'put_tar', 'ship_inputs',
                                   'ship_trainer']

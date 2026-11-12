@@ -55,7 +55,10 @@ MODES = (MODE_SHADOW, MODE_LIVE)
 # Box names must not start with ``affine-pe-``: the live rental code counts
 # every ``affine-pe-*`` pod against its node cap, and the PIT host reaps
 # unknown ``affine-pe-pit-*`` pods. These prefixes keep the two systems apart.
-BOX_PREFIX_SHADOW = 'affine-bctl-shadow-'
+# A shadow box has a name that no live tool matches: every live tool finds its
+# pods by a name that starts with ``affine-`` (``pit.LIVE_NAME_ROOT``). The
+# shadow boxes of the PIT package follow the same rule (``sn120-shadow-pit-``).
+BOX_PREFIX_SHADOW = 'sn120-shadow-bctl-'
 BOX_PREFIX_LIVE = 'affine-bctl-live-'
 
 # Every R2 key of a shadow run starts with this root. It is inside the one

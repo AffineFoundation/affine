@@ -20,6 +20,8 @@ from .guard import (
     GuardedStore, LiveModeRefused, StateRoot, box_name, check_key, check_mode, check_outside_live,
     own_prefix, parse_box_name, run_prefix, shadow_prefix,
 )
+from .. import LIVE_NAME_ROOT
+from ..isolated_rent import live_name_problem
 from ..shadow import ShadowWriteError
 from ..shadow_guard import R2_PREFIX as PIT_SHADOW_PREFIX
 from ..shadow_guard import ShadowGuard
@@ -470,8 +472,11 @@ def test_a_live_state_root_must_be_outside_every_live_root_too(tmp_path):
 # ----------------------------------------------------------------------------
 
 def test_box_names_are_exact_and_do_not_look_like_live_boxes():
-    assert box_name(RUN, 7, 0) == BOX_PREFIX_SHADOW + RUN + '-f7-t0'
+    assert box_name(RUN, 7, 0) == BOX_PREFIX_SHADOW + RUN + '-f7-t0' == 'sn120-shadow-bctl-run0001-f7-t0'
     assert not BOX_PREFIX_SHADOW.startswith('affine-pe-')
+    # No live tool matches a shadow box: each one finds its pods by a name that starts with ``affine-``.
+    assert not BOX_PREFIX_SHADOW.startswith(LIVE_NAME_ROOT)
+    assert live_name_problem(box_name(RUN, 7, 0)) is None and live_name_problem(box_name(RUN, 7, 0, MODE_LIVE))
     assert parse_box_name(RUN, box_name(RUN, 7, 3)) == (7, 3)
     assert parse_box_name(RUN, box_name(RUN, 123456789012, 123456789)) == (123456789012, 123456789)
     for fence, try_no in ((0, 0), (-1, 0), (1, -1)):
