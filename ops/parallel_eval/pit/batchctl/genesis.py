@@ -4,17 +4,21 @@ Terms
 -----
 * Live HEAD: the checkpoint that the validator host uses now. Its id is ``H``.
 * Descriptor: the document that names the bf16 weight files of ``H`` and the sha256 of each file.
-* Master index: the document that names the files of the fp32 master of ``H`` (the shards and
-  ``meta.json``) with the sha256, the size and the R2 key of each file.
+* Master index: the document that names the shards of the fp32 master of ``H`` with the sha256, the
+  size and the R2 key of each shard. The index of the live publisher names ``meta.json`` by a pointer
+  (``meta_json.r2_key``) and has no file entry for it. An index of the PIT pipeline names it as a file too.
+* ``meta.json``: the file of the fp32 master that the trainer on the box reads. It names the master
+  digest, the entry (``bf16_sha256``) and each shard with its sha256 and its size.
 * Genesis state: the first state of a run. Its manifest has the batch id ``genesis`` and no parent.
 * Claim: a sha256 that a document names. This module does not download a file to check a claim.
 
 What the seed does
 ------------------
-1. It reads the size and the etag of every live file (``head`` only).
-2. It plans the state: one object for each file, then ``index.json``, then the manifest (``files.py``).
-3. It copies every live file to the prefix of the run. R2 makes each copy on the server side.
-4. It writes the descriptor and ``index.json``. It writes the manifest last, and only if its key is free.
+1. It reads ``meta.json`` of the live master and checks it against the master index (see the rules).
+2. It reads the size and the etag of every live file (``head`` only).
+3. It plans the state: one object for each file, then ``index.json``, then the manifest (``files.py``).
+4. It copies every live file to the prefix of the run. R2 makes each copy on the server side.
+5. It writes the descriptor and ``index.json``. It writes the manifest last, and only if its key is free.
 
 The files of the state are the files of a trained state (``box/steps.py``): ``bf16/<name>`` for each
 weight file, ``fp32/<name>`` for each file of the fp32 master, and ``aux/descriptor.json``.
@@ -28,6 +32,10 @@ Rules
 * The seed is idempotent. After an error, run it again. An object that is complete is not copied again.
 * The sha256 of a copied object is a claim. Its size comes from R2. The controller hashes every object
   again before it uses the state (``effects._verify_state``), so a wrong claim fails closed later.
+* ``meta.json`` is not a claim: the seed reads its bytes. They must name the master digest and the entry
+  of the master index, and the same shards with the same sha256 and size. If the index names
+  ``meta.json`` as a file, the bytes must have that sha256 and that size. The copy is made only while
+  the live key still has the bytes that were checked. Any difference stops the seed before a write.
 
 Command line::
 
@@ -40,7 +48,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -50,7 +58,7 @@ from .files import (
     DESCRIPTOR_PATH, GROUP_BF16, GROUP_FP32, INDEX_NAME, META_CHECKPOINT, META_FP32_ENTRY, FileEntry, index_body,
     manifest_of, parse_index, slot_name,
 )
-from .interfaces import NotFound, PreconditionFailed, StoreError
+from .interfaces import NotFound, PreconditionFailed, StoreError, TooLarge
 from .layout import (
     GENESIS_BATCH, MAX_COMPLETE_BYTES, MAX_OBJECT_BYTES, META_FP32_MASTER_DIGEST, ROLE_AUX, ROLE_BF16_WEIGHTS,
     ROLE_FP32_MASTER, SAFE_NAME, Layout, ObjectRef, StateManifest, is_hex64, load_json, parse_manifest, sha256_hex,
@@ -62,6 +70,8 @@ CURRENT_NAME = 'CURRENT.json'
 JOB_NAME = 'TRAINING-JOB.json'
 JOB_CHECKPOINT = ('payload', 'manifest', 'payload', 'checkpoint')
 MASTER_META = 'meta.json'
+# The live file names each tensor of the master: about 100 KiB. Well under this limit.
+MAX_META_BYTES = 16 << 20
 MAX_KEY_CHARS = 1024
 # Used with ``fullmatch`` only. Short, so that ``int`` never fails on a directory name.
 EPOCH_DIR = re.compile(r'[0-9]{1,18}')
@@ -79,7 +89,9 @@ class LiveHead:
     weights: Tuple[Tuple[str, str], ...]            # (file name, sha256), sorted
     entry: str                                      # bf16_sha256 of the master index
     master_digest: str
-    master: Tuple[Tuple[str, str, int, str], ...]   # (file name, sha256, bytes, r2 key), sorted
+    # (file name, sha256, bytes, r2 key), sorted: the shards, and ``meta.json`` if the index names it as a file.
+    master: Tuple[Tuple[str, str, int, str], ...]
+    meta_key: str                                   # the live R2 key of ``meta.json`` of the master
 
 
 @dataclass(frozen=True)
@@ -144,8 +156,30 @@ def _master(files: Any) -> Tuple[Tuple[str, str, int, str], ...]:
         )
         _need(ok, 'the master index has a file entry that is not valid: %.80r' % (name,))
         out.append((name, info['sha256'], info['bytes'], info['r2_key']))
-    _need(MASTER_META in files and len(out) > 1, 'the master index must name meta.json and one or more other files')
+    _need(any(name != MASTER_META for name, _sha, _size, _key in out), 'the master index names no shard')
     return tuple(sorted(out))
+
+
+def _meta_key(master_index: Mapping[str, Any], master: Sequence[Tuple[str, str, int, str]]) -> str:
+    """The live R2 key of ``meta.json`` of the master.
+
+    The index of the live publisher has a pointer: ``meta_json.r2_key``. An index of the PIT pipeline
+    also names ``meta.json`` as a file. With neither, ``meta.json`` is in the directory of the shards.
+    """
+    keys = {name: key for name, _sha, _size, key in master}
+    pointer = master_index.get('meta_json')
+    pointed = pointer.get('r2_key') if isinstance(pointer, Mapping) else None
+    if pointed is not None:
+        _need(_is_key(pointed) and pointed.rpartition('/')[2] == MASTER_META,
+              'meta_json of the master index does not point to a meta.json')
+        _need(keys.get(MASTER_META, pointed) == pointed, 'the master index names two keys for meta.json')
+        return pointed
+    if MASTER_META in keys:
+        return keys[MASTER_META]
+    folders = {key.rpartition('/')[0] for key in keys.values()}
+    _need(len(folders) == 1 and '' not in folders,
+          'the master index names no meta.json, and its shards are not in one directory')
+    return '%s/%s' % (folders.pop(), MASTER_META)
 
 
 def live_head(descriptor: Mapping[str, Any], master_index: Mapping[str, Any]) -> LiveHead:
@@ -155,17 +189,18 @@ def live_head(descriptor: Mapping[str, Any], master_index: Mapping[str, Any]) ->
     entry, digest = master_index.get('bf16_sha256'), master_index.get('master_digest')
     _need(is_hex64(entry), 'the master index names no bf16_sha256')
     _need(is_hex64(digest), 'the master index names no master_digest')
-    # ``meta_json`` is a copy of ``meta.json``. The box refuses a master whose ``meta.json`` names
-    # another digest or another entry, so a copy that disagrees is refused here already.
+    # ``meta_json`` is a pointer to ``meta.json``. If it also names a digest or an entry, that must be
+    # the one of the index. The seed checks the bytes of ``meta.json`` itself (``_with_meta``).
     meta = master_index.get('meta_json', {})
     agrees = (
         isinstance(meta, Mapping) and meta.get('master_digest', digest) == digest
         and meta.get('bf16_sha256', entry) == entry
     )
     _need(agrees, 'meta_json of the master index names another master')
+    master = _master(master_index.get('files'))
     return LiveHead(
         checkpoint_id=descriptor['id'], weights=_weights(descriptor.get('files')), entry=entry,
-        master_digest=digest, master=_master(master_index.get('files')),
+        master_digest=digest, master=master, meta_key=_meta_key(master_index, master),
     )
 
 
@@ -255,6 +290,9 @@ def plan(head: LiveHead, sizes: Mapping[str, int], *, ckpt_prefix: str = DEFAULT
 
     Pure: no I/O. The same input gives the same state id. ``sizes`` maps a live source key to its size.
     """
+    # The trainer on the box reads ``meta.json``. A state without it trains nothing.
+    _need(any(name == MASTER_META for name, _sha, _size, _key in head.master),
+          'the fp32 master has no meta.json: the seed reads it from its live key')
     descriptor = _descriptor_body(head)
     rows: List[Tuple[str, str, str, int, Optional[str]]] = [
         (DESCRIPTOR_PATH, ROLE_AUX, sha256_hex(descriptor), len(descriptor), None),
@@ -303,10 +341,48 @@ def _layout(prefix: str) -> Layout:
     return Layout(prefix)
 
 
-def _live_infos(store: Any, src_bucket: Optional[str], keys: Sequence[str]) -> Dict[str, Any]:
-    """Size and etag of every live key. The live side is reached through a read-only store."""
+def _live(store: Any, src_bucket: Optional[str]) -> ReadOnlyStore:
+    """The live side: a store that can only read."""
     source = store if src_bucket in (None, store.bucket) else R2Store(store._c, src_bucket, store.cfg)
-    live = ReadOnlyStore(source)
+    return ReadOnlyStore(source)
+
+
+def _with_meta(live: ReadOnlyStore, head: LiveHead) -> Tuple[LiveHead, str]:
+    """Read ``meta.json`` of the live master and check it against the master index.
+
+    Returns the head with ``meta.json`` as a file of the master, and the etag of the bytes that were
+    checked. Each difference is a ``GenesisError``: the seed then writes nothing.
+    """
+    try:
+        blob = live.get(head.meta_key, max_bytes=MAX_META_BYTES)
+    except NotFound:
+        raise GenesisError('the live key %s does not exist in the bucket %s' % (head.meta_key, live.bucket)) from None
+    except TooLarge:
+        raise GenesisError('the live key %s is too large for a meta.json' % head.meta_key) from None
+    try:
+        meta = load_json(blob.data)
+    except ValueError:
+        meta = None
+    _need(isinstance(meta, Mapping), 'meta.json of the live master is not a JSON object')
+    _need(meta.get('master_digest') == head.master_digest, 'meta.json of the live master names another master digest')
+    _need(meta.get('bf16_sha256') == head.entry, 'meta.json of the live master names another bf16_sha256')
+    files = meta.get('files')
+    _need(isinstance(files, Mapping), 'meta.json of the live master names no files')
+    in_meta = {
+        name: (info.get('sha256'), info.get('bytes')) if isinstance(info, Mapping) else None
+        for name, info in files.items()
+    }
+    shards = [row for row in head.master if row[0] != MASTER_META]
+    _need(in_meta == {name: (sha, size) for name, sha, size, _key in shards},
+          'meta.json of the live master and the master index do not name the same shards')
+    row = (MASTER_META, sha256_hex(blob.data), len(blob.data), head.meta_key)
+    _need(all(named == row for named in head.master if named[0] == MASTER_META),
+          'meta.json of the live master does not have the sha256 and the size that the master index names')
+    return replace(head, master=tuple(sorted(shards + [row]))), blob.etag
+
+
+def _live_infos(live: ReadOnlyStore, keys: Sequence[str]) -> Dict[str, Any]:
+    """Size and etag of every live key."""
     infos: Dict[str, Any] = {}
     for key in keys:
         info = live.head(key)
@@ -345,9 +421,13 @@ def _put_manifest(store: Any, key: str, body: bytes) -> None:
 def _seed(store: Any, head: LiveHead, *, prefix: str, ckpt_prefix: str, src_bucket: Optional[str],
           log: Callable[[str], None]) -> Plan:
     lay = _layout(prefix)
-    sources = [source.key for source in _sources(head, ckpt_prefix)]
-    _need(not any(key.startswith(prefix) for key in sources), 'a live key is under the prefix of the run')
-    infos = _live_infos(store, src_bucket, sources)
+    live_keys = [head.meta_key] + [source.key for source in _sources(head, ckpt_prefix)]
+    _need(not any(key.startswith(prefix) for key in live_keys), 'a live key is under the prefix of the run')
+    live = _live(store, src_bucket)
+    head, meta_etag = _with_meta(live, head)
+    infos = _live_infos(live, [source.key for source in _sources(head, ckpt_prefix)])
+    # ``meta.json`` is copied only while its live key has the bytes that were checked.
+    etags = dict({key: info.etag for key, info in infos.items()}, **{head.meta_key: meta_etag})
     made = plan(head, {key: info.size for key, info in infos.items()}, ckpt_prefix=ckpt_prefix)
     state_id, body = made.manifest.state_id, made.manifest.body()
     names = [name for _src, name, _size in made.copies] + [name for name, _data in made.local]
@@ -360,7 +440,7 @@ def _seed(store: Any, head: LiveHead, *, prefix: str, ckpt_prefix: str, src_buck
         return made
     _need(stored is None, 'the manifest key %s holds other bytes' % manifest_key)
     for src, name, size in made.copies:
-        _copy(store, src, keys[name], size, src_etag=infos[src].etag, src_bucket=src_bucket, log=log)
+        _copy(store, src, keys[name], size, src_etag=etags[src], src_bucket=src_bucket, log=log)
     for name, data in made.local:
         store.put(keys[name], data)
     # Last: the manifest says that the state is complete.
