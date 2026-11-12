@@ -288,6 +288,15 @@ class HostGateWriter:
         if self.shadow:
             raise GateWriteError('refusing gate write in shadow mode')
 
+    def preflight(self) -> None:
+        """Fail now if a host part that a later write needs is missing: the rounds, the K1 grant function.
+
+        It writes nothing. A caller runs it before it starts work that ends in a gate decision.
+        """
+        self._refuse_shadow()
+        self._rounds()
+        _resolve_k1_grant_fn(self.k1_grant_fn, required=True)
+
     def write_decision(
         self,
         *,
