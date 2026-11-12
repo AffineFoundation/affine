@@ -16,8 +16,8 @@ from ops.parallel_eval.pit import probe_fingerprint as PF
 from ops.parallel_eval.pit import probe_layout as PL
 from ops.parallel_eval.pit.pe_score import call_live_host_score
 from ops.parallel_eval.pit.pe_score import score as pit_score
-from ops.parallel_eval.pit.test_early_stop import EPOCH, RID, Round
-from ops.parallel_eval.pit.test_early_stop import probe_result as worker_result
+from ops.parallel_eval.pit.round_fixture import EPOCH, RID, Round
+from ops.parallel_eval.pit.round_fixture import probe_result as worker_result
 
 SAMPLING = {'harness': 'live-math-v3', 'sampling_contract': {'temperature': 1.0, 'top_p': 1.0, 'max_tokens': 65536}}
 GPU_NAME = {'RTX5090': 'NVIDIA GeForce RTX 5090', 'B300': 'NVIDIA B300', 'H100': 'NVIDIA H100 80GB HBM3'}
