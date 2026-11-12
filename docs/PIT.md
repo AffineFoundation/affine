@@ -269,6 +269,27 @@ At the start, `PIT_STATE`, `PIT_UPLOAD_ROOT` and `PIT_FP32_PENDING_INDEX` become
 places in the shadow state root. The live roots (`PE_STATE`, `LIFE_ROOT` and the
 others) stay as inputs that the process reads.
 
+Box names. Each live tool finds its pods by a name that starts with `affine-`
+(the PE lanes and the PE node cap use `affine-pe-`). A shadow box and a fakepass
+box have a name that no live tool matches:
+
+| Box | Name | Rent path |
+|-----|------|-----------|
+| live PIT | `affine-pe-pit-<epoch>-a<attempt>` | live `pe_rent` (shares the PE node cap) |
+| shadow PIT | `sn120-shadow-pit-<epoch>-a<attempt>` | `pit/isolated_rent.py` (own cap, `max_boxes`) |
+| fakepass | `sn120-fakepass-pit-<epoch>-a<attempt>` | `pit/isolated_rent.py` |
+
+- Live `pe_rent` refuses to rent or release such a name, and does not list or
+  count the box. Thus a shadow box takes no slot of the live node cap, and no
+  live program can adopt it or remove it.
+- The isolated rent path removes only a pod whose name starts with its own
+  prefix. It cannot remove a live pod.
+- Its lock, its pod ledger and its events are in `<PIT_STATE>/isolated-rent/`
+  (for fakepass: in the sandbox).
+- A box with a name from before this change (`affine-pe-pit-shadow-*`,
+  `affine-pe-pit-fakepass-*`) belongs to no service now. Release it by hand, or
+  let its 4 h rental time end.
+
 The entry points of the box pipeline (train, probe, upload, fetch), with their
 arguments and their output JSON, are in `docs/PIT_BOX_ENTRY_POINTS.md`.
 

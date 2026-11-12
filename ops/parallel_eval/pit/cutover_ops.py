@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Tuple
 
 from . import PREFIX
-from .pe_rent import is_pit_name
+from .pe_rent import is_live_pit_name
 
 BANNED_BASELINE_KEYS = frozenset(('indices', 'raw_seed', 'secret_draw', 'presign'))
 CLAIM_GLOB = 'PIT-CLAIM-e*.json'
@@ -293,12 +293,15 @@ def clear_pit_claims(roots: List[Path]) -> List[str]:
 
 
 def release_affine_pit_boxes() -> Dict[str, Any]:
-    """Best-effort release of affine-pe-pit-* rentals via host pe_rent when importable."""
+    """Best-effort release of the live affine-pe-pit-* rentals via host pe_rent when importable.
+
+    Shadow and fakepass boxes have other names; a live revert does not release them.
+    """
     out: Dict[str, Any] = dict(released=[], warnings=[])
     listings: List[Mapping[str, Any]] = []
     release_fn = None
     try:
-        from .pe_rent import RentService, bind_host_rent_service, is_pit_name
+        from .pe_rent import RentService, bind_host_rent_service
 
         rent = bind_host_rent_service(RentService())
         list_fn = rent.list_pods
@@ -306,7 +309,7 @@ def release_affine_pit_boxes() -> Dict[str, Any]:
         if list_fn is not None:
             raw = list_fn()
             if isinstance(raw, list):
-                listings = [x for x in raw if is_pit_name((x.get('name') or x.get('pod_name') or ''))]
+                listings = [x for x in raw if is_live_pit_name((x.get('name') or x.get('pod_name') or ''))]
         if release_host is None:
             out['warnings'].append('host pe_rent.release unavailable; skipped box release')
             return out
@@ -338,7 +341,7 @@ def release_affine_pit_boxes() -> Dict[str, Any]:
                     pods = json.loads(proc.stdout)
                     for row in pods:
                         name = row.get('name') or ''
-                        if not is_pit_name(name):
+                        if not is_live_pit_name(name):
                             continue
                         bid = str(row.get('id') or name)
                         try:

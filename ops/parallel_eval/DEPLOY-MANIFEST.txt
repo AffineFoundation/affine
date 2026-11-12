@@ -37,6 +37,9 @@ ops/parallel_eval/pit/early_stop.py
 ops/parallel_eval/pit/expected_master.py
 ops/parallel_eval/pit/gate_writer.py
 ops/parallel_eval/pit/host_wiring.py
+ops/parallel_eval/pit/isolated_rent.py
+#   ↑ rent path of shadow and fakepass boxes (names sn120-shadow-pit-* / sn120-fakepass-pit-*).
+#     pe_rent.py imports it. Live mode does not use it: live boxes keep affine-pe-pit-* and live pe_rent.
 ops/parallel_eval/pit/lost_infra.py
 ops/parallel_eval/pit/pe_lane.py
 ops/parallel_eval/pit/pe_rent.py

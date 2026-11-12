@@ -6,8 +6,9 @@ Only the eval verdict is fake. Everything else runs the production code:
   ``--epoch`` the operator names, under the same rule), the head ``H`` its
   signed job trains from and the published fp32 master index ``M(H)`` are
   read (never written); an epoch in flight or decided RED is never used;
-* a real ``affine-pe-pit-fakepass-*`` box is rented (B300, then B200, then
-  H200, each under the price ceiling; never sharded GPUs);
+* a real ``sn120-fakepass-pit-*`` box is rented (B300, then B200, then
+  H200, each under the price ceiling; never sharded GPUs); no live tool
+  matches that name, so the rent path is ``isolated_rent``;
 * ``HostBoxIO.train_v834e`` trains on host-v834e (``host.checked``, admitted
   files byte-identical, no overlay) and ``_early_upload_artifacts`` streams
   bf16 + fp32 to real R2 under ``pit-fakepass/<run>/``;
@@ -77,7 +78,8 @@ from .fakepass_sandbox import (
     tcp_ping,
 )
 from .gpu_policy import effective_gpu_order
-from .pe_rent import RentError, RentService, bind_host_rent_service, is_fakepass_name
+from .isolated_rent import IsolatedRentError, bind_isolated_rent, live_name_problem
+from .pe_rent import RentError, RentService, is_fakepass_name
 from .signer import FixtureRootSigner
 from .state import ItemRecord, ItemState
 
@@ -724,6 +726,10 @@ def make_fakepass_host_rent(
 ) -> Callable[..., Mapping[str, Any]]:
     """B300, then B200, then H200 — each only if an 8-GPU offer is under ceiling.
 
+    ``rent_mod``: the rent path with ``pick_node``, ``rent`` and ``release``. For a
+    real run it is the ``IsolatedRent`` of the fakepass prefix: live ``pe_rent``
+    refuses a fakepass name.
+
     ``note(event, **fields)``: the event name is positional, so a timeline
     writer whose first parameter is ``event`` cannot receive it twice.
     """
@@ -776,10 +782,21 @@ def build_rent_service(rent_mod: Any, *, ledger_path: Path, note: Callable[..., 
         share_pe_cap=False,
         ledger_path=str(ledger_path),
     )
-    bind_host_rent_service(svc, module_path=rent_mod.__name__)
-    if svc.host_release is None or svc.list_pods is None:
-        _die('host pe_rent lacks release/list_pods')
-    svc.host_rent = make_fakepass_host_rent(rent_mod, note=note)
+    # Live rent, release and our_pods are for ``affine-pe-*`` names. The fakepass box has a
+    # name that live never matches: its rent path is isolated (own lock and pod ledger).
+    try:
+        isolated = bind_isolated_rent(
+            rent_mod,
+            prefix=BOX_NAME_PREFIX,
+            state_dir=Path(ledger_path).parent / 'isolated-rent',
+            gpu_order=FAKEPASS_GPU_ORDER,
+            price_ceiling=float(PRICE_CEILING_USD_H),
+        )
+    except IsolatedRentError as exc:
+        _die('fakepass rent path: %s' % exc)
+    svc.host_rent = make_fakepass_host_rent(isolated, note=note)
+    svc.host_release = isolated.release
+    svc.list_pods = isolated.pods
     svc.offer_precheck_fn = None
     return svc
 
@@ -1042,6 +1059,9 @@ class RealFakepass:
         assert_env_sandboxed(self.env, root)
         if os.environ.get('PIT_FAKEPASS_MODE') != 'real':
             _die('REAL phases must run inside the swapped sandbox environ')
+        problem = live_name_problem(BOX_NAME_PREFIX)
+        if problem:
+            _die('BOX_NAME_PREFIX %s: %s' % (BOX_NAME_PREFIX, problem))
         self.mods = import_live_modules()
         bound = assert_live_modules_sandboxed(self.mods, root)
         self._note('sandbox_ready', run_id=self.run_id, root=str(root), live_sources=self.sources.as_dict(),
