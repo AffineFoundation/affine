@@ -211,13 +211,17 @@ def call_live_host_score(
     epoch: int,
     round_id: str,
     result: Mapping[str, Any],
-    baseline_of: Optional[Callable[[str], Any]] = None,
+    baseline_of: Optional[Callable[[int, str], Any]] = None,
 ) -> Dict[str, Any]:
     """Invoke live ``score(epoch, rid, result)`` (positional) and nest heldout.
 
-    ``baseline_of(round_id)`` gives the round baseline. Before the scorer runs, the hardware and
-    layout fingerprint of the candidate probe must be equal to that of the baseline
-    (``probe_fingerprint.refusal``). If not, the result is ``no_decision`` and the scorer does not run.
+    ``baseline_of(epoch, round_id)`` gives the baseline that the scorer judges this candidate against.
+    Before the scorer runs, the hardware and layout fingerprint of the candidate probe must be equal to
+    that of the baseline (``probe_fingerprint.refusal``). If not, the result is ``no_decision`` and the
+    scorer does not run. A side with no fingerprint is a mismatch.
+
+    If the check sees no ready baseline, the scorer runs: its answer is "pending". If it gives GREEN or
+    RED there, it found a baseline that the check did not see. That score is not used (``no_decision``).
 
     Falls back to keyword ``round_id=`` only for non-live test doubles that
     declare that parameter — never pass ``round_id=`` to the live module.
@@ -226,13 +230,15 @@ def call_live_host_score(
     controller can keep the box and retry — never raise into ``_fail_and_release``.
     """
     rid = str(round_id)
+    checked = baseline_of is None
     if baseline_of is not None:
-        baseline = baseline_of(rid)
+        baseline = baseline_of(int(epoch), rid)
         # A baseline that is not ready has no rollouts: the scorer answers "pending" and the box waits.
         if isinstance(baseline, Mapping) and baseline.get('per_task'):
             refused = probe_fingerprint.refusal(baseline, result)
             if refused is not None:
                 return nest_heldout_fields(refused, round_id=rid)
+            checked = True
     try:
         params = inspect.signature(host_score).parameters
     except (TypeError, ValueError):
@@ -263,7 +269,10 @@ def call_live_host_score(
         raise
     if not isinstance(raw, Mapping):
         raise ScoreError('host score must return a mapping')
-    return nest_heldout_fields(raw, round_id=rid)
+    out = nest_heldout_fields(raw, round_id=rid)
+    if not checked and str(out.get('decision') or '').lower() in ('green', 'red'):
+        return nest_heldout_fields(probe_fingerprint.unchecked(result, out.get('decision')), round_id=rid)
+    return out
 
 
 def score(

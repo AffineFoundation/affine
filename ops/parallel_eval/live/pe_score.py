@@ -52,6 +52,20 @@ def round_baseline(rid, epoch=None, per_turn=False):
     return b
 
 
+def _per_turn(pv):
+    return pv.get('scoring_mode') == 'same-run'
+
+
+def scoring_baseline(epoch, rid):
+    """The baseline that score() judges the candidate of this epoch against: the baseline of the round, or the
+    baseline of the turn when the round scores each turn against its own head run. {} when there is no round.
+    The PIT host reads the hardware and layout fingerprint from it before score() runs."""
+    r = rj(HELDOUT / rid / 'ROUND.private.json') or {}
+    if not r:
+        return {}
+    return round_baseline(rid, int(epoch), _per_turn(r['cfg']))
+
+
 def score(epoch, rid, result, flag=None):
     """-> decision dict (BV.estimate output + meta). Raises Pending if the round baseline is not ready."""
     f = flag if flag is not None else (rj(FLAG) or {})
@@ -59,7 +73,7 @@ def score(epoch, rid, result, flag=None):
     if not r:
         raise RuntimeError('round %s missing' % rid)
     pv = r['cfg']
-    per_turn = pv.get('scoring_mode') == 'same-run'
+    per_turn = _per_turn(pv)
     b = round_baseline(rid, epoch, per_turn)
     bl = b.get('per_task')
     if not bl:

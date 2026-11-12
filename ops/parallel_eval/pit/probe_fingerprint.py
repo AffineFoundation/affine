@@ -16,13 +16,22 @@ for two boxes of one class that serve the same layout.
 
 Rule: a candidate is scored only against a baseline that has an equal
 fingerprint. A difference, or a fingerprint that is missing or not valid on one
-side, gives ``no_decision`` and a request for a new baseline. The scorer does
-not run. There is no comparison across hardware or layouts.
+side or on the two sides, gives ``no_decision`` and a request for a new
+baseline. The scorer does not run. There is no comparison across hardware or
+layouts, and there is no comparison of two probes that do not say what they are.
+
+Where the fingerprint of a document comes from:
+
+* a probe that ``probe_serve.py`` served has a ``serve_layout`` record;
+* a baseline has the stamp (``stamp``) that its writer made from the HEAD probe;
+* a probe with the live ``serve.sh`` has no record. It gets no decision until
+  the box puts a stamp on its result.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Dict, List, Mapping, Optional
 
 from .probe_layout import GATE_DTYPE, GATE_MAX_MODEL_LEN, gpu_class_of
@@ -30,6 +39,7 @@ from .probe_layout import GATE_DTYPE, GATE_MAX_MODEL_LEN, gpu_class_of
 VERSION = 'pit-probe-fingerprint-v1'
 KEY = 'probe_fingerprint'
 GUARD = 'probe-fingerprint-mismatch'
+_GPU_LINE = re.compile(r'^\s*\d+\s+.*(NVIDIA|GeForce|RTX|Tesla)', re.IGNORECASE)
 FIELDS = (
     'gpu_class', 'gpu_count', 'tensor_parallel', 'replicas', 'vllm_version', 'dtype', 'max_model_len',
     'prefix_caching', 'max_num_seqs', 'gpu_memory_utilization', 'sampling',
@@ -113,12 +123,39 @@ def differences(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> Li
     return out
 
 
+def hardware_note(doc: Any) -> Optional[str]:
+    """What a document says about its GPUs, for the operator who reads a no-decision. It is not a proof.
+
+    A probe result of a PIT box has ``eval_gpu``. A baseline of the serial gate has the GPU names of its pod in
+    the ``runtime`` lines of its ``settings`` (the output of ``nvidia-smi ... | sort | uniq -c``).
+    """
+    if not isinstance(doc, Mapping):
+        return None
+    if doc.get('eval_gpu'):
+        return str(doc['eval_gpu'])
+    settings = doc.get('settings') if isinstance(doc.get('settings'), Mapping) else {}
+    lines = [' '.join(str(line).split()) for line in (settings.get('runtime') or []) if _GPU_LINE.match(str(line))]
+    return '; '.join(lines) or None
+
+
+def _no_decision(problems: List[str], found: Mapping[str, Any], baseline: Any, result: Any) -> Dict[str, Any]:
+    return dict(
+        decision='no_decision', guard=GUARD, reasons=['%s: %s' % (GUARD, text) for text in problems],
+        rebaseline=dict(required=True, reason=GUARD, fingerprint=found.get('candidate')),
+        probe_fingerprint=dict(
+            baseline=found.get('baseline'), candidate=found.get('candidate'), differences=problems,
+            hardware_note=dict(baseline=hardware_note(baseline), candidate=hardware_note(result)),
+        ),
+    )
+
+
 def refusal(baseline: Any, result: Any) -> Optional[Dict[str, Any]]:
     """None: the candidate can be scored against this baseline. Else the no-decision to give in place of a score.
 
-    When no side declares its hardware and layout (a probe with the live ``serve.sh``, not served by
-    ``probe_serve.py``), the rule of the live gate applies and the result is None. When one side declares it, the
-    two fingerprints must be valid and equal.
+    There is one path to a score: each side gives a valid fingerprint, and the two are equal. A side that does not
+    declare its hardware and layout gets the same answer as a difference. This includes the case where no side
+    declares it (a probe with the live ``serve.sh`` against a baseline of the serial gate): the two can be from
+    different hardware, and nothing in the two documents proves that they are not.
     """
     found: Dict[str, Optional[Dict[str, Any]]] = {}
     problems: List[str] = []
@@ -128,16 +165,26 @@ def refusal(baseline: Any, result: Any) -> Optional[Dict[str, Any]]:
         except FingerprintError as exc:
             found[side] = None
             problems.append('%s: %s' % (side, exc))
-    if not problems:
-        if found['baseline'] is None and found['candidate'] is None:
-            return None
-        problems = ['%s: no hardware and layout fingerprint' % side for side in found if found[side] is None]
+            continue
+        if found[side] is None:
+            problems.append('%s: no hardware and layout fingerprint' % side)
     if not problems:
         problems = differences(found['baseline'], found['candidate'])
     if not problems:
         return None
-    return dict(
-        decision='no_decision', guard=GUARD, reasons=['%s: %s' % (GUARD, text) for text in problems],
-        rebaseline=dict(required=True, reason=GUARD, fingerprint=found['candidate']),
-        probe_fingerprint=dict(baseline=found['baseline'], candidate=found['candidate'], differences=problems),
-    )
+    return _no_decision(problems, found, baseline, result)
+
+
+def unchecked(result: Any, decision: Any) -> Dict[str, Any]:
+    """The no-decision for a score that the scorer gave when the check did not see a ready baseline.
+
+    The check and the scorer must read the same baseline. If the scorer has a decision and the check had no
+    baseline, the fingerprints were not compared. That decision is not used.
+    """
+    problems = ['the scorer gave %r against a baseline that the fingerprint check did not see' % (decision,)]
+    try:
+        found = dict(candidate=of(result))
+    except FingerprintError as exc:
+        found = dict(candidate=None)
+        problems.append('candidate: %s' % exc)
+    return _no_decision(problems, found, None, result)
