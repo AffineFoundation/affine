@@ -257,6 +257,21 @@ Shared state (do not migrate):
 Confirm: decision log under staging; **no** `DECISION.json` / `HEAD-CHAIN` / R2
 head writes; rentals drop to 0 when the queue is empty.
 
+Shadow mode has a hard deny in the process (`pit/shadow_guard.py`). The process
+can write one directory and one R2 prefix, and nothing else.
+
+| Setting | Meaning |
+|---------|---------|
+| `PIT_SHADOW_STATE` | Necessary. The shadow state root: the one directory that the process writes. An absolute path that is not a live directory, not in one and not above one. Without it `run_host.py` stops with exit code 2. |
+| `--r2-output-prefix P` or `PIT_R2_OUTPUT_PREFIX=P` | Where the run writes in R2, for example `pit-shadow/batchctl/<run id>/`. It must be under `pit-shadow/`. Default: `pit-shadow/`. The argument is refused in live mode. |
+
+At the start, `PIT_STATE`, `PIT_UPLOAD_ROOT` and `PIT_FP32_PENDING_INDEX` become
+places in the shadow state root. The live roots (`PE_STATE`, `LIFE_ROOT` and the
+others) stay as inputs that the process reads.
+
+The entry points of the box pipeline (train, probe, upload, fetch), with their
+arguments and their output JSON, are in `docs/PIT_BOX_ENTRY_POINTS.md`.
+
 ## Operator: live cutover
 
 Preconditions: trainer **idle** (no `TRAINING-JOB` without `TRAINING-RESULT`);

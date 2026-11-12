@@ -99,6 +99,7 @@ ops/parallel_eval/live/bundle_fetch.py
 
 # --- Docs / operator ---
 docs/PIT.md
+docs/PIT_BOX_ENTRY_POINTS.md
 ops/parallel_eval/DEPLOY-MANIFEST.txt
 
 # --- Shared durable + serverless job lifecycle (controller imports from release) ---
