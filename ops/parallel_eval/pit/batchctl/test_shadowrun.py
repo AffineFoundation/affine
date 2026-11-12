@@ -133,9 +133,27 @@ def test_the_parts_that_are_not_wired_fail_closed():
 
 
 def test_only_the_named_host_helper_can_be_loaded(monkeypatch):
-    assert set(hostlink.HOST_HELPERS) == {'lium'}
+    common, box, score = ('ops.parallel_eval.live.' + name for name in ('pe_common', 'pe_box', 'pe_score'))
+    assert hostlink.HOST_HELPERS == {
+        'lium': (common, 'lium'), 'pod_of': (common, 'pod_of'),
+        'boot_helpers': (box, 'boot_helpers'), 'push_probe_bundle': (box, 'push_probe_bundle'),
+        'bundle_trainer': (box, 'bundle_trainer'), 'ship_inputs': (box, 'ship_inputs'),
+        'ship_train_pit': (box, '_ship_train_pit'), 'train_cmd': (box, '_train_pit_inner_cmd'),
+        'put': (box, 'put'), 'put_tar': (box, 'put_tar'),
+        'public_harness': ('ops.parallel_eval.pit.box', '_load_public_harness'),
+        'score': (score, 'score'), 'blocks_baseline': (score, 'blocks_baseline'),
+    }
+    assert hostlink.HOST_VALUES == {'heldout': (score, 'HELDOUT')}
+    # The box helpers are in this repository. The others need the code of the validator host.
+    for name, (module, _) in hostlink.HOST_HELPERS.items():
+        if module in (box, 'ops.parallel_eval.pit.box'):
+            assert callable(hostlink.load(name)), name
     with pytest.raises(hostlink.HostLinkError):
         hostlink.load('other')
+    with pytest.raises(hostlink.HostLinkError):
+        hostlink.load('heldout')
+    with pytest.raises(hostlink.HostLinkError):
+        hostlink.value('lium')
     monkeypatch.setitem(hostlink.HOST_HELPERS, 'lium', ('no_such_module_of_the_host', 'lium'))
     with pytest.raises(hostlink.HostLinkError):
         hostlink.load('lium')
