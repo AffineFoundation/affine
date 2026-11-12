@@ -75,7 +75,7 @@ STALL_FIRST_COMPILE = {
 
 from .config import PitConfig, load_pit_config, DEFAULT_PIT
 from .state import ItemState, ItemRecord, TransitionError, apply_transition, ALLOWED
-from .shadow import ShadowGuard, ShadowWriteError, FORBIDDEN_SHADOW_WRITES
+from .shadow import ShadowGuard, ShadowWriteError, SHADOW_R2_PREFIXES
 
 __all__ = [
     'PREFIX', 'PREFIX_LIVE', 'PREFIX_SHADOW',
@@ -88,5 +88,5 @@ __all__ = [
     'ALLOWED_GPUS', 'REQUIRED_GPU_COUNT', 'LOW_MEM_GPU_GIB',
     'PitConfig', 'load_pit_config', 'DEFAULT_PIT',
     'ItemState', 'ItemRecord', 'TransitionError', 'apply_transition', 'ALLOWED',
-    'ShadowGuard', 'ShadowWriteError', 'FORBIDDEN_SHADOW_WRITES',
+    'ShadowGuard', 'ShadowWriteError', 'SHADOW_R2_PREFIXES',
 ]

@@ -32,8 +32,9 @@ from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 
 import botocore.client
 
-STATE_ENV = 'PIT_SHADOW_STATE'
-R2_PREFIX = 'pit-shadow/'
+from .shadow import R2_PREFIX, SHADOW_R2_PREFIXES, STATE_ENV, ShadowWriteError, r2_key_problem
+from .shadow import inside as _inside
+
 R2_PREFIX_ENV = {
     'PIT_R2_PENDING_PREFIX': R2_PREFIX + 'pending',
     'PIT_R2_FP32_PREFIX': R2_PREFIX + 'fp32-master',
@@ -56,16 +57,8 @@ PATH_EVENTS: Dict[str, Tuple[Tuple[int, Optional[int]], ...]] = {
 ENTRY_EVENTS = ('os.remove', 'os.rmdir', 'os.rename', 'os.link', 'os.symlink')
 
 
-class ShadowWriteError(RuntimeError):
-    """Shadow mode tried to write outside its state root or its R2 prefix. The write did not occur."""
-
-
 class ShadowConfigError(RuntimeError):
     """Shadow mode has no safe state root."""
-
-
-def _inside(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip('/') + '/')
 
 
 def _real(path: Any, dir_fd: Any = None, *, entry: bool = False) -> Optional[str]:
@@ -94,7 +87,7 @@ class ShadowGuard:
     """The write policy of one shadow process."""
 
     state_root: Path
-    r2_prefixes: Tuple[str, ...] = (R2_PREFIX,)
+    r2_prefixes: Tuple[str, ...] = SHADOW_R2_PREFIXES
     scratch: Tuple[str, ...] = ()
     denied: List[str] = field(default_factory=list)
 
@@ -126,8 +119,9 @@ class ShadowGuard:
         if not keys:
             self._deny('S3 %s has no object key: shadow writes objects under %s only' % (operation, list(self.r2_prefixes)))
         for key in keys:
-            if not isinstance(key, str) or not key.startswith(self.r2_prefixes) or '/../' in '/%s/' % key:
-                self._deny('S3 %s of key %r is outside the R2 prefix allowlist %s' % (operation, key, list(self.r2_prefixes)))
+            problem = r2_key_problem(key, self.r2_prefixes)
+            if problem:
+                self._deny('S3 %s of key %r: %s' % (operation, key, problem))
 
     def activate(self) -> 'ShadowGuard':
         """Make this the policy of the process. The hooks go in one time and stay."""

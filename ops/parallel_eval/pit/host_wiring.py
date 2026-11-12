@@ -351,7 +351,8 @@ def build_live_host_bundle(
     host_score = getattr(score_mod, 'score', None)
     if not callable(host_score):
         raise LiveWiringError('pe_score.score required')
-    round_baseline = getattr(score_mod, 'round_baseline', None)
+    # The baseline that the scorer judges a candidate against (the round baseline, or the baseline of the turn).
+    scoring_baseline = getattr(score_mod, 'scoring_baseline', None)
 
     verify_uploads = getattr(verify_mod, 'verify_uploads', None) or getattr(verify_mod, 'verify_green_uploads', None)
     if not callable(verify_uploads):
@@ -477,21 +478,20 @@ def build_live_host_bundle(
 
     def score_fn(**kwargs: Any) -> Mapping[str, Any]:
         # Always call live score(epoch, rid, result) positionally via adapter.
-        # The baseline of the round gives its hardware and layout fingerprint; a candidate probe
-        # with a different one gets no decision (probe_fingerprint.py).
+        # The baseline gives its hardware and layout fingerprint. A candidate probe with a different
+        # one, or a side with none, gets no decision (probe_fingerprint.py). This is not an audit
+        # record: the scorer does not run.
         rid = str(kwargs.get('round_id') or kwargs.get('rid') or '')
         result = kwargs.get('result') or {}
-        if not callable(round_baseline):
-            # This pe_score module cannot show its baseline: a probe that declares its layout is not scored.
-            refused = probe_fingerprint.refusal(None, result)
-            if refused is not None:
-                return nest_heldout_fields(refused, round_id=rid)
+        if not callable(scoring_baseline):
+            # This pe_score module cannot show the baseline that it scores against: nothing is scored.
+            return nest_heldout_fields(probe_fingerprint.refusal(None, result), round_id=rid)
         return call_live_host_score(
             host_score,
             epoch=int(kwargs['epoch']),
             round_id=rid,
             result=result,
-            baseline_of=round_baseline if callable(round_baseline) else None,
+            baseline_of=scoring_baseline,
         )
 
     rounds = None
