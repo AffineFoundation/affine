@@ -154,6 +154,24 @@ class AgentConfig:
         return None
 
 
+# GPU class of a run -> (the box class that trains and probes on it, the one serving layout of its probes).
+RUN_CLASSES: Dict[str, Tuple[Callable[[], recipe.BoxClass], PL.ProbeLayout]] = {
+    'RTX5090': (recipe.rtx5090x8, PL.RTX5090_TP2),
+}
+
+
+def config_for(gpu: str, *, harness: Mapping[str, Any], scratch: Path, transfer: recipe.Transfer,
+               sharded_host: Optional[Path] = None, max_head_blocks: Optional[int] = None) -> AgentConfig:
+    """The settings of the agent for a run on one GPU class."""
+    if gpu not in RUN_CLASSES:
+        raise ValueError('there is no box job for the GPU class %s' % (gpu,))
+    klass, layout = RUN_CLASSES[gpu]
+    return AgentConfig(
+        klass=klass(), paths=recipe.BoxPaths(), transfer=transfer, plan=PL.ProbePlan((layout,)), harness=harness,
+        scratch=scratch, sharded_host=sharded_host, max_head_blocks=max_head_blocks,
+    )
+
+
 @dataclass(frozen=True)
 class Lease:
     """What one lease needs, read on the validator host before the box is touched."""
@@ -426,4 +444,4 @@ class LiveBoxAgent:
             thread.join(timeout=60.0)
 
 
-__all__ = ['AgentConfig', 'LiveBoxAgent', 'Tools', 'host_tools']
+__all__ = ['AgentConfig', 'LiveBoxAgent', 'RUN_CLASSES', 'Tools', 'config_for', 'host_tools']

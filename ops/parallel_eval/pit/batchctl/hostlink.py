@@ -23,7 +23,8 @@ function that this package calls through one of its interfaces:
               files of the live gate and write nothing.
 
 ``HOST_VALUES`` holds what is not a function: ``heldout``, the directory
-where the live scorer reads its rounds.
+where the live scorer reads its rounds, and ``never_names``, the names of the
+nodes and pods that the live lane never rents and never removes.
 
 None of the helpers writes live state. A helper that cannot be loaded stops
 the start: there is no second way.
@@ -55,6 +56,7 @@ HOST_HELPERS: Dict[str, Tuple[str, str]] = {
 }
 HOST_VALUES: Dict[str, Tuple[str, str]] = {
     'heldout': (PE_SCORE, 'HELDOUT'),
+    'never_names': (PE_COMMON, 'NEVER_NAMES'),
 }
 
 
