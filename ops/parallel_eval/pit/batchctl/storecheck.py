@@ -5,8 +5,9 @@ exact rules: a create-only write, a compare-and-swap write, a copy that is
 tied to the etag of its source, a digest of the bytes that are really
 stored, and a listing that is complete.
 
-The R2 adapter is not in this package. It proves these rules in its own
-tests, against the real store, in a scratch prefix::
+The R2 adapter (``r2.py``) proves these rules in its own tests: against a
+fake S3 in every test run, and against the real store, in a scratch prefix,
+when the operator names a bucket::
 
     check_store(adapter, 'shadow/batchctl/<run_id>/contract/', big_bytes=64 << 20)
 

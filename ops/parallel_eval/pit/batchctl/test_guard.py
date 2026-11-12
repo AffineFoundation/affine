@@ -314,7 +314,7 @@ RUNTIME = sorted(
     if not path.name.startswith('test_') and path.name not in ('sim.py', 'modelcheck.py')
 )
 # Third-party code that one runtime module may import.
-THIRD_PARTY = {'s3store.py': {'boto3', 'botocore'}}
+THIRD_PARTY = {'r2.py': {'boto3', 'botocore', 'urllib3'}}
 # Modules outside this package that the controller may import, by the
 # number of dots of the relative import.
 OUTSIDE = {2: {'fakepass_sandbox', 'shadow', 'gpu_policy', ''}, 3: {'durable'}}
