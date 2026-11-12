@@ -26,7 +26,7 @@ import os
 import queue
 import threading
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from . import MODE_SHADOW, VERSION
 from . import core as C
@@ -213,6 +213,20 @@ def op_key(op: Any) -> Tuple:
 # Errors that must stop the process. Every other error of an effect is
 # reported and the effect runs again (see ``Controller.attempt``).
 FATAL = (ShadowWriteError, JournalError, C.CoreError, ControllerError)
+
+
+@dataclass(frozen=True)
+class FleetView:
+    """What a part outside the core (the judge, the box agent) can know about the leases of the run."""
+
+    # The fences of the leases that are not ended: they wait for a box, run, or wait for a verdict.
+    live: FrozenSet[int]
+    # fence -> base state, for each lease that has a box and whose job did not start yet.
+    starting: Mapping[int, Optional[str]]
+    # The number of batches that have no box yet. Each will start from the newest HEAD.
+    waiting: int
+    # The state id of the newest HEAD. None before the genesis.
+    head_state: Optional[str]
 
 
 class Controller:
@@ -456,6 +470,23 @@ class Controller:
         with self._lock:
             self._check_alive()
             return self.state.done.get(batch_id)
+
+    def fleet(self) -> 'FleetView':
+        """The leases of the run as the journal has them now. Read-only."""
+        with self._lock:
+            self._check_alive()
+            state = self.state
+            leases = {fence: state.active[batch_id] for fence, batch_id in state.by_fence.items()}
+            newest = state.base()
+            return FleetView(
+                live=frozenset(leases),
+                starting={
+                    fence: batch.lease.base_state for fence, batch in leases.items()
+                    if batch.phase is C.Phase.RUNNING and not batch.lease.launched
+                },
+                waiting=sum(1 for batch in state.active.values() if batch.phase in (C.Phase.QUEUED, C.Phase.RENTING)),
+                head_state=newest[0] if newest is not None else None,
+            )
 
     def _known_refs(self) -> Dict[str, Tuple[str, str]]:
         with self._lock:

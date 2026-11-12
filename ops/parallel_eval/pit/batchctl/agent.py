@@ -278,12 +278,10 @@ class LiveBoxAgent:
         if not lease.bound or budget_s < recipe.HEAD_MIN_S:
             # A box that trains nothing runs no step, and a lease with no time for a block starts none.
             return ()
-        newest = self.fleet.head_state()
-        # Boxes that wait take blocks too, if they start from this base.
-        others = self.fleet.waiting() if newest in (None, spec.base_state) else 0
+        # Boxes that start on this base soon take blocks too: the blocks are split across the boxes.
         return self.baselines.claim(
             lease.rnd, lease.base.checkpoint_id, spec.fence, live=set(self.fleet.live()) | {spec.fence},
-            others=others, limit=self.cfg.max_head_blocks,
+            others=self.fleet.others(spec.fence, spec.base_state), limit=self.cfg.max_head_blocks,
         )
 
     def _urls(self, spec: JobSpec, manifest: StateManifest) -> Dict[str, Any]:

@@ -507,6 +507,38 @@ def test_the_status_file_is_a_view_and_never_an_input(tmp_path):
     assert json.loads(path.read_text())['head']['seq'] == report.head_seq
 
 
+def test_the_fleet_view_is_the_leases_of_the_journal(tmp_path):
+    harness = Harness(tmp_path, 7, Scenario(batches=6, max_boxes=2, chaos=False))
+    harness._boot()
+    seen = {'live': 0, 'starting': 0, 'waiting': 0, 'head': 0}
+    for _ in range(60):
+        harness.fair(1)
+        ctl = harness.ctl
+        view, state = ctl.fleet(), ctl.state
+        assert view.live == frozenset(state.by_fence)
+        assert set(view.starting) <= view.live
+        for fence, base in view.starting.items():
+            batch = state.leased(fence)
+            assert batch.phase is C.Phase.RUNNING and not batch.lease.launched
+            assert base == batch.lease.base_state and base is not None
+        assert view.waiting == sum(
+            1 for batch in state.active.values() if batch.phase in (C.Phase.QUEUED, C.Phase.RENTING))
+        newest = state.base()
+        assert view.head_state == (newest[0] if newest is not None else None)
+        seen['live'] += bool(view.live)
+        seen['starting'] += bool(view.starting)
+        seen['waiting'] += bool(view.waiting)
+        seen['head'] += view.head_state is not None
+    assert all(seen.values()), seen
+    # The view is read-only: it wrote no journal record and changed no lease.
+    before = (len(journal_records(harness)), dict(harness.ctl.state.by_fence))
+    harness.ctl.fleet()
+    assert (len(journal_records(harness)), dict(harness.ctl.state.by_fence)) == before
+    harness.ctl.close()
+    with pytest.raises(K.ControllerError):
+        harness.ctl.fleet()
+
+
 # ----------------------------------------------------------------------------
 # The threaded loop
 # ----------------------------------------------------------------------------

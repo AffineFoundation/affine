@@ -258,12 +258,14 @@ def test_a_box_alone_takes_each_head_block_and_boxes_that_come_split_them(bench:
     # A second run: other batches wait for a box, so each box takes one block.
     other = Bench(bench.tmp / 'second')
     other.fleet.fences, other.fleet.head = {1, 2}, other.manifest.state_id
-    other.fleet.waiting = lambda: 5
+    asked = []
+    other.fleet.others = lambda fence, base_state: asked.append((fence, base_state)) or 5
     first = other.launch(fence=1)
     other.pod.claimed = False
     second = other.launch(fence=2)
     assert [block['block'] for block in other.doc(first.probe_args)['head']] == [0]
     assert [block['block'] for block in other.doc(second.probe_args)['head']] == [1]
+    assert asked == [(1, other.manifest.state_id), (2, other.manifest.state_id)]
     # A launch that is sent again names the same blocks.
     other.pod.claimed = False
     assert [block['block'] for block in other.doc(other.launch(fence=1).probe_args)['head']] == [0]

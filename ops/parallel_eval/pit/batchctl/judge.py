@@ -60,8 +60,8 @@ class Fleet:
         """The fences of the leases that run or wait for a verdict."""
         return ()
 
-    def waiting(self) -> int:
-        """The number of batches that will get a box soon."""
+    def others(self, fence: int, base_state: str) -> int:
+        """The number of other boxes that will start a job on this base state soon."""
         return 0
 
     def head_state(self) -> Optional[str]:
