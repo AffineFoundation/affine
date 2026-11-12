@@ -78,18 +78,26 @@ def _weights(report: Mapping[str, Any]) -> dict:
     return {(r['task_id'], r['nonce']): weight(r, share(r)) for r in rows}
 
 
+def is_update_report(report: Any) -> bool:
+    """True for the trainer report of a finished update that has the numbers of every rollout."""
+    return isinstance(report, Mapping) and report.get('status') == 'updated' and isinstance(report.get('trajectories'), list)
+
+
+def input_differences(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict:
+    """-> {input: [value in A, value in B]} for each input that differs between two update reports.
+
+    The inputs are the batch, the checkpoint, the fp32 master, the signed settings and the turn parameters."""
+    flat_a, flat_b = (_flat(dict({k: r.get(k) for k in INPUT_KEYS}, turn=_turn(r), fp32_master=_master(r))) for r in (a, b))
+    return {key: [flat_a.get(key), flat_b.get(key)]
+            for key in sorted(set(flat_a) | set(flat_b)) if flat_a.get(key) != flat_b.get(key)}
+
+
 def compare(a: Mapping[str, Any], b: Mapping[str, Any], *, top: int = 10) -> dict:
     """-> the comparison of two update reports as plain data (see the module docstring)."""
     for report in (a, b):
-        if report.get('status') != 'updated' or not isinstance(report.get('trajectories'), list):
+        if not is_update_report(report):
             raise ValueError('an update report with status "updated" and its trajectories is required')
-    inputs = {}
-    sides = (dict({k: a.get(k) for k in INPUT_KEYS}, turn=_turn(a), fp32_master=_master(a)),
-             dict({k: b.get(k) for k in INPUT_KEYS}, turn=_turn(b), fp32_master=_master(b)))
-    flat_a, flat_b = _flat(sides[0]), _flat(sides[1])
-    for key in sorted(set(flat_a) | set(flat_b)):
-        if flat_a.get(key) != flat_b.get(key):
-            inputs[key] = [flat_a.get(key), flat_b.get(key)]
+    inputs = input_differences(a, b)
     totals = {}
     for key in TOTAL_KEYS:
         x, y = a.get(key), b.get(key)

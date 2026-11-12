@@ -16,6 +16,7 @@ from ops.parallel_eval.pit import probe_layout as PL
 from ops.parallel_eval.pit import probe_parity as PP
 from ops.parallel_eval.pit import probe_serve as PS
 from ops.parallel_eval.pit.probe_fixture import ENV_ID, HARNESS, BoxCase
+from ops.parallel_eval.pit.training_report import copy_training_report_to_host
 
 CID = 'c' * 64
 
@@ -194,6 +195,169 @@ class TestVerdicts(unittest.TestCase):
         self.assertIn('B is 2.50 times as fast as A', text)
         self.assertIn('largest differences first (5 of 972)', text)
         self.assertEqual(len(text.split('Fisher p\n')[1].splitlines()), 5)
+
+
+def update(norm, *, cid=CID, data='d' * 64, step=41, engine='padded', world=None, limit=1.0, **more):
+    """The trainer report of one update (report.private.json), with the keys that the trainer writes.
+
+    The reports of two real updates are in test_host_v834f_sharded.TestCompareTrainReports.
+    """
+    rows = [dict(task_id='t%d' % i, nonce=i, tokens=100, loss_tokens=100, derail_index=None, support_outside_tokens=0,
+                 advantage=0.5, stop='stop', old_logprob_mean=-1.0) for i in range(4)]
+    report = dict(
+        version='affine-mimo-grpo-update-v1', status='updated', input_checkpoint=cid, data_sha256=data,
+        optimizer_step_before=step, optimizer_step=step + 1, group_count=1, rollout_count=4,
+        input=dict(run='r', epoch=9, checkpoint=cid, contract_sha256='c' * 64, optimizer_step=step),
+        config=dict(settings=dict(max_gradient_norm=limit)), preclip_gradient_norm=norm, objective_loss=-0.1,
+        trained_rollouts=4, masked_rollouts=0, trained_tokens=400, loss_tokens=400, derailed_rollouts=0,
+        trajectories=rows, microbatch=dict(engine=engine, count=1, **({'world': world} if world else {})),
+        epoch_metrics=dict(preclip_gradient_norm=norm, max_gradient_norm=limit, gradient_clip_applied=norm > limit))
+    report.update(more)
+    return report
+
+
+class TestPreclipIsTracked(unittest.TestCase):
+    """The parity report has the gradient norm before clipping of the trainer update of each side."""
+
+    def setUp(self):
+        rng = random.Random(21)
+        probs = tasks(rng, 300)
+        self.a, self.b = result(sample(rng, probs)), result(sample(rng, probs))
+        self.b300 = update(0.8)
+        self.sharded = update(0.888, engine='packed-zero3-v835', world=8)          # 11% above, as the run of 2026-11-11
+
+    def test_the_report_has_the_norm_of_each_side_and_the_ratio(self):
+        report = PP.compare(self.a, self.b, train_a=self.b300, train_b=self.sharded)
+        pre = report['preclip']
+        self.assertEqual((pre['a']['preclip_gradient_norm'], pre['b']['preclip_gradient_norm']), (0.8, 0.888))
+        self.assertAlmostEqual(pre['ratio_b_over_a'], 1.11, places=12)
+        self.assertAlmostEqual(pre['relative_difference'], 0.088 / 0.888, places=12)
+        # The shadow pass criterion permits 5%: this pair is beyond it, and the report says so.
+        self.assertEqual((pre['shadow_tolerance'], pre['within_shadow_tolerance']), (0.05, False))
+        self.assertEqual((pre['same_job'], pre['differences'], pre['in_verdict']), (True, [], False))
+        self.assertEqual((pre['a']['engine'], pre['a']['ranks'], pre['b']['engine'], pre['b']['ranks']),
+                         ('padded', None, 'packed-zero3-v835', 8))
+        for side in (pre['a'], pre['b']):
+            self.assertEqual((side['input_checkpoint'], side['data_sha256'], side['optimizer_step_before']), (CID, 'd' * 64, 41))
+            self.assertEqual((side['from_this_checkpoint'], side['max_gradient_norm'], side['above_limit']), (True, 1.0, False))
+            self.assertEqual((side['trained_rollouts'], side['trained_tokens'], side['loss_tokens']), (4, 400, 400))
+            self.assertNotIn('trajectories', side)
+        json.dumps(report)
+        text = PP.render(report, top=3)
+        self.assertIn('preclip gradient norm of the trainer update (tracked; not in the verdict): '
+                      'A 0.8 [padded], B 0.888 [packed-zero3-v835, 8 ranks], B / A 1.1100\n', text)
+        self.assertIn('  relative difference 9.91%, above the 5.00% of the shadow pass criterion\n', text)
+        self.assertIn('  the trainer limits the norm to 1: A not above the limit, B not above the limit\n', text)
+
+        close = PP.compare(self.a, self.b, train_a=self.b300, train_b=update(0.83, limit=0.5))['preclip']
+        self.assertEqual((close['within_shadow_tolerance'], close['b']['above_limit']), (True, True))
+        self.assertEqual(close['differences'], ['config.settings.max_gradient_norm'])     # a setting, not the job
+        self.assertEqual(close['same_job'], True)
+
+    def test_the_norm_changes_no_verdict_and_no_exit_code(self):
+        plain = PP.compare(self.a, self.b)
+        self.assertEqual(plain['verdict'], 'no_difference_detected')
+        self.assertEqual(plain['preclip'], dict(
+            in_verdict=False, a=None, b=None, same_job=None, differences=[], ratio_b_over_a=None,
+            relative_difference=None, shadow_tolerance=0.05, within_shadow_tolerance=None))
+        self.assertIn('not in the verdict): no trainer report (give --train-a and --train-b)\n', PP.render(plain))
+        for norm in (0.8, 0.888, 80.0):
+            tracked = PP.compare(self.a, self.b, train_a=self.b300, train_b=update(norm))
+            self.assertEqual({k: v for k, v in tracked.items() if k != 'preclip'},
+                             {k: v for k, v in plain.items() if k != 'preclip'})
+        # Sides that differ stay different with equal norms.
+        rng = random.Random(22)
+        probs = tasks(rng, 300)
+        worse = PP.compare(result(sample(rng, probs)), result(sample(rng, [p * 0.7 for p in probs])),
+                           train_a=self.b300, train_b=self.b300)
+        self.assertEqual((worse['verdict'], worse['preclip']['ratio_b_over_a']), ('different', 1.0))
+        self.assertFalse(any('preclip' in reason or 'norm' in reason for reason in worse['reasons']))
+
+    def test_updates_of_two_jobs_have_no_ratio(self):
+        for other, differs, differences in (
+                (update(0.888, data='e' * 64), ['data_sha256'], ['data_sha256']),
+                (update(0.888, step=42), ['optimizer_step_before'], ['input.optimizer_step']),
+                (update(0.888, cid='f' * 64), ['input_checkpoint'], ['input.checkpoint'])):
+            pre = PP.compare(self.a, self.b, train_a=self.b300, train_b=other)['preclip']
+            self.assertEqual((pre['same_job'], pre['ratio_b_over_a'], pre['relative_difference'],
+                              pre['within_shadow_tolerance']), (False, None, None, None), differs)
+            self.assertEqual(pre['differences'], differences)
+            self.assertEqual((pre['a']['preclip_gradient_norm'], pre['b']['preclip_gradient_norm']), (0.8, 0.888))
+            # Two summaries name the keys of the job that differ.
+            cut = lambda report: {k: v for k, v in report.items() if k != 'trajectories'}
+            self.assertEqual(PP.track_preclip(cut(self.b300), cut(other))['differences'], differs)
+        self.assertEqual(pre['b']['from_this_checkpoint'], False)
+        self.assertIn('  the update of B does not start from the checkpoint of the two sides\n', PP.render(
+            PP.compare(self.a, self.b, train_a=self.b300, train_b=update(0.888, cid='f' * 64))))
+        text = PP.render(PP.compare(self.a, self.b, train_a=self.b300, train_b=update(0.888, data='e' * 64)))
+        self.assertIn('A 0.8 [padded], B 0.888 [padded]; no ratio: the two updates are not one job\n'
+                      '  inputs of the two updates that differ: data_sha256\n', text)
+        self.assertNotIn('does not start from', text)
+        # One job that starts from another checkpoint than the two sides serve: a ratio, and the report says so.
+        report = PP.compare(self.a, self.b, train_a=update(0.8, cid='f' * 64), train_b=update(0.888, cid='f' * 64))
+        self.assertEqual((report['preclip']['same_job'], report['preclip']['a']['from_this_checkpoint']), (True, False))
+        self.assertAlmostEqual(report['preclip']['ratio_b_over_a'], 1.11, places=12)
+        self.assertIn('  the updates of A and B do not start from the checkpoint of the two sides\n', PP.render(report))
+
+    def test_one_side_without_a_trainer_report_has_no_ratio(self):
+        pre = PP.compare(self.a, self.b, train_b=self.sharded)['preclip']
+        self.assertEqual((pre['a'], pre['b']['preclip_gradient_norm'], pre['ratio_b_over_a'], pre['same_job']),
+                         (None, 0.888, None, None))
+        self.assertIn('not in the verdict): A no trainer report, B 0.888 [packed-zero3-v835, 8 ranks]\n',
+                      PP.render(PP.compare(self.a, self.b, train_b=self.sharded)))
+
+    def test_the_documents_that_hold_a_trainer_report(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict('os.environ', {'PE_STATE': tmp}):
+            stored = copy_training_report_to_host(report_path=None, item_id='i' * 32, epoch=9, candidate_id='e' * 64,
+                                                  report_doc=self.sharded)
+            on_host = json.loads(Path(stored['host_path']).read_text())
+        holders = dict(
+            live_training_result=dict(payload=dict(report=dict(training=self.sharded, checkpoint=CID))),
+            train_v834e_result=dict(ok=True, report='/host/report.private.json', report_doc=self.sharded),
+            host_training_report=on_host)
+        for name, doc in holders.items():
+            pre = PP.compare(self.a, self.b, train_a=self.b300, train_b=doc)['preclip']
+            self.assertEqual(pre, PP.compare(self.a, self.b, train_a=self.b300, train_b=self.sharded)['preclip'], name)
+        # markers/train.done and the summary of the host have the norm alone: a ratio, and no word on the job.
+        marker = dict(ok=True, report='/workspace/pst/out/report.private.json',
+                      training_report_summary=dict(gradient_norm=0.888, engine='packed', update_size=1.0))
+        for doc in (marker, dict(summary=on_host['summary'])):
+            pre = PP.compare(self.a, self.b, train_a=self.b300, train_b=doc)['preclip']
+            self.assertAlmostEqual(pre['ratio_b_over_a'], 1.11, places=12)
+            self.assertEqual((pre['same_job'], pre['differences'], pre['b']['input_checkpoint']), (None, [], None))
+        self.assertIn('  the reports do not say if the two updates are one job (one checkpoint, one batch, one step)\n',
+                      PP.render(PP.compare(self.a, self.b, train_a=self.b300, train_b=marker)))
+        # A box summary has 0 where the trainer report had no norm; an update that did not run has none.
+        for doc in (dict(training_report_summary=dict(gradient_norm=0.0)), dict(status='no-update'), {}, 'report'):
+            with self.assertRaises(PP.ParityError) as caught:
+                PP.compare(self.a, self.b, train_a=self.b300, train_b=doc)
+            self.assertIn('no gradient norm of a trainer update', str(caught.exception))
+        # A document that holds itself has an end.
+        loop = dict(status='no-update')
+        loop['report'] = loop
+        with self.assertRaises(PP.ParityError):
+            PP.find_update(loop)
+
+    def test_the_command_line_reads_the_two_trainer_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for name, doc in (('a', self.a), ('b', self.b), ('train-a', self.b300), ('train-b', self.sharded),
+                              ('no-norm', dict(status='no-update'))):
+                paths[name] = str(Path(tmp, name + '.json'))
+                Path(paths[name]).write_text(json.dumps(doc))
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = PP.main(['compare', paths['a'], paths['b'], '--train-a', paths['train-a'], '--train-b',
+                                paths['train-b'], '--out', str(Path(tmp, 'report.json'))])
+                refused = PP.main(['compare', paths['a'], paths['b'], '--train-a', paths['train-a'], '--train-b',
+                                   paths['no-norm'], '--out', str(Path(tmp, 'refused.json'))])
+            written = json.loads(Path(tmp, 'report.json').read_text())
+            self.assertFalse(Path(tmp, 'refused.json').exists())
+        self.assertEqual((code, refused), (0, 2))                # 11% apart: the exit code is the one of the verdict
+        self.assertIn('B / A 1.1100', out.getvalue())
+        self.assertIn('probe parity: the document has no gradient norm of a trainer update', err.getvalue())
+        self.assertEqual(written['preclip'], PP.compare(self.a, self.b, train_a=self.b300, train_b=self.sharded)['preclip'])
+        self.assertEqual((written['verdict'], written['version']), ('no_difference_detected', PP.REPORT_VERSION))
 
 
 class TestSidesOnTheBox(BoxCase):
