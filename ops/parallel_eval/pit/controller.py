@@ -2696,12 +2696,21 @@ class Controller:
                 raise ShadowWriteError('shadow guard failed to refuse %s' % action)
             except ShadowWriteError:
                 pass
+        # The guard is an allowlist: a file outside the shadow state root and a live R2 key are refused.
+        root = self.shadow.state_root
+        outside = Path(os.path.realpath(root)).parent if root else Path(os.sep)
         for name in ('DECISION.json', 'HEAD-CHAIN.json', 'CURRENT.json', 'WEIGHTS.json'):
             try:
-                self.shadow.check_path(name)
-                raise ShadowWriteError('shadow guard failed to refuse path %s' % name)
+                self.shadow.check_path(outside / name, kind=name)
             except ShadowWriteError:
-                pass
+                continue
+            raise ShadowWriteError('shadow guard failed to refuse path %s' % name)
+        for key in ('fp32-master/%s' % item.candidate_id, 'pit-pending/%s' % item.candidate_id, 'heads/current'):
+            try:
+                self.shadow.check_r2_key(key)
+            except ShadowWriteError:
+                continue
+            raise ShadowWriteError('shadow guard failed to refuse the R2 key %s' % key)
 
 
 HostController = Controller
