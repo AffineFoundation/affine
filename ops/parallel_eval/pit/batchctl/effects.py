@@ -27,7 +27,8 @@ from typing import Any, Callable, FrozenSet, List, Mapping, Optional, Set, Tuple
 from . import core as C
 from .guard import box_name, parse_box_name
 from .interfaces import (
-    BatchSource, Blob, BoxAgent, BoxError, BoxInfo, Clock, JobSpec, Judge, JudgeInvalid, NotFound,
+    BatchSource, Blob, BoxAgent, BoxError, BoxInfo, Clock, JobSpec, Judge, JudgeInvalid, JudgeNotReady,
+    NotFound,
     ObjectStore, Provider, ProviderError, RentUnavailable, SourceError, StoreError, TooLarge,
     VERDICT_GREEN, VERDICT_RED,
 )
@@ -473,6 +474,10 @@ class Effects:
 
         try:
             verdict = self.judge.verdict(result, batch_id=op.batch_id, base_state=op.base_state)
+        except JudgeNotReady:
+            # No verdict yet. The result is durable under its own hash, so
+            # nothing is lost while the batch waits in SETTLING.
+            return []
         except JudgeInvalid:
             return [C.SettleInvalid(op.fence, 'result_unreadable')]
         if verdict == VERDICT_RED:

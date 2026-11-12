@@ -21,6 +21,7 @@ from . import core as C
 from . import guard as G
 from . import journal as J
 from .guard import GuardedStore, StateRoot, parse_box_name, shadow_prefix
+from .interfaces import JudgeNotReady
 from .sim import ControllerStore, Harness, MemOps, Scenario
 from .. import PRICE_CEILING_USD_H
 from ..shadow import ShadowWriteError
@@ -682,6 +683,45 @@ def test_the_same_unexpected_error_again_and_again_halts_new_work(tmp_path):
     report = run.finish()
     assert sum(report.outcomes.values()) == 3 and report.halted is None
     assert report.kinds['halted'] == report.kinds['resumed'] == 1
+
+
+class NotYet:
+    """A judge that has no verdict for its first calls."""
+
+    def __init__(self, inner, waits: int):
+        self._inner = inner
+        self.waits = waits
+        self.asked = 0
+
+    def verdict(self, result, *, batch_id, base_state):
+        self.asked += 1
+        if self.asked <= self.waits:
+            raise JudgeNotReady('the baseline of the round is not there')
+        return self._inner.verdict(result, batch_id=batch_id, base_state=base_state)
+
+
+def test_a_judge_that_is_not_ready_is_asked_again_and_nothing_is_lost(tmp_path):
+    # More waits than ``effect_error_limit``: a wait is not an error.
+    judges = []
+    run = Threaded(tmp_path, 44, Scenario(batches=3, max_boxes=2, chaos=False))
+
+    def layer(part):
+        judges.append(NotYet(part, waits=12))
+        return judges[-1]
+
+    run.layers['judge'] = layer
+    ctl = run.start()
+    try:
+        assert run.until(run.harness._quiescent)
+    finally:
+        run.halt()
+    report = run.finish()
+    assert judges[0].asked > 12
+    assert sum(report.outcomes.values()) == 3 and report.halted is None
+    # No box was lost and no error was counted while the judge had no verdict.
+    assert 'attempt_failed' not in report.kinds and report.outcomes.get('lost_infra', 0) == 0
+    assert ctl.status()['alerts']['counts'] == {}
+    assert report.kinds['lease_issued'] == 3
 
 
 @pytest.mark.parametrize('error', [

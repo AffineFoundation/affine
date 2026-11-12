@@ -253,6 +253,16 @@ class JudgeInvalid(ValueError):
     """The bytes are not a result for this batch and this base state."""
 
 
+class JudgeNotReady(RuntimeError):
+    """The verdict cannot be given yet: something that the judge compares
+    against is not there (for example the baseline of the round).
+
+    Not a verdict, not a loss and not an error. The controller asks again
+    later. The result is durable in R2 and the box is released already, so
+    the wait costs nothing.
+    """
+
+
 class Judge(Protocol):
     def verdict(self, result: bytes, *, batch_id: str, base_state: str) -> str:
         """Return ``VERDICT_GREEN`` or ``VERDICT_RED``.
@@ -262,6 +272,8 @@ class Judge(Protocol):
         the trainer fail" must be RED here, not ``JudgeInvalid``: an invalid
         result counts as an infrastructure loss, and a miner must not be
         able to buy that credit with a bad batch.
+
+        ``JudgeNotReady``: no verdict yet; the controller asks again later.
         """
 
 
