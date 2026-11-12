@@ -21,6 +21,28 @@ modes
              gradient that zero3_numerics.py gathered from FSDP ranks in bf16 (<work>/sharded-gradient.pt). The
              saved candidate master is then loaded with the admitted host-v834e _fp32_load.
 
+--observe (sharded mode, rank 0) puts pass-through instruments on the staged code and adds what they saw to the
+result. Every instrumented function runs unchanged; see observe(). It answers three questions about memory that
+only show on a real GPU as an out-of-memory error: does a full-size original Parameter outlive the fully_shard call
+that replaced it, does backward keep the recomputed logits of the head chunks, and does the zero-weight probe step
+run the backward of the real loss. --logit-chunk lowers rank 0's head chunk so that one micro-batch has several.
+
+Options for the gradient comparison of the sharded update with the unsharded one:
+  --capped-tokens N   the capped rollout of the batch gets N tokens, so that the derail mask cuts it
+  --max-rows N        sharded: at most N rollouts in one micro-batch (dp_max_rows of the fixture's signed engine)
+  --turn JSON         the `train` block of the dispatch (lr, step_mult, knobs), read by the launcher's own
+                      ff_trainer.train_params as the installed prepare_signed_dispatch reads it
+  --derail-threshold X  the job's derail threshold instead of the published -3.0 (the tiny random model gives its
+                      own tokens a mean log-prob near -4.2, so -9.0 means: no rollout derails)
+  --capture-gradient  keep the accumulated fp32 gradient as it is before the clip, in <run>/gradient.pt. The
+                      unsharded run keeps the whole gradient, a sharded run keeps what rank 0 holds: its dim-0
+                      shard of the sum over every rank (the whole tensor in a one-rank world).
+
+The settings of a sharded run (v835_zero3.PROFILES) come from PIT_ZERO3_PROFILE in the environment of this
+process, as on the box. --helper-profile gives the helper ranks another name than rank 0 has: the helper must
+refuse the job, and the trainer must then stop instead of running ranks with different collectives.
+Every run also writes the update report as train_pit.py writes it: <run>/report.private.json.
+
 Every run has its own fp32 master store, <work>/<run>/fp32-master, so an entry there was written by that run.
 The launcher splits a master into files of 4 GiB; the tiny master is 142 kB, so the harness lowers that one
 constant (FP32_SHARD_BYTES) to make the same code write several files.
@@ -29,7 +51,8 @@ train_pit.py itself is not run here: it needs the box paths, a signed dispatch a
 a stand-in. The result is written to <work>/<mode>/result.json.
 """
 import argparse
-import dataclasses
+import collections
+import gc
 import inspect
 import json
 import os
@@ -37,6 +60,8 @@ import shutil
 import sys
 import time
 import types
+import warnings
+import weakref
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -48,13 +73,175 @@ FIXTURE_SHARD_BYTES = 48 * 1024   # stands in for the launcher's 4 GiB FP32_SHAR
 ADMITTED_MODES = ('reference', 'fp32-load')
 
 
+PROBE_TOKENS = (19000, 19000, 15000, 15000, 11000, 11000)
+
+
 def plan_probe(dp):
-    """The installed planner (the function the update calls) on four 14,000-token rollouts for two ranks.
-    Two of them are 28,000 tokens: one bin under the signed 40,960 budget, two bins under the 24,576 cut."""
-    rows = [dict(group=types.SimpleNamespace(prompt=range(2000)), rollout=types.SimpleNamespace(tokens=range(12000)))
-            for _ in range(4)]
-    assign, bins, _ = dp._plan(rows, list(range(4)), 2)
-    return dict(bins=bins, largest_bin_tokens=max(14000 * len(batch) for batches in assign for batch in batches))
+    """The installed planner (the function the update calls) on six rollouts for two ranks: two each of 19,000,
+    15,000 and 11,000 tokens. The fixture lets two rollouts share a bin. The largest bin is 38,000 tokens under
+    the signed 40,960 budget, 30,000 under the 32,768 budget of the default sharded settings, and 22,000 under
+    the 24,576 budget of the reference settings."""
+    rows = [dict(group=types.SimpleNamespace(prompt=range(1000)), rollout=types.SimpleNamespace(tokens=range(tokens - 1000)))
+            for tokens in PROBE_TOKENS]
+    assign, bins, _ = dp._plan(rows, list(range(len(rows))), 2)
+    return dict(bins=bins, largest_bin_tokens=max(sum(PROBE_TOKENS[i] for i in batch) for batches in assign for batch in batches))
+
+
+NODE = 'autograd::engine::evaluate_function: '         # the profiler's name for one autograd node that backward ran
+
+
+def _sizes(items):
+    return [[len(prompt), len(output)] for prompt, output in items]
+
+
+def _recorded(seen, kind, call, items_of):
+    """-> call, which also adds the autograd nodes that ran during it to seen['nodes']."""
+    import torch      # after install(), as everywhere in this file
+
+    def run(*args, **kwargs):
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
+            out = call(*args, **kwargs)
+        nodes = collections.Counter(e.name[len(NODE):] for e in profile.events() if e.name.startswith(NODE))
+        seen['nodes'].append(dict(kind=seen['tag'] or kind, items=items_of(*args), nodes=dict(nodes)))
+        return out
+    return run
+
+
+def observe(z3, B):
+    """Wrap four staged functions of rank 0 so that each call is recorded and then runs unchanged. -> the record.
+
+    shard   after every real fully_shard(unit): how many of the unit's original trainable Parameters are alive.
+            FSDP has replaced each of them by this rank's shard, so a live one is a full-size tensor that some
+            reference still pins.
+    head    when backward reaches the decoder output (Actor._head_done; every head chunk is done by then): how
+            many fp32 [tokens, vocab] tensors are alive. They are recomputed logits that the head checkpoint holds.
+    nodes   the autograd nodes that the backward of each zero-weight probe step and of each real step ran.
+    """
+    # torch imports only now: the closure is on sys.path and install() has patched it (train_pit order)
+    import torch
+    from torch.distributed.tensor import DTensor
+    seen = dict(shard=[], head=[], nodes=[], tag=None)
+    real_shard = z3.fully_shard
+
+    def fully_shard(module, **kwargs):
+        originals = [weakref.ref(p) for p in module.parameters() if p.requires_grad and not isinstance(p, DTensor)]
+        out = real_shard(module, **kwargs)
+        gc.collect()
+        seen['shard'].append(dict(unit=type(module).__name__, originals=len(originals),
+                                  alive=sum(ref() is not None for ref in originals)))
+        return out
+    z3.fully_shard = fully_shard
+
+    real_done = z3.Actor._head_done
+
+    def _head_done(self, grad):
+        gc.collect()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')        # the scan touches deprecated module attributes
+            logits = sum(1 for obj in gc.get_objects() if isinstance(obj, torch.Tensor) and obj.dtype == torch.float32
+                         and obj.dim() == 2 and obj.shape[1] == self.inv['vocab'])
+        seen['head'].append(dict(phase=seen['tag'] or ('step' if self.accumulate else 'probe'), logits_alive=logits))
+        return real_done(self, grad)
+    z3.Actor._head_done = _head_done
+
+    z3.Actor.null_step = _recorded(seen, 'probe', z3.Actor.null_step, lambda actor, module, items: _sizes(items))
+    B._gradient_pass = _recorded(seen, 'step', B._gradient_pass, lambda runtime, rows, plan, *rest: _sizes(
+        (rows[i]['group'].prompt, rows[i]['rollout'].tokens) for batch in plan for i in batch))
+    return seen
+
+
+def head_control(z3, B, stock, seen, items, support):
+    """The same micro-batch and the same loss on log_q twice on the sharded actor: with the forward of the stock
+    v8211_batched file (log_p keeps its graph) and with the staged sharded forward. Then the staged zero-weight
+    probe step on the stock forward. -> what the runs kept alive in backward and which nodes they ran (recorded
+    by observe() under control-stock, control-staged and control-probe), and whether the values and the gradients
+    of the first two are the same bits."""
+    import torch      # after install(), as everywhere in this file
+    actor = z3.WORLD['actor']
+
+    def run(tag, forward):
+        def step():
+            with torch.enable_grad():
+                outs = forward()
+            weights = [torch.linspace(0.5, 1.5, len(log_q)) for _, log_q, _ in outs]
+            torch.stack([(w * log_q).sum() for w, (_, log_q, _) in zip(weights, outs)]).sum().backward()
+            actor.end_step()
+            return outs
+        actor.clear()
+        seen['tag'] = tag
+        try:
+            outs = _recorded(seen, tag, step, lambda: _sizes(items))()
+        finally:
+            seen['tag'] = None
+        gradients = {name: actor.shard_grad(name).clone() for name, _ in actor.names}
+        values = [tuple(t.detach().clone() for t in out) for out in outs]
+        attached = [bool(out[0].requires_grad) for out in outs]
+        actor.clear()
+        return gradients, values, attached
+
+    def stock_forward():        # what the sharded forward did before the head-memory fix: begin the step, stock outputs
+        actor.begin_step()
+        return stock(actor.runtime, items, gradients=True, engine='padded', logit_chunk=z3.LOGIT_CHUNK, support=support)
+    want_g, want_v, want_attached = run('control-stock', stock_forward)
+    got_g, got_v, got_attached = run('control-staged', lambda: B.batched_log_probs(
+        actor.runtime, items, gradients=True, engine='packed', logit_chunk=z3.LOGIT_CHUNK, support=support))
+    # The probe step must differentiate what the loss differentiates, whatever the forward hands back: here a
+    # log_p that keeps its graph. Its state is the one _probe() sets.
+    attached = types.SimpleNamespace(batched_log_probs=lambda *args, **kwargs: stock_forward(), SUPPORT_RENORM=support)
+    seen['tag'], actor.accumulate = 'control-probe', False
+    try:
+        actor.null_step(attached, items)
+    finally:
+        seen['tag'], actor.accumulate = None, True
+    actor.clear()
+    return dict(
+        items=_sizes(items), logit_chunk=z3.LOGIT_CHUNK,
+        head_chunks=-(-sum(len(output) for _, output in items) // z3.LOGIT_CHUNK),
+        stock_log_p_attached=want_attached, staged_log_p_attached=got_attached,
+        values_equal=all(torch.equal(a, b) for want, got in zip(want_v, got_v) for a, b in zip(want, got)),
+        gradient_tensors=len(want_g), gradient_nonzero=sum(bool(g.abs().sum() > 0) for g in want_g.values()),
+        gradients_equal=list(want_g) == list(got_g) and all(torch.equal(want_g[n], got_g[n]) for n in want_g))
+
+
+def capture_unsharded_gradient(accumulator, path):
+    """Pass-through on the engine's accumulator: save the fp32 gradient the unsharded update hands to the clip."""
+    import torch      # after install(), as everywhere in this file
+    real = accumulator.clip
+
+    def clip(self, maximum):
+        torch.save({name: buffer.detach().clone() for name, buffer in self.buffers.items()}, str(path))
+        return real(self, maximum)
+    accumulator.clip = clip
+
+
+def capture_sharded_gradient(z3):
+    """Pass-through on rank 0's Actor.shard_grad. -> {name: the first shard read after the gradient steps}.
+    The probe step reads shards too, with `accumulate` off: those reads are not kept."""
+    seen, real = {}, z3.Actor.shard_grad
+
+    def shard_grad(self, name, params=None):
+        shard = real(self, name, params)
+        if self.accumulate and name not in seen:
+            seen[name] = shard.detach().to('cpu', copy=True)
+        return shard
+    z3.Actor.shard_grad = shard_grad
+    return seen
+
+
+def unsharded_engine(update, e):
+    """The unsharded reference runs under the admitted launcher's own turn wrappers (train_update_v833j ->
+    train_update_v833i): they apply the `train` block of the dispatch and force KL off. Under them the launcher
+    holds the v8.3 DP engine, which needs CUDA and a DP world. Its closure cell gets the update the wrappers name
+    `_original` instead: v8211_batched.train_update_batched of the same host files, on the padded engine."""
+    def cell(function, name):
+        return function.__closure__[function.__code__.co_freevars.index(name)]
+    original = update._original
+
+    def padded(runtime, optimizer, groups, binding, *, config, **kwargs):
+        kwargs.update(engine='padded', token_budget=e['token_budget'], max_rows=e['max_rows'])
+        return original(runtime, optimizer, groups, binding, config=config, **kwargs)
+    padded._original = original
+    cell(cell(update, 'train_update_v833i').cell_contents, 'dp_update').cell_contents = padded
 
 
 def main(argv=None):
@@ -66,11 +253,22 @@ def main(argv=None):
     ap.add_argument('--port', type=int, default=29583)
     ap.add_argument('--tag', default=None, help='result directory name (default: the mode)')
     ap.add_argument('--kill-helper', action='store_true', help='kill the helper rank before the update (watchdog check)')
+    ap.add_argument('--helper-profile', default=None,
+                    help='sharded: the helper ranks start with this PIT_ZERO3_PROFILE; rank 0 keeps the settings it chose in activate()')
     ap.add_argument('--guard-fail', type=int, default=0, help='make the N-th step-boundary guard call raise once, then retry')
     ap.add_argument('--fake-peak', default=None, choices=('first-over', 'always-over'),
                     help='there is no GPU here: stand in for the GPU memory rank 0 measures in the probe step. '
                          'first-over = over the limit until its layer inputs are on the host; always-over = always')
+    ap.add_argument('--observe', action='store_true', help='sharded: record what rank 0 keeps alive (see observe())')
+    ap.add_argument('--logit-chunk', type=int, default=None, help='sharded: head tokens per lm_head call on rank 0')
+    ap.add_argument('--capped-tokens', type=int, default=None, help='tokens of the capped rollout (fixture.free_groups)')
+    ap.add_argument('--max-rows', type=int, default=None, help='sharded: rollouts per micro-batch (signed dp_max_rows)')
+    ap.add_argument('--turn', default=None, help='JSON `train` block of the dispatch: lr, step_mult, knobs')
+    ap.add_argument('--capture-gradient', action='store_true', help='keep the fp32 gradient before the clip (gradient.pt)')
+    ap.add_argument('--derail-threshold', type=float, default=None, help='derail threshold of the job settings')
     a = ap.parse_args(argv)
+    if a.observe and (a.mode != 'sharded' or a.world != 1):
+        ap.error('--observe runs its control forward on rank 0 alone: it needs --mode sharded --world 1')
     work = Path(a.work).resolve()
     src = fixture.source_root(work / 'src')
     sharded = a.mode == 'sharded'
@@ -97,6 +295,8 @@ def main(argv=None):
     meta = json.loads((work / 'head.json').read_text())
     descriptor, spec = meta['descriptor'], meta['spec']
     engine = dict(fixture.ENGINE_BLOCK, dp_world=a.world, dp_port=a.port)
+    if a.max_rows:
+        engine['dp_max_rows'] = a.max_rows
     cfg = host.checked(fixture.signed_config(host, hostdir, src, engine, TEST_SEED))
     result = dict(mode=a.mode, host_files=sorted(host.HOST_FILES), launcher=str(Path(host.__file__).resolve()))
     if a.mode in ('fp32-load', 'bf16-master'):
@@ -114,7 +314,12 @@ def main(argv=None):
             except RuntimeError as x:
                 result['activate_none'] = 'refused: %s' % x
         result['policy'] = z3.activate(host)
+        if a.logit_chunk:
+            z3.LOGIT_CHUNK = a.logit_chunk
+        if a.helper_profile:      # activate() has fixed rank 0's settings; install() starts the helpers with this environment
+            os.environ[z3.PROFILE_ENV] = a.helper_profile
     info = host.install(cfg, start_dp=sharded)
+    seen = observe(z3, sys.modules['v824_batched']) if a.observe else None
     result['install'] = dict(dp_world=info['dp_world'], zero3=info.get('zero3'), dp_token_budget=info.get('dp_token_budget'))
     dp = sys.modules['v83_dp']
     helpers = dp.STATE.get('helpers') or []
@@ -136,7 +341,10 @@ def main(argv=None):
     result['fp32_accumulator_signature'] = str(inspect.signature(FP32Accumulator.__init__))
     torch.set_num_threads(2)
     runtime = MimoRuntime.load(str(head), descriptor, spec, device='cpu', trainable=True, allow_fixture=True)
-    config = TrainerConfig(**fixture.trainer_settings())
+    settings = fixture.trainer_settings()
+    if a.derail_threshold is not None:
+        settings['derail_threshold'] = a.derail_threshold
+    config = TrainerConfig(**settings)
     step = 7
     opt = CPUAdamW(runtime.model.named_parameters(), config, input_checkpoint=descriptor['id'])
     opt.global_step = step
@@ -147,10 +355,23 @@ def main(argv=None):
     host._fp32_save(opt, bf, dict(version=host.FP32_VERSION, bf16_sha256=bf, master_digest=dig, tensor_sha256=per), (bf,), events.append)
     os.environ['AFFINE_FP32_EXPECTED_MASTER_HASH'] = dig
     ff = sys.modules['ff_trainer']
-    groups = fixture.free_groups(ff)
+    groups = fixture.free_groups(ff, capped_tokens=a.capped_tokens)
     binding = InputBinding('fixture-run', 'fixture-epoch', descriptor['id'], '0' * 64, step)
     B = sys.modules['v824_batched']
     e = cfg['engine']
+    if a.turn:
+        given = json.loads(a.turn)
+        defaults = dict(lr=e['sgd_lr'], kl=float(config.kl_coefficient))
+        knobs = dict(ff.KNOB_DEFAULTS, **given.get('knobs', {}))
+        train = dict(defaults, **{k: v for k, v in given.items() if k != 'knobs'})
+        train.update(knobs=knobs, defaults=defaults, given=sorted(set(given) - {'knobs'} | set(given.get('knobs', {}))))
+        host.TURN_PARAMS['params'] = ff.train_params(dict(train=train), binding)
+    captured = None
+    if a.capture_gradient:
+        if sharded:
+            captured = capture_sharded_gradient(z3)
+        else:
+            capture_unsharded_gradient(FP32Accumulator, out / 'gradient.pt')
     records = []
     calls = dict(n=0, failed=False)
     stores_seen = set()
@@ -187,15 +408,16 @@ def main(argv=None):
             if a.fake_peak:
                 z3._measured_peak = measured          # the same world, now without the stand-in measurement
             report = B.train_update_batched(runtime, opt, groups, binding, **kwargs)
-    else:   # the unsharded update: KL forced off as the host does, original engine, the host's CPUAdamW.step
-        cfg0 = dataclasses.replace(config, kl_coefficient=0., kl_reference_checkpoint='').validate()
-        opt.config = cfg0
+    else:   # the unsharded update: the launcher's turn wrappers, original engine, the host's CPUAdamW.step
         # install() put the CUDA-only packed forward on v824_batched; the padded forward is the same file's own function
         B.batched_log_probs = fixture.load_module('v8211_stock', hostdir / 'v8211_batched.py').batched_log_probs
-        report = B.train_update_batched._original(runtime, opt, groups, binding, config=cfg0, reference_runtime=None,
-                                                  engine='padded', token_budget=e['token_budget'], max_rows=e['max_rows'],
-                                                  guard=guard, record=records.append)
+        unsharded_engine(B.train_update_batched, e)
+        report = B.train_update_batched(runtime, opt, groups, binding, config=config, reference_runtime=None,
+                                        guard=guard, record=records.append)
     result['update_seconds'] = time.monotonic() - t0
+    (out / 'report.private.json').write_text(json.dumps(report, default=str))      # as train_pit.py writes it
+    if captured is not None:
+        torch.save(captured, str(out / 'gradient.pt'))
     off = sys.modules['v8210_optimizer_offpath']
     staged = off.stage_for_publication_model_only(runtime, opt, report, str(out / 'staged'), workers=e['stage_workers'])
     staged = staged[0] if isinstance(staged, tuple) else staged
@@ -221,6 +443,12 @@ def main(argv=None):
         record_stages=sorted({r.get('stage') for r in records}),
         trajectory_loss_records=sum(r.get('stage') == 'trajectory-loss' for r in records),
         masked_records=sum(r.get('stage') == 'masked-unresolved' for r in records))
+    if a.observe:
+        stock = fixture.load_module('v8211_stock', hostdir / 'v8211_batched.py').batched_log_probs
+        items = [(g.prompt, t.tokens) for g in groups for t in g.trajectories][:3]
+        control = head_control(z3, B, stock, seen, items, B.SUPPORT_RENORM)
+        result['observed'] = dict(shard=seen['shard'], head=seen['head'], nodes=seen['nodes'], control=control,
+                                  logit_chunk=z3.LOGIT_CHUNK, vocab=z3.WORLD['actor'].inv['vocab'])
     if sharded:
         dp._bcast(dict(op='stop'))
         result['helper_returncodes'] = [h.wait(timeout=60) for h in helpers]

@@ -180,6 +180,11 @@ def build_decision_doc(
             doc['parallel_eval']['no_sample_reason'] = (
                 (item.meta or {}).get('no_sample_reason') or ''
             )[:400]
+    if scored.get('early_stop') is True and gate_decision == 'red':
+        # RED-only early stop of the probe: ``evaluated`` is the estimate of the tasks that were finished.
+        doc['parallel_eval']['early_stop'] = True
+        doc['parallel_eval']['early_stop_fraction'] = scored.get('early_stop_fraction')
+        doc['parallel_eval']['early_stop_detail'] = dict(scored.get('early_stop_detail') or {})
     return doc
 
 

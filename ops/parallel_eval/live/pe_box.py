@@ -35,7 +35,9 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
+
+from ops.parallel_eval.live import pe_artifact_upload as AU
 
 sys.dont_write_bytecode = True
 
@@ -129,6 +131,11 @@ def _trainer_host_dir() -> Path:
         cand = repo / 'miner' / 'validator' / 'trainer-v834e'
         if cand.is_dir() and (cand / 'mimo_host_trainer_v83.py').is_file():
             return cand
+    return _signed_trainer_host_dir()
+
+
+def _signed_trainer_host_dir() -> Path:
+    """trainer-host-v834e inside the signed release; ignores every trainer override."""
     rel = _v834e_release()
     cand = rel / 'trainer-host-v834e'
     return cand if cand.is_dir() else rel
@@ -1362,8 +1369,11 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
 
     Streams fp32 box→R2 (no host staging). APPLY later verifies against R2 using
     the host-recorded ``candidate_master_digest``. Never soft-fails into eval.
+
+    The two trees go in one box job: all their parts share one pool of parallel
+    uploads, and the host checks R2 by size and ETag (no download).
     """
-    from ops.parallel_eval.live.pe_artifact_upload import EARLY_UPLOAD_RETRIES
+    EARLY_UPLOAD_RETRIES = AU.EARLY_UPLOAD_RETRIES
 
     out = dict(receipt)
     cid = str(out.get('candidate_id') or '')
@@ -1378,25 +1388,39 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
         raise EarlyUploadError('early upload needs candidate_files')
     if len(master_dig) != 64:
         raise EarlyUploadError('early upload needs host-recorded candidate_master_digest')
+    store_entry = str(
+        ((out.get('report_doc') or {}).get('optimizer') or {})
+        .get('sgd', {})
+        .get('fp32_master', {})
+        .get('output_store_entry')
+        or out.get('output_store_entry')
+        or ''
+    )
     last_err: Exception | None = None
     for attempt in range(1, int(EARLY_UPLOAD_RETRIES) + 1):
         try:
-            # fp32 master FIRST, then bf16 (Jacob 2026-11-10).
+            box_master_dir = out.get('box_master_dir')
+            box_candidate_dir = out.get('box_candidate_dir') or (KDIR + '/' + cid)
+            sent: Mapping[str, Any] = {}
+            if AU.box_multipart_transport():
+                box_master_dir = box_master_dir or _resolve_box_master_dir(
+                    P, master_digest=master_dig, store_entry=store_entry,
+                )
+                sent = AU.upload_trees_from_box(P, candidate_id=cid, put=put, trees={
+                    'master': dict(dir=box_master_dir, prefix=AU.pending_r2_prefix(cid), names=None),
+                    'candidate': dict(dir=box_candidate_dir, prefix=_ckpt_r2_prefix(cid, pending=True),
+                                      names=sorted(files)),
+                })
+            # The fp32 master is recorded FIRST, then bf16 (Jacob 2026-11-10).
             master_up = upload_master_from_box(
                 P,
                 candidate_id=cid,
                 master_digest=master_dig,
                 bf16_sha256=cid,
-                box_master_dir=out.get('box_master_dir'),
-                store_entry=str(
-                    ((out.get('report_doc') or {}).get('optimizer') or {})
-                    .get('sgd', {})
-                    .get('fp32_master', {})
-                    .get('output_store_entry')
-                    or out.get('output_store_entry')
-                    or ''
-                ),
+                box_master_dir=box_master_dir,
+                store_entry=store_entry,
                 pending=True,
+                uploaded=sent.get('master'),
             )
             if not master_up.get('complete') and not int(master_up.get('shard_count') or 0):
                 raise EarlyUploadError('early upload master incomplete')
@@ -1404,8 +1428,9 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
                 P,
                 candidate_id=cid,
                 files=files,
-                box_candidate_dir=out.get('box_candidate_dir'),
+                box_candidate_dir=box_candidate_dir,
                 pending=True,
+                uploaded=sent.get('candidate'),
             )
             seed = {
                 'candidate_verified': True,
@@ -1418,13 +1443,14 @@ def _early_upload_artifacts(P: Any, receipt: Mapping[str, Any]) -> Dict[str, Any
                     'host_master_digest': master_dig,
                     'attempt': attempt,
                     'candidate_upload': {
-                        k: cand_up.get(k) for k in ('ok', 'path', 'verified') if k in cand_up
+                        k: cand_up.get(k)
+                        for k in ('ok', 'path', 'verified', 'transport', 'downloads') if k in cand_up
                     },
                     'master_publish': {
                         k: master_up.get(k)
                         for k in (
                             'shard_count', 'complete', 'index', 'box_master_dir',
-                            'pending', 'transport',
+                            'pending', 'transport', 'downloads',
                         )
                         if k in master_up
                     },
@@ -1454,10 +1480,17 @@ def _r2_local_mirror() -> Optional[Path]:
     return _env_path('PIT_R2_LOCAL_MIRROR')
 
 
+def _life_bucket(why: str) -> Any:
+    """The R2 bucket, from the one source in pe_artifact_upload."""
+    try:
+        return AU.open_life_bucket()
+    except AU.ArtifactUploadError as exc:
+        raise BoxIOError('%s: %s' % (why, exc)) from exc
+
+
 def _ckpt_r2_prefix(candidate_id: str, *, pending: bool = False) -> str:
     if pending:
-        from ops.parallel_eval.live.pe_artifact_upload import pending_r2_prefix
-        return '%s/model' % pending_r2_prefix(candidate_id)
+        return '%s/model' % AU.pending_r2_prefix(candidate_id)
     prefix = os.environ.get('PIT_R2_CKPT_PREFIX') or (
         'mimo/affine-mimo9b-grpo-20261013/checkpoints'
     )
@@ -1493,14 +1526,9 @@ def presign_put_urls(
             out[name] = 'file://' + str(dest)
         return out
     try:
-        from subnet.storage import Bucket  # type: ignore
-        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-        if life_cfg is None or not life_cfg.is_file():
-            raise BoxIOError(
-                'PIT_LIFE_CFG required for live R2 put_object presign '
-                '(or set PIT_PRESIGN_PUT_JSON / PIT_R2_LOCAL_MIRROR)'
-            )
-        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        bucket = _life_bucket(
+            'live R2 put_object presign (or set PIT_PRESIGN_PUT_JSON / PIT_R2_LOCAL_MIRROR)'
+        )
         prefix = _ckpt_r2_prefix(candidate_id, pending=pending)
         return {
             n: bucket.presign('%s/%s' % (prefix, n), 'put_object', 7200)
@@ -1513,13 +1541,9 @@ def presign_put_urls(
 
 
 def _sha256_r2_object(key: str) -> str:
-    """Stream-hash the exact R2 key the box PUT (pending or live), never a re-derived presign."""
+    """Serial transport only: stream-hash the exact R2 key the box PUT, never a re-derived presign."""
     try:
-        from subnet.storage import Bucket  # type: ignore
-        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-        if life_cfg is None or not life_cfg.is_file():
-            raise BoxIOError('PIT_LIFE_CFG required to GET %s for sha verify' % key)
-        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        bucket = _life_bucket('GET %s for sha verify' % key)
         body = bucket.client.get_object(Bucket=bucket.name, Key=key)['Body']
         h = hashlib.sha256()
         try:
@@ -1541,16 +1565,33 @@ def upload_candidate_from_box(
     files: Mapping[str, str],
     box_candidate_dir: Optional[str] = None,
     pending: bool = True,
+    uploaded: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Mapping[str, Any]:
     """Box PUTs bf16 files to scoped R2 URLs; host verifies sha256 from R2/mirror.
 
     ``pending=True`` (default): private ``pit-pending/`` prefix until APPLY promotes.
+
+    Default transport: the box sends the files in parallel parts and the host
+    checks size and ETag in R2 against the sha256 manifest of the box; each
+    sha256 must be the one in the checkpoint descriptor (``files``). ``uploaded``
+    is the candidate tree of a job that also carried the fp32 master.
     """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
     if not files:
         raise BoxIOError('candidate files missing for R2 upload')
     box_dir = box_candidate_dir or (KDIR + '/' + candidate_id)
+    if uploaded is None and AU.box_multipart_transport():
+        try:
+            uploaded = AU.upload_trees_from_box(P, candidate_id=candidate_id, put=put, trees={
+                'candidate': dict(dir=box_dir, prefix=_ckpt_r2_prefix(candidate_id, pending=pending),
+                                  names=sorted(files)),
+            })['candidate']
+        except AU.ArtifactUploadError as exc:
+            raise BoxIOError(str(exc)) from exc
+    if uploaded is not None:
+        return _record_candidate_upload(candidate_id, files, uploaded, pending=pending)
+    # Serial transport (local mirror or injected URLs).
     # Always use the same pending/live prefix that verify will read.
     urls = dict(presign_put_urls(candidate_id, files, pending=pending))
     missing = [n for n in files if n not in urls]
@@ -1617,6 +1658,43 @@ rm -f %s
             raise BoxIOError('R2 sha mismatch for %s: got %s want %s' % (name, got[:12], expected[:12]))
         verified[name] = got
 
+    return _write_candidate_receipt(candidate_id, files, verified, pending=pending, transport='presigned-put')
+
+
+def _record_candidate_upload(
+    candidate_id: str,
+    files: Mapping[str, str],
+    uploaded: Mapping[str, Mapping[str, Any]],
+    *,
+    pending: bool,
+) -> Mapping[str, Any]:
+    """Receipt of a parallel upload. Every file must be in R2 with the sha256 of the checkpoint descriptor."""
+    verified: dict[str, str] = {}
+    for name, expected in files.items():
+        got = str((uploaded.get(name) or {}).get('sha256') or '')
+        if not got:
+            raise BoxIOError('R2 upload has no record of %s' % name)
+        if got != expected:
+            raise BoxIOError('R2 sha mismatch for %s: got %s want %s' % (name, got[:12], str(expected)[:12]))
+        verified[name] = got
+    objects = {
+        name: {k: uploaded[name].get(k) for k in ('r2_key', 'bytes', 'verify', 'reused') + AU.TRANSFER_FIELDS}
+        for name in files
+    }
+    return _write_candidate_receipt(
+        candidate_id, files, verified, pending=pending, transport='presigned-multipart', objects=objects,
+    )
+
+
+def _write_candidate_receipt(
+    candidate_id: str,
+    files: Mapping[str, str],
+    verified: Mapping[str, str],
+    *,
+    pending: bool,
+    transport: str,
+    objects: Optional[Mapping[str, Any]] = None,
+) -> Mapping[str, Any]:
     # Local receipt so pe_verify can confirm without re-fetching 18 GB.
     dst = _upload_root() / candidate_id
     dst.mkdir(parents=True, exist_ok=True)
@@ -1624,18 +1702,21 @@ rm -f %s
         'id': candidate_id,
         'sha256': candidate_id,
         'files': dict(files),
-        'verified_files': verified,
+        'verified_files': dict(verified),
         'uploaded_at': time.time(),
         'source': 'pit-box-r2-put',
-        'transport': 'presigned-put',
+        'transport': transport,
         'pending': bool(pending),
     }
+    if objects is not None:
+        receipt['objects'] = dict(objects)
     (dst / 'UPLOAD.json').write_text(json.dumps(receipt, indent=1, sort_keys=True) + '\n')
     (dst / 'CHECKPOINT.json').write_text(json.dumps({
         'id': candidate_id, 'files': dict(files),
     }, indent=1, sort_keys=True) + '\n')
     os.chmod(dst / 'UPLOAD.json', 0o600)
-    return dict(ok=True, path=str(dst), verified=len(verified), transport='presigned-put')
+    downloads = sum(1 for o in (objects or {}).values() if o.get('verify') == 'download')
+    return dict(ok=True, path=str(dst), verified=len(verified), transport=transport, downloads=downloads)
 
 
 # ---------------------------------------------------------------------------
@@ -1988,14 +2069,9 @@ def _publish_fp32_master_objects(
             shutil.copy2(src, dest)
         return
     try:
-        from subnet.storage import Bucket  # type: ignore
-        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-        if life_cfg is None or not life_cfg.is_file():
-            raise BoxIOError(
-                'PIT_LIFE_CFG required to publish fp32 master to R2 '
-                '(or set PIT_R2_LOCAL_MIRROR for hermetic tests)'
-            )
-        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        bucket = _life_bucket(
+            'publish fp32 master to R2 (or set PIT_R2_LOCAL_MIRROR for hermetic tests)'
+        )
         for name, meta in files_meta.items():
             src = local_dir / name
             if not src.is_file():
@@ -2098,18 +2174,17 @@ def upload_master_from_box(
     box_master_dir: Optional[str] = None,
     store_entry: str = '',
     pending: bool = True,
+    uploaded: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Mapping[str, Any]:
     """Box→R2 stream for every fp32 master shard (no host staging of 35+ GB).
 
     ``master_digest`` is the host-recorded digest from train.done / report —
     never replaced by the box's meta.json. Default ``pending=True`` writes a
     private pending index; APPLY promotes to the live public index.
-    """
-    from ops.parallel_eval.live.pe_artifact_upload import (
-        ArtifactUploadError,
-        stream_upload_master_from_box,
-    )
 
+    ``uploaded`` is the master tree of a job that also carried the bf16
+    candidate; without it the transfer runs in this call.
+    """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise BoxIOError('candidate_id must be hex64')
     digest = str(master_digest or '').strip()
@@ -2124,7 +2199,7 @@ def upload_master_from_box(
     if len(entry) == 64 and all(c in '0123456789abcdef' for c in entry):
         bf16_sha256 = entry
     try:
-        return stream_upload_master_from_box(
+        return AU.stream_upload_master_from_box(
             P,
             candidate_id=candidate_id,
             master_digest=digest,
@@ -2132,8 +2207,9 @@ def upload_master_from_box(
             box_master_dir=box_dir,
             put=put,
             pending=pending,
+            uploaded=uploaded,
         )
-    except ArtifactUploadError as exc:
+    except AU.ArtifactUploadError as exc:
         raise BoxIOError(str(exc)) from exc
 
 

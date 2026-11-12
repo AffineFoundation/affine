@@ -177,6 +177,39 @@ tokens; update size within 1e-3 relative; gradient norm within 5%; same draw,
 seed and head baseline; per-task disagreement ratio in [0.8, 1.25];
 `|Δz| < 2.0`. Equal candidate hashes / equal z are **not** required.
 
+## Artifact transfer (box → R2 → live prefix)
+
+After training, one box job sends the fp32 master and the bf16 candidate to the
+private pending prefix. The host downloads nothing to check them.
+
+1. **Upload.** The host signs one URL for each part of each file (a part is a
+   byte range; 256 MiB). The box tool `pe_r2_box_upload.py` sends 16 parts at a
+   time, straight from disk, and hashes every file. It returns a manifest: the
+   sha256 of each file and the MD5 of each part.
+2. **Check.** The host reads the size and the ETag of each object. The ETag of
+   R2 is a function of the MD5 of the parts, so an equal ETag shows that R2
+   holds the bytes that the box hashed. Each bf16 sha256 must also be the one
+   in the checkpoint descriptor. A difference fails the upload (3 tries, then
+   the box is kept and the item fails closed).
+3. **Promote (APPLY).** The host copies each pending object to the live prefix
+   inside R2, in parallel part copies (`UploadPartCopy`), on the condition that
+   the pending object still has the ETag of step 2. The live object must have
+   that ETag too. Only then is the public index written, with the `meta_json`
+   pointer.
+
+When R2 returns an ETag that the host cannot tie to the sha256 (an index
+written by the serial transport, or a store that forms ETags in another way),
+the host hashes that object as a stream. This is slow and still fail closed;
+`downloads` in the upload record counts these objects.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PIT_R2_PART_BYTES` | 268435456 | bytes in one part (5 MiB to 5 GiB) |
+| `PIT_R2_WORKERS` | 16 | parts in flight at one time |
+| `PIT_R2_READ_TIMEOUT_S` | 900 | seconds one request waits for data |
+
+`PIT_R2_LOCAL_MIRROR` (tests, dry runs) keeps the serial transport.
+
 ## Deploy file placement (RA snapshot; never `git checkout` live)
 
 Services do **not** run from the git branch. Deploy by copying reviewed files into

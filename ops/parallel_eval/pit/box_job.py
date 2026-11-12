@@ -464,8 +464,12 @@ class BoxJobController:
         timeout_s: float = 7200.0,
         wait_for_marker: bool = False,
         extra_kill_patterns: Sequence[str] = (),
+        on_poll: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
         """Skip if marker exists; else kill stale, run (or detach+poll), then mark.
+
+        ``on_poll``, when given, runs before each sleep while the host waits for the
+        marker of a detached stage. It must not raise.
 
         When ``detached_command`` is set the stage runs on the box under
         setsid/nohup. The box (or ``runner`` after poll) must produce the stage
@@ -508,6 +512,8 @@ class BoxJobController:
                         return dict(st.result)
                     if st.state != STATUS_RUNNING:
                         break
+                    if on_poll is not None:
+                        on_poll()
                     self.sleep_fn(poll_s)
                 st = self.status()
                 if stage in st.markers:
@@ -552,6 +558,8 @@ class BoxJobController:
                                 if 'retry once' not in str(exc) or attempt >= 1:
                                     raise
                                 break  # for-loop: one same-box relaunch
+                        if on_poll is not None:
+                            on_poll()
                         self.sleep_fn(poll_s)
                     else:
                         raise BoxJobError('detached stage %s timed out' % stage)

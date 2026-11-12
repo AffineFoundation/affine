@@ -20,16 +20,16 @@
     "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
     "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
     "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-    "v835_zero3.py": "2dc9c2f8ed70a921aecfe1cfb4e24927acf3e6ac6acfd5fcaf028d155064b2f1",
+    "v835_zero3.py": "427a809ea7fb450fc969ef4ffdcf9448f977731fd36a45d8b41a3b4f294f54ee",
     "v83_dp.py": "e0f1056bd04b4bb3e11534b421f9229d78322b4d4f9c313f3ba1cc36c247279c",
     "v83_fast_kernels.py": "e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4",
     "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
   },
   "host_version": "host-v834f",
-  "manifest_sha256": "ee054b2c196853144fbe05c0dafe472fb018d8463a9c8151d5b207bd83afc4b5",
+  "manifest_sha256": "8bf169128547f00c93cec5d0412efc608b6b96ce7040b41425a072bff9a43c48",
   "note": "UNSIGNED proposal for ROOT signing with sign_host_v834f.py against the ROOT-admitted host-v834e private config. Do not bootstrap or override ROOT.",
   "public_files": {
-    "trainer-config.public.json": "3f8282e6dd705860c89779124fd67a3b50c5b83441e4d602d2d4543d0e749f57"
+    "trainer-config.public.json": "a7f0c87c9f7f2ccefc3a9218a4d16d1429785833cb00d83851cf65f08469443e"
   },
   "scope": "sn120-mimo-trainer-host-overrides-v8.3.3",
   "version": "affine-mimo-trainer-host-v833"

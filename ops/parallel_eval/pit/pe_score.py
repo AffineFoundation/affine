@@ -15,6 +15,7 @@ import importlib
 import inspect
 from typing import Any, Callable, Dict, Mapping, Optional
 
+from . import probe_fingerprint
 from .shadow_compare import evaluate_shadow_pass
 
 # Flat fields live pe_score.score puts on the decision; gate emit needs them
@@ -210,8 +211,13 @@ def call_live_host_score(
     epoch: int,
     round_id: str,
     result: Mapping[str, Any],
+    baseline_of: Optional[Callable[[str], Any]] = None,
 ) -> Dict[str, Any]:
     """Invoke live ``score(epoch, rid, result)`` (positional) and nest heldout.
+
+    ``baseline_of(round_id)`` gives the round baseline. Before the scorer runs, the hardware and
+    layout fingerprint of the candidate probe must be equal to that of the baseline
+    (``probe_fingerprint.refusal``). If not, the result is ``no_decision`` and the scorer does not run.
 
     Falls back to keyword ``round_id=`` only for non-live test doubles that
     declare that parameter — never pass ``round_id=`` to the live module.
@@ -220,6 +226,13 @@ def call_live_host_score(
     controller can keep the box and retry — never raise into ``_fail_and_release``.
     """
     rid = str(round_id)
+    if baseline_of is not None:
+        baseline = baseline_of(rid)
+        # A baseline that is not ready has no rollouts: the scorer answers "pending" and the box waits.
+        if isinstance(baseline, Mapping) and baseline.get('per_task'):
+            refused = probe_fingerprint.refusal(baseline, result)
+            if refused is not None:
+                return nest_heldout_fields(refused, round_id=rid)
     try:
         params = inspect.signature(host_score).parameters
     except (TypeError, ValueError):

@@ -13,31 +13,47 @@ ops/parallel_eval/pit/__init__.py
 ops/parallel_eval/pit/apply_live.py
 ops/parallel_eval/pit/life_paths.py
 ops/parallel_eval/pit/baseline_job.py
+ops/parallel_eval/pit/bench_box.py
+ops/parallel_eval/pit/bench_fetch_inputs.py
+ops/parallel_eval/pit/bench_host_run.py
 ops/parallel_eval/pit/bench_job.py
+ops/parallel_eval/pit/bench_publish.py
 ops/parallel_eval/pit/binding.py
 ops/parallel_eval/pit/box.py
+ops/parallel_eval/pit/box_job.py
 ops/parallel_eval/pit/ceremony_sign_host_key.py
 ops/parallel_eval/pit/checkpoint_auth.py
 ops/parallel_eval/pit/config.py
 ops/parallel_eval/pit/controller.py
 ops/parallel_eval/pit/cutover.py
+ops/parallel_eval/pit/cutover_apply.py
 ops/parallel_eval/pit/cutover_ops.py
 ops/parallel_eval/pit/decision_emit.py
 ops/parallel_eval/pit/decisions.py
 ops/parallel_eval/pit/durable.py
+ops/parallel_eval/pit/early_stop.py
+#   ↑ RED-only early stop of the probe. config.py, box.py and controller.py import it.
+#     It does nothing unless the PIT config sets the flag; no shipped config sets it.
 ops/parallel_eval/pit/expected_master.py
 ops/parallel_eval/pit/gate_writer.py
 ops/parallel_eval/pit/host_wiring.py
+ops/parallel_eval/pit/lost_infra.py
 ops/parallel_eval/pit/pe_lane.py
 ops/parallel_eval/pit/pe_rent.py
 ops/parallel_eval/pit/pe_score.py
 #   ↑ nest_heldout_fields: sigma_run_floor from top-level → evaluated → 0.0
 #     (real live pe_score has no top-level sigma; gate emit needs heldout filled)
 ops/parallel_eval/pit/prior_job.py
+ops/parallel_eval/pit/probe_fingerprint.py
+ops/parallel_eval/pit/probe_layout.py
+ops/parallel_eval/pit/probe_serve.py
+#   ↑ probe serving layouts. config.py and box.py import them. Live mode serves the live layout only.
 ops/parallel_eval/pit/queue_ingest.py
+ops/parallel_eval/pit/rerun.py
 ops/parallel_eval/pit/run_host.py
 #   ↑ writes PE_STATE/pit/HOST-HEARTBEAT.json each tick (mining discovery cutover liveness)
 ops/parallel_eval/pit/shadow.py
+ops/parallel_eval/pit/shadow_guard.py
 ops/parallel_eval/pit/shadow_compare.py
 ops/parallel_eval/pit/signer.py
 ops/parallel_eval/pit/state.py
@@ -61,6 +77,12 @@ ops/parallel_eval/live/pe_common.py
 
 # --- New host seams required by host_wiring (fail closed if absent) ---
 ops/parallel_eval/live/pe_box.py
+ops/parallel_eval/live/pe_artifact_upload.py
+ops/parallel_eval/live/pe_r2_multipart.py
+ops/parallel_eval/live/pe_r2_box_upload.py
+#   ↑ parallel R2 transfer. pe_artifact_upload.py imports both. The host ships pe_r2_box_upload.py
+#     to the box as it is (standard library only), so it must be in the same directory.
+ops/parallel_eval/live/pe_probe_plan.py
 ops/parallel_eval/live/pe_verify.py
 ops/parallel_eval/live/pe_upload_verify.py
 ops/parallel_eval/live/pe_round_seed.py
