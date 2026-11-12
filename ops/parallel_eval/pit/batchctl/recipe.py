@@ -55,6 +55,8 @@ PLAN_TIMEOUT_S = 300
 OUTCOME_TIMEOUT_S = 600
 # A HEAD block ends itself with ``timeout``. Its step waits this much longer, so the step never fails the lease.
 HEAD_STEP_MARGIN_S = 300
+# A HEAD block does not start with less time than this left in the lease.
+HEAD_MIN_S = 1800
 
 SETS_EXPECTED_MASTER = re.compile(re.escape(EXPECTED_MASTER_ENV) + r'\s*=\s*["\']?([^\s"\';]*)')
 SETS_OVERRIDE = re.compile(r'BOOTSTRAP_OVERRIDE\s*=')
@@ -182,6 +184,7 @@ class LeaseFiles:
     state = property(lambda self: self.at('state.json'))
     candidate = property(lambda self: self.at('candidate.json'))
     outcome = property(lambda self: self.at('outcome.json'))
+    clock = property(lambda self: self.at('t0'))
 
     def head_dir(self, block: int) -> str:
         return self.at('head-%d' % block)
@@ -276,33 +279,48 @@ def steps_config(spec: JobSpec, *, paths: BoxPaths, klass: BoxClass, base: Index
 
 
 def _head_steps(*, files: LeaseFiles, step: str, stop: str, head: Sequence[HeadBlock],
-                tool_files: Sequence[str]) -> List[Dict[str, Any]]:
+                tool_files: Sequence[str], budget_s: int) -> List[Dict[str, Any]]:
     """The steps of the HEAD blocks. None of them can fail the lease: a block
-    that does not finish is named in the result, and another box runs it."""
+    that does not finish is named in the result, and another box runs it.
+
+    A block starts only while the lease has time for it. ``budget_s`` is the
+    time from the start of the job in which every block must end. A block
+    that has less than ``HEAD_MIN_S`` left does not start, and a block that
+    starts is ended at the budget.
+    """
     quote = shlex.quote
     if not head:
         return []
     need(len({one.block for one in head}) == len(head), 'a HEAD block is named two times')
     need(len(tool_files) > 0 and all(SAFE_PATH.fullmatch(path) is not None for path in tool_files),
          'the HEAD blocks have no probe tool')
+    need(isinstance(budget_s, int) and not isinstance(budget_s, bool) and budget_s > 0, 'the HEAD blocks have no time')
     out = [{'name': 'headplan', 'script': (step % 'headplan').rstrip('\n') + ' || true\n', 'timeout_s': PLAN_TIMEOUT_S}]
     for one in head:
         folder = files.head_dir(one.block)
-        script = 'mkdir -p %s\ncp -f %s %s/\n' % (quote(folder), ' '.join(quote(path) for path in tool_files),
-                                               quote(folder))
-        script += 'timeout -k 60 %d bash -c %s\n' % (one.timeout_s, quote(one.probe_cmd))
+        script = (
+            'start=$(cat %s 2>/dev/null || echo 0)\n'
+            'left=$(( start + %d - $(date +%%s) ))\n'
+            'if [ "$left" -lt %d ]; then echo "HEAD block %d: the lease has no time left for it"; exit 0; fi\n'
+            'if [ "$left" -gt %d ]; then left=%d; fi\n'
+        ) % (quote(files.clock), budget_s, HEAD_MIN_S, one.block, one.timeout_s, one.timeout_s)
+        script += 'mkdir -p %s\ncp -f %s %s/\n' % (quote(folder), ' '.join(quote(path) for path in tool_files),
+                                                quote(folder))
+        script += 'timeout -k 60 "$left" bash -c %s\n' % quote(one.probe_cmd)
         out.append({'name': 'head-%d' % one.block, 'script': script + stop + 'exit 0\n',
                     'timeout_s': one.timeout_s + HEAD_STEP_MARGIN_S})
     return out
 
 
 def _steps(*, paths: BoxPaths, klass: BoxClass, files: LeaseFiles, train_cmd: str, probe_cmd: str,
-           probe_timeout_s: int, head: Sequence[HeadBlock] = (),
-           tool_files: Sequence[str] = ()) -> List[Dict[str, Any]]:
+           probe_timeout_s: int, head: Sequence[HeadBlock] = (), tool_files: Sequence[str] = (),
+           head_budget_s: int = 0) -> List[Dict[str, Any]]:
     quote = shlex.quote
     step = 'python3 %s %%s --config %s\n' % (quote(files.steps_code), quote(files.steps_config))
     stop = 'python3 %s --root %s stop >/dev/null 2>&1\n' % (quote(files.probe_tool), quote(paths.probe_root))
+    clock = [{'name': 'clock', 'script': 'date +%%s > %s\n' % quote(files.clock), 'timeout_s': 60}] if head else []
     return [
+        *clock,
         {'name': 'train', 'script': train_cmd, 'timeout_s': klass.train_timeout_s, 'env': dict(klass.train_env)},
         {'name': 'collect', 'script': step % 'collect', 'timeout_s': COLLECT_TIMEOUT_S, 'state': files.state},
         {'name': 'plan', 'script': step % 'plan', 'timeout_s': PLAN_TIMEOUT_S},
@@ -311,15 +329,15 @@ def _steps(*, paths: BoxPaths, klass: BoxClass, files: LeaseFiles, train_cmd: st
             'timeout_s': probe_timeout_s,
             'subst': {CANDIDATE_TOKEN: {'file': files.candidate, 'key': ['candidate_id'], 'match': '[0-9a-f]{64}'}},
         },
-        *_head_steps(files=files, step=step, stop=stop, head=head, tool_files=tool_files),
+        *_head_steps(files=files, step=step, stop=stop, head=head, tool_files=tool_files, budget_s=head_budget_s),
         {'name': 'outcome', 'script': step % 'outcome', 'timeout_s': OUTCOME_TIMEOUT_S},
     ]
 
 
 def job_document(spec: JobSpec, *, paths: BoxPaths, klass: BoxClass, base: Index, binding: Mapping[str, Any],
                  train_cmd: str, probe_cmd: str, probe_timeout_s: int, urls: Mapping[str, Any],
-                 transfer: Transfer, head: Sequence[HeadBlock] = (),
-                 tool_files: Sequence[str] = ()) -> Dict[str, Any]:
+                 transfer: Transfer, head: Sequence[HeadBlock] = (), tool_files: Sequence[str] = (),
+                 head_budget_s: int = 0) -> Dict[str, Any]:
     """``job.json`` of one lease.
 
     ``base`` is the file index of the base state. ``binding`` says which
@@ -327,8 +345,10 @@ def job_document(spec: JobSpec, *, paths: BoxPaths, klass: BoxClass, base: Index
     if that is the checkpoint of the base state. ``urls`` holds the signed
     URLs: ``base`` (``manifest``, ``objects``) and ``put`` (``objects``,
     ``heartbeat``, ``result``, ``complete``). ``head`` are the HEAD blocks
-    that the lease runs after its own probe, and ``tool_files`` the files of
-    the probe tool on the box, which each block gets a copy of.
+    that the lease runs after its own probe, ``tool_files`` the files of the
+    probe tool on the box, which each block gets a copy of, and
+    ``head_budget_s`` the time from the start of the job in which the blocks
+    must end.
     """
     expected = spec.expected_fp32_master_digest
     need(base.fp32_master_digest == expected, 'the base state has another fp32 master than the lease expects')
@@ -369,7 +389,8 @@ def job_document(spec: JobSpec, *, paths: BoxPaths, klass: BoxClass, base: Index
             {'file': paths.train_in + '/head.descriptor.json', 'key': ['id'], 'equals': base.checkpoint_id},
         ],
         'steps': _steps(paths=paths, klass=klass, files=files, train_cmd=train_cmd, probe_cmd=probe_cmd,
-                        probe_timeout_s=probe_timeout_s, head=head, tool_files=tool_files),
+                        probe_timeout_s=probe_timeout_s, head=head, tool_files=tool_files,
+                        head_budget_s=head_budget_s),
         'outcome': files.outcome,
         'wipe': [
             paths.train_in, paths.train_out, paths.fp32, paths.ckpt, paths.probe_runs,
@@ -379,12 +400,9 @@ def job_document(spec: JobSpec, *, paths: BoxPaths, klass: BoxClass, base: Index
     }
 
 
-def lease_seconds(klass: BoxClass, probe_timeout_s: int, *, transfer_s: int = 3600, head_blocks: int = 0,
-                  head_timeout_s: int = 0) -> int:
-    """The longest time that a lease of this class can need: the download of
-    the base, every step at its limit (with ``head_blocks`` HEAD blocks), and
-    the rest of the upload."""
+def lease_seconds(klass: BoxClass, probe_timeout_s: int, *, transfer_s: int = 3600) -> int:
+    """The longest time that a lease of this class can need for its batch: the
+    download of the base, every step at its limit, and the rest of the upload.
+    HEAD blocks are not in it: they run only in the time that is left."""
     steps = klass.train_timeout_s + COLLECT_TIMEOUT_S + PLAN_TIMEOUT_S + probe_timeout_s + OUTCOME_TIMEOUT_S
-    if head_blocks > 0:
-        steps += PLAN_TIMEOUT_S + head_blocks * (head_timeout_s + HEAD_STEP_MARGIN_S)
     return transfer_s + steps + transfer_s

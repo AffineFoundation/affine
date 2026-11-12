@@ -167,14 +167,16 @@ class Baselines:
 
     # -- writing -------------------------------------------------------------
 
-    def claim(self, rnd: Round, checkpoint: str, fence: int, *, live: Collection[int], others: int) -> Tuple[int, ...]:
+    def claim(self, rnd: Round, checkpoint: str, fence: int, *, live: Collection[int], others: int,
+              limit: Optional[int] = None) -> Tuple[int, ...]:
         """The blocks that the box of this lease runs after its own probe.
 
         ``live`` are the leases that still run or wait for a verdict.
         ``others`` is the number of boxes that will start from this checkpoint
         soon. With enough of them, a box takes one block and the blocks are
         split across boxes. With none, the box takes each free block, so the
-        baseline does not wait for a box that never comes.
+        baseline does not wait for a box that never comes. ``limit`` is the
+        largest number of blocks that one box takes.
         """
         with self._lock:
             path = self._dir(rnd, checkpoint) / ('claim-f%d.json' % fence)
@@ -182,7 +184,10 @@ class Baselines:
             if known is not None:
                 return known
             free = self.free(rnd, checkpoint, [f for f in live if f != fence])
-            take = tuple(free[:max(1, len(free) - max(0, others))])
+            count = max(1, len(free) - max(0, others))
+            if limit is not None:
+                count = min(count, max(0, limit))
+            take = tuple(free[:count])
             _write_once(path, {'schema': CLAIM_SCHEMA, 'fence': fence, 'blocks': list(take), 'at': self.clock()})
             return self._claims(rnd, checkpoint).get(fence, ())
 
