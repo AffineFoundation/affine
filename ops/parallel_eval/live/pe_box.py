@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -400,8 +401,37 @@ def ckpt_urls(cid: str, files: Mapping[str, Any]) -> Mapping[str, Any]:
     return json.loads(p.stdout)['urls']
 
 
+FETCH_FAILED = 'PIT_FETCH_FAILED'
+_URL_TEXT = re.compile(r'https?://\S+')
+
+
+def fetch_error_text(lines: Sequence[str]) -> str:
+    """The error of a box fetch, from the last lines of its log. No URL goes to the host log.
+
+    gate_fetch.py ends its log with one JSON record (status "failed", the error, the errno, the number of tries).
+    If the record is not there (the process was killed), the text is the last lines as they are.
+    """
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get('status') == 'failed':
+            code = record.get('errno_name') or record.get('errno')
+            return _URL_TEXT.sub('<url>', '%s%s after %s tries%s' % (
+                record.get('error'), ' (errno %s)' % code if code else '', record.get('attempts'),
+                '; a new fetch can pass' if record.get('retryable') else ''))
+    return _URL_TEXT.sub('<url>', ' | '.join(line.strip() for line in lines if line.strip()))[-600:] or 'no output in the fetch log'
+
+
 def fetch(P: Any, cid: str, files: Mapping[str, Any], urls: Mapping[str, Any], dest: str, threads: int = 32) -> tuple:
-    """run5090.fetch — idempotent gate_fetch on the box; URLs file deleted after."""
+    """run5090.fetch — idempotent gate_fetch on the box; URLs file deleted after.
+
+    gate_fetch.py tries each request again after a network error, with a pause that doubles. A fetch that fails
+    for good is a BoxIOError that has the error of the box in it. For that, the box command prints the line
+    ``PIT_FETCH_FAILED rc=<n>`` and the end of the fetch log on stdout and ends with exit code 0: the text does
+    not depend on the stderr of ssh. The URLs file is deleted in each case.
+    """
     t0 = time.time()
     have = P.run(
         'test -f {K}/{c}/.verified && du -sb {K}/{c} | cut -f1 || echo NO'.format(K=dest, c=cid)
@@ -414,11 +444,18 @@ def fetch(P: Any, cid: str, files: Mapping[str, Any], urls: Mapping[str, Any], d
         "python3 -c \"import json,sys;d=json.load(sys.stdin);"
         "json.dump(d['descriptor'],open('{K}/{c}.descriptor.json','w'));"
         "json.dump(d['urls'],open('{c}.urls.private.json','w'))\" && "
-        "(python3 {F} {K}/{c}.descriptor.json {K} {c}.urls.private.json --threads {n} "
-        ">> {K}/{c}.fetch.log 2>&1; rc=$?; rm -f {c}.urls.private.json; "
-        "tail -1 {K}/{c}.fetch.log; test -f {K}/{c}/.verified; du -sb {K}/{c} | cut -f1)"
-    ).format(K=dest, c=cid, F=PST + '/gate_fetch.py', n=threads)
-    out = P.run(c, inp=blob.encode(), timeout=5400).strip().splitlines()
+        "{{ rc=0; python3 {F} {K}/{c}.descriptor.json {K} {c}.urls.private.json --threads {n} "
+        ">> {K}/{c}.fetch.log 2>&1 || rc=$?; rm -f {c}.urls.private.json; "
+        "if [ \"$rc\" -eq 0 ] && [ -f {K}/{c}/.verified ]; then tail -n 1 {K}/{c}.fetch.log; du -sb {K}/{c} | cut -f1; "
+        "else echo \"{M} rc=$rc\"; tail -n 15 {K}/{c}.fetch.log; fi; }}"
+    ).format(K=dest, c=cid, F=PST + '/gate_fetch.py', n=threads, M=FETCH_FAILED)
+    out = (P.run(c, inp=blob.encode(), timeout=5400) or '').strip().splitlines()
+    failed = [i for i, line in enumerate(out) if line.startswith(FETCH_FAILED)]
+    if failed:
+        raise BoxIOError('box fetch %s failed (%s): %s' % (
+            cid[:12], out[failed[0]].split(None, 1)[-1], fetch_error_text(out[failed[0] + 1:])))
+    if not out or not out[-1].strip().isdigit():
+        raise BoxIOError('box fetch %s gave no size: %s' % (cid[:12], fetch_error_text(out[-5:])))
     return round(time.time() - t0, 1), int(out[-1])
 
 
