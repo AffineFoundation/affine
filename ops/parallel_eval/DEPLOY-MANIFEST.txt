@@ -53,6 +53,7 @@ ops/parallel_eval/pit/rerun.py
 ops/parallel_eval/pit/run_host.py
 #   ↑ writes PE_STATE/pit/HOST-HEARTBEAT.json each tick (mining discovery cutover liveness)
 ops/parallel_eval/pit/shadow.py
+ops/parallel_eval/pit/shadow_guard.py
 ops/parallel_eval/pit/shadow_compare.py
 ops/parallel_eval/pit/signer.py
 ops/parallel_eval/pit/state.py

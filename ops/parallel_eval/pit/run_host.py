@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
+from . import shadow_guard
 from .apply_live import LiveApplicator
 from .bench_box import MemBenchBoxStore
 from .bench_host_run import make_bench_box_store_factory
@@ -666,6 +667,13 @@ def _gate_emit_ready(item) -> bool:
 
 
 def main(argv=None) -> int:
+    try:
+        return _run(argv)
+    finally:
+        shadow_guard.leave()
+
+
+def _run(argv=None) -> int:
     ap = argparse.ArgumentParser(description='PIT live host daemon')
     ap.add_argument('--flag', required=True, help='PROMOTION-GATE / PE flag JSON')
     ap.add_argument('--state', default=None, help='PIT_STATE override')
@@ -686,6 +694,14 @@ def main(argv=None) -> int:
     if args.allow_unwired and cfg.is_live():
         print(json.dumps({'error': '--allow-unwired is shadow-only'}), file=sys.stderr)
         return 2
+    if cfg.is_shadow():
+        # Hard deny before any work: from here this process can write only the shadow state root
+        # (PIT_SHADOW_STATE) and R2 keys under pit-shadow/.
+        try:
+            shadow_guard.enter_shadow()
+        except shadow_guard.ShadowConfigError as exc:
+            print(json.dumps({'error': str(exc)[:400]}), file=sys.stderr)
+            return 2
 
     store = DurableStore(root=pit_state_root(args.state))
     try:
