@@ -76,6 +76,10 @@ ops/parallel_eval/live/pe_common.py
 # --- New host seams required by host_wiring (fail closed if absent) ---
 ops/parallel_eval/live/pe_box.py
 ops/parallel_eval/live/pe_artifact_upload.py
+ops/parallel_eval/live/pe_r2_multipart.py
+ops/parallel_eval/live/pe_r2_box_upload.py
+#   ↑ parallel R2 transfer. pe_artifact_upload.py imports both. The host ships pe_r2_box_upload.py
+#     to the box as it is (standard library only), so it must be in the same directory.
 ops/parallel_eval/live/pe_probe_plan.py
 ops/parallel_eval/live/pe_verify.py
 ops/parallel_eval/live/pe_upload_verify.py
