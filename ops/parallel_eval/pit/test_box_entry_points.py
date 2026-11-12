@@ -225,10 +225,17 @@ class TestDocument(unittest.TestCase):
         code, out, _ = run_tool(probe_parity.main, ['--help'])
         self.assertEqual(code, 0)
         self.assertIn('{plan,run-side,compare}', out)
-        code, out, _ = run_tool(probe_parity.main, ['compare', '--help'])
-        self.assertEqual(code, 0)
-        options = sorted(set(re.findall(r'--[a-z][a-z-]+', out)) - {'--help'})
-        self.assertEqual(options, ['--max-shift', '--out', '--top', '--train-a', '--train-b', '--z-crit'])
+        options = {}
+        for command in ('plan', 'run-side', 'compare'):
+            code, out, _ = run_tool(probe_parity.main, [command, '--help'])
+            self.assertEqual(code, 0)
+            options[command] = sorted(set(re.findall(r'--[a-z][a-z-]*', out)) - {'--help'})
+        self.assertEqual(options, {
+            'plan': ['--checkpoint', '--env', '--harness', '--indices', '--k', '--max-tokens', '--out', '--pool-size',
+                     '--seed', '--tasks'],
+            'run-side': ['--layout', '--out', '--plan', '--pod', '--tag', '--work-dir'],
+            'compare': ['--max-shift', '--out', '--top', '--train-a', '--train-b', '--z-crit']})
+        self.assertEqual((probe_parity.GATE_K_CAND, probe_parity.GATE_MAX_TOKENS), (8, 65536))
         self.assertEqual(probe_parity.EXIT, {'parity': 0, 'no_difference_detected': 0, 'different': 1,
                                              'inconclusive': 2, 'not_comparable': 2})
         side = {'checkpoint_id': DIGEST, 'seed': 's', 'envs': {'affine_gatepool': {'per_task': {'1': {'n': 8, 'c': 4}}}}}
@@ -239,7 +246,8 @@ class TestDocument(unittest.TestCase):
         self.assertEqual((preclip['in_verdict'], preclip['ratio_b_over_a'], preclip['relative_difference'],
                           preclip['shadow_tolerance'], preclip['within_shadow_tolerance']), (False, 2.0, 0.5, 0.05, False))
         self.assertEqual(sorted(preclip['a']), sorted(preclip['b']))
-        self.assert_documented(options + sorted(probe_parity.EXIT) + ['preclip'] + sorted(preclip) + sorted(preclip['a']))
+        self.assert_documented(sum(options.values(), []) + sorted(probe_parity.EXIT) + ['preclip'] + sorted(preclip)
+                               + sorted(preclip['a']))
 
     def test_a_failed_probe_writes_the_documented_marker_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:

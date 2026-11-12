@@ -413,6 +413,31 @@ python -m ops.parallel_eval.pit.probe_parity compare <side A> <side B> [options]
 on one box and writes a side record. `compare` reads two sides. A side is that
 record, or a probe result (`probe_result` of `RESULT.json`).
 
+Options of `plan`:
+
+| Option | Meaning |
+|--------|---------|
+| `--checkpoint <id>` | the checkpoint (HEAD) that the two sides serve |
+| `--seed <text>` | the plan seed. Each request seed comes from it. |
+| `--indices <file>` | JSON file with the list of task indices |
+| `--tasks <n>`, `--pool-size <n>` | without `--indices`: draw `n` tasks with an index below the pool size |
+| `--k <n>` | rollouts for each task. Default 8. |
+| `--max-tokens <n>` | the largest output of one rollout, in tokens. Default 65536. |
+| `--env <id>` | environment id on the box. Default `affine_gatepool`. |
+| `--harness <file>` | the public harness file. Default: the harness of this host. |
+| `--out <file>` | where the plan goes |
+
+Options of `run-side`. The checkpoint must be on the box.
+
+| Option | Meaning |
+|--------|---------|
+| `--pod <file>` | JSON file with the handle of the box (the rent record) |
+| `--plan <file>` | the plan that `plan` wrote |
+| `--layout <name or file>` | a preset name, or a JSON file with layout settings |
+| `--tag <name>` | name of this side. Default: the layout name. |
+| `--work-dir <dir>` | directory on the box. Default `/workspace/pst/probe-parity`. |
+| `--out <file>` | where the side record goes on the host |
+
 Options of `compare`:
 
 | Option | Meaning |
