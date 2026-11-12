@@ -333,9 +333,13 @@ class TestSigningArtifact(SignerCase):
         self.assertNotIn('engine', public)
         self.assertNotIn('trainer_config', public)
         zero3 = load_source(STAGE / 'v835_zero3.py', 'v835_public_probe')
-        self.assertEqual(public['zero3']['token_budget'], zero3.LOW_VRAM_TOKEN_BUDGET)
         self.assertEqual(public['zero3']['logit_chunk'], zero3.LOGIT_CHUNK)
         self.assertEqual(public['host_files_sha256']['v835_zero3.py'], sha256(STAGE / 'v835_zero3.py'))
+        # the settings of the sharded update are published as the stage holds them: both sets, and which is the default
+        self.assertEqual(public['zero3']['profile_env'], 'PIT_ZERO3_PROFILE')
+        self.assertEqual(public['zero3']['default_profile'], zero3.DEFAULT_PROFILE)
+        self.assertEqual(public['zero3']['profiles'], {name: profile._asdict() for name, profile in zero3.PROFILES.items()})
+        self.assertEqual(public['zero3']['token_budget'], zero3.PROFILES[zero3.DEFAULT_PROFILE].token_budget)
 
     def test_fails_closed_on_a_missing_file(self):
         (self.here / 'stage' / 'v835_zero3.py').unlink()
@@ -447,10 +451,144 @@ class TestSigner(SignerCase):
         self.assertIn('not ROOT-signed', self.refused(['--dry-run', '--base-private', str(self.base)]))
 
 
+def stage_with_profile(name):
+    """A fresh copy of the stage module in a process environment that names the settings `name` (None = no name).
+    The module fixes its settings at the first call of settings(), which runs here."""
+    saved = os.environ.pop('PIT_ZERO3_PROFILE', None)
+    try:
+        if name is not None:
+            os.environ['PIT_ZERO3_PROFILE'] = name
+        module = load_source(STAGE / 'v835_zero3.py', 'v835_profile_probe')
+        module.settings()
+        return module
+    finally:
+        os.environ.pop('PIT_ZERO3_PROFILE', None)
+        if saved is not None:
+            os.environ['PIT_ZERO3_PROFILE'] = saved
+
+
+class TestSettings(unittest.TestCase):
+    """The values the real 8x RTX 5090 runs set are two named sets. A process runs one of them, whole."""
+
+    U6 = dict(name='rtx5090-u6', token_budget=32768, offload_params=False, pin_inputs=True, layer_reduce='native',
+              prefetch=1, gather='data')
+    U2 = dict(name='reference-u2', token_budget=24576, offload_params=True, pin_inputs=False, layer_reduce='float32',
+              prefetch=0, gather='control')
+
+    def test_the_two_sets_and_the_default(self):
+        zero3 = stage_with_profile(None)
+        self.assertEqual({name: profile._asdict() for name, profile in zero3.PROFILES.items()},
+                         {'rtx5090-u6': self.U6, 'reference-u2': self.U2})
+        self.assertEqual(zero3.DEFAULT_PROFILE, 'rtx5090-u6')
+        self.assertEqual(zero3.settings()._asdict(), self.U6)                       # no name in the environment: the default
+        self.assertEqual(zero3.LOGIT_CHUNK, 1024)                                   # a chunk of 4096 ran out of GPU memory with two layers ahead
+
+    def test_the_environment_names_a_whole_set_and_the_first_call_fixes_it(self):
+        zero3 = stage_with_profile('reference-u2')
+        self.assertNotIn('PIT_ZERO3_PROFILE', os.environ)                           # the name is gone again
+        self.assertEqual(zero3.settings()._asdict(), self.U2)                       # the process keeps the set it began with
+        self.assertEqual(zero3.token_budget(40960), 24576)
+        self.assertEqual(zero3.token_budget(16384), 16384)                          # never above the signed engine budget
+        default = stage_with_profile(None)
+        self.assertEqual(default.token_budget(40960), 32768)
+        self.assertEqual(default.token_budget(16384), 16384)
+
+    def test_an_unknown_name_is_refused(self):
+        for name in ('rtx5090', 'RTX5090-U6', 'reference', 'native'):               # never the nearest or the default set
+            with self.assertRaises(ValueError) as ctx:
+                stage_with_profile(name)
+            self.assertIn('unknown PIT_ZERO3_PROFILE %r' % name, str(ctx.exception))
+
+    def test_no_single_value_can_change_and_what_failed_on_the_box_cannot_be_set(self):
+        zero3 = stage_with_profile(None)
+        u6 = zero3.PROFILES['rtx5090-u6']
+        with self.assertRaises(AttributeError):
+            u6.token_budget = 65536
+        changed = lambda **change: zero3.Settings(**dict(u6._asdict(), **change))
+        self.assertEqual(changed(), u6)
+        with self.assertRaises(ValueError):
+            changed(prefetch=2)                                                     # two layers ahead: out of GPU memory on the box
+        for change in (dict(layer_reduce='float16'), dict(gather='gloo'), dict(token_budget=0), dict(token_budget=32768.0)):
+            with self.assertRaises(ValueError):
+                changed(**change)
+        # the stage reads no other switch for these values
+        body = (STAGE / 'v835_zero3.py').read_text()
+        self.assertEqual(sorted(set(re.findall(r"'(PIT_[A-Z0-9_]+|CUDA_VISIBLE_MEM_GIB)'", body))),
+                         ['CUDA_VISIBLE_MEM_GIB', 'PIT_PER_GPU_MEM_GIB', 'PIT_ZERO3', 'PIT_ZERO3_PROFILE'])
+        self.assertNotIn('torch.compile', body)                                     # no compile hook in the sharded update
+
+
+class TestHostBlocks(unittest.TestCase):
+    """The store of the page-locked layer inputs (v835_zero3._HostBlocks). No GPU here: the blocks are ordinary
+    host memory, so this checks the block arithmetic, the reuse and the bits. The block size is 64 bytes."""
+
+    def setUp(self):
+        self.zero3 = load_source(STAGE / 'v835_zero3.py', 'v835_blocks_probe')
+        self.assertEqual(self.zero3.HOST_BLOCK_BYTES, 1 << 24)
+        self.zero3.HOST_BLOCK_BYTES = 64
+        self.generator = torch.Generator().manual_seed(11)
+
+    def random(self, shape, dtype):
+        return torch.randn(shape, generator=self.generator).to(dtype)
+
+    @staticmethod
+    def raw(tensor):
+        return tensor.contiguous().view(-1).view(torch.uint8)
+
+    def test_a_tensor_comes_back_bit_for_bit_from_whole_and_part_blocks(self):
+        pool = self.zero3._HostBlocks(pin=False)
+        # 160 bytes: 2 blocks and a half. 256 bytes: 4 whole blocks. 672 bytes: 10 blocks and a half.
+        tensors = [self.random((2, 5, 8), torch.bfloat16), self.random((1, 16, 8), torch.bfloat16), self.random((3, 7, 8), torch.float32)]
+        packed = [pool.store(tensor) for tensor in tensors]
+        self.assertEqual([pack[3] for pack in packed], [0, 3, 7])                   # the first block of each tensor
+        self.assertEqual((pool.used, len(pool.blocks)), (18, 18))
+        self.assertTrue(all(block.numel() == 64 and block.dtype == torch.uint8 for block in pool.blocks))
+        for tensor, pack in reversed(list(zip(tensors, packed))):                   # backward asks in the other order
+            back = pool.load(pack)
+            self.assertEqual((back.dtype, tuple(back.shape), back.device), (tensor.dtype, tuple(tensor.shape), tensor.device))
+            self.assertTrue(torch.equal(self.raw(back), self.raw(tensor)))
+            self.assertIsNot(back, tensor)
+
+    def test_a_new_step_fills_the_same_blocks_and_an_input_of_the_step_before_is_refused(self):
+        pool = self.zero3._HostBlocks(pin=False)
+        old = pool.store(torch.arange(100, dtype=torch.float32))                    # 400 bytes: 7 blocks
+        pool.reset()
+        value = torch.arange(40, dtype=torch.float32) + 0.5
+        new = pool.store(value)                                                     # 160 bytes: 3 of the same 7 blocks
+        self.assertEqual((pool.used, len(pool.blocks)), (3, 7))
+        self.assertTrue(torch.equal(pool.load(new), value))
+        with self.assertRaises(ValueError) as ctx:                                  # its blocks hold other data by now
+            pool.load(old)
+        self.assertIn('earlier micro-batch', str(ctx.exception))
+
+    def test_the_hooks_put_what_fills_a_block_into_the_store_and_copy_the_rest(self):
+        pool = self.zero3._HostBlocks(pin=False)
+        hooks = self.zero3._SavedInputsOnHost(pool)
+        large, small = self.random((4, 8, 8), torch.float32), self.random((3, 5), torch.float32)    # 1024 bytes, 60 bytes
+        in_blocks, own_copy = hooks._pack(large), hooks._pack(small)
+        self.assertEqual((len(in_blocks), len(own_copy), pool.used), (5, 2, 16))
+        self.assertTrue(torch.equal(hooks._unpack(in_blocks), large) and torch.equal(hooks._unpack(own_copy), small))
+        # without a store (the reference settings) every tensor is a copy of its own
+        plain = self.zero3._SavedInputsOnHost()
+        copied = plain._pack(large)
+        self.assertEqual(len(copied), 2)
+        self.assertIsNot(copied[1], large)
+        self.assertTrue(torch.equal(plain._unpack(copied), large))
+
+    def test_autograd_gets_the_saved_tensor_back_from_the_blocks(self):
+        pool = self.zero3._HostBlocks(pin=False)
+        x = self.random((4, 8, 8), torch.float32).requires_grad_()
+        with self.zero3._SavedInputsOnHost(pool):
+            y = (x * x).sum()
+        self.assertGreaterEqual(pool.used, 16)                                      # autograd handed x to the store
+        y.backward()
+        self.assertTrue(torch.equal(x.grad, x.detach() + x.detach()))
+
+
 class TestMemoryModel(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.zero3 = load_source(STAGE / 'v835_zero3.py', 'v835_memory_probe')
+        cls.zero3 = stage_with_profile(None)
 
     def test_reference_geometry_is_the_pinned_9b_configuration(self):
         with torch.device('meta'):
@@ -461,32 +599,66 @@ class TestMemoryModel(unittest.TestCase):
 
     def test_sharded_estimate_is_not_total_over_world(self):
         inv = self.zero3.REFERENCE_9B
-        out = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv)
         total = sum(inv[k] for k in ('layer_sum', 'embed', 'head', 'other', 'frozen')) * 2 / 2 ** 30
-        self.assertEqual(out['tokens'], 36864)                      # one rollout of the full training context
-        self.assertGreater(out['certain_gib'], total)               # every rank loads the whole actor once
-        self.assertGreater(out['certain_gib'], 3 * total / 8)       # far above "weights and gradients divided by 8"
-        self.assertLess(out['estimate_gib'], out['limit_gib'])
-        self.assertEqual(out['limit_gib'], 28.0)
-        self.assertFalse(out['coefficients']['measured'])
+        for profile in ('rtx5090-u6', 'reference-u2'):
+            out = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, profile=profile)
+            self.assertEqual(out['profile'], profile)
+            self.assertEqual(out['tokens'], 36864)                      # one rollout of the full training context
+            self.assertGreater(out['certain_gib'], total)               # every rank loads the whole actor once
+            self.assertGreater(out['certain_gib'], 3 * total / 8)       # far above "weights and gradients divided by 8"
+            self.assertLess(out['estimate_gib'], out['limit_gib'])
+            self.assertEqual(out['limit_gib'], 28.0)
+            self.assertFalse(out['coefficients']['measured'])
+        # no profile given: the settings of the process (here the default)
+        self.assertEqual(self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv)['profile'], 'rtx5090-u6')
+        with self.assertRaises(ValueError):
+            self.zero3.estimate_peak_gib(inv, tokens=8192, world=8, profile='rtx5090')
 
     def test_layer_inputs_go_to_the_host_when_the_estimate_is_near_the_limit(self):
         inv, estimate = self.zero3.REFERENCE_9B, self.zero3.estimate_peak_gib
-        budget = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, tokens=24576)
-        self.assertFalse(budget['offload_inputs'])                  # a micro-batch of the cut budget: inputs stay on the GPU
+        budget = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, tokens=24576, profile='reference-u2')
+        self.assertFalse(budget['offload_inputs'])                  # a micro-batch of the reference budget: inputs stay on the GPU
         self.assertEqual(budget['offload_host_gib'], 0.0)
         self.assertLess(budget['estimate_gib'], 0.75 * budget['limit_gib'])
-        full = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, tokens=36864)
+        full = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, tokens=36864, profile='reference-u2')
         self.assertTrue(full['offload_inputs'])                     # one full-context rollout: planned with them on the host
-        on_gpu = estimate(inv, tokens=36864, world=8)
+        on_gpu = estimate(inv, tokens=36864, world=8, profile='reference-u2')
         self.assertGreater(on_gpu['estimate_gib'], 0.75 * full['limit_gib'])
         self.assertLess(full['phases']['layer']['estimate_gib'], on_gpu['phases']['layer']['estimate_gib'] - 8.0)
         hidden = 36864 * inv['hidden'] * 2 / 2 ** 30
         self.assertAlmostEqual(full['offload_host_gib'], (inv['layers'] + 2 - 3) * hidden, places=6)
-        for tokens in (8192, 24576, 36864):                         # more tokens never lower the estimate of a mode
-            for mode in (False, True):
-                self.assertLessEqual(estimate(inv, tokens=tokens, world=8, offload_inputs=mode)['estimate_gib'],
-                                     estimate(inv, tokens=tokens + 4096, world=8, offload_inputs=mode)['estimate_gib'])
+        for profile in ('rtx5090-u6', 'reference-u2'):
+            for tokens in (8192, 24576, 36864):                     # more tokens never lower the estimate of a mode
+                for mode in (False, True):
+                    self.assertLessEqual(
+                        estimate(inv, tokens=tokens, world=8, offload_inputs=mode, profile=profile)['estimate_gib'],
+                        estimate(inv, tokens=tokens + 4096, world=8, offload_inputs=mode, profile=profile)['estimate_gib'])
+
+    def test_the_default_settings_keep_the_layer_shards_on_the_gpu_and_plan_a_full_bin_with_its_inputs_on_the_host(self):
+        inv, estimate, gib = self.zero3.REFERENCE_9B, self.zero3.estimate_peak_gib, 2.0 ** 30
+        u6 = lambda **kwargs: estimate(inv, world=8, profile='rtx5090-u6', **kwargs)
+        u2 = lambda **kwargs: estimate(inv, world=8, profile='reference-u2', **kwargs)
+        # resident on every GPU: the fp32 shards of the layers and of the final norm, and their fp32 gradient shards
+        on_gpu = 2 * (inv['layer_sum'] + inv['other']) * 4 / gib / 8
+        self.assertAlmostEqual(on_gpu, 6.44, places=2)
+        for phase in ('head', 'head-reduce', 'embed-reduce'):
+            self.assertAlmostEqual(u6(tokens=32768)['phases'][phase]['certain_gib'] - u2(tokens=32768)['phases'][phase]['certain_gib'],
+                                   on_gpu, places=2)
+        # one layer backward also holds bf16 reduce-scatter inputs in place of fp32 ones: two inputs of half the size
+        layer = inv['layer_max'] * 2 / gib
+        self.assertAlmostEqual(u6(tokens=32768)['phases']['layer']['certain_gib'] - u2(tokens=32768)['phases']['layer']['certain_gib'],
+                               on_gpu - 2 * layer + layer / 8, places=2)
+        # a micro-batch of the 32768 budget: over the limit with the layer inputs on the GPU, planned with them on the host
+        self.assertGreater(u6(tokens=32768)['estimate_gib'], 28.0)
+        plan = self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=8, inv=inv, tokens=32768, profile='rtx5090-u6')
+        self.assertTrue(plan['offload_inputs'])
+        self.assertLess(plan['estimate_gib'], plan['limit_gib'])
+        # on the host an input takes whole blocks of 16 MiB: 32768 tokens fill 16, two tokens more need a 17th
+        kept = inv['layers'] + 2 - 3
+        self.assertEqual(self.zero3.HOST_BLOCK_BYTES, 1 << 24)
+        self.assertAlmostEqual(plan['offload_host_gib'], kept * 16 * 2 ** 24 / gib, places=9)
+        self.assertAlmostEqual(u6(tokens=32770, offload_inputs=True)['offload_host_gib'], kept * 17 * 2 ** 24 / gib, places=9)
+        self.assertAlmostEqual(u2(tokens=32770, offload_inputs=True)['offload_host_gib'], kept * 32770 * inv['hidden'] * 2 / gib, places=9)
 
     def test_refuses_what_cannot_fit(self):
         with self.assertRaises(self.zero3.VramPreflightError) as ctx:
@@ -497,19 +669,17 @@ class TestMemoryModel(unittest.TestCase):
         with self.assertRaises(self.zero3.VramPreflightError):
             self.zero3.preflight_or_raise(per_gpu_gib=32.0, world=1, n_params=9.4e9, sharded=False)
 
-    def test_token_budget_cut(self):
-        self.assertEqual(self.zero3.token_budget(40960), 24576)
-        self.assertEqual(self.zero3.token_budget(16384), 16384)
-
     def test_host_memory_model_counts_the_gradient_once(self):
         inv = self.zero3.REFERENCE_9B
-        ram = self.zero3.host_ram_gib(inv)
         trainable = inv['layer_sum'] + inv['embed'] + inv['head'] + inv['other']
         gib = 2.0 ** 30
-        self.assertAlmostEqual(ram['rank0_gib'], ((trainable + inv['frozen']) * 2 + trainable * 4) / gib)   # actor + fp32 master
-        self.assertAlmostEqual(ram['shards_gib'], (inv['layer_sum'] + inv['other']) * 4 / gib)
-        self.assertAlmostEqual(ram['step_gib'], (trainable * 4 + inv['embed'] * 20) / gib)                  # one fp32 gradient + step temporaries
-        self.assertAlmostEqual(ram['total_gib'], ram['rank0_gib'] + ram['shards_gib'] + ram['step_gib'])
+        for profile, shards in (('reference-u2', (inv['layer_sum'] + inv['other']) * 4 / gib),      # FSDP keeps the layer shards on the host
+                                ('rtx5090-u6', 0.0)):                                                 # they stay on the GPU
+            ram = self.zero3.host_ram_gib(inv, profile=profile)
+            self.assertAlmostEqual(ram['rank0_gib'], ((trainable + inv['frozen']) * 2 + trainable * 4) / gib)   # actor + fp32 master
+            self.assertAlmostEqual(ram['shards_gib'], shards)
+            self.assertAlmostEqual(ram['step_gib'], (trainable * 4 + inv['embed'] * 20) / gib)                  # one fp32 gradient + step temporaries
+            self.assertAlmostEqual(ram['total_gib'], ram['rank0_gib'] + ram['shards_gib'] + ram['step_gib'])
 
 
 class TestWatchdog(unittest.TestCase):
@@ -536,27 +706,94 @@ class TestWatchdog(unittest.TestCase):
 
 
 class TestShardedNumerics(unittest.TestCase):
-    """torch FSDP on the production-class model, two processes, against the v8.3.4e gradient definition."""
+    """torch FSDP on the production-class model, two processes, against the gradient sum that the settings of the
+    run define. With no name the tool runs the default settings (rtx5090-u6), as the trainer does."""
 
-    def run_tool(self, dtype):
-        return train_shard.run_numerics(world=2, dtype=dtype, seed=3)
+    RUNS = {}
 
-    def test_production_precision_bf16_forward_fp32_reduction(self):
-        out = self.run_tool('bfloat16')
+    def run_tool(self, dtype, **kwargs):
+        key = (dtype,) + tuple(sorted(kwargs.items()))
+        if key not in self.RUNS:
+            self.RUNS[key] = train_shard.run_numerics(world=2, dtype=dtype, seed=3, **kwargs)
+        return self.RUNS[key]
+
+    def test_reference_settings_bf16_forward_fp32_reduction(self):
+        out = self.run_tool('bfloat16', profile='reference-u2')
         self.assertTrue(out['ok'], out)
+        self.assertEqual(out['profile']['name'], 'reference-u2')
         self.assertTrue(out['all_sharded'] and out['names_equal'] and out['weights_exact'])
         self.assertEqual(out['native_dtypes'], ['torch.float32'])        # layer shards: fp32, gathered in bf16
         self.assertEqual(out['explicit_dtypes'], ['torch.bfloat16'])     # embedding / lm_head shards stay bf16
         self.assertLessEqual(out['reduction']['rel_diff'], 1e-6)         # a bf16 rounding of the reduction would be ~4e-3
+        self.assertEqual(out['reduction'], out['fp32_reduction'])        # the definition of these settings is the v8.3.4e accumulator
         self.assertEqual([2 * b for b in out['shard_bytes']], [out['full_bytes']] * 2)
         self.assertGreaterEqual(max(out['null_steps']), 1)               # lockstep zero-weight steps did run
+        # every reduce-scatter has an fp32 input: one in each step for each layer, the final norm, lm_head and the embedding
+        self.assertEqual(out['reduce_inputs'], {'torch.float32': (out['layers'] + 3) * out['steps']})
+        self.assertEqual(out['gather_groups'], [{'control': out['tensors']}] * 2)       # shards to rank 0 over the control group
+        self.assertEqual(out['host_blocks'], [None, None])                              # no store of page-locked blocks
+
+    def test_default_settings_add_the_layer_gradients_in_bf16_and_lm_head_and_the_embedding_in_fp32(self):
+        out = self.run_tool('bfloat16')
+        self.assertTrue(out['ok'], out)
+        self.assertEqual(out['profile']['name'], 'rtx5090-u6')
+        self.assertTrue(out['profiles_equal'] and out['reduce_inputs_equal'])           # every rank ran the same settings and collectives
+        self.assertTrue(out['all_sharded'] and out['names_equal'] and out['weights_exact'])
+        self.assertEqual(out['native_dtypes'], ['torch.float32'])                       # the shards and the gradient shards stay fp32
+        self.assertEqual([2 * b for b in out['shard_bytes']], [out['full_bytes']] * 2)
+        self.assertGreaterEqual(max(out['null_steps']), 1)
+        layers, steps, tensors = out['layers'], out['steps'], out['tensors']
+        # reduce-scatter inputs: bf16 for each layer and the final norm, fp32 for lm_head and the embedding
+        self.assertEqual(out['reduce_inputs'], {'torch.bfloat16': (layers + 1) * steps, 'torch.float32': 2 * steps})
+        # lm_head and the embedding: the fp32 sum over the ranks of each step, bit for bit, which is the v8.3.4e
+        # accumulator up to the order of fp32 additions
+        self.assertEqual((out['explicit_step_reduction']['tensors'], out['explicit_step_reduction']['exact_tensors']), (2, 2))
+        self.assertLessEqual(out['explicit_reduction']['rel_diff'], 1e-6)
+        # layers: the two ranks of a step added in bf16 and the steps added in fp32, bit for bit
+        self.assertTrue(out['layers_in_bf16'] and out['one_order'])
+        self.assertEqual((out['layer_reduction']['tensors'], out['layer_reduction']['exact_tensors']), (tensors - 2, tensors - 2))
+        self.assertEqual(out['reduction']['exact_tensors'], tensors)
+        # that is not the fp32 sum of the reference settings: it differs by the bf16 rounding of one addition, which
+        # is at most 2**-9 of its result (this fixture gave a distance of 1.1e-3)
+        far = out['layer_fp32_reduction']
+        self.assertLess(far['exact_tensors'], far['tensors'])
+        self.assertGreater(far['rel_diff'], 1e-5)
+        self.assertLess(far['rel_diff'], 1e-2)
+        self.assertGreater(far['cosine'], 0.99999)
+        self.assertEqual(out['gather_groups'], [{'data': tensors}] * 2)                 # shards to rank 0 over the data group
+
+    def test_default_settings_gather_the_next_layer_before_the_layer_runs(self):
+        """All-gathers a rank has issued in a step at the moment each decoder layer starts its forward."""
+        ahead, plain = self.run_tool('bfloat16'), self.run_tool('bfloat16', profile='reference-u2')
+        layers = plain['layers']
+        self.assertGreaterEqual(layers, 3)
+        before = plain['gathers_before_layer']
+        self.assertEqual(before, list(range(before[0], before[0] + layers)))            # reference: one more for each layer
+        # default: the next layer's all-gather is out already; the last layer has none after it
+        self.assertEqual(ahead['gathers_before_layer'], [n + 1 for n in before[:-1]] + [before[-1]])
+
+    def test_more_than_two_ranks_add_bf16_gradients_in_the_order_of_the_backend(self):
+        """Then the layer sum has no single value. lm_head and the embedding keep the fp32 check, and the layers
+        must stay near the fp32 sum. What NCCL gives on 8 GPUs is not measured here."""
+        out = train_shard.run_numerics(world=3, dtype='bfloat16', seed=3)
+        self.assertTrue(out['ok'], out)
+        self.assertTrue(out['layers_in_bf16'])
+        self.assertFalse(out['one_order'])
+        self.assertLessEqual(out['explicit_reduction']['rel_diff'], 1e-6)
+        self.assertTrue(out['layers_near_fp32'])
+        self.assertLess(out['layer_fp32_reduction']['rel_diff'], out['layer_bf16_tol'])
+        self.assertGreater(out['layer_fp32_reduction']['cosine'], 0.9999)
 
     def test_fp32_matches_one_unsharded_process(self):
-        out = self.run_tool('float32')
-        self.assertTrue(out['ok'], out)
-        self.assertTrue(out['losses_equal'])
-        self.assertLessEqual(out['unsharded']['rel_diff'], 1e-6)
-        self.assertLessEqual(out['reduction']['rel_diff'], 1e-6)
+        for profile in (None, 'reference-u2'):                           # in fp32 both settings add in fp32
+            out = self.run_tool('float32', **(dict(profile=profile) if profile else {}))
+            self.assertTrue(out['ok'], out)
+            self.assertTrue(out['losses_equal'])
+            self.assertLessEqual(out['unsharded']['rel_diff'], 1e-6)
+            self.assertLessEqual(out['reduction']['rel_diff'], 1e-6)
+            self.assertLessEqual(out['fp32_reduction']['rel_diff'], 1e-6)
+            self.assertEqual(out['reduce_inputs'], {'torch.float32': (out['layers'] + 3) * out['steps']})
+            self.assertFalse(out['layers_in_bf16'])
 
     def test_layer_inputs_behind_the_host_hooks_give_the_same_gradient_bit_for_bit(self):
         """No GPU here, so the host copy is a CPU-to-CPU copy: this checks the autograd plumbing and the values."""
@@ -573,6 +810,31 @@ class TestShardedNumerics(unittest.TestCase):
         self.assertEqual(list(first), list(second))
         self.assertTrue(all(torch.equal(first[name], second[name]) for name in first))
         self.assertLessEqual(hooked['unsharded']['rel_diff'], 1e-6)
+        # a layer input of the tiny model is far below one 16 MiB block: every one was a host copy of its own
+        self.assertEqual(hooked['host_blocks'], [0, 0])
+
+    def test_layer_inputs_in_host_blocks_give_the_same_gradient_bit_for_bit(self):
+        """The default settings keep a layer input that fills a block in the block store. The block size is lowered
+        to 64 bytes so that every input of the tiny model fills several. No GPU here: the blocks are ordinary host
+        memory and the copies are CPU-to-CPU, so page-locking and the direct GPU copy are not exercised."""
+        work = Path(tempfile.mkdtemp(prefix='v834f-blocks-'))
+        self.addCleanup(shutil.rmtree, work, True)
+        plain = train_shard.run_numerics(world=2, dtype='float32', seed=3, work=work / 'plain')
+        blocks = train_shard.run_numerics(world=2, dtype='float32', seed=3, work=work / 'blocks', offload_inputs=True,
+                                          host_block_bytes=64)
+        self.assertTrue(plain['ok'] and blocks['ok'], (plain, blocks))
+        self.assertTrue(blocks['profile']['pin_inputs'])
+        layers, steps = blocks['layers'], blocks['steps']
+        self.assertEqual(blocks['packed_inputs'], [layers * steps] * 2)
+        for held, used in zip(blocks['host_blocks'], blocks['host_blocks_used']):
+            self.assertEqual(len(used), steps)
+            self.assertTrue(all(count >= 2 * layers for count in used), used)       # every input filled two blocks or more
+            self.assertEqual(held, max(used))                                       # a step begins again at the first block:
+            self.assertLess(held, sum(used))                                        # a rank holds the blocks of its largest step
+        first, second = torch.load(plain['gradient_file']), torch.load(blocks['gradient_file'])
+        self.assertEqual(list(first), list(second))
+        self.assertTrue(all(torch.equal(first[name], second[name]) for name in first))
+        self.assertLessEqual(blocks['unsharded']['rel_diff'], 1e-6)
 
 
 class TestShardedInstallEndToEnd(unittest.TestCase):
@@ -586,15 +848,18 @@ class TestShardedInstallEndToEnd(unittest.TestCase):
         for mode, args, env in (('prepare', (), child_env()), ('reference', (), child_env()),
                                 ('plain', (), child_env(PIT_PER_GPU_MEM_GIB='180')),
                                 ('sharded', ('--port', str(free_port())), child_env(PIT_PER_GPU_MEM_GIB='32')),
+                                # the same update with the reference settings, named as on the box
+                                ('sharded', ('--port', str(free_port()), '--tag', 'sharded-u2'),
+                                 child_env(PIT_PER_GPU_MEM_GIB='32', PIT_ZERO3_PROFILE='reference-u2')),
                                 ('fp32-load', ('--source', 'sharded'), child_env()),
                                 ('fp32-load', ('--source', 'reference'), child_env())):
             proc, seconds = run_driver(cls.work, mode, *args, env=env)
             if proc.returncode != 0:
                 raise AssertionError('%s failed (rc %s):\n%s\n%s' % (mode, proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:]))
-            if mode == 'sharded':
+            if mode == 'sharded' and '--tag' not in args:
                 cls.sharded_log, cls.sharded_seconds = proc.stdout, seconds
         load = lambda mode: json.loads((cls.work / mode / 'result.json').read_text())
-        cls.ref, cls.plain, cls.out = load('reference'), load('plain'), load('sharded')
+        cls.ref, cls.plain, cls.out, cls.u2 = load('reference'), load('plain'), load('sharded'), load('sharded-u2')
         cls.loaded, cls.loaded_ref = load('fp32-load-sharded'), load('fp32-load-reference')
 
     def master_entry(self, run):
@@ -614,6 +879,7 @@ class TestShardedInstallEndToEnd(unittest.TestCase):
         self.assertTrue(re.search(r'train_pit.py|v83_dp.py', ' '.join(argv)))       # the box clean-up pattern still finds it
         events = [json.loads(line) for line in self.sharded_log.splitlines() if line.startswith('{"component": "trainer-host-v834f"')]
         self.assertEqual([e['event'] for e in events], ['helper-zero3', 'helper-sharded'])
+        self.assertEqual(events[0]['profile'], 'rtx5090-u6')                        # the helper says which settings it runs
         self.assertEqual(self.out['forward'], 'make_train_update.<locals>.log_probs')
 
     def test_activate_needs_the_launcher_and_decides_from_the_gpu(self):
@@ -621,12 +887,31 @@ class TestShardedInstallEndToEnd(unittest.TestCase):
         self.assertEqual(self.out['policy']['per_gpu_mem_gib'], 32.0)
         self.assertTrue(self.out['policy']['zero3'])
         self.assertEqual(self.out['zero3_env'], '1')
-        self.assertEqual(self.out['install'], dict(dp_world=2, zero3=True, dp_token_budget=24576))
-        # the same host-v834f files on a GPU that fits the update: the v8.3.4e update, budget untouched
+        self.assertEqual(self.out['install'], dict(dp_world=2, zero3=True, dp_token_budget=32768))
+        self.assertEqual(self.out['policy']['profile'], TestSettings.U6)            # no name given: the default settings
+        self.assertEqual(self.out['policy']['token_budget_cap'], 32768)
+        # the same host-v834f files on a GPU that fits the update: the v8.3.4e update, budget untouched, no settings read
         self.assertFalse(self.plain['policy']['zero3'])
         self.assertIsNone(self.plain['zero3_env'])
+        self.assertIsNone(self.plain['policy']['profile'])
+        self.assertIsNone(self.plain['policy']['token_budget_cap'])
         self.assertEqual(self.plain['install'], dict(dp_world=0, zero3=False, dp_token_budget=40960))
         self.assertEqual(self.plain['forward'], 'make_train_update.<locals>.fast_blp')
+
+    def test_the_reference_settings_run_when_the_environment_names_them(self):
+        self.assertEqual(self.u2['policy']['profile'], TestSettings.U2)
+        self.assertEqual(self.u2['install'], dict(dp_world=2, zero3=True, dp_token_budget=24576))
+        self.assertEqual(self.u2['microbatch']['token_budget'], 24576)
+        self.assertEqual(self.u2['microbatch']['profile'], TestSettings.U2)
+        self.assertEqual(self.u2['plan_probe'], dict(bins=5, largest_bin_tokens=22000))
+        self.assertEqual(self.u2['helper_returncodes'], [0])
+        self.assertEqual(self.u2['status'], 'updated')
+        # the fixture is fp32, where both settings add every gradient in fp32: the numbers of the unsharded update
+        for out in (self.u2, self.out):
+            self.assertAlmostEqual(out['objective_loss'], self.ref['objective_loss'], delta=1e-6 * abs(self.ref['objective_loss']))
+            self.assertAlmostEqual(out['preclip_gradient_norm'], self.ref['preclip_gradient_norm'],
+                                   delta=1e-6 * self.ref['preclip_gradient_norm'])
+            self.assertAlmostEqual(out['raw_update_norm'], self.ref['raw_update_norm'], delta=1e-6 * self.ref['raw_update_norm'])
 
     def test_live_accumulator_signature_and_no_typeerror(self):
         self.assertEqual(self.out['fp32_accumulator_signature'], '(self, named_parameters)')
@@ -636,12 +921,14 @@ class TestShardedInstallEndToEnd(unittest.TestCase):
     def test_token_cut_ran_in_the_plan(self):
         micro = self.out['microbatch']
         self.assertEqual(micro['engine'], 'packed-zero3-v835')
-        self.assertEqual(micro['token_budget'], 24576)
+        self.assertEqual(micro['token_budget'], 32768)
+        self.assertEqual(micro['profile'], TestSettings.U6)                         # the report names the settings that ran
         self.assertEqual(self.ref['microbatch']['token_budget'], 40960)
         self.assertEqual(micro['logit_chunk'], 1024)
-        # the planner the update calls: two 14,000-token rollouts share a bin under 40,960 and not under 24,576
-        self.assertEqual(self.out['plan_probe'], dict(bins=4, largest_bin_tokens=14000))
-        self.assertEqual(self.plain['plan_probe'], dict(bins=2, largest_bin_tokens=28000))
+        # the planner the update calls, on two rollouts each of 19,000, 15,000 and 11,000 tokens (two to a bin here):
+        # the two longest share a bin under 40,960; under 32,768 the largest bin is the two of 15,000
+        self.assertEqual(self.out['plan_probe'], dict(bins=3, largest_bin_tokens=30000))
+        self.assertEqual(self.plain['plan_probe'], dict(bins=3, largest_bin_tokens=38000))
 
     def test_lockstep_and_sharded_parameter_sizes(self):
         micro = self.out['microbatch']
@@ -1245,6 +1532,30 @@ class TestShardedFailures(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertLess(seconds, 120)
         self.assertFalse((self.work / 'kill' / 'result.json').exists())
+
+    def test_a_helper_with_other_settings_refuses_the_job_and_the_trainer_stops(self):
+        """Ranks with different settings would issue different collectives. Rank 0 sends the name of its settings
+        with the job; the helper compares it with its own before it shards anything."""
+        proc, seconds = run_driver(self.work, 'sharded', '--port', str(free_port()), '--tag', 'mixed',
+                                   '--helper-profile', 'reference-u2', env=child_env(PIT_ZERO3='1'), timeout=300)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertLess(seconds, 120)
+        self.assertFalse((self.work / 'mixed' / 'result.json').exists())            # no update came out of the mixed world
+        events = [json.loads(line) for line in proc.stdout.splitlines() if line.startswith('{"component": "trainer-host-v834f"')]
+        started = next(e for e in events if e['event'] == 'helper-zero3')
+        self.assertEqual(started['profile'], 'reference-u2')
+        failed = next(e for e in events if e['event'] == 'zero3-rank-failed')
+        self.assertEqual((failed['rank'], failed['where']), (1, 'sharding'))
+        self.assertIn("rank 0 runs the settings 'rtx5090-u6', this rank 'reference-u2'", failed['error'])
+        self.assertFalse([e for e in events if e['event'] == 'helper-sharded'])     # the helper built no sharded actor
+
+    def test_an_unknown_settings_name_stops_the_trainer_before_any_helper_starts(self):
+        proc, _ = run_driver(self.work, 'sharded', '--port', str(free_port()), '--tag', 'unknown',
+                             env=child_env(PIT_ZERO3='1', PIT_ZERO3_PROFILE='rtx5090'))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unknown PIT_ZERO3_PROFILE 'rtx5090'", proc.stderr)
+        self.assertFalse((self.work / 'unknown' / 'result.json').exists())
+        self.assertNotIn('helper-zero3', proc.stdout)
 
 
 if __name__ == '__main__':

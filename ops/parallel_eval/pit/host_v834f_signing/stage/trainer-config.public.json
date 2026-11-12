@@ -21,7 +21,7 @@
   "v824_optimizer_fast.py": "be1100793d63ccdcfc898f2259d647509444a61cbcd9ecf45d5112f90107a9c2",
   "v824_publication_fast.py": "1df916998e842419a7e091e1f9a4fa41e77495111267dfafd6ff66726517997e",
   "v824_staging_fast.py": "1b8050636d7aa25cedcf6982a6e05f49abf406bd9504d32cb893389bea381426",
-  "v835_zero3.py": "31426dbec7cb2a7273e710e95c933be25b2da49533902455463d85dbcef5b602",
+  "v835_zero3.py": "427a809ea7fb450fc969ef4ffdcf9448f977731fd36a45d8b41a3b4f294f54ee",
   "v83_dp.py": "e0f1056bd04b4bb3e11534b421f9229d78322b4d4f9c313f3ba1cc36c247279c",
   "v83_fast_kernels.py": "e4e3ce56ce3158750db97b82bf543615f2c809b28d2427840960963f2ef145e4",
   "v83_kernels_policy.py": "ea27bab149c57227291ff0a920a69e6a0aee2e2e78e45a561420135d02fe1bb2"
@@ -31,10 +31,32 @@
  "version": "affine-mimo-trainer-host-v833",
  "zero3": {
   "below_gpu_gib": 100.0,
+  "default_profile": "rtx5090-u6",
   "env": "PIT_ZERO3",
   "logit_chunk": 1024,
+  "profile_env": "PIT_ZERO3_PROFILE",
+  "profiles": {
+   "reference-u2": {
+    "gather": "control",
+    "layer_reduce": "float32",
+    "name": "reference-u2",
+    "offload_params": true,
+    "pin_inputs": false,
+    "prefetch": 0,
+    "token_budget": 24576
+   },
+   "rtx5090-u6": {
+    "gather": "data",
+    "layer_reduce": "native",
+    "name": "rtx5090-u6",
+    "offload_params": false,
+    "pin_inputs": true,
+    "prefetch": 1,
+    "token_budget": 32768
+   }
+  },
   "sharding": "torch.distributed.fsdp.fully_shard, reshard_after_forward=True (FULL_SHARD)",
   "target_peak_gib": 28.0,
-  "token_budget": 24576
+  "token_budget": 32768
  }
 }

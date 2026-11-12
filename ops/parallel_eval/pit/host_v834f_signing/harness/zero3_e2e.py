@@ -37,6 +37,10 @@ Options for the gradient comparison of the sharded update with the unsharded one
   --capture-gradient  keep the accumulated fp32 gradient as it is before the clip, in <run>/gradient.pt. The
                       unsharded run keeps the whole gradient, a sharded run keeps what rank 0 holds: its dim-0
                       shard of the sum over every rank (the whole tensor in a one-rank world).
+
+The settings of a sharded run (v835_zero3.PROFILES) come from PIT_ZERO3_PROFILE in the environment of this
+process, as on the box. --helper-profile gives the helper ranks another name than rank 0 has: the helper must
+refuse the job, and the trainer must then stop instead of running ranks with different collectives.
 Every run also writes the update report as train_pit.py writes it: <run>/report.private.json.
 
 Every run has its own fp32 master store, <work>/<run>/fp32-master, so an entry there was written by that run.
@@ -69,13 +73,18 @@ FIXTURE_SHARD_BYTES = 48 * 1024   # stands in for the launcher's 4 GiB FP32_SHAR
 ADMITTED_MODES = ('reference', 'fp32-load')
 
 
+PROBE_TOKENS = (19000, 19000, 15000, 15000, 11000, 11000)
+
+
 def plan_probe(dp):
-    """The installed planner (the function the update calls) on four 14,000-token rollouts for two ranks.
-    Two of them are 28,000 tokens: one bin under the signed 40,960 budget, two bins under the 24,576 cut."""
-    rows = [dict(group=types.SimpleNamespace(prompt=range(2000)), rollout=types.SimpleNamespace(tokens=range(12000)))
-            for _ in range(4)]
-    assign, bins, _ = dp._plan(rows, list(range(4)), 2)
-    return dict(bins=bins, largest_bin_tokens=max(14000 * len(batch) for batches in assign for batch in batches))
+    """The installed planner (the function the update calls) on six rollouts for two ranks: two each of 19,000,
+    15,000 and 11,000 tokens. The fixture lets two rollouts share a bin. The largest bin is 38,000 tokens under
+    the signed 40,960 budget, 30,000 under the 32,768 budget of the default sharded settings, and 22,000 under
+    the 24,576 budget of the reference settings."""
+    rows = [dict(group=types.SimpleNamespace(prompt=range(1000)), rollout=types.SimpleNamespace(tokens=range(tokens - 1000)))
+            for tokens in PROBE_TOKENS]
+    assign, bins, _ = dp._plan(rows, list(range(len(rows))), 2)
+    return dict(bins=bins, largest_bin_tokens=max(sum(PROBE_TOKENS[i] for i in batch) for batches in assign for batch in batches))
 
 
 NODE = 'autograd::engine::evaluate_function: '         # the profiler's name for one autograd node that backward ran
@@ -244,6 +253,8 @@ def main(argv=None):
     ap.add_argument('--port', type=int, default=29583)
     ap.add_argument('--tag', default=None, help='result directory name (default: the mode)')
     ap.add_argument('--kill-helper', action='store_true', help='kill the helper rank before the update (watchdog check)')
+    ap.add_argument('--helper-profile', default=None,
+                    help='sharded: the helper ranks start with this PIT_ZERO3_PROFILE; rank 0 keeps the settings it chose in activate()')
     ap.add_argument('--guard-fail', type=int, default=0, help='make the N-th step-boundary guard call raise once, then retry')
     ap.add_argument('--fake-peak', default=None, choices=('first-over', 'always-over'),
                     help='there is no GPU here: stand in for the GPU memory rank 0 measures in the probe step. '
@@ -305,6 +316,8 @@ def main(argv=None):
         result['policy'] = z3.activate(host)
         if a.logit_chunk:
             z3.LOGIT_CHUNK = a.logit_chunk
+        if a.helper_profile:      # activate() has fixed rank 0's settings; install() starts the helpers with this environment
+            os.environ[z3.PROFILE_ENV] = a.helper_profile
     info = host.install(cfg, start_dp=sharded)
     seen = observe(z3, sys.modules['v824_batched']) if a.observe else None
     result['install'] = dict(dp_world=info['dp_world'], zero3=info.get('zero3'), dp_token_budget=info.get('dp_token_budget'))

@@ -15,13 +15,43 @@ every path.
 
 | Host file | Change |
 | --- | --- |
-| `v835_zero3.py` | new: the sharded update (torch FSDP), helper entry, memory checks |
+| `v835_zero3.py` | new: the sharded update (torch FSDP), helper entry, memory checks, two named sets of settings |
 | `mimo_host_trainer_v83.py` | `HOST_FILES` + `zero3()` + the `install()` hook; taken only when `PIT_ZERO3` is on |
 | the other 14 host files | byte-identical to the admitted host-v834e |
 
 The engine block, the source root, the authority and the original-method pins
 are copied from the host-v834e admission. `sign_host_v834f.py` refuses anything
 else.
+
+## Settings of the sharded update
+
+`v835_zero3.py` holds two named sets of settings (`PROFILES`). The signature
+covers both sets and the default. `stage/trainer-config.public.json` shows them.
+
+| Setting | `rtx5090-u6` (default) | `reference-u2` |
+| --- | --- | --- |
+| micro-batch token budget | 32768 | 24576 |
+| fp32 layer shards and their gradient shards | on the GPU | in host memory |
+| layer inputs that a rank keeps on the host | page-locked blocks | ordinary copies |
+| sum of the layer gradients over the ranks | bf16 | fp32 |
+| layers all-gathered ahead in forward | 1 | 0 |
+| gradient shards go to rank 0 over | the data group (NCCL) | the control group (gloo) |
+
+- `PIT_ZERO3_PROFILE` names one whole set. It can change no single value. An
+  unknown name stops the trainer before a helper starts. A helper with another
+  set than rank 0 refuses the job.
+- `rtx5090-u6` holds the operator's measured values (run U6). It changes the
+  arithmetic of the decoder-layer gradients against host-v834e: their sum over
+  the ranks is taken in bf16, not in fp32. lm_head and the embedding keep the
+  fp32 sum.
+- `reference-u2` keeps the host-v834e arithmetic: every gradient is added in fp32.
+- To sign with `reference-u2` as the default, change `DEFAULT_PROFILE` and run
+  `sign_host_v834f.py --write-proposal` first.
+- Both sets keep the CPU optimizer step on rank 0, the serial fp32 save, every
+  layer checkpointed and 1024 head tokens per lm_head call. There is no
+  `torch.compile` hook.
+- With `PIT_ZERO3` off nothing in `v835_zero3.py` runs, so the B300 path reads
+  no settings.
 
 ## Where the fp32 master is, and who saves it
 
@@ -64,18 +94,29 @@ else.
 
 ## Not verified yet
 
-The sharded path has run only on CPU (torch FSDP over gloo, world 2 and 8, tiny
-model). It has **not** run on CUDA/NCCL, on the 9B model, or with the fla
-training kernels.
+The files of this stage have run only on CPU (torch FSDP over gloo, world 2, 3
+and 8, tiny model). The operator ran earlier revisions on real 8×RTX5090 boxes
+with his own patches: run U2 (one full step of 1000 rollouts, 42.0 min) and run
+U6 (the `rtx5090-u6` values, 6 steps). This stage writes those values again
+from his description. As committed, it has **not** run on CUDA/NCCL, on the 9B
+model, or with the fla training kernels.
 
 - GPU memory: the per-GPU numbers are estimates (hand counts, see
   `v835_zero3.estimate_peak_gib`). The update measures one zero-weight step on
   every rank before it produces a gradient. A rank over the limit moves its
   checkpointed layer inputs to host memory and all ranks measure again. What
-  is still over the limit is refused. The first live test gives the real numbers.
-- Host memory: about 129 GiB for the 9B model by count
-  (`v835_zero3.host_ram_gib`), plus up to about 70 GiB while the layer inputs
-  of a full-context micro-batch are on the host. Not measured.
+  is still over the limit is refused. Run U2 measured a GPU peak of 18.9 GB.
+  No measurement exists for this stage with `rtx5090-u6`.
+- `rtx5090-u6`: the CPU tests check which collectives run, their dtypes and
+  the gradient values. They do not exercise page-locked memory, the direct GPU
+  copy, the NCCL gather or the speed. With three or more ranks the backend
+  chooses the order of the bf16 additions. The tests see the gloo order only;
+  there the layer gradients are 1e-3 to 3e-3 (relative) away from the fp32 sum.
+- Host memory: the count (`v835_zero3.host_ram_gib`) gives about 129 GiB for
+  `reference-u2` and 103 GiB for `rtx5090-u6`, plus up to about 70 GiB while
+  the layer inputs of a full-context micro-batch are on the host. The count is
+  too low: run U2 measured a host peak of 272 GB (trainer RSS 257 GB). A box
+  needs more than 300 GB of host memory.
 - fp32 master with bf16 weights: the CPU launcher runs load fp32 weights (the
   real runtime refuses bf16 on a CPU), so there the master equals the weights.
   The bf16 case is tested without the DP world only.
