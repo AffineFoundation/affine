@@ -17,11 +17,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ops.jobs.kinds import NAME_PREFIX
 from ops.parallel_eval.pit import LIVE_NAME_ROOT, PREFIX_LIVE, PREFIX_SHADOW
+from ops.parallel_eval.pit.durable import pit_state_root
 from ops.parallel_eval.pit.isolated_rent import (
     ISOLATED_PREFIXES,
     LEGACY_ISOLATED_PREFIXES,
@@ -34,6 +37,7 @@ from ops.parallel_eval.pit.pe_rent import (
     NEVER_NAME_PREFIXES,
     RentError,
     RentService,
+    bind_isolated_rent_service,
     is_fakepass_name,
     is_live_pit_name,
     is_pit_name,
@@ -206,6 +210,31 @@ class TestNameRules(unittest.TestCase):
             with self.assertRaisesRegex(RentError, 'live tools match'):
                 service.rent(item_id='i' * 32, epoch=7, attempt=0)
         self.assertEqual(calls, [])
+
+    def test_a_shadow_service_reads_the_state_root_when_it_rents_and_not_when_it_binds(self):
+        """The controller binds the rent path when it starts. A state root that fails closed refuses the rent."""
+        calls = []
+        host = types.SimpleNamespace(
+            lium=lambda *args, **kw: calls.append(args) or (1, '', 'not called'),
+            lium_ps=lambda: [dict(id='id-1', name=SHADOW), dict(id='id-2', name=LANE)],
+            pick_node=lambda *args, **kw: calls.append(args) or (None, None))
+        service = RentService(shadow=True, name_prefix=PREFIX_SHADOW)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ):
+            os.environ.pop('PIT_SHADOW_STATE', None)
+            os.environ.update(PIT_STATE=os.path.join(tmp, 'pit'), PE_STATE=os.path.join(tmp, 'pe'))
+            with self.assertRaisesRegex(RuntimeError, 'fail closed'):
+                pit_state_root()                                    # the two names disagree: no valid state root
+            bind_isolated_rent_service(service, host)
+            self.assertEqual([pod['name'] for pod in service.list_pods()], [SHADOW])
+            for use in (lambda: service.host_rent(SHADOW), lambda: service.host_release(SHADOW, 'test')):
+                with self.assertRaisesRegex(RuntimeError, 'fail closed'):
+                    use()
+            self.assertEqual((calls, os.listdir(tmp)), ([], []))    # no Lium call and no file
+            # The same service with a valid root: its files are in that root.
+            os.environ['PIT_SHADOW_STATE'] = tmp
+            self.assertIsNone(service.host_rent(SHADOW))            # Lium has no offer
+            self.assertEqual(sorted(os.listdir(os.path.join(tmp, 'pit', 'isolated-rent'))), ['events.jsonl', 'rent.lock'])
+            self.assertEqual(os.listdir(tmp), ['pit'])
 
     def test_each_service_reconciles_the_boxes_of_its_own_prefix_only(self):
         account = [dict(id='id-%d' % n, name=name) for n, name in enumerate((

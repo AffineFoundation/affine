@@ -595,13 +595,18 @@ def bind_isolated_rent_service(
     *,
     state_dir: Optional[Path] = None,
 ) -> RentService:
-    """Bind a shadow or fakepass service to the isolated rent path (own names, own state)."""
+    """Bind a shadow or fakepass service to the isolated rent path (own names, own state).
+
+    Without ``state_dir`` the state is in ``<PIT state root>/isolated-rent``. The root is read when a rent file is
+    needed, as the controller reads it: an environment without a valid root refuses the rent, not the start of the
+    controller.
+    """
     if not service.shadow:
         raise RentError('the isolated rent path is for shadow and fakepass services only')
     isolated = bind_isolated_rent(
         mod,
         prefix=service.own_prefix(),
-        state_dir=Path(state_dir) if state_dir else pit_state_root() / 'isolated-rent',
+        state_dir=Path(state_dir) if state_dir else (lambda: pit_state_root() / 'isolated-rent'),
         gpu_order=tuple(service.gpu_order),
         price_ceiling=float(service.price_ceiling_usd_h),
     )

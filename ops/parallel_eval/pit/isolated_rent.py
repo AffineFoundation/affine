@@ -28,7 +28,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 from . import LIVE_NAME_ROOT, PREFIX_SHADOW
 
@@ -85,7 +85,7 @@ class IsolatedRent:
     """Rent, list and release the boxes of one isolated name prefix."""
 
     prefix: str
-    state_dir: Path
+    state_dir: Union[Path, Callable[[], Path]]      # a callable is asked when a state file is needed
     lium: Callable[..., Tuple[int, str, str]]
     lium_ps: Callable[[], List[Mapping[str, Any]]]
     pick_node: Callable[..., Tuple[Optional[str], Optional[Mapping[str, Any]]]]
@@ -100,7 +100,8 @@ class IsolatedRent:
     now: Callable[[], float] = time.time
 
     def __post_init__(self) -> None:
-        self.state_dir = Path(self.state_dir)
+        if not callable(self.state_dir):
+            self.state_dir = Path(self.state_dir)
         problem = live_name_problem(self.prefix)
         if problem:
             raise IsolatedRentError('refused the prefix %r: %s' % (self.prefix, problem))
@@ -119,8 +120,12 @@ class IsolatedRent:
             raise IsolatedRentError('refused the name %r: it has a protected pod name in it' % (name,))
 
     # -- state files -------------------------------------------------------
+    def _dir(self) -> Path:
+        """The state directory. Listing pods does not need it; a rent, a release and an event do."""
+        return Path(self.state_dir()) if callable(self.state_dir) else self.state_dir
+
     def _ledger_path(self) -> Path:
-        return self.state_dir / 'pods.json'
+        return self._dir() / 'pods.json'
 
     def _load(self) -> Dict[str, Dict[str, Any]]:
         try:
@@ -130,17 +135,18 @@ class IsolatedRent:
         return doc if isinstance(doc, dict) else {}
 
     def _save(self, ledger: Mapping[str, Any]) -> None:
-        self.state_dir.mkdir(parents=True, exist_ok=True)
         path = self._ledger_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
         tmp.write_text(json.dumps(ledger, indent=1, sort_keys=True, default=str) + '\n')
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
 
     def _event(self, event: str, **fields: Any) -> None:
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        state = self._dir()
+        state.mkdir(parents=True, exist_ok=True)
         row = dict(fields, event=event, at=float(self.now()), prefix=self.prefix)
-        with open(self.state_dir / 'events.jsonl', 'a') as handle:
+        with open(state / 'events.jsonl', 'a') as handle:
             handle.write(json.dumps(row, sort_keys=True, default=str) + '\n')
 
     # -- Lium --------------------------------------------------------------
@@ -157,8 +163,9 @@ class IsolatedRent:
     def rent(self, name: str, ttl: str = RENT_TTL, *, gpu: Optional[str] = None, **_ignored: Any) -> Optional[Dict[str, Any]]:
         """Rent one 8-GPU box with this name. -> the pod dict, or None when Lium has no offer or the rental failed."""
         self._check_name(name)
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.state_dir / 'rent.lock', 'w') as lock:
+        state = self._dir()
+        state.mkdir(parents=True, exist_ok=True)
+        with open(state / 'rent.lock', 'w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             prefer = [gpu] if gpu else (list(self.gpu_order) or None)
             got_gpu, row = self.pick_node(prefer, fallback=False, price_ceiling=self.price_ceiling)
@@ -272,7 +279,7 @@ def bind_isolated_rent(
     mod: Any,
     *,
     prefix: str,
-    state_dir: Path,
+    state_dir: Union[Path, Callable[[], Path]],
     gpu_order: Tuple[str, ...] = (),
     price_ceiling: Optional[float] = None,
 ) -> IsolatedRent:
@@ -291,7 +298,7 @@ def bind_isolated_rent(
     # The helpers are looked up at each call: a host that replaces one (a test fixture) is still used.
     return IsolatedRent(
         prefix=prefix,
-        state_dir=Path(state_dir),
+        state_dir=state_dir,
         lium=lambda *args, **kw: mod.lium(*args, **kw),
         lium_ps=lambda: mod.lium_ps(),
         pick_node=lambda *args, **kw: mod.pick_node(*args, **kw),
