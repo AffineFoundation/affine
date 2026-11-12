@@ -12,7 +12,7 @@ from .layout import (
 )
 from .test_fakes import LockedStore, model_files, model_ids, put_state
 
-LAYOUT = Layout('shadow/batchctl/run0001/')
+LAYOUT = Layout('pit-shadow/batchctl/run0001/')
 MASTER = 'c' * 64
 
 

@@ -14,7 +14,7 @@ What a shadow run can write, and nothing else:
 
 * its own state root (journal, lock, status file): a directory that is not
   in or around a live root (``guard.StateRoot``);
-* R2 keys under ``shadow/batchctl/<run id>/`` (``guard.GuardedStore``);
+* R2 keys under ``pit-shadow/batchctl/<run id>/`` (``guard.GuardedStore``);
 * boxes with a shadow name of this run (``lium.LiumProvider``).
 
 There is no other mode in this file, and no code for the live state, the

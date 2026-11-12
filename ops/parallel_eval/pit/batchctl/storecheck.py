@@ -9,7 +9,7 @@ The R2 adapter (``r2.py``) proves these rules in its own tests: against a
 fake S3 in every test run, and against the real store, in a scratch prefix,
 when the operator names a bucket::
 
-    check_store(adapter, 'shadow/batchctl/<run_id>/contract/', big_bytes=64 << 20)
+    check_store(adapter, 'pit-shadow/batchctl/<run_id>/contract/', big_bytes=64 << 20)
 
 ``check_store`` raises ``ContractBroken`` with the rule that failed.
 """

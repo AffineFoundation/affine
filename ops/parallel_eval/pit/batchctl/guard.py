@@ -4,7 +4,7 @@ This pull request ships shadow mode only. Each deny below is a hard error,
 not a setting:
 
 * R2: every key that the controller reads, writes, copies or deletes must be
-  under ``shadow/batchctl/<run_id>/``. Live keys are out of reach.
+  under ``pit-shadow/batchctl/<run_id>/``. Live keys are out of reach.
 * Local files: the controller writes four named files in one marked state
   root. The root must be outside every live root.
 * Boxes: the controller destroys a box only if its name is exactly a name

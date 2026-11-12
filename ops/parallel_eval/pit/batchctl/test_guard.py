@@ -38,6 +38,11 @@ LIVE_KEYS = [
     'shadow/HEAD.json',
     'shadow/batchctl/HEAD.json',
     'shadow/batchctl/other0001/HEAD.json',
+    'shadow/batchctl/run0001/HEAD.json',
+    'pit-shadow/HEAD.json',
+    'pit-shadow/batchctl/HEAD.json',
+    'pit-shadow/batchctl/other0001/HEAD.json',
+    'pit-shadow/other/run0001/HEAD.json',
     PREFIX,
     PREFIX[:-1],
     PREFIX + '../other0001/HEAD.json',
@@ -185,7 +190,8 @@ def test_bad_run_id_is_refused(run_id):
 
 
 def test_a_prefix_that_is_not_a_shadow_prefix_is_refused():
-    for prefix in ('', 'live/', 'pit/', 'shadow/batchctl', 'shadow/other/run0001/'):
+    for prefix in ('', 'live/', 'pit/', 'pit-shadow/', 'pit-shadow/batchctl', 'pit-shadow/other/run0001/',
+                   'shadow/batchctl/run0001/', 'xpit-shadow/batchctl/run0001/'):
         with pytest.raises(ShadowWriteError):
             check_key(prefix, prefix + 'HEAD.json')
 

@@ -48,7 +48,8 @@ MODE_SHADOW = 'shadow'
 # unknown ``affine-pe-pit-*`` pods. This prefix keeps the two systems apart.
 BOX_PREFIX_SHADOW = 'affine-bctl-shadow-'
 
-# Every R2 key of a shadow run starts with this root.
-R2_SHADOW_ROOT = 'shadow/batchctl/'
+# Every R2 key of a shadow run starts with this root. It is inside the one
+# shadow prefix of the PIT package (``pit-shadow/``, see ``pit.shadow_guard``).
+R2_SHADOW_ROOT = 'pit-shadow/batchctl/'
 
 __all__ = ['VERSION', 'MODE_SHADOW', 'BOX_PREFIX_SHADOW', 'R2_SHADOW_ROOT']

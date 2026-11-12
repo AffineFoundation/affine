@@ -95,7 +95,7 @@ class Lease:
 
     def __init__(self, server, tmp_path, *, seed='base'):
         self.server, self.store = server, server.store
-        self.layout = L.Layout('shadow/batchctl/%s/' % RUN)
+        self.layout = L.Layout('pit-shadow/batchctl/%s/' % RUN)
         self.manifest, self.files = put_model(self.store, self.layout, seed, chunk=CHUNK)
         self.checkpoint, self.entry, self.master = model_ids(self.files)
         self.base = self.manifest.state_id

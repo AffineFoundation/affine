@@ -7,7 +7,7 @@ Three kinds:
 * against scripted answers: the mapping of every answer of R2 to the error
   rule of the interfaces, and the resumed read of ``digest``;
 * against real R2, only when ``BATCHCTL_R2_CONFIG`` names a bucket document.
-  They write under a sandbox prefix ``shadow/batchctl/<run_id>/`` and nowhere
+  They write under a sandbox prefix ``pit-shadow/batchctl/<run_id>/`` and nowhere
   else. moto cannot prove what real R2 does with a condition, so these runs
   are the proof that counts.
 """

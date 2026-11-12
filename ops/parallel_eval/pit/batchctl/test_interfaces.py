@@ -13,9 +13,9 @@ H1, H2 = ('%064x' % n for n in (1, 2))
 def spec(**over):
     fields = dict(
         run_id='run0001', batch_id='b1', batch_ref='ref', fence=7, attempt=1,
-        base_state=H1, base_seq=0, base_prefix='shadow/batchctl/run0001/states/%s/' % H1,
+        base_state=H1, base_seq=0, base_prefix='pit-shadow/batchctl/run0001/states/%s/' % H1,
         expected_fp32_master_digest=H2,
-        staging_prefix='shadow/batchctl/run0001/staging/b1/000000000007/',
+        staging_prefix='pit-shadow/batchctl/run0001/staging/b1/000000000007/',
         heartbeat_every_s=60.0, job_ttl_s=3600.0,
     )
     fields.update(over)
@@ -48,10 +48,10 @@ def test_job_spec_without_a_real_fp32_master_digest_cannot_be_built(digest):
     {'attempt': 0},
     {'base_seq': -1},
     {'fence': 8},
-    {'staging_prefix': 'shadow/batchctl/run0001/staging/b1/'},
-    {'staging_prefix': 'shadow/batchctl/run0001/staging/b1/000000000007'},
-    {'base_prefix': 'shadow/batchctl/run0001/states/%s/' % H2},
-    {'base_prefix': 'shadow/batchctl/run0001/states/'},
+    {'staging_prefix': 'pit-shadow/batchctl/run0001/staging/b1/'},
+    {'staging_prefix': 'pit-shadow/batchctl/run0001/staging/b1/000000000007'},
+    {'base_prefix': 'pit-shadow/batchctl/run0001/states/%s/' % H2},
+    {'base_prefix': 'pit-shadow/batchctl/run0001/states/'},
 ])
 def test_job_spec_must_be_consistent(over):
     with pytest.raises(ValueError):

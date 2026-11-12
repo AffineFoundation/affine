@@ -166,14 +166,14 @@ def test_bad_head_pointer_is_rejected(raw):
 
 
 def test_layout_keys():
-    lay = L.Layout('shadow/batchctl/run1/')
-    assert lay.head == 'shadow/batchctl/run1/HEAD.json'
-    assert lay.link(H1) == 'shadow/batchctl/run1/links/%s.json' % H1
-    assert lay.state_manifest(H1) == 'shadow/batchctl/run1/states/%s/manifest.json' % H1
-    assert lay.state_object(H1, 'w.bin') == 'shadow/batchctl/run1/states/%s/obj/w.bin' % H1
-    assert lay.result(H2) == 'shadow/batchctl/run1/results/%s.json' % H2
-    assert lay.outcome('b1') == 'shadow/batchctl/run1/outcomes/b1.json'
-    assert lay.staging_prefix('b1', 7) == 'shadow/batchctl/run1/staging/b1/000000000007/'
+    lay = L.Layout('pit-shadow/batchctl/run1/')
+    assert lay.head == 'pit-shadow/batchctl/run1/HEAD.json'
+    assert lay.link(H1) == 'pit-shadow/batchctl/run1/links/%s.json' % H1
+    assert lay.state_manifest(H1) == 'pit-shadow/batchctl/run1/states/%s/manifest.json' % H1
+    assert lay.state_object(H1, 'w.bin') == 'pit-shadow/batchctl/run1/states/%s/obj/w.bin' % H1
+    assert lay.result(H2) == 'pit-shadow/batchctl/run1/results/%s.json' % H2
+    assert lay.outcome('b1') == 'pit-shadow/batchctl/run1/outcomes/b1.json'
+    assert lay.staging_prefix('b1', 7) == 'pit-shadow/batchctl/run1/staging/b1/000000000007/'
     assert lay.staging_complete('b1', 7).endswith('/000000000007/COMPLETE.json')
     assert lay.parse_staging_key(lay.staging_object('b1', 7, 'w.bin')) == ('b1', 7)
     assert lay.parse_staging_key(lay.head) is None
@@ -185,7 +185,7 @@ def test_layout_keys():
 def test_a_staging_key_from_outside_never_makes_the_parser_fail(fence):
     # ``str.isdigit`` is true for digits that ``int`` refuses, and ``int``
     # refuses a very long number. Neither may reach ``int``.
-    lay = L.Layout('shadow/batchctl/run1/')
+    lay = L.Layout('pit-shadow/batchctl/run1/')
     assert lay.parse_staging_key('%sb1/%s/x' % (lay.staging_root, fence)) is None
 
 
@@ -244,7 +244,7 @@ def test_a_trailing_newline_never_passes_a_name_check():
 
 
 def test_heartbeat_roundtrip_and_fence_binding():
-    lay = L.Layout('shadow/batchctl/run1/')
+    lay = L.Layout('pit-shadow/batchctl/run1/')
     assert lay.staging_heartbeat('b1', 7) == lay.staging_prefix('b1', 7) + 'HEARTBEAT.json'
     assert lay.parse_staging_key(lay.staging_heartbeat('b1', 7)) == ('b1', 7)
     raw = L.heartbeat_body(fence=7, seq=3, stage='train')
@@ -270,8 +270,8 @@ def test_bad_heartbeat_is_rejected(raw):
 
 
 def test_run_binding_names_the_journal():
-    lay = L.Layout('shadow/batchctl/run1/')
-    assert lay.run == 'shadow/batchctl/run1/RUN.json'
+    lay = L.Layout('pit-shadow/batchctl/run1/')
+    assert lay.run == 'pit-shadow/batchctl/run1/RUN.json'
     one = L.run_body(run_id='run1', journal_id=H1)
     assert one == L.run_body(run_id='run1', journal_id=H1)
     assert one != L.run_body(run_id='run1', journal_id=H2)
