@@ -32,7 +32,7 @@ from safetensors.torch import load_file
 from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
 
 from ops.parallel_eval.live import pe_artifact_upload
-from ops.parallel_eval.pit import compare_train_reports, train_shard
+from ops.parallel_eval.pit import compare_train_reports, probe_parity, train_shard
 from subnet.storage import canonical, sha
 
 REPO = Path(__file__).resolve().parents[3]
@@ -1466,6 +1466,35 @@ class TestCompareTrainReports(unittest.TestCase):
     def test_refuses_a_report_without_an_update(self):
         with self.assertRaises(ValueError):
             compare_train_reports.compare(dict(status='no-update'), self.report['sharded'])
+
+    def test_the_parity_harness_tracks_the_norm_of_these_reports(self):
+        """probe_parity reads the same reports for its tracked number: the gradient norm before clipping of each
+        side, the ratio B / A and the inputs that differ. A side is a probe of the head that the updates start from."""
+        head = self.report['derail']['input_checkpoint']
+        cells = {str(i): dict(n=8, c=4, w=4, u=0, b=0, x=0, tok=800, L=[100] * 8) for i in range(4)}
+        side = dict(checkpoint_id=head, seed='s', partial=False, samples=32, planned_samples=32, wall_seconds=10.0,
+                    rollouts_per_min=192.0, replicas=1, envs=dict(affine_gatepool=dict(per_task=cells)))
+
+        def track(a, b):
+            return probe_parity.compare(side, side, train_a=self.report[a], train_b=self.report[b])['preclip']
+
+        same = track('derail', 'sharded')
+        self.assertEqual((same['a']['preclip_gradient_norm'], same['b']['preclip_gradient_norm']),
+                         (self.report['derail']['preclip_gradient_norm'], self.report['sharded']['preclip_gradient_norm']))
+        self.assertAlmostEqual(same['ratio_b_over_a'], 1.0, delta=1e-6)
+        self.assertEqual((same['same_job'], same['differences'], same['within_shadow_tolerance'], same['in_verdict']),
+                         (True, [], True, False))
+        self.assertEqual((same['a']['engine'], same['a']['ranks'], same['b']['engine'], same['b']['ranks']),
+                         ('padded', None, 'packed-zero3-v835', 2))
+        for update in (same['a'], same['b']):
+            self.assertEqual((update['from_this_checkpoint'], update['max_gradient_norm'], update['above_limit'],
+                              update['trained_rollouts']), (True, 1.0, False, 9))
+        other = track('no-derail', 'sharded')                                       # one batch and head, another setting
+        self.assertEqual((other['same_job'], other['differences']), (True, ['config.settings.derail_threshold']))
+        totals = compare_train_reports.compare(self.report['no-derail'], self.report['sharded'])['totals']
+        self.assertEqual(other['ratio_b_over_a'], totals['preclip_gradient_norm']['ratio'])
+        self.assertEqual((other['a']['derailed_rollouts'], other['b']['derailed_rollouts'], other['a']['loss_tokens'],
+                          other['b']['loss_tokens']), (0, 1, 277, 263))
 
 
 class TestShardedFailures(unittest.TestCase):

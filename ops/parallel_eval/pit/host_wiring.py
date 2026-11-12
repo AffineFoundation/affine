@@ -24,7 +24,7 @@ from .decision_emit import gate_epochs_root
 from .gate_writer import HostGateWriter, build_host_rounds
 from .life_paths import pe_state_root
 from .pe_lane import LaneService, bind_host_lane_service
-from .pe_rent import RentService, _bind_offer_precheck, bind_host_rent_service
+from .pe_rent import RentService, _bind_offer_precheck, bind_isolated_rent_service
 from . import probe_fingerprint
 from .pe_score import call_live_host_score, nest_heldout_fields
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
@@ -112,36 +112,11 @@ def _live_pod_ids(rent_mod: Any) -> set[str]:
     return ids
 
 
-def _make_shadow_rent(rent_mod: Any, host_rent: Any) -> Callable[..., Mapping[str, Any]]:
-    """Rent ``affine-pe-pit-shadow-*`` via live pe_rent (prefix satisfies affine-pe-*).
-
-    Shadow must use the live rent/release path so ``pe_rent.release``'s
-    ``affine-pe-`` assert succeeds — otherwise pods keep billing after the
-    ledger says released. Does not pass ``max_eval_nodes`` (own cap).
-    """
-    def _rent(name: str, ttl: str = '4h', *, gpu: str = 'B300', **_kw: Any) -> Mapping[str, Any]:
-        if not str(name).startswith(PREFIX_SHADOW):
-            raise LiveWiringError(
-                'shadow rent name must start with %s' % PREFIX_SHADOW
-            )
-        if not callable(host_rent):
-            raise LiveWiringError('shadow rent requires live pe_rent.rent')
-        # Drop max_eval_nodes — shadow has its own cap (share_pe_cap=False).
-        out = host_rent(name, ttl, gpu=gpu)
-        if out is None:
-            raise LiveWiringError('shadow host rent returned no box')
-        d = dict(out)
-        d['auto_backup_disabled'] = True
-        d['shadow'] = True
-        return d
-
-    return _rent
-
-
 def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
     """Live PIT + PE share one global eval-node cap (review-2 blocker 4).
 
-    Shadow boxes use PREFIX_SHADOW and never enter this shared budget.
+    Shadow boxes never enter this shared budget: live ``eval_nodes`` lists
+    ``affine-pe-*`` pods only, and a shadow name does not start with that.
     """
     eval_nodes = getattr(rent_mod, 'eval_nodes', None)
     our_pods = getattr(rent_mod, 'our_pods', None) or getattr(rent_mod, 'list_pods', None)
@@ -172,7 +147,9 @@ def _bind_shared_cap_counters(rent: RentService, rent_mod: Any) -> None:
                         continue
                 elif name in warm_names:
                     continue
-                # Exclude live + shadow PIT (and legacy shadow prefix).
+                # Exclude live PIT (the ledger counts those) and names that are
+                # not ``affine-pe-*``. Names from before the prefix change
+                # (``affine-pe-pit-shadow-*``) start with PREFIX_LIVE.
                 # Exclude on-demand GREEN bench boxes (own cap 1; not PE eval).
                 if (
                     name.startswith(PREFIX_LIVE)
@@ -405,12 +382,6 @@ def build_live_host_bundle(
     ledger_path = extra.get('rent_ledger_path') or os.environ.get('PIT_RENT_LEDGER')
     shadow = bool(cfg.is_shadow())
 
-    # Shadow: own prefix + own cap; never share the live PE 5-node budget.
-    # Live pe_rent asserts affine-pe-*, so shadow rents via a thin lium wrapper.
-    effective_host_rent = host_rent
-    if shadow:
-        effective_host_rent = _make_shadow_rent(rent_mod, host_rent)
-
     rent = RentService(
         max_boxes=cfg.max_boxes,
         max_eval_nodes=int(extra.get('max_eval_nodes') or cfg.max_boxes or 5),
@@ -421,12 +392,20 @@ def build_live_host_bundle(
         shadow=shadow,
         name_prefix=PREFIX_SHADOW if shadow else PREFIX_LIVE,
         share_pe_cap=not shadow,
-        host_rent=effective_host_rent,
+        host_rent=host_rent,
         host_release=host_release,
         list_pods=list_pods,
         ledger_path=ledger_path,
     )
-    if not shadow:
+    if shadow:
+        # Shadow: own prefix + own cap. Live rent, release and our_pods are for
+        # ``affine-pe-*`` names; a shadow box has a name that live never matches,
+        # so it has its own rent, release and listing (own lock and pod ledger).
+        try:
+            bind_isolated_rent_service(rent, rent_mod, state_dir=extra.get('isolated_rent_state'))
+        except RuntimeError as exc:
+            raise LiveWiringError('shadow rent path: %s' % exc) from exc
+    else:
         _bind_shared_cap_counters(rent, rent_mod)
     _bind_offer_precheck(rent, rent_mod)
 

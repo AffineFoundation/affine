@@ -45,6 +45,15 @@ Verdicts:
   inconclusive            no test is, but the run is partial or cannot resolve
                           ``max_shift``. Use more tasks.
   not_comparable          the two sides did not run the same plan.
+
+The trainer update is tracked too. The preclip gradient norm is the size of the
+gradient of one update, before the trainer limits it to ``max_gradient_norm``.
+``compare`` reads the trainer report of each side (``--train-a``, ``--train-b``:
+``report.private.json`` of ``train_pit.py``, for the update that the trainer of
+that side made from one batch). The report then has the norm of each side and
+the ratio B / A. The norm is a tracked number, not a test: it does not change
+the verdict or the exit code. ``compare_train_reports.py`` compares the same two
+updates rollout by rollout.
 """
 from __future__ import annotations
 
@@ -63,10 +72,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from ops.parallel_eval.live.pe_probe_plan import build_probe_plan
 
 from . import GATE_K_CAND, GATE_MAX_TOKENS
+from . import compare_train_reports as CTR
 from . import probe_layout as PL
 from . import probe_serve as PS
 from .box import _load_public_harness, normalize_meta_pod
 from .box_job import RemoteBoxJobStore
+from .shadow_compare import GRAD_NORM_REL_TOL, gradient_norm_within_tol
 
 REPORT_VERSION = 'pit-probe-parity-v1'
 Z_CRIT = 3.0
@@ -75,6 +86,14 @@ TAIL_ALPHA = 0.01
 EXIT = {'parity': 0, 'no_difference_detected': 0, 'different': 1, 'inconclusive': 2, 'not_comparable': 2}
 # Count fields of one task cell in a probe result, and what each one counts.
 COUNTS = {'pass': 'c', 'unresolved': 'u', 'budget_hit': 'b', 'error': 'x'}
+# Keys under which a document holds a trainer report or its summary: ``TRAINING-RESULT.json`` of a live epoch
+# (payload, report, training), the result of ``train_v834e``, the training report that the host stores for an
+# item, ``markers/train.done``.
+UPDATE_HOLDERS = ('payload', 'report_doc', 'training_report', 'report', 'training', 'training_report_summary', 'summary')
+# The job of one update: the checkpoint that it starts from, the batch, and the optimizer step.
+UPDATE_JOB = ('input_checkpoint', 'data_sha256', 'optimizer_step_before')
+UPDATE_NUMBERS = ('objective_loss', 'trained_rollouts', 'masked_rollouts', 'trained_tokens', 'loss_tokens',
+                  'derailed_rollouts')
 
 
 class ParityError(ValueError):
@@ -190,6 +209,89 @@ def _plan_differences(a: Mapping[str, Any], b: Mapping[str, Any]) -> List[str]:
     return why
 
 
+# ------------------------------------------------------------------ the trainer update of each side
+def _above_zero(value: Any) -> Optional[float]:
+    """``value`` as a number above zero, else None. A box summary has 0 where the trainer report had no norm."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return None
+    return float(value)
+
+
+def find_update(doc: Any) -> Mapping[str, Any]:
+    """The trainer report in ``doc``, or the summary of one when ``doc`` has no more.
+
+    ``doc`` is ``report.private.json`` of ``train_pit.py``, or a document that holds it (``UPDATE_HOLDERS``): for
+    the live trainer, ``TRAINING-RESULT.json`` of the epoch.
+    """
+    found: List[Mapping[str, Any]] = []
+    queue = [doc]
+    while queue:
+        item = queue.pop(0)
+        if isinstance(item, Mapping) and not any(item is seen for seen in found):
+            found.append(item)
+            queue.extend(item.get(key) for key in UPDATE_HOLDERS)
+    # The trainer report has the job of the update. A summary has the norm alone, as ``gradient_norm``.
+    for key in ('preclip_gradient_norm', 'gradient_norm'):
+        for item in found:
+            if _above_zero(item.get(key)) is not None:
+                return item
+    raise ParityError('the document has no gradient norm of a trainer update')
+
+
+def update_summary(report: Mapping[str, Any], *, checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
+    """What the parity report keeps of one trainer update: the norm, the limit of the trainer, the job."""
+    norm = _above_zero(report.get('preclip_gradient_norm')) or _above_zero(report.get('gradient_norm'))
+    metrics, config, micro = (
+        report.get(key) if isinstance(report.get(key), Mapping) else {} for key in ('epoch_metrics', 'config', 'microbatch'))
+    settings = config.get('settings') if isinstance(config.get('settings'), Mapping) else {}
+    limit = _above_zero(metrics.get('max_gradient_norm')) or _above_zero(settings.get('max_gradient_norm'))
+    out = dict(
+        preclip_gradient_norm=norm, max_gradient_norm=limit, above_limit=(norm > limit if limit else None),
+        engine=micro.get('engine') or report.get('engine'), ranks=micro.get('world'), status=report.get('status'))
+    out.update({key: report.get(key) for key in UPDATE_NUMBERS + UPDATE_JOB})
+    start = out['input_checkpoint']
+    out['from_this_checkpoint'] = (start == checkpoint_id) if start and checkpoint_id else None
+    return out
+
+
+def track_preclip(doc_a: Any = None, doc_b: Any = None, *, checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
+    """The preclip gradient norm of the trainer update of each side, and the ratio B / A.
+
+    ``doc_a`` and ``doc_b`` are documents for ``find_update``; None when a side has no trainer report.
+
+    same_job     True: the two updates start from one checkpoint, with one batch, at one optimizer step.
+                 False: one of these differs; a ratio then has no meaning, and there is none.
+                 None: the documents do not say.
+    differences  each input that differs. For two trainer reports these are the names that
+                 ``compare_train_reports`` gives (settings, turn parameters and fp32 master too).
+    within_shadow_tolerance
+                 the check of the gradient norm in the shadow pass criterion (``shadow_compare``), on this pair.
+
+    The norm is a tracked number. It has no part in the verdict (``in_verdict`` is False).
+    """
+    reports = [None if doc is None else find_update(doc) for doc in (doc_a, doc_b)]
+    a, b = (None if report is None else update_summary(report, checkpoint_id=checkpoint_id) for report in reports)
+    out: Dict[str, Any] = dict(
+        in_verdict=False, a=a, b=b, same_job=None, differences=[], ratio_b_over_a=None, relative_difference=None,
+        shadow_tolerance=GRAD_NORM_REL_TOL, within_shadow_tolerance=None)
+    if a is None or b is None:
+        return out
+    in_both = [key for key in UPDATE_JOB if a[key] is not None and b[key] is not None]
+    job_differs = [key for key in in_both if a[key] != b[key]]
+    if job_differs:
+        out['same_job'] = False
+    elif {'input_checkpoint', 'data_sha256'} <= set(in_both):
+        out['same_job'] = True
+    whole = all(CTR.is_update_report(report) for report in reports)
+    out['differences'] = sorted(CTR.input_differences(*reports)) if whole else job_differs
+    if out['same_job'] is not False:
+        norm_a, norm_b = a['preclip_gradient_norm'], b['preclip_gradient_norm']
+        out.update(
+            ratio_b_over_a=norm_b / norm_a, relative_difference=abs(norm_b - norm_a) / max(norm_a, norm_b),
+            within_shadow_tolerance=gradient_norm_within_tol(dict(gradient_norm=norm_b), dict(gradient_norm=norm_a))[0])
+    return out
+
+
 # ------------------------------------------------------------------ the comparison
 def _stratified(pairs: Sequence[Tuple[Mapping[str, Any], Mapping[str, Any]]], field: str) -> Dict[str, Any]:
     """Shift test of one count field over all tasks: rates of both sides, mean delta, z."""
@@ -206,12 +308,17 @@ def _stratified(pairs: Sequence[Tuple[Mapping[str, Any], Mapping[str, Any]]], fi
 
 def compare(doc_a: Mapping[str, Any], doc_b: Mapping[str, Any], *, tag_a: Optional[str] = None,
             tag_b: Optional[str] = None, max_shift: Optional[float] = None, z_crit: float = Z_CRIT,
-            tail_alpha: float = TAIL_ALPHA) -> Dict[str, Any]:
-    """Compare two sides of one checkpoint. Side A is the reference; a delta is B minus A."""
+            tail_alpha: float = TAIL_ALPHA, train_a: Any = None, train_b: Any = None) -> Dict[str, Any]:
+    """Compare two sides of one checkpoint. Side A is the reference; a delta is B minus A.
+
+    ``train_a`` and ``train_b`` are the trainer reports of the two sides. The report tracks their preclip
+    gradient norm under the key ``preclip`` (see ``track_preclip``). They do not change the verdict.
+    """
     a, b = load_side(doc_a, tag=tag_a, default_tag='A'), load_side(doc_b, tag=tag_b, default_tag='B')
     if not a['checkpoint_id'] or a['checkpoint_id'] != b['checkpoint_id']:
         raise ParityError('the sides are not one checkpoint: %s and %s' % (
             str(a['checkpoint_id'])[:12], str(b['checkpoint_id'])[:12]))
+    preclip = track_preclip(train_a, train_b, checkpoint_id=a['checkpoint_id'])
     shared = sorted(set(a['cells']) & set(b['cells']))
     if not shared:
         raise ParityError('the sides share no finished task')
@@ -302,6 +409,7 @@ def compare(doc_a: Mapping[str, Any], doc_b: Mapping[str, Any], *, tag_a: Option
         dispersion=dispersion, tail=tail,
         same_length_share=(same_len / len_pairs if len_pairs else None),
         speedup_b_over_a=(walls[0] / walls[1] if all(walls) and not incomplete else None),
+        preclip=preclip,
         tasks=sorted(tasks, key=lambda row: (row['p'], -abs(row['delta']), row['env_id'], row['index'])),
     )
 
@@ -310,6 +418,46 @@ def _mean_tokens(cells: Any) -> Optional[float]:
     cells = list(cells)
     samples = sum(cell['n'] for cell in cells)
     return sum(int(cell.get('tok') or 0) for cell in cells) / samples if samples else None
+
+
+def _render_preclip(preclip: Mapping[str, Any]) -> List[str]:
+    """Text lines of the tracked preclip gradient norm."""
+    sides = [(tag, preclip.get(key)) for tag, key in (('A', 'a'), ('B', 'b'))]
+    title = 'preclip gradient norm of the trainer update (tracked; not in the verdict): '
+    if not any(side for _, side in sides):
+        return [title + 'no trainer report (give --train-a and --train-b)']
+
+    def one(tag: str, side: Optional[Mapping[str, Any]]) -> str:
+        if not side:
+            return '%s no trainer report' % tag
+        how = [str(side['engine'])] if side.get('engine') else []
+        how += ['%s ranks' % side['ranks']] if side.get('ranks') else []
+        return '%s %.6g%s' % (tag, side['preclip_gradient_norm'], ' [%s]' % ', '.join(how) if how else '')
+
+    first = title + ', '.join(one(tag, side) for tag, side in sides)
+    lines: List[str] = []
+    if preclip.get('ratio_b_over_a') is not None:
+        first += ', B / A %.4f' % preclip['ratio_b_over_a']
+        lines.append('  relative difference %.2f%%, %s the %.2f%% of the shadow pass criterion' % (
+            100 * preclip['relative_difference'], 'within' if preclip['within_shadow_tolerance'] else 'above',
+            100 * preclip['shadow_tolerance']))
+    elif preclip.get('same_job') is False:
+        first += '; no ratio: the two updates are not one job'
+    if all(side for _, side in sides):
+        if preclip.get('same_job') is None:
+            lines.append('  the reports do not say if the two updates are one job (one checkpoint, one batch, one step)')
+        if preclip.get('differences'):
+            lines.append('  inputs of the two updates that differ: %s' % ', '.join(preclip['differences']))
+    elsewhere = [tag for tag, side in sides if side and side.get('from_this_checkpoint') is False]
+    if elsewhere:
+        lines.append('  %s not start from the checkpoint of the two sides' % (
+            'the updates of A and B do' if len(elsewhere) == 2 else 'the update of %s does' % elsewhere[0]))
+    limits = sorted({side['max_gradient_norm'] for _, side in sides if side and side.get('max_gradient_norm')})
+    if limits:
+        lines.append('  the trainer limits the norm to %s: %s' % (' / '.join('%g' % limit for limit in limits), ', '.join(
+            '%s %s' % (tag, 'above the limit' if side['above_limit'] else 'not above the limit')
+            for tag, side in sides if side and side.get('max_gradient_norm'))))
+    return [first] + lines
 
 
 def render(report: Mapping[str, Any], *, top: int = 20) -> str:
@@ -356,6 +504,7 @@ def render(report: Mapping[str, Any], *, top: int = 20) -> str:
                 side['tag'], side['wall_seconds'], side.get('replicas'), side.get('mean_out_tokens') or 0))
     if report['speedup_b_over_a']:
         lines.append('B is %.2f times as fast as A' % report['speedup_b_over_a'])
+    lines += _render_preclip(report.get('preclip') or {})
     lines.append('per-task pass rates, largest differences first (%d of %d):' % (
         min(top, len(report['tasks'])), len(report['tasks'])))
     lines.append('  %-18s %7s %7s %7s %8s %9s' % ('env', 'task', 'A', 'B', 'B - A', 'Fisher p'))
@@ -453,6 +602,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cp.add_argument('--z-crit', type=float, default=Z_CRIT, help='a test beyond this z says the layouts differ')
     cp.add_argument('--top', type=int, default=20, help='tasks in the text report')
     cp.add_argument('--out', help='write the full report (every task) as JSON')
+    cp.add_argument('--train-a', help='trainer report of the update that the trainer of side A made: report.private.json '
+                                      'of train_pit.py, or a document that holds it (TRAINING-RESULT.json of a live '
+                                      'epoch). The report then tracks the gradient norm before clipping of each side; '
+                                      'the verdict does not change')
+    cp.add_argument('--train-b', help='the same for side B. The two updates must be of one batch')
 
     args = ap.parse_args(argv)
     try:
@@ -480,7 +634,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(json.dumps(dict(out=args.out, status=record['status'], samples=record['result'].get('samples'),
                                   partial=record['result'].get('partial'))))
             return 0
-        report = compare(_read(args.a), _read(args.b), max_shift=args.max_shift, z_crit=args.z_crit)
+        report = compare(_read(args.a), _read(args.b), max_shift=args.max_shift, z_crit=args.z_crit,
+                         train_a=_read(args.train_a) if args.train_a else None,
+                         train_b=_read(args.train_b) if args.train_b else None)
         if args.out:
             Path(args.out).write_text(json.dumps(report, sort_keys=True) + '\n')
         sys.stdout.write(render(report, top=args.top))

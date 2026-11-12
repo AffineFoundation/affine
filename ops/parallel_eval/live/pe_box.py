@@ -24,6 +24,7 @@ private material are committed here.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -294,8 +295,10 @@ def put(P: Any, dest: str, data: bytes, mode: str = '644') -> None:
     if len(data) > 8 * 1024 * 1024:
         raise BoxIOError('refuse large put over ssh stdin (%d bytes); use put_tar/scp' % len(data))
     parent = str(Path(dest).parent)
+    # The temp name has the pid of the box shell in it: two starters that put the same file at one time
+    # do not write one temp file, and no mv fails because the other mv took the file.
     P.run(
-        "mkdir -p %s && cat > %s.tmp && chmod %s %s.tmp && mv %s.tmp %s" % (
+        "mkdir -p %s && cat > %s.tmp.$$ && chmod %s %s.tmp.$$ && mv %s.tmp.$$ %s" % (
             parent, dest, mode, dest, dest, dest,
         ),
         inp=bytes(data),
@@ -1528,10 +1531,8 @@ def _life_bucket(why: str) -> Any:
 def _ckpt_r2_prefix(candidate_id: str, *, pending: bool = False) -> str:
     if pending:
         return '%s/model' % AU.pending_r2_prefix(candidate_id)
-    prefix = os.environ.get('PIT_R2_CKPT_PREFIX') or (
-        'mimo/affine-mimo9b-grpo-20261013/checkpoints'
-    )
-    return '%s/%s/model' % (prefix.rstrip('/'), candidate_id)
+    prefix = AU.r2_write_prefix('PIT_R2_CKPT_PREFIX', 'mimo/affine-mimo9b-grpo-20261013/checkpoints')
+    return '%s/%s/model' % (prefix, candidate_id)
 
 
 def presign_put_urls(
@@ -1759,8 +1760,25 @@ def _write_candidate_receipt(
 # ---------------------------------------------------------------------------
 # HostBoxIO
 # ---------------------------------------------------------------------------
+def _in_output_prefix(method: Any) -> Any:
+    """Run a method of HostBoxIO with the R2 output prefix of its object."""
+    @functools.wraps(method)
+    def run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with AU.output_prefix(getattr(self, 'output_prefix', None)):
+            return method(self, *args, **kwargs)
+    return run
+
+
 class HostBoxIO:
-    """Host-side BoxIO: provision+train ON the rented box (drive_item path)."""
+    """Host-side BoxIO: provision+train ON the rented box (drive_item path).
+
+    ``output_prefix`` says where this object writes in R2, for example ``pit-shadow/batchctl/<run id>/``.
+    The pending artifacts go to ``<output_prefix>pending/<candidate id>/`` (see
+    ``pe_artifact_upload.output_prefix``). None: the write prefixes of the environment.
+    """
+
+    def __init__(self, output_prefix: Optional[str] = None) -> None:
+        self.output_prefix = None if output_prefix is None else AU.clean_output_prefix(output_prefix)
 
     def download_head(self, head: str) -> str:
         if not isinstance(head, str) or len(head) != 64:
@@ -1774,6 +1792,7 @@ class HostBoxIO:
             raise BoxIOError('expected_digest must be hex64')
         return 'r2://master/%s:%s' % (head, expected_digest)
 
+    @_in_output_prefix
     def train_v834e(self, **kwargs: Any) -> Mapping[str, Any]:
         if kwargs.get('fp32_bootstrap_override') or kwargs.get('bootstrap_override'):
             raise BoxIOError('bootstrap-override-refused-by-pit')
@@ -1894,6 +1913,8 @@ class HostBoxIO:
                 )
             except BoxJobError as exc:
                 raise BoxIOError('box train stage: %s' % exc) from exc
+            # 'adopted': a trainer of a different starter was alive (BUSY) or done. This call started nothing.
+            info['train-start'] = 'started' if ('train', 'started') in ctrl.starts else 'adopted'
 
         if not train_marker.get('ok') and not train_marker.get('checkpoint'):
             # Marker without checkpoint — fail closed (box wrote a failed marker).
@@ -2013,6 +2034,7 @@ class HostBoxIO:
         return result
 
 
+    @_in_output_prefix
     def upload_candidate(
         self,
         *,
@@ -2072,6 +2094,7 @@ class HostBoxIO:
         os.chmod(dst / 'UPLOAD.json', 0o600)
         return dict(ok=True, path=str(dst))
 
+    @_in_output_prefix
     def upload_master_during_probe(self, *, candidate_id: str, master_path: str) -> Mapping[str, Any]:
         return upload_master(candidate_id=candidate_id, path=master_path)
 
@@ -2079,8 +2102,8 @@ class HostBoxIO:
         raise BoxIOError('live HostBoxIO refuses probe_result_fixture (use pe_lane.run_probe)')
 
 
-def box_io_factory() -> HostBoxIO:
-    return HostBoxIO()
+def box_io_factory(output_prefix: Optional[str] = None) -> HostBoxIO:
+    return HostBoxIO(output_prefix=output_prefix)
 
 
 def destroy_box_state(*, box_id: str, reason: str = 'done', **_ignored) -> Mapping[str, Any]:

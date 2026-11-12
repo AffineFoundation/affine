@@ -6,6 +6,9 @@ Terms:
   in the environment variable ``PIT_SHADOW_STATE``. It is never a live directory.
 * R2 prefix allowlist: the start of each object key that a shadow process can
   write. It is ``pit-shadow/``. Each live prefix is outside it.
+* R2 output prefix: where one run writes, under the allowlist. The controller
+  gives it as an argument or in ``PIT_R2_OUTPUT_PREFIX``, for example
+  ``pit-shadow/batchctl/<run id>/``. A prefix outside the allowlist stops the start.
 
 The guard is a hard deny in the process, not a convention:
 
@@ -28,18 +31,18 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import botocore.client
+
+from ops.parallel_eval.live import pe_artifact_upload as AU
 
 from .shadow import R2_PREFIX, SHADOW_R2_PREFIXES, STATE_ENV, ShadowWriteError, r2_key_problem
 from .shadow import inside as _inside
 
-R2_PREFIX_ENV = {
-    'PIT_R2_PENDING_PREFIX': R2_PREFIX + 'pending',
-    'PIT_R2_FP32_PREFIX': R2_PREFIX + 'fp32-master',
-    'PIT_R2_CKPT_PREFIX': R2_PREFIX + 'ckpts',
-}
+# Host directories that the box pipeline writes (receipts, the pending index): the variable, and its place
+# in the shadow state root. A value of the environment stays only if it is in the shadow state root.
+HOST_OUTPUT_ENV = {'PIT_UPLOAD_ROOT': 'pit/uploads', 'PIT_FP32_PENDING_INDEX': 'pit/fp32-pending'}
 # Environment variables that name live state. Shadow reads these places and never writes them.
 LIVE_ROOT_ENV = (
     'PE_STATE', 'PE_ST', 'PE_HERE', 'PE_JOBS', 'PE_LIFE', 'LIFE_ROOT', 'PE_LIFE_STATE', 'HG_GATE_STATE',
@@ -188,13 +191,34 @@ def shadow_state_root(environ: Optional[MutableMapping[str, str]] = None) -> Opt
     return Path(raw) if raw else None
 
 
-def enter_shadow(environ: Optional[MutableMapping[str, str]] = None, *, scratch: Optional[Sequence[str]] = None) -> ShadowGuard:
+def shadow_r2_env(environ: Mapping[str, str], r2_prefix: Optional[str] = None) -> Dict[str, str]:
+    """The R2 output prefix of a shadow process and its three write prefixes, as environment variables.
+
+    The output prefix is ``r2_prefix``, or the variable ``PIT_R2_OUTPUT_PREFIX``, or ``pit-shadow/``. An
+    output prefix that is not under the allowlist stops the start. The three write prefixes are always the
+    directories under the output prefix, so a live prefix of the environment never stays.
+    """
+    base = r2_prefix if r2_prefix is not None else (environ.get(AU.OUTPUT_PREFIX_ENV) or R2_PREFIX)
+    try:
+        env = AU.output_prefix_env(base)
+    except AU.ArtifactUploadError as exc:
+        raise ShadowConfigError(str(exc)) from None
+    problem = r2_key_problem(env[AU.OUTPUT_PREFIX_ENV] + 'x')
+    if problem:
+        raise ShadowConfigError('the R2 output prefix %s is not for shadow: %s' % (env[AU.OUTPUT_PREFIX_ENV], problem))
+    return env
+
+
+def enter_shadow(environ: Optional[MutableMapping[str, str]] = None, *, scratch: Optional[Sequence[str]] = None,
+                 r2_prefix: Optional[str] = None) -> ShadowGuard:
     """Start the hard deny for this process. Shadow mode calls this before it does any work.
 
     ``PIT_SHADOW_STATE`` must name a directory that is not a live root, not inside one and not above one.
-    The PIT state root and the R2 write prefixes of the process become shadow ones.
+    The PIT state root, the host directories that the box pipeline writes and the R2 write prefixes of the
+    process become shadow ones. ``r2_prefix`` is the output prefix of the run in R2 (see ``shadow_r2_env``).
     """
     environ = os.environ if environ is None else environ
+    r2_env = shadow_r2_env(environ, r2_prefix)
     raw = environ.get(STATE_ENV)
     if not raw or not os.path.isabs(raw):
         raise ShadowConfigError('%s must be set to an absolute path: shadow mode needs its own state root' % STATE_ENV)
@@ -207,7 +231,10 @@ def enter_shadow(environ: Optional[MutableMapping[str, str]] = None, *, scratch:
             if _inside(root, live) or _inside(live, root):
                 raise ShadowConfigError('%s=%s overlaps the live root %s=%s' % (STATE_ENV, root, name, live))
     environ['PIT_STATE'] = os.path.join(root, 'pit')
-    environ.update(R2_PREFIX_ENV)
+    for name, place in HOST_OUTPUT_ENV.items():
+        if not environ.get(name) or not _inside(os.path.realpath(environ[name]), root):
+            environ[name] = os.path.join(root, place)
+    environ.update(r2_env)
     sys.dont_write_bytecode = True
     os.makedirs(root, exist_ok=True)
     guard = ShadowGuard(state_root=Path(root), scratch=tuple(scratch) if scratch is not None else (tempfile.gettempdir(),))

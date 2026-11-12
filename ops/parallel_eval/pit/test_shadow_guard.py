@@ -5,7 +5,10 @@ real one. After each set of refused writes the live tree and the live objects ar
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
+import json
 import os
 import shutil
 import tempfile
@@ -15,6 +18,7 @@ from unittest import mock
 
 import boto3
 
+from ops.parallel_eval.pit import run_host
 from ops.parallel_eval.pit import shadow_guard as SG
 from ops.parallel_eval.pit.durable import DurableStore, pit_state_root
 from ops.parallel_eval.pit.r2_fixture import BUCKET, R2Server
@@ -174,6 +178,81 @@ class TestEnterShadow(unittest.TestCase):
         with self.assertRaises(SG.ShadowWriteError):
             (self.live / 'state' / 'pit-claim.json').write_text('{}')
         (self.root / 'shadow' / 'ok.json').write_text('{}')
+
+    def test_the_output_prefix_of_the_controller_decides_the_r2_write_prefixes(self):
+        run = 'pit-shadow/batchctl/run1/'
+        names = ('PIT_R2_OUTPUT_PREFIX', 'PIT_R2_PENDING_PREFIX', 'PIT_R2_FP32_PREFIX', 'PIT_R2_CKPT_PREFIX')
+        cases = {
+            'the argument': ({}, {'r2_prefix': run}, run),
+            'the argument with no "/" at its end': ({}, {'r2_prefix': run.rstrip('/')}, run),
+            'the variable': ({'PIT_R2_OUTPUT_PREFIX': run}, {}, run),
+            'the argument wins over the variable': ({'PIT_R2_OUTPUT_PREFIX': 'pit-shadow/other/'}, {'r2_prefix': run}, run),
+            'no output prefix': ({}, {}, SG.R2_PREFIX),
+        }
+        for name, (given, kwargs, expected) in cases.items():
+            # The live prefixes of the environment never stay.
+            env = dict(given, **{SG.STATE_ENV: str(self.root / 'shadow'), 'PIT_R2_FP32_PREFIX': 'fp32-master',
+                                 'PIT_R2_PENDING_PREFIX': 'pit-pending'})
+            SG.enter_shadow(env, scratch=(), **kwargs)
+            self.assertEqual([env[key] for key in names], [
+                expected, expected + 'pending', expected + 'fp32-master', expected + 'ckpts'], name)
+            SG.leave()
+
+    def test_an_output_prefix_outside_the_allowlist_stops_the_start(self):
+        bad = ('fp32-master/', 'pit-pending/run1/', 'pit-shadowx/run1/', 'pit/batchctl/run1/', 'pit-shadow/../fp32-master/',
+               '/pit-shadow/run1/', 'pit-shadow//run1/', 'pit-shadow/run 1/', 'pit-shadow/.hidden/', '/', '', 7)
+        for prefix in bad:
+            ways = [{'r2_prefix': prefix}]
+            if isinstance(prefix, str) and prefix:
+                ways.append({'PIT_R2_OUTPUT_PREFIX': prefix})          # the same prefix, as the variable
+            for way in ways:
+                start = {SG.STATE_ENV: str(self.root / 'shadow'), 'PIT_R2_PENDING_PREFIX': 'pit-pending'}
+                start.update({key: value for key, value in way.items() if key != 'r2_prefix'})
+                env = dict(start)
+                with self.assertRaises(SG.ShadowConfigError, msg=repr(way)):
+                    SG.enter_shadow(env, scratch=(), r2_prefix=way.get('r2_prefix'))
+                self.assertIsNone(SG.active(), way)
+                self.assertEqual(env, start, way)                       # a refused start changes nothing
+
+    def test_enter_shadow_puts_the_host_directories_of_the_box_pipeline_in_the_state_root(self):
+        shadow = self.root / 'shadow'
+        env = {SG.STATE_ENV: str(shadow), 'PE_STATE': str(self.live / 'state'),
+               'PIT_UPLOAD_ROOT': str(self.live / 'state' / 'pit' / 'uploads'),
+               'PIT_FP32_PENDING_INDEX': str(self.live / 'state' / 'pit' / 'fp32-pending')}
+        SG.enter_shadow(env, scratch=())
+        self.assertEqual((env['PIT_UPLOAD_ROOT'], env['PIT_FP32_PENDING_INDEX']),
+                         (str(shadow / 'pit' / 'uploads'), str(shadow / 'pit' / 'fp32-pending')))
+        SG.leave()
+        # Not set: the default would be in the live PE state. A directory in the shadow state root stays.
+        env = {SG.STATE_ENV: str(shadow), 'PE_STATE': str(self.live / 'state'),
+               'PIT_FP32_PENDING_INDEX': str(shadow / 'own-index')}
+        SG.enter_shadow(env, scratch=())
+        self.assertEqual((env['PIT_UPLOAD_ROOT'], env['PIT_FP32_PENDING_INDEX']),
+                         (str(shadow / 'pit' / 'uploads'), str(shadow / 'own-index')))
+
+    def run_host(self, mode, prefix):
+        """The host runner with ``--r2-output-prefix``. -> (exit code, error, environment after, files made)."""
+        flag = self.root / 'flag.json'
+        flag.write_text(json.dumps({'parallel_eval': {
+            'enabled': True, 'pit': {'enabled': True, 'mode': mode, 'cutover': mode == 'live'}}}))
+        env = {SG.STATE_ENV: str(self.root / 'shadow'), 'PE_STATE': str(self.live / 'state'),
+               'PIT_R2_PENDING_PREFIX': 'pit-pending'}
+        said = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(said):
+            code = run_host.main(['--flag', str(flag), '--once', '--dry-run', '--r2-output-prefix', prefix])
+            after = dict(os.environ)
+        made = sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*'))
+        return code, json.loads(said.getvalue())['error'], after == env, made
+
+    def test_the_host_runner_refuses_an_output_prefix_that_it_can_not_use(self):
+        nothing = ['flag.json', 'live', 'live/state']
+        # The live lane has fixed prefixes: the argument is for shadow only.
+        self.assertEqual(self.run_host('live', 'pit-shadow/batchctl/run1/'),
+                         (2, '--r2-output-prefix is shadow-only', True, nothing))
+        code, error, same_env, made = self.run_host('shadow', 'fp32-master/')
+        self.assertEqual((code, same_env, made), (2, True, nothing))
+        self.assertIn('fp32-master/ is not for shadow', error)
+        self.assertIsNone(SG.active())
 
 
 class TestR2(unittest.TestCase):

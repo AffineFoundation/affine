@@ -785,7 +785,7 @@ class _FakeRent:
         price = self.offers.get(g)
         if price is None or price > price_ceiling:
             return None, None
-        return g, {'price_per_hour': price}
+        return g, {'price_per_hour': price, 'huid': 'exec-%s' % g}
 
     def rent(self, name, ttl, gpu=None):
         self.calls.append(('rent', name, ttl, gpu))
@@ -831,12 +831,30 @@ class TestRealRentPolicy(unittest.TestCase):
 
 @contextlib.contextmanager
 def _lium_fixture_module(fake: _FakeRent, pods=()) -> Iterator[types.ModuleType]:
-    """Importable stand-in for the host Lium rental module (the external boundary)."""
+    """Importable stand-in for the Lium helpers of the host rental module (the external boundary).
+
+    It has no ``rent`` / ``release`` / ``our_pods``: those are for live names, and the fakepass rent
+    path must not need them.
+    """
     mod = types.ModuleType('fixture_lium_pe_rent')
+    listed = list(pods)
+
+    def lium(*args, timeout=None):
+        fake.calls.append(('lium',) + tuple(args[:2]))
+        if args[0] == 'up':
+            name = args[args.index('--name') + 1]
+            pod = {'id': 'pod-' + name, 'name': name, 'huid': args[1], 'ip': '127.0.0.1', 'ssh_port': 40022,
+                   'status': 'RUNNING'}
+            listed.append(pod)
+            return 0, json.dumps({'pod': pod}), ''
+        if args[0] == 'rm':
+            listed[:] = [p for p in listed if p['id'] != args[1]]
+            return 0, '', ''
+        return 2, '', 'unknown lium command'
+
     mod.pick_node = fake.pick_node
-    mod.rent = fake.rent
-    mod.release = fake.release
-    mod.our_pods = lambda ps=None: list(pods)
+    mod.lium = lium
+    mod.lium_ps = lambda: list(listed)
     sys.modules[mod.__name__] = mod
     try:
         yield mod
@@ -874,8 +892,15 @@ class TestRealRentNoteCallback(unittest.TestCase):
             out = svc.rent(item_id=self.run_.item_id, epoch=self.run_.sources.epoch, attempt=0)
         self.assertEqual(out['gpu'], 'B300')
         self.assertTrue(is_fakepass_name(out['name']))
+        self.assertFalse(out['name'].startswith('affine-'))
         # One paid rental: the TypeError signature fallback must not run.
-        self.assertEqual(len([c for c in fake.calls if c[0] == 'rent']), 1)
+        self.assertEqual([c for c in fake.calls if c[:2] == ('lium', 'up')], [('lium', 'up', 'exec-B300')])
+        # The service lists and releases the box by its own prefix, with its own state in the sandbox.
+        self.assertEqual([p['name'] for p in svc.list_pods()], [out['name']])
+        self.assertTrue(svc.release(out['box_id'], reason='test-done')['ok'])
+        self.assertEqual(svc.list_pods(), [])
+        self.assertEqual([c for c in fake.calls if c[:2] == ('lium', 'rm')], [('lium', 'rm', out['box_id'])])
+        self.assertTrue((self.paths['pe'] / 'isolated-rent' / 'pods.json').is_file())
         rows = [r for r in self._timeline() if r['event'] == 'rent_attempt']
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['gpu'], 'B300')

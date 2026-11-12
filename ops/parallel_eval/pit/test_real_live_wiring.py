@@ -646,9 +646,8 @@ class TestRealLiveWiring(unittest.TestCase):
         from ops.parallel_eval.pit import PREFIX_SHADOW
         from ops.parallel_eval.pit.pe_rent import RentService
 
-        # Shadow must satisfy live pe_rent's affine-pe-* assert (rent + release).
-        self.assertTrue(PREFIX_SHADOW.startswith('affine-pe-'))
-        self.assertTrue(PREFIX_SHADOW.startswith('affine-pe-pit-shadow-'))
+        # A shadow name is not a live name: live eval_nodes never counts a shadow box.
+        self.assertFalse(PREFIX_SHADOW.startswith('affine-'))
         rent = RentService(
             shadow=True, name_prefix=PREFIX_SHADOW, share_pe_cap=False,
             max_boxes=2, max_eval_nodes=5,
