@@ -373,8 +373,10 @@ def _with_meta(live: ReadOnlyStore, head: LiveHead) -> Tuple[LiveHead, str]:
         for name, info in files.items()
     }
     shards = [row for row in head.master if row[0] != MASTER_META]
-    _need(in_meta == {name: (sha, size) for name, sha, size, _key in shards},
-          'meta.json of the live master and the master index do not name the same shards')
+    in_index = {name: (sha, size) for name, sha, size, _key in shards}
+    differ = sorted(name for name in set(in_meta) | set(in_index) if in_meta.get(name) != in_index.get(name))
+    _need(not differ, 'meta.json of the live master and the master index do not name the same shards '
+                      '(sha256 and bytes of each): %d differ, the first is %.80r' % (len(differ), differ[:1]))
     row = (MASTER_META, sha256_hex(blob.data), len(blob.data), head.meta_key)
     _need(all(named == row for named in head.master if named[0] == MASTER_META),
           'meta.json of the live master does not have the sha256 and the size that the master index names')
