@@ -544,6 +544,20 @@ def run_probe(layout: PL.ProbeLayout, cid: str, plan: Mapping[str, Any], box: Bo
     return result, status
 
 
+def sampling_config(box: Box) -> Optional[Dict[str, Any]]:
+    """The harness and the sampling contract of the probe bundle on this box (the frozen settings of a round).
+
+    None when the bundle has no manifest. The host then has no fingerprint for this probe and gives no decision.
+    """
+    try:
+        doc = json.loads(Path(box.p('live_math_manifest_subset.json')).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get('sampling_contract') is None:
+        return None
+    return dict(harness=doc.get('harness'), sampling_contract=doc.get('sampling_contract'))
+
+
 def queue_use(result: Mapping[str, Any], record: Mapping[str, Any]) -> Dict[str, Any]:
     """How the worker's one queue fed the replicas. An idle replica costs time, never a score, so this is a record."""
     need = len(record['replicas'])
@@ -580,7 +594,8 @@ def eval_job(job_dir: str, cid: str, plan_path: str, layouts_path: str, box: Box
         wait_gpus_free(box)
         record = serve(plan, cid, box)
         result, status = run_probe(PL.ProbeLayout.from_mapping(record['layout']), cid, probe_plan, box)
-        result['serve_layout'] = dict({k: v for k, v in record.items() if k != 'packages'}, queue=queue_use(result, record))
+        result['serve_layout'] = dict({k: v for k, v in record.items() if k != 'packages'}, queue=queue_use(result, record),
+                                      sampling=sampling_config(box))
         done(status, probe_result=result, run_name=probe_plan['run_name'])
         return 0
     except Exception as exc:  # the host must always get a marker, never a 2 h timeout

@@ -44,6 +44,7 @@ ops/parallel_eval/pit/pe_score.py
 #   ↑ nest_heldout_fields: sigma_run_floor from top-level → evaluated → 0.0
 #     (real live pe_score has no top-level sigma; gate emit needs heldout filled)
 ops/parallel_eval/pit/prior_job.py
+ops/parallel_eval/pit/probe_fingerprint.py
 ops/parallel_eval/pit/probe_layout.py
 ops/parallel_eval/pit/probe_serve.py
 #   ↑ probe serving layouts. config.py and box.py import them. Live mode serves the live layout only.

@@ -25,7 +25,8 @@ from .gate_writer import HostGateWriter, build_host_rounds
 from .life_paths import pe_state_root
 from .pe_lane import LaneService, bind_host_lane_service
 from .pe_rent import RentService, _bind_offer_precheck, bind_host_rent_service
-from .pe_score import call_live_host_score
+from . import probe_fingerprint
+from .pe_score import call_live_host_score, nest_heldout_fields
 from .signer import LIVE_ROOT_MODE, load_delegated_host_signer
 
 
@@ -350,6 +351,7 @@ def build_live_host_bundle(
     host_score = getattr(score_mod, 'score', None)
     if not callable(host_score):
         raise LiveWiringError('pe_score.score required')
+    round_baseline = getattr(score_mod, 'round_baseline', None)
 
     verify_uploads = getattr(verify_mod, 'verify_uploads', None) or getattr(verify_mod, 'verify_green_uploads', None)
     if not callable(verify_uploads):
@@ -475,11 +477,21 @@ def build_live_host_bundle(
 
     def score_fn(**kwargs: Any) -> Mapping[str, Any]:
         # Always call live score(epoch, rid, result) positionally via adapter.
+        # The baseline of the round gives its hardware and layout fingerprint; a candidate probe
+        # with a different one gets no decision (probe_fingerprint.py).
+        rid = str(kwargs.get('round_id') or kwargs.get('rid') or '')
+        result = kwargs.get('result') or {}
+        if not callable(round_baseline):
+            # This pe_score module cannot show its baseline: a probe that declares its layout is not scored.
+            refused = probe_fingerprint.refusal(None, result)
+            if refused is not None:
+                return nest_heldout_fields(refused, round_id=rid)
         return call_live_host_score(
             host_score,
             epoch=int(kwargs['epoch']),
-            round_id=str(kwargs.get('round_id') or kwargs.get('rid') or ''),
-            result=kwargs.get('result') or {},
+            round_id=rid,
+            result=result,
+            baseline_of=round_baseline if callable(round_baseline) else None,
         )
 
     rounds = None
