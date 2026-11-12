@@ -384,6 +384,9 @@ def test_the_bootstrap_override_never_reaches_a_step(server, tmp_path):
     lambda job: job['steps'][0].update(env={'AFFINE_FP32_EXPECTED_MASTER_HASH': '0' * 64}),
     lambda job: job['steps'][0].update(script='AFFINE_FP32_BOOTSTRAP_OVERRIDE=1 true'),
     lambda job: job['steps'][0].update(script='export AFFINE_FP32_BOOTSTRAP_OVERRIDE = 1; true'),
+    lambda job: job['steps'][0].update(script='AFFINE_FP32_EXPECTED_MASTER_HASH=%s true' % ('0' * 64)),
+    lambda job: job['steps'][1].update(script='export AFFINE_FP32_EXPECTED_MASTER_HASH="%s"; true' % ('0' * 64)),
+    lambda job: job['steps'][1].update(script='AFFINE_FP32_EXPECTED_MASTER_HASH= true'),
     lambda job: job.update(expected_fp32_master_digest=''),
     lambda job: job.pop('expected_fp32_master_digest'),
     lambda job: job.update(base_state='x'),
@@ -418,18 +421,25 @@ def test_a_job_that_breaks_a_rule_does_not_start(server, tmp_path, change):
 
 
 def test_a_script_may_remove_the_override_but_never_set_it(server, tmp_path):
-    # The train command of the live lane starts with ``env -u AFFINE_FP32_BOOTSTRAP_OVERRIDE NAME=value``.
+    # The train command of the live lane starts with ``env -u AFFINE_FP32_BOOTSTRAP_OVERRIDE NAME=value``,
+    # and gives the trainer the fp32 master digest of the lease once more.
     lease = Lease(server, tmp_path)
     job = lease.job()
-    job['steps'][0]['script'] = 'env -u AFFINE_FP32_BOOTSTRAP_OVERRIDE AFFINE_FP32_EXPECTED_MASTER_HASH=x true'
+    job['steps'][0]['script'] = (
+        'env -u AFFINE_FP32_BOOTSTRAP_OVERRIDE AFFINE_FP32_EXPECTED_MASTER_HASH=%s true' % lease.master)
     J.check_job(job)
-    # A value that a step takes from a file cannot bring the override in either.
+    # A value that a step takes from a file cannot bring the override in either, nor another digest.
     source = tmp_path / 'value.json'
-    source.write_text(json.dumps({'v': 'AFFINE_FP32_BOOTSTRAP_OVERRIDE=1'}))
     step = {'name': 'x', 'script': 'env @@VALUE@@ true', 'timeout_s': 1,
             'subst': {'@@VALUE@@': {'file': str(source), 'key': ['v'], 'match': '.*'}}}
+    source.write_text(json.dumps({'v': 'AFFINE_FP32_BOOTSTRAP_OVERRIDE=1'}))
     with pytest.raises(J.JobError, match='the bootstrap override is never set'):
         J.Runner(job, str(lease.work)).script(step)
+    source.write_text(json.dumps({'v': 'AFFINE_FP32_EXPECTED_MASTER_HASH=%s' % ('0' * 64)}))
+    with pytest.raises(J.JobError, match='another fp32 master digest than the lease expects'):
+        J.Runner(job, str(lease.work)).script(step)
+    source.write_text(json.dumps({'v': 'AFFINE_FP32_EXPECTED_MASTER_HASH=%s' % lease.master}))
+    assert lease.master in J.Runner(job, str(lease.work)).script(step)
 
 
 def test_the_job_never_wipes_the_directory_that_holds_its_claim(server, tmp_path):

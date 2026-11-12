@@ -86,6 +86,9 @@ ENV_BOOTSTRAP_OVERRIDE = 'AFFINE_FP32_BOOTSTRAP_OVERRIDE'
 # A script may remove the override from its environment (``env -u NAME``).
 # It may never give it a value.
 SETS_OVERRIDE = re.compile(r'BOOTSTRAP_OVERRIDE\s*=')
+# A script may give the fp32 master digest of the lease once more. It may
+# never give another one.
+SETS_EXPECTED = re.compile(ENV_EXPECTED_MASTER + r'\s*=\s*["\']?([^\s"\';]*)')
 
 # The heartbeat number of the box starts above every number that the host
 # writes while it prepares the box, so the number never goes back.
@@ -212,6 +215,8 @@ def check_job(job):
         names.add(name)
         need(isinstance(step.get('script'), str) and step['script'], 'step.script')
         need(SETS_OVERRIDE.search(step['script']) is None, 'step %s: the bootstrap override is never set' % name)
+        need(all(value == expected for value in SETS_EXPECTED.findall(step['script'])),
+             'step %s: another fp32 master digest than the lease expects' % name)
         need(isinstance(step.get('timeout_s'), (int, float)) and step['timeout_s'] > 0, 'step.timeout_s')
         check_env(step.get('env', {}), expected, 'step ' + name)
         need(step.get('cwd') is None or is_abs(step['cwd']), 'step.cwd')
@@ -636,6 +641,8 @@ class Runner:
             text = text.replace(token, value)
         if SETS_OVERRIDE.search(text) is not None:
             raise JobError('step %s: the bootstrap override is never set' % step['name'])
+        if any(value != self.job['expected_fp32_master_digest'] for value in SETS_EXPECTED.findall(text)):
+            raise JobError('step %s: another fp32 master digest than the lease expects' % step['name'])
         return text
 
     def kill(self):
