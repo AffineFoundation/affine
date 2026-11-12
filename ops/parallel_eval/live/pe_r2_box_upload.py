@@ -37,6 +37,17 @@ class UploadError(RuntimeError):
     """The upload of a file cannot be completed."""
 
 
+class Stopped(UploadError):
+    """A part stopped because a different part failed. It is a result of the failure, not its cause."""
+
+
+def first_cause(failures):
+    """The failure to report: the first that is a cause. A ``Stopped`` is reported only when there is no cause."""
+    failures = list(failures)
+    causes = [exc for exc in failures if not isinstance(exc, Stopped)]
+    return (causes or failures or [None])[0]
+
+
 def part_ranges(size, part_bytes):
     """(offset, length) of every part of a file of ``size`` bytes. All parts but the last have ``part_bytes``."""
     size, part_bytes = int(size), int(part_bytes)
@@ -101,7 +112,7 @@ def send_part(url, path, offset, length, headers=None, timeout=900.0, chunk=CHUN
             handle.seek(offset)
             while left:
                 if stop is not None and stop.is_set():
-                    raise UploadError('stopped: another part failed')
+                    raise Stopped('stopped: another part failed')
                 data = handle.read(min(chunk, left))
                 if not data:
                     raise UploadError('%s is shorter than planned' % path)
@@ -160,10 +171,12 @@ def upload(job):
         last = None
         for attempt in range(attempts):
             if stop.is_set():
-                raise UploadError('stopped: another part failed')
+                raise Stopped('stopped: another part failed')
             try:
                 return send_part(part['url'], entry['path'], offset, length, headers=entry.get('headers'),
                                  timeout=timeout, stop=stop)
+            except Stopped:
+                raise                           # this part did not fail; do not count it as a failed attempt
             except (OSError, http.client.HTTPException, UploadError) as exc:
                 last = exc
                 if attempt + 1 < attempts:
@@ -193,16 +206,23 @@ def upload(job):
             if object_etag(hashed['parts'], multipart) == entry['have_etag']:
                 return dict(record, sha256=hashed['sha256'], hashed=hashed['parts'], sent=[], etags=[], reused=True)
             sending = queue(entry, ranges)
-        sent = [future.result() for future in sending]
+        sent, failures = [], []
+        for future in sending:                  # wait for every part: the part that failed first is not always part 1
+            try:
+                sent.append(future.result())
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise first_cause(failures)
         hashed = hashing.result()
         return dict(record, sha256=hashed['sha256'], hashed=hashed['parts'],
                     sent=[md5 for md5, _etag in sent], etags=[etag for _md5, etag in sent])
 
-    files, errors, waiting = {}, [], []
+    files, causes, stopped, waiting = {}, [], [], []
 
     def failed(name, exc):                      # every failure goes into the manifest; the host fails closed on it
         stop.set()
-        errors.append('%s: %s' % (name, str(exc)[:300]))
+        (stopped if isinstance(exc, Stopped) else causes).append('%s: %s' % (name, str(exc)[:300]))
 
     with ThreadPoolExecutor(max(1, len(job['files']))) as file_pool:
         for entry in job['files']:              # the parts go into the queue in the order of the job
@@ -219,6 +239,7 @@ def upload(job):
                 failed(name, exc)
     part_pool.shutdown(wait=True)
     hash_pool.shutdown(wait=True)
+    errors = causes + stopped                   # the causes come first; a stopped file is a result of a cause
     return dict(
         version=VERSION, ok=not errors, files=files, errors=errors[:20], seconds=round(time.time() - started, 3),
         bytes_sent=sum(record['bytes'] for record in files.values() if not record['reused']),

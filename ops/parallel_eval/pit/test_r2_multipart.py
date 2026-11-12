@@ -7,9 +7,12 @@ this machine (see r2_fixture). Parts are 5 MiB here (the R2 minimum) and 256 MiB
 """
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -254,6 +257,64 @@ class TestParallelUpload(R2Case):
             R2MP.finish_upload(bucket, record, doc)
         self.assertIn('the box upload failed', str(caught.exception))
         self.assertEqual((self.r2.keys(), self.r2.open_uploads()), ([], []))
+
+
+class TestCauseOfAFailedUpload(unittest.TestCase):
+    """The manifest names the part that the store refused, not a part that stopped because of the refusal."""
+
+    def test_a_part_that_only_stopped_is_not_the_cause(self):
+        stopped, cause = BOX.Stopped('stopped: another part failed'), BOX.UploadError('part 2 of f failed: HTTP 403')
+        self.assertIs(BOX.first_cause([stopped, cause]), cause)
+        self.assertIs(BOX.first_cause([cause, stopped]), cause)
+        self.assertIs(BOX.first_cause([stopped]), stopped)
+        self.assertIsNone(BOX.first_cause([]))
+
+    def test_a_part_in_flight_stops_and_the_manifest_names_the_refused_part(self):
+        refused, received = threading.Event(), {}
+
+        class Store(http.server.BaseHTTPRequestHandler):
+            def do_PUT(self):
+                left = int(self.headers['Content-Length'])
+                if self.path == '/part1':
+                    # Part 1 stays in flight: the store reads none of it before it has refused part 2.
+                    refused.wait(30)
+                    time.sleep(0.5)
+                while left:
+                    data = self.rfile.read(min(65536, left))
+                    if not data:
+                        break
+                    left -= len(data)
+                    received[self.path] = received.get(self.path, 0) + len(data)
+                self.send_response(403 if self.path == '/part2' else 200)
+                self.send_header('ETag', '"0"')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                if self.path == '/part2':
+                    refused.set()
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Store)
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path, first, last = Path(tmp.name) / 'f', 64 * MIB, MIB
+        with open(path, 'wb') as handle:        # part 1 is more than the sockets can hold: its sender must wait
+            handle.truncate(first + last)
+        base = 'http://127.0.0.1:%d' % server.server_address[1]
+        doc = BOX.upload(dict(attempts=1, workers=2, timeout_s=60, files=[dict(
+            id='f', path=str(path), bytes=first + last, multipart=True, part_bytes=first,
+            parts=[dict(n=1, url=base + '/part1'), dict(n=2, url=base + '/part2')])]))
+        self.assertFalse(doc['ok'])
+        self.assertEqual(doc['errors'], ['f: part 2 of f failed 1 times: HTTP 403: '])
+        self.assertEqual(received['/part2'], last)
+        self.assertLess(received.get('/part1', 0), first)       # part 1 did stop: the store did not get all of it
 
 
 class TestParallelCopy(R2Case):
