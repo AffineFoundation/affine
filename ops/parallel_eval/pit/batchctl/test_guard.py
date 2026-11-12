@@ -315,7 +315,7 @@ def test_a_live_store_reaches_its_own_prefix_and_a_shadow_store_refuses_it():
 # Local state root
 # ----------------------------------------------------------------------------
 
-def test_state_root_inside_or_around_a_live_root_is_refused(tmp_path):
+def test_state_root_inside_or_around_a_live_root_is_refused(tmp_path, monkeypatch):
     live = tmp_path / 'live-state'
     live.mkdir()
     for key in ('PE_STATE', 'PIT_STATE', 'PE_LIFE_STATE', 'HG_GATE_STATE', 'PIT_FP32_MASTER_INDEX'):
@@ -334,7 +334,10 @@ def test_state_root_inside_or_around_a_live_root_is_refused(tmp_path):
     with pytest.raises(ShadowWriteError):
         StateRoot.create(link / 'x', RUN, {'PE_STATE': str(live)})
 
-    # The test environment itself has live roots under tmp_path.
+    # With no environment given, the live roots of the process environment count. They are set
+    # here: a shell that names its own PE_STATE must not change what this test proves.
+    monkeypatch.setenv('PE_STATE', str(tmp_path / 'pe'))
+    monkeypatch.setenv('PIT_STATE', str(tmp_path / 'pe' / 'pit'))
     with pytest.raises(ShadowWriteError):
         StateRoot.create(tmp_path, RUN)
     with pytest.raises(ShadowWriteError):
