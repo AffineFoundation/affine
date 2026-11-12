@@ -532,6 +532,61 @@ class HostGateWriter:
         _wj(decision_path, dec, 0o600)
         return decision_path
 
+    def write_lost_infra(
+        self,
+        *,
+        epoch: int,
+        head: str,
+        candidate: str,
+        why: str,
+        parallel_eval_meta: Optional[Mapping[str, Any]] = None,
+    ) -> Path:
+        """Write DECISION=lost_infra with settlement=pending_operator.
+
+        The boxes of the epoch were lost before a decision, so there is no evaluation.
+        No heldout validation, no rounds turn_add (no turn credit), no k1 grant, no
+        APPLY/HEAD/bench. K1 pays the epoch only with a matching K1-INFRA-CREDITS row.
+        """
+        self._refuse_shadow()
+        now = time.time()
+        pe_meta = dict(parallel_eval_meta or {})
+        pe_meta.setdefault('settlement', 'pending_operator')
+        pe_meta.setdefault('terminal', 'lost_infra')
+        pe_meta.setdefault('lost_infra_reason', (why or '')[:400])
+        dec = dict(
+            version=self.gate_version,
+            epoch=int(epoch),
+            head=head or '',
+            candidate=candidate or '',
+            mode='live',
+            decided_at=now,
+            decided_at_cr=_cr(now),
+            decision='lost_infra',
+            evaluated=dict(z=None),
+            reasons=['lost_infra', (why or '')[:200]],
+            heldout={},
+            parallel_eval=pe_meta,
+            no_decision=False,
+            merge_blocked=False,
+            chart_status='lost_infra',
+            red_credit='zero',
+            source='pit',
+            settlement='pending_operator',
+            paid=False,
+        )
+        epoch_dir = self.epochs_root / str(int(epoch))
+        decision_path = epoch_dir / 'DECISION.json'
+        if decision_path.exists():
+            existing = _rj(decision_path)
+            if isinstance(existing, Mapping) and _same_decision(existing, dec):
+                return decision_path
+            # An unreadable file is a conflict too: never write over what is there.
+            raise GateWriteError(
+                'conflicting DECISION.json for epoch %d' % int(epoch)
+            )
+        _wj(decision_path, dec, 0o600)
+        return decision_path
+
 
 @dataclass
 class RecordingGateWriter:
