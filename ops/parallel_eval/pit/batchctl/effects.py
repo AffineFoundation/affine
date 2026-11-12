@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, FrozenSet, List, Mapping, Optional, Set, Tuple
 
+from . import MODE_SHADOW
 from . import core as C
 from .guard import box_name, parse_box_name
 from .interfaces import (
@@ -56,10 +57,21 @@ class EffectConfig:
     job_ttl_s: float
     heartbeat_every_s: float
     apply_verify: str = APPLY_VERIFY_SHA256
+    mode: str = MODE_SHADOW
 
     def __post_init__(self) -> None:
         if self.apply_verify not in (APPLY_VERIFY_SHA256, APPLY_VERIFY_ETAG):
             raise ValueError('apply_verify must be sha256 or etag')
+
+    @property
+    def mode_args(self) -> Tuple[str, ...]:
+        """The mode as the last argument of ``parse_box_name``: nothing in shadow mode.
+
+        Shadow is the default of that function. A shadow run thus calls it
+        with the same two arguments as before live mode existed. ``test_sim``
+        needs that: it puts a function of two arguments in its place.
+        """
+        return () if self.mode == MODE_SHADOW else (self.mode,)
 
 
 class FenceView:
@@ -276,7 +288,7 @@ class Effects:
         provider = self.providers.get(op.rung.provider)
         if provider is None:
             return [C.RentFailed(op.fence, op.try_no, 'unknown_provider')]
-        name = box_name(self.cfg.run_id, op.fence, op.try_no)
+        name = box_name(self.cfg.run_id, op.fence, op.try_no, self.cfg.mode)
         if not self._still(op.fence, C.Phase.RENTING, try_no=op.try_no):
             return []
         try:
@@ -713,7 +725,7 @@ class Effects:
         box = next((b for b in listed if b.box_id == op.box_id), None)
         if box is None:
             return [C.BoxGone(op.box_id, 'absent')]
-        if parse_box_name(self.cfg.run_id, box.name) is None:
+        if parse_box_name(self.cfg.run_id, box.name, *self.cfg.mode_args) is None:
             # The id now names a box that this run did not make. Hands off.
             self._alert('destroy_refused_not_ours', op.box_id)
             return [C.BoxGone(op.box_id, 'not_ours')]
@@ -761,7 +773,7 @@ class Effects:
             except ProviderError:
                 continue
             for box in listed:
-                parsed = parse_box_name(self.cfg.run_id, box.name)
+                parsed = parse_box_name(self.cfg.run_id, box.name, *self.cfg.mode_args)
                 if parsed is not None:
                     events.append(C.OrphanSeen(box.box_id, name, parsed[0], parsed[1]))
         try:

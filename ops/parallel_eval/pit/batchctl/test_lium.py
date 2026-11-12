@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from . import BOX_PREFIX_SHADOW
+from . import BOX_PREFIX_LIVE, BOX_PREFIX_SHADOW, MODE_LIVE, MODE_SHADOW
 from . import guard as G
 from . import lium as L
 from ..shadow import ShadowWriteError
@@ -489,6 +489,46 @@ def test_a_pod_that_this_run_did_not_make_is_never_removed(name):
     assert not world.verbs('rm') and len(world.pods) == 1
 
 
+def test_a_live_provider_and_a_shadow_provider_of_one_run_id_never_touch_the_boxes_of_each_other():
+    live_name = G.box_name(RUN, 1, 0, MODE_LIVE)
+    assert live_name == BOX_PREFIX_LIVE + RUN + '-f1-t0' and live_name != NAME
+    world = FakeLium().add(offer('node-a'))
+    shadow_pod = world.pod(NAME)
+    live = provider(world, mode=MODE_LIVE, max_boxes=2)
+
+    # One cap for the account: the shadow pod counts against the cap of the live run. Its name is not a live name.
+    assert live.shadow_boxes(live.pods()) == 1
+    with pytest.raises(ShadowWriteError):
+        rent(live, NAME)
+    assert not world.verbs('up')
+    box = rent(live, live_name)
+    up = world.verbs('up')[0]
+    assert box.name == live_name and up[up.index('--name') + 1] == live_name
+    assert live.shadow_boxes(live.pods()) == 2
+    with pytest.raises(RentUnavailable, match='cap of 2'):
+        rent(live, G.box_name(RUN, 2, 0, MODE_LIVE))
+
+    # The live provider does not remove the shadow pod and does not give its address.
+    with pytest.raises(ShadowWriteError):
+        live.destroy(shadow_pod['id'])
+    assert live.ssh_target(shadow_pod['id']) is None and live.ssh_target(box.box_id) is not None
+
+    # The shadow provider of the same run id does the same with the live pod.
+    shadow = provider(world, max_boxes=1)
+    assert shadow.cfg.mode == MODE_SHADOW and shadow.shadow_boxes(shadow.pods()) == 2
+    with pytest.raises(ShadowWriteError):
+        rent(shadow, live_name)
+    with pytest.raises(ShadowWriteError):
+        shadow.destroy(box.box_id)
+    assert shadow.ssh_target(box.box_id) is None and shadow.ssh_target(shadow_pod['id']) is not None
+    assert not world.verbs('rm') and len(world.pods) == 2
+
+    # Each provider removes its own pod.
+    live.destroy(box.box_id)
+    shadow.destroy(shadow_pod['id'])
+    assert world.verbs('rm') == [('rm', box.box_id, '-y'), ('rm', shadow_pod['id'], '-y')] and not world.pods
+
+
 def test_a_protected_pod_is_never_removed_even_with_a_name_of_this_run():
     world = FakeLium()
     pod = world.pod(NAME, huid='baseline-node')
@@ -570,6 +610,14 @@ def test_settings_out_of_range_are_refused(changes):
     settings.update(changes)
     with pytest.raises(ValueError):
         L.LiumConfig(**settings)
+
+
+def test_the_mode_of_the_settings_is_shadow_or_live():
+    assert L.LiumConfig(run_id=RUN, gpus=('RTX5090',)).mode == MODE_SHADOW
+    assert L.LiumConfig(run_id=RUN, gpus=('RTX5090',), mode=MODE_LIVE).mode == MODE_LIVE
+    for mode in ('LIVE', 'prod', '', None, 7):
+        with pytest.raises(ValueError, match='mode'):
+            L.LiumConfig(run_id=RUN, gpus=('RTX5090',), mode=mode)
 
 
 def test_the_defaults_are_the_limits_of_the_shadow_run():

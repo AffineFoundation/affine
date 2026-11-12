@@ -7,17 +7,18 @@ HEAD, live R2 keys, the ledger, weights and extrinsics, ``mining.json``,
 from __future__ import annotations
 
 import ast
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
-from . import BOX_PREFIX_SHADOW, MODE_SHADOW, R2_SHADOW_ROOT
+from . import BOX_PREFIX_LIVE, BOX_PREFIX_SHADOW, MODE_LIVE, MODE_SHADOW, R2_LIVE_ROOT, R2_SHADOW_ROOT
 from . import guard as G
 from . import interfaces as I
 from .guard import (
     GuardedStore, LiveModeRefused, StateRoot, box_name, check_key, check_mode, check_outside_live,
-    own_prefix, parse_box_name, shadow_prefix,
+    own_prefix, parse_box_name, run_prefix, shadow_prefix,
 )
 from ..shadow import ShadowWriteError
 from ..shadow_guard import R2_PREFIX as PIT_SHADOW_PREFIX
@@ -26,6 +27,7 @@ from ..shadow_guard import ShadowWriteError as PitShadowWriteError
 
 RUN = 'run0001'
 PREFIX = R2_SHADOW_ROOT + RUN + '/'
+LIVE_PREFIX = R2_LIVE_ROOT + RUN + '/'
 PACKAGE = Path(__file__).parent
 
 LIVE_KEYS = [
@@ -102,7 +104,7 @@ class Recorder:
 
 
 def every_call(store: GuardedStore, key):
-    good = PREFIX + 'states/' + 'a' * 64 + '/manifest.json'
+    good = store.prefix + 'states/' + 'a' * 64 + '/manifest.json'
     return [
         lambda: store.get(key, max_bytes=10),
         lambda: store.head(key),
@@ -126,6 +128,28 @@ def test_every_mode_but_shadow_is_refused(mode):
         check_mode(mode)
     check_mode(MODE_SHADOW)
     assert issubclass(LiveModeRefused, ShadowWriteError)
+
+
+@pytest.mark.parametrize('mode', ['LIVE', 'Live', 'live ', 'shadow ', 'prod', 'promote', '', None, 7, True, ['live']])
+def test_an_unknown_mode_is_refused_with_and_without_the_live_flag(mode):
+    for armed in (False, True):
+        with pytest.raises(LiveModeRefused):
+            check_mode(mode, armed)
+
+
+@pytest.mark.parametrize('flag', [False, None, 0, 1, 'true', 'yes', [True]], ids=repr)
+def test_live_mode_needs_its_explicit_flag(flag):
+    with pytest.raises(LiveModeRefused, match='live mode needs its explicit flag'):
+        check_mode(MODE_LIVE)
+    with pytest.raises(LiveModeRefused, match='live mode needs its explicit flag'):
+        check_mode(MODE_LIVE, flag)
+    with pytest.raises(LiveModeRefused, match='live mode needs its explicit flag'):
+        check_mode(MODE_LIVE, live_armed=flag)
+    check_mode(MODE_LIVE, True)
+    check_mode(MODE_LIVE, live_armed=True)
+    # Shadow needs no flag, and the flag does not change it.
+    check_mode(MODE_SHADOW)
+    check_mode(MODE_SHADOW, live_armed=True)
 
 
 # ----------------------------------------------------------------------------
@@ -208,6 +232,85 @@ def test_a_prefix_that_is_not_a_shadow_prefix_is_refused():
             check_key(prefix, prefix + 'HEAD.json')
 
 
+def test_the_prefix_of_a_live_run_is_outside_the_shadow_prefix():
+    assert R2_LIVE_ROOT == 'pit/batchctl/' and not R2_LIVE_ROOT.startswith(PIT_SHADOW_PREFIX)
+    assert run_prefix(RUN, MODE_LIVE) == 'pit/batchctl/%s/' % RUN == LIVE_PREFIX
+    assert run_prefix(RUN) == run_prefix(RUN, MODE_SHADOW) == shadow_prefix(RUN) == PREFIX
+    assert not LIVE_PREFIX.startswith(PIT_SHADOW_PREFIX) and not PREFIX.startswith(R2_LIVE_ROOT)
+    # The shadow guard of the PIT package refuses a write to the prefix of a live run.
+    guard = ShadowGuard(state_root=Path('/nonexistent-batchctl-root'))
+    with pytest.raises(PitShadowWriteError):
+        guard.check_s3('PutObject', {'Bucket': 'b', 'Key': LIVE_PREFIX + 'HEAD.json'})
+    for mode in ('LIVE', 'prod', '', None):
+        with pytest.raises(LiveModeRefused):
+            run_prefix(RUN, mode)
+        with pytest.raises(LiveModeRefused):
+            GuardedStore(Recorder(), RUN, mode)
+    for prefix in ('pit/', 'pit/batchctl', 'pit/other/run0001/', 'xpit/batchctl/run0001/', 'live/batchctl/run0001/'):
+        with pytest.raises(ShadowWriteError):
+            check_key(prefix, prefix + 'HEAD.json')
+
+
+@pytest.mark.parametrize('key', LIVE_KEYS + [
+    PREFIX + 'HEAD.json',
+    PREFIX + 'RUN.json',
+    PREFIX + 'states/' + 'a' * 64 + '/manifest.json',
+    'pit/batchctl/HEAD.json',
+    'pit/batchctl/other0001/HEAD.json',
+    'pit-shadow/' + LIVE_PREFIX + 'HEAD.json',
+    LIVE_PREFIX,
+    LIVE_PREFIX[:-1],
+    LIVE_PREFIX + '../other0001/HEAD.json',
+    LIVE_PREFIX + '../../../' + PREFIX + 'HEAD.json',
+    LIVE_PREFIX + './HEAD.json',
+    LIVE_PREFIX + 'states//manifest.json',
+    LIVE_PREFIX + 'a\\b',
+    LIVE_PREFIX + 'ledger.json',
+    LIVE_PREFIX + 'states/WEIGHTS.json',
+    '/' + LIVE_PREFIX + 'HEAD.json',
+    'x' + LIVE_PREFIX + 'HEAD.json',
+])
+def test_a_live_store_refuses_every_shadow_key_and_every_key_outside_its_prefix(key):
+    inner = Recorder()
+    store = GuardedStore(inner, RUN, MODE_LIVE)
+    assert store.mode == MODE_LIVE and store.prefix == LIVE_PREFIX
+    for call in every_call(store, key):
+        with pytest.raises(ShadowWriteError):
+            call()
+    assert inner.calls == []
+
+
+def test_a_live_store_reaches_its_own_prefix_and_a_shadow_store_refuses_it():
+    inner = Recorder()
+    live = GuardedStore(inner, RUN, MODE_LIVE)
+    key = LIVE_PREFIX + 'HEAD.json'
+    for prefix in ('', 'pit/', R2_LIVE_ROOT, R2_LIVE_ROOT + 'other0001/', R2_SHADOW_ROOT, PREFIX, PREFIX + 'staging/',
+                   LIVE_PREFIX + '../', LIVE_PREFIX[:-1]):
+        with pytest.raises(ShadowWriteError):
+            live.list(prefix)
+    assert inner.calls == []
+    live.get(key, max_bytes=5)
+    live.put(key, b'x', if_match='e')
+    live.copy(LIVE_PREFIX + 'staging/b/000000000001/obj/w', LIVE_PREFIX + 'states/' + 'a' * 64 + '/obj/w', src_etag='e')
+    live.delete(LIVE_PREFIX + 'staging/b/000000000001/obj/w')
+    assert [info.key for info in live.list(LIVE_PREFIX + 'staging/')] == [LIVE_PREFIX + 'staging/a']
+    assert [call[0] for call in inner.calls] == ['get', 'put', 'copy', 'delete', 'list']
+    assert check_key(LIVE_PREFIX, key) == key
+
+    inner = Recorder()
+    shadow = GuardedStore(inner, RUN)
+    assert shadow.mode == MODE_SHADOW and shadow.prefix == PREFIX
+    for live_key in (key, LIVE_PREFIX + 'RUN.json', LIVE_PREFIX + 'states/' + 'a' * 64 + '/manifest.json',
+                     LIVE_PREFIX, R2_LIVE_ROOT + 'HEAD.json'):
+        for call in every_call(shadow, live_key):
+            with pytest.raises(ShadowWriteError):
+                call()
+    for prefix in (R2_LIVE_ROOT, LIVE_PREFIX, LIVE_PREFIX + 'staging/'):
+        with pytest.raises(ShadowWriteError):
+            shadow.list(prefix)
+    assert inner.calls == []
+
+
 # ----------------------------------------------------------------------------
 # Local state root
 # ----------------------------------------------------------------------------
@@ -281,6 +384,84 @@ def test_state_root_owns_four_files_and_their_temp_names(tmp_path):
     assert G.FORBIDDEN_NAMES.isdisjoint(name.lower() for name in G.STATE_FILES)
 
 
+def test_a_live_state_root_has_its_own_marker(tmp_path):
+    assert G.MARKERS == {MODE_SHADOW: 'BATCHCTL-SHADOW-ROOT.json', MODE_LIVE: 'BATCHCTL-LIVE-ROOT.json'}
+    assert G.MARKER == G.MARKERS[MODE_SHADOW] and G.MARKERS[MODE_LIVE] not in G.STATE_FILES
+    path = tmp_path / 'live-root'
+    root = StateRoot.create(path, RUN, mode=MODE_LIVE)
+    assert root.mode == MODE_LIVE and root.marker == 'BATCHCTL-LIVE-ROOT.json'
+    assert sorted(p.name for p in path.iterdir()) == ['BATCHCTL-LIVE-ROOT.json']
+    doc = json.loads((path / root.marker).read_text())
+    assert doc['mode'] == MODE_LIVE and doc['run_id'] == RUN
+    again = StateRoot.open(path, RUN, mode=MODE_LIVE)
+    assert (again.path, again.run_id, again.mode) == (root.path, RUN, MODE_LIVE)
+
+    # It owns the four files of its mode, and not the marker of a shadow root.
+    assert root.state_files == {root.marker, G.JOURNAL, G.LOCK, G.STATUS}
+    assert G.FORBIDDEN_NAMES.isdisjoint(name.lower() for name in root.state_files)
+    for name in (root.marker, G.JOURNAL, G.LOCK, G.STATUS, G.JOURNAL + '.create.tmp', G.STATUS + '.tmp'):
+        assert root.file(name) == root.path / name
+        assert root.check(root.path / name) == root.path / name
+    for name in [G.MARKER, G.MARKER + '.tmp'] + LIVE_NAMES:
+        with pytest.raises(ShadowWriteError):
+            root.file(name)
+
+    # The default mode is shadow, and a shadow root does not own the marker of a live root.
+    shadow = StateRoot.create(tmp_path / 'shadow-root', RUN)
+    assert shadow.mode == MODE_SHADOW and shadow.marker == G.MARKER and shadow.state_files == G.STATE_FILES
+    assert json.loads((shadow.path / G.MARKER).read_text())['mode'] == MODE_SHADOW
+    with pytest.raises(ShadowWriteError):
+        shadow.file(G.MARKERS[MODE_LIVE])
+
+
+def test_a_state_root_of_one_mode_is_not_a_state_root_of_the_other_mode(tmp_path):
+    shadow, live = tmp_path / 'shadow-root', tmp_path / 'live-root'
+    StateRoot.create(shadow, RUN)
+    StateRoot.create(live, RUN, mode=MODE_LIVE)
+    with pytest.raises(ShadowWriteError):
+        StateRoot.open(shadow, RUN, mode=MODE_LIVE)
+    with pytest.raises(ShadowWriteError):
+        StateRoot.open(live, RUN)
+    with pytest.raises(ShadowWriteError):
+        StateRoot.create(shadow, RUN, mode=MODE_LIVE)
+    with pytest.raises(ShadowWriteError):
+        StateRoot.create(live, RUN)
+
+    # A marker with the name of one mode and the document of the other mode is refused.
+    forged = tmp_path / 'forged'
+    forged.mkdir()
+    (forged / G.MARKERS[MODE_LIVE]).write_text((shadow / G.MARKER).read_text())
+    with pytest.raises(ShadowWriteError, match='state root marker is for another run or mode'):
+        StateRoot.open(forged, RUN, mode=MODE_LIVE)
+
+    # A root that holds the markers of both modes is a root of neither mode.
+    (live / G.MARKER).write_text((shadow / G.MARKER).read_text())
+    for mode in (MODE_LIVE, MODE_SHADOW):
+        with pytest.raises(ShadowWriteError, match='state root holds a file that the controller does not own'):
+            StateRoot.open(live, RUN, mode=mode)
+
+    for mode in ('LIVE', 'prod', '', None):
+        with pytest.raises(LiveModeRefused):
+            StateRoot.create(tmp_path / 'unknown', RUN, mode=mode)
+        with pytest.raises(LiveModeRefused):
+            StateRoot.open(shadow, RUN, mode=mode)
+    assert not (tmp_path / 'unknown').exists()
+
+
+def test_a_live_state_root_must_be_outside_every_live_root_too(tmp_path):
+    lane = tmp_path / 'live-state'
+    lane.mkdir()
+    env = {'PE_STATE': str(lane)}
+    for bad in (lane, lane / 'batchctl', tmp_path):
+        with pytest.raises(ShadowWriteError):
+            StateRoot.create(bad, RUN, env, MODE_LIVE)
+    assert not (lane / 'batchctl').exists()
+    root = StateRoot.create(tmp_path / 'ok', RUN, env, MODE_LIVE)
+    assert StateRoot.open(root.path, RUN, env, MODE_LIVE).mode == MODE_LIVE
+    with pytest.raises(ShadowWriteError):
+        StateRoot.open(root.path, RUN, {'PE_STATE': str(root.path)}, MODE_LIVE)
+
+
 # ----------------------------------------------------------------------------
 # Boxes
 # ----------------------------------------------------------------------------
@@ -322,6 +503,33 @@ def test_a_box_name_that_this_run_did_not_make_is_not_ours(name):
     assert parse_box_name(RUN, name) is None
 
 
+def test_the_box_names_of_the_two_modes_are_never_mixed():
+    live, shadow = box_name(RUN, 7, 3, MODE_LIVE), box_name(RUN, 7, 3)
+    assert live == BOX_PREFIX_LIVE + RUN + '-f7-t3' == 'affine-bctl-live-run0001-f7-t3'
+    assert shadow == box_name(RUN, 7, 3, MODE_SHADOW) == BOX_PREFIX_SHADOW + RUN + '-f7-t3'
+    assert not BOX_PREFIX_LIVE.startswith('affine-pe-')
+    assert not BOX_PREFIX_LIVE.startswith(BOX_PREFIX_SHADOW) and not BOX_PREFIX_SHADOW.startswith(BOX_PREFIX_LIVE)
+    assert own_prefix(RUN, MODE_LIVE) == BOX_PREFIX_LIVE + RUN + '-'
+    assert own_prefix(RUN) == own_prefix(RUN, MODE_SHADOW) == BOX_PREFIX_SHADOW + RUN + '-'
+
+    assert parse_box_name(RUN, live, MODE_LIVE) == (7, 3)
+    assert parse_box_name(RUN, shadow) == parse_box_name(RUN, shadow, MODE_SHADOW) == (7, 3)
+    # A shadow run never takes a live name as its own, and a live run never takes a shadow name.
+    assert parse_box_name(RUN, live) is None and parse_box_name(RUN, live, MODE_SHADOW) is None
+    assert parse_box_name(RUN, shadow, MODE_LIVE) is None
+    for name in (box_name('run0002', 7, 3, MODE_LIVE), live + '-x', live + '\n', live.upper(), 'x' + live,
+                 BOX_PREFIX_LIVE + RUN, BOX_PREFIX_LIVE + RUN + '-f0-t0', 'affine-pe-pit-9-a1', '', None):
+        assert parse_box_name(RUN, name, MODE_LIVE) is None
+    for mode in ('LIVE', 'prod', '', None):
+        for call in (lambda: own_prefix(RUN, mode), lambda: box_name(RUN, 1, 0, mode),
+                     lambda: parse_box_name(RUN, live, mode)):
+            with pytest.raises(LiveModeRefused):
+                call()
+    for fence, try_no in ((0, 0), (-1, 0), (1, -1)):
+        with pytest.raises(ValueError):
+            box_name(RUN, fence, try_no, MODE_LIVE)
+
+
 # ----------------------------------------------------------------------------
 # No code path to the chain, the website or Discord
 # ----------------------------------------------------------------------------
@@ -336,6 +544,15 @@ THIRD_PARTY = {'r2.py': {'boto3', 'botocore', 'urllib3'}}
 # Modules outside this package that the controller may import, by the
 # number of dots of the relative import.
 OUTSIDE = {2: {'fakepass_sandbox', 'shadow', 'gpu_policy', ''}, 3: {'durable'}}
+# Modules of the PIT package that one runtime module may import more. Each is
+# the existing code of the live lane that the module must reuse, not copy.
+OUTSIDE_FOR = {
+    'feed.py': {'queue_ingest'},
+    'judge.py': {'probe_fingerprint', 'pe_score'},
+    'agent.py': {'probe_layout', 'probe_serve'},
+    'settle.py': {'gate_writer'},
+    'run.py': {'shadow_guard', 'gate_writer'},
+}
 # Standard-library modules that can talk to something. Only the injected
 # interfaces may do I/O, so none of these is imported.
 NETWORK = {
@@ -356,6 +573,11 @@ def imports_of(path: Path):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield 0, alias.name
+        elif isinstance(node, ast.ImportFrom) and node.level == 2 and not node.module:
+            # ``from .. import name``: a module of the PIT package, or a constant of its ``__init__``.
+            for alias in node.names:
+                is_module = (PACKAGE.parent / (alias.name + '.py')).is_file() or (PACKAGE.parent / alias.name).is_dir()
+                yield node.level, alias.name if is_module else ''
         elif isinstance(node, ast.ImportFrom):
             yield node.level, node.module or ''
 
@@ -373,7 +595,10 @@ def test_runtime_module_imports_nothing_that_can_reach_the_live_system(path):
         elif level == 1:
             assert top in local or top == '', '%s imports .%s' % (path.name, module)
         else:
-            assert top in OUTSIDE.get(level, ()), '%s imports %s%s' % (path.name, '.' * level, module)
+            allowed = set(OUTSIDE.get(level, ()))
+            if level == 2:
+                allowed |= OUTSIDE_FOR.get(path.name, set())
+            assert top in allowed, '%s imports %s%s' % (path.name, '.' * level, module)
 
 
 @pytest.mark.parametrize('path', RUNTIME, ids=lambda path: path.name)

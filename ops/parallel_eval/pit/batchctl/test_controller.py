@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from . import MODE_SHADOW
+from . import MODE_LIVE, MODE_SHADOW
 from . import controller as K
 from . import core as C
 from . import guard as G
 from . import journal as J
-from .guard import GuardedStore, StateRoot, parse_box_name, shadow_prefix
-from .interfaces import JudgeNotReady
+from .guard import GuardedStore, LiveModeRefused, StateRoot, parse_box_name, run_prefix, shadow_prefix
+from .interfaces import Blob, JudgeNotReady, PreconditionFailed
 from .sim import ControllerStore, Harness, MemOps, Scenario
 from ... import pit as PIT
 from .. import PRICE_CEILING_USD_H
@@ -73,6 +73,20 @@ def test_the_default_settings_are_shadow_with_the_promotion_gate_closed():
 def test_settings_refuse_every_mode_but_shadow(mode):
     with pytest.raises(ShadowWriteError):
         config(mode=mode)
+
+
+def test_settings_accept_live_mode_only_with_its_explicit_flag():
+    for changes in ({}, {'live_armed': False}, {'live_armed': None}, {'live_armed': 1}, {'live_armed': 'yes'}):
+        with pytest.raises(LiveModeRefused, match='live mode needs its explicit flag'):
+            config(mode=MODE_LIVE, **changes)
+    cfg = config(mode=MODE_LIVE, live_armed=True)
+    assert cfg.mode == MODE_LIVE and cfg.live_armed is True
+    # The flag is off by default, and it does not select the mode.
+    assert config().live_armed is False and config(live_armed=True).mode == MODE_SHADOW
+    # The flag does not make an unknown mode a mode.
+    for mode in ('LIVE', 'prod', 'mainnet', '', None):
+        with pytest.raises(LiveModeRefused):
+            config(mode=mode, live_armed=True)
 
 
 @pytest.mark.parametrize('run_id', ['', 'ab', 'Run0001', 'run 0001', 'run0001\n', '../x', 'a' * 33, None])
@@ -241,7 +255,7 @@ def test_the_batch_source_is_read_only(tmp_path):
 def test_the_guard_wraps_every_store_the_controller_gets(tmp_path):
     # The controller cannot be built around a store that is not fenced.
     source = inspect.getsource(K.Controller.__init__)
-    assert 'GuardedStore(store, config.run_id)' in source
+    assert 'GuardedStore(store, config.run_id, config.mode)' in source
     harness = Harness(tmp_path, 1, Scenario(batches=1))
     harness._boot()
     ctl = harness.ctl
@@ -259,6 +273,74 @@ def test_the_guard_wraps_every_store_the_controller_gets(tmp_path):
         with pytest.raises(ShadowWriteError):
             call()
     ctl.close()
+
+
+class StartStore:
+    """A store that holds what the start of a controller writes."""
+
+    def __init__(self):
+        self.objs = {}
+
+    def put(self, key, data, *, if_none_match=False, if_match=None):
+        if if_none_match and key in self.objs:
+            raise PreconditionFailed(key)
+        self.objs[key] = bytes(data)
+        return 'e'
+
+    def get(self, key, *, max_bytes):
+        return Blob(self.objs[key], 'e')
+
+
+def test_a_live_controller_has_the_live_prefix_and_a_live_state_root(tmp_path):
+    harness = Harness(tmp_path, 1, Scenario(batches=1))
+    live = dataclasses.replace(harness.config, mode=MODE_LIVE, live_armed=True)
+    root = StateRoot.create(tmp_path / 'live-root', harness.run_id, mode=MODE_LIVE)
+    prefix = 'pit/batchctl/%s/' % harness.run_id
+    store = StartStore()
+    ctl = controller_on(harness, root, config=live, store=store, file_ops=None)
+    assert type(ctl.store) is GuardedStore and ctl.store.mode == MODE_LIVE
+    assert ctl.store.prefix == ctl.layout.prefix == prefix == run_prefix(harness.run_id, MODE_LIVE)
+    assert not prefix.startswith('pit-shadow/') and prefix != shadow_prefix(harness.run_id)
+    assert ctl.effects.cfg.mode == MODE_LIVE
+    for call in (
+        lambda: ctl.store.put(shadow_prefix(harness.run_id) + 'HEAD.json', b'{}'),
+        lambda: ctl.store.get(shadow_prefix(harness.run_id) + 'HEAD.json', max_bytes=10),
+        lambda: ctl.store.put('HEAD.json', b'{}'),
+        lambda: ctl.store.put('pit/HEAD-CHAIN.json', b'{}'),
+        lambda: ctl.store.get('pit/HEAD-CHAIN.json', max_bytes=10),
+        lambda: ctl.store.list('pit/'),
+        lambda: ctl.root.file(G.MARKER),
+        lambda: ctl.root.file('mining.json'),
+    ):
+        with pytest.raises(ShadowWriteError):
+            call()
+    assert store.objs == {}
+
+    # The start writes the mode and the prefix to the journal, and only the run binding to R2.
+    ctl.open()
+    ctl.close()
+    first = J.scan((root.path / G.JOURNAL).read_bytes())[0][0]
+    assert first['t'] == 'init'
+    assert first['b']['mode'] == MODE_LIVE and first['b']['r2_prefix'] == prefix
+    assert set(store.objs) == {prefix + 'RUN.json'}
+    assert {p.name for p in root.path.iterdir()} == {G.MARKERS[MODE_LIVE], G.JOURNAL, G.LOCK}
+
+
+def test_the_mode_of_the_settings_and_of_the_state_root_must_be_the_same(tmp_path):
+    harness = Harness(tmp_path, 1, Scenario(batches=1))
+    live = dataclasses.replace(harness.config, mode=MODE_LIVE, live_armed=True)
+    shadow_root = StateRoot.open(harness.root_path, harness.run_id)
+    live_root = StateRoot.create(tmp_path / 'live-root', harness.run_id, mode=MODE_LIVE)
+    with pytest.raises(ShadowWriteError, match='state root is for another mode'):
+        controller_on(harness, shadow_root, config=live)
+    with pytest.raises(ShadowWriteError, match='state root is for another mode'):
+        controller_on(harness, live_root)
+    # The controller checks the flag again: settings that lost it are refused.
+    unarmed = dataclasses.replace(live)
+    object.__setattr__(unarmed, 'live_armed', False)
+    with pytest.raises(LiveModeRefused, match='live mode needs its explicit flag'):
+        controller_on(harness, live_root, config=unarmed)
+    assert {p.name for p in live_root.path.iterdir()} == {G.MARKERS[MODE_LIVE]}
 
 
 def test_runtime_modules_exist():

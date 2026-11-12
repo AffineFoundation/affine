@@ -91,11 +91,14 @@ class Config:
     genesis_state: str
     core: C.CoreConfig
     mode: str = MODE_SHADOW
+    # Live mode needs this explicit flag. This class never reads the flag from
+    # a file or from the environment.
+    live_armed: bool = False
     allow_sharded_gpus: bool = ALLOW_SHARDED_GPUS_DEFAULT
     # The GPU classes that this run may rent, as an explicit list. None: the
     # promotion gate of the PIT package decides (``allow_sharded_gpus``), as
-    # on the live lane. A list is a setting of this one shadow run. The live
-    # default is not read and not changed by it.
+    # on the live lane. A list is a setting of this one run. The default of
+    # the live lane is not read and not changed by it.
     gpu_allow_list: Optional[Tuple[str, ...]] = None
     gpu_count: int = REQUIRED_GPU_COUNT
     price_ceiling_usd_h: float = PRICE_CEILING_USD_H
@@ -128,7 +131,7 @@ class Config:
     effect_timeout_s: float = 3600.0
 
     def __post_init__(self) -> None:
-        check_mode(self.mode)
+        check_mode(self.mode, self.live_armed)
         check_run_id(self.run_id)
         if not is_hex64(self.genesis_state):
             raise ValueError('genesis_state must be a state id (sha256)')
@@ -226,16 +229,18 @@ class Controller:
         clock: Clock,
         file_ops: Optional[FileOps] = None,
     ):
-        check_mode(config.mode)
+        check_mode(config.mode, config.live_armed)
         if root.run_id != config.run_id:
             raise ShadowWriteError('state root is for another run')
+        if root.mode != config.mode:
+            raise ShadowWriteError('state root is for another mode')
         for rung in config.core.ladder:
             if rung.provider not in providers:
                 raise ValueError('ladder names an unknown provider: %r' % (rung.provider,))
         self.config = config
         self.root = root
         self.clock = clock
-        self.store = GuardedStore(store, config.run_id)
+        self.store = GuardedStore(store, config.run_id, config.mode)
         self.layout = Layout(self.store.prefix)
         self.providers = dict(providers)
         self.timers = Timers(TimerConfig(
@@ -248,6 +253,7 @@ class Controller:
         self.effects = Effects(
             EffectConfig(
                 run_id=config.run_id,
+                mode=config.mode,
                 gpu_count=config.gpu_count,
                 price_ceiling_usd_h=config.price_ceiling_usd_h,
                 rent_timeout_s=config.rent_timeout_s,

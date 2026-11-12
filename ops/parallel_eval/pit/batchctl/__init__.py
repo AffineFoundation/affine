@@ -1,4 +1,4 @@
-"""Parallel per-batch controller for SN120 (shadow mode first).
+"""Parallel per-batch controller for SN120 (two modes: shadow and live).
 
 One process on the validator host owns this controller. Every other part can
 die at any time: rented GPU boxes, the R2 network path, worker threads, and
@@ -11,12 +11,19 @@ Module map
 ``core``       pure state machine. No I/O, no clock. ``state = fold(journal)``.
 ``layout``     R2 key layout and strict document parsers.
 ``interfaces`` the seams: object store, provider, box agent, batch source, judge.
-``guard``      shadow-mode hard denies (R2 prefix, state root, forbidden names).
+``guard``      hard denies of both modes (R2 prefix, state root, box names, forbidden names).
 ``effects``    idempotent side effects (rent, launch, poll, settle, apply, ...).
 ``timers``     deadlines and cost, folded from the journal.
 ``controller`` the runtime loop: recover, reconcile, plan, run, commit.
 ``modelcheck`` exhaustive state-space checker over the real ``core``.
 ``sim``        fake provider / R2 / boxes for the fault-injection harness.
+
+Modes
+-----
+``shadow`` is the default. ``live`` is refused unless the caller gives its
+explicit flag (``guard.check_mode``). Each mode has its own R2 root, its own
+box name prefix and its own state root marker. A run of one mode cannot reach
+the objects, the boxes or the files of a run of the other mode.
 
 Rules the code keeps
 --------------------
@@ -42,14 +49,24 @@ Rules the code keeps
 # the batch. A v1 journal names one base per batch and is refused.
 VERSION = 'affine-batchctl-v2'
 MODE_SHADOW = 'shadow'
+MODE_LIVE = 'live'
+MODES = (MODE_SHADOW, MODE_LIVE)
 
 # Box names must not start with ``affine-pe-``: the live rental code counts
 # every ``affine-pe-*`` pod against its node cap, and the PIT host reaps
-# unknown ``affine-pe-pit-*`` pods. This prefix keeps the two systems apart.
+# unknown ``affine-pe-pit-*`` pods. These prefixes keep the two systems apart.
 BOX_PREFIX_SHADOW = 'affine-bctl-shadow-'
+BOX_PREFIX_LIVE = 'affine-bctl-live-'
 
 # Every R2 key of a shadow run starts with this root. It is inside the one
 # shadow prefix of the PIT package (``pit-shadow/``, see ``pit.shadow_guard``).
 R2_SHADOW_ROOT = 'pit-shadow/batchctl/'
+# Every R2 key of a live run starts with this root. It is outside the shadow prefix ``pit-shadow/``.
+R2_LIVE_ROOT = 'pit/batchctl/'
+R2_ROOTS = {MODE_SHADOW: R2_SHADOW_ROOT, MODE_LIVE: R2_LIVE_ROOT}
+BOX_PREFIXES = {MODE_SHADOW: BOX_PREFIX_SHADOW, MODE_LIVE: BOX_PREFIX_LIVE}
 
-__all__ = ['VERSION', 'MODE_SHADOW', 'BOX_PREFIX_SHADOW', 'R2_SHADOW_ROOT']
+__all__ = [
+    'VERSION', 'MODE_SHADOW', 'MODE_LIVE', 'MODES', 'BOX_PREFIX_SHADOW', 'BOX_PREFIX_LIVE', 'BOX_PREFIXES',
+    'R2_SHADOW_ROOT', 'R2_LIVE_ROOT', 'R2_ROOTS',
+]

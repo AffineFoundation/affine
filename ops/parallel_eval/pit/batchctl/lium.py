@@ -42,7 +42,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
-from . import BOX_PREFIX_SHADOW
+from . import BOX_PREFIXES, MODE_SHADOW, MODES
 from ..shadow import ShadowWriteError
 from .guard import parse_box_name
 from .interfaces import BoxInfo, ProviderError, RentUnavailable
@@ -92,8 +92,13 @@ class LiumConfig:
     adopt_wait_s: float = 60.0
     adopt_wait_running_s: float = 300.0
     adopt_poll_s: float = 10.0
+    # The mode of the run. It selects the box name prefix: this provider
+    # counts, rents and removes only boxes with a name of its own mode.
+    mode: str = MODE_SHADOW
 
     def __post_init__(self) -> None:
+        if self.mode not in MODES:
+            raise ValueError('mode must be shadow or live')
         if not self.gpus or any(not isinstance(gpu, str) or not gpu for gpu in self.gpus):
             raise ValueError('gpus must name at least one GPU class')
         if self.max_boxes < 1 or self.gpu_count < 1 or self.nodes_per_rent < 1:
@@ -343,10 +348,13 @@ class LiumProvider:
         return [self.info(row) for row in self.pods()]
 
     def shadow_boxes(self, pods: Sequence[Mapping[str, Any]]) -> int:
-        """Boxes that count against the cap: every pod with a shadow name, of
-        any run, plus the rentals of this process that no pod shows yet."""
+        """Boxes that count against the cap: every pod with a name of this
+        controller, of any run and of both modes, plus the rentals of this
+        process that no pod shows yet. One cap holds for the account: a shadow
+        run and a live run together never have more boxes than the cap."""
         names = {row.get('name') for row in pods}
-        listed = sum(1 for name in names if isinstance(name, str) and name.startswith(BOX_PREFIX_SHADOW))
+        prefixes = tuple(BOX_PREFIXES.values())
+        listed = sum(1 for name in names if isinstance(name, str) and name.startswith(prefixes))
         return listed + sum(1 for name in self._renting if name not in names)
 
     def rent(
@@ -354,7 +362,7 @@ class LiumProvider:
         ttl_s: float, timeout_s: float,
     ) -> BoxInfo:
         cfg = self.cfg
-        if parse_box_name(cfg.run_id, name) is None:
+        if parse_box_name(cfg.run_id, name, cfg.mode) is None:
             raise ShadowWriteError('shadow rents no box with a name that this run did not make')
         if any(word and word in name for word in cfg.never_names):
             raise ShadowWriteError('shadow rents no box with a protected name')
@@ -461,7 +469,7 @@ class LiumProvider:
         row = self._row(box_id)
         if row is None:
             return
-        if parse_box_name(self.cfg.run_id, row.get('name')) is None or self._forbidden(row):
+        if parse_box_name(self.cfg.run_id, row.get('name'), self.cfg.mode) is None or self._forbidden(row):
             # The controller checks the name before it calls. A caller that
             # gets here has a bug: stop, and remove nothing.
             raise ShadowWriteError('shadow removes no pod that this run did not make')
@@ -487,7 +495,7 @@ class LiumProvider:
     def ssh_target(self, box_id: str) -> Optional[Dict[str, Any]]:
         """The address of one pod of this run, or None if it has none yet."""
         row = self._row(box_id)
-        if row is None or parse_box_name(self.cfg.run_id, row.get('name')) is None:
+        if row is None or parse_box_name(self.cfg.run_id, row.get('name'), self.cfg.mode) is None:
             return None
         return ssh_target(row)
 
