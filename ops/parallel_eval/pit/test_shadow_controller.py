@@ -11,7 +11,7 @@ from .config import PitConfig
 from .controller import Controller
 from .pe_lane import LaneService
 from .pe_rent import RentService
-from .shadow import FORBIDDEN_SHADOW_WRITES, ShadowGuard, ShadowWriteError, assert_no_forbidden_writes
+from .shadow import SHADOW_R2_PREFIXES, ShadowGuard, ShadowWriteError, assert_no_forbidden_writes
 from .state import ItemState
 
 
@@ -65,8 +65,37 @@ class TestShadowController(unittest.TestCase):
         for name in ('DECISION.json', 'HEAD-CHAIN.json', 'CURRENT.json', 'WEIGHTS.json'):
             with self.assertRaises(ShadowWriteError):
                 g.check_path('/tmp/%s' % name)
-        for name in ('DECISION.json', 'HEAD-CHAIN.json', 'R2_HEAD_POINTER'):
-            self.assertIn(name, FORBIDDEN_SHADOW_WRITES)
+
+    def test_guard_is_an_allowlist_of_r2_prefixes_and_of_the_state_root(self):
+        self.assertEqual(SHADOW_R2_PREFIXES, ('pit-shadow/',))
+        root = self.td / 'shadow-state'
+        g = ShadowGuard(PitConfig(enabled=True, mode='shadow'), state_root=root)
+        # R2: a key under the allowlist passes. Each other key is refused, also one with a name nobody listed.
+        g.check_r2_key('pit-shadow/pending/%s/model.safetensors' % ('c' * 64))
+        g.check_r2_key('pit-shadow/fp32-master/%s/model-00001-of-00004.safetensors' % ('c' * 64))
+        for key in ('fp32-master/%s/model.safetensors' % ('c' * 64), 'pit-pending/x', 'ckpts/x', 'heads/current',
+                    'a-new-live-prefix/x', 'pit-shadow', 'pit-shadowx/y', 'pit-shadow/../fp32-master/x',
+                    '/pit-shadow/x', '', None):
+            with self.assertRaises(ShadowWriteError, msg=key):
+                g.check_r2_key(key)
+        # Files: the shadow state root passes. Each other place is refused, with any file name.
+        g.check_path(root / 'pit' / 'items' / 'DECISION.json')
+        for path in (self.pe / 'DECISION.json', self.pe / 'a-new-live-file.json', self.life / 'CURRENT.json',
+                     root / '..' / 'pe' / 'x.json', self.td / 'shadow-state-2' / 'x.json'):
+            with self.assertRaises(ShadowWriteError, msg=path):
+                g.check_path(path)
+        assert_no_forbidden_writes([root / 'pit' / 'x.json'], root)
+        with self.assertRaises(ShadowWriteError):
+            assert_no_forbidden_writes([root / 'pit' / 'x.json', self.pe / 'HEAD-CHAIN.json'], root)
+        # No shadow state root: no file write passes.
+        none = ShadowGuard(PitConfig(enabled=True, mode='shadow'))
+        os.environ.pop('PIT_SHADOW_STATE', None)
+        with self.assertRaises(ShadowWriteError):
+            none.check_path(root / 'pit' / 'x.json')
+        # Live mode after cutover: the guard is off.
+        live = ShadowGuard(PitConfig(enabled=True, mode='live'))
+        live.check_r2_key('fp32-master/x')
+        live.check_path(self.pe / 'DECISION.json')
 
     def test_controller_shadow_never_writes_live(self):
         clock = {'t': 0.0}

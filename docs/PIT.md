@@ -177,6 +177,39 @@ tokens; update size within 1e-3 relative; gradient norm within 5%; same draw,
 seed and head baseline; per-task disagreement ratio in [0.8, 1.25];
 `|Δz| < 2.0`. Equal candidate hashes / equal z are **not** required.
 
+## Artifact transfer (box → R2 → live prefix)
+
+After training, one box job sends the fp32 master and the bf16 candidate to the
+private pending prefix. The host downloads nothing to check them.
+
+1. **Upload.** The host signs one URL for each part of each file (a part is a
+   byte range; 256 MiB). The box tool `pe_r2_box_upload.py` sends 16 parts at a
+   time, straight from disk, and hashes every file. It returns a manifest: the
+   sha256 of each file and the MD5 of each part.
+2. **Check.** The host reads the size and the ETag of each object. The ETag of
+   R2 is a function of the MD5 of the parts, so an equal ETag shows that R2
+   holds the bytes that the box hashed. Each bf16 sha256 must also be the one
+   in the checkpoint descriptor. A difference fails the upload (3 tries, then
+   the box is kept and the item fails closed).
+3. **Promote (APPLY).** The host copies each pending object to the live prefix
+   inside R2, in parallel part copies (`UploadPartCopy`), on the condition that
+   the pending object still has the ETag of step 2. The live object must have
+   that ETag too. Only then is the public index written, with the `meta_json`
+   pointer.
+
+When R2 returns an ETag that the host cannot tie to the sha256 (an index
+written by the serial transport, or a store that forms ETags in another way),
+the host hashes that object as a stream. This is slow and still fail closed;
+`downloads` in the upload record counts these objects.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PIT_R2_PART_BYTES` | 268435456 | bytes in one part (5 MiB to 5 GiB) |
+| `PIT_R2_WORKERS` | 16 | parts in flight at one time |
+| `PIT_R2_READ_TIMEOUT_S` | 900 | seconds one request waits for data |
+
+`PIT_R2_LOCAL_MIRROR` (tests, dry runs) keeps the serial transport.
+
 ## Deploy file placement (RA snapshot; never `git checkout` live)
 
 Services do **not** run from the git branch. Deploy by copying reviewed files into
@@ -223,6 +256,42 @@ Shared state (do not migrate):
 
 Confirm: decision log under staging; **no** `DECISION.json` / `HEAD-CHAIN` / R2
 head writes; rentals drop to 0 when the queue is empty.
+
+Shadow mode has a hard deny in the process (`pit/shadow_guard.py`). The process
+can write one directory and one R2 prefix, and nothing else.
+
+| Setting | Meaning |
+|---------|---------|
+| `PIT_SHADOW_STATE` | Necessary. The shadow state root: the one directory that the process writes. An absolute path that is not a live directory, not in one and not above one. Without it `run_host.py` stops with exit code 2. |
+| `--r2-output-prefix P` or `PIT_R2_OUTPUT_PREFIX=P` | Where the run writes in R2, for example `pit-shadow/batchctl/<run id>/`. It must be under `pit-shadow/`. Default: `pit-shadow/`. The argument is refused in live mode. |
+
+At the start, `PIT_STATE`, `PIT_UPLOAD_ROOT` and `PIT_FP32_PENDING_INDEX` become
+places in the shadow state root. The live roots (`PE_STATE`, `LIFE_ROOT` and the
+others) stay as inputs that the process reads.
+
+Box names. Each live tool finds its pods by a name that starts with `affine-`
+(the PE lanes and the PE node cap use `affine-pe-`). A shadow box and a fakepass
+box have a name that no live tool matches:
+
+| Box | Name | Rent path |
+|-----|------|-----------|
+| live PIT | `affine-pe-pit-<epoch>-a<attempt>` | live `pe_rent` (shares the PE node cap) |
+| shadow PIT | `sn120-shadow-pit-<epoch>-a<attempt>` | `pit/isolated_rent.py` (own cap, `max_boxes`) |
+| fakepass | `sn120-fakepass-pit-<epoch>-a<attempt>` | `pit/isolated_rent.py` |
+
+- Live `pe_rent` refuses to rent or release such a name, and does not list or
+  count the box. Thus a shadow box takes no slot of the live node cap, and no
+  live program can adopt it or remove it.
+- The isolated rent path removes only a pod whose name starts with its own
+  prefix. It cannot remove a live pod.
+- Its lock, its pod ledger and its events are in `<PIT_STATE>/isolated-rent/`
+  (for fakepass: in the sandbox).
+- A box with a name from before this change (`affine-pe-pit-shadow-*`,
+  `affine-pe-pit-fakepass-*`) belongs to no service now. Release it by hand, or
+  let its 4 h rental time end.
+
+The entry points of the box pipeline (train, probe, upload, fetch), with their
+arguments and their output JSON, are in `docs/PIT_BOX_ENTRY_POINTS.md`.
 
 ## Operator: live cutover
 

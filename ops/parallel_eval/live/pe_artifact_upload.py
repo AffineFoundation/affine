@@ -1,21 +1,47 @@
 """Box→R2 artifact upload helpers (bf16 + fp32 stream; private pending until APPLY).
 
-Never stage a full fp32 master tree on the host. Box PUTs directly to R2
-(presigned); host verifies digests from R2/mirror and may download only enough
-to hash, then deletes any temp. RED artifacts stay under a private pending
-prefix/index until APPLY promotes them (or GC on release).
+Never stage a full fp32 master tree on the host, and never download an artifact
+to the host to check it. The box sends every file to R2 in parallel parts
+(``upload_trees_from_box``); the host checks each object by its size and ETag
+against the sha256 manifest of the box. APPLY copies pending → live inside R2 in
+parallel parts and checks the copy the same way. RED artifacts stay under a
+private pending prefix/index until APPLY promotes them (or GC on release).
+
+``PIT_R2_LOCAL_MIRROR`` (tests, dry runs) and injected PUT URLs keep the serial
+transport: one PUT for each file, and the host hashes what it reads back.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
+
+from ops.parallel_eval.live import pe_r2_multipart as R2MP
+
+BOX_TOOL = Path(__file__).with_name('pe_r2_box_upload.py')
+BOX_UPLOAD_TIMEOUT_S = 7200
+# Fields of one file that the parallel upload records for the R2 copy and its check at APPLY.
+TRANSFER_FIELDS = ('etag', 'part_bytes', 'multipart', 'parts')
+# The output prefix says where one run writes in R2. Each write prefix of the pipeline has an environment
+# variable of its own. With an output prefix, it is the directory of this table under that prefix.
+OUTPUT_PREFIX_ENV = 'PIT_R2_OUTPUT_PREFIX'
+OUTPUT_PARTS = {
+    'PIT_R2_PENDING_PREFIX': 'pending',
+    'PIT_R2_FP32_PREFIX': 'fp32-master',
+    'PIT_R2_CKPT_PREFIX': 'ckpts',
+}
+_PREFIX_PART = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+_OUTPUT_PREFIX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('pit_r2_output_prefix', default=None)
 
 
 class ArtifactUploadError(RuntimeError):
@@ -23,6 +49,56 @@ class ArtifactUploadError(RuntimeError):
 
 
 EARLY_UPLOAD_RETRIES = 3
+
+
+def clean_output_prefix(prefix: Any) -> str:
+    """``prefix`` as the start of object keys, with one ``/`` at its end (``pit-shadow/batchctl/<run id>/``).
+
+    Each part starts with a letter or a digit and has letters, digits, ``.``, ``_`` and ``-`` only. Any other
+    prefix is refused: no key may leave the place that the caller named.
+    """
+    parts = prefix.rstrip('/').split('/') if isinstance(prefix, str) else []
+    if not parts or any(_PREFIX_PART.fullmatch(part) is None or '..' in part for part in parts):
+        raise ArtifactUploadError('R2 output prefix %r is not a plain key prefix' % (prefix,))
+    return '/'.join(parts) + '/'
+
+
+def output_prefix_env(prefix: Any) -> Dict[str, str]:
+    """The environment of a process that writes each R2 object under ``prefix``: the output prefix itself and
+    the three write prefixes ``<prefix>pending``, ``<prefix>fp32-master`` and ``<prefix>ckpts``."""
+    base = clean_output_prefix(prefix)
+    env = {OUTPUT_PREFIX_ENV: base}
+    env.update({name: base + part for name, part in OUTPUT_PARTS.items()})
+    return env
+
+
+@contextlib.contextmanager
+def output_prefix(prefix: Optional[str]) -> Iterator[Optional[str]]:
+    """Inside this block, each R2 key that the pipeline makes is under ``prefix``. ``None`` changes nothing.
+
+    The prefix is an argument of one caller. It holds for the thread (or the asyncio task) that entered the
+    block, so two box jobs of one process can write under two prefixes. A thread that starts inside the
+    block does not get it. It wins over the environment variables.
+    """
+    if prefix is None:
+        yield _OUTPUT_PREFIX.get()
+        return
+    token = _OUTPUT_PREFIX.set(clean_output_prefix(prefix))
+    try:
+        yield _OUTPUT_PREFIX.get()
+    finally:
+        _OUTPUT_PREFIX.reset(token)
+
+
+def r2_write_prefix(name: str, default: str) -> str:
+    """One write prefix of the pipeline, with no ``/`` at its end. ``name`` is its environment variable.
+
+    Order: the output prefix of the caller (``output_prefix``), then the variable, then ``default``.
+    """
+    base = _OUTPUT_PREFIX.get()
+    if base is not None:
+        return base + OUTPUT_PARTS[name]
+    return (os.environ.get(name) or default).rstrip('/')
 
 
 def _env_path(*names: str) -> Optional[Path]:
@@ -37,15 +113,34 @@ def r2_local_mirror() -> Optional[Path]:
     return _env_path('PIT_R2_LOCAL_MIRROR')
 
 
+def box_multipart_transport() -> bool:
+    """True when the box sends its artifacts to R2 in parallel parts (the default).
+
+    False in the two modes that keep the serial transport: a local directory in place of R2
+    (``PIT_R2_LOCAL_MIRROR``), and PUT URLs that the operator injected.
+    """
+    if r2_local_mirror() is not None:
+        return False
+    injected = (_env_path('PIT_PRESIGN_MASTER_PUT_JSON'), _env_path('PIT_PRESIGN_PUT_JSON'))
+    return not any(path is not None and path.is_file() for path in injected)
+
+
+def open_life_bucket() -> Any:
+    """The R2 bucket of the life config: the one place where the artifact code gets its R2 client."""
+    from subnet.storage import Bucket  # type: ignore
+    life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
+    if life_cfg is None or not life_cfg.is_file():
+        raise ArtifactUploadError('PIT_LIFE_CFG required for R2 object ops')
+    return Bucket(json.loads(life_cfg.read_text())['bucket'])
+
+
 def pending_r2_prefix(candidate_id: str) -> str:
     """Isolated private prefix — never the live website/k1 path."""
-    base = (os.environ.get('PIT_R2_PENDING_PREFIX') or 'pit-pending').rstrip('/')
-    return '%s/%s' % (base, candidate_id)
+    return '%s/%s' % (r2_write_prefix('PIT_R2_PENDING_PREFIX', 'pit-pending'), candidate_id)
 
 
 def live_fp32_r2_prefix(candidate_id: str) -> str:
-    base = (os.environ.get('PIT_R2_FP32_PREFIX') or 'fp32-master').rstrip('/')
-    return '%s/%s' % (base, candidate_id)
+    return '%s/%s' % (r2_write_prefix('PIT_R2_FP32_PREFIX', 'fp32-master'), candidate_id)
 
 
 def pending_master_index_dir() -> Path:
@@ -175,14 +270,7 @@ def _presign_master_puts(
             out[name] = 'file://' + str(dest)
         return out
     try:
-        from subnet.storage import Bucket  # type: ignore
-        life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-        if life_cfg is None or not life_cfg.is_file():
-            raise ArtifactUploadError(
-                'PIT_LIFE_CFG required for master put_object presign '
-                '(or PIT_R2_LOCAL_MIRROR / PIT_PRESIGN_MASTER_PUT_JSON)'
-            )
-        bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+        bucket = open_life_bucket()
         return {
             n: bucket.presign('%s/%s' % (prefix, n), 'put_object', 7200)
             for n in sorted(inv)
@@ -274,7 +362,10 @@ def verify_master_from_r2(
     inv: Mapping[str, Mapping[str, Any]],
     pending: bool = True,
 ) -> Dict[str, str]:
-    """Host verifies shard sha from R2/mirror. Temp downloads deleted immediately."""
+    """Serial transport only: the host hashes every shard that it reads back from the mirror or from R2.
+
+    The default transport (``upload_trees_from_box``) checks size and ETag in place of this download.
+    """
     mirror = r2_local_mirror()
     prefix = pending_r2_prefix(candidate_id) if pending else live_fp32_r2_prefix(candidate_id)
     verified: Dict[str, str] = {}
@@ -298,11 +389,7 @@ def verify_master_from_r2(
         try:
             local = tmp_dir / Path(name).name
             try:
-                from subnet.storage import Bucket  # type: ignore
-                life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-                if life_cfg is None or not life_cfg.is_file():
-                    raise ArtifactUploadError('PIT_LIFE_CFG required to GET master for verify')
-                bucket = Bucket(json.loads(life_cfg.read_text())['bucket'])
+                bucket = open_life_bucket()
                 url = bucket.presign('%s/%s' % (prefix, name), 'get_object', 3600)
                 with urllib.request.urlopen(
                     urllib.request.Request(url, headers={'User-Agent': 'affine-pit-master-verify/1'}),
@@ -342,11 +429,12 @@ def write_pending_master_index(
 ) -> Path:
     """Private pending index — not the public website index."""
     files_meta = {
-        n: {
-            'sha256': m['sha256'],
-            'bytes': int(m.get('bytes') or 0),
-            'r2_key': '%s/%s' % (pending_r2_prefix(candidate_id), n),
-        }
+        n: dict(
+            {k: m[k] for k in TRANSFER_FIELDS if m.get(k) is not None},
+            sha256=m['sha256'],
+            bytes=int(m.get('bytes') or 0),
+            r2_key='%s/%s' % (pending_r2_prefix(candidate_id), n),
+        )
         for n, m in inv.items()
     }
     assert_master_tree_complete(files_meta)
@@ -369,52 +457,123 @@ def write_pending_master_index(
     return idx_path
 
 
-def _open_life_bucket() -> Any:
-    from subnet.storage import Bucket  # type: ignore
-    life_cfg = _env_path('PIT_LIFE_CFG', 'AFFINE_LIFE_CFG')
-    if life_cfg is None or not life_cfg.is_file():
-        raise ArtifactUploadError('PIT_LIFE_CFG required for R2 object ops')
-    return Bucket(json.loads(life_cfg.read_text())['bucket'])
-
-
-def _sha256_live_object(key: str) -> str:
-    """Hash an object from local mirror or live R2 (fail closed)."""
-    mirror = r2_local_mirror()
-    if mirror is not None:
-        path = mirror / key
-        if not path.is_file():
-            raise ArtifactUploadError('live object missing after promote: %s' % key)
-        return _sha256_file(path)
+def _last_json(output: Any, what: str) -> Dict[str, Any]:
+    """The JSON document in the last line of the output of a box command."""
+    lines = [line for line in str(output or '').strip().splitlines() if line.strip()]
     try:
-        bucket = _open_life_bucket()
-        data = bucket.get(key)
-    except ArtifactUploadError:
-        raise
-    except Exception as exc:
-        raise ArtifactUploadError('R2 GET for promote verify failed: %s' % str(exc)[:200]) from exc
-    return hashlib.sha256(data).hexdigest()
+        doc = json.loads(lines[-1])
+    except (IndexError, ValueError) as exc:
+        raise ArtifactUploadError('%s: the box returned no result: %s' % (what, str(output)[-300:])) from exc
+    if not isinstance(doc, dict):
+        raise ArtifactUploadError('%s: the box result is not an object' % what)
+    return doc
 
 
-def _copy_object_pending_to_live(src_key: str, dst_key: str) -> None:
-    """Server-side copy pending → live (mirror: shutil; live: Bucket.copy)."""
-    mirror = r2_local_mirror()
-    if mirror is not None:
-        src = mirror / src_key
-        dst = mirror / dst_key
-        if not src.is_file():
-            raise ArtifactUploadError('pending object missing for promote: %s' % src_key)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        return
+def upload_trees_from_box(
+    P: Any,
+    *,
+    candidate_id: str,
+    trees: Mapping[str, Mapping[str, Any]],
+    put: Any,
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """One parallel job: the box sends file trees to R2 in parts, the host checks every object.
+
+    ``trees``: {label: {dir, prefix, names}}. ``dir`` is the directory on the box, ``prefix`` the R2 prefix,
+    ``names`` the files to send (None: every file below ``dir``). All trees share one pool of part uploads;
+    the parts of the first tree are first in its queue.
+
+    -> {label: {name: {sha256, bytes, r2_key, etag, part_bytes, multipart, parts, verify, reused}}}
+
+    The host never reads an artifact back: it compares the size and the ETag of each object with the sha256
+    manifest of the box (see pe_r2_multipart). Fail closed: any difference raises and nothing is recorded.
+    """
+    if not isinstance(candidate_id, str) or len(candidate_id) != 64:
+        raise ArtifactUploadError('candidate_id must be hex64')
+    work = '%s/pit-r2-upload-%s' % ((os.environ.get('PIT_R2_BOX_TMP') or '/tmp').rstrip('/'), candidate_id[:12])
+    tool, stat_path, job_path = (work + '/' + name for name in ('pe_r2_box_upload.py', 'stat.json', 'job.private.json'))
     try:
-        bucket = _open_life_bucket()
-        copy_fn = getattr(bucket, 'copy_object', None) or getattr(bucket, 'copy', None)
-        if callable(copy_fn):
-            copy_fn(src_key, dst_key)
-            return
-        # Fallback: GET+PUT (streaming) when Bucket has no copy helper.
-        data = bucket.get(src_key)
-        bucket.put(dst_key, data)
+        bucket = open_life_bucket()
+        client = R2MP.transfer_client(bucket)
+        put(P, tool, BOX_TOOL.read_bytes(), '700')
+        put(P, stat_path, json.dumps({'trees': {
+            label: dict(dir=str(tree['dir']), names=None if tree.get('names') is None else sorted(tree['names']))
+            for label, tree in trees.items()}}).encode(), '600')
+        stat = _last_json(P.run('python3 %s stat %s' % (shlex.quote(tool), shlex.quote(stat_path)),
+                                timeout=600, check=False), 'file sizes')
+        if not stat.get('ok'):
+            raise ArtifactUploadError('files missing on the box: %s' % list(stat.get('missing') or [])[:5])
+        files: Dict[str, Dict[str, Any]] = {}
+        for label, tree in trees.items():
+            sizes = (stat.get('trees') or {}).get(label) or {}
+            if not sizes:
+                raise ArtifactUploadError('box tree %s is empty at %s' % (label, tree['dir']))
+            for name, size in sorted(sizes.items()):
+                files['%s/%s' % (label, name)] = dict(
+                    key='%s/%s' % (str(tree['prefix']).rstrip('/'), name),
+                    path='%s/%s' % (str(tree['dir']).rstrip('/'), name), bytes=int(size))
+        job, record = R2MP.plan_upload(bucket, files, client=client)
+        try:
+            put(P, job_path, json.dumps(job, sort_keys=True).encode(), '600')
+            manifest = _last_json(P.run('python3 %s upload %s' % (shlex.quote(tool), shlex.quote(job_path)),
+                                        timeout=BOX_UPLOAD_TIMEOUT_S, check=False), 'upload')
+        except BaseException:
+            R2MP.abort_upload(bucket, record, client=client)
+            raise
+        done = R2MP.finish_upload(bucket, record, manifest, client=client)
+    except R2MP.R2TransferError as exc:
+        raise ArtifactUploadError(str(exc)) from exc
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {label: {} for label in trees}
+    for ident, entry in done.items():
+        label, name = ident.split('/', 1)
+        out[label][name] = dict(
+            sha256=entry['sha256'], bytes=entry['bytes'], r2_key=entry['key'], etag=entry['etag'],
+            part_bytes=entry['part_bytes'], multipart=entry['multipart'], parts=entry['parts'],
+            verify=entry['verify'], reused=entry['reused'])
+    return out
+
+
+def _mirror_copy(mirror: Path, src_key: str, dst_key: str) -> None:
+    src, dst = mirror / src_key, mirror / dst_key
+    if not src.is_file():
+        raise ArtifactUploadError('pending object missing for promote: %s' % src_key)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _mirror_sha256(mirror: Path, key: str) -> str:
+    path = mirror / key
+    if not path.is_file():
+        raise ArtifactUploadError('live object missing after promote: %s' % key)
+    return _sha256_file(path)
+
+
+def _promote_object(bucket: Any, client: Any, name: str, meta: Mapping[str, Any], src_key: str, dst_key: str) -> str:
+    """Copy one pending object to its live key inside R2 and check the copy. -> how it was checked.
+
+    The copy is checked without a download when the upload recorded the ETag of the pending object and the
+    live object has that ETag: the upload tied that ETag to the sha256 of the box. Else the host hashes the
+    live object as a stream. A difference in size, ETag-and-sha256, or a missing object raises.
+    """
+    sha, etag = str(meta.get('sha256') or ''), str(meta.get('etag') or '')
+    if len(sha) != 64:
+        raise ArtifactUploadError('promote refused: pending index has no sha256 for %s' % name)
+    try:
+        size = int(meta['bytes']) if etag else None     # an index of the serial transport is not exact on size
+        if src_key != dst_key:
+            copied = R2MP.server_copy(bucket, src_key, dst_key, size=size, etag=etag or None,
+                                      part=meta.get('part_bytes'), client=client)
+            size = copied['bytes']
+        elif size is None:
+            found = R2MP.head(client, bucket.name, dst_key)
+            if found is None:
+                raise ArtifactUploadError('pending object missing for promote: %s' % src_key)
+            size = found['bytes']
+        return R2MP.check_object(client, bucket.name, dst_key, size=size, sha256=sha, etag=etag or None)['verify']
+    except R2MP.R2TransferError as exc:
+        text = str(exc)
+        if text.startswith('source object missing'):
+            raise ArtifactUploadError('pending object missing for promote: %s' % src_key) from exc
+        raise ArtifactUploadError('promote verify mismatch %s: %s' % (name, text[:300])) from exc
     except ArtifactUploadError:
         raise
     except Exception as exc:
@@ -430,6 +589,10 @@ def promote_pending_master_to_live(
 
     Never rewrite the public index to live keys before objects exist there —
     the next box's master download reads index r2_key and would stall.
+
+    The copy runs inside R2 in parallel parts (one CopyObject on a 4 GB shard
+    runs into the read timeout). The host downloads nothing unless R2 gives an
+    ETag that it cannot tie to the recorded sha256.
     """
     pending_path = pending_master_index_dir() / ('%s.json' % candidate_id)
     if not pending_path.is_file():
@@ -445,21 +608,35 @@ def promote_pending_master_to_live(
         raise ArtifactUploadError('pending master has no files for %s' % candidate_id[:12])
     src_prefix = pending_r2_prefix(candidate_id)
     dst_prefix = live_fp32_r2_prefix(candidate_id)
+    mirror = r2_local_mirror()
+    bucket = client = None
+    if mirror is None:
+        try:
+            bucket = open_life_bucket()
+            client = R2MP.transfer_client(bucket)
+        except ArtifactUploadError:
+            raise
+        except Exception as exc:
+            raise ArtifactUploadError('R2 server-side copy failed: %s' % str(exc)[:200]) from exc
     live_files: Dict[str, Any] = {}
     for n, meta in files.items():
-        src_key = str((meta or {}).get('r2_key') or ('%s/%s' % (src_prefix, n)))
+        meta = dict(meta or {})
+        src_key = str(meta.get('r2_key') or ('%s/%s' % (src_prefix, n)))
         dst_key = '%s/%s' % (dst_prefix, n)
-        _copy_object_pending_to_live(src_key, dst_key)
         # Verify live object before committing the public index.
-        expected = str((meta or {}).get('sha256') or '')
-        if expected:
-            got = _sha256_live_object(dst_key)
-            if got != expected:
-                raise ArtifactUploadError(
-                    'promote verify mismatch %s: got %s want %s'
-                    % (n, got[:12], expected[:12])
-                )
-        live_files[n] = dict(meta or {}, r2_key=dst_key)
+        if mirror is not None:
+            _mirror_copy(mirror, src_key, dst_key)
+            expected = str(meta.get('sha256') or '')
+            if expected:
+                got = _mirror_sha256(mirror, dst_key)
+                if got != expected:
+                    raise ArtifactUploadError(
+                        'promote verify mismatch %s: got %s want %s'
+                        % (n, got[:12], expected[:12])
+                    )
+        else:
+            _promote_object(bucket, client, n, meta, src_key, dst_key)
+        live_files[n] = dict(meta, r2_key=dst_key)
     if 'meta.json' not in live_files:
         raise ArtifactUploadError(
             'promote refused: meta.json missing after pending→live copy'
@@ -507,8 +684,16 @@ def gc_pending_artifacts(candidate_id: str) -> Dict[str, Any]:
             removed.append(str(root))
     else:
         try:
-            bucket = _open_life_bucket()
+            bucket = open_life_bucket()
             client = getattr(bucket, 'client', None)
+            # Parts of an upload that never finished cost storage and are in no object listing.
+            if client is not None:
+                try:
+                    dropped = R2MP.abort_stale_uploads(bucket, prefix + '/', client=client)
+                    if dropped:
+                        removed.append('unfinished-uploads:%d' % dropped)
+                except Exception as exc:
+                    removed.append('r2-gc-upload-abort-error:%s' % str(exc)[:120])
             # Prefer boto3 list+delete so ~55 GB objects leave with the index.
             if client is not None:
                 token = None
@@ -552,24 +737,41 @@ def stream_upload_master_from_box(
     box_master_dir: str,
     put: Any,
     pending: bool = True,
+    uploaded: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Box→R2 stream for every fp32 shard; host verifies; write pending index.
 
     ``master_digest`` is the host-recorded digest (from train report) — never
     replaced by box meta.json.
+
+    ``uploaded`` is the master tree of an ``upload_trees_from_box`` job that
+    also carried other trees; without it this call runs the transfer itself.
     """
     if not isinstance(candidate_id, str) or len(candidate_id) != 64:
         raise ArtifactUploadError('candidate_id must be hex64')
     digest = str(master_digest or '').strip()
     if len(digest) != 64:
         raise ArtifactUploadError('master_digest must be hex64 (host-recorded)')
-    inv = inventory_box_master(P, box_master_dir)
-    urls = _presign_master_puts(candidate_id, inv, pending=pending)
-    missing = [n for n in inv if n not in urls]
-    if missing:
-        raise ArtifactUploadError('presign PUT missing for %s' % missing[:5])
-    box_put_files(P, box_dir=box_master_dir, urls=urls, put=put)
-    verified = verify_master_from_r2(candidate_id=candidate_id, inv=inv, pending=pending)
+    if uploaded is None and box_multipart_transport():
+        if not pending:
+            # The public index is written by promote alone, after its own check of the live objects.
+            raise ArtifactUploadError('fp32 master upload is pending-only; APPLY promotes it to live')
+        uploaded = upload_trees_from_box(P, candidate_id=candidate_id, put=put, trees={
+            'master': dict(dir=box_master_dir, prefix=pending_r2_prefix(candidate_id), names=None)})['master']
+    if uploaded is not None:
+        inv: Dict[str, Any] = {n: dict(m) for n, m in uploaded.items()}
+        assert_master_tree_complete(inv)
+        verified = {n: m['sha256'] for n, m in inv.items()}
+        transport = 'box-r2-multipart'
+    else:
+        inv = inventory_box_master(P, box_master_dir)
+        urls = _presign_master_puts(candidate_id, inv, pending=pending)
+        missing = [n for n in inv if n not in urls]
+        if missing:
+            raise ArtifactUploadError('presign PUT missing for %s' % missing[:5])
+        box_put_files(P, box_dir=box_master_dir, urls=urls, put=put)
+        verified = verify_master_from_r2(candidate_id=candidate_id, inv=inv, pending=pending)
+        transport = 'box-r2-stream'
     bf16 = str(bf16_sha256 or candidate_id)
     idx = write_pending_master_index(
         candidate_id=candidate_id, bf16=bf16, digest=digest, inv=inv,
@@ -588,5 +790,6 @@ def stream_upload_master_from_box(
         ),
         complete=True,
         verified=len(verified),
-        transport='box-r2-stream',
+        transport=transport,
+        downloads=sum(1 for m in inv.values() if m.get('verify') == 'download'),
     )

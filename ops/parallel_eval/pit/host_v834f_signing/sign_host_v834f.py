@@ -157,7 +157,11 @@ def public_copy(launcher, digests):
                'original-method pins are those of the host-v834e admission, unchanged.'),
         host_version=HOST_VERSION, base_host_version='host-v834e', version=launcher.VERSION, scope=launcher.SCOPE,
         added_host_files=list(ADDED), changed_host_files=list(CHANGED), host_files_sha256=digests,
-        zero3=dict(env=zero3.ZERO3_ENV, below_gpu_gib=zero3.LOW_MEM_GPU_GIB, token_budget=zero3.LOW_VRAM_TOKEN_BUDGET,
+        zero3=dict(env=zero3.ZERO3_ENV, below_gpu_gib=zero3.LOW_MEM_GPU_GIB,
+                   # the settings of the sharded update: one named set, chosen whole (never a single value)
+                   profile_env=zero3.PROFILE_ENV, default_profile=zero3.DEFAULT_PROFILE,
+                   profiles={name: profile._asdict() for name, profile in sorted(zero3.PROFILES.items())},
+                   token_budget=zero3.PROFILES[zero3.DEFAULT_PROFILE].token_budget,
                    logit_chunk=zero3.LOGIT_CHUNK, target_peak_gib=zero3.TARGET_PEAK_GIB,
                    sharding='torch.distributed.fsdp.fully_shard, reshard_after_forward=True (FULL_SHARD)'))
 

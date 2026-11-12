@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
+from . import shadow_guard
 from .apply_live import LiveApplicator
 from .bench_box import MemBenchBoxStore
 from .bench_host_run import make_bench_box_store_factory
@@ -666,6 +667,13 @@ def _gate_emit_ready(item) -> bool:
 
 
 def main(argv=None) -> int:
+    try:
+        return _run(argv)
+    finally:
+        shadow_guard.leave()
+
+
+def _run(argv=None) -> int:
     ap = argparse.ArgumentParser(description='PIT live host daemon')
     ap.add_argument('--flag', required=True, help='PROMOTION-GATE / PE flag JSON')
     ap.add_argument('--state', default=None, help='PIT_STATE override')
@@ -673,6 +681,9 @@ def main(argv=None) -> int:
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--allow-unwired', action='store_true', help='shadow only: skip live wiring validation')
     ap.add_argument('--interval', type=float, default=5.0)
+    ap.add_argument('--r2-output-prefix', default=None,
+                    help='shadow only: where this run writes in R2, for example pit-shadow/batchctl/<run id>/ '
+                         '(default: PIT_R2_OUTPUT_PREFIX, then pit-shadow/)')
     args = ap.parse_args(argv)
 
     flag_path = Path(args.flag)
@@ -686,6 +697,18 @@ def main(argv=None) -> int:
     if args.allow_unwired and cfg.is_live():
         print(json.dumps({'error': '--allow-unwired is shadow-only'}), file=sys.stderr)
         return 2
+    if args.r2_output_prefix is not None and not cfg.is_shadow():
+        # The live lane has fixed R2 prefixes that the website and the miners read.
+        print(json.dumps({'error': '--r2-output-prefix is shadow-only'}), file=sys.stderr)
+        return 2
+    if cfg.is_shadow():
+        # Hard deny before any work: from here this process can write only the shadow state root
+        # (PIT_SHADOW_STATE) and R2 keys under pit-shadow/.
+        try:
+            shadow_guard.enter_shadow(r2_prefix=args.r2_output_prefix)
+        except shadow_guard.ShadowConfigError as exc:
+            print(json.dumps({'error': str(exc)[:400]}), file=sys.stderr)
+            return 2
 
     store = DurableStore(root=pit_state_root(args.state))
     try:

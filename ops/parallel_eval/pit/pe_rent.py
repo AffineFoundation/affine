@@ -5,6 +5,9 @@ Host RA ``pe_rent.py`` owns real Lium rental. This git port:
 * defines the on-demand rent/release API PIT uses;
 * counts ``affine-pe-pit-*`` boxes toward the item box_cap only
   (live ``pe_rent`` requires names starting ``affine-pe-``);
+* gives shadow and fakepass boxes a name that no live tool matches
+  (``sn120-shadow-pit-*`` / ``sn120-fakepass-pit-*``) and rents them with
+  ``isolated_rent``; each service reconciles the boxes of its own prefix only;
 * refuses NEVER_NAMES / warm-pool semantics;
 * prefers B300 then cheapest allowed GPU under the $56/h ceiling;
 * requires a full 8-GPU pack of an allowed class (B300/RTX5090/B200/H200/H100);
@@ -32,7 +35,16 @@ from . import (
     PREFIX_SHADOW,
     PRICE_CEILING_USD_H,
 )
+from .durable import pit_state_root
+from .isolated_rent import (
+    LEGACY_ISOLATED_PREFIXES,
+    PREFIX_FAKEPASS,
+    bind_isolated_rent,
+    live_name_problem,
+)
 
+# Every live PE tool matches pods by this prefix (live pe_common.PREFIX).
+LIVE_PE_PREFIX = 'affine-pe-'
 
 NEVER_NAME_PREFIXES = (
     'affine-trainer-',
@@ -43,9 +55,6 @@ NEVER_NAME_PREFIXES = (
     'affine-warm-',
     'affine-baseline-',  # baseline jobs use their own prefix; never claim as PIT
 )
-
-# Fakepass harness boxes: live host ignores them and they do not count against cap.
-PREFIX_FAKEPASS = 'affine-pe-pit-fakepass-'
 
 PIT_LIVE_TTL = '4h'
 # Preferred first class; pick_node falls back to cheaper allowed classes.
@@ -65,13 +74,12 @@ def is_fakepass_name(name: str) -> bool:
 
 
 def is_live_pit_name(name: str) -> bool:
-    # PREFIX_SHADOW is a longer sub-prefix of PREFIX_LIVE — exclude it.
-    # Fakepass harness boxes are also excluded from the live host cap.
+    # Shadow and fakepass names do not start with PREFIX_LIVE. The names they had
+    # before (LEGACY_ISOLATED_PREFIXES) do: live does not own a box with such a name.
     return (
         isinstance(name, str)
         and name.startswith(PREFIX_LIVE)
-        and not is_shadow_pit_name(name)
-        and not is_fakepass_name(name)
+        and not name.startswith(LEGACY_ISOLATED_PREFIXES)
     )
 
 
@@ -227,6 +235,15 @@ class RentService:
     def active_count(self) -> int:
         return self.ledger.count()
 
+    def own_prefix(self) -> str:
+        return self.name_prefix or (PREFIX_SHADOW if self.shadow else PREFIX_LIVE)
+
+    def owns(self, name: Any) -> bool:
+        """True for a box name of this service. A service adopts and releases only such boxes."""
+        if not isinstance(name, str) or not name.startswith(self.own_prefix()):
+            return False
+        return self.shadow or not name.startswith(LEGACY_ISOLATED_PREFIXES)
+
     def save_ledger(self) -> None:
         if self.ledger_path:
             self.ledger.save(self.ledger_path)
@@ -300,7 +317,8 @@ class RentService:
         live_ids: Set[str] = set()
         for row in rows:
             name = row.get('name') or row.get('pod_name') or ''
-            if not is_pit_name(name):
+            # Live does not touch a shadow or fakepass box, and shadow does not touch a live box.
+            if not self.owns(name):
                 continue
             bid = str(row.get('id') or row.get('box_id') or name)
             live_ids.add(bid)
@@ -348,14 +366,17 @@ class RentService:
             raise RentError('gpu_order has unsupported class: %r' % (order,))
         if self.require_host and self.host_rent is None:
             raise RentError('live rent requires host pe_rent module')
-        prefix = self.name_prefix or (PREFIX_SHADOW if self.shadow else PREFIX_LIVE)
-        name = '%s%d-a%d' % (prefix, int(epoch), int(attempt))
+        name = '%s%d-a%d' % (self.own_prefix(), int(epoch), int(attempt))
         if is_never_name(name):
             raise RentError('refused NEVER_NAME')
-        # Live pe_rent requires affine-pe-* for rent AND release. Live + shadow
-        # PIT both use affine-pe-pit-* (shadow: affine-pe-pit-shadow-*).
-        if self.require_host and not name.startswith('affine-pe-'):
-            raise RentError('live/shadow rent name must start with affine-pe-')
+        if self.shadow:
+            # Shadow and fakepass: a name that no live tool matches.
+            problem = live_name_problem(name)
+            if problem:
+                raise RentError('refused the shadow rent name %s: %s' % (name, problem))
+        elif self.require_host and not name.startswith(LIVE_PE_PREFIX):
+            # Live pe_rent requires affine-pe-* for rent AND release.
+            raise RentError('live rent name must start with %s' % LIVE_PE_PREFIX)
         at = float(self.now_fn())
         # Pre-check offer listing (price/GPU) before committing the rental.
         try:
@@ -568,13 +589,47 @@ def _bind_offer_precheck(service: RentService, mod: Any) -> None:
     service.offer_precheck_fn = _precheck
 
 
+def bind_isolated_rent_service(
+    service: RentService,
+    mod: Any,
+    *,
+    state_dir: Optional[Path] = None,
+) -> RentService:
+    """Bind a shadow or fakepass service to the isolated rent path (own names, own state).
+
+    Without ``state_dir`` the state is in ``<PIT state root>/isolated-rent``. The root is read when a rent file is
+    needed, as the controller reads it: an environment without a valid root refuses the rent, not the start of the
+    controller.
+    """
+    if not service.shadow:
+        raise RentError('the isolated rent path is for shadow and fakepass services only')
+    isolated = bind_isolated_rent(
+        mod,
+        prefix=service.own_prefix(),
+        state_dir=Path(state_dir) if state_dir else (lambda: pit_state_root() / 'isolated-rent'),
+        gpu_order=tuple(service.gpu_order),
+        price_ceiling=float(service.price_ceiling_usd_h),
+    )
+    service.host_rent = isolated.rent
+    service.host_release = isolated.release
+    service.list_pods = isolated.pods
+    service.disable_auto_backup_fn = None
+    return service
+
+
 def bind_host_rent_service(
     service: RentService,
     *,
     module_path: Optional[str] = None,
+    isolated_state_dir: Optional[Path] = None,
 ) -> RentService:
     mod = load_host_pe_rent(module_path)
     if mod is None:
+        return service
+    if service.shadow:
+        # Live rent/release refuse a shadow name, and our_pods does not list a shadow box.
+        bind_isolated_rent_service(service, mod, state_dir=isolated_state_dir)
+        _bind_offer_precheck(service, mod)
         return service
     service.host_rent = getattr(mod, 'rent', None) or getattr(mod, 'rent_box', None)
     service.host_release = getattr(mod, 'release', None) or getattr(mod, 'release_box', None)

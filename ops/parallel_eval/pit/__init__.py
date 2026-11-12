@@ -13,12 +13,14 @@ under the last-10-GREEN rule.
 """
 # Live pe_rent asserts name.startswith("affine-pe-") for BOTH rent and release.
 # Live PIT boxes use this sub-prefix so they share the PE rental path + global
-# eval-node cap. Shadow must ALSO satisfy affine-pe-* or pe_rent.release refuses
-# the name and the box keeps billing while the ledger says released.
+# eval-node cap.
 PREFIX = 'affine-pe-pit-'
 PREFIX_LIVE = PREFIX
-# Shadow: affine-pe-pit-shadow-* (own cap; still releaseable via live pe_rent).
-PREFIX_SHADOW = 'affine-pe-pit-shadow-'
+# Every live tool finds its pods by a name that starts with this text.
+LIVE_NAME_ROOT = 'affine-'
+# Shadow boxes: a name that no live tool matches. Live pe_rent refuses the name,
+# so shadow rents and releases its boxes with pit/isolated_rent.py (own cap).
+PREFIX_SHADOW = 'sn120-shadow-pit-'
 MAX_BOXES_SHADOW = 2
 MAX_BOXES_LIVE = 5
 MAX_BOXES_DEFAULT = MAX_BOXES_SHADOW  # disabled/shadow default; live overrides to 5
@@ -75,10 +77,10 @@ STALL_FIRST_COMPILE = {
 
 from .config import PitConfig, load_pit_config, DEFAULT_PIT
 from .state import ItemState, ItemRecord, TransitionError, apply_transition, ALLOWED
-from .shadow import ShadowGuard, ShadowWriteError, FORBIDDEN_SHADOW_WRITES
+from .shadow import ShadowGuard, ShadowWriteError, SHADOW_R2_PREFIXES
 
 __all__ = [
-    'PREFIX', 'PREFIX_LIVE', 'PREFIX_SHADOW',
+    'PREFIX', 'PREFIX_LIVE', 'PREFIX_SHADOW', 'LIVE_NAME_ROOT',
     'MAX_BOXES_DEFAULT', 'MAX_BOXES_SHADOW', 'MAX_BOXES_LIVE',
     'GPU_ORDER', 'GPU_PINNED', 'SHARDED_GPUS', 'ALLOW_SHARDED_GPUS_DEFAULT',
     'PRICE_CEILING_USD_H', 'TRAIN_OUTPUT_TOKENS',
@@ -88,5 +90,5 @@ __all__ = [
     'ALLOWED_GPUS', 'REQUIRED_GPU_COUNT', 'LOW_MEM_GPU_GIB',
     'PitConfig', 'load_pit_config', 'DEFAULT_PIT',
     'ItemState', 'ItemRecord', 'TransitionError', 'apply_transition', 'ALLOWED',
-    'ShadowGuard', 'ShadowWriteError', 'FORBIDDEN_SHADOW_WRITES',
+    'ShadowGuard', 'ShadowWriteError', 'SHADOW_R2_PREFIXES',
 ]

@@ -6,6 +6,7 @@ keys are always dropped; REAL may then rebind a subset to sandbox paths
 """
 from __future__ import annotations
 
+import configparser
 import enum
 import json
 import os
@@ -389,19 +390,72 @@ def liveness_loop(
             time.sleep(sleep_s)
 
 
-def has_lium_credentials(env: Optional[Mapping[str, str]] = None) -> bool:
+LIUM_KEY_ENV = ('LIUM_API_API_KEY', 'LIUM_API_KEY')
+LIUM_CONFIG_INI = Path('.lium') / 'config.ini'
+
+
+def _lium_config_ini_source(path: Path, workspace: Optional[str]) -> Optional[str]:
+    """Which ``config.ini`` entry holds the API key the Lium CLI would use, or None.
+
+    Mirrors the CLI: a requested workspace means only that workspace's key;
+    otherwise the stored default workspace, then ``[api] api_key``.
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path)
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+
+    def saved(name: str) -> Optional[str]:
+        section = 'workspace.%s' % name.lower()
+        if (parser.get(section, 'api_key', fallback='') or '').strip():
+            return 'config.ini:[%s] api_key' % section
+        return None
+
+    if workspace:
+        return saved(workspace)
+    active = (parser.get('workspaces', 'active', fallback='') or '').strip()
+    if active and saved(active):
+        return saved(active)
+    if (parser.get('api', 'api_key', fallback='') or '').strip():
+        return 'config.ini:[api] api_key'
+    return None
+
+
+def lium_credential_source(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """Non-secret label for the Lium credential in reach, or None. Never returns the key.
+
+    Order is the Lium CLI's own: ``LIUM_WORKSPACE`` pins the key saved for that
+    workspace; else ``LIUM_API_API_KEY`` / ``LIUM_API_KEY``; else the standard
+    config file ``~/.lium/config.ini``. Older host layouts stay accepted last.
+    """
     src = env if env is not None else os.environ
-    if src.get('LIUM_API_KEY') or src.get('LIUM_TOKEN'):
-        return True
     home = Path(src.get('HOME') or Path.home())
-    for candidate in (
-        home / '.lium' / 'config.json',
-        home / '.lium' / 'credentials',
-        Path(src['LIUM_CONFIG']) if src.get('LIUM_CONFIG') else None,
+    ini = home / LIUM_CONFIG_INI
+    workspace = (src.get('LIUM_WORKSPACE') or '').strip() or None
+    if workspace:
+        return _lium_config_ini_source(ini, workspace) if ini.is_file() else None
+    for key in LIUM_KEY_ENV:
+        if src.get(key):
+            return 'env:%s' % key
+    if ini.is_file():
+        found = _lium_config_ini_source(ini, None)
+        if found:
+            return found
+    if src.get('LIUM_TOKEN'):
+        return 'env:LIUM_TOKEN'
+    for label, candidate in (
+        ('legacy:config.json', home / '.lium' / 'config.json'),
+        ('legacy:credentials', home / '.lium' / 'credentials'),
+        ('env:LIUM_CONFIG', Path(src['LIUM_CONFIG']) if src.get('LIUM_CONFIG') else None),
     ):
         if candidate is not None and candidate.is_file():
-            return True
-    return False
+            return label
+    return None
+
+
+def has_lium_credentials(env: Optional[Mapping[str, str]] = None) -> bool:
+    return lium_credential_source(env) is not None
 
 
 class SeveredPod:

@@ -187,7 +187,9 @@ class TestLostInfraWaiting(unittest.TestCase):
         self.assertIn('e1', busy[0])
 
     def test_fakepass_excluded_from_live_cap(self):
-        self.assertTrue(is_fakepass_name('affine-pe-pit-fakepass-abc'))
+        self.assertTrue(is_fakepass_name('sn120-fakepass-pit-abc'))
+        self.assertFalse(is_live_pit_name('sn120-fakepass-pit-abc'))
+        # The name that a fakepass box had before: live PIT does not own such a box.
         self.assertFalse(is_live_pit_name('affine-pe-pit-fakepass-abc'))
         self.assertTrue(is_live_pit_name('affine-pe-pit-live1'))
 

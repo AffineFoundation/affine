@@ -19,6 +19,9 @@ from typing import Any, Iterator, List, Optional
 from .decisions import DecisionLog
 from .state import ItemRecord, ItemState
 
+# The shadow state root (shadow_guard.STATE_ENV). The name is here so that this file does not import botocore.
+SHADOW_STATE_ENV = 'PIT_SHADOW_STATE'
+
 
 def pit_state_root(explicit: Optional[str] = None) -> Path:
     """Single PIT_STATE source of truth shared with pe_live claim checks.
@@ -28,6 +31,10 @@ def pit_state_root(explicit: Optional[str] = None) -> Path:
     """
     if explicit:
         return Path(explicit)
+    shadow = os.environ.get(SHADOW_STATE_ENV)
+    if shadow:
+        # Shadow mode: the PIT state is in the shadow state root, never in PE_STATE (shadow_guard.py).
+        return Path(shadow) / 'pit'
     pit = os.environ.get('PIT_STATE')
     pe = os.environ.get('PE_STATE') or os.environ.get('PE_ST')
     if pit and pe:
@@ -166,6 +173,9 @@ class DurableStore:
         # Only mirror when env vars are non-empty (Path('') == '.' is truthy).
         pe_state_env = os.environ.get('PE_STATE') or ''
         pe_life_env = os.environ.get('PE_LIFE_STATE') or ''
+        if os.environ.get(SHADOW_STATE_ENV):
+            # Shadow mode: no claim in a live directory. Live pe_live skips an epoch that has a claim.
+            pe_state_env = pe_life_env = ''
         if pe_state_env:
             _wj(Path(pe_state_env) / ('PIT-CLAIM-e%d.json' % int(epoch)), doc, 0o600)
         if pe_life_env:
