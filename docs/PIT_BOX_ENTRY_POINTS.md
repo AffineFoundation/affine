@@ -48,6 +48,57 @@ These are constants of `ops/parallel_eval/live/pe_box.py`.
 | `KDIR` | `/opt/plain/probe/affine-env-probe/ckpt` | checkpoints that the probe serves |
 | `BOX_ROOT` | `/root/affine-env-probe` | probe directory (`podctl.py`, `runs/`) |
 
+## Names that a controller loads
+
+The batch controller loads these names from this code when it starts (its file
+`batchctl/hostlink.py` has the list). A name that is not there stops its start.
+Do not rename one, and do not change its arguments.
+
+`P` is the ssh handle of one box: an object with
+`run(cmd, inp=None, timeout=..., check=True)` that runs a shell command there.
+
+Helpers that prepare a box. Call them in this order:
+
+| Name | Call | What it does |
+|------|------|--------------|
+| `pe_box.boot_helpers` | `boot_helpers(P)` | First step on a new box. It makes the links and the directories, and puts `gate_fetch.py` and `bundle_fetch.py` in `/workspace/pst`. |
+| `pe_box.push_probe_bundle` | `push_probe_bundle(P)` | It puts the probe bundle on the box (`podctl.py` and the vLLM environment). |
+| `pe_box.bundle_trainer` | `bundle_trainer(P)` | It puts the trainer bundle and the trainer package `host-v834e` on the box, and checks each sha256. It returns a record. |
+| `pe_box.ship_inputs` | `ship_inputs(P, epoch_dir=..., epoch=..., work_jd=...)` | It writes the trainer inputs to `/workspace/pst/in` and downloads the rollout documents (with retries, see "Fetch"). It refuses an unsigned dispatch. `work_jd` is a private scratch directory on the host. |
+| `pe_box._ship_train_pit` | `_ship_train_pit(P)` | It writes `/workspace/pst/train_pit.py`. |
+
+Other names:
+
+| Name | Call | What it does |
+|------|------|--------------|
+| `pe_box._train_pit_inner_cmd` | `_train_pit_inner_cmd(expected_master=...)` | It gives the train command text. See "Train". |
+| `pe_box.put` | `put(P, dest, data, mode='644')` | It writes one small file on the box (8 MiB at most). |
+| `pe_box.put_tar` | `put_tar(P, local_dir, remote_dir)` | It copies a directory to the box. It does not empty the destination first. |
+| `probe_serve.ship` | `ship(write_text, job_dir, plan, read_text=None)` | It copies the probe tool and the layouts to a directory on the box. It returns `{<file name>: <path on the box>}`. |
+| `probe_serve.detached_command` | `detached_command(preamble=..., job_dir=..., candidate_id=..., plan_path=..., root='/root/affine-env-probe', box_args=())` | It gives the shell text of `probe_serve.py eval`. See "Probe". |
+| `probe_layout.ProbePlan` | `plan.layouts`, `plan.primary`, `plan.eval_timeout_s()`, `plan.primary.concurrency()` | The serving layouts of a probe, the first one, the time limit of one probe in seconds, and the requests in flight for each server. |
+| `pe_probe_plan.build_probe_plan` | see "Probe" | It makes the plan of a probe. The file `live/pe_probe_plan.py` can run on the box: it uses the standard library only. |
+| `probe_fingerprint.of`, `.KEY`, `.FingerprintError` | see "Fingerprint" | The fingerprint of a probe. |
+| `gpu_policy.effective_gpu_order` | `effective_gpu_order(order=None, allow_sharded_gpus=False)` | The GPU classes that a run can rent, in order. |
+| `pit/box._load_public_harness` | `_load_public_harness()` | The public harness of the live lane: `harness` and `sampling_contract`. |
+| `pit/pe_score.call_live_host_score` | `call_live_host_score(host_score, epoch=..., round_id=..., result=..., baseline_of=None)` | It runs the live decision function on one probe result. With `baseline_of`, the fingerprint check runs before the scorer. See "Fingerprint". |
+| `live/pe_common.lium` | `lium(*words, timeout=180)` | It runs the Lium command-line tool. It returns `(exit code, stdout, stderr)`. Validator host only. |
+| `live/pe_common.pod_of` | `pod_of({"id": ..., "ip": ..., "port": ..., "huid": ..., "name": ...})` | It gives `P` for one box. Validator host only. |
+| `live/pe_score.score` | `score(epoch, rid, result, flag=None)` | The decision function of the live gate. Validator host only. |
+| `live/pe_score.HELDOUT` | a path | The directory where the scorer reads its rounds. Validator host only. |
+
+"Validator host only": the module does not load on a different machine.
+
+The controller also imports these names. Keep them:
+
+| Module | Names |
+|--------|-------|
+| `ops/parallel_eval/pit` | `ALLOWED_GPUS`, `SHARDED_GPUS`, `REQUIRED_GPU_COUNT`, `PRICE_CEILING_USD_H`, `ALLOW_SHARDED_GPUS_DEFAULT` |
+| `pit/shadow` | `ShadowWriteError` |
+| `pit/fakepass_sandbox` | `FakepassError`, `assert_paths_outside_live`, `live_roots_from_env` |
+| `pit/queue_ingest` | `_epoch_index_of`, `_above_floor_or_pit_open`, `_epoch_dir_ready` |
+| `ops/parallel_eval/durable` | `canonical` |
+
 ## Output prefix (R2)
 
 One prefix says where a run writes in R2. Example:
