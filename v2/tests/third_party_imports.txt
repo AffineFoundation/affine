@@ -11,8 +11,16 @@ pytest
 
 # gpu: train/eval workers
 
-# r2: R2 head store
+# r2: R2 head store (moto is the S3 fake, used by tests only)
+boto3
+botocore
+moto
 
 # chain: weights writer and chain reader
 
 # miner: miner tooling and llms.txt
+
+# envs: math task pool and grader
+math_verify
+latex2sympy2_extended
+sympy
