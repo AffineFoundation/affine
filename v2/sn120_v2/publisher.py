@@ -35,8 +35,9 @@ from .seams import ObjectStore
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
-# The site pull job writes this file on the web host, under the public address. It is not a store key, and the
-# publisher never writes it: it holds signed download links for the weight files of the current head.
+# The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
+# is not a store key, and the publisher never writes it: it holds signed download links for the weight files of
+# the current head. The pull is a command outside this package, so the path is typed here; a test compares the two.
 READ_LINKS = "public/read_links.json"
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
@@ -642,6 +643,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "- Weight files are not served under the public address. Signed download links for the files of the current",
         f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
         "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
+        "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
+        "  You do not need the `master`: it is only for a check of a fold.",
         f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
         "  always a matching pair.",
         "",

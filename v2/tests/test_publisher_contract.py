@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 
@@ -191,6 +192,8 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat
+    assert f'LINKS = "{publisher.READ_LINKS}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text()  # the writer's path
+    assert all(f'"{key}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text() for key in ("expires_at", "head_version_id", "base", "loras", "master", "sha256", "size"))
 
 
 def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):
