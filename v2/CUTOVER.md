@@ -12,12 +12,9 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
-1. The preflight command (hard gate, "GPU box", step 5).
-2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
-3. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
-4. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-5. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
-6. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
+1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
+2. A unit file or another supervisor for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
+3. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
 
 ## Hosts
 
@@ -103,9 +100,12 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
+   git merge-base --is-ancestor 505f5ddab15c325ecedcf5c763bddf61225ff6ff HEAD; echo "exit=$?"
    cd v2 && source .venv/bin/activate
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
+
+   **The mainnet bootstrap runs only at a commit that contains `505f5dda` (PR #131).** The third line must print `exit=0`. With `exit=1`, the checkout is an earlier commit: it writes the head pointer to `public/current.json`, which is v1's object, and it has no preflight command. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the same fact from the code.
 
 2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable of the smoke test (`env | grep ^SN120_` prints nothing).
 
@@ -124,7 +124,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    nvidia-smi --query-gpu=index,name,memory.used --format=csv     # 8 GPUs, almost no memory in use
    ```
 
-4. Three changes that the build must hold. Stop if one of them is wrong. (The first and the third are **not landed yet** at the commit of this file; the second is.)
+4. Three changes that the build must hold. Stop if one of them is wrong.
 
    ```
    python -c "from sn120_v2 import layout; print(layout.CURRENT)"
@@ -190,17 +190,49 @@ Run every command from `v2/`, inside the virtual environment.
    - The last line of the report must say `UID 0 is <address>: it has no seat and gets no weight; it is the given owner hotkey`.
 5. **Preflight (hard gate).** A read-only command lists every key and prefix that v2 writes, and fails when one of them already exists in the bucket. Run it before the first production write, which is step 6. If it fails, stop the cutover: v2 would write over an object that is not its own. Do not go on without it.
 
-   **Not landed yet** at the commit of this file (PR #131). Nobody has run it against the real bucket: this run is the first. It only lists; it writes nothing.
+   Nobody has run it against the real bucket: this run is the first. It only lists; it writes nothing.
 
    ```
-   python -m sn120_v2.r2 --preflight
+   python -m sn120_v2.r2 --preflight; echo "exit=$?"
    ```
 
-   Check: exit code 0 (`echo $?`), and the last line is `PASS  no object at a key that v2 writes`. The first line names the bucket and the key prefix: the bucket is the production one and the prefix is `''`. Each key or prefix of v2 has one line `ok`; the line for `private/ff/v1/miners` shows the count of miner files, which v2 reads in place.
+   The output on a bucket and prefix with nothing of v2, and `N` miner files of v1:
 
-   A line `EXISTS  <key or prefix>  N objects` and the last line `FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix`: stop, and send the output to the coordinator. Do not delete anything to make it pass.
+   ```
+   preflight  bucket 'affine-verification-mock-20260930', key prefix '': 16 keys and prefixes from layout.py, list calls only
+   ok      pending  nothing
+   ok      private/ff/v1/miners  N objects: the miner files, read in place
+   ok      private/journal  nothing
+   ok      private/rounds  nothing
+   ok      public/bases  nothing
+   ok      public/benchmarks.json  nothing
+   ok      public/ff/links  nothing
+   ok      public/ff/links.json  nothing
+   ok      public/head.json  nothing
+   ok      public/heads  nothing
+   ok      public/irt  nothing
+   ok      public/llms.txt  nothing
+   ok      public/loras  nothing
+   ok      public/masters  nothing
+   ok      public/mining.json  nothing
+   ok      public/rounds  nothing
+   PASS  no object at a key that v2 writes
+   exit=0
+   ```
 
-   After step 6, a second run finds v2's own genesis files. Then name them as expected, one `--allow` for each: `python -m sn120_v2.r2 --preflight --allow public/bases/ --allow public/masters/`.
+   Check:
+
+   - `exit=0`, and the last line of the command is `PASS  no object at a key that v2 writes`.
+   - The first line names the production bucket and the key prefix `''`.
+   - The line for the head pointer says `public/head.json`. If it says `public/current.json`, the commit is too old (check 1 of "Before the mainnet bootstrap").
+   - The line for `private/ff/v1/miners` shows the count of miner files. v2 reads them in place and never writes there, so objects there are expected.
+
+   When it does not pass:
+
+   - A line `EXISTS  <key or prefix>  N objects`, then up to 10 of the keys, and the last line `FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix`, with `exit=1`. Stop, and send the output to the coordinator. Do not delete anything to make it pass.
+   - A line `FAIL    <key or prefix>  <error>`: that list call failed, so the place is not known to be empty. A line `FAIL  open the bucket  <error>`: the store settings of step 2 are wrong. Correct the cause and run it again.
+
+   After step 6, a second run finds v2's own genesis files. Then name them as expected, one `--allow` for each: `python -m sn120_v2.r2 --preflight --allow public/bases/ --allow public/masters/`. Their lines then say `N objects, all under --allow`.
 6. **Genesis files** (57 GB of disk, 30 GB of RAM, no GPU). With the genesis directory of the smoke test, nothing is downloaded or built again; the files are uploaded to `public/bases/<base hash>/` and `public/masters/<master digest>/` of the production store, and each stored file is read back and compared.
 
    ```
@@ -240,7 +272,22 @@ Run every command from `v2/`, inside the virtual environment.
 
 ## AffineValidator: the order at the cutover
 
-One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Steps 1 to 4 can be done before the cutover; step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap).
+One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap).
+
+**What can be done now, before the smoke test is green: steps 1, 2, 3 and 4, the chain check of step 6, and the file check 8.1.** None of them changes anything that is live: they start no unit, enable no timer, stop nothing of v1, and write nothing to the chain, to the store or into the site directory. Each one is marked **Can be done now** in the list.
+
+| Step | What it leaves on the host | What to do again at the cutover |
+| --- | --- | --- |
+| 1 | A v2 checkout and its virtual environment. | Check out the cutover commit and run the install line again. Then run `git diff --stat <the commit of today> <the cutover commit> -- v2/systemd`: if it names a file, run the `sed` blocks of steps 2 and 3 again. |
+| 2 | The weights writer's credentials file, and two unit files that are not enabled. | Nothing, but see step 1. |
+| 3 | Two unit files that are not enabled. It only reads v1's credentials file and the site directory. | Nothing, but see step 1. |
+| 4 | A copy of v1's site and the frozen v1 history, both outside the site directory. | Make both again right before step 7 of "GPU box": `mv "$BACKUP" "$BACKUP-early"`, then the copy block of step 4. The way back uses the copy, so the copy must be fresh. |
+| 6, the chain check only | The script file. It only reads the chain. | Nothing. Step 9 runs it again. |
+| 8.1 | Nothing. It reads the mode and the names of the pull's credentials file. | Step 8 runs it again. |
+
+Set the session names and the helper `with_store` again in each new shell.
+
+Everything else waits. Step 5, the two dry runs of step 6 and step 7 read the journal copy in the production store, and that copy exists only after the bootstrap. From 8.3 on, each step changes something that is live.
 
 The order follows Jacob's sequence: the new `llms.txt` first (step 8), then the weights and the stop of v1 (steps 9 and 10), then the website (step 12). The first run of the pull is the site switch, so the pull does not run before step 12.
 
@@ -252,7 +299,7 @@ Run every step as the Linux user that runs v1's `affine-ff.service`: that user c
 
 ```
 RUNUSER=$(whoami)
-REPO=$HOME/affine                          # the checkout
+REPO=$HOME/affine                          # the v2 checkout: a directory of its own, never a directory of v1
 WSTATE=$HOME/sn120-v2-weights              # the weights writer's own directory
 WENV=$HOME/sn120-v2-weights.env            # the weights writer's own credentials file
 WALLETS=$HOME/.bittensor/wallets           # the directory that holds the wallet NAME
@@ -280,17 +327,20 @@ with_store() ( set -a; . "$PENV"; set +a; "$@" )
 
 A variable with `SN120_R2_` at its start wins over the plain name. So the shell of these steps must hold none: `env | grep ^SN120_R2_` prints nothing.
 
-1. **Install.** The same commit as the GPU box.
+1. **Install.** **Can be done now**, with the newest commit of `v2`. At the cutover: the same commit as the GPU box.
+
+   `$REPO` is a checkout for v2 alone. v1 runs from `/home/const/subnet120` and `/home/const/subnet120-rewrite`: never check out another commit there, and never install into v1's environment. If `$REPO` does not exist yet: `git clone https://github.com/AffineFoundation/affine "$REPO"`.
 
    ```
    cd "$REPO" && git fetch origin && git checkout <commit that the coordinator names>
+   git merge-base --is-ancestor 3953282834931ece95dccfae720ea01049a1d1cd HEAD; echo "exit=$?"
    cd v2 && uv venv .venv --python 3.12 && source .venv/bin/activate
    uv pip install -e ".[chain,r2,links]"
    install -d -m 700 "$WSTATE" "$LSTATE"
    ```
 
-   Check: `python -c "import bittensor, boto3, nacl, sn120_v2.weights_writer, sn120_v2.links; print('ok')"` prints `ok`.
-2. **The weights writer: credentials file and unit files.** Write `$WENV` with these five lines, with no quotes and no `export`, then `chmod 600 "$WENV"`. The token is the read-only one.
+   Check: the second line prints `exit=0`: the commit contains PR #139, so the pull and `reset.py llms` read the names of the pull's credentials file. `python -c "import bittensor, boto3, nacl, sn120_v2.weights_writer, sn120_v2.links; print('ok')"` prints `ok`.
+2. **The weights writer: credentials file and unit files.** **Can be done now.** Write `$WENV` with these five lines, with no quotes and no `export`, then `chmod 600 "$WENV"`. The token is the read-only one.
 
    ```
    SN120_R2_ENDPOINT=https://00523074f51300584834607253cae0fa.r2.cloudflarestorage.com
@@ -319,7 +369,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
    systemd-analyze verify /etc/systemd/system/sn120-v2-weights.service /etc/systemd/system/sn120-v2-weights.timer
    ```
 
-3. **The links job: host check and unit files.** The job reads v1's credentials file in place. Never use `cat`, `grep` or `source` on that file.
+3. **The links job: host check and unit files.** **Can be done now.** The job reads v1's credentials file in place. Never use `cat`, `grep` or `source` on that file.
 
    ```
    cut -s -d= -f1 "$CRED"                      # prints the names in the file, never a value
@@ -341,7 +391,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
    systemd-analyze verify /etc/systemd/system/sn120-v2-links.service /etc/systemd/system/sn120-v2-links.timer
    ```
 
-4. **Check the host, copy v1's site, and freeze the v1 history.** Do it before step 7 of "GPU box" (the import's real run). Nothing here changes the site directory.
+4. **Check the host, copy v1's site, and freeze the v1 history.** **Can be done now**; make the copy and the history again right before step 7 of "GPU box" (the import's real run). Nothing here changes the site directory.
 
    First the checks of the host. They only read.
 
@@ -411,7 +461,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
 
    Check: `wallet_hotkey` equals `validator_hotkey`, and either `"preflight": "passed"`, or `"status": "would defer"` with the reason `recent write: the rate limit allows the next one in N blocks`. That reason is normal while v1's writer still writes. Any other reason, or `nothing submitted: the hotkey file ...`: stop and correct it.
 
-   Save the chain check script: the block in "The chain check" below. It only reads the chain and needs no wallet. Step 9 runs it several times. Then run it:
+   Save the chain check script: the block in "The chain check" below. It only reads the chain and needs no wallet. Step 9 runs it several times. **Can be done now**: the script and its run, not the dry run above. Then run it:
 
    ```
    python "$HOME/sn120-v2-chain-check.py"
@@ -447,7 +497,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
    Check: one line `links: issued N of M waiting hotkeys (not activated ..., not Ed25519 ...), removed 0, valid 86400 s`, exit code 0. `M` is the queue of the bootstrap. If the second count is most of v1's files, stop and ask: then the v2 queue is not what the import promised.
 8. **The new `llms.txt` alone.** Only this one file goes up here: the `llms.txt` that the bootstrap published into the store. v1's `mining.json`, `index.html` and every other file of the site stay as they are. Do not run the pull for this: one run of the pull also replaces `mining.json` and `index.html`.
 
-   1. **Check the pull's credentials file.** It exists already: `$PENV`. Do not make a new one, do not edit it, and do not show its content.
+   1. **Check the pull's credentials file.** **Can be done now.** It exists already: `$PENV`. Do not make a new one, do not edit it, and do not show its content.
 
       ```
       stat -c '%a %U' "$PENV"          # 600 and the run user
@@ -521,9 +571,15 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
       ```
 
       Check: `systemctl --user list-timers --all` does not list the v1 writer's timer, and `systemctl --user is-enabled <v1 writer>.timer` prints `disabled`. `affine-hourly-burn.timer` and `affine-transition-weights.timer` stay disabled and masked. Never start them.
-   3. **Wait for the rate limit.** Run the chain check again.
+   3. **Wait for the rate limit, and for an epoch that does not end at once.** Run the chain check again.
 
-      Check: `last write block` is still the block of 9.1. If it moved, a v1 writer is still alive: go back to 9.2. Wait until it prints `next write allowed in blocks: 0`. Do not start v2 before this: a first run inside the rate limit submits nothing, and it uses the attempt of the hour.
+      Check:
+
+      - `last write block` is still the block of 9.1. If it moved, a v1 writer is still alive: go back to 9.2.
+      - Wait until it prints `next write allowed in blocks: 0`. This is at most 20 minutes after v1's last write.
+      - Wait until it prints `next epoch in blocks:` with a value of 10 or more. If the value is less than 10, wait 3 minutes and run the check again: then the epoch has changed and the value is large.
+
+      Do not start v2 before this. A first run inside the rate limit submits nothing, and it uses the attempt of the hour. A commit in the last 3 blocks of an epoch can open one epoch (72 minutes) late.
    4. **First run of v2's writer.** This is the first real weight write of v2. The command returns when the run ends; a write waits about one minute for the block to be final.
 
       ```
@@ -711,8 +767,31 @@ Run it with the virtual environment of the checkout: `"$REPO/v2/.venv/bin/python
 | --- | --- |
 | `commit-reveal on`, `reveal period in epochs` | The weights go to the chain hidden, and the chain opens them after that many epochs. An epoch is 360 blocks, 72 minutes. |
 | `rate limit in blocks`, `last write block`, `next write allowed in blocks` | The last weight write of the validator hotkey, by any writer, and how long the chain refuses the next one. |
+| `next epoch in blocks` | How many blocks are left in the epoch. The first v2 write starts only with 10 or more (step 9.3). |
 | `commit that waits for its reveal` | A write that the chain has accepted and not opened yet. |
 | `weights on chain` | The weights that count now. |
+
+## What only the real host can prove
+
+The code and the steps were tested on other machines, with a stand-in for the web server and a local store. Each line below is a fact that only AffineValidator, the real bucket or the edge can show. Jacob runs the check at the step that is named. A check that fails stops the list at that step.
+
+| # | The fact | The check | When the check fails |
+| --- | --- | --- | --- |
+| 1 | The user of this list owns the site directory and can write there. | Step 4: `stat` shows `$RUNUSER` for the four paths, and `ps` shows `$RUNUSER` for `affine-ff.service`. | Do not change an owner or a mode in the site directory. Log in as the user that `stat` shows, and start the list again from the session names as that user. |
+| 2 | `$KEEP` and the site directory are on one disk. | Step 4: the first `df` prints one mount point two times. | Set `MOVED` to a directory on the mount point of `$SITE`, outside `$SITE`. The copy `$BACKUP` can stay on the other disk. |
+| 3 | v1 has no `public/` directory in the site directory. | Step 4: `ls -d "$SITE/public"` says `No such file or directory`. | Tell the coordinator before step 12. Do not run the pull: it refuses to replace a file there that it did not write. |
+| 4 | The web server gives 404 as JSON for a link file that does not exist. | Step 4: the `curl` line prints `404 application/json`. | Tell the coordinator before step 11. Do not change the web server. |
+| 5 | The pull's token reads the real store. | Step 8.4: `reset.py llms` prints `reset llms: ...` and `exit=0`. It is the first read with this token. | `missing in the store`: the GPU box has not published, or the bucket in the file is wrong. An access error: the token cannot read this bucket; correct the token, and never use v1's credentials file for the pull. Nothing in the site directory changed. |
+| 6 | No other v1 process puts `llms.txt` back. | Step 8.4: after 60 seconds the hash is still `H`. | Find the process (`pm2 ls`, `crontab -l`, `grep -rl llms ~/.config/systemd/user/`), stop it, and run the command of 8.4 again. |
+| 7 | The edge and the reverse proxy pass `llms.txt` with no cache. | Step 8.4: `curl -fsS https://affine.io/llms.txt \| sha256sum` shows `H`. | Run `curl -sI https://affine.io/llms.txt` and read `cf-cache-status` and `age`. If a cache holds v1's file, wait until it shows `H`, and tell the coordinator. Do not go on to step 9 before it shows `H`. |
+| 8 | The validator hotkey file is readable for the writer's user, and the chain uses commit-reveal. | Step 6: `wallet_hotkey` equals `validator_hotkey`; the chain check prints `commit-reveal on: True`. | `nothing submitted: the hotkey file ...`: correct the path or the wallet name in step 2, and run the dry run again. `commit-reveal on: False`: stop and tell the coordinator. |
+| 9 | The name of v1's weight writer unit. | Step 9.2: the two commands show its timer and its service. Step 9.3: `last write block` does not move. | If `last write block` moved, a writer is still alive: go back to 9.2. Do not start v2's writer before it stands still. |
+| 10 | Which v1 units write into the site directory. | Step 10: `find` prints nothing after 90 seconds. | Each line is a file that a process still writes. Find the process, stop it, and run the last two lines of step 10 again. Do not start step 11 or step 12 before `find` prints nothing. |
+| 11 | The real web server serves the new `public/` directory and `v1.html` with no restart, and the edge passes the new paths. | Step 12.1: every line of the two loops from outside starts with `200`. | A file is on the disk and its address gives 404: stop, and tell the coordinator. Do not restart the web server on your own. If the root page is broken, do "Go back". v1's files have not moved at this point. |
+| 12 | No cache holds `public/read_links.json` for longer than a few minutes. | Step 12.1: `curl -sI https://affine.io/public/read_links.json`, the headers `cache-control` and `age`. | Tell the coordinator. The site can stay up; the read links are not announced before this is corrected. |
+| 13 | The files of v1's real directory that no v1 page links. | Step 12.3: the dry run of `reset.py out` names nothing that must stay. | Do not do the real run. Send the dry run to the coordinator. The site works with v1's files still in place. |
+| 14 | No object of the real bucket is at a key that v2 writes. | "GPU box", step 5: the preflight prints `PASS`. | Stop the cutover and send the output to the coordinator. Do not delete anything. |
+| 15 | What the edge keeps for v1's `.js?v=` addresses. | Only after the `--assets` move and a later way back: "Go back", step 6, shows v1's page with its charts. | The edge can keep a "not found" answer for up to one day. So do the `--assets` move only when the way back is no longer needed. If it happened, tell the coordinator. |
 
 ## After the start
 
@@ -732,24 +811,39 @@ On AffineValidator: `journalctl -u sn120-v2-weights.service --since "3 hours ago
 
 ### After a fix: a new commit on the GPU box
 
-A round that an older commit opened continues at a newer commit. A move in the middle of a round costs only that the round runs again from its start.
+This is "After a fix" of [SMOKE.md](SMOKE.md), with the same words. Two things differ on mainnet: there is no `smoke params` command, so the parameter file is `$CUT/params.json` with the two new digests; and the digest block is check 3 of "Before the mainnet bootstrap".
 
-One case needs one more command: the fix changed the code digest or the install, and a round is open. Then end the round first. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
+A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. Never run `bootstrap` again. The message for the fix says if it needs the install line and if it needs the digest block.
 
-1. Stop `run`.
-2. Check out the commit, install again and run the test suite (checks 1 and 2 of "Before the mainnet bootstrap").
-3. If a round is open and the digests changed, end the round:
+Stop `run`. Then look at the state:
 
-   ```
-   python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack
-   ```
+```
+python -m sn120_v2 status --state-dir $STATE          # "phase": "IDLE", "RUNNING" or "APPLY"
+```
 
-   It ends an open, undecided round at once. Nobody is charged, no failure is counted for a seat, and the seats are first in the next round. It is refused (exit code 2, `no round is open and undecided`) when no round is open or the round is already decided; `run` finishes a decided round.
-4. The digest block (check 3 of "Before the mainnet bootstrap").
-5. `set-params` with a file that holds the new digests. The file holds the whole set of overrides.
-6. Start `run` again. Never run `bootstrap` again.
+Then:
 
-`python -m sn120_v2.gpu.plan` only prints: run it before step 3 and compare `code_digest` and `image_digest` with `$CUT/params.json` to see if the digests changed. `status` shows a `phase` other than `IDLE` while a round is open.
+```
+git fetch origin && git checkout <the commit of the fix>
+uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"    # only when the fix needs the install line
+python -m pytest
+```
+
+The fix needs **no** digest block: run the `run` command again. It takes up an open round and finishes it. A move in the middle of a round costs only that the round runs again from its start.
+
+The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
+
+- `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then `run`. The file holds the whole set of overrides, not only the change.
+- `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. Nobody is charged, no failure is counted for a seat, and its seats are first in the next round:
+
+  ```
+  python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack
+  ```
+
+  Then do the `IDLE` line. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
+- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only. `run` then finishes the fold with the new code.
+
+`end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused (exit code 2, `no round is open and undecided`) when no round is open, and when the round is already decided.
 
 After any failed lease, the next round opens 5 minutes later at the earliest (`apply_retry_s` 300).
 
@@ -909,7 +1003,7 @@ v2 and v1 share one bucket, and v2 has no prefix. The rule: **no v2 write and no
 
 No top-level prefix belongs to v2 alone, except `pending/`. v1 has objects under `public/` and under `private/`. So v2's keys are exactly the ones below, and nothing lists, copies or deletes a whole `public/` or `private/`.
 
-**What v2 writes** (`sn120_v2/layout.py`):
+**What v2 writes** (`sn120_v2/layout.py`). With the miner files below, these are the 16 lines of the preflight:
 
 | Key or prefix | Writer |
 | --- | --- |
@@ -920,6 +1014,7 @@ No top-level prefix belongs to v2 alone, except `pending/`. v1 has objects under
 | `private/journal/`, `private/rounds/` | controller, admission |
 | `pending/` | the box, for every result before the controller has checked it |
 | `public/benchmarks.json` | the benchmark service, when it exists |
+| `public/ff/links/`, `public/ff/links.json` | the links job, only when it runs with `--to-store`. At this cutover it runs with `--site-dir` and writes nothing to the bucket. The preflight still checks these two. |
 
 **What v2 reads and never writes:** `private/ff/v1/miners/<hotkey>/batch.json`, the miner's own file. The key is the same as in v1, on purpose. Only the miner writes it, through its upload link.
 
