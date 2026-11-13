@@ -82,14 +82,18 @@ def store(env, tmp_path):
     return store
 
 
+def command(env: dict, script: str, *args: str) -> subprocess.CompletedProcess:
+    """One command of ``v2/site`` as a process. Its store settings are ``env`` alone: no ``SN120_*`` or ``R2_*`` name of the caller's shell reaches it."""
+    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_", "R2_"))}
+    done = subprocess.run([sys.executable, str(PULL.with_name(script)), *args], capture_output=True, text=True, env={**ours, **env})
+    assert "X-Amz" not in done.stdout + done.stderr and SECRET not in done.stdout + done.stderr  # no signed link in a log
+    return done
+
+
 def pull(env: dict, site: Path, *more: str) -> subprocess.CompletedProcess:
     if site.parent.is_dir():
         site.mkdir(exist_ok=True)
-    args = [sys.executable, str(PULL), "--site-dir", str(site), "--public-url", URL, *more]
-    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_R2_", "R2_"))}
-    done = subprocess.run(args, capture_output=True, text=True, env={**ours, **env})
-    assert "X-Amz" not in done.stdout + done.stderr and SECRET not in done.stdout + done.stderr  # no signed link in a log
-    return done
+    return command(env, "pull.py", "--site-dir", str(site), "--public-url", URL, *more)
 
 
 def tree(site: Path) -> dict[str, bytes]:
@@ -347,9 +351,8 @@ def test_the_whole_run_passes_with_a_token_that_cannot_write_and_a_file_with_the
     item = json.loads((site / LINKS).read_text())["base"]["files"][0]
     with urllib.request.urlopen(item["url"]) as response:  # a link signed with that token reads the file
         assert hashlib.sha256(response.read()).hexdigest() == item["sha256"] and item["url"].startswith(proxy)
-    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_R2_", "R2_"))}
     (site / "llms.txt").unlink()  # the reset tool's copy of llms.txt takes the same names and makes no write call either
-    reset = subprocess.run([sys.executable, str(PULL.with_name("reset.py")), "llms", "--site-dir", str(site)], capture_output=True, text=True, env={**ours, **token})
+    reset = command(token, "reset.py", "llms", "--site-dir", str(site))
     assert reset.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT) and read_only.denied == [], reset.stderr
 
     writer = R2Store.from_env({**env, "SN120_R2_ENDPOINT": proxy}, attempts=1)  # the same store does refuse a write
@@ -361,6 +364,23 @@ def test_the_whole_run_passes_with_a_token_that_cannot_write_and_a_file_with_the
     done = pull({name: value for name, value in token.items() if name not in ("R2_ENDPOINT", "R2_ACCOUNT_ID")}, site)
     assert done.returncode == 1 and "nothing written" in done.stderr  # a missing name is named, and no value is shown
     assert all(name in done.stderr for name in ("SN120_R2_ENDPOINT", "R2_ENDPOINT", "R2_ACCOUNT_ID")) and env["SN120_R2_BUCKET"] not in done.stderr
+
+
+def test_reset_llms_reads_the_store_with_only_the_plain_names(env, store, tmp_path):
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "llms.txt").write_text("the old contract")
+    token = {PLAIN_NAMES[name]: value for name, value in env.items()}  # the operator's file: no SN120_R2_* name
+    done = command(token, "reset.py", "llms", "--site-dir", str(site))
+    assert done.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT), done.stderr
+    assert sorted(path.name for path in site.iterdir()) == ["llms.txt"]
+
+    (site / "llms.txt").write_text("the old contract")
+    done = command({**token, "SN120_R2_BUCKET": "not-the-bucket"}, "reset.py", "llms", "--site-dir", str(site))  # a set v2 name wins
+    assert done.returncode == 1 and (site / "llms.txt").read_text() == "the old contract"
+    done = command({name: value for name, value in token.items() if name != "R2_BUCKET"}, "reset.py", "llms", "--site-dir", str(site))
+    assert done.returncode == 1 and (site / "llms.txt").read_text() == "the old contract"  # a missing name is named, and no value is shown
+    assert "SN120_R2_BUCKET" in done.stderr and "R2_BUCKET is not set" in done.stderr and "fake-id" not in done.stderr
 
 
 def test_a_store_setting_comes_from_its_plain_name_only_when_the_v2_name_is_not_set():
