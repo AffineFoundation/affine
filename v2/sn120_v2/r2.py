@@ -14,16 +14,23 @@ The rules this file holds:
   controller records ``no_decision`` and promotes nothing.
 * Credentials come from the environment at run time. They are never logged and
   never put in an error message. A presigned URL is a secret: do not log it.
+
+``python -m sn120_v2.r2 --self-test`` runs these rules once on the real bucket.
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import hashlib
 import os
+import tempfile
+import time
+import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -244,3 +251,74 @@ class R2Store:
         with self._guard("presign", key):
             params = {"Bucket": self._bucket, "Key": self._k(key), **extra}
             return self._s3.generate_presigned_url(operation, Params=params, ExpiresIn=int(ttl_s))
+
+
+def self_test(store: R2Store) -> bool:
+    """Run each store rule once under a throwaway key prefix, then delete what was written.
+
+    Prints one line per check, and never a link or a credential. True when every check passed.
+    """
+    root = f"selftest/{uuid.uuid4().hex}"
+    small, link = f"{root}/l1/small", f"{root}/link"
+    data = b"sn120 r2 self-test"
+    big = os.urandom(2 * store._part_size + MIB)  # three parts
+    digest = hashlib.sha256(big).hexdigest()
+    passed = True
+
+    def check(name: str, run: Callable[[], object]) -> None:
+        nonlocal passed
+        start, why = time.monotonic(), ""
+        try:
+            good = bool(run())
+        except Exception as exc:  # report it, then run the remaining checks
+            good = False
+            why = str(exc) if isinstance(exc, (V2Error, KeyError)) else f"{type(exc).__name__} {getattr(exc, 'code', '')}"
+        passed = passed and good
+        print(f"{'ok  ' if good else 'FAIL'}  {name}  {time.monotonic() - start:.2f}s  {why}".rstrip())
+
+    def presigned_put() -> bool:
+        url, headers = store.presign_put(link, 600)
+        with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method="PUT"), timeout=60) as reply:
+            return reply.status == 200 and store.get(link) == data
+
+    def presigned_get() -> bool:
+        with urllib.request.urlopen(store.presign_get(link, 600), timeout=60) as reply:
+            return reply.read() == data
+
+    def clean() -> bool:
+        for key in store.list(f"{root}/"):
+            store.delete(key)
+        return store.list(f"{root}/") == [] and not store.exists(small)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        up, down = Path(tmp) / "up", Path(tmp) / "down"
+        up.write_bytes(big)
+        try:
+            check("put, get", lambda: store.put(small, data) or store.get(small) == data)
+            check("size, sha256", lambda: store.size(small) == len(data) and store.sha256(small) == hashlib.sha256(data).hexdigest())
+            check("list by path segment", lambda: store.put(f"{root}/l10/small", data) or store.list(f"{root}/l1") == [small])
+            check(f"multipart upload, {len(big) // MIB} MiB", lambda: store.put_file(f"{root}/big", up) or store.sha256(f"{root}/big") == digest)
+            check("multipart copy (UploadPartCopy)", lambda: store.copy(f"{root}/big", f"{root}/copy") or store.sha256(f"{root}/copy") == digest)
+            check("download to a file", lambda: store.get_file(f"{root}/copy", down) or down.read_bytes() == big)
+            check("presigned PUT with its header", presigned_put)
+            check("presigned GET", presigned_get)
+        finally:
+            check("delete what the test wrote", clean)
+    print(f"{'PASS' if passed else 'FAIL'}  r2 self-test, keys under {store._prefix}{root}/")
+    return passed
+
+
+def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m sn120_v2.r2", description="Check the R2 bucket named by SN120_R2_*.")
+    parser.add_argument("--self-test", action="store_true", required=True, help="write, verify and delete test keys under selftest/")
+    parser.parse_args(argv)
+    try:
+        store = R2Store.from_env(environ, part_size=5 * MIB)  # the smallest part size: an 11 MiB object has three parts
+    except V2Error as exc:
+        print(f"FAIL  open the bucket  {exc}")
+        return 1
+    return 0 if self_test(store) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
