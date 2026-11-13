@@ -41,6 +41,7 @@ class ChainClient(Protocol):
     def registration_blocks(self, block: int) -> Mapping[int, int]: ...  # UID -> block of its registration
     def last_update(self, block: int) -> Sequence[int]: ...  # by UID: block of its last weight write
     def rate_limit(self, block: int) -> int: ...  # blocks a validator must wait between two weight writes
+    def signer(self) -> str: ...  # the address the wallet signs as; read from the wallet, with no chain call
     def plan(self, weights: Mapping[int, float]) -> tuple[str, list[str]]: ...  # dry run: signer address, refusals
     def submit(self, weights: Mapping[int, float]) -> tuple[bool, str]: ...  # one signed submission: accepted, message
 
@@ -176,6 +177,9 @@ class FakeChain:
         self._up()
         return self.limit
 
+    def signer(self) -> str:
+        return self.validator_hotkey
+
     def plan(self, weights: Mapping[int, float]) -> tuple[str, list[str]]:
         self._up()
         return self.validator_hotkey, list(self.refusals)
@@ -240,6 +244,14 @@ class SubtensorClient:
         uids = sorted(weights)
         version_key = int(self._query("WeightsVersionKey") or 0)
         return self.sdk.SetWeights(netuid=self.netuid, uids=uids, weights=[weights[uid] for uid in uids], version_key=version_key)
+
+    def signer(self) -> str:
+        if self.wallet is None:
+            raise ConfigError("this chain client has no wallet: it can only read")
+        try:
+            return str(self.wallet.hotkey.ss58_address)
+        except Exception as exc:
+            raise ConfigError(f"cannot read the hotkey of the wallet: {exc}") from exc
 
     def plan(self, weights: Mapping[int, float]) -> tuple[str, list[str]]:
         plan = self.chain.plan(self._intent(weights), self.wallet)

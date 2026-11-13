@@ -9,7 +9,12 @@ a result of that formula. It is never a fallback: when the chain read fails
 or is partial, or the state does not load, the run submits nothing, so the
 last valid weights stay on chain.
 
-Run it from one hourly timer: ``python -m sn120_v2.weights_writer``.
+Run it from one hourly timer, on the machine that holds the validator wallet:
+
+    python -m sn120_v2.weights_writer --state-dir DIR --network finney --wallet NAME/HOTKEY
+
+With ``--dry-run`` it computes and prints the table. Then it needs no wallet,
+and it writes nothing to the chain or to a file.
 """
 
 from __future__ import annotations
@@ -20,18 +25,35 @@ import json
 import os
 import time
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
 from . import payout
 from .chain import Reader, Setter, SubtensorClient
 from .errors import ContractError, InfraError, V2Error
-from .params import Params, load_params, require_env
+from .params import Params, load_params
 from .seams import ChainReader, WeightSetter
-from .types import King, WeightReceipt
+from .state import load as replay_journal
+from .types import ChainSnapshot, King, WeightReceipt
 
+JOURNAL_FILE = "journal.jsonl"
 LOCK_FILE = "weights.lock"
 STATE_FILE = "weights_state.json"
+
+KingsSource = Callable[[], tuple[Sequence[King], str]]
+
+
+def load_kings(state_dir: Path) -> tuple[list[King], str]:
+    """The kings, oldest first, and the one hotkey that may set weights.
+
+    This is the only place where the writer reads the controller's state:
+    the journal in ``state_dir``. A journal that cannot be read raises.
+    """
+    view = replay_journal(Path(state_dir) / JOURNAL_FILE)
+    if view.genesis is None:
+        raise ContractError("the journal holds no genesis: the state is not bootstrapped")
+    return list(view.kings), view.genesis.validator_hotkey
 
 
 @contextmanager
@@ -59,25 +81,60 @@ def save_state(state_dir: Path, state: dict[str, Any]) -> None:
     os.replace(scratch, state_dir / STATE_FILE)
 
 
-def load_kings_file(path: Path) -> tuple[King, ...]:
-    """Kings, oldest first, from a JSON list of ``King`` records. A missing or malformed file raises."""
-    rows = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(rows, list):
-        raise ContractError("the kings file must hold a JSON list of kings")
-    return tuple(King.from_dict(row) for row in rows)
+class Keep(Exception):
+    """A reason to submit nothing in this run, so that the last valid weights stay."""
+
+    def __init__(self, block: int, reason: str) -> None:
+        super().__init__(reason)
+        self.block, self.reason = block, reason
+
+
+def build_table(
+    kings_source: KingsSource, reader: ChainReader, params: Params, last_valid: dict[str, Any] | None = None
+) -> tuple[dict[int, float], ChainSnapshot, int, int, str]:
+    """The payout table from one complete chain snapshot and a state that loaded. Anything less raises ``Keep``.
+
+    Returns the table, the snapshot, the number of kings, the time of the newest king, and the validator hotkey.
+    """
+    try:
+        snapshot = reader.snapshot()
+    except InfraError as exc:
+        raise Keep(0, f"no complete chain snapshot: {exc}") from exc
+    if snapshot.netuid != params.netuid:
+        raise Keep(snapshot.block, f"the chain snapshot is for netuid {snapshot.netuid}, not {params.netuid}")
+    try:
+        kings, validator_hotkey = kings_source()
+        kings = tuple(kings)
+        newest = max((king.applied_at for king in kings), default=0)
+    except Exception as exc:  # a corrupt journal, a missing file, a state with no genesis
+        raise Keep(snapshot.block, f"the state failed to load: {exc}") from exc
+    # The kings list only grows. A shorter or older list means a bad state read, which must not turn into a burn.
+    last = last_valid or {}
+    if len(kings) < last.get("kings", 0) or newest < last.get("newest_king_at", 0):
+        raise Keep(snapshot.block, "the kings list went backwards, so the state did not load correctly")
+    try:
+        table = payout.weights(kings, snapshot.hotkeys(), params)
+    except V2Error as exc:
+        raise Keep(snapshot.block, f"the payout refused the table: {exc}") from exc
+    return table, snapshot, len(kings), newest, validator_hotkey
 
 
 def run_once(
     *,
-    load_kings: Callable[[], Sequence[King]],
+    load_kings: KingsSource,
     reader: ChainReader,
     setter: WeightSetter,
+    wallet_hotkey: str,
     params: Params,
     state_dir: Path,
     now: int,
     force: bool = False,
 ) -> WeightReceipt:
-    """One attempt to set the weights. ``load_kings`` returns the applied kings, oldest first.
+    """One attempt to set the weights.
+
+    ``load_kings`` returns the applied kings, oldest first, and the validator
+    hotkey of the genesis. ``wallet_hotkey`` is the address the wallet signs
+    as: when the two differ, nothing is submitted.
 
     Each clock hour (``params.weights_cadence_s``) gets one attempt, whatever
     its result. ``force`` lets an operator run a second one.
@@ -94,45 +151,33 @@ def run_once(
             return WeightReceipt("deferred", 0, "this hour already had its attempt")
         state["last_run_at"] = now
         save_state(state_dir, state)  # saved before any chain call: a crash cannot become a retry loop
-        receipt = _attempt(load_kings, reader, setter, params, state, now)
+        receipt = _attempt(load_kings, reader, setter, wallet_hotkey, params, state, now)
         state["last_receipt"] = receipt.to_dict()
         save_state(state_dir, state)
         return receipt
 
 
 def _attempt(
-    load_kings: Callable[[], Sequence[King]],
+    kings_source: KingsSource,
     reader: ChainReader,
     setter: WeightSetter,
+    wallet_hotkey: str,
     params: Params,
     state: dict[str, Any],
     now: int,
 ) -> WeightReceipt:
-    def kept(block: int, reason: str) -> WeightReceipt:
-        return WeightReceipt("deferred", block, f"{reason}; nothing submitted, the last valid weights stay")
-
     try:
-        snapshot = reader.snapshot()
-    except InfraError as exc:
-        return kept(0, f"no complete chain snapshot: {exc}")
-    if snapshot.netuid != params.netuid:
-        return kept(snapshot.block, f"the chain snapshot is for netuid {snapshot.netuid}, not {params.netuid}")
-    try:
-        kings = tuple(load_kings())
-        newest = max((king.applied_at for king in kings), default=0)
-    except Exception as exc:
-        return kept(snapshot.block, f"the state failed to load: {exc}")
-    # The kings list only grows. An older or empty list means a bad state read, which must not turn into a burn.
-    if newest < state.get("last_valid", {}).get("newest_king_at", 0):
-        return kept(snapshot.block, "the kings list went backwards, so the state did not load correctly")
-    try:
-        table = payout.weights(kings, snapshot.hotkeys(), params)
-    except V2Error as exc:
-        return kept(snapshot.block, f"the payout refused the table: {exc}")
+        table, snapshot, count, newest, validator_hotkey = build_table(kings_source, reader, params, state.get("last_valid"))
+    except Keep as keep:
+        return WeightReceipt("deferred", keep.block, f"{keep.reason}; nothing submitted, the last valid weights stay")
+    if wallet_hotkey != validator_hotkey:
+        reason = f"the wallet signs as {wallet_hotkey}, but the genesis names {validator_hotkey} as the validator hotkey"
+        return WeightReceipt("deferred", snapshot.block, f"{reason}; nothing submitted")
     state["last_valid"] = {
         "weights": {str(uid): weight for uid, weight in table.items()},
         "block": snapshot.block,
         "computed_at": now,
+        "kings": count,
         "newest_king_at": newest,
     }
     try:
@@ -142,28 +187,40 @@ def _attempt(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Set the SN120 chain weights once: last-10-kings, 1/N each.")
-    parser.add_argument("--dry-run", action="store_true", help="read the chain and print the table; submit nothing")
+    parser = argparse.ArgumentParser(
+        prog="python -m sn120_v2.weights_writer", description="Set the SN120 chain weights once: the last 10 kings, 1/N each."
+    )
+    # No setting has a default path, network or wallet. A missing one is an error.
+    parser.add_argument("--state-dir", type=Path, required=True, help="directory of the controller's journal; the writer's lock and memory go here too")
+    parser.add_argument("--network", required=True, help="the chain: finney, or the address of a node")
+    parser.add_argument("--wallet", help="NAME/HOTKEY of the validator wallet on this machine; required unless --dry-run")
+    parser.add_argument("--params", help="JSON file of parameter overrides: the same file that the controller runs with")
+    parser.add_argument("--dry-run", action="store_true", help="compute and print the table: no wallet, no chain write, no file written")
     parser.add_argument("--force", action="store_true", help="run even if this hour already had its attempt")
     args = parser.parse_args(argv)
-    # Every setting is required. A missing one is an error, never a default path, network or wallet.
-    params = load_params(require_env("SN120_V2_PARAMS_FILE"))
-    kings_file = Path(require_env("SN120_V2_KINGS_FILE"))
-    network = require_env("SN120_V2_CHAIN_NETWORK")
+    if not args.dry_run and not args.wallet:
+        parser.error("--wallet is required unless --dry-run")
+    params = load_params(args.params) if args.params else Params()
+    kings_source = partial(load_kings, args.state_dir)
+    client = SubtensorClient.connect(params.netuid, args.network, "" if args.dry_run else args.wallet)
+    reader = Reader(client, params.netuid)
     if args.dry_run:
-        registered = Reader(SubtensorClient.connect(params.netuid, network), params.netuid).snapshot().hotkeys()
-        table = payout.weights(load_kings_file(kings_file), registered, params)
-        print(json.dumps({"dry_run": True, "weights": table}, sort_keys=True))
+        try:
+            table, snapshot, count, _, validator_hotkey = build_table(kings_source, reader, params)
+            report = {"status": "would set", "block": snapshot.block, "kings": count, "weights": table, "validator_hotkey": validator_hotkey}
+            report["validator_registered"] = validator_hotkey in snapshot.hotkeys().values()
+        except Keep as keep:
+            report = {"status": "would defer", "block": keep.block, "reason": keep.reason}
+        print(json.dumps({"dry_run": True} | report, sort_keys=True))
         return 0
-    state_dir = Path(require_env("SN120_V2_WEIGHTS_STATE_DIR"))
-    validator_hotkey = require_env("SN120_V2_VALIDATOR_HOTKEY")
-    client = SubtensorClient.connect(params.netuid, network, require_env("SN120_V2_WALLET"))
+    wallet_hotkey = client.signer()
     receipt = run_once(
-        load_kings=lambda: load_kings_file(kings_file),
-        reader=Reader(client, params.netuid),
-        setter=Setter(client, validator_hotkey, params.weights_rate_limit_blocks),
+        load_kings=kings_source,
+        reader=reader,
+        setter=Setter(client, wallet_hotkey, params.weights_rate_limit_blocks),
+        wallet_hotkey=wallet_hotkey,
         params=params,
-        state_dir=state_dir,
+        state_dir=args.state_dir,
         now=int(time.time()),
         force=args.force,
     )

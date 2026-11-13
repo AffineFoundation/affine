@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -155,22 +156,25 @@ STUB_SDK = SimpleNamespace(
 
 def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     chain = StubSubtensor()
-    client = SubtensorClient(120, chain, wallet="wallet", sdk=STUB_SDK)
+    wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="hk0"))
+    client = SubtensorClient(120, chain, wallet=wallet, sdk=STUB_SDK)
+    assert client.signer() == "hk0"
     snap = Reader(client, 120, clock=lambda: 1_800_000_000).snapshot()
     assert snap.block == 900 and snap.hotkeys() == {0: "hk0", 1: "hk1"}
     assert snap.registrations[1].registration_block == 800 and client.block_hash(3) == "0xhash3"
     assert client.last_update(900) == [10, 20] and client.rate_limit(900) == 100
     assert client.plan({1: 1.0}) == ("hk0", ["too soon"])
     assert client.submit({1: 0.25, 0: 0.75}) == (True, "0xabc")
-    [(intent, wallet, options)] = chain.executed
-    assert intent == dict(netuid=120, uids=[0, 1], weights=[0.75, 0.25], version_key=7) and wallet == "wallet"
+    [(intent, used, options)] = chain.executed
+    assert intent == dict(netuid=120, uids=[0, 1], weights=[0.75, 0.25], version_key=7) and used is wallet
     assert options["retries"] == 0
-    with pytest.raises(ConfigError):
-        SubtensorClient(120, chain, sdk=STUB_SDK).submit({1: 1.0})  # no wallet: this client can only read
+    for call in (lambda reader: reader.submit({1: 1.0}), lambda reader: reader.signer()):
+        with pytest.raises(ConfigError):
+            call(SubtensorClient(120, chain, sdk=STUB_SDK))  # no wallet: this client can only read
 
 
 def test_the_snapshot_command_needs_no_wallet_and_writes_only_after_a_complete_read(tmp_path, monkeypatch):
-    chain, out, calls = fake(), tmp_path / "chain_snapshot.json", []
+    chain, out, calls = fake(now=int(time.time())), tmp_path / "chain_snapshot.json", []
     monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: calls.append(settings) or chain)
     argv = ["--netuid", "120", "--network", "a-node", "--out", str(out)]
     chain.born.pop(2)  # a partial read
