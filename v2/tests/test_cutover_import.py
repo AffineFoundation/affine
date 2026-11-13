@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,8 +35,12 @@ def v1() -> dict:
     return copy.deepcopy(RAW)
 
 
-def load(v1: dict, undecided: str | None = "front", now: float = NOW) -> V1Import:
-    return build_import(v1["k1"], v1["mining"], now=now, undecided=undecided)
+def load(v1: dict, undecided: str | None = "front", earlier: tuple[dict, ...] = ()) -> V1Import:
+    return build_import(v1["k1"], v1["mining"], now=NOW, undecided=undecided, earlier=earlier)
+
+
+def turn(k1: dict, epoch: int) -> dict:
+    return next(row for row in k1["turns"] if row["epoch_index"] == epoch)
 
 
 def chain(v1: dict, extra: tuple[Registration, ...] = ()) -> ChainSnapshot:
@@ -79,6 +84,57 @@ def test_turns_without_a_verdict_need_the_operators_decision(v1):
     assert len(front.demoted) == 194 and not set(front.demoted) & set(served.served_regs)
 
 
+def test_a_pending_turn_that_left_v1s_window_is_kept_by_an_earlier_copy(v1):
+    """k1.json shows 200 epochs. Epoch 1157 (pending) is the first to leave; the newer copy here is made up from the saved one."""
+    saved, lost, full = copy.deepcopy(v1["k1"]), (923, 9474708), load(v1)
+    saved["generated_at"] -= 3600
+    v1["k1"]["turns"] = [row for row in v1["k1"]["turns"] if row["epoch_index"] >= 1158]
+    alone = load(v1)
+    assert len(alone.front) == 13 and lost in alone.served_regs  # without the saved copy, the miner is charged in silence
+    assert [king.applied_at > 0 for king in alone.kings] == [False, False] + [True] * 8  # two kings left the window too
+    assert load(v1, earlier=(saved,)) == full
+    assert lost in load(v1, "served", (saved,)).served_regs
+    with pytest.raises(CutoverError, match="1157"):
+        load(v1, None, (saved,))
+    judged, reopened = copy.deepcopy(saved), copy.deepcopy(saved)
+    judged["generated_at"] += 60
+    turn(judged, 1157)["verdict"] = "red"  # a newer saved copy shows the verdict: the turn stays judged
+    turn(reopened, 1214)["verdict"] = "pending"  # the newest copy shows e1214 as RED: it stays RED
+    assert load(v1, earlier=(judged, saved, reopened)) == replace(alone, kings=full.kings)
+    other_miner, from_the_future = copy.deepcopy(saved), copy.deepcopy(saved)
+    turn(other_miner, 1157)["uid"] = 924
+    from_the_future["generated_at"] += 7200
+    for bad in (other_miner, from_the_future, {**saved, "version": "sn120-k1-public-v0"}):
+        with pytest.raises(CutoverError, match="earlier k1.json"):
+            load(v1, earlier=(saved, bad))
+
+
+def test_v1_retry_grants_go_to_the_front_in_block_then_uid_order(v1):
+    """Made-up data: v1's public retry-grant list was empty on 13 Nov 2026. A grant is one more turn after a RED turn."""
+    queue = v1["k1"]["queue"]
+    reds = [turn(v1["k1"], 1208), turn(v1["k1"], 1214)]  # UID 8 at block 9493273, UID 992 at block 9488898
+    queue["grants"] = [
+        dict(position=i - 2, uid=red["uid"], hotkey=red["hotkey"], registration_block=red["reg_block"], turns=1, grant=dict(red_epoch=red["epoch_index"]))
+        for i, red in enumerate(reds)
+    ]
+    waits = queue["expired_back_of_queue"][0]
+    queue["next"] = [*queue["grants"], dict(position=0, uid=waits["uid"], hotkey=waits["hotkey"], registration_block=waits["registration_block"])]
+    imp = load(v1, "served")
+    assert imp.front == ((992, 9488898), (8, 9493273))  # the earlier registration block goes first, not the lower UID
+    assert not set(imp.front) & set(imp.served_regs) and not {red["hotkey"] for red in reds} & set(imp.served_hotkeys)
+    assert len(imp.served_regs) == len(imp.served_hotkeys) == 776
+    both = load(v1, "front")
+    assert len(both.front) == 16 and list(both.front) == sorted(both.front, key=cutover.fifo)
+    assert [seat.reg.key for seat in preview_queue(both, chain(v1), Params())][:16] == list(both.front)
+    queue["next"].append(dict(position=1, uid=8, hotkey=reds[0]["hotkey"], registration_block=9493273))  # a served seat that waits, no grant
+    with pytest.raises(CutoverError, match="also listed as served"):
+        load(v1)
+    queue["next"].pop()
+    queue["grants"][0]["hotkey"] = VALIDATOR[:-1] + "m"
+    with pytest.raises(CutoverError, match="never had a turn"):
+        load(v1)
+
+
 def test_ingest_against_a_real_registration_snapshot_keeps_the_paid_queue(v1):
     """One turn per registration: v2 queues only seats that v1 did not serve, owed seats first, in block-then-UID order."""
     imp = load(v1)
@@ -113,7 +169,7 @@ def _payee_was_not_green(v1):
 
 
 def _timeout_is_not_a_win(v1):
-    next(turn for turn in v1["k1"]["turns"] if turn["epoch_index"] == 1211)["verdict"] = "timeout-promote"
+    turn(v1["k1"], 1211)["verdict"] = "timeout-promote"
 
 
 def _demoted_seat_also_served(v1):
@@ -174,6 +230,7 @@ def test_dry_run_prints_and_writes_nothing(tmp_path, capsys, monkeypatch):
     assert cutover.main([*FILES, "--undecided", "front", "--chain", str(snapshot), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "v1-e1211 uid 920" in out and "front of the queue: 14 seats" in out and "first weights" in out and "DRY RUN" in out
+    assert "UID 0 is owner" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
     assert sorted(path.name for path in tmp_path.iterdir()) == ["chain.json"]
 
 
@@ -183,8 +240,8 @@ def test_real_run_writes_both_records_once(tmp_path, capsys):
     assert cutover.main([*FILES, "--undecided", "front", "--out", str(out)]) == 2  # no genesis inputs, no defaults
     assert cutover.main([*FILES, *genesis, "--out", str(out)]) == 2  # no decision for the open turns
     assert not out.exists()
-    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--out", str(out)]) == 0
-    assert sorted(path.name for path in out.iterdir()) == ["genesis.json", "k1.json", "mining.json", "v1_import.json"]
+    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--earlier-k1", str(DATA / "k1.json"), "--out", str(out)]) == 0
+    assert sorted(path.name for path in out.iterdir()) == ["earlier-1-k1.json", "genesis.json", "k1.json", "mining.json", "v1_import.json"]
     imp = V1Import.from_json((out / "v1_import.json").read_bytes())
     assert imp.kings == load(copy.deepcopy(RAW)).kings and "sha256=" in imp.source and "undecided=front" in imp.source
     assert (out / "k1.json").read_bytes() == (DATA / "k1.json").read_bytes()

@@ -12,7 +12,7 @@ v1 host, the object store or a credential, and it never writes to the chain.
 If v1's data is incomplete or inconsistent, it raises ``CutoverError`` and
 writes nothing.
 
-    python -m sn120_v2.cutover --dry-run
+    python -m sn120_v2.cutover --dry-run --undecided front --earlier-k1 <saved k1.json>
     python -m sn120_v2.cutover --master-digest <sha256> --validator-hotkey <ss58> --undecided front --out <dir>
 
 The runbook is v2/CUTOVER.md.
@@ -107,12 +107,17 @@ def build_import(
     undecided: str | None = None,
     max_age_s: int = 3600,
     source: str = "",
+    earlier: Sequence[Mapping[str, Any]] = (),
 ) -> V1Import:
     """Check v1's public state and turn it into a ``V1Import``.
 
     ``undecided`` is the operator's decision for turns that v1 took but never
     judged: ``"front"`` (not charged, first in the v2 queue) or ``"served"``
     (charged, no new turn). With such turns and no decision, the import stops.
+
+    ``earlier`` holds saved copies of k1.json from before ``k1``. k1.json shows
+    only v1's last 200 epochs, and a turn without a verdict must not be lost
+    when it leaves that window. The newest copy that shows a turn decides it.
     """
     queue = _get(k1, "queue", dict, "k1.json")
     _need(k1.get("version") == K1_VERSION and queue.get("version") == QUEUE_VERSION, "k1.json has an unknown format version")
@@ -144,22 +149,32 @@ def build_import(
     turns = [turn for turn in window if isinstance(turn, dict) and turn.get("status") == "turn"]
     shown = {turn.get("epoch_index"): (turn.get("uid"), turn.get("hotkey"), turn.get("reg_block")) for turn in turns}
     _need(shown == {epoch: row for epoch, row in history.items() if epoch >= first}, "the public turns do not match the served turns")
+    seen: dict[int, Any] = {}  # epoch -> turn row, from the newest copy that shows the epoch
+    for old in sorted(earlier, key=lambda old: _get(old, "generated_at", float, "earlier k1.json")):
+        _need(old.get("version") == K1_VERSION and old["generated_at"] <= k1["generated_at"], "an earlier k1.json is newer or has an unknown version")
+        for turn in _get(old, "turns", list, "earlier k1.json"):
+            if isinstance(turn, dict) and turn.get("status") == "turn":
+                epoch, row = turn.get("epoch_index"), (turn.get("uid"), turn.get("hotkey"), turn.get("reg_block"))
+                _need(history.get(epoch) == row, f"an earlier k1.json shows a turn e{epoch} that is not in v1's served turns")
+                seen[epoch] = turn
+    seen = {epoch: turn for epoch, turn in seen.items() if epoch < first} | {turn["epoch_index"]: turn for turn in turns}
 
     # 2. Kings. v1's payees are its last 10 distinct GREEN UIDs; derive them again from the public turns.
     payees = sorted(_get(k1, "payees", list, "k1.json"), key=lambda payee: -_get(payee, "green_epoch", int, "payee"))
     listed = [(p["green_epoch"], _get(p, "uid", int, "payee"), check_ss58(p.get("hotkey"))) for p in payees]
     uids = {uid for _, uid, _ in listed}
     _need(1 <= len(listed) <= V1_PAYEES and len(uids) == len(listed) and 0 not in uids, "payees must be 1 to 10 distinct miner UIDs")
-    _need(all(hotkey in served_hotkeys for _, _, hotkey in listed), "a payee never had a turn")
+    _need(all(history.get(epoch, ())[:2] == (uid, hotkey) for epoch, uid, hotkey in listed), "a payee did not have a turn at its GREEN epoch")
     derived: list[tuple[int, int, str]] = []
     for turn in reversed(turns):
         if turn.get("verdict") == "green" and len(derived) < V1_PAYEES and turn["uid"] not in {uid for _, uid, _ in derived}:
             derived.append((turn["epoch_index"], turn["uid"], turn["hotkey"]))
+    before = listed[len(derived) :]  # payees whose GREEN turn has left the window: an earlier copy may still show it
     _need(
-        listed[: len(derived)] == derived and all(epoch < first for epoch, _, _ in listed[len(derived) :]),
+        listed[: len(derived)] == derived and all(epoch < first and seen.get(epoch, {"verdict": "green"}).get("verdict") == "green" for epoch, _, _ in before),
         "payees do not match the GREEN turns in k1.json",
     )
-    when = {turn["epoch_index"]: turn.get("turn_at") for turn in turns}
+    when = {epoch: turn.get("turn_at") for epoch, turn in seen.items()}
     score = {p["green_epoch"]: p.get("z") for p in payees}
     kings = tuple(
         King(uid, hotkey, f"v1-e{epoch}", "", int(when.get(epoch) or 0), float(score[epoch]) if type(score[epoch]) in (int, float) else 0.0)
@@ -168,7 +183,13 @@ def build_import(
 
     # 3. Seats owed a turn: v1's open retry grants, and turns that v1 took but never decided.
     owed = {_seat(row, "registration_block", chain_block, "grant"): _get(row, "hotkey", str, "grant") for row in _get(queue, "grants", list, "queue")}
-    open_turns = [turn for turn in turns if turn.get("verdict") not in DECIDED and last_turn[turn["hotkey"]] == turn["epoch_index"]]
+    _need(set(owed.values()) <= served_hotkeys, "a retry grant names a hotkey that never had a turn")
+    green = {epoch for epoch, _, _ in listed}  # a payee's turn was judged, also when only an earlier copy shows it
+    open_turns = [
+        turn
+        for epoch, turn in sorted(seen.items())
+        if turn.get("verdict") not in DECIDED and last_turn[turn["hotkey"]] == epoch and epoch not in green
+    ]
     if open_turns and undecided not in ("front", "served"):
         raise CutoverError(
             f"{len(open_turns)} v1 turn(s) have no verdict (epochs {[turn['epoch_index'] for turn in open_turns]}). Decide with "
@@ -218,15 +239,18 @@ def chain_report(imp: V1Import, genesis: GenesisSpec | None, snapshot: ChainSnap
     _need(genesis is None or genesis.validator_hotkey in registered.values(), "the validator hotkey is not registered on the subnet")
     table = weights(imp.kings, registered, params)
     _need(table != {params.burn_uid: 1.0}, "no imported king is still registered: v2 would burn all weight")
+    _need(params.burn_uid in registered, f"UID {params.burn_uid} is not in the chain snapshot")
     count = [sum(zone(seat) == z for seat in seats) for z in (FRONT, NORMAL, BACK)]
     lines = [f"CHAIN at block {snapshot.block}: {len(seats)} seats wait ({count[0]} front, {count[1]} normal, {count[2]} back). First 20:"]
     lines += [f"    {i}. uid {s.reg.uid} block {s.reg.registration_block} {s.reg.hotkey}" for i, s in enumerate(seats[:20], 1)]
-    return lines + [f"  first weights: {len(table)} UIDs, {1 / len(table):.4f} each: {sorted(table)}"]
+    lines.append(f"  first weights: {len(table)} UIDs, {1 / len(table):.4f} each: {sorted(table)}")
+    return lines + [f"  UID {params.burn_uid} is {registered[params.burn_uid]}: unearned weight goes there, so it must be the subnet owner hotkey"]
 
 
-def describe(imp: V1Import, genesis: GenesisSpec | None, k1: Mapping[str, Any]) -> list[str]:
-    """What the import holds, as text for the operator."""
-    turns = {(turn.get("uid"), turn.get("reg_block")): turn for turn in k1["turns"]}
+def describe(imp: V1Import, genesis: GenesisSpec | None, copies: Sequence[Mapping[str, Any]]) -> list[str]:
+    """What the import holds, as text for the operator. ``copies`` are the k1.json copies, oldest first."""
+    turns = {(turn.get("uid"), turn.get("reg_block")): turn for k1 in copies for turn in k1["turns"]}
+    had = [row["hotkey"] for row in copies[-1]["queue"]["served"]]
     lines = ["GENESIS: not built (needs --master-digest and --validator-hotkey)"]
     if genesis is not None:
         lines = [f"GENESIS {genesis.model_repo} @ {genesis.model_revision}", f"  base hash {genesis.base_hash}"]
@@ -239,7 +263,7 @@ def describe(imp: V1Import, genesis: GenesisSpec | None, k1: Mapping[str, Any]) 
     for uid, block in imp.front:
         turn = turns.get((uid, block), {})
         batch = f"v1 e{turn.get('epoch_index', '?')} took {turn.get('tasks', '?')} prompts, {turn.get('rollouts', '?')} rollouts"
-        lines.append(f"    uid {uid} block {block} {turn.get('hotkey', '?')} ({batch})")
+        lines.append(f"    uid {uid} block {block} {turn.get('hotkey', '?')} ({batch}; {had.count(turn.get('hotkey'))} v1 turns in all)")
     return lines
 
 
@@ -257,14 +281,15 @@ def read_source(location: str) -> bytes:
 
 def run(args: argparse.Namespace) -> list[str]:
     raw = {"k1.json": read_source(args.k1), "mining.json": read_source(args.mining)}
+    raw |= {f"earlier-{i}-k1.json": read_source(path) for i, path in enumerate(args.earlier_k1, 1)}
     try:
-        k1, mining = (json.loads(data) for data in raw.values())
+        k1, mining, *earlier = (json.loads(data) for data in raw.values())
     except ValueError as exc:
         raise CutoverError(f"a v1 file is not JSON: {exc}") from exc
     source = "; ".join(f"{name} sha256={sha256_hex(data)}" for name, data in raw.items())
-    imp = build_import(k1, mining, now=time.time(), undecided=args.undecided, max_age_s=args.max_age_s, source=source)
+    imp = build_import(k1, mining, now=time.time(), undecided=args.undecided, max_age_s=args.max_age_s, source=source, earlier=earlier)
     genesis = build_genesis(args.master_digest, args.validator_hotkey) if args.out or args.master_digest or args.validator_hotkey else None
-    lines = describe(imp, genesis, k1)
+    lines = describe(imp, genesis, [*sorted(earlier, key=lambda old: old["generated_at"]), k1])
     if args.chain:
         lines += chain_report(imp, genesis, ChainSnapshot.from_json(read_source(args.chain)), Params())
     if args.out is None:
@@ -283,6 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m sn120_v2.cutover", description="Build the v2 genesis and the import of v1's state.")
     parser.add_argument("--k1", default=K1_URL, help="v1 k1.json: https URL or file (default: %(default)s)")
     parser.add_argument("--mining", default=MINING_URL, help="v1 mining.json: https URL or file (default: %(default)s)")
+    parser.add_argument("--earlier-k1", action="append", default=[], metavar="FILE", help="a saved earlier copy of k1.json; give it once per copy")
     parser.add_argument("--chain", help="file with a ChainSnapshot as JSON: also check and print the starting queue and weights")
     parser.add_argument("--master-digest", help="sha256 digest of the genesis fp32 master files")
     parser.add_argument("--validator-hotkey", help="SS58 address of the validator hotkey that v1 used")
