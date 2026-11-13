@@ -55,11 +55,13 @@ TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official gra
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
-# These two verdicts depend on this machine at this moment. They hold for one call and are never kept.
-TRANSIENT = (TIME_LIMIT, FAULT)
+TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
+# These verdicts depend on this machine at this moment. They hold for one call and are never kept.
+TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT)
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
 ENV_TIME_LIMIT = "time-limit"
+PROBE_TEXT = "What is 1 + 1?"  # the tokenizer works when it counts at least one token in this text, as a prompt and as an output
 PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
@@ -78,10 +80,11 @@ RULES: dict[str, str] = {
     "rollouts": "rollouts is not a non-empty list",
     "rollout_keys": "a rollout does not have exactly the keys output, reward",
     "output": "an output is not text",
-    "reward": "a reward is not a finite number",
+    "reward": "a reward is not a finite number, or the rewards of one prompt are too large to take their mean",
     "cap": "the first group alone is larger than the rollout cap",
     "text": "a prompt or an output is not valid Unicode text",
     "control_token": "a prompt or an output holds a chat control token",
+    TOKENIZER_FAULT: "a prompt or an output makes the tokenizer fail; the file is checked again later",
     "output_tokens": "an output is longer than the output token cap",
     "context_tokens": "prompt + output is longer than the context token cap",
     "answer_only": "too many rollouts have almost no reasoning before the first boxed answer",
@@ -374,6 +377,28 @@ def final_answer(text: str) -> str | None:
     return None
 
 
+def _count(tokens: Tokens, count: Callable[[str], int], text: str, where: str) -> int:
+    """The token count of one text. A text that makes the tokenizer fail is the fault of the file, when the tokenizer still works.
+
+    The tokenizer works when it counts ``PROBE_TEXT``. If it fails there too, the failure is ours: ``InfraError``.
+    A Rust tokenizer reports a panic with a ``BaseException``, so that is caught here too.
+    """
+    try:
+        return count(text)
+    except (InfraError, KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as cause:
+        try:
+            works = tokens.prompt_tokens(PROBE_TEXT) > 0 and tokens.output_tokens(PROBE_TEXT) > 0
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            works = False
+        if not works:
+            raise InfraError(f"the tokenizer fails on its known-good case: {type(cause).__name__}") from cause
+        raise Invalid(TOKENIZER_FAULT, f"{where}: the tokenizer fails on this text") from None
+
+
 def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tuple[set[tuple[int, int]], Sizes | None]:
     """Text, token and content rules on the kept groups.
 
@@ -387,7 +412,7 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tup
     sizes: Sizes = {}
     for i, (prompt, rollouts) in enumerate(groups):
         _text(prompt, f"groups[{i}].prompt")
-        n_prompt = tokens.prompt_tokens(prompt) if tokens else 0
+        n_prompt = _count(tokens, tokens.prompt_tokens, prompt, f"groups[{i}].prompt") if tokens else 0
         for j, (output, _) in enumerate(rollouts):
             here = f"groups[{i}].rollouts[{j}]"
             _text(output, f"{here}.output")
@@ -397,14 +422,14 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tup
                 answers[answer] += 1
             if tokens is None:
                 continue
-            n = tokens.output_tokens(output)
+            n = _count(tokens, tokens.output_tokens, output, f"{here}.output")
             _need(n <= cap, "output_tokens", f"{here}.output is {n} tokens; the cap is {cap}")
             used = n_prompt + n + (n < cap)  # an output below the cap gets one end-of-sequence token; at the cap it is cut
             capped.update({(i, j)} if n == cap else ())
             sizes[i, j] = (n_prompt, n)
             _need(used <= context, "context_tokens", f"{here}: prompt + output is {used} tokens; the cap is {context}")
             cut = output.find(_BOXED)
-            before = n if cut < 0 else tokens.output_tokens(output[:cut])  # reasoning comes before the first boxed answer
+            before = n if cut < 0 else _count(tokens, tokens.output_tokens, output[:cut], f"{here}.output")  # reasoning comes before the first boxed answer
             answer_only += before < params.min_reasoning_tokens
             reasoning, total = reasoning + before, total + n
     if tokens is not None:
@@ -446,7 +471,11 @@ def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], s
     recipe = params.recipe.for_miner(train)
     active = tokens = 0
     for i, (_, rollouts) in enumerate(groups):
-        for j, advantage in enumerate(advantages([reward for _, reward in rollouts], recipe.group_size)):
+        try:
+            group = advantages([reward for _, reward in rollouts], recipe.group_size)
+        except OverflowError:  # finite rewards whose sum is not: the trainer cannot take the mean either
+            raise Invalid("reward", f"groups[{i}]: the rewards are too large to take their mean") from None
+        for j, advantage in enumerate(group):
             if advantage == 0:
                 continue
             row = trained_tokens(*sizes[i, j], recipe) if sizes is not None else 1
@@ -570,8 +599,8 @@ class StoreAdmission:
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
-        A verdict in ``TRANSIENT`` (a grader time limit or a grader fault) depends on this machine at this moment,
-        so it is not kept: the next call checks the file again.
+        A verdict in ``TRANSIENT`` (a grader time limit, a grader fault or a tokenizer fault) depends on this
+        machine at this moment, so it is not kept: the next call checks the file again.
         """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
