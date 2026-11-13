@@ -10,7 +10,7 @@ import pytest
 from sn120_v2 import layout, public, publisher, r2, sim
 from sn120_v2.admission import TIME_LIMIT
 from sn120_v2.canonical import sha256_hex, to_jsonable
-from sn120_v2.errors import ContractError, InfraError
+from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import MinerBound, Recipe
 
 
@@ -102,7 +102,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
 
 def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777, train_max_context_tokens=888, sample_temperature=0.75)
-    made = world(tmp_path, temperature=0.9, batch_cap=3, lease_timeout_s=6000, kings_window=7, recipe=recipe)
+    made = world(tmp_path, temperature=0.9, batch_cap=3, kings_window=7, recipe=recipe)
     text = published(made.publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
     flat = " ".join(text.split())  # the rules as sentences, whatever the line breaks
     assert "A value G above 0 cuts the rollouts of each prompt, in file order, into groups of G" in flat
@@ -115,14 +115,44 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
     assert "reads the latest file at lease time" in flat and "The admission checks run again on each new file." in flat
     assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps its place and is not charged" in flat
-    assert "A round takes at most 3 batches" in flat and "at most 100 minutes from the lease to the promotion" in flat
-    assert "ends early, as soon as every LoRA is dropped or decided" in flat
+    assert "A round takes at most 3 batches" in flat
+    assert "The only rule that moves a waiting seat back is squat-trim (section 4)" in flat
     assert "A round with no winner changes nothing in the payout: the window of the last 7 kings keeps being paid." in flat
     assert "No burn, in any case: no weight goes to UID 0 or to the owner as a fallback." in flat
     assert "The share of a king that is no longer registered is split among the other registered kings of the window." in flat
     assert "goes to UID 0." not in flat and "the writer sets nothing and the last valid weights stay on chain" in flat
     capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
     assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+
+
+def test_the_round_time_limit_and_the_queue_place_follow_the_params(tmp_path):
+    changes = dict(round_time_limit_s=4800, lease_timeout_s=4500, promote_reserve_s=300, eval_chunk_tasks=40, n_gpus=4, n_tasks=400)
+    changes |= dict(looks=(0.25, 1.0), max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0)
+    flat = " ".join(published(world(tmp_path, **changes).publisher.snapshots[-1])[1].split())
+    assert "at most 80 minutes from the lease to the promotion of the winner" in flat
+    assert "ends early, as soon as every LoRA is dropped or decided" in flat
+    assert "The stop time is minute 70: 5 minutes before the limit" in flat  # worker: min(lease, limit) - reserve
+    assert "A slot is floor(4 / batches) GPUs, and at least 1." in flat and "Scoring runs in chunks of 40 tasks." in flat
+    assert "judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
+    assert "If fewer tasks than the first look (100) are scored at the limit, each open LoRA is `no_decision`." in flat
+    assert "arrives later than 75 minutes after the lease is never used" in flat
+    assert "reported `no_decision` for your entry 5 times" in flat
+    assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
+    assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
+    assert "no seat moves back in the first 21600 s after its registration" in flat
+
+
+def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
+    snap = world(tmp_path).publisher.snapshots[-1]
+    doc, text, store = published(snap)
+    assert doc["contract"]["upload"] is None and doc["contract"]["links_url"] == "" and "Where to get the link: not published yet." in text
+    publisher.StorePublisher(store, "https://files.example/", "https://site.example/ff/links/").publish(snap)
+    doc, flat = json.loads(store[layout.MINING_JSON]), " ".join(store[layout.LLMS_TXT].decode().split())
+    assert doc["contract"]["links_url"] == "https://site.example/ff/links"
+    assert doc["contract"]["upload"]["sealed_links"] == "https://site.example/ff/links/<hotkey>.json"
+    assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
+    with pytest.raises(ConfigError):
+        publisher.StorePublisher(store, "", "site.example/ff/links")
 
 
 def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):

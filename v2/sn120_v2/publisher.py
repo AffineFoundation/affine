@@ -27,7 +27,9 @@ from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .judging import drop_margin
+from .links import upload_entry
 from .params import MinerBound, Params, Recipe
+from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
 from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadManifest
 
@@ -142,8 +144,8 @@ def object_keys() -> dict[str, str]:
     }
 
 
-def contract(params: Params, public_url: str) -> dict[str, Any]:
-    """The fixed rules in machine-readable form. Everything is derived from ``params``."""
+def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
+    """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
     return {
         "params_hash": params.params_hash,
@@ -159,6 +161,8 @@ def contract(params: Params, public_url: str) -> dict[str, Any]:
         "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
         "null_model": NULL_MODEL,
         "public_url": public_url,
+        "links_url": links_url,
+        "upload": upload_entry(links_url) if links_url else None,
         "objects": object_keys(),
         "code": REPO + "/tree/v2/v2",
     }
@@ -178,7 +182,7 @@ def refuse_private(value: Any, where: str = "snapshot") -> None:
         raise ContractError(f"{where}: {value.split('/')[0]}/ objects are never published")
 
 
-def mining_document(snapshot: Mapping[str, Any], public_url: str = "") -> dict[str, Any]:
+def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> dict[str, Any]:
     """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block."""
     clash = [key for key in OWN_KEYS if key in snapshot]
     if clash:
@@ -189,7 +193,7 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "") -> dict[s
     if not plain.get("head"):
         raise ContractError("the snapshot has no head")
     HeadManifest.from_dict(plain["head"])  # a head whose ids do not match its content is refused
-    return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url)}
+    return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url, links_url)}
 
 
 def _recipe_lines(params: Params) -> list[str]:
@@ -252,6 +256,7 @@ def _recipe_lines(params: Params) -> list[str]:
 def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
     entries, seats = round_now.get("entries") or [], queue.get("next") or []
+    stop = min(params.lease_timeout_s, params.round_time_limit_s) - params.promote_reserve_s  # worker.LocalRunner.run
     return [
         "## 3. The round now",
         "",
@@ -261,11 +266,29 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
         "  for a full round. Registrations for the next round are always open.",
-        f"- Round time: at most {show(params.lease_timeout_s / 60)} minutes from the lease to the promotion. A round ends",
-        "  early, as soon as every LoRA is dropped or decided.",
         "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
         "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
         "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        "",
+        "### The time limit of a round",
+        "",
+        f"- A round takes at most {show(params.round_time_limit_s / 60)} minutes from the lease to the promotion of the winner. The lease is",
+        "  the moment a round takes its entries. A round ends early, as soon as every LoRA is dropped or decided.",
+        f"- The stop time is minute {show(stop / 60)}: {show(params.promote_reserve_s / 60)} minutes before the limit, so that judging and promotion",
+        "  fit. After the stop time the box starts nothing new: no training and no chunk of tasks.",
+        "- Training: each batch trains on its own slot of GPUs, and the slots train at the same time. A slot is",
+        f"  floor({params.n_gpus} / batches) GPUs, and at least 1. So with {params.n_gpus} batches or more, each batch trains on one GPU,",
+        f"  {params.n_gpus} batches at a time, and each other batch waits for a free GPU. Scoring starts when all training is done.",
+        "- A batch whose training did not start before the stop time is `no_decision`.",
+        f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. After each chunk the box",
+        "  looks at the clock. A chunk that is not finished at the stop time is not used.",
+        "- An open LoRA is a LoRA that was not dropped at a look (section 6). At the limit, each open LoRA is judged by",
+        "  the win rule of section 6 on the whole chunks that null M and every open LoRA finished. Those tasks are then",
+        f"  the whole test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
+        f"- If fewer tasks than the first look ({params.look_sizes()[0]}) are scored at the limit, each open LoRA is `no_decision`.",
+        f"- A box result that arrives later than {show(params.lease_timeout_s / 60)} minutes after the lease is never used: each entry of that",
+        "  box is `no_decision`.",
+        "- `no_decision` means: not charged, and the seat goes to the front of the queue (section 4).",
         "",
         "## 4. The queue",
         "",
@@ -281,18 +304,32 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  To enter again, register again.",
         f"- Order: registration block, then UID. UID {params.burn_uid} has no seat.",
         "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
-        "- If your file is missing or invalid when the round copies files, your seat is skipped. You are not charged",
-        "  and you keep your place.",
-        "- If our infrastructure fails, your entry is `no_decision`. You are not charged and you go to the front of",
-        f"  the queue. After {params.max_infra_attempts} such failures the seat is held for the operator.",
-        f"- Squat-trim: expected wait = max({params.squat_min_wait_s} s, seats ahead / turn rate of the last 24 h). A seat",
-        f"  with no valid file that is older than {show(params.squat_age_factor)} x its expected wait moves to the back.",
-        "  A seat with a valid file is never moved.",
+        "- `no_decision`: our infrastructure failed, or the time limit of the round came first (section 3). You are",
+        f"  not charged and you go to the front of the queue. When the box has reported `no_decision` for your entry {params.max_infra_attempts}",
+        "  times (the training failed, or the time limit came first), the seat is held: it takes no turn until the",
+        "  operator releases it.",
+        "",
+        "### Your place while you wait",
+        "",
+        "- A seat that has a valid file stored keeps its place and is never moved back. While your entry is not",
+        "  evaluated, you may replace your file as often as you like (section 5): a new valid file does not change",
+        "  your place.",
+        "- If your file is missing or invalid when the validator picks the entries of a round, your seat is skipped. You are not charged, and you",
+        "  keep your place, with one exception: squat-trim.",
+        "- Squat-trim moves a seat to the back of the queue. It applies only to a seat that has no valid file stored",
+        f"  when the validator picks the entries of a round, and only when the registration of that seat is older than {show(params.squat_age_factor)} x its expected",
+        f"  wait. Expected wait = max({params.squat_min_wait_s} s, seats ahead x seconds per turn). Seconds per turn = {SECONDS_PER_DAY} / the number",
+        "  of entries that were charged in the last 24 hours.",
+        f"- So no seat moves back in the first {show(params.squat_age_factor * params.squat_min_wait_s)} s after its registration, and no seat moves back when no entry",
+        "  was charged in the last 24 hours.",
+        "- A seat at the back still gets its turn, after every other seat. It stays at the back when a valid file",
+        "  arrives later. To keep your place: store a valid file early, and replace it only with a file that passes",
+        "  `check` (section 5).",
     ]
 
 
 def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    recipe, upload = params.recipe, (doc.get("upload") or {}).get("sealed_links")
+    recipe, upload = params.recipe, (doc["contract"].get("upload") or {}).get("sealed_links")
     example = {
         "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
@@ -305,8 +342,9 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "You have one private object for each hotkey. A hotkey whose queue entry is not evaluated yet keeps its queue",
         "position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed",
         "window. The validator reads the latest file at lease time (the moment a round takes the entry): that copy is",
-        "what is trained. The admission checks run again on each new file. The file stays private unless it wins.",
-        "Then the exact file and the LoRA are published.",
+        "what is trained. The admission checks run again on each new file. The only rule that moves a waiting seat",
+        "back is squat-trim (section 4): it applies to a seat with no valid file stored, never to a seat with a valid",
+        "file. The file stays private unless it wins. Then the exact file and the LoRA are published.",
         "",
         "```json",
         json.dumps(example, indent=1),
@@ -402,21 +440,25 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
         f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
         f"  total level {show(params.drop_alpha)}. For this draw, a LoRA is dropped when z is at or below: {show(drops)}.",
+        "- When the time limit of the round stops the scoring early, the win rule runs on the tasks scored by then",
+        "  (section 3).",
         f"- If fewer than {show(params.min_cover)} of the rollouts resolve without an infrastructure error, the entry is",
         "  `no_decision`.",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
         "",
         "## 7. Payout",
         "",
-        f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. Each king",
-        "  of the window gets an equal share of the miner weight, while the hotkey that won is still registered on",
-        "  that UID.",
+        f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
+        "  again has one place in the window, with its newest win.",
+        "- Each king of the window gets an equal share of all the weight, while the hotkey that won is still registered",
+        "  on that UID: 1 / (the number of such kings).",
         "- The share of a king that is no longer registered is split among the other registered kings of the window.",
         f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
         "  paid.",
         f"- No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback. If no king of the window is",
         "  registered, the writer sets nothing and the last valid weights stay on chain.",
-        f"- One writer sets the weights every {params.weights_cadence_s} s.",
+        f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
+        "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",
         "",
         *(table(tuple(kings[0]), (row.values() for row in kings)) if kings else ["There is no king yet."]),
         "",
@@ -500,26 +542,33 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     return "\n".join(reflow(lines)) + "\n"
 
 
-def render(snapshot: Mapping[str, Any], public_url: str = "") -> tuple[bytes, bytes]:
+def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
     """(mining.json bytes, llms.txt bytes) of one snapshot."""
-    doc = mining_document(snapshot, public_url)
+    doc = mining_document(snapshot, public_url, links_url)
     mining = json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
     return mining.encode("utf-8"), llms_text(doc).encode("utf-8")
 
 
 class StorePublisher:
-    """The ``Publisher`` seam: writes both files to the public zone of an object store."""
+    """The ``Publisher`` seam: writes both files to the public zone of an object store.
 
-    def __init__(self, store: ObjectStore, public_url: str = "") -> None:
+    ``public_url`` is the address under which the public zone is served. ``links_url`` is the public address of
+    the upload link files (``python -m sn120_v2.links issue --links-url``). Each is "" until it exists.
+    """
+
+    def __init__(self, store: ObjectStore, public_url: str = "", links_url: str = "") -> None:
         self.store = store
         self.public_url = public_url.rstrip("/")
+        self.links_url = links_url.rstrip("/")
+        if self.links_url:
+            upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
         """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
 
         A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
         """
-        mining, llms = render(snapshot, self.public_url)
+        mining, llms = render(snapshot, self.public_url, self.links_url)
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
