@@ -17,7 +17,8 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError
 from sn120_v2.gpu import batch, plan, procs
 from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, read_reply, server_argv, server_env
-from sn120_v2.gpu.resident import Resident, resident_head, upload_tree
+from sn120_v2.gpu import resident as resident_module
+from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
 from sn120_v2.gpu.trainer import LORA_FILES, LoraTrainer
 from sn120_v2.params import Recipe
 from sn120_v2.sampling import rollout_seed
@@ -194,11 +195,15 @@ def test_gpus_count_as_free_only_when_the_driver_says_so():
 # ---- the verified cache ----
 
 
-def test_the_cache_serves_only_files_that_hash_to_the_identity(box, tmp_path):
+def test_the_cache_serves_only_files_that_hash_to_the_identity(box, tmp_path, monkeypatch):
     resident = Resident(box.store, tmp_path / "w")
     base_dir = resident_head(resident, box.head)
     assert sorted(p.name for p in base_dir.iterdir()) == ["config.json", "model.safetensors"]  # the master is not in the base directory
+    hashed = []
+    monkeypatch.setattr(resident_module, "hash_tree", lambda path: hashed.append(path) or hash_tree(path))
+    assert resident_head(Resident(box.store, tmp_path / "w"), box.head) == base_dir and hashed == []  # the trainer, the evaluator and the folder hash a head one time
     (base_dir / "model.safetensors").write_bytes(b"rot")  # a damaged local copy is found by a new process and replaced
+    resident_module._SHARED.clear()  # a new process
     assert (resident_head(Resident(box.store, tmp_path / "w"), box.head) / "model.safetensors").read_bytes() == b"bf16"
     box.store.put(f"{layout.public_master_prefix(box.head.base_fp32_master_digest)}/model.part00.safetensors", b"upcast copy")
     fresh = Resident(box.store, tmp_path / "w2")
@@ -258,6 +263,7 @@ def test_train_uses_the_miner_values_the_request_gpus_and_uploads_what_it_hashed
     artifact = trainer(box, job).train(request)
     argv, env, sent = job.calls[0]
     assert argv[:3] == [sys.executable, "-m", "sn120_v2.gpu.train_job"] and env["CUDA_VISIBLE_DEVICES"] == "2,3"
+    assert env["TRITON_CACHE_DIR"] == str(box.config.work_dir / "triton" / "gpu2")  # a kernel cache per GPU slot: jobs of one wave never share it
     recipe = Recipe.from_dict(sent["recipe"])
     assert (recipe.rank, recipe.lora_lr, recipe.steps, recipe.sample_temperature) == (8, 2e-5, 2, 0.8)
     assert sent["seed"] == 11 and sent["base_hash"] == box.head.base_hash and [row["advantage"] for row in sent["rows"]] == [0.5, -0.5, 0.0]
@@ -269,6 +275,7 @@ def test_train_uses_the_miner_values_the_request_gpus_and_uploads_what_it_hashed
     assert not Path(argv[-1]).exists()  # the box keeps no copy of the LoRA or of the miner's rows
     logged = [json.loads(line) for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()]
     assert [(line["phase"], line["round_id"], line["queue_pos"], line["step_norm"]) for line in logged] == [("train", "r000001", 0, 0.5)] and logged[0]["wall_s"] >= 0
+    assert (logged[0]["steps"], logged[0]["tokens"]) == (2, 9) and {"forward_tokens", "step_s", "n_gpus", "rows", "step_norm_before_cap"} <= set(logged[0])  # the speed can be read
 
 
 def test_every_key_a_miner_may_set_trains_at_both_ends_of_its_bound(box):
@@ -300,8 +307,14 @@ def test_a_bad_training_report_never_becomes_a_lora(box, report, error):
 
 
 def test_training_failures_are_sorted_into_miner_and_box(box):
-    with pytest.raises(InfraError):
-        trainer(box, FakeJob(code=1)).train(train_request(box))
+    class Crash(FakeJob):
+        def __call__(self, argv, env, log):
+            Path(log).write_text("Traceback ...\ntorch.OutOfMemoryError: CUDA out of memory\n")
+            return super().__call__(argv, env, log)
+
+    with pytest.raises(InfraError, match="code 1; log: .*train-r000001-000.log; last line: torch.OutOfMemoryError: CUDA out of memory"):
+        trainer(box, Crash(code=1)).train(train_request(box))
+    assert "CUDA out of memory" in (box.config.work_dir / "logs" / "train-r000001-000.log").read_text()  # the cause outlives the job directory
     with pytest.raises(InfraError):
         trainer(box, FakeJob(files=LORA_FILES[:2])).train(train_request(box))
     with pytest.raises(InfraError, match="global_norm_cap"):
@@ -427,6 +440,7 @@ def test_outcome_codes_capped_is_never_graded_and_errors_stay_in_the_count(box):
     assert len(grades.seen) == 1 and "P cut" not in grades.seen[0] and len(grades.seen[0]) == 8  # an E of the grader is graded one time
     logged = json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
     assert (logged["phase"], logged["look"], logged["models"], logged["rollouts"], logged["capped"]) == ("eval", 0, 2, 12, 2) and logged["wall_s"] >= logged["generate_s"]
+    assert logged["generate_s"] >= logged["longest_rollout_s"] > 0 and {"output_tokens", "longest_rollout_tokens", "most_output_tokens", "n_gpus"} <= set(logged)
     assert read_reply({"choices": [{"message": {"content": "<think>x</think>a<|im_end|>"}, "finish_reason": "stop"}]}) == ("<think>x</think>a", False)
 
 

@@ -44,15 +44,25 @@ def upload_tree(store: ObjectStore, path: Path, prefix: str, workers: int = 4) -
     return files, {name: (path / name).stat().st_size for name in files}
 
 
+# One lock and one set of verified identities per cache directory, shared by every Resident of this process.
+_SHARED: dict[Path, tuple[threading.RLock, set[str]]] = {}
+_SHARED_LOCK = threading.Lock()
+
+
 class Resident:
-    """The cache directory of one box: ``<work_dir>/cache/<identity>/<file name>``."""
+    """The cache directory of one box: ``<work_dir>/cache/<identity>/<file name>``.
+
+    The trainer, the evaluator and the folder each hold a Resident of the
+    same directory. They share the lock and the list of what is verified, so
+    a 56 GB head is hashed one time in a process, not one time per part.
+    """
 
     def __init__(self, store: ObjectStore, work_dir: Path):
         self.store = store
         self.root = Path(work_dir) / "cache"
         self.root.mkdir(parents=True, exist_ok=True)
-        self._verified: set[str] = set()
-        self._lock = threading.RLock()  # training threads of one wave share this cache
+        with _SHARED_LOCK:  # training threads of one wave share this cache too
+            self._lock, self._verified = _SHARED.setdefault(self.root.resolve(), (threading.RLock(), set()))
 
     def tree(self, prefix: str, identity: str) -> Path:
         """The local directory of the file set stored under ``prefix``, verified against ``identity``."""

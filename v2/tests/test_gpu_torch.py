@@ -6,9 +6,15 @@ import json
 import math
 import shutil
 import string
+import sys
 from pathlib import Path
 
 import pytest
+
+# The tiny model of these tests runs on the CPU. The fast kernels of
+# flash-linear-attention run only on a GPU. With this entry, transformers finds
+# no such package in this process and takes its plain torch path, on any machine.
+sys.modules["fla"] = None  # type: ignore[assignment]
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
