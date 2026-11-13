@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from functools import partial
+from types import SimpleNamespace
 
 import pytest
 
+from sn120_v2 import chain as chain_module
 from sn120_v2.chain import FakeChain, Reader, Setter, SubtensorClient
 from sn120_v2.params import Params
 from sn120_v2.sim import SimWorld, sim_params
@@ -33,7 +36,8 @@ class Rig:
     def __init__(self, state_dir) -> None:
         self.chain = FakeChain({uid: f"hk{uid}" for uid in range(16)}, VALIDATOR)
         self.kings = [king(1, 0), king(2, 1)]
-        self.load_kings = lambda: (self.kings, self.chain.validator_hotkey)
+        self.pinned = None  # the parameters pinned in the journal
+        self.load_kings = lambda: (self.kings, self.chain.validator_hotkey, self.pinned)
         self.state_dir = state_dir
 
     def run(self, **options):
@@ -129,9 +133,19 @@ def test_a_first_run_with_an_outage_or_with_no_registered_king_submits_nothing(r
 
 
 def test_the_writer_reads_the_kings_and_the_validator_hotkey_from_the_journal(journal_rig):
-    kings, validator_hotkey = load_kings(journal_rig.state_dir)
+    kings, validator_hotkey, pinned = load_kings(journal_rig.state_dir)
     assert [(king.uid, king.hotkey) for king in kings] == [(1, "hk1")] and validator_hotkey == SIM_VALIDATOR
+    assert pinned == sim_params()
     assert journal_rig.run().status == "set" and journal_rig.chain.weights == {1: 1.0}
+
+
+def test_the_payout_uses_the_parameters_pinned_in_the_journal_not_the_ones_of_the_command(rig):
+    rig.pinned = replace(Params(), kings_window=1)
+    assert rig.run().status == "set" and rig.chain.weights == {2: 1.0}  # a window of one: only the newest king
+    rig.chain.advance(HOUR_BLOCKS)
+    rig.pinned = replace(Params(), netuid=7)  # a journal of another subnet than the connection
+    receipt = rig.run()
+    assert receipt.status == "deferred" and "pins netuid 7" in receipt.reason and rig.chain.submissions == 1
 
 
 @pytest.mark.parametrize(
@@ -196,10 +210,31 @@ def test_the_dry_run_prints_the_table_and_writes_nothing(journal_rig, monkeypatc
     assert report == {
         "dry_run": True, "status": "would set", "block": chain.block, "kings": 1, "weights": {"1": 1.0},
         "validator_hotkey": SIM_VALIDATOR, "validator_registered": True,
+        "last_write_block": 0, "blocks_since_last_write": chain.block,
     }  # fmt: skip
     chain.down = "connection refused"
     assert main(argv) == 0 and json.loads(capsys.readouterr().out)["status"] == "would defer"
-    assert calls == [(120, "a-node", "")] * 2  # no wallet goes to the connection
+    assert calls == [(120, "a-node", "", "")] * 2  # no wallet goes to the connection
+    assert chain.submissions == 0 and sorted(path.name for path in state_dir.iterdir()) == files
+
+
+def test_the_dry_run_with_a_wallet_runs_the_checks_before_a_submission_and_writes_nothing(journal_rig, monkeypatch, capsys):
+    chain, state_dir = journal_rig.chain, journal_rig.state_dir
+    monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: chain)
+    files = sorted(path.name for path in state_dir.iterdir())
+    argv = ["--state-dir", str(state_dir), "--network", "a-node", "--dry-run", "--wallet", "cold/hot"]
+
+    def report() -> dict:
+        assert main(argv) == 0
+        return json.loads(capsys.readouterr().out)
+
+    passed = report()
+    assert passed["status"] == "would set" and passed["preflight"] == "passed" and passed["wallet_hotkey"] == SIM_VALIDATOR
+    chain.updated[0] = chain.block - 10  # another writer set weights 10 blocks ago
+    recent = report()
+    assert recent["status"] == "would defer" and "recent write" in recent["reason"] and recent["blocks_since_last_write"] == 10
+    chain.signer = lambda: "hk2"  # the hotkey file is not the validator hotkey of the genesis
+    assert report()["status"] == "would defer"
     assert chain.submissions == 0 and sorted(path.name for path in state_dir.iterdir()) == files
 
 
@@ -208,7 +243,7 @@ def test_the_command_sets_the_weights_with_the_wallet(journal_rig, monkeypatch, 
     monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: calls.append(settings) or chain)
     argv = ["--state-dir", str(state_dir), "--network", "a-node", "--wallet", "cold/hot"]
     assert main(argv) == 0 and json.loads(capsys.readouterr().out)["status"] == "set"
-    assert calls == [(120, "a-node", "cold/hot")] and chain.weights == {1: 1.0}
+    assert calls == [(120, "a-node", "cold/hot", "")] and chain.weights == {1: 1.0}
     assert main(argv) == 0 and "already had its attempt" in json.loads(capsys.readouterr().out)["reason"]
     chain.validator_hotkey = "hk2"  # the wallet now signs as another hotkey than the genesis names
     assert main(argv + ["--force"]) == 0 and "the genesis names" in json.loads(capsys.readouterr().out)["reason"]
@@ -220,3 +255,20 @@ def test_the_command_refuses_a_missing_setting_before_any_connection(argv, monke
     monkeypatch.setattr(SubtensorClient, "connect", fail)
     with pytest.raises(SystemExit):
         main(argv)
+
+
+def test_a_missing_hotkey_file_is_one_clear_line_and_no_connection(tmp_path, monkeypatch, capsys):
+    class NoHotkeyWallet:
+        def __init__(self, name, path):
+            self.hotkey_file = SimpleNamespace(path=f"{path}/{name.replace('/', '/hotkeys/')}")
+
+        @property
+        def hotkey(self):
+            raise FileNotFoundError("keyfile does not exist")
+
+    monkeypatch.setattr(chain_module, "bittensor", SimpleNamespace(Wallet=NoHotkeyWallet, Subtensor=fail))
+    argv = ["--state-dir", str(tmp_path), "--network", "a-node", "--wallet", "cold/hot", "--wallet-path", "/wallets"]
+    assert main(argv) == 2 and main(argv + ["--dry-run"]) == 2  # ``fail`` would raise if a connection opened
+    error = capsys.readouterr().err
+    assert "nothing submitted: the hotkey file /wallets/cold/hotkeys/hot does not exist" in error
+    assert list(tmp_path.iterdir()) == []
