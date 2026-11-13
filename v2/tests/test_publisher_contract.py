@@ -119,6 +119,8 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
     assert "A round with no winner changes nothing in the payout: the window of the last 7 kings keeps being paid." in flat
     assert "No burn, in any case: no weight goes to UID 0 or to the owner as a fallback." in flat
+    assert "The share of a king that is no longer registered is split among the other registered kings of the window." in flat
+    assert "goes to UID 0." not in flat and "the writer sets nothing and the last valid weights stay on chain" in flat
     capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
     assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
 
