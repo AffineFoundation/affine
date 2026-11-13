@@ -21,7 +21,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FORMATS
+from .admission import CONTROL_TOKENS, FORMATS, TIME_LIMIT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -226,7 +226,8 @@ def _recipe_lines(params: Params) -> list[str]:
         "  `train` makes the whole file invalid.",
         f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
         "- Your `train` values are published only if your batch wins.",
-        "- The `train` keys of v1 (`lr`, `kl`, `step_mult`) are not keys here. A file that carries one is invalid.",
+        "- A file with `train` keys that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps",
+        "  its place and is not charged until the miner uploads a new file.",
         "",
         "### What the trainer does with them",
         "",
@@ -235,12 +236,13 @@ def _recipe_lines(params: Params) -> list[str]:
         "  rollouts stays a group. The advantage of a rollout is its reward minus the mean reward of its group. The",
         f"  default is {recipe.group_size}.",
         "- `sample_temperature` T: you state the temperature at which you sampled your rollouts. The trainer divides the",
-        "  logits of the head by T before it scores the tokens of a rollout. Evaluation always uses",
-        f"  `params.temperature` ({show(params.temperature)}). The default T is {show(recipe.sample_temperature)}.",
+        f"  logits of the head by T before it scores the tokens of a rollout. Evaluation always samples at temperature",
+        f"  {show(params.temperature)}. The default T is {show(recipe.sample_temperature)}.",
         "- `global_norm_cap`: the largest allowed Frobenius norm of the whole adapter update,",
         "  sqrt(sum over all target modules of ||(alpha / rank) * B @ A||_F^2), in the units of the model weights. If the",
-        "  trained update is larger, every B matrix is multiplied by cap / norm. `step_norm` in the train report is the",
-        f"  norm after the cap. {'It is unset now: there is no cap.' if cap is None else f'The cap is now {show(cap)}.'}",
+        "  trained update is larger, every B matrix is multiplied by cap / norm. The train report states the norm before",
+        "  the cap and the norm after it (`step_norm` is the norm after the cap). The number is set in the params at",
+        f"  the mainnet genesis; unset means no cap. {'It is unset now: there is no cap.' if cap is None else f'The cap is now {show(cap)}.'}",
         f"- Train caps: a rollout above `train_max_output_tokens` ({recipe.train_max_output_tokens}) or",
         f"  `train_max_context_tokens` ({recipe.train_max_context_tokens}, prompt + output) is truncated, not rejected. The",
         "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
@@ -259,6 +261,8 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
         "  for a full round. Registrations for the next round are always open.",
+        f"- Round time: at most {show(params.lease_timeout_s / 60)} minutes from the lease to the promotion. A round ends",
+        "  early, as soon as every LoRA is dropped or decided.",
         "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
         "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
         "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
@@ -329,6 +333,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
+        "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
+        f"  reward: rule code `{TIME_LIMIT}`.",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
@@ -404,7 +410,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- A king is a round winner that was applied. The last {params.kings_window} distinct king UIDs each get an",
         "  equal share of the miner weight, while the hotkey that won is still registered on that UID.",
-        f"- A null round adds no king. Weight that no king earned goes to UID {params.burn_uid}. Weights are never all zero.",
+        f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
+        f"  paid. No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback.",
         f"- One writer sets the weights every {params.weights_cadence_s} s.",
         "",
         *(table(tuple(kings[0]), (row.values() for row in kings)) if kings else ["There is no king yet."]),

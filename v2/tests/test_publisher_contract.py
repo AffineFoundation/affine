@@ -7,7 +7,8 @@ import json
 
 import pytest
 
-from sn120_v2 import layout, public, publisher, sim
+from sn120_v2 import layout, public, publisher, r2, sim
+from sn120_v2.admission import TIME_LIMIT
 from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.errors import ContractError, InfraError
 from sn120_v2.params import MinerBound, Recipe
@@ -91,7 +92,8 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
     assert "Training reads at most 777 output tokens" in text and "A longer rollout is valid: the trainer" in text
     header = doc["contract"]["batch_file"]["upload_headers"]
-    assert header == {"Content-Type": "application/octet-stream"} and "`Content-Type: application/octet-stream`" in text
+    assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in text  # what the presigner signs
+    assert f"rule code `{TIME_LIMIT}`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds")
     for key in doc["contract"]["objects"].values():
@@ -100,16 +102,23 @@ def test_every_number_follows_the_pinned_params(tmp_path):
 
 def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777, train_max_context_tokens=888, sample_temperature=0.75)
-    text = published(world(tmp_path, temperature=0.9, recipe=recipe).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+    made = world(tmp_path, temperature=0.9, batch_cap=3, lease_timeout_s=6000, kings_window=7, recipe=recipe)
+    text = published(made.publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
     flat = " ".join(text.split())  # the rules as sentences, whatever the line breaks
     assert "A value G above 0 cuts the rollouts of each prompt, in file order, into groups of G" in flat
     assert "its reward minus the mean reward of its group. The default is 0." in flat
-    assert "divides the logits of the head by T" in flat and "`params.temperature` (0.9). The default T is 0.75." in flat
-    assert "every B matrix is multiplied by cap / norm" in flat and "It is unset now: there is no cap." in flat
+    assert "divides the logits of the head by T" in flat and "always samples at temperature 0.9. The default T is 0.75." in flat
+    assert "every B matrix is multiplied by cap / norm" in flat and "unset means no cap. It is unset now: there is no cap." in flat
+    assert "states the norm before the cap and the norm after it (`step_norm` is the norm after the cap)" in flat
     assert "`train_max_output_tokens` (777) or `train_max_context_tokens` (888, prompt + output) is truncated, not rejected" in flat
     assert "A rollout with no output token left is dropped and counted." in flat
     assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
     assert "reads the latest file at lease time" in flat and "The admission checks run again on each new file." in flat
+    assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps its place and is not charged" in flat
+    assert "A round takes at most 3 batches" in flat and "at most 100 minutes from the lease to the promotion" in flat
+    assert "ends early, as soon as every LoRA is dropped or decided" in flat
+    assert "A round with no winner changes nothing in the payout: the window of the last 7 kings keeps being paid." in flat
+    assert "No burn, in any case: no weight goes to UID 0 or to the owner as a fallback." in flat
     capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
     assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
 
