@@ -33,6 +33,7 @@ except ImportError:  # the SDK is the optional "chain" extra: the control plane 
     bittensor = None
 
 BLOCK_SECONDS = 12  # Bittensor block time, used to estimate the time of an old block
+SIGN_CHECK = b"sn120-v2 weights writer: a check that the hotkey file can sign. This is not a transaction."
 
 
 class ChainClient(Protocol):
@@ -210,7 +211,9 @@ def hotkey_address(wallet: Any) -> str:
     """
     where = getattr(getattr(wallet, "hotkey_file", None), "path", "of the wallet")
     try:
-        return str(wallet.hotkey.ss58_address)
+        keypair = wallet.hotkey
+        keypair.sign(SIGN_CHECK)  # a file with only the public key loads, but it cannot sign; the signature is dropped
+        return str(keypair.ss58_address)
     except FileNotFoundError as exc:
         raise ConfigError(
             f"the hotkey file {where} does not exist. The writer signs with the validator hotkey: "
@@ -220,7 +223,7 @@ def hotkey_address(wallet: Any) -> str:
         raise ConfigError(f"the hotkey file {where} is not readable by this user") from exc
     except Exception as exc:
         raise ConfigError(
-            f"the hotkey file {where} did not load ({type(exc).__name__}). It must be the plain hotkey file: "
+            f"the hotkey file {where} cannot sign ({type(exc).__name__}). It must be the plain hotkey file: "
             "a file with a password or with only the public key cannot sign in an unattended run"
         ) from exc
 
@@ -240,6 +243,7 @@ class SubtensorClient:
 
         ``wallet_path`` is the directory that holds the wallets; "" means the SDK's own, ``~/.bittensor/wallets``.
         A wallet whose hotkey file is missing or unusable is ``ConfigError``, before any connection opens.
+        A chain that does not answer is ``InfraError``.
         """
         if bittensor is None:
             raise ConfigError("the bittensor SDK is not installed: install the 'chain' extra")
@@ -250,7 +254,11 @@ class SubtensorClient:
             except ValueError as exc:
                 raise ConfigError(f"bad wallet {wallet!r}: {exc}") from exc
             hotkey_address(holder)
-        return cls(netuid, bittensor.Subtensor(network), holder)
+        try:
+            chain = bittensor.Subtensor(network)
+        except Exception as exc:
+            raise InfraError(f"no connection to the chain at {network!r}: {type(exc).__name__}: {exc}") from exc
+        return cls(netuid, chain, holder)
 
     def _query(self, item: str, block: int | None = None) -> Any:
         return self.chain.query(getattr(self.items, item), [self.netuid], block=block)

@@ -13,15 +13,22 @@ nothing, so the last valid weights stay on chain.
 Run it from one hourly timer, on the machine that holds the validator hotkey
 (the unit files are in ``v2/systemd``):
 
-    python -m sn120_v2.weights_writer --state-dir DIR --network finney --wallet NAME/HOTKEY
+    python -m sn120_v2.weights_writer --state-dir DIR --from-store --network finney --wallet NAME/HOTKEY
+
+The kings, the validator hotkey and the parameters come from the controller's
+journal. Without ``--from-store`` the journal is the file ``DIR/journal.jsonl``.
+With ``--from-store`` the run first pulls the journal copy from the object
+store into that file, for a machine that does not run the controller. The
+pull only reads the store. When the store does not answer, the run uses the
+last valid journal that the file holds; with no such file it submits nothing.
 
 The write is signed by the hotkey. The run reads the hotkey file and no other
 key file: the coldkey is never needed on this machine.
 
 With ``--dry-run`` it computes and prints the table. Then it needs no wallet,
-and it writes nothing to the chain or to a file. With ``--dry-run --wallet``
-it also checks the hotkey file and runs every check that comes before a
-submission, still with no chain write.
+and it writes nothing to the chain. With ``--dry-run --wallet`` it also checks
+the hotkey file and runs every check that comes before a submission, still
+with no chain write.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
@@ -41,27 +49,99 @@ from . import payout
 from .chain import Reader, Setter, SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .params import Params, load_params
-from .seams import ChainReader, WeightSetter
+from .seams import ChainReader, ObjectStore, WeightSetter
 from .state import load as replay_journal
+from .state import load_from_store
 from .types import ChainSnapshot, King, WeightReceipt
+
+try:
+    from .r2 import R2Store
+except ImportError:  # boto3 is the optional "r2" extra: only --from-store needs it
+    R2Store = None
 
 JOURNAL_FILE = "journal.jsonl"
 LOCK_FILE = "weights.lock"
 STATE_FILE = "weights_state.json"
 
-KingsSource = Callable[[], tuple[Sequence[King], str, Params | None]]
+
+@dataclass(frozen=True)
+class View:
+    """What the writer takes from the controller's journal."""
+
+    kings: tuple[King, ...]  # oldest first
+    validator_hotkey: str  # the one hotkey that may set weights
+    params: Params | None  # the parameters pinned in the journal
+    source: str  # which journal was read, for the log
 
 
-def load_kings(state_dir: Path) -> tuple[list[King], str, Params | None]:
-    """The kings, oldest first, the one hotkey that may set weights, and the parameters pinned in the journal.
+ViewSource = Callable[[], View]
 
-    This is the only place where the writer reads the controller's state:
-    the journal in ``state_dir``. A journal that cannot be read raises.
+
+def read_view(state_dir: Path, open_store: Callable[[], ObjectStore] | None = None) -> View:
+    """Read the controller's journal. This is the only place where the writer does that.
+
+    Without ``open_store``: the journal file in ``state_dir``.
+
+    With ``open_store``: the journal copy in the store, pulled into that file, which is then a cache.
+    The store is only read. When it does not answer (``InfraError``), the last valid journal in the
+    cache is used. With no journal in the cache, that error is raised.
+
+    A journal that cannot be read, or that has no genesis, raises.
     """
-    view = replay_journal(Path(state_dir) / JOURNAL_FILE)
-    if view.genesis is None:
+    path = Path(state_dir) / JOURNAL_FILE
+    if open_store is None:
+        state, source = replay_journal(path), "the journal file"
+    else:
+        try:
+            state, source = load_from_store(open_store(), path), "the journal copy in the store"
+        except InfraError as exc:
+            state = replay_journal(path) if path.exists() else None
+            if state is None or state.genesis is None:
+                raise InfraError(f"the store did not answer, and this host has no cache of the journal: {exc}") from exc
+            source = f"the cache of the journal copy, because the store did not answer ({exc})"
+    if state.genesis is None:
         raise ContractError("the journal holds no genesis: the state is not bootstrapped")
-    return list(view.kings), view.genesis.validator_hotkey, view.params
+    return View(tuple(state.kings), state.genesis.validator_hotkey, state.params, source)
+
+
+def load_kings(state_dir: Path) -> tuple[list[King], str]:
+    """The kings, oldest first, and the validator hotkey, from the journal file in ``state_dir``."""
+    view = read_view(state_dir)
+    return list(view.kings), view.validator_hotkey
+
+
+def once(read: ViewSource) -> ViewSource:
+    """``read`` runs one time. Every call gives its result, or raises its error again."""
+    outcome: list[Any] = []
+
+    def cached() -> View:
+        if not outcome:
+            try:
+                outcome.append(read())
+            except Exception as exc:
+                outcome.append(exc)
+        if isinstance(outcome[0], Exception):
+            raise outcome[0]
+        return outcome[0]
+
+    return cached
+
+
+def params_in_force(view: ViewSource, given: Params | None) -> Params:
+    """The parameters pinned in the journal. ``given`` (``--params``) is a check on them, never a replacement.
+
+    When the journal pins none, or did not load, ``given`` or the defaults stand in. A journal
+    that did not load makes the run defer.
+    """
+    try:
+        pinned = view().params
+    except ConfigError:
+        raise
+    except Exception:
+        pinned = None
+    if pinned and given and given.params_hash != pinned.params_hash:
+        raise ConfigError("--params differs from the parameters pinned in the journal")
+    return pinned or given or Params()
 
 
 @contextmanager
@@ -97,48 +177,42 @@ class Keep(Exception):
         self.block, self.reason = block, reason
 
 
-def build_table(
-    kings_source: KingsSource, reader: ChainReader, params: Params, last_valid: dict[str, Any] | None = None
-) -> tuple[dict[int, float], ChainSnapshot, int, int, str]:
+def build_table(view_source: ViewSource, reader: ChainReader, params: Params, last_valid: dict[str, Any] | None = None) -> tuple[dict[int, float], ChainSnapshot, View]:
     """The payout table from one complete chain snapshot and a state that loaded. Anything less raises ``Keep``.
 
     So does a table with no registered king: it would put weight on ``burn_uid``, and the writer never burns.
 
     The payout uses the parameters pinned in the journal when it has them, so that
     the writer and the controller cannot disagree. ``params`` is the fallback.
-
-    Returns the table, the snapshot, the number of kings, the time of the newest king, and the validator hotkey.
     """
     try:
         snapshot = reader.snapshot()
     except InfraError as exc:
         raise Keep(0, f"no complete chain snapshot: {exc}") from exc
+    try:
+        view = view_source()
+        newest = max((king.applied_at for king in view.kings), default=0)
+    except Exception as exc:  # a corrupt journal, a missing file, a state with no genesis, a store with no cache
+        raise Keep(snapshot.block, f"the state failed to load: {exc}") from exc
+    params = view.params or params
     if snapshot.netuid != params.netuid:
         raise Keep(snapshot.block, f"the chain snapshot is for netuid {snapshot.netuid}, not {params.netuid}")
-    try:
-        kings, validator_hotkey, pinned = kings_source()
-        kings, params = tuple(kings), pinned or params
-        newest = max((king.applied_at for king in kings), default=0)
-    except Exception as exc:  # a corrupt journal, a missing file, a state with no genesis
-        raise Keep(snapshot.block, f"the state failed to load: {exc}") from exc
-    if snapshot.netuid != params.netuid:
-        raise Keep(snapshot.block, f"the journal pins netuid {params.netuid}, but the chain snapshot is for netuid {snapshot.netuid}")
     # The kings list only grows. A shorter or older list means a bad state read.
     last = last_valid or {}
-    if len(kings) < last.get("kings", 0) or newest < last.get("newest_king_at", 0):
+    if len(view.kings) < last.get("kings", 0) or newest < last.get("newest_king_at", 0):
         raise Keep(snapshot.block, "the kings list went backwards, so the state did not load correctly")
     try:
-        table = payout.weights(kings, snapshot.hotkeys(), params)
+        table = payout.weights(view.kings, snapshot.hotkeys(), params)
     except V2Error as exc:
         raise Keep(snapshot.block, f"the payout refused the table: {exc}") from exc
     if not table or params.burn_uid in table:
         raise Keep(snapshot.block, "no king of the window is registered on chain, and the writer never burns")
-    return table, snapshot, len(kings), newest, validator_hotkey
+    return table, snapshot, view
 
 
 def run_once(
     *,
-    load_kings: KingsSource,
+    view: ViewSource,
     reader: ChainReader,
     setter: WeightSetter,
     wallet_hotkey: str,
@@ -149,9 +223,9 @@ def run_once(
 ) -> WeightReceipt:
     """One attempt to set the weights.
 
-    ``load_kings`` returns the applied kings, oldest first, and the validator
-    hotkey of the genesis. ``wallet_hotkey`` is the address the wallet signs
-    as: when the two differ, nothing is submitted.
+    ``view`` reads the journal: the applied kings, oldest first, and the
+    validator hotkey of the genesis. ``wallet_hotkey`` is the address the
+    wallet signs as: when the two differ, nothing is submitted.
 
     Each clock hour (``params.weights_cadence_s``) gets one attempt, whatever
     its result. ``force`` lets an operator run a second one.
@@ -168,14 +242,14 @@ def run_once(
             return WeightReceipt("deferred", 0, "this hour already had its attempt")
         state["last_run_at"] = now
         save_state(state_dir, state)  # saved before any chain call: a crash cannot become a retry loop
-        receipt = _attempt(load_kings, reader, setter, wallet_hotkey, params, state, now)
+        receipt = _attempt(view, reader, setter, wallet_hotkey, params, state, now)
         state["last_receipt"] = receipt.to_dict()
         save_state(state_dir, state)
         return receipt
 
 
 def _attempt(
-    kings_source: KingsSource,
+    view_source: ViewSource,
     reader: ChainReader,
     setter: WeightSetter,
     wallet_hotkey: str,
@@ -184,18 +258,19 @@ def _attempt(
     now: int,
 ) -> WeightReceipt:
     try:
-        table, snapshot, count, newest, validator_hotkey = build_table(kings_source, reader, params, state.get("last_valid"))
+        table, snapshot, view = build_table(view_source, reader, params, state.get("last_valid"))
     except Keep as keep:
         return WeightReceipt("deferred", keep.block, f"{keep.reason}; nothing submitted, the last valid weights stay")
-    if wallet_hotkey != validator_hotkey:
-        reason = f"the wallet signs as {wallet_hotkey}, but the genesis names {validator_hotkey} as the validator hotkey"
+    if wallet_hotkey != view.validator_hotkey:
+        reason = f"the wallet signs as {wallet_hotkey}, but the genesis names {view.validator_hotkey} as the validator hotkey"
         return WeightReceipt("deferred", snapshot.block, f"{reason}; nothing submitted")
     state["last_valid"] = {
         "weights": {str(uid): weight for uid, weight in table.items()},
         "block": snapshot.block,
         "computed_at": now,
-        "kings": count,
-        "newest_king_at": newest,
+        "kings": len(view.kings),
+        "newest_king_at": max(king.applied_at for king in view.kings),
+        "kings_from": view.source,
     }
     try:
         return setter.set_weights(table)
@@ -203,16 +278,18 @@ def _attempt(
         return WeightReceipt("deferred", snapshot.block, f"the weight setter failed: {exc}")
 
 
-def dry_run(kings_source: KingsSource, client: Any, reader: ChainReader, params: Params, wallet_hotkey: str = "") -> dict[str, Any]:
-    """What a run would do now. It writes nothing: not to the chain, and not to a file.
+def dry_run(view_source: ViewSource, client: Any, reader: ChainReader, params: Params, wallet_hotkey: str = "") -> dict[str, Any]:
+    """What a run would do now, with no chain write. It saves no writer state and takes no lock.
 
     With ``wallet_hotkey`` (the address read from the hotkey file) it also runs the setter's checks before a submission.
     """
     try:
-        table, snapshot, count, _, validator_hotkey = build_table(kings_source, reader, params)
+        table, snapshot, view = build_table(view_source, reader, params)
     except Keep as keep:
         return {"status": "would defer", "block": keep.block, "reason": keep.reason}
-    report: dict[str, Any] = {"status": "would set", "block": snapshot.block, "kings": count, "weights": table, "validator_hotkey": validator_hotkey}
+    validator_hotkey = view.validator_hotkey
+    report: dict[str, Any] = {"status": "would set", "block": snapshot.block, "kings": len(view.kings), "weights": table}
+    report |= {"validator_hotkey": validator_hotkey, "kings_from": view.source}
     uids = [uid for uid, hotkey in snapshot.hotkeys().items() if hotkey == validator_hotkey]
     report["validator_registered"] = bool(uids)
     if uids:
@@ -231,35 +308,55 @@ def dry_run(kings_source: KingsSource, client: Any, reader: ChainReader, params:
     return report
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def open_r2_store() -> ObjectStore:
+    if R2Store is None:
+        raise ConfigError("--from-store needs boto3: install the 'r2' extra")
+    return R2Store.from_env()
+
+
+def main(argv: Sequence[str] | None = None, open_store: Callable[[], ObjectStore] = open_r2_store) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m sn120_v2.weights_writer", description="Set the SN120 chain weights once: the last 10 kings, 1/N each."
     )
     # No setting has a default path, network or wallet. A missing one is an error.
-    parser.add_argument("--state-dir", type=Path, required=True, help="directory of the controller's journal; the writer's lock and memory go here too")
+    parser.add_argument("--state-dir", type=Path, required=True, help="directory of the journal (journal.jsonl); the writer's lock and memory go here too")
+    parser.add_argument(
+        "--from-store",
+        action="store_true",
+        help="first pull the journal copy from the object store into the state directory (SN120_R2_* variables; a read-only token is enough). "
+        "For a host that does not run the controller: never use it on the controller's own state directory",
+    )
     parser.add_argument("--network", required=True, help="the chain: finney, or the address of a node")
     parser.add_argument("--wallet", help="NAME/HOTKEY of the validator wallet on this machine: only its hotkey file is read; required unless --dry-run")
     parser.add_argument("--wallet-path", default="", help="directory that holds the wallets; default: the SDK's ~/.bittensor/wallets")
-    parser.add_argument("--params", help="JSON file of parameter overrides. The payout uses the parameters pinned in the journal when it has them")
-    parser.add_argument("--dry-run", action="store_true", help="compute and print the table: no chain write, no file written; --wallet adds the checks before a submission")
+    parser.add_argument("--params", help="optional check: refused when it differs from the parameters pinned in the journal. Not needed: the journal's parameters are used")
+    parser.add_argument("--dry-run", action="store_true", help="compute and print the table: no chain write, no wallet needed; --wallet adds the checks before a submission")
     parser.add_argument("--force", action="store_true", help="run even if this hour already had its attempt")
     args = parser.parse_args(argv)
     if not args.dry_run and not args.wallet:
         parser.error("--wallet is required unless --dry-run")
-    kings_source = partial(load_kings, args.state_dir)
+    view = once(partial(read_view, args.state_dir, open_store if args.from_store else None))
     try:
-        params = load_params(args.params) if args.params else Params()
+        params = params_in_force(view, load_params(args.params) if args.params else None)
         client = SubtensorClient.connect(params.netuid, args.network, args.wallet or "", args.wallet_path)
         wallet_hotkey = client.signer() if args.wallet else ""
     except ConfigError as exc:  # for example a missing hotkey file: one clear line, and no chain call
         print(f"nothing submitted: {exc}", file=sys.stderr)
         return 2
+    except InfraError as exc:  # no chain: the same result as a chain read that fails later
+        status = "would defer" if args.dry_run else "deferred"
+        print(json.dumps({"status": status, "block": 0, "reason": f"{exc}; nothing submitted, the last valid weights stay"}, sort_keys=True))
+        return 0
+    try:
+        print(f"kings: read from {view().source}", file=sys.stderr)
+    except Exception as exc:
+        print(f"kings: not read: {exc}", file=sys.stderr)
     reader = Reader(client, params.netuid)
     if args.dry_run:
-        print(json.dumps({"dry_run": True} | dry_run(kings_source, client, reader, params, wallet_hotkey), sort_keys=True))
+        print(json.dumps({"dry_run": True} | dry_run(view, client, reader, params, wallet_hotkey), sort_keys=True))
         return 0
     receipt = run_once(
-        load_kings=kings_source,
+        view=view,
         reader=reader,
         setter=Setter(client, wallet_hotkey, params.weights_rate_limit_blocks),
         wallet_hotkey=wallet_hotkey,
