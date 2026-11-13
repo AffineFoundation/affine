@@ -255,7 +255,7 @@ This stage is optional, and its place is between `4-multi` and `5-full`. It prov
 
 Things to know:
 
-- Whole files that are already in the smoke prefix are not valid under the cap of 2048 (rule `output_tokens`). They are passed over in stages 1, 2 and 4. That is correct. Under the launch cap they are valid again, so stage 3 can take some of them.
+- Whole files that are already in the smoke prefix (from an earlier step 5) are not valid under the cap of 2048 (rule `output_tokens`). They are passed over in stages 1, 2 and 4. That is correct. Under the launch cap they are valid again. So stage 3 can take some of them, and its `run` first checks all of them, which can take some minutes.
 - A real file can fail the rules `no_signal` (no group has two different rewards) or `train_cost` (training it costs too much). So stage 5 can see fewer valid files than it copied. `python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack` shows the count for each rule.
 - The weights dry run of step 8 takes `--params`. Give it the file of the stage that is pinned now, or leave `--params` out. With another file it stops with `--params differs from the parameters pinned in the journal`.
 - Do not edit a stage file by hand: the `smoke params` command writes it again.

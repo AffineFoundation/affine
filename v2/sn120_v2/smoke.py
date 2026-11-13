@@ -42,6 +42,7 @@ from .seams import ObjectStore
 _SMALL = {"z_bar": 0.0, "min_scored_tasks": 2, "max_infra_attempts": 1000, "apply_retry_s": 5}
 # A reply stops after this many tokens in the rounds that only prove the path. One reply at the real cap can take 15 minutes.
 SHORT_REPLY = 2048
+MAX_FAILED_CHECKS = 8  # a small copy gives up on a file after this many groups that fail the admission check
 # Overrides of the launch values, one set per round of the ramp, in order. The two digests are added to each.
 RAMP: dict[str, dict[str, Any]] = {
     "1-tiny": _SMALL | {"batch_cap": 1, "n_gpus": 1, "n_tasks": 1, "eval_chunk_tasks": 1, "max_output_tokens": SHORT_REPLY},
@@ -94,30 +95,36 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
     if not source:
         return None, "no group has two different rewards"
 
-    def longest(group: Any) -> int:
+    def longest(group: Any) -> int | None:
         try:
             return max(count(row["output"]) for row in group["rollouts"])
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:  # a text that makes the tokenizer fail (a Rust panic is a BaseException): never use that group
-            return cap + 1
+            return None
 
     # Tokens are counted for the groups with the shortest text first; a group far above the cap is never counted.
     source.sort(key=lambda group: max(len(row["output"]) for row in group["rollouts"]))
     kept: list[Any] = []
-    best, size, rule = None, 0, ""
+    best, size, rule, failed = None, 0, "", 0
     for group in source:
         tokens = longest(group)
+        if tokens is None:
+            continue
         if tokens > cap:
             if best is None and not rule:
                 return None, f"no group with two different rewards has every rollout within {cap} tokens; the nearest group needs {tokens}"
             break
         data = json.dumps(head | {"groups": kept + [group]}).encode()
         rule = check(data)
-        if not rule:
-            kept, best, size = kept + [group], data, max(size, tokens)
-            if len(kept) == groups:
+        if rule:
+            failed += 1
+            if failed == MAX_FAILED_CHECKS:
                 break
+            continue
+        kept, best, size = kept + [group], data, max(size, tokens)
+        if len(kept) == groups:
+            break
     if best is None:
         return None, f"a copy of its short groups fails the check: {rule}"
     rollouts = sum(len(group["rollouts"]) for group in kept)
