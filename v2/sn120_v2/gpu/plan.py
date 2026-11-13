@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ..canonical import file_sha256, manifest_digest
-from ..errors import ContractError, InfraError
+from ..errors import InfraError
 from ..params import Params, require_env
 
 
@@ -21,25 +21,6 @@ class BoxConfig:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> BoxConfig:
         return cls(Path(require_env("SN120_WORK_DIR", environ)), require_env("SN120_IMAGE_DIGEST", environ))
-
-
-def train_waves(n_batches: int, params: Params) -> tuple[tuple[tuple[int, ...], ...], ...]:
-    """The GPU ids of every batch of a round, in queue order, grouped in waves.
-
-    Each LoRA gets floor(n_gpus / batches) GPUs, and at least one. The LoRAs
-    of one wave hold disjoint GPUs and train at the same time. With more
-    batches than GPUs, the waves run one after the other. A round above the
-    batch cap is refused.
-    """
-    if not 1 <= n_batches <= params.batch_cap:
-        raise ContractError(f"a round trains 1 to {params.batch_cap} batches, not {n_batches}")
-    per_lora = params.gpus_per_lora(n_batches)
-    at_once = params.n_gpus // per_lora
-    waves = []
-    for first in range(0, n_batches, at_once):
-        slots = range(min(at_once, n_batches - first))
-        waves.append(tuple(tuple(range(slot * per_lora, (slot + 1) * per_lora)) for slot in slots))
-    return tuple(waves)
 
 
 def code_digest() -> str:

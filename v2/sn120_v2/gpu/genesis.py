@@ -5,7 +5,7 @@
 It downloads the pinned checkpoint files of the launch model to
 ``<dir>/base``, checks that they hash to the pinned base hash, and writes the
 fp32 master to ``<dir>/master``: every floating-point tensor of the base in
-float32, in weight files of the same names. bf16 to fp32 loses nothing. The
+float32, in weight files of at most 4 GiB each. bf16 to fp32 loses nothing. The
 last line of the output is one JSON object; its ``master_digest`` is the
 value for ``--master-digest`` of the cutover import.
 

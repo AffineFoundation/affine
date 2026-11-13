@@ -43,21 +43,21 @@ def training_rows(groups: Groups) -> list[dict]:
     return rows
 
 
-def fit_tokens(n_prompt: int, output: Sequence[int], eos_id: int, max_output: int, max_context: int) -> tuple[list[int], bool]:
-    """The output tokens to train on, and whether the rollout was cut at the cap.
+def fit_tokens(n_prompt: int, output: Sequence[int], eos_id: int, max_output: int, max_context: int) -> tuple[list[int], bool, bool]:
+    """The output tokens to train on, whether they end without an end token, and whether tokens were removed.
 
-    An output shorter than the cap ended by itself: the end-of-turn token is
-    appended. An output of exactly the cap was cut: nothing is appended, and
-    it never counts as ended. A longer output, or one that does not fit the
-    context with its prompt, rejects the file. Nothing is truncated here.
+    The room is ``max_output`` tokens, or less when the prompt is long. An
+    output shorter than the room ended by itself: the end-of-turn token is
+    appended. An output that fills the room or is longer is cut to the room:
+    nothing is appended, so it never counts as ended. A long row is cut, not
+    rejected: the training cap is shorter than the cap a miner samples with.
     """
-    if not output or len(output) > max_output:
-        raise BatchRejected(f"an output must hold 1 to {max_output} tokens")
-    capped = len(output) == max_output
-    tokens = list(output) if capped else [*output, eos_id]
-    if n_prompt + len(tokens) > max_context:
-        raise BatchRejected(f"a prompt with its output is longer than {max_context} tokens")
-    return tokens, capped
+    room = min(max_output, max_context - n_prompt)
+    if not output or room < 1:
+        raise BatchRejected("a row needs at least one output token and a prompt that leaves room for it")
+    if len(output) >= room:
+        return list(output[:room]), True, len(output) > room
+    return [*output, eos_id], False, False
 
 
 def derail_keep(logps: Sequence[float], window: int, threshold: float, tail: int) -> int:

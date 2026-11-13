@@ -3,7 +3,9 @@
 The fold starts from the verified fp32 master, never from the bf16 base:
 rounding to bf16 happens one time, at the end, so it cannot add up over
 folds. The master and the base go to two directories and two prefixes. The
-arithmetic runs on the CPU, one weight file at a time.
+arithmetic runs on the CPU, one weight file of the base at a time. The master
+holds the tensors of base file ``<stem>.safetensors`` in the files
+``<stem>.partNN.safetensors``.
 """
 
 from __future__ import annotations
@@ -28,6 +30,9 @@ from .resident import Resident, hash_tree, upload_tree
 
 _PREFIX, _A, _B = "base_model.model.", ".lora_A.weight", ".lora_B.weight"
 _META = {"format": "pt"}
+# A box uploads one file in one request of at most 5 GiB. A base weight file
+# doubles in size as fp32, so the master is written in parts below that limit.
+PART_BYTES = 4 * 1024**3
 
 
 def read_lora(path: Path, rank: int) -> dict[str, torch.Tensor]:
@@ -50,18 +55,36 @@ def read_lora(path: Path, rank: int) -> dict[str, torch.Tensor]:
     return deltas
 
 
-def fold_files(master_dir: Path, base_dir: Path, loras: Sequence[dict[str, torch.Tensor]], out_master: Path, out_base: Path) -> None:
-    """Write the new master (fp32) and the new base (each tensor in the dtype the old base has)."""
+def write_parts(tensors: dict[str, torch.Tensor], out_dir: Path, stem: str, part_bytes: int) -> None:
+    """Write ``<stem>.partNN.safetensors`` files in tensor-name order, each with at most ``part_bytes`` of tensors."""
+    part: dict[str, torch.Tensor] = {}
+    size = index = 0
+    for name in [*sorted(tensors), None]:
+        nbytes = 0 if name is None else tensors[name].numel() * tensors[name].element_size()
+        if nbytes > part_bytes:
+            raise VerifyError(f"{name} alone is larger than one upload")
+        if part and (name is None or size + nbytes > part_bytes):
+            save_file(part, str(out_dir / f"{stem}.part{index:02d}.safetensors"), metadata=_META)
+            part, size, index = {}, 0, index + 1
+        if name is not None:
+            part[name], size = tensors[name], size + nbytes
+
+
+def fold_files(
+    master_dir: Path, base_dir: Path, loras: Sequence[dict[str, torch.Tensor]], out_master: Path, out_base: Path, part_bytes: int = PART_BYTES
+) -> None:
+    """Write the new master (fp32, in parts) and the new base (each tensor in the dtype the old base has)."""
     out_master.mkdir(parents=True)
     out_base.mkdir(parents=True)
     waiting = {name for deltas in loras for name in deltas}
-    shards = sorted(master_dir.glob("*.safetensors"))
-    if not shards or sorted(p.name for p in base_dir.glob("*.safetensors")) != [p.name for p in shards]:
-        raise VerifyError("the fp32 master and the base do not have the same weight files")
-    for shard in shards:
-        master, base = load_file(str(shard)), load_file(str(base_dir / shard.name))
+    unread = {file.name for file in master_dir.iterdir()}
+    for shard in sorted(base_dir.glob("*.safetensors")):
+        base, master = load_file(str(shard)), {}
+        for part in sorted(master_dir.glob(f"{shard.stem}.part*.safetensors")):
+            master.update(load_file(str(part)))
+            unread.discard(part.name)
         if sorted(master) != sorted(base):
-            raise VerifyError(f"{shard.name}: the master and the base hold different tensors")
+            raise VerifyError(f"{shard.name}: the fp32 master and the base hold different tensors")
         for name, weight in master.items():
             if weight.is_floating_point() and weight.dtype != torch.float32:
                 raise VerifyError(f"{name} is {weight.dtype} in the master; a master is fp32 and is never upcast here")
@@ -74,8 +97,10 @@ def fold_files(master_dir: Path, base_dir: Path, loras: Sequence[dict[str, torch
                 raise VerifyError(f"{name} is not finite after the fold")
             master[name], base[name] = weight, weight.to(base[name].dtype)
             waiting.discard(name)
-        save_file(master, str(out_master / shard.name), metadata=_META)
-        save_file(base, str(out_base / shard.name), metadata=_META)
+        write_parts(master, out_master, shard.stem, part_bytes)
+        save_file(base, str(out_base / shard.name), metadata=_META)  # same name and size as before: the index file stays true
+    if unread or not any(out_base.iterdir()):
+        raise VerifyError("the fp32 master does not hold exactly the weight files of the base")
     if waiting:
         raise VerifyError(f"{len(waiting)} LoRA tensors match no weight of the head, for example {sorted(waiting)[0]}")
     for file in base_dir.iterdir():  # config and tokenizer files do not change
@@ -83,12 +108,12 @@ def fold_files(master_dir: Path, base_dir: Path, loras: Sequence[dict[str, torch
             shutil.copy2(file, out_base / file.name)
 
 
-def upcast(base_dir: Path, out_dir: Path) -> str:
+def upcast(base_dir: Path, out_dir: Path, part_bytes: int = PART_BYTES) -> str:
     """Build the first fp32 master from a base. Returns its digest. Only genesis may use this."""
     out_dir.mkdir(parents=True)
     for shard in sorted(base_dir.glob("*.safetensors")):
         tensors = {name: t.float() if t.is_floating_point() else t for name, t in load_file(str(shard)).items()}
-        save_file(tensors, str(out_dir / shard.name), metadata=_META)
+        write_parts(tensors, out_dir, shard.stem, part_bytes)
     return manifest_digest(hash_tree(out_dir))
 
 

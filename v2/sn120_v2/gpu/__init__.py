@@ -2,7 +2,7 @@
 
 Everything that needs no GPU is plain Python and is tested on CPU:
 
-  plan.py       elastic GPU split, the worker-image pin, the code digest
+  plan.py       the box config, the worker-image pin, the code digest
   batch.py      frozen batch -> training rows: caps, advantages, derail mask
   procs.py      child processes that hold GPUs, and the check that GPUs are free
   resident.py   verified local copies of the head, the fp32 master and LoRAs

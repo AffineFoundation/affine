@@ -143,7 +143,7 @@ class Replica:
                 token_loss = ppo_loss(log_q, row["old"][i : i + LOGIT_CHUNK], row["advantage"], self.recipe)
                 part = (token_loss * (row["mask"][i : i + LOGIT_CHUNK] & inside)).sum() / (row["count"] * n_rows)
                 part.backward()
-                loss += float(part)
+                loss += float(part.detach())
             hidden.backward(leaf.grad)
             trained += row["count"]
         return loss, trained
@@ -162,8 +162,8 @@ def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> list[dict]:
             prompts[row["prompt"]] = tokenizer.encode(text, add_special_tokens=False)
         prompt_ids = prompts[row["prompt"]]
         output = tokenizer.encode(row["output"], add_special_tokens=False)
-        tokens, capped = fit_tokens(len(prompt_ids), output, eos, recipe.train_max_output_tokens, recipe.train_max_context_tokens)
-        out.append({"prompt_ids": prompt_ids, "tokens": tokens, "capped": capped, "advantage": row["advantage"]})
+        tokens, capped, cut = fit_tokens(len(prompt_ids), output, eos, recipe.train_max_output_tokens, recipe.train_max_context_tokens)
+        out.append({"prompt_ids": prompt_ids, "tokens": tokens, "capped": capped, "truncated": cut, "advantage": row["advantage"]})
     return out
 
 
@@ -200,7 +200,9 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
             losses.append(sum(loss for loss, _ in results))
             grad_norms.append(norm)
             trained = sum(count for _, count in results)
-    return save(first, recipe, job, out_dir, {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows)})
+    facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows)}
+    facts["truncated_rows"] = sum(row["truncated"] for row in rows)  # rows cut to the training token cap
+    return save(first, recipe, job, out_dir, facts)
 
 
 def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict) -> dict:

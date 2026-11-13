@@ -81,6 +81,7 @@ class ServeSettings:
     retries: int = 2  # extra tries after a transport failure or a 5xx reply
     free_limit_mib: int = 1024  # a GPU above this is still in use
     free_timeout_s: float = 120.0
+    grade_tries: int = 3  # times a reply is graded when the grader's worker process dies on it
 
 
 def server_argv(base_dir: str, port: int, params: Params) -> list[str]:
@@ -108,6 +109,11 @@ def server_env(gpu: int, work_dir: Path) -> dict[str, str]:
     env.update({key: str(cache / name) for key, name in names.items()})
     env.update(HF_HUB_OFFLINE="1", VLLM_NO_USAGE_STATS="1", DO_NOT_TRACK="1")
     return env
+
+
+def box_fault(grade: Any) -> bool:
+    """True when this grade says nothing about the text: the worker process that graded it died."""
+    return getattr(grade, "rule", "") == "grade-worker-died"
 
 
 def chat_body(model: str, messages: list[dict[str, str]], seed: int, params: Params) -> dict:
@@ -210,18 +216,29 @@ class VllmEvaluator:
             self.resident.prune({head.base_hash, head.base_fp32_master_digest})
 
     def _grade(self, tasks: Sequence[str], jobs: list, replies: list) -> dict[tuple[str, int, int], str]:
-        """One code per job. The grader sees only replies that ended; it never learns which model wrote one."""
+        """One code per job. The grader sees only replies that ended; it never learns which model wrote one.
+
+        An ``E`` of the grader itself (it cannot decide, or its own time limit)
+        is final and is never graded again. A grade lost to a dead worker
+        process is a failure of this box: only those replies are graded
+        again, and if a worker still dies the look is an ``InfraError``. So
+        a dead worker never puts a code into an outcome string.
+        """
         codes = {job: ERROR if reply is None else CAP for job, reply in zip(jobs, replies)}
         ended = [(job, reply[0]) for job, reply in zip(jobs, replies) if reply is not None and not reply[1]]
-        try:
-            grades = self.grader.grade_many([(self.pool.task(tasks[job[2]]), text, False) for job, text in ended])
-        except Exception as exc:  # noqa: BLE001 - a broken grader is a failure of this box
-            raise InfraError(f"the grader failed: {exc}") from exc
-        if len(grades) != len(ended):
-            raise InfraError("the grader returned a wrong number of grades")
-        for (job, _), grade in zip(ended, grades):
-            codes[job] = grade.code if grade.code in (PASS, FAIL, ERROR) else ERROR
-        return codes
+        for _ in range(self.settings.grade_tries):
+            try:
+                grades = self.grader.grade_many([(self.pool.task(tasks[job[2]]), text, False) for job, text in ended])
+            except Exception as exc:  # noqa: BLE001 - a broken grader is a failure of this box
+                raise InfraError(f"the grader failed: {exc}") from exc
+            if len(grades) != len(ended):
+                raise InfraError("the grader returned a wrong number of grades")
+            for (job, _), grade in zip(ended, grades):
+                codes[job] = grade.code if grade.code in (PASS, FAIL, ERROR) else ERROR
+            ended = [item for item, grade in zip(ended, grades) if box_fault(grade)]
+            if not ended:
+                return codes
+        raise InfraError(f"a grader worker died on {len(ended)} replies in every one of {self.settings.grade_tries} tries; the look is not scored")
 
     def _serve(self, head: HeadVersion, params: Params) -> None:
         """Make one server per GPU serve ``head``. Servers of another head are stopped first."""
