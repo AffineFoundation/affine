@@ -22,9 +22,10 @@ from .errors import ContractError
 
 _PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
-CURRENT = "public/current.json"  # pointer to the current head manifest
+CURRENT = "public/current.json"  # the current head: the bytes of HeadManifest.to_json()
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
+BENCHMARKS = "public/benchmarks.json"  # written by the benchmark service, read by the website
 
 
 def _part(value: object) -> str:
@@ -83,6 +84,19 @@ def public_base_prefix(base_hash: str) -> str:
 
 def public_master_prefix(master_digest: str) -> str:
     return f"public/masters/{_part(master_digest)}"
+
+
+def public_base_file(base_hash: str, name: str) -> str:
+    """One file of a bf16 base. ``name`` is a key of ``HeadManifest.base_files``."""
+    return f"{public_base_prefix(base_hash)}/{_part(name)}"
+
+
+def public_master_file(master_digest: str, name: str) -> str:
+    return f"{public_master_prefix(master_digest)}/{_part(name)}"
+
+
+def public_lora_file(lora_hash: str, name: str) -> str:
+    return f"{public_lora_prefix(lora_hash)}/{_part(name)}"
 
 
 def head_manifest(version_id: str) -> str:
