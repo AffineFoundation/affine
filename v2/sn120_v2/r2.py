@@ -16,6 +16,8 @@ The rules this file holds:
   never put in an error message. A presigned URL is a secret: do not log it.
 
 ``python -m sn120_v2.r2 --self-test`` runs these rules once on the real bucket.
+``python -m sn120_v2.r2 --preflight`` only lists: it shows whether a bucket already
+holds an object at a key that v2 writes. Run it before v2 starts in a bucket it shares.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import inspect
 import os
 import tempfile
 import time
@@ -30,13 +33,14 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from . import layout
 from .errors import ContractError, InfraError, V2Error
 from .params import require_env
 
@@ -308,16 +312,82 @@ def self_test(store: R2Store) -> bool:
     return passed
 
 
+def _fixed_prefix(make_key: Callable[..., str]) -> str:
+    """The path segments that every key of one ``layout`` function starts with."""
+    names = inspect.signature(make_key).parameters.values()
+    one, two = (make_key(*[n if name.annotation == "int" else str(n) for name in names]).split("/") for n in (1, 2))
+    same = 0
+    while same < min(len(one), len(two)) and one[same] == two[same]:
+        same += 1
+    if not same:
+        raise ContractError(f"layout.{make_key.__name__} has no fixed key prefix, so the preflight cannot check it")
+    return "/".join(one[:same])
+
+
+def written_roots() -> tuple[list[str], str]:
+    """(every key and key prefix that v2 writes, the prefix of the miner files), read from ``layout.py`` itself.
+
+    A public string of ``layout`` is a key or a prefix as it stands. A public function gives its fixed prefix.
+    So a key that is added to ``layout.py`` is checked with no change here.
+    """
+    found = set()
+    for name, value in vars(layout).items():
+        if name.startswith("_"):
+            continue
+        if isinstance(value, str):
+            found.add(value.strip("/"))
+        elif inspect.isfunction(value) and value.__module__ == layout.__name__:
+            found.add(_fixed_prefix(value))
+    roots = sorted(root for root in found if not any(root.startswith(other + "/") for other in found))
+    return roots, _fixed_prefix(layout.miner_object)
+
+
+def preflight(store: R2Store, allow: Sequence[str] = (), show: int = 10) -> bool:
+    """List every key and prefix that v2 writes, and print what exists. It only lists: it writes and deletes nothing.
+
+    True when nothing exists, except the miner files (v2 reads them in place) and what is under ``allow``.
+    """
+    roots, miners = written_roots()
+    allowed = [item.strip("/") for item in allow]
+    print(f"preflight  bucket {store._bucket!r}, key prefix {store._prefix!r}: {len(roots)} keys and prefixes from layout.py, list calls only")
+    clean = True
+    for root in roots:
+        try:
+            keys = store.list(root)
+        except V2Error as exc:  # a prefix that cannot be listed is not known to be empty
+            clean = False
+            print(f"FAIL    {root}  {exc}")
+            continue
+        found = [key for key in keys if not any(key == item or key.startswith(item + "/") for item in allowed)]
+        if root == miners:
+            print(f"ok      {root}  {len(keys)} objects: the miner files, read in place")
+        elif not found:
+            print(f"ok      {root}  " + (f"{len(keys)} objects, all under --allow" if keys else "nothing"))
+        else:
+            clean = False
+            print(f"EXISTS  {root}  {len(found)} objects")
+            for key in found[:show]:
+                print(f"          {key}")
+            if len(found) > show:
+                print(f"          ... and {len(found) - show} more")
+    print("PASS  no object at a key that v2 writes" if clean else "FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix")
+    return clean
+
+
 def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m sn120_v2.r2", description="Check the R2 bucket named by SN120_R2_*.")
-    parser.add_argument("--self-test", action="store_true", required=True, help="write, verify and delete test keys under selftest/")
-    parser.parse_args(argv)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--self-test", action="store_true", help="write, verify and delete test keys under selftest/<random id>/")
+    mode.add_argument("--preflight", action="store_true", help="read-only: exit 0 only if no object exists at a key that v2 writes")
+    parser.add_argument("--allow", action="append", default=[], metavar="KEY_OR_PREFIX",
+                        help="with --preflight: objects here are expected, for example the genesis files. Repeat it for more")
+    args = parser.parse_args(argv)
     try:
         store = R2Store.from_env(environ, part_size=5 * MIB)  # the smallest part size: an 11 MiB object has three parts
     except V2Error as exc:
         print(f"FAIL  open the bucket  {exc}")
         return 1
-    return 0 if self_test(store) else 1
+    return 0 if (preflight(store, args.allow) if args.preflight else self_test(store)) else 1
 
 
 if __name__ == "__main__":

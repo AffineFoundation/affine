@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import urllib.request
 import uuid
 from unittest.mock import Mock
@@ -12,8 +13,9 @@ import pytest
 from botocore.exceptions import ClientError, ReadTimeoutError
 from moto.server import ThreadedMotoServer
 
+from sn120_v2 import layout, links
 from sn120_v2.errors import ConfigError, ContractError, InfraError
-from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store, main, self_test
+from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store, main, preflight, self_test, written_roots
 from sn120_v2.seams import ObjectStore, Presigner
 
 SECRET = "fake-secret-value-never-shown"
@@ -51,6 +53,19 @@ def store(env):
 def raw_put(store, key, data, **extra):
     """Write behind the store's back, as a box with an upload link could."""
     store._s3.put_object(Bucket=store._bucket, Key=store._k(key), Body=data, **extra)
+
+
+def record_calls(store):
+    """Every S3 call that the store sends from now on, as (operation, key)."""
+    calls = []
+    store._s3.meta.events.register("before-parameter-build.s3", lambda params, model, **kw: calls.append((model.name, params.get("Key"))))
+    return calls
+
+
+# What v1 has in the bucket that production shares, by its source: none of it is a key that v2 writes.
+V1_KEYS = ("public/current.json", "public/checkpoints/c1/model.safetensors", "public/streams/live/current.json", "public/head.json.bak",
+           "private/ff/v1/turns/e1/batch.json", "private/ff/v1/miners/5Hotkey/batch.json", "mimo/run/checkpoints/c1/fp32-master/w.bin",
+           "pendingx/y", "selftest/keep")
 
 
 def test_round_trip_and_missing_keys(store, tmp_path):
@@ -160,12 +175,12 @@ def test_prefix_keeps_a_run_inside_its_own_namespace(env):
     """A smoke run under a prefix cannot read, list or delete a key outside that prefix."""
     root = R2Store.from_env(env, attempts=1)
     smoke = R2Store.from_env(env | {"SN120_R2_PREFIX": "/smoke/run1/"}, attempts=1)
-    root.put("public/current.json", b"live")
-    smoke.put("public/current.json", b"smoke")
-    assert smoke.list("") == ["public/current.json"] and smoke.get("public/current.json") == b"smoke"
-    assert root.list("") == ["public/current.json", "smoke/run1/public/current.json"]
-    smoke.delete("public/current.json")
-    assert root.get("public/current.json") == b"live"
+    root.put(layout.CURRENT, b"live")
+    smoke.put(layout.CURRENT, b"smoke")
+    assert smoke.list("") == [layout.CURRENT] and smoke.get(layout.CURRENT) == b"smoke"
+    assert root.list("") == [layout.CURRENT, f"smoke/run1/{layout.CURRENT}"]
+    smoke.delete(layout.CURRENT)
+    assert root.get(layout.CURRENT) == b"live"
 
 
 def test_presigned_links_work_without_credentials(store):
@@ -207,15 +222,79 @@ def test_bad_configuration_fails_closed_and_hides_the_secret(env):
 
 
 def test_self_test_checks_every_rule_and_leaves_nothing(env, store, capsys):
-    """The first smoke-test step: one line per check, no link or secret printed, nothing left in the bucket."""
+    """The first smoke-test step: one line per check, no link or secret printed, nothing left in the bucket.
+
+    With no key prefix (production) it writes and deletes only under ``selftest/<random id>/`` at the bucket root.
+    """
+    for key in V1_KEYS:
+        store.put(key, b"v1")
     assert main(["--self-test"], env) == 0
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 10 and all(line.startswith("ok  ") for line in lines[:9]) and lines[9].startswith("PASS")
-    assert store.list("") == [] and SECRET not in "".join(lines) and "X-Amz" not in "".join(lines)
+    assert store.list("") == sorted(V1_KEYS) and SECRET not in "".join(lines) and "X-Amz" not in "".join(lines)
+    calls = record_calls(store)
     store._s3.upload_part_copy = Mock(side_effect=ClientError({"Error": {"Code": "SignatureDoesNotMatch"}}, "UploadPartCopy"))
     assert self_test(store) is False
+    sent = [(name, key) for name, key in calls if key]  # every call of the self-test that names a key
     failed = [line for line in capsys.readouterr().out.splitlines() if line.startswith("FAIL")]
     assert len(failed) == 3 and "multipart copy" in failed[0] and "SignatureDoesNotMatch" in failed[0]  # copy, download, summary
-    assert store.list("") == []
+    assert store.list("") == sorted(V1_KEYS) and all(store.get(key) == b"v1" for key in V1_KEYS)
+    own = {key.split("/")[1] for _, key in sent}
+    assert len(own) == 1 and re.fullmatch("[0-9a-f]{32}", own.pop()) and {"PutObject", "DeleteObject"} <= {name for name, _ in sent}
+    assert all(key.startswith("selftest/") for _, key in sent)
     assert main(["--self-test"], {k: v for k, v in env.items() if k != "SN120_R2_BUCKET"}) == 1
     assert "SN120_R2_BUCKET" in capsys.readouterr().out
+
+
+def test_preflight_only_lists_and_passes_only_when_no_v2_key_exists(env, store, capsys):
+    """The cutover gate for a bucket that v1 also used: read-only, and exit 0 only when no key that v2 writes holds an object."""
+    for key in V1_KEYS:
+        store.put(key, b"v1")
+    calls = record_calls(store)
+    assert preflight(store) is True and {name for name, _ in calls} == {"ListObjectsV2"}
+    out = capsys.readouterr().out
+    assert "private/ff/v1/miners  1 objects: the miner files" in out and out.splitlines()[-1].startswith("PASS") and "EXISTS" not in out
+    assert main(["--preflight"], env) == 0 and store.list("") == sorted(V1_KEYS)
+    store.put(layout.public_base_file("h", "model.bin"), b"genesis")
+    assert main(["--preflight"], env) == 1
+    assert main(["--preflight", "--allow", layout.public_base_prefix("h") + "/"], env) == 0
+    assert "1 objects, all under --allow" in capsys.readouterr().out
+    theirs = [layout.CURRENT, "pending/left/by/anyone", layout.round_file("r000001"), layout.journal_record(0), f"{layout.LINK_FILES}/5Hotkey.json"]
+    theirs += [layout.irt_snapshot(f"s{n}") for n in range(12)]
+    for key in theirs:
+        store.put(key, b"x")
+    assert main(["--preflight", "--allow", "public/bases/h"], env) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert all(f"          {key}" in lines for key in theirs[:5]) and "          ... and 2 more" in lines and lines[-1].startswith("FAIL")
+    assert [line.split()[1] for line in lines if line.startswith("EXISTS")] == ["pending", "private/journal", "public/ff/links", "public/head.json", "public/irt", "public/rounds"]
+    for key in theirs + [layout.public_base_file("h", "model.bin")]:
+        store.delete(key)
+    store._s3.get_paginator = Mock(side_effect=TIMEOUT)  # a prefix that cannot be listed is not known to be empty
+    assert preflight(store) is False and "FAIL    pending  r2 list" in capsys.readouterr().out
+
+
+def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
+    """A key that is added to ``layout.py`` is checked with no change to the preflight."""
+    roots, miners = written_roots()
+    assert miners == "private/ff/v1/miners" == layout.miner_object("x").rsplit("/", 2)[0] and miners in roots
+    assert {layout.CURRENT, layout.LLMS_TXT, layout.MINING_JSON, layout.BENCHMARKS, layout.JOURNAL, layout.PENDING, "private/rounds", "public/rounds"} <= set(roots)
+    assert all(root.split("/")[0] in ("public", "private", "pending") for root in roots)
+    for name, value in vars(layout).items():  # every key that a layout function makes is under one listed root
+        if callable(value) and getattr(value, "__module__", "") == layout.__name__ and not name.startswith("_"):
+            key = value(*["a"] * (value.__code__.co_argcount - (name in ("pending_lora_prefix", "journal_record"))), *[7] * (name in ("pending_lora_prefix", "journal_record")))
+            assert any(key == root or key.startswith(root + "/") for root in roots), name
+    assert (f"{layout.LINK_FILES}/", layout.LINK_INDEX) == (links.PUBLIC_PREFIX + links.LINKS_DIR, links.PUBLIC_PREFIX + links.INDEX)
+
+    def new_zone(name: str, seq: int) -> str:
+        return f"public/new-zone/{name}/{seq:03d}.json"
+
+    def anywhere(name: str) -> str:
+        return f"{name}/file.json"
+
+    new_zone.__module__ = anywhere.__module__ = layout.__name__
+    monkeypatch.setattr(layout, "new_zone", new_zone, raising=False)
+    monkeypatch.setattr(layout, "NEW_POINTER", "public/new-pointer.json", raising=False)
+    assert {"public/new-zone", "public/new-pointer.json"} <= set(written_roots()[0])
+    monkeypatch.setattr(layout, "anywhere", anywhere, raising=False)
+    with pytest.raises(ContractError, match="anywhere"):
+        written_roots()
