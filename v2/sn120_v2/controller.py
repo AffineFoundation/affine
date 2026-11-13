@@ -187,9 +187,19 @@ class Controller:
         return manifest.head
 
     def set_params(self, params: Params, now: int) -> None:
-        """Operator action: pin new parameters. Refused while a round is open, because a round pins one set."""
-        if self.state.round is not None:
-            raise V2Error("a round is open; set the parameters when it has closed")
+        """Operator action: pin new parameters. Refused while a round is open, because a round pins one set.
+
+        One case is allowed in a round: the round is decided, and only the
+        image and code digests change. Training, scoring and judging are done
+        then; the digests only say which code may do the fold that is left.
+        Without this, a fix to the fold code could never finish the round.
+        """
+        record = self.state.round
+        if record is not None:
+            old = self.params.recipe
+            same = dataclasses.replace(params, recipe=dataclasses.replace(params.recipe, image_digests=old.image_digests, code_digest=old.code_digest))
+            if record.decision is None or same != self.params:
+                raise V2Error("a round is open; set the parameters when it has closed (a decided round takes new digests only)")
         if not self.state.heads:
             raise V2Error("the journal has no genesis yet; give the parameters to bootstrap")
         self._log(PARAMS_SET, {"params": params.to_dict()}, now)

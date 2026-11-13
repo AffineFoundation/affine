@@ -309,6 +309,23 @@ def test_the_parameters_are_pinned_in_the_journal_at_the_first_start(tmp_path):
     assert replay(read_journal(tmp_path / JOURNAL_FILE)).params == capped
 
 
+def test_a_decided_round_whose_fold_fails_takes_new_digests_and_nothing_else(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, 0.3)
+    world.folder.fail = True  # the fold code has a fault; its fix changes the code digest
+    assert world.round() is None and world.controller.state.round.applied
+    fixed = replace(world.params, recipe=replace(world.params.recipe, image_digests=("image-after-the-fix",), code_digest="c" * 64))
+    with pytest.raises(V2Error):
+        world.controller.set_params(replace(fixed, z_bar=0.0), world.clock())
+    world.controller.set_params(fixed, world.clock())
+    world.folder.fail = False
+    world.now += world.params.apply_retry_s
+    world.controller.tick(world.clock())
+    state = world.controller.state
+    assert state.round is None and state.head.folded and state.rounds[-1].outcome == "applied" and state.params == fixed
+    assert replay(read_journal(tmp_path / JOURNAL_FILE)).params == fixed
+
+
 # ------------------------------------------------------------ the round summary
 
 
