@@ -20,6 +20,7 @@ moto
 bittensor
 
 # miner: miner tooling and llms.txt
+transformers
 
 # envs: math task pool and grader
 math_verify
