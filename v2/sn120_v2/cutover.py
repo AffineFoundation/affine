@@ -241,20 +241,20 @@ def preview_queue(imp: V1Import, snapshot: ChainSnapshot, params: Params) -> lis
 def chain_report(
     imp: V1Import, genesis: GenesisSpec | None, snapshot: ChainSnapshot, params: Params, owner_hotkey: str | None = None
 ) -> list[str]:
-    """Starting queue and first weights for one chain snapshot. Refuses a start that would pay no king or the wrong owner."""
+    """Starting queue and first weights for one chain snapshot. Refuses a start that would pay no king, or with another hotkey at UID 0 than the given owner."""
     seats, registered = preview_queue(imp, snapshot, params), snapshot.hotkeys()
     _need(genesis is None or genesis.validator_hotkey in registered.values(), "the validator hotkey is not registered on the subnet")
     table = weights(imp.kings, registered, params)
-    _need(table != {params.burn_uid: 1.0}, "no imported king is still registered: v2 would burn all weight")
+    _need(table != {params.burn_uid: 1.0}, "no imported king is still registered: v2 never burns, so its writer would set no weights")
     _need(params.burn_uid in registered, f"UID {params.burn_uid} is not in the chain snapshot")
     holder = registered[params.burn_uid]
-    _need(owner_hotkey in (None, holder), f"UID {params.burn_uid} is {holder}, not the owner hotkey {owner_hotkey}: unearned weight would go to {holder}")
+    _need(owner_hotkey in (None, holder), f"UID {params.burn_uid} is {holder}, not the owner hotkey {owner_hotkey}: v2 gives UID {params.burn_uid} no seat and no weight, so find which of the two is wrong")
     count = [sum(zone(seat) == z for seat in seats) for z in (FRONT, NORMAL, BACK)]
     lines = [f"CHAIN at block {snapshot.block}: {len(seats)} seats wait ({count[0]} front, {count[1]} normal, {count[2]} back). First 20:"]
     lines += [f"    {i}. uid {s.reg.uid} block {s.reg.registration_block} {s.reg.hotkey}" for i, s in enumerate(seats[:20], 1)]
     lines.append(f"  first weights: {len(table)} UIDs, {1 / len(table):.4f} each: {sorted(table)}")
     checked = "it is the given owner hotkey" if owner_hotkey else "not checked (no --owner-hotkey)"
-    return lines + [f"  UID {params.burn_uid} is {holder}: it gets weight only if no king is registered; {checked}"]
+    return lines + [f"  UID {params.burn_uid} is {holder}: it has no seat and gets no weight; {checked}"]
 
 
 def copy_miner_files(src: ObjectStore, dst: ObjectStore, hotkeys: Sequence[str], limit: int | None = None) -> list[str]:

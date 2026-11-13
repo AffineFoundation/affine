@@ -69,7 +69,7 @@ def test_kings_are_v1s_last_ten_payees_oldest_first(v1):
     assert V1Import.from_json(imp.to_json()) == imp
 
 
-def test_a_start_that_would_burn_all_weight_is_refused(v1):
+def test_a_start_that_would_pay_no_king_is_refused(v1):
     imp, snapshot = load(v1), chain(v1)
     assert any("first weights" in line for line in chain_report(imp, None, snapshot, Params()))
     nobody = ChainSnapshot(120, snapshot.block, 0, tuple(reg for reg in snapshot.registrations if reg.uid not in KING_UIDS))
@@ -236,19 +236,19 @@ def test_dry_run_prints_and_writes_nothing(tmp_path, capsys, monkeypatch):
     assert cutover.main([*FILES, "--chain", str(snapshot), "--dry-run"]) == 0  # the 14 open turns go to the front by default
     out = capsys.readouterr().out
     assert "v1-e1211 uid 920" in out and "front of the queue: 14 seats" in out and "first weights" in out and "DRY RUN" in out
-    assert "UID 0 is owner: it gets weight only if no king is registered; not checked" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
+    assert "UID 0 is owner: it has no seat and gets no weight; not checked" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
     assert sorted(path.name for path in tmp_path.iterdir()) == ["chain.json"]
     assert cutover.main([*FILES, "--undecided", "front", "--owner-hotkey", OWNER, "--dry-run"]) == 2  # nothing to check it against
     assert "--owner-hotkey needs --chain" in capsys.readouterr().err
 
 
 def test_a_uid_0_that_is_not_the_owner_hotkey_is_refused(tmp_path, capsys):
-    """v2 sends unearned weight to UID 0. The operator names the owner hotkey; another hotkey at UID 0 stops the cutover."""
+    """v2 gives UID 0 no seat and no weight. The operator names the owner hotkey; another hotkey at UID 0 stops the cutover."""
     args = [*FILES, "--undecided", "front", "--dry-run", "--chain"]
     for name, holder in (("owner.json", OWNER), ("other.json", VALIDATOR)):
         (tmp_path / name).write_bytes(chain(RAW, (Registration(0, holder, 1),)).to_json())
     assert cutover.main([*args, str(tmp_path / "owner.json"), "--owner-hotkey", OWNER]) == 0
-    assert f"UID 0 is {OWNER}: it gets weight only if no king is registered; it is the given owner hotkey" in capsys.readouterr().out
+    assert f"UID 0 is {OWNER}: it has no seat and gets no weight; it is the given owner hotkey" in capsys.readouterr().out
     assert cutover.main([*args, str(tmp_path / "other.json"), "--owner-hotkey", OWNER]) == 2
     assert f"UID 0 is {VALIDATOR}, not the owner hotkey {OWNER}" in capsys.readouterr().err
     assert cutover.main([*args, str(tmp_path / "owner.json"), "--owner-hotkey", OWNER[:-1] + "9"]) == 2  # a typing error
