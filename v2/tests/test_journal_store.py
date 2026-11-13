@@ -91,7 +91,9 @@ def test_cleanup_can_only_delete_staged_objects(tmp_path):
     store.put("pending/rounds/r1/l/a", b"1")
     store.put("public/bases/head/model.bin", b"2")
     assert delete_pending(store, "pending/rounds/r1") == 1
-    for protected in ("public/bases/head", "private/rounds/r1", ""):
+    for protected in ("public/bases/head", "private/rounds/r1", "", "pending", "pending/", "pending/rounds", "pending/rounds/", "pending//r1", "pendingx/rounds/r1"):
         with pytest.raises(ContractError):
             delete_pending(store, protected)
     assert store.exists("public/bases/head/model.bin")
+    store.put("pending/rounds/r10/l/a", b"3")
+    assert delete_pending(store, "pending/rounds/r1") == 0 and store.exists("pending/rounds/r10/l/a")

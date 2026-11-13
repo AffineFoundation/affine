@@ -8,8 +8,8 @@ The public pull (``pull.py``) is the site switch: its first good run replaces ``
 ``index.html`` at the root. This command does the three things around that switch.
 
 ``llms`` copies the store's ``llms.txt`` to the root of the site, and nothing else: the new contract can go up
-before the site. The store comes from the ``SN120_R2_*`` variables, as for the pull; a read-only token is enough.
-The file is taken only when it is of the same snapshot as the store's ``mining.json``, as the pull takes it, so
+before the site. The store comes from the same variables as for the pull (``SN120_R2_*``, or the plain ``R2_*``
+names); a read-only token is enough. The file is taken only when it is of the same snapshot as the store's ``mining.json``, as the pull takes it, so
 the pull later finds the same bytes and writes nothing.
 
 ``out`` moves every v1 entry out of the site directory into ``--to``. It runs after the pull wrote the v2 site,
@@ -42,6 +42,7 @@ from build import ASSETS, DATA, V1_DATA, write
 from sn120_v2 import layout
 from sn120_v2.errors import V2Error
 from sn120_v2.r2 import R2Store
+from sn120_v2.r2_names import store_env
 
 V2_SITE = (*ASSETS, DATA, V1_DATA)
 KEEP = frozenset({
@@ -72,7 +73,7 @@ def llms(site: Path) -> int:
     if not site.is_dir():
         return refuse(f"{site} is not a directory")
     try:
-        store = R2Store.from_env()
+        store = R2Store.from_env(store_env(os.environ))
         text, mining = store.get(layout.LLMS_TXT), store.get(layout.MINING_JSON)
         digest = json.loads(mining).get("snapshot_digest")
     except KeyError as error:

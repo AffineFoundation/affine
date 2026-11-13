@@ -2,8 +2,11 @@
 
     python v2/site/pull.py --site-dir <dir> --public-url <URL> [--v1-history <file>]
 
-The store comes from the ``SN120_R2_*`` variables (``R2Store.from_env``). A
-read-only token is enough: this command never writes to the store.
+The store comes from the ``SN120_R2_*`` variables. A variable that is not set
+is taken from its plain name: ``R2_ENDPOINT`` (a URL or a host name; without
+it, ``R2_ACCOUNT_ID``), ``R2_BUCKET``, ``R2_ACCESS_KEY_ID``,
+``R2_SECRET_ACCESS_KEY`` (``sn120_v2.r2_names``). A read-only token is enough:
+this command never writes to the store.
 
   --site-dir     the directory that the web server serves. It must exist.
   --public-url   the address under which a browser reaches that directory.
@@ -57,6 +60,7 @@ import build
 from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
+from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
 
 LINKS = "public/read_links.json"  # not an object of the store: this command makes it
@@ -379,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     lock = os.open(site, os.O_RDONLY)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # two runs at once could each remove what the other wrote
-        store = R2Store.from_env()
+        store = R2Store.from_env(store_env(os.environ))
         return run(store, site, args.public_url, args.ttl_s, args.keep_rounds, args.max_file_mb << 20, args.v1_history, int(time.time()))
     except BlockingIOError:
         print("pull: FAILED another pull runs on this directory; nothing written", file=sys.stderr)
