@@ -24,7 +24,7 @@ from sn120_v2.types import ChainSnapshot, Registration
 
 OLD_STATE = Path(__file__).parent / "data" / "state_515d7e9f" / "idle"
 RUN = ["--rounds", "1", "--max-idle", "1", "--idle-sleep", "0"]
-STAGES = ["1-tiny", "2-two", "3-eight", "4-multi", "5-full"]
+STAGES = ["1-tiny", "2-two", "3-eight", "4-multi", "limit-judged", "limit-not-scored", "5-full"]
 
 
 def bootstrap(directory: Path, params: Path) -> None:
@@ -48,7 +48,7 @@ def bootstrap(directory: Path, params: Path) -> None:
 def test_the_five_parameter_files_of_the_ramp_run_one_round_each_on_one_bootstrap(tmp_path, start, capsys):
     (tmp_path / "plan.json").write_text(json.dumps({"image_digest": SIM_IMAGE, "code_digest": ""}))
     assert smoke.main(["params", "--plan", str(tmp_path / "plan.json"), "--out", str(tmp_path)]) == 0
-    files = {stage: tmp_path / f"params-{stage}.json" for stage in [*STAGES, *smoke.LIMIT]}
+    files = {stage: tmp_path / f"params-{stage}.json" for stage in STAGES}
     assert capsys.readouterr().out.split() == [str(path) for path in files.values()]
     for stage, stop_s, first_look in (("limit-judged", 1380, 4), ("limit-not-scored", 360, 2000)):
         at_limit, two = load_params(files[stage]), load_params(files["2-two"])
@@ -87,6 +87,9 @@ def test_the_five_parameter_files_of_the_ramp_run_one_round_each_on_one_bootstra
         "2-two": (seen["2-two"][0], 8, 2, 2),
         "3-eight": ("applied", 32, 8, 8),
         "4-multi": (seen["4-multi"][0], 8, 2, 8),
+        # The CPU stack has no clock, so these two rounds end before their limit; test_golive.py has the rounds at the limit.
+        "limit-judged": (seen["limit-judged"][0], 2000, 2, 2),
+        "limit-not-scored": (seen["limit-not-scored"][0], 2000, 2, 2),
         "5-full": ("applied", 2000, 32, 8),
     }
     applied = sum(outcome == "applied" for outcome, *_ in seen.values())
@@ -97,7 +100,7 @@ def test_the_five_parameter_files_of_the_ramp_run_one_round_each_on_one_bootstra
     assert (small.z_bar, small.min_scored_tasks, small.max_output_tokens) == (0.0, 2, 2048)
     assert smoke.main(["params", "--plan", str(tmp_path / "plan.json"), "--out", str(tmp_path), "--short-reply", "4096"]) == 0
     caps = [load_params(files[stage]).max_output_tokens for stage in STAGES]
-    assert caps == [4096, 4096, 65536, 4096, 65536], "a higher low cap, for real files with no group short enough"
+    assert caps == [4096, 4096, 65536, 4096, 4096, 4096, 65536], "a higher low cap, for real files with no group short enough"
 
 
 # --- small copies of real miner files ---

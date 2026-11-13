@@ -289,7 +289,7 @@ Pass for `limit-not-scored`, all of these:
 1. The first line is `SN120 v2 round r00000N: NO_DECISION (stopped at the time limit)`.
 2. The line `not scored: 2 of 2 batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
 3. Two rows with the verdict `not_scored` and the note `the round's time limit ended the scoring after 0 tasks, before the first look of 2000`.
-4. In the `wall time` line, `total` is at most `8m00s`.
+4. In the `wall time` line, `total` is at most `8m00s`. One case is known: the stop time does not cut the start of a vLLM server. If the servers were still starting at minute 6, `total` is more than 8 minutes. Lines 1, 2, 3 and 5 are then still a pass of the rule; send the `wall time` line.
 5. The JSON summary shows `"phase": "IDLE"`, and `last_outcomes` ends with `"no_decision"`. `served` and `heads` are the same as before the round: nobody is charged, and both seats are still in the queue. The next round takes these two seats first.
 
 Not a pass, and what to do:
@@ -297,7 +297,7 @@ Not a pass, and what to do:
 - `limit-judged` shows rows with `not_scored`: the first block did not finish before minute 23. That is not a fault of the rule. Send the `eval` lines of `phases.jsonl` and the `wall time` line; the time limit of this file must be higher. Nobody is charged.
 - `limit-not-scored` shows rows with `lost` or `winner`: the box scored 2000 tasks in 6 minutes, or it did not stop. Send `run-limit-not-scored.log`.
 - A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training of a small copy took longer than the training time of the file. Send the `train` lines of `phases.jsonl`.
-- `total` is above the time limit by more than a few seconds: the steps after the stop (the stop of the vLLM servers, the result) took more than `promote_reserve_s`. Send the `wall time` line.
+- In `limit-judged`, `total` or `lease to promotion` is above the time limit: the steps after the stop (the stop of the vLLM servers, the result, the promotion) took more than `promote_reserve_s`. Send the `wall time` line.
 
 After these two rounds, go on with `5-full`: its `set-params` puts the launch values back.
 
