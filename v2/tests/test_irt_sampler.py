@@ -213,6 +213,35 @@ def test_a_replayed_or_malformed_update_does_not_change_the_table(build):
     assert sampler.snapshot_id() == once
 
 
+def test_a_second_update_for_the_same_draw_after_a_crash_changes_nothing(build):
+    """The controller's close step can run twice: in one process, or again after a restart."""
+    head = build.head()
+    live = trained(head, rounds=3)
+    before = published(live)  # what the controller stored when the round opened
+    draw = live.draw(head, "seed-crash", 20)
+    new_head = head_after(head, "r000004")
+    call = dict(outcomes={"null": ("PFFP" * 5,), "win": ("PPFP" * 5,), "lose": ("FFFP" * 5,)}, winner_lora_hash="win", new_head_version_id=new_head.version_id)
+    once = live.update(head, draw, **call)
+    after = published(live)
+    assert once != before["snapshot_id"] and after["rounds"] == 4
+
+    # The same process closes the round again.
+    assert live.update(head, draw, **call) == once and published(live) == after
+    # A restart from the snapshot stored after the update: the second call is a no-op.
+    restarted = IRTSampler(POOL, snapshot=after)
+    assert restarted.update(head, draw, **call) == once and published(restarted) == after
+    # A restart from the snapshot stored before the update: the update runs once and gives the same table.
+    rolled_back = IRTSampler(POOL, snapshot=before)
+    assert rolled_back.update(head, draw, **call) == once
+    assert rolled_back.update(head, draw, **call) == once and published(rolled_back) == after
+    # The draw alone names the round: a second call with other results or no winner is not a second lesson.
+    assert live.update(head, draw, {"null": ("F" * 20,)}) == once and published(live) == after
+    # The next round still teaches the table.
+    next_draw = live.draw(new_head, "seed-next", 20)
+    assert live.update(new_head, next_draw, {"null": ("PFFP" * 5,)}) != once
+    assert live.public_snapshot()["rounds"] == 5
+
+
 def test_the_published_snapshot_is_the_whole_state(build):
     head = build.head()
     sampler = trained(head, rounds=3)
