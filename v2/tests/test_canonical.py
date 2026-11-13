@@ -127,6 +127,12 @@ def test_record_accepts_an_integer_where_a_float_is_expected():
     assert Inner.from_dict({"name": "a", "score": 2}) == Inner("a", 2.0)
 
 
+def test_record_digest_survives_a_json_round_trip_when_a_float_field_holds_a_whole_number():
+    record = Outer(count=1, flag=False, items=(Inner("a", 2),), pair=("x", 1), table={})
+    assert record.to_dict()["items"][0]["score"] == 2.0 and type(record.to_dict()["items"][0]["score"]) is float
+    assert Outer.from_json(record.to_json()).digest() == record.digest()
+
+
 @pytest.mark.parametrize(
     "patch",
     [
