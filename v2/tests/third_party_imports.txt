@@ -21,5 +21,11 @@ botocore
 moto
 
 # chain: weights writer and chain reader
+bittensor
 
 # miner: miner tooling and llms.txt
+
+# envs: math task pool and grader
+math_verify
+latex2sympy2_extended
+sympy

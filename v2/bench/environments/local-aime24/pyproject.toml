@@ -1,0 +1,13 @@
+[project]
+name = "local-aime24"
+version = "0.1.0"
+description = "primeintellect/aime24 (pinned) with an open sandbox network policy for the local subprocess runtime"
+requires-python = ">=3.11"
+dependencies = ["aime24"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["local_aime24"]
