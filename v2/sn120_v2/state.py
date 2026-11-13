@@ -146,7 +146,7 @@ def _genesis(state: State, data: dict, at: int) -> None:
 
 
 def _params_set(state: State, data: dict, at: int) -> None:
-    _need(state.round is None, "the parameters changed while a round was open")
+    _need(state.round is None or state.round.decision is not None, "the parameters changed while a round was running")
     state.params = Params.from_dict(data["params"])
 
 

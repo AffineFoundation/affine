@@ -80,6 +80,8 @@ Pass: `plan.json` is one line, `{"code_digest": "<64 hex>", "image_digest": "<64
 
 `"batch_cap": 8` makes the first round small: at most 8 batches, one per GPU, all trained at the same time. Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
 
+For a first round that takes minutes, not hours, see "Tiny first" after step 4.
+
 `bootstrap` (step 4) pins these parameters. A change of `params.json` after step 4 has no effect by itself. To change a parameter later: stop `run`, edit the file, then run `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params.json`. It prints the old and the new `params_hash`.
 
 After any `uv pip install` or `git pull`, run this block again. A stale digest stops the first train call with an error; it never gives a wrong score.
@@ -165,6 +167,81 @@ Expected output, a JSON summary:
 Pass: exit code 0; `kings` are the 10 UIDs of the dry run; `queue` is the number of seats the dry run printed; `published` is `true`.
 
 The parameters are now **pinned**: they are a record in the journal, and every process uses that record, not a local file. A second `bootstrap` on the same prefix is refused.
+
+## Tiny first: five rounds, small to full
+
+Do this after step 4. It uses the one bootstrap of step 4 for five rounds. Each round is a **stage** with its own parameter file. `set-params` pins that file before the round. The first stage runs the whole path in minutes. The last stage is the full round of steps 5 to 9.
+
+| Stage | Batches | GPUs in use (`n_gpus`) | Tasks | Reply cap (`max_output_tokens`) | What it adds | Expected time |
+|---|---|---|---|---|---|---|
+| `1-tiny` | 1 | 1 | 1 | 2048 | one training job on one GPU, one vLLM server, scoring, decision, publish | 10 to 20 minutes the first time, 5 to 8 after that |
+| `2-two` | 2 | 2 | 8 | 2048 | two training jobs at the same time, three looks | 6 to 10 minutes |
+| `3-eight` | 8 | 8 | 32 | 65,536 (the launch value) | 8 jobs, 8 servers, a winner, promotion, fold | 25 to 45 minutes |
+| `4-multi` | 2 | 8 | 8 | 2048 | 4 GPUs for each training job, on a folded head | 8 to 15 minutes |
+| `5-full` | 32 | 8 | 2000 | 65,536 | the launch values | up to 100 minutes, then the fold |
+
+Where the minutes come from (estimates, not measured): each `run` hashes the model files (1 minute) and starts the vLLM servers (2 to 4 minutes, 4 to 8 the first time). The first round downloads the model into the box cache (3 to 10 minutes). One training job is 1 to 1.5 minutes, plus a one-time compile on each GPU. A block of tasks lasts as long as its longest reply: about 1 minute at 2048 tokens, 11 to 18 minutes when one reply runs to 65,536. A fold is 8 to 16 minutes.
+
+The four small files also set these values. They are for the smoke test only:
+
+- `z_bar` 0 and `min_scored_tasks` 2: a LoRA wins when it is above null M on at least 2 tasks (z above 0). So a small round can have a winner.
+- `max_infra_attempts` 1000: no seat is put on hold while faults are fixed.
+- `apply_retry_s` 5: after a failed round, the next one starts 5 seconds later, not 5 minutes.
+
+`5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it one of the small files.
+
+Write the five files. Run this again each time the digest block of step 1 ran:
+
+```
+python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE
+export V1_R2_ENDPOINT=... V1_R2_BUCKET=... V1_R2_ACCESS_KEY_ID=... V1_R2_SECRET_ACCESS_KEY=...   # read-only token
+```
+
+Expected: five lines, `$SMOKE/params-1-tiny.json` to `$SMOKE/params-5-full.json`.
+
+Each stage is the same three commands. Run them for `1-tiny`, then `2-two`, `3-eight`, `4-multi`:
+
+```
+export STAGE=1-tiny
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
+python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
+```
+
+For `5-full`, the copy command is `python -m sn120_v2.smoke copy --state-dir $STATE --whole`. Then do the `status` check of step 5 and steps 6 to 9 as written.
+
+What the three commands do:
+
+1. `set-params` prints the old and the new `params_hash`. It is refused while a round is open. `n_gpus` changes only here, between two `run` commands.
+2. `copy` gives the next seats of the queue a miner file: as many as the round takes (`batch_cap`). It reads v1's bucket and writes only under the smoke prefix. Without `--whole` it writes a **small copy**: at most 2 groups of the real file. A group is one prompt with its rollouts. Each group is copied whole and unchanged. A group is used only when it has two different rewards and every rollout of it is within the reply cap. The copy has no `train` object, so it trains with the default recipe (1 step). The copy must pass the full admission check, or it is not written.
+3. `run` runs one round and prints the round summary.
+
+Expected from `copy`: one line for each file, for example `copied 5F.. 2 of 61 groups, 16 rollouts, longest 1890 tokens, 51234 of 48211002 bytes sha256=... default recipe`. Then `1 of 1 files copied`. Lines that start with `passed over` name a file with no usable group, and why.
+
+If `copy` ends with fewer files than it needs (exit code 1): the real files have too few short groups for this cap. The `passed over` lines say `the nearest group needs <N>`. Write the files again with a cap above that N, then run the three commands again:
+
+```
+python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE --short-reply 4096
+```
+
+Use the same `--short-reply` each time you write the files after that.
+
+Pass, for each stage:
+
+- `1-tiny`: the summary starts with `SN120 v2 round r00000N: NULL`. One row, verdict `lost`, `tasks scored: 1 of 1`. `NULL` is the only correct result: one task has no standard error, so this round can have no winner. The JSON summary shows `"phase": "IDLE"`.
+- `2-two`: `NULL` or `APPLIED`. Two rows, each `lost` or `winner`. With the cap of 2048 most replies are cut, so expect `NULL`.
+- `3-eight`: `APPLIED`, 8 rows, a `winner` line, `"heads"` is 2 more than before, `"head_folded": true`, and `kings` holds the winner's UID. The chance of a winner is about 80 to 93 percent, when null M passes between 5 and 90 percent of the 32 tasks: with `z_bar` 0, one of 8 LoRAs is above null M by chance alone. If the result is `NULL`, that is not a fault: run the three commands of this stage again. They take the next 8 seats.
+- `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
+- `5-full`: the pass lines of steps 6 to 9.
+
+In every stage: no row has the verdict `no_decision` or `not_trained`, and the first line is not `NO_DECISION`.
+
+Things to know:
+
+- Whole files that are already in the smoke prefix are not valid under the cap of 2048 (rule `output_tokens`). They are passed over in stages 1, 2 and 4. That is correct. Under the launch cap they are valid again, so stage 3 can take some of them.
+- A real file can fail the rules `no_signal` (no group has two different rewards) or `train_cost` (training it costs too much). So stage 5 can see fewer valid files than it copied. `python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack` shows the count for each rule.
+- The weights dry run of step 8 takes `--params`. Give it the file of the stage that is pinned now, or leave `--params` out. With another file it stops with `--params differs from the parameters pinned in the journal`.
+- Do not edit a stage file by hand: the `smoke params` command writes it again.
 
 ## 5. Copy a few real queued batches into the smoke prefix
 
@@ -266,6 +343,8 @@ Not a pass, and what to do:
 - Lines `waiting: ...` that repeat: the chain or the store does not answer. If the chain read is the cause, set `SN120_V2_CHAIN_NETWORK=none` (the queue then stays as bootstrap made it) and run again.
 
 If the box dies in the round: start a box, do steps 1 and 2 with the **same** `SN120_R2_PREFIX`, and run the step 6 command with an empty `$STATE`. It pulls the journal from the store and continues or closes the open round.
+
+If a fix lands while a round is open, or a round cannot finish: see "After a fix".
 
 ## 7. Publish of `mining.json` and `llms.txt`
 
@@ -374,6 +453,41 @@ Pass: `round.txt` has one row for each batch with its delta, z, cap-hit rate and
 5. The dry-run line of step 8.
 6. The `eval` lines of `$SN120_WORK_DIR/logs/phases.jsonl` (the wall time of each block of tasks).
 7. Any step that did not pass, with its output.
+
+## After a fix
+
+A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. The message for the fix says if it needs the install line and if it needs the digest block.
+
+First look at the state:
+
+```
+python -m sn120_v2 status --state-dir $STATE          # "phase": "IDLE", "RUNNING" or "APPLY"
+```
+
+Then:
+
+```
+git fetch origin && git checkout <the commit of the fix>
+uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"    # only when the fix needs the install line
+```
+
+The fix needs **no** digest block: run the `run` command again. It takes up an open round and finishes it.
+
+The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
+
+- `IDLE`: the digest block of step 1, the `smoke params` command, `set-params` with the file of the stage, then `run`.
+- `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. Nobody is charged, and its seats are first in the next round:
+
+  ```
+  python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack
+  ```
+
+  Then do the `IDLE` line.
+- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code.
+
+`end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
+
+The cheapest restart, when the state itself is lost or wrong: the block in the next section. It keeps the genesis files (no upload of the 56 GB), the miner files and the box cache. It removes the journal and everything the rounds wrote. Then do step 4 from the `bootstrap` command on.
 
 ## Start the test again from the beginning
 

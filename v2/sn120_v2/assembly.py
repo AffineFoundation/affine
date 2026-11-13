@@ -61,17 +61,19 @@ class HeadTokens:
 
     The tokenizer files are read from the public store on first use, each one
     checked against the head manifest. So the checker counts tokens with
-    exactly the files that the trainer and the evaluator load.
+    exactly the files that the trainer and the evaluator load. ``manifest``
+    is the head manifest of the journal; without it, the head pointer in the
+    store is read.
     """
 
-    def __init__(self, store: ObjectStore, cache: Path) -> None:
-        self.store, self.cache = store, cache
+    def __init__(self, store: ObjectStore, cache: Path, manifest: HeadManifest | None = None) -> None:
+        self.store, self.cache, self.manifest = store, cache, manifest
         self._tokens: HFTokens | None = None
 
     def _load(self) -> HFTokens:
         if self._tokens is None:
             try:
-                manifest = get_record(self.store, layout.CURRENT, HeadManifest)
+                manifest = self.manifest or get_record(self.store, layout.CURRENT, HeadManifest)
             except KeyError:
                 raise ConfigError("the store has no current head yet; run bootstrap first") from None
             base_hash = manifest.head.base_hash
@@ -128,7 +130,7 @@ def stack(context: StackContext) -> Stack:
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
     params = context.params
     pool = load_pool()
-    tokens = HeadTokens(store, context.state_dir / "tokenizer")
+    tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
