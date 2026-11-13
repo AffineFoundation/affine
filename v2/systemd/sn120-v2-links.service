@@ -1,0 +1,36 @@
+# SN120 v2 upload links: one run writes the sealed link files and the index, then exits.
+#
+# Each word in capitals that starts with LINKS_ is a blank for the operator. Fill all of them before the install:
+#   LINKS_USER              the Linux user that owns the website directory and may read the credentials file
+#   LINKS_R2_ENDPOINT       the URL of the store's S3 endpoint, the same as the controller's
+#   LINKS_R2_BUCKET         the bucket, the same as the controller's
+#   LINKS_PYTHON            the python of the virtual environment where sn120_v2 is installed, as a full path
+#   LINKS_STATE_DIR         a directory of this job alone, for its copy of the journal; no other job uses it
+#   LINKS_CREDENTIALS_FILE  a file on the host with the store token that signs uploads: R2_ACCESS_KEY_ID= and
+#                           R2_SECRET_ACCESS_KEY= lines (the v1 names) or the SN120_R2_* names. It is read in place.
+#   LINKS_SITE_DIR          the root directory of the public website; the job writes ff/links/ and ff/links.json there
+#   LINKS_PUBLIC_URL        the public address of ff/links, like https://<site>/ff/links
+#   LINKS_NETWORK           the chain network name or the address of a chain node (read only, no wallet)
+#
+# If the controller uses a prefix in the bucket, add this line under [Service]: Environment=SN120_R2_PREFIX=<prefix>
+# Without that line the prefix is empty.
+#
+# The token stays in its file on the host. This unit holds no secret, and no other unit names that file.
+
+[Unit]
+Description=SN120 v2 upload links (one run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=LINKS_USER
+Environment=SN120_R2_ENDPOINT=LINKS_R2_ENDPOINT
+Environment=SN120_R2_BUCKET=LINKS_R2_BUCKET
+ExecStart=LINKS_PYTHON -m sn120_v2.links issue --state-dir LINKS_STATE_DIR --credentials-file LINKS_CREDENTIALS_FILE --site-dir LINKS_SITE_DIR --links-url LINKS_PUBLIC_URL --network LINKS_NETWORK
+# A run that fails writes nothing and removes nothing: the links issued before stay valid. The next run is the timer's.
+Restart=no
+TimeoutStartSec=900
+# The link files are public: the web server must be able to read them. Keep the job's own directory at mode 700.
+UMask=0022
+NoNewPrivileges=true

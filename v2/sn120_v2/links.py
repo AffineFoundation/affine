@@ -34,7 +34,11 @@ The job needs three things: read-only chain access, store credentials that can
 sign a PUT, and the queue. The queue comes from the copy of the controller's
 journal that the store holds (``state.load_from_store``), so the job can run on
 a host without the controller. ``--state-dir`` is the directory of the job's
-local copy of that journal; it only saves downloads.
+local copy of that journal; it only saves downloads. The store comes from the
+``SN120_R2_*`` variables; ``--credentials-file`` takes the two parts of the
+token from a file in place, so a host that already has such a file (the v1
+link job's) needs no second copy of the secret. ``v2/systemd/`` has a unit and
+a timer for the job.
 
 Commands:
 ``issue``     the operator's job: write the link files (see ``--help``)
@@ -49,6 +53,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -91,6 +96,8 @@ INDEX = "ff/links.json"
 PUBLIC_PREFIX = "public/"  # where the files go when the site is served from the object store
 ACTIVATION_MARK = "affine2|activate|"
 REVEAL_IN = "180s"  # the chain shows the commitment after this delay
+# The two parts of the store token: the name that R2Store.from_env reads, and the name in a v1 credentials file.
+TOKEN_NAMES = {"SN120_R2_ACCESS_KEY_ID": "R2_ACCESS_KEY_ID", "SN120_R2_SECRET_ACCESS_KEY": "R2_SECRET_ACCESS_KEY"}
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
@@ -369,10 +376,35 @@ def _chain_activated(network: str, hotkeys: Iterable[str], netuid: int) -> set[s
             client.chain.close()
 
 
+def store_token(path: str | Path) -> dict[str, str]:
+    """The two parts of the store token from a ``KEY=VALUE`` file, under the names that ``R2Store.from_env`` reads.
+
+    The file is read as v1 reads its credentials file: one ``KEY=VALUE`` on a line, ``#`` starts a comment, quotes
+    around a value are dropped, other lines are ignored. Both the v1 names (``R2_ACCESS_KEY_ID``,
+    ``R2_SECRET_ACCESS_KEY``) and the ``SN120_R2_*`` names are accepted. The values go to no file, no log and no
+    other process: an error names the variable, never its value.
+    """
+    try:
+        lines = Path(path).read_text().splitlines()
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"cannot read the credentials file {path}: {type(exc).__name__}") from exc
+    values = {}
+    for line in lines:
+        if "=" in line and not line.lstrip().startswith("#"):
+            name, value = line.split("=", 1)
+            values[name.strip().removeprefix("export ").strip()] = value.strip().strip("\"'")
+    token = {name: values.get(name) or values.get(v1_name, "") for name, v1_name in TOKEN_NAMES.items()}
+    for name, value in token.items():
+        if not value:
+            raise ConfigError(f"the credentials file {path} has no {TOKEN_NAMES[name]} and no {name}")
+    return token
+
+
 def _issue_once(args: argparse.Namespace) -> int:
     if R2Store is None:
         raise ConfigError("boto3 is not installed: install the 'r2' extra")
-    store = R2Store.from_env()
+    # the file is read on each run, so a rotated token is picked up; the process environment is not changed
+    store = R2Store.from_env({**os.environ, **store_token(args.credentials_file)} if args.credentials_file else None)
     try:  # the journal copy that the store holds; the file in --state-dir only saves downloads
         state = load_from_store(store, Path(args.state_dir) / JOURNAL_FILE)
     except OSError as exc:
@@ -385,6 +417,8 @@ def _issue_once(args: argparse.Namespace) -> int:
         ready = _chain_activated(args.network, waiting, args.netuid)
         hotkeys = [hotkey for hotkey in waiting if hotkey in ready]
     files = link_files(hotkeys, store, int(time.time()), args.links_url, args.ttl_s, args.reissue_s)
+    if args.site_dir and not Path(args.site_dir).is_dir():  # LocalStore would make it: a site reset that moved it away would find a new one
+        raise ConfigError(f"the site directory {args.site_dir} does not exist; this job never makes it")
     sink, prefix = (LocalStore(args.site_dir), "") if args.site_dir else (store, PUBLIC_PREFIX)
     removed = write_files(files, sink, prefix)
     issued = len(files) - 1  # every file but the index
@@ -449,6 +483,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"the directory of the job's local copy of the journal ({JOURNAL_FILE}); the journal is read from the store, and the store is not written",
     )
     issue.add_argument("--journal-from-store", action="store_true", help=argparse.SUPPRESS)  # accepted and ignored: it is the only way now
+    issue.add_argument(
+        "--credentials-file",
+        default="",
+        help="a KEY=VALUE file with the store token, read in place: R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (the v1 names), "
+        "or the SN120_R2_* names; the endpoint and the bucket still come from SN120_R2_ENDPOINT and SN120_R2_BUCKET",
+    )
     issue.add_argument("--links-url", required=True, help="the public address of the link files, like https://<site>/ff/links (never derived)")
     where = issue.add_mutually_exclusive_group(required=True)
     where.add_argument("--site-dir", help=f"write {LINKS_DIR}<hotkey>.json and {INDEX} under this local directory: the root of the public website")
