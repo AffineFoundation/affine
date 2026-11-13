@@ -366,6 +366,15 @@ def test_a_wrong_call_changes_nothing(box, tmp_path):
         assert done.returncode == 64 and "usage:" in done.stderr and box.calls == []
 
 
+def test_on_a_new_box_the_loop_starts_from_an_empty_state_directory(box, tmp_path):
+    """A new box has no journal yet: ``run`` pulls the copy from the store. The loop must not need a local journal."""
+    box.state.rmdir()
+    box.state.mkdir()
+    (box.home / "rounds").write_text("no journal here")  # the fake ``status`` fails, as the real one does with no journal
+    assert box.loop(["exit:0"]) == 0 and box.runs == 1
+    assert "(rounds closed so far: unknown)" in box.log
+
+
 # ------------------------------------------------------------ the loop with the real command line
 
 
