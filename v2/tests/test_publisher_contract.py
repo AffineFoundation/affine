@@ -7,11 +7,12 @@ import json
 
 import pytest
 
-from sn120_v2 import layout, public, publisher, r2, sim
+from sn120_v2 import layout, links, public, publisher, r2, sim
 from sn120_v2.admission import TIME_LIMIT
 from sn120_v2.canonical import sha256_hex, to_jsonable
-from sn120_v2.errors import ContractError, InfraError
-from sn120_v2.params import MinerBound, Recipe
+from sn120_v2.errors import ConfigError, ContractError, InfraError
+from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
+from sn120_v2.types import HeadVersion
 
 
 class MemStore(dict):
@@ -78,8 +79,9 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
         assert (row["low"], row["high"], row["choices"], row["decided"]) == (bound.low, bound.high, list(bound.choices), bound.decided)
         assert row["default"] == json.loads(json.dumps(getattr(recipe, bound.key)))
         assert f"| `train.{bound.key}` | " in text and row["allowed"] in text
-    assert "| `train.steps` | 3 | a whole number from 2 to 7, both ends included | placeholder: it can change |" in text
-    assert "a non-empty subset of q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj | decided" in text
+    assert "| `train.steps` | 3 | a whole number from 2 to 7, both ends included |" in text
+    assert "a non-empty subset of q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj |" in text
+    assert "placeholder" not in text.lower()  # the miner's text states the launch values as they are
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
@@ -93,7 +95,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
     assert "Training reads at most 777 output tokens" in text and "A longer rollout is valid: the trainer" in text
     header = doc["contract"]["batch_file"]["upload_headers"]
-    assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in text  # what the presigner signs
+    assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in " ".join(text.split())  # what the presigner signs
     assert f"rule code `{TIME_LIMIT}`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds")
@@ -103,7 +105,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
 
 def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777, train_max_context_tokens=888, sample_temperature=0.75)
-    made = world(tmp_path, temperature=0.9, batch_cap=3, lease_timeout_s=6000, kings_window=7, recipe=recipe)
+    made = world(tmp_path, temperature=0.9, batch_cap=3, kings_window=7, recipe=recipe)
     text = published(made.publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
     flat = " ".join(text.split())  # the rules as sentences, whatever the line breaks
     assert "A value G above 0 cuts the rollouts of each prompt, in file order, into groups of G" in flat
@@ -114,16 +116,63 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "`train_max_output_tokens` (777) or `train_max_context_tokens` (888, prompt + output) is truncated, not rejected" in flat
     assert "A rollout with no output token left is dropped and counted." in flat
     assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
-    assert "reads the latest file at lease time" in flat and "The admission checks run again on each new file." in flat
+    assert "copies the latest file when a round takes the entry" in flat and "The admission checks run again on each new file." in flat
     assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps its place and is not charged" in flat
-    assert "A round takes at most 3 batches" in flat and "at most 100 minutes from the lease to the promotion" in flat
-    assert "ends early, as soon as every LoRA is dropped or decided" in flat
+    assert "A round takes at most 3 batches" in flat
+    assert "The only rule that moves a waiting seat back is squat-trim (section 4)" in flat
     assert "A round with no winner changes nothing in the payout: the window of the last 7 kings keeps being paid." in flat
     assert "No burn, in any case: no weight goes to UID 0 or to the owner as a fallback." in flat
     assert "The share of a king that is no longer registered is split among the other registered kings of the window." in flat
     assert "goes to UID 0." not in flat and "the writer sets nothing and the last valid weights stay on chain" in flat
     capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
     assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+
+
+def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
+    changes = dict(round_time_limit_s=4800, lease_timeout_s=9000, promote_reserve_s=300, train_time_budget_s=1500)
+    changes |= dict(eval_chunk_tasks=40, n_gpus=4, n_tasks=400, looks=(0.25, 1.0))
+    changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0)
+    flat = " ".join(published(world(tmp_path, **changes).publisher.snapshots[-1])[1].split())
+    assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
+    assert "The box stops 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
+    assert "ends early, as soon as every LoRA is dropped or decided" in flat
+    assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
+    assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
+    assert "Scoring runs in chunks of 40 tasks." in flat
+    assert "The first look (100 tasks) is always scored in full for null M and every trained LoRA." in flat
+    assert "judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
+    assert "The lease ends 150 minutes after it starts." in flat
+    assert "reported `no_decision` for your entry 5 times" in flat and "so it never holds a seat" in flat
+    assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
+    assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
+    assert "no seat moves back in the first 21600 s after its registration" in flat
+
+
+def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
+    snap = world(tmp_path).publisher.snapshots[-1]
+    doc, text, store = published(snap)
+    assert doc["contract"]["upload"] is None and doc["contract"]["links_url"] == "" and "Where to get the link: not published yet." in text
+    publisher.StorePublisher(store, "https://files.example/", "https://site.example/ff/links/").publish(snap)
+    doc, flat = json.loads(store[layout.MINING_JSON]), " ".join(store[layout.LLMS_TXT].decode().split())
+    upload = doc["contract"]["upload"]
+    assert doc["contract"]["links_url"] == "https://site.example/ff/links" and upload == links.upload_entry("https://site.example/ff/links")
+    assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
+    assert f"A new file is written every {upload['reissue_every_seconds'] // 60} minutes. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert "links open --hotkey <ss58> --key <seed file> --links-url https://site.example/ff/links)" in flat
+    assert "links activate --wallet <wallet name> --hotkey <hotkey name>" in flat and "The opened URL is a secret." in flat
+    with pytest.raises(ConfigError):
+        publisher.StorePublisher(store, "", "site.example/ff/links")
+
+
+def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_path):
+    made = world(tmp_path).controller.state.head
+    fields = dict(base_fp32_master_digest=made.base_fp32_master_digest, loras=(), round_id=made.round_id, applied_at=made.applied_at)
+    genesis = HeadVersion.make(parent_version_id=None, base_hash=GENESIS_BASE_HASH, **fields)
+    later = HeadVersion.make(parent_version_id=genesis.version_id, base_hash=GENESIS_BASE_HASH, **fields)
+    assert publisher._genesis_lines(made) == []  # the sim's base is not the launch model
+    text = " ".join(publisher._genesis_lines(genesis))
+    assert GENESIS_MODEL_REPO in text and GENESIS_MODEL_REVISION in text and "No winner is applied yet" in text
+    assert "No winner is applied yet" not in " ".join(publisher._genesis_lines(later))
 
 
 def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):

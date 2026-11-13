@@ -289,7 +289,7 @@ EOF
 
 Expected: `{"published": true, "head": "...", "queue": <seats>}`, then the start of `llms.txt`, the top-level keys of `mining.json`, the head, the round files and an empty `pending/` list.
 
-Pass: `llms.txt` states the LoRA recipe, the miner-settable bounds and the round rules; the head in `current.json` is the `head` of `status`; `public/rounds/r000001/` has `round.json` (the summary record) and, with a winner, `batch.json` (the winner's batch); `pending/` is empty.
+Pass: `llms.txt` states the LoRA recipe, the miner-settable bounds and the round rules; the head in the head pointer (`layout.CURRENT`) is the `head` of `status`; `public/rounds/r000001/` has `round.json` (the summary record) and, with a winner, `batch.json` (the winner's batch); `pending/` is empty.
 
 ## 8. Weights: dry run only
 
@@ -385,11 +385,12 @@ The journal copy is in the store. So a new state directory with the same prefix 
 ```
 python - <<'EOF'
 import os
+from sn120_v2 import layout
 from sn120_v2.r2 import R2Store
 assert os.environ.get("SN120_R2_PREFIX", "").startswith("smoke"), "this block is only for a smoke prefix"
 store = R2Store.from_env()
 tops = ("private/journal/", "private/rounds/", "pending/", "public/heads/", "public/rounds/", "public/loras/", "public/irt/")
-keys = [key for top in tops for key in store.list(top)] + ["public/current.json", "public/llms.txt", "public/mining.json"]
+keys = [key for top in tops for key in store.list(top)] + [layout.CURRENT, layout.LLMS_TXT, layout.MINING_JSON]
 for key in keys:
     if store.exists(key):
         store.delete(key)
