@@ -170,7 +170,7 @@ class VllmEvaluator:
     def evaluate(self, request: EvalRequest) -> EvalChunk:
         params, tasks = request.params, request.task_ids
         check_pins(self.config.image_digest, params)
-        started, written = time.monotonic(), []
+        started, written = time.monotonic(), []  # written: (output tokens, seconds) of each rollout that got a reply
         if any(lora.head_version_id != request.head.version_id for lora in request.loras):
             raise ContractError("a LoRA of this look was trained on another head")
         models = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
@@ -201,10 +201,11 @@ class VllmEvaluator:
                     if budget <= 0:
                         return None
                 try:
+                    sent = time.monotonic()
                     reply = self.http(url, body, budget)
                     result = read_reply(reply)
                     usage = reply.get("usage")
-                    written.append(int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0)
+                    written.append((int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0, time.monotonic() - sent))
                     return result
                 except HttpError as exc:
                     if exc.status < 500:
@@ -228,7 +229,10 @@ class VllmEvaluator:
             for model in models
         }
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
-        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "output_tokens": sum(written), "capped": sum(code == CAP for code in codes.values())}
+        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "output_tokens": sum(tokens for tokens, _ in written), "capped": sum(code == CAP for code in codes.values())}
+        # The longest rollout sets the least time of a chunk. Its time includes the wait for a free place on its server.
+        longest = max(written, key=lambda pair: pair[1], default=(0, 0.0))
+        counts.update(n_gpus=len(self._urls), longest_rollout_s=longest[1], longest_rollout_tokens=longest[0], most_output_tokens=max((tokens for tokens, _ in written), default=0))
         log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts)
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
