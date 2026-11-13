@@ -1,0 +1,13 @@
+[project]
+name = "amc23"
+version = "0.1.0"
+description = "AMC 2023 (the 40-problem AMC12 2023 A/B set used by Qwen/DeepSeek/SimpleRL evals) -- Affine bench env (verifiers v1, math-verify scoring)"
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0", "math-verify>=0.8.0", "datasets"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["amc23"]
