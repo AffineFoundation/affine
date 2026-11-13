@@ -4,7 +4,7 @@ Every host value is a required environment variable. A missing one stops the ser
 a price cap or a store. The paths on the rented node are fixed, because the node is a fresh machine this service sets up.
 
   BENCH_STATE      directory for results and daemon state
-  BENCH_SITE       directory that receives benchmarks.json
+  BENCH_SITE       directory for the local copy of benchmarks.json (a cache; the record is layout.BENCHMARKS in the store)
   BENCH_NODE_SSH   file where deploy/rent.sh writes the ssh wrapper to the node
   BENCH_LIUM       path of the Lium CLI (its key stays in the operator's Lium config)
   BENCH_MAX_PRICE  highest price in $/h this service may rent at

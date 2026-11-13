@@ -1,5 +1,5 @@
-"""The one place where the benchmark service reads v2 state. It only reads: the journal file, and `get` and `presign_get`
-on the store.
+"""The one place where the benchmark service touches v2 state. It reads the journal file, and uses `get` and
+`presign_get` on the store. Its only write is the result table at `layout.BENCHMARKS`.
 
 Applied kings come from `sn120_v2.state.load`. It replays the controller's journal read-only, so it is safe while the
 controller writes and when the controller is down. There is no call into the controller.
@@ -7,14 +7,13 @@ controller writes and when the controller is down. There is no call into the con
 The node serves plain weights. So a king is benchmarked from the FOLDED head of its round (its LoRA merged into the
 base). The file hashes of that head come from its manifest in the store.
 """
-import functools, importlib, re
+import functools, importlib, os
 from sn120_v2 import layout, state
 from sn120_v2.errors import VerifyError
 from sn120_v2.types import HeadManifest
 from . import config as C
 
 URL_TTL_S = 7200  # the node gets links that expire, never a store credential
-_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _manifests = {}  # version_id -> HeadManifest. A head version is content-addressed, so a cached one never changes.
 
 
@@ -51,9 +50,22 @@ def kings():
 
 def presigned(king):
     """What the node needs to fetch one king: its file hashes, and one expiring GET link per file."""
-    files = dict(folded()[king].base_files)
-    bad = [n for n in files if not _FILE.fullmatch(n)]
-    if bad:
-        raise VerifyError(f"unsafe file name in the manifest of king {king[:12]}: {bad[0]!r}")
-    prefix = layout.public_base_prefix(king)
-    return dict(descriptor=dict(id=king, files=files), urls={n: store().presign_get(f"{prefix}/{n}", URL_TTL_S) for n in files})
+    files = dict(folded()[king].base_files)  # layout refuses a file name that is not one plain path segment
+    urls = {n: store().presign_get(layout.public_base_file(king, n), URL_TTL_S) for n in files}
+    return dict(descriptor=dict(id=king, files=files), urls=urls)
+
+
+def upload_table(path):
+    """Write the result table to the bucket. The bucket is the durable record; the local file is a cache."""
+    store().put(layout.BENCHMARKS, open(path, "rb").read())
+
+
+def restore_table(path):
+    """A host with no local table starts from the published one, so a merge-only publish never drops a published row."""
+    if not os.path.exists(path):
+        try:
+            data = store().get(layout.BENCHMARKS)
+        except KeyError:
+            return  # nothing is published yet
+        with open(path + ".tmp", "wb") as f: f.write(data)
+        os.replace(path + ".tmp", path)

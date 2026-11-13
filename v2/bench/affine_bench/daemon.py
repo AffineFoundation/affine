@@ -202,12 +202,19 @@ def maybe_release():
     save()
 
 
+def publish_table(rows):
+    """Rebuild the local table. After a collected king, write it to the bucket too; a failed upload is tried again next step."""
+    source.restore_table(publish.OUT); publish.publish(rows, S)
+    if S.get("upload_due"):
+        source.upload_table(publish.OUT); S.pop("upload_due"); save()
+
+
 # ------------------------------------------------------------------------------------------------ main loop
 def step():
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     run = S.get("running")
     if not run and not pod_ready(queue(rows)):
-        S["queue"] = [m["model_id"] for m in queue(rows)]; publish.publish(rows, S); return
+        S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows); return
     if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
         # The run belonged to a pod that has since been replaced; its run dir went with that pod.
         # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
@@ -216,14 +223,14 @@ def step():
     if run:
         st = node_status(run["run_key"], run.get("pid"))
         if st is None:
-            node_down(run); publish.publish(rows, S); return
+            node_down(run); publish_table(rows); return
         if S.pop("node_down", None):
             log(event="node-back", model=run["run_key"]); save()
         lines = int(st.get("lines") or 0)
         if lines > run.get("progress", 0):
             run["progress"] = lines; run["last_progress"] = now(); save()
         if st.get("done") == "1":
-            collect(run); S["running"] = None; save()
+            collect(run); S["running"] = None; S["upload_due"] = True; save()
         elif st.get("alive") != "1":
             k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
             log(event="run-died", model=run["run_key"], fails=S["fail"][k]); S["running"] = None; save()
@@ -243,7 +250,7 @@ def step():
                 except Exception: log(event="prefetch-failed", model=nxt["model_id"])
             break
     maybe_release()
-    S["queue"] = [m["model_id"] for m in queue(rows)]; publish.publish(rows, S)
+    S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows)
 
 
 def only_instance():
@@ -270,7 +277,7 @@ def main(once=False):
 
 def cli(cmd, argv):
     if cmd == "publish":
-        publish.publish(model_rows(), S); print("published"); return
+        publish_table(model_rows()); print("published"); return
     if cmd == "status":
         q = queue(); r = S.get("running")
         print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_cr=cr(r["started"]), progress=r.get("progress")),

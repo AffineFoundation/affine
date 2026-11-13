@@ -9,8 +9,9 @@ POD = dict(id="pod-exact-id", name=P.NAME, huid="fake-pod", gpu="8xB300", cost=1
 
 
 class Store:
-    """Read-only on purpose: it has no put, copy or delete, so a write by the service would fail the test."""
-    def __init__(self, inner): self.inner, self.signed, self.published = inner, [], True
+    """No copy and no delete, and a put to one key only: any other write by the service fails the test."""
+    def __init__(self, inner): self.inner, self.signed, self.published, self.tables = inner, [], True, []
+    def put(self, key, data): assert key == layout.BENCHMARKS; self.tables.append(data); self.inner.put(key, data)
     def presign_get(self, key, ttl_s): self.signed.append(key); return f"https://signed.example/{key}?ttl={ttl_s}"
 
     def get(self, key):
@@ -69,7 +70,7 @@ def test_a_king_is_listed_only_when_its_folded_head_is_published(world, monkeypa
     assert (row["king"], row["round_id"], row["head_version_id"]) == (folded.base_hash, folded.round_id, folded.version_id)
     blob = source.presigned(row["king"])
     assert blob["descriptor"] == dict(id=row["king"], files=dict(v2.controller.state.manifest.base_files))
-    assert sorted(store.signed) == [f"{layout.public_base_prefix(row['king'])}/{name}" for name in sorted(blob["urls"])]
+    assert sorted(store.signed) == [layout.public_base_file(row["king"], name) for name in sorted(blob["urls"])]
     stacked = sim.SimWorld(tmp_path / "k2", sim.sim_params(fold_every_k=2))
     monkeypatch.setattr(C, "JOURNAL", str(stacked.root / sim.JOURNAL_FILE)); monkeypatch.setattr(store, "inner", stacked.store)
     assert green(stacked, 1).loras and source.kings() == []  # a king whose LoRA is still stacked on the base is not served
@@ -94,6 +95,11 @@ def test_one_green_is_benchmarked_once_on_its_own_pod_then_the_pod_is_released_b
     assert "signed.example" not in " ".join(node.cmds) + capsys.readouterr().out
     r2 = green(v2, 2)
     assert [m["king"] for m in D.queue()] == [r2.base_hash]  # only the new green is queued
+    # the bucket holds the table: written once for the king, not at each poll; a host with no local copy starts from it
+    assert len(store.tables) == 1 and [m["model_id"] for m in json.loads(store.tables[0])["models"]] == [mid]
+    pathlib.Path(C.SITE, "benchmarks.json").unlink()
+    source.restore_table(C.SITE + "/benchmarks.json")
+    assert pathlib.Path(C.SITE, "benchmarks.json").read_bytes() == store.tables[0]
 
 
 def test_only_one_daemon_per_state_directory():
@@ -118,5 +124,6 @@ def test_the_benchmark_is_informational_only():
         for node in ast.walk(ast.parse(path.read_text())):
             names = [node.module] if isinstance(node, ast.ImportFrom) and node.module else [a.name for a in getattr(node, "names", []) if isinstance(node, ast.Import)]
             assert not [n for n in names if n.startswith("sn120_v2") and n not in allowed], path
-    for path in (v2 / "sn120_v2").rglob("*.py"):
-        assert "affine_bench" not in path.read_text() and "benchmarks.json" not in path.read_text(), path
+    for path in (v2 / "sn120_v2").rglob("*.py"):  # layout.py names the key of the table; no v2 module reads the table
+        text = path.read_text()
+        assert "affine_bench" not in text and ("BENCHMARKS" not in text and "benchmarks.json" not in text or path.name == "layout.py"), path
