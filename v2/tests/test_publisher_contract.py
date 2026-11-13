@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 
 from sn120_v2 import layout, links, public, publisher, r2, sim
-from sn120_v2.admission import TIME_LIMIT
+from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
@@ -131,13 +132,17 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
 def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     changes = dict(round_time_limit_s=4800, lease_timeout_s=9000, promote_reserve_s=300, train_time_budget_s=1500)
     changes |= dict(eval_chunk_tasks=40, n_gpus=4, n_tasks=400, looks=(0.25, 1.0))
-    changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0)
+    changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0, max_train_token_steps=123456)
     flat = " ".join(published(world(tmp_path, **changes).publisher.snapshots[-1])[1].split())
     assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
     assert "The box stops 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
     assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
+    assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
+    assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
+    no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
+    assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
     assert "Scoring runs in chunks of 40 tasks." in flat
     assert "The first look (100 tasks) is always scored in full for null M and every trained LoRA." in flat
     assert "judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
@@ -173,6 +178,25 @@ def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_
     text = " ".join(publisher._genesis_lines(genesis))
     assert GENESIS_MODEL_REPO in text and GENESIS_MODEL_REVISION in text and "No winner is applied yet" in text
     assert "No winner is applied yet" not in " ".join(publisher._genesis_lines(later))
+
+
+def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
+    made = world(tmp_path)
+    doc, text, _ = published(made.publisher.snapshots[-1])
+    example = json.loads(text.split("```json\n")[1].split("```")[0])
+    rewards = [rollout["reward"] for rollout in example["groups"][0]["rollouts"]]
+    assert len(set(rewards)) > 1  # one rollout, or equal rewards, trains nothing
+    check_batch(json.dumps(example | {"hotkey": "hk1"}).encode(), "hk1", made.params)
+    rows = text.split("### Rule codes")[1].split("### How to upload")[0].splitlines()
+    assert [row for row in rows if row.startswith("| `")] == [f"| `{code}` | {meaning} |" for code, meaning in RULES.items()]  # each rule, with its text, in run order
+    assert all(meaning.strip() for meaning in RULES.values()) and set(TRANSIENT) <= set(RULES)
+    assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
+    assert "- `no_signal`: your file must train something." in text
+    flat = " ".join(text.split())
+    assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
+    assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat
+    assert f'LINKS = "{publisher.READ_LINKS}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text()  # the writer's path
+    assert all(f'"{key}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text() for key in ("expires_at", "head_version_id", "base", "loras", "master", "sha256", "size"))
 
 
 def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):
