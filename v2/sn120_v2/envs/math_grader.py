@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import multiprocessing
 import re
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -58,6 +59,9 @@ CONTROL_TOKENS = (
     "<|video_pad|>", "<|audio_start|>", "<|audio_end|>", "<|audio_pad|>",
 )  # fmt: skip
 MATH_OPENER = {"\\]": "\\[", "\\)": "\\(", "$$": "$$", "$": "$"}  # closing math wrapper -> its opener
+# The values of ``Grade.machine_cause``. They are part of the API: do not rename them.
+TIME_LIMIT = "time-limit"
+WORKER_DIED = "worker-died"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,16 @@ class Grade:
     * ``F``: ``wrong`` (strict format, wrong answer) or ``unresolved:<why>`` (no answer in the strict format).
     * ``C``: ``capped``.
     * ``E``: ``reference-unparseable``, ``grader-error``, ``grader-timeout``, ``grade-timeout`` or ``grade-worker-died``.
+
+    ``rule`` is text for logs. Do not branch on it. To tell the two kinds of
+    ``E`` apart, read ``machine_cause``:
+
+    * ``None``: the grade is stable. The same input gives the same grade on every machine. Every ``P``, ``F`` and
+      ``C`` is stable. A stable ``E`` means the reference cannot be parsed, or math-verify raised an error.
+    * ``TIME_LIMIT`` (``"time-limit"``): a time limit expired, math-verify's own limit or ``GradePool.timeout_s``.
+    * ``WORKER_DIED`` (``"worker-died"``): the ``GradePool`` worker process died during the job.
+
+    A grade with a ``machine_cause`` always has code ``E``. It can differ on another machine or at another time.
     """
 
     code: str
@@ -80,10 +94,11 @@ class Grade:
     cap_hit: bool
     answer: str | None
     rule: str
+    machine_cause: str | None = None
 
 
-def _fail(code: str, rule: str, answer: str | None = None) -> Grade:
-    return Grade(code, 0.0, code == CAP, answer, rule)
+def _fail(code: str, rule: str, answer: str | None = None, machine_cause: str | None = None) -> Grade:
+    return Grade(code, 0.0, code == CAP, answer, rule, machine_cause)
 
 
 def check_runtime() -> None:
@@ -313,6 +328,9 @@ def grade_answer(gold: str, problem: str, output: str, capped: bool) -> Grade:
     """Grade ``output`` against the reference answer ``gold`` of ``problem``. See ``grade``."""
     if capped:
         return _fail(CAP, "capped")
+    if threading.current_thread() is not threading.main_thread():
+        # In any other thread math-verify cannot set its alarm, and every grade would look like a stable ``E``.
+        raise InfraError("the math grader must run in the main thread of a process; use GradePool")
     try:
         _runtime_checked()
         box, reason = _strict_box(output)
@@ -331,7 +349,7 @@ def grade_answer(gold: str, problem: str, output: str, capped: bool) -> Grade:
             return _fail(FAIL, "wrong", strict)
         return _fail(FAIL, "unresolved:" + ("control-token" if reason == "ok" else reason), box)
     except TimeoutException:  # not a subclass of Exception: math-verify ran out of time
-        return _fail(ERROR, "grader-timeout")
+        return _fail(ERROR, "grader-timeout", machine_cause=TIME_LIMIT)
 
 
 def grade(task: Task, output: str, capped: bool) -> Grade:
@@ -379,9 +397,10 @@ class _Worker:
 class GradePool:
     """Grade in ``workers`` processes, each job under a hard limit of ``timeout_s`` seconds.
 
-    A job that passes the limit has its worker killed and gets code ``E``,
-    rule ``grade-timeout``. A job whose worker dies gets code ``E``, rule
-    ``grade-worker-died``. Neither is retried, so neither can become a pass.
+    A job that passes the limit has its worker killed and gets code ``E``
+    with ``machine_cause`` ``TIME_LIMIT``. A job whose worker dies gets code
+    ``E`` with ``machine_cause`` ``WORKER_DIED``. Neither is retried, so
+    neither can become a pass.
     A fresh worker replaces the lost one. ``job`` is the function to run; the
     default is ``grade``.
     """
@@ -405,7 +424,7 @@ class GradePool:
                     try:
                         worker.link.send(jobs[worker.index])
                     except OSError:  # the worker died while it was idle
-                        grades[worker.index] = self._replace(worker, "grade-worker-died")
+                        grades[worker.index] = self._replace(worker, "grade-worker-died", WORKER_DIED)
             busy = [worker for worker in self._workers if worker.index is not None]
             if not busy and waiting:
                 continue
@@ -417,14 +436,14 @@ class GradePool:
                     try:
                         grades[worker.index], worker.index = worker.link.recv(), None
                     except (EOFError, OSError):
-                        grades[worker.index] = self._replace(worker, "grade-worker-died")
+                        grades[worker.index] = self._replace(worker, "grade-worker-died", WORKER_DIED)
                 elif time.monotonic() >= worker.deadline:
-                    grades[worker.index] = self._replace(worker, "grade-timeout")
+                    grades[worker.index] = self._replace(worker, "grade-timeout", TIME_LIMIT)
 
-    def _replace(self, worker: _Worker, rule: str) -> Grade:
+    def _replace(self, worker: _Worker, rule: str, machine_cause: str) -> Grade:
         worker.stop()
         self._workers[self._workers.index(worker)] = _Worker(self._context, self._job)
-        return _fail(ERROR, rule)
+        return _fail(ERROR, rule, machine_cause=machine_cause)
 
     def close(self) -> None:
         for worker in self._workers:
