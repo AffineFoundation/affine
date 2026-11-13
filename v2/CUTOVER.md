@@ -14,10 +14,10 @@ Each point is a fact or a command that is not on `v2` at the commit of this file
 
 1. The preflight command (hard gate, "GPU box", step 5).
 2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
-3. The code that reads `SN120_LINKS_URL` on the GPU box. The variable is in this file; the code of this commit does not read it yet ("Before the mainnet bootstrap", check 4).
-4. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
-5. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-6. The site reset steps: the hand copy of the new `llms.txt` ("AffineValidator", step 8), and the block that moves v1's stale files away (step 12). The copy of v1's site in step 4 only reads; it is complete.
+3. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
+4. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
+5. The site reset steps: the hand copy of the new `llms.txt` ("AffineValidator", step 8), and the block that moves v1's stale files away (step 12). The copy of v1's site in step 4 only reads; it is complete.
+6. The pull reads the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` of its credentials file ("AffineValidator", step 12). The pull of this commit reads only the `SN120_R2_` names.
 7. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
 
 ## Hosts
@@ -36,7 +36,7 @@ This file names no machine address. Jacob has them.
 | --- | --- | --- |
 | Weights writer | Its own env file with a read-only R2 token. The unit never reads another credentials file. | Its own, for example `$HOME/sn120-v2-weights` |
 | Upload links job | v1's file `/home/const/subnet120-rewrite/state/private/r2-direct.env`, read in place (`--credentials-file`). It can sign an upload; v1's `affine-ff.service` signs with it. | Its own, for example `$HOME/sn120-v2-links` |
-| Public pull | Its own env file with a read-only R2 token that Jacob makes for it, for example `$HOME/sn120-v2-site-pull.env`. It is not the credentials file of the upload links job. | None: it reads no journal. It writes only in the site directory. |
+| Public pull | Its own file, which exists already: `/home/const/sn120-v2/secrets/r2-public-pull.env`, mode 600. Its token can only read, and only this one bucket (Jacob verified: list and get work, a PUT is denied). It is not the credentials file of the upload links job. | None: it reads no journal. It writes only in the site directory. |
 
 ## Production values (Jacob, 13 Nov 2026)
 
@@ -125,7 +125,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    nvidia-smi --query-gpu=index,name,memory.used --format=csv     # 8 GPUs, almost no memory in use
    ```
 
-4. Three changes that the build must hold. (**Not landed yet** at the commit of this file.) Stop if one of them is wrong.
+4. Three changes that the build must hold. Stop if one of them is wrong. (The first and the third are **not landed yet** at the commit of this file; the second is.)
 
    ```
    python -c "from sn120_v2 import layout; print(layout.CURRENT)"
@@ -245,7 +245,7 @@ One list, in this order. Each step has its check. Do not start a step before the
 
 The order follows Jacob's sequence: the new `llms.txt` first (step 8), then the weights and the stop of v1 (steps 9 and 10), then the website (step 12). The first run of the pull is the site switch, so the pull does not run before step 12.
 
-Before the cutover, Jacob makes the read-only R2 token for the pull (step 12).
+The pull's credentials file exists already; step 12 only checks it.
 
 The workers' documents hold more detail on each job: `api-weights.md`, `api-links.md` and `api-site.md`. The commands here are the same.
 
@@ -264,7 +264,7 @@ SITE=/home/const/subnet120/affine/website
 LINKS_URL=https://affine.io/ff/links
 ENDPOINT=https://00523074f51300584834607253cae0fa.r2.cloudflarestorage.com
 BUCKET=affine-verification-mock-20260930
-PENV=$HOME/sn120-v2-site-pull.env          # the pull's own credentials file
+PENV=/home/const/sn120-v2/secrets/r2-public-pull.env     # the pull's own credentials file; it exists already
 KEEP=$HOME/sn120-v1-archive                # where files of v1 are kept, outside the site directory
 BACKUP=$KEEP/website-v1                    # the copy of v1's whole site directory
 V1FILE=$KEEP/v1-history.json               # the frozen v1 history
@@ -495,14 +495,16 @@ mkdir -p "$KEEP"
 
     Check: `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
 
-    Write the pull's own credentials file `$PENV` with these four lines, with no quotes and no `export`, then `chmod 600 "$PENV"`. The token is a read-only one that Jacob makes for the pull. It is not the credentials file of the upload links job: that one can sign uploads.
+    The pull's credentials file exists already: `$PENV`. Do not make a new one, and do not show its content. Check it:
 
     ```
-    SN120_R2_ENDPOINT=https://00523074f51300584834607253cae0fa.r2.cloudflarestorage.com
-    SN120_R2_BUCKET=affine-verification-mock-20260930
-    SN120_R2_ACCESS_KEY_ID=
-    SN120_R2_SECRET_ACCESS_KEY=
+    stat -c '%a %U' "$PENV"          # 600 and the run user
+    cut -d= -f1 "$PENV"              # the names only, no value
     ```
+
+    Check: the mode is `600`. The names are `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_ENDPOINT`. The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
+
+    **Not landed yet:** the pull of this commit reads only the names `SN120_R2_ENDPOINT`, `SN120_R2_BUCKET`, `SN120_R2_ACCESS_KEY_ID` and `SN120_R2_SECRET_ACCESS_KEY`. A change that makes it accept the names of this file is on its way. With a build that does not have it, the run by hand stops with an error about a missing store setting and replaces nothing: stop there and tell the coordinator. Do not edit the file.
 
     One run by hand:
 
