@@ -1,5 +1,6 @@
 /* SN120 v2 status site. One column schema and one renderer for every table, as on the v1 site (k1-tables.js).
-   The page reads one file, site-data.json, which build.py writes from the publisher's public snapshot.
+   A page reads one file. index.html reads site-data.json, which build.py writes from the publisher's public snapshot.
+   v1.html (<body data-page="v1">) reads v1-data.json, the frozen v1 history that v1_archive.py wrote once at cutover.
    Privacy: build.py puts a batch link and a LoRA hash on an applied winner only; every other batch shows "private". */
 (() => {
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -35,11 +36,12 @@
     demoted: ['back of queue', 'wait', 'Moved to the back: no valid file for too long. A seat with a valid file is never moved back.'],
     held: ['held', 'wait', 'Parked for the operator after repeated infrastructure failures. Not charged.'],
   };
+  const V1 = document.body.dataset.page === 'v1', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
 
   const files = r => r.batch
     ? link(r.batch, 'batch.json', 'The winning batch, byte for byte') + (r.lora ? ' ' + key(r.lora, 6, 0) : '')
-    : r.imported ? mute('v1 king', 'Carried over from v1 at cutover.')
+    : r.imported ? link('v1.html', 'v1 king', 'Carried over from v1 at cutover. The v1 history is on its own page.')
     : pill('private', 'private', 'Only a winner is published. This batch stays private.');
   const dagger = (c, t) => c ? `<sup title="${esc(t)}">†</sup>` : '';
   const benchCell = id => r => {
@@ -78,6 +80,14 @@
     kind: { h: 'Kind', w: 84, r: r => r.folded ? mute('folded', 'The LoRAs are merged into the base.') : mute('stacked', 'The winning LoRA is stacked on the base.') },
     manifest: { h: 'Manifest', w: 84, r: r => r.manifest ? link(r.manifest, 'head.json', 'File hashes of this head') : mute('—') },
     model: { h: 'Model', w: 190, r: r => esc(r.label) + (r.status === 'scored' ? '' : ' ' + pill(r.status, 'wait')) },
+    epoch: { h: 'Epoch', w: 64, n: 1, r: r => 'E' + esc(r.epoch) },
+    verdict: { h: 'Result', w: 92, r: r => pill(...({ green: ['GREEN', 'up', 'Applied to the head.'], red: ['RED', 'dn', 'Not applied.'] }[r.verdict] || [r.verdict, 'wait', 'Not decided when v1 stopped.'])) },
+    share: { h: 'Weight', w: 68, n: 1, r: r => pct(r.share), t: 'Share of the miner weight when v1 stopped.' },
+    batch: { h: 'Batch', w: 92, n: 1, r: r => r.tasks == null ? mute('—') : esc(r.tasks) + (r.rollouts == null ? '' : ' · ' + esc(r.rollouts)), t: 'Tasks in the batch, then rollouts.' },
+    cPass: { h: 'Cand. pass', w: 84, n: 1, r: r => pct(r.c_pass), t: 'Pass rate of the trained candidate on the scoring sample.' },
+    hPass: { h: 'Head pass', w: 84, n: 1, r: r => pct(r.h_pass), t: 'Pass rate of the head on the same sample.' },
+    cand: { h: 'Candidate', w: 100, r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
+    date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
     avg: { h: 'Avg', w: 64, n: 1, r: r => r.avg == null ? mute('—') : (100 * r.avg).toFixed(1) + dagger(r.avg_partial, 'At least one score of this row is from a partial run.'), t: 'Mean of the scored benchmarks of the row, in percent.' },
   };
   const T = {
@@ -86,7 +96,9 @@
     history: { cols: ['round', 'uid', 'hot', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
     rounds: { cols: ['round', 'env', 'head', 'seats', 'skipped', 'tasks', 'mPass', 'mCap', 'outcome', 'at'], empty: 'No round yet.' },
     heads: { cols: ['head', 'round', 'kind', 'manifest', 'at'], empty: 'No head yet.' },
-    bench: { cols: ['model', 'round', 'at', 'avg'], empty: 'No benchmark result yet.' },
+    bench: { cols: V1 ? ['model', 'date', 'avg'] : ['model', 'round', 'at', 'avg'], empty: 'No benchmark result yet.' },
+    v1kings: { cols: ['rank', 'uid', 'hot', 'epoch', 'z', 'share'], empty: 'No king.' },
+    v1turns: { cols: ['epoch', 'uid', 'hot', 'verdict', 'z', 'cPass', 'hPass', 'capHit', 'batch', 'cand', 'head', 'date'], empty: 'No turn.' },
   };
 
   const table = n => document.querySelector(`#${n} table`);
@@ -107,7 +119,27 @@
     if (box.classList.contains('wait')) { box.classList.remove('wait'); body.classList.add('fade'); }
   }
 
+  function bench(b) {
+    const lead = T.bench.cols.filter(k => !k.startsWith('bench:'));
+    T.bench.cols = [...lead, ...b.columns.map(c => {
+      C['bench:' + c.id] = { h: c.label, w: 78, n: 1, r: benchCell(c.id), t: c.in_avg ? 'Score in percent.' : 'Shown only: not counted in Avg.' };
+      return 'bench:' + c.id;
+    })];
+    shell('bench');
+    const kings = b.rows.filter(x => x.kind === 'king').length;
+    fill('bench', b.rows, !b.rows.length ? '' : V1 ? `${kings} kings` : `${kings} kings · updated ${dur(Date.now() / 1000 - b.updated_at)} ago`);
+  }
+  const match = (rows, f) => f ? rows.filter(x => String(x.uid) === f || String(x.hotkey || '').toLowerCase().includes(f)) : rows;
+  function renderV1() {
+    const d = D, f = filter.trim().toLowerCase(), turns = match(d.turns, f);
+    document.getElementById('archived').textContent = utc(d.archived_at);
+    fill('v1kings', d.kings, `${d.kings.length} kings when v1 stopped`);
+    fill('v1turns', turns, f ? `${turns.length} of ${d.turns.length} turns` : `${turns.length} turns · ${turns.filter(x => x.verdict === 'green').length} green`);
+    bench(d.bench);
+    status();
+  }
   function render() {
+    if (V1) return renderV1();
     const d = D, r = d.round, q = d.queue.rows, waits = q.filter(x => !x.flags.includes('leased')), ready = waits.filter(x => x.file_valid).length;
     const live = {
       id: r.id || '—', state: d.phase, seats: r.seats == null ? '—' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
@@ -120,28 +152,23 @@
     const hidden = d.queue.total - q.length;
     fill('queue', q, `${q.length - waits.length} in the round · ${ready} waiting with a valid file · ${waits.length - ready} waiting without`,
       hidden > 0 ? `+${hidden} more registrations wait behind these and are not listed.` : '');
-    const f = filter.trim().toLowerCase(), hist = f ? d.history.filter(x => String(x.uid) === f || x.hotkey.toLowerCase().includes(f)) : d.history;
+    const f = filter.trim().toLowerCase(), hist = match(d.history, f);
     fill('history', hist, f ? `${hist.length} of ${d.history.length} results` : `${hist.length} results`);
     fill('rounds', d.rounds, `${d.rounds.length} rounds · ${d.rounds.filter(x => x.outcome === 'applied').length} applied`);
     fill('heads', d.heads, `${d.heads.length} versions`);
-    const b = d.bench || { columns: [], rows: [] };
-    T.bench.cols = ['model', 'round', 'at', 'avg', ...b.columns.map(c => {
-      C['bench:' + c.id] = { h: c.label, w: 78, n: 1, r: benchCell(c.id), t: c.in_avg ? 'Score in percent.' : 'Shown only: not counted in Avg.' };
-      return 'bench:' + c.id;
-    })];
-    shell('bench');
-    fill('bench', b.rows, b.rows.length ? `${b.rows.filter(x => x.kind === 'king').length} kings · updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : '');
+    bench(d.bench || { columns: [], rows: [] });
     status();
   }
   function status(failed) {
     const el = document.getElementById('status');
     el.dataset.state = !D || failed ? 'unavailable' : 'live';
-    el.textContent = !D ? 'No data yet.' : (failed ? 'Refresh failed; this is the last good data. ' : '') + `Last change published ${dur(Date.now() / 1000 - D.generated_at)} ago.`;
+    el.textContent = V1 ? (D ? `Archived ${utc(D.archived_at)}. This page does not change.` : 'The v1 archive is not on this site.')
+      : !D ? 'No data yet.' : (failed ? 'Refresh failed; this is the last good data. ' : '') + `Last change published ${dur(Date.now() / 1000 - D.generated_at)} ago.`;
   }
   async function load(first) {
     try {
-      const res = await (first || fetch('site-data.json?t=' + Date.now(), { cache: 'no-store' }));
-      if (!res || !res.ok) throw new Error('site-data.json ' + (res ? res.status : 'unreachable'));
+      const res = await (first || fetch(DATA + '?t=' + Date.now(), { cache: 'no-store' }));
+      if (!res || !res.ok) throw new Error(DATA + ' ' + (res ? res.status : 'unreachable'));
       D = await res.json();
       render();
     } catch (e) { console.warn(e); status(true); }
@@ -151,7 +178,7 @@
     if (b && navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(() => { b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900); }, () => { });
   });
   document.getElementById('filter').addEventListener('input', e => { filter = e.target.value; if (D) render(); });
-  Object.keys(T).forEach(shell);
+  Object.keys(T).filter(table).forEach(shell);
   load(window.SITE_DATA);
-  setInterval(load, 60000);
+  if (!V1) setInterval(load, 60000);
 })();

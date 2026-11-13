@@ -1,18 +1,21 @@
 """Build the SN120 v2 status site: static files plus one small ``site-data.json``.
 
 The site reads only public files. This builder reads ``public/mining.json``
-(the publisher's snapshot) and the benchmark service's ``benchmarks.json``; it
-never calls the controller. ``view`` and ``bench_view`` are the only code that
-knows the shape of those two files.
+(the publisher's snapshot) and ``public/benchmarks.json`` (the benchmark
+service's file); it never calls the controller. ``view`` and ``bench_view``
+are the only code that knows the shape of those two files. A missing or bad
+benchmark file leaves the benchmark table empty and nothing else.
 
-    python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--every 60]
+    python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--v1-history <file or URL>] [--every 60]
 
   --source      root of the object store: a local directory or an http(s) URL.
   --public-url  URL under which a browser reaches that same root (for file links).
   --out         directory to write the site into.
+  --v1-history  the frozen v1 history that ``v1_archive.py`` wrote at cutover. It
+                is copied to ``v1-data.json`` for the page ``v1.html``.
   --every       rebuild the data every N seconds; without it, build once and exit.
 
-All three paths are required: there is no default host path. Files are written
+The first three are required: there is no default host path. Files are written
 to a temporary name and then renamed, so a reader never sees half a file. A
 failed read keeps the last good ``site-data.json`` and exits non-zero (or, with
 ``--every``, tries again). The builder writes a fixed set of files and no copies.
@@ -39,19 +42,27 @@ from sn120_v2.types import WINNER
 
 STATIC = Path(__file__).parent / "static"
 # Order matters: a file is stamped with the hashes of the files before it.
-ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "site.css", "index.html")
+ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "site.css", "index.html", "v1.html")
 TEXT = (".css", ".html")
 DATA = "site-data.json"
-BENCH_KEY: str | None = None  # the store key of benchmarks.json: set it from ``layout`` when the foundation adds it
+V1_DATA = "v1-data.json"
+V1_SCHEMA = "sn120-v1-archive-1"
+NOTED: dict[str, str] = {}  # the last note printed per topic
 FLAGS = ("front", "demoted", "held")
 
 
-def read(source: str, key: str) -> bytes:
-    """One object of the store, from a directory or over http(s)."""
-    if source.startswith(("http://", "https://")):
-        with urllib.request.urlopen(f"{source.rstrip('/')}/{key}", timeout=20) as response:
+def fetch(location: str) -> bytes:
+    """One file, from a local path or over http(s)."""
+    if location.startswith(("http://", "https://")):
+        request = urllib.request.Request(location, headers={"User-Agent": "sn120-v2-site"})
+        with urllib.request.urlopen(request, timeout=30) as response:
             return response.read()
-    return (Path(source) / key).read_bytes()
+    return Path(location).read_bytes()
+
+
+def read(source: str, key: str) -> bytes:
+    """One object under a root: the object store or the v1 site, as a directory or an http(s) URL."""
+    return fetch(f"{source.rstrip('/')}/{key}")
 
 
 def write(path: Path, data: bytes) -> None:
@@ -183,10 +194,23 @@ def build_data(source: str, out: Path, link: Callable[[str], str]) -> None:
     snap = json.loads(read(source, layout.MINING_JSON))
     bench = None
     try:  # the benchmark table is informational: without it the rest of the page is still built
-        bench = bench_view(json.loads(read(source, BENCH_KEY))) if BENCH_KEY else None
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        print(f"site: no benchmark table: {type(error).__name__}: {error}", file=sys.stderr)
+        bench = bench_view(json.loads(read(source, layout.BENCHMARKS)))
+        json.dumps(bench, allow_nan=False)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        bench = None
+        note = f"site: no benchmark table: {type(error).__name__}: {error}"
+        if note != NOTED.get("bench"):  # say it once, not on every rebuild
+            print(note, file=sys.stderr)
+        NOTED["bench"] = note
     write(out / DATA, json.dumps(view(snap, bench, link), separators=(",", ":"), allow_nan=False).encode())
+
+
+def install_v1(location: str, out: Path) -> None:
+    """Copy the frozen v1 history into the site. Anything that is not such an archive is refused."""
+    data = fetch(location)
+    if json.loads(data).get("schema") != V1_SCHEMA:
+        raise ValueError(f"{location} is not a v1 archive ({V1_SCHEMA}); make one with v1_archive.py")
+    write(out / V1_DATA, data)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -194,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", required=True, help="root of the object store: a directory or an http(s) URL")
     parser.add_argument("--public-url", required=True, help="URL under which a browser reaches that same root")
     parser.add_argument("--out", required=True, type=Path, help="directory to write the site into")
+    parser.add_argument("--v1-history", help="the frozen v1 history from v1_archive.py: a file or an http(s) URL")
     parser.add_argument("--every", type=float, default=0, help="rebuild the data every N seconds (0 = build once)")
     args = parser.parse_args(argv)
 
@@ -202,6 +227,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     build_static(args.out, link)
+    if args.v1_history:
+        try:
+            install_v1(args.v1_history, args.out)
+        except Exception as error:  # noqa: BLE001 - a bad archive is never installed; the operator must see it
+            print(f"site: v1 history not installed: {type(error).__name__}: {error}", file=sys.stderr)
+            return 1
     while True:
         try:
             build_data(args.source, args.out, link)
