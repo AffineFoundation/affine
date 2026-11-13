@@ -8,6 +8,8 @@
   publish     read-only for the journal: write llms.txt and mining.json again
   round       print the summary of a closed round as a short text to paste
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
+  end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
+              seats are first in the next round (this command takes over the journal)
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -230,6 +232,18 @@ def cmd_set_params(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_end_round(args: argparse.Namespace) -> int:
+    controller, _ = open_controller(args, "end-round")
+    record = controller.state.round
+    if record is None or record.decision is not None:
+        raise V2Error("no round is open and undecided; a decided round is finished by run")
+    while (record := controller.state.round) is not None and record.decision is None:
+        lease = next(lease for lease in record.leases if lease.status == "open")
+        controller.fail_lease(lease.lease_id, "ended by the operator", now())
+    print(json.dumps(summary(controller.state, controller.params), indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sn120_v2", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -266,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     one.add_argument("--json", action="store_true", help="print the stored JSON record instead of the text")
     setp = command("set-params", cmd_set_params, stack=True)
     setp.add_argument("--params", required=True, help="JSON file of parameter overrides on the defaults; the result replaces the pinned set")
+    command("end-round", cmd_end_round, stack=True)
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
