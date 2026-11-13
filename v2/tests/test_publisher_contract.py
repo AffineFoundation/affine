@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from sn120_v2 import layout, links, public, publisher, r2, sim
-from sn120_v2.admission import RULES, TIME_LIMIT, check_batch
+from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
@@ -187,7 +187,10 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     rewards = [rollout["reward"] for rollout in example["groups"][0]["rollouts"]]
     assert len(set(rewards)) > 1  # one rollout, or equal rewards, trains nothing
     check_batch(json.dumps(example | {"hotkey": "hk1"}).encode(), "hk1", made.params)
-    assert all(f"| `{code}` | {meaning} |" in text for code, meaning in RULES.items())
+    rows = text.split("### Rule codes")[1].split("### How to upload")[0].splitlines()
+    assert [row for row in rows if row.startswith("| `")] == [f"| `{code}` | {meaning} |" for code, meaning in RULES.items()]  # each rule, with its text, in run order
+    assert all(meaning.strip() for meaning in RULES.values()) and set(TRANSIENT) <= set(RULES)
+    assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
     assert "- `no_signal`: your file must train something." in text
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS

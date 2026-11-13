@@ -22,7 +22,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST
+from .admission import CONTROL_TOKENS, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -415,7 +415,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
         "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
-        "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output). The",
+        "- `reward`: a finite number. The rewards of one prompt must be small enough to take their mean. A reward must",
+        "  equal the grade that the official grader gives to (prompt, output). The",
         f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
@@ -443,6 +444,11 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "The validator and the `check` command name the first rule that a file breaks. The rules run in this order:",
         "",
         *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
+        "",
+        f"Not a final verdict: {', '.join(f'`{code}`' for code in TRANSIENT)}. Such a code comes from one check on our machine at one",
+        "moment. The validator does not keep it: it checks the file again at its next check. While a file has such a",
+        "code, a round does not take it: you are not charged and the seat keeps its place (section 4). Every other",
+        "code is final for those bytes: upload a new file.",
         "",
         "### How to upload",
         "",
