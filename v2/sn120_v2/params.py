@@ -218,11 +218,14 @@ class Params(Record):
     train_time_budget_s: int = 40 * 60
     promote_reserve_s: int = 600  # PLACEHOLDER: the box stops scoring this long before the limit, so judging and promotion fit
     # PLACEHOLDER: the box scores this many tasks, then looks at the clock. One chunk lasts at least as long as its
-    # longest rollout, so fewer and larger chunks waste less time. 500 = the first look of 2000 tasks in one chunk.
+    # longest rollout, so fewer and larger chunks waste less time. A chunk that the limit cuts is never used, and
+    # fewer tasks than the first look decide nothing. So 500 = the first look of 2000 tasks in one chunk.
     eval_chunk_tasks: int = 500
-    # A box result that arrives later than this is never used. It is longer than the round's time limit, because the
-    # first look is always scored in full: only the end of the lease cuts it.
-    lease_timeout_s: int = 4 * 3600
+    # A box result that arrives later than this is never used. The box stops scoring at the round's time limit minus
+    # promote_reserve_s, whatever this value is. The time after the limit is only a reserve for the steps between the
+    # stop and the arrival of the result (grading of the last chunk, stop of the servers), so that a round that
+    # stopped in time never loses its result to the lease. No task is scored in it.
+    lease_timeout_s: int = 2 * 3600
     max_infra_attempts: int = 3  # no_decision outcomes before an entry is held for the operator
     squat_min_wait_s: int = 86400
     squat_age_factor: float = 2.0

@@ -9,7 +9,13 @@ own parameter file, and ``set-params`` pins it before the round:
   4-multi  2 batches on 8 GPUs: each training job has 4 GPUs
   5-full   the launch values
 
-  python -m sn120_v2.smoke params --plan plan.json --out DIR     write the five files
+Two more rounds, between 4-multi and 5-full, hit the round's time limit on
+purpose. Each is 2-two with a test of 2000 tasks and a short time limit:
+
+  limit-judged      the limit comes after the first look: each LoRA is judged on the chunks finished
+  limit-not-scored  the limit comes inside the first look: each LoRA is not_scored and is not charged
+
+  python -m sn120_v2.smoke params --plan plan.json --out DIR     write the seven files
   python -m sn120_v2.smoke copy --state-dir DIR                  small copies for the next round
   python -m sn120_v2.smoke copy --state-dir DIR --whole          whole files for the next round
 
@@ -42,6 +48,8 @@ from .seams import ObjectStore
 _SMALL = {"z_bar": 0.0, "min_scored_tasks": 2, "max_infra_attempts": 1000, "apply_retry_s": 5}
 # A reply stops after this many tokens in the rounds that only prove the path. One reply at the real cap can take 15 minutes.
 SHORT_REPLY = 2048
+# For the two rounds at the time limit: 2-two with a test that can never be scored inside the limit.
+_AT_LIMIT = _SMALL | {"batch_cap": 2, "n_gpus": 2, "n_tasks": 2000, "max_output_tokens": SHORT_REPLY}
 MAX_FAILED_CHECKS = 8  # a small copy gives up on a file after this many groups that fail the admission check
 # Overrides of the launch values, one set per round of the ramp, in order. The two digests are added to each.
 RAMP: dict[str, dict[str, Any]] = {
@@ -51,6 +59,18 @@ RAMP: dict[str, dict[str, Any]] = {
     # The real reply cap, so null M passes tasks and a LoRA can win. One look and one block: the block lasts as long as its longest reply.
     "3-eight": _SMALL | {"batch_cap": 8, "n_gpus": 8, "n_tasks": 32, "eval_chunk_tasks": 32, "looks": [1.0]},
     "4-multi": _SMALL | {"batch_cap": 2, "n_gpus": 8, "n_tasks": 8, "eval_chunk_tasks": 4, "max_output_tokens": SHORT_REPLY},
+    # The round's time limit on purpose (worker.LocalRunner.run). The training time is far more than two small copies
+    # need, so that no batch is not_trained.
+    # Stop at minute 23. First look = 4 tasks = one chunk, so it is complete long before the stop, even when the first
+    # replies of a new server take minutes. min_scored_tasks 8 is above the first look, so no LoRA is dropped there, and
+    # each LoRA is judged at the stop by the launch rule (z above 1) on the chunks finished.
+    "limit-judged": _AT_LIMIT
+    | {"eval_chunk_tasks": 4, "looks": [0.002, 1.0], "z_bar": 1.0, "min_scored_tasks": 8}
+    | {"round_time_limit_s": 1500, "lease_timeout_s": 3000, "promote_reserve_s": 120, "train_time_budget_s": 600},
+    # Stop at minute 6. First look = all 2000 tasks in one chunk: it cannot be complete at the stop.
+    "limit-not-scored": _AT_LIMIT
+    | {"eval_chunk_tasks": 2000, "looks": [1.0]}
+    | {"round_time_limit_s": 480, "lease_timeout_s": 960, "promote_reserve_s": 120, "train_time_budget_s": 300},
     "5-full": {},
 }
 
@@ -214,7 +234,7 @@ def cmd_copy(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sn120_v2.smoke", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    sub = commands.add_parser("params", help="write the five parameter files of the ramp")
+    sub = commands.add_parser("params", help="write the parameter files of the ramp and of the two rounds at the time limit")
     sub.add_argument("--plan", required=True, help="the output file of python -m sn120_v2.gpu.plan")
     sub.add_argument("--out", required=True, help="the directory for the files")
     sub.add_argument("--short-reply", type=int, default=SHORT_REPLY, help="max_output_tokens of the rounds with a low reply cap")

@@ -2,7 +2,7 @@
 
 A seat is one paid registration. Turn order has three zones:
 
-  front   seats sent back after a no_decision (our failure, not the miner's)
+  front   seats sent back, not charged: no_decision (our failure), not_trained or not_scored (the round's time ended)
   normal  everyone else
   back    seats moved back because they had no valid file for too long
 

@@ -203,14 +203,14 @@ The four small files also set these values. They are for the smoke test only:
 
 `5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it one of the small files.
 
-Write the five files. Run this again each time the digest block of step 1 ran:
+Write the files. Run this again each time the digest block of step 1 ran:
 
 ```
 python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE
 export V1_R2_ENDPOINT=... V1_R2_BUCKET=... V1_R2_ACCESS_KEY_ID=... V1_R2_SECRET_ACCESS_KEY=...   # read-only token
 ```
 
-Expected: five lines, `$SMOKE/params-1-tiny.json` to `$SMOKE/params-5-full.json`.
+Expected: seven lines. Five are the stages, `$SMOKE/params-1-tiny.json` to `$SMOKE/params-5-full.json`. Two are for the rounds that hit the time limit on purpose (below): `params-limit-judged.json` and `params-limit-not-scored.json`.
 
 Each stage is the same three commands. Run them for `1-tiny`, then `2-two`, `3-eight`, `4-multi`:
 
@@ -248,11 +248,58 @@ Pass, for each stage:
 - `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
 - `5-full`: the pass lines of steps 6 to 9.
 
-In every stage: no row has the verdict `no_decision` or `not_trained`, and the first line is not `NO_DECISION`.
+In every stage: no row has the verdict `no_decision`, `not_trained` or `not_scored`, and the first line is not `NO_DECISION`.
 
 ### A round that hits the time limit on purpose
 
-This stage is optional, and its place is between `4-multi` and `5-full`. It proves the rule at the round's time limit with a round that is too long for a short limit. Its parameter file and its pass lines are not in this section yet.
+This stage is optional, and its place is between `4-multi` and `5-full`. It proves the rule at the round's time limit on the real box. It is two rounds. Each one is `2-two` (2 batches, 2 GPUs, reply cap 2048) with a test of 2000 tasks and a short time limit. 2000 tasks can never be scored inside these limits, so each round hits its limit.
+
+The rule (step 6 has it in full): the box stops scoring at the **stop time**. That is the time limit minus `promote_reserve_s`, counted from the lease. A block of tasks that still runs then is stopped and is not used. Then:
+
+- A LoRA with the first look complete is judged on the blocks that null M and every open LoRA finished. It is charged, win or lose.
+- A LoRA with fewer scored tasks than the first look is `not_scored`. It is not charged and it is first in the next round.
+
+| Stage | Proves | Time limit (`round_time_limit_s`) | Stop time | Training time (`train_time_budget_s`) | First look | Block (`eval_chunk_tasks`) | Expected time |
+|---|---|---|---|---|---|---|---|
+| `limit-judged` | the judgment on the blocks finished | 1500 s (25 minutes) | minute 23 | 600 s | 4 tasks (`looks` 0.002 and 1) | 4 tasks | 26 to 28 minutes |
+| `limit-not-scored` | `not_scored`: not charged, place kept | 480 s (8 minutes) | minute 6 | 300 s | 2000 tasks (`looks` 1) | 2000 tasks | 9 to 11 minutes |
+
+Other values of the two files: `promote_reserve_s` 120 in both, so the box stops 2 minutes before the time limit. `lease_timeout_s` is 2 times the time limit (3000 and 960): a result that arrives later than this is not used. `limit-judged` also sets `z_bar` 1 (the launch win rule) and `min_scored_tasks` 8: with fewer than 8 scored tasks no LoRA can win, and no LoRA is dropped at the first look of 4 tasks.
+
+Run `limit-judged` first. It is the main proof: it also shows that the box stops a running block at the stop time. Run it only after `1-tiny` and `2-two` passed on this box: the first replies of a new vLLM server can take minutes, and `limit-judged` leaves the first block that time. Then run `limit-not-scored`. Each round is the same three commands as a stage:
+
+```
+export STAGE=limit-judged
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
+python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
+```
+
+Pass for `limit-judged`, all of these:
+
+1. The first line ends with `(stopped at the time limit)`: `SN120 v2 round r00000N: NULL (stopped at the time limit)` or `... APPLIED (stopped at the time limit)`. Both are a pass.
+2. The line `batches: 2 | tasks scored: N of 2000`. N is a multiple of 4 and far below 2000. Expect some tens.
+3. Two rows, each `lost` or `winner`. The `tasks` column shows the same N in both rows: both LoRAs and null M were judged on the same tasks.
+4. A `lost` row has a note with the reason, most often `z ... is not above 1`. If N is below 8, the note also says `scored on N tasks; the rule needs 8`; that is still a pass.
+5. In the `wall time` line with no winner, `total` is at most `25m00s`. With a winner, `lease to promotion` is at most `25m00s`; the fold comes after it and is not in the limit.
+6. The JSON summary shows `"phase": "IDLE"`, and `served` is 2 more than before: both seats are charged.
+
+Pass for `limit-not-scored`, all of these:
+
+1. The first line is `SN120 v2 round r00000N: NO_DECISION (stopped at the time limit)`.
+2. The line `not scored: 2 of 2 batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
+3. Two rows with the verdict `not_scored` and the note `the round's time limit ended the scoring after 0 tasks, before the first look of 2000`.
+4. In the `wall time` line, `total` is at most `8m00s`. One case is known: the stop time does not cut the start of a vLLM server. If the servers were still starting at minute 6, `total` is more than 8 minutes. Lines 1, 2, 3 and 5 are then still a pass of the rule; send the `wall time` line.
+5. The JSON summary shows `"phase": "IDLE"`, and `last_outcomes` ends with `"no_decision"`. `served` and `heads` are the same as before the round: nobody is charged, and both seats are still in the queue. The next round takes these two seats first.
+
+Not a pass, and what to do:
+
+- `limit-judged` shows rows with `not_scored`: the first block did not finish before minute 23. That is not a fault of the rule. Send the `eval` lines of `phases.jsonl` and the `wall time` line; the time limit of this file must be higher. Nobody is charged.
+- `limit-not-scored` shows rows with `lost` or `winner`: the box scored 2000 tasks in 6 minutes, or it did not stop. Send `run-limit-not-scored.log`.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training of a small copy took longer than the training time of the file. Send the `train` lines of `phases.jsonl`.
+- In `limit-judged`, `total` or `lease to promotion` is above the time limit: the steps after the stop (the stop of the vLLM servers, the result, the promotion) took more than `promote_reserve_s`. Send the `wall time` line.
+
+After these two rounds, go on with `5-full`: its `set-params` puts the launch values back.
 
 Things to know:
 
@@ -319,14 +366,15 @@ What happens:
 4. Decision: the best LoRA wins if z > 1. Else there is no winner, and the head and the kings stay as they are.
 5. Promotion and fold: the winner's LoRA is published, then added to the master.
 
-A round always reaches a decision for the LoRAs that it trained. The rules:
+The time limit of a round is 100 minutes from the lease to the promotion. The box stops scoring at minute 90, with no exception. The 10 minutes after it are for the grading of the last block, the judging and the promotion. The rules:
 
-- A batch that was not trained when the training time ended has the verdict `not_trained`. It is not charged, it is first in the next round, and no failure is counted for its seat.
-- The first look (500 tasks) is always scored in full for null M and every trained LoRA. The time limit does not cut it.
-- After the first look the time limit applies: at most 100 minutes from the lease to the promotion. The box starts no new block of tasks after minute 90. A LoRA that is still open then is judged by z > 1 on the blocks that null M and every open LoRA finished.
+- A batch that was not trained when the training time ended has the verdict `not_trained`. It is not charged, it is first in the next round, and no failure is counted for its seat. So the scoring starts at minute 40 at the latest.
+- The box starts no new block of tasks after minute 90. A block that still runs then is stopped and is not used.
+- A LoRA that is still open at the limit is judged by z > 1 on the blocks that null M and every open LoRA finished.
+- If fewer tasks than the first look (500) are scored at the limit, every trained LoRA has the verdict `not_scored`. It is not charged, it is first in the next round, and no failure is counted for its seat.
 - A round ends early when every LoRA is dropped or decided.
 
-So `lease to promotion` can be above 100 minutes only when the training time plus the first look are longer than that. The summary shows the time of each phase.
+The summary shows the time of each phase.
 
 Watch it from a second shell (same exports):
 
@@ -342,7 +390,7 @@ Expected at the end: the round summary as text (see step 9), then the JSON summa
 Pass, all of these:
 
 1. The first line of the round summary is `SN120 v2 round r000001: APPLIED` or `... NULL`. Both are a pass. `NULL` means no LoRA beat null M by more than one standard error.
-2. Every batch has a verdict: `winner`, `lost`, or `not_trained`. With 8 batches on 8 GPUs, expect no `not_trained`. `lease to promotion` in the `wall time` line is at most `100m00s`; if it is more, send the `wall time` line: the first look took too long for the parameters.
+2. Every batch has a verdict: `winner` or `lost`. With 8 batches on 8 GPUs, expect no `not_trained` and no `not_scored`. `lease to promotion` in the `wall time` line is at most `100m00s`; if it is more, send the `wall time` line: the steps after the stop took more than 10 minutes.
 3. The JSON summary shows `"phase": "IDLE"` and `"head_folded": true`.
 4. With `APPLIED`: `"heads": 3` (genesis, the head with the winner's LoRA, the folded head), and `kings` starts with the winner's UID.
 5. `nvidia-smi` shows the GPUs free after the command ends.
@@ -355,6 +403,7 @@ Pass, all of these:
 Not a pass, and what to do:
 
 - `NO_DECISION`: a failure of the box or the store, or no batch was trained inside the training time. Nobody is charged; the seats are back at the front. Read the `note` column and `run.log`, fix the cause, run step 6 again.
+- Rows with `not_scored`: the first block of 500 tasks did not finish before minute 90. Nobody is charged, and the same seats are first in the next round, so the next round would end the same way. Send the `wall time` line and the `eval` lines of `phases.jsonl`; `train_time_budget_s`, `batch_cap` or the number of tasks must change.
 - A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: one batch on one GPU needs more than 40 minutes. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change.
 - `ABANDONED`: the winner's files did not match their hash. The head did not change. Stop and report it.
 - `refused:` on the last line: a check failed closed. The line names the check.
@@ -542,7 +591,7 @@ The code passes its tests on CPU with a tiny model and fake vLLM servers. This r
 3. The same task and seed give the same sampling for null M and for every LoRA.
 4. Memory and speed with long rows (up to 32,768 output tokens in training, up to 65,536 in generation).
 5. The GPUs are free between training and evaluation.
-6. The times: how long one batch trains on one GPU (against the 40 minutes of training time), how long a block of 500 tasks takes, and so how many batches and tasks fit in 100 minutes. If the tasks do not fit, the time limit ends the round after the first look and the summary says `(stopped at the time limit)`.
+6. The times: how long one batch trains on one GPU (against the 40 minutes of training time), how long a block of 500 tasks takes, and so how many batches and tasks fit in 100 minutes. If the tasks do not fit, the time limit ends the round and the summary says `(stopped at the time limit)`; if not even the first look fits, the trained LoRAs are `not_scored`.
 7. Fold time and RAM with the real 37.6 GB master, and R2 speed for 56 GB.
 8. How many real v1 files are valid under the v2 rules.
 9. The update norm of the default recipe.
