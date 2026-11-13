@@ -29,7 +29,7 @@ from ..sampling import rollout_seed
 from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 from .batch import END_OF_TURN
-from .plan import BoxConfig, check_pins
+from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
 
@@ -77,14 +77,14 @@ class ServeSettings:
 
     first_port: int = 8100
     start_timeout_s: float = 1800.0  # model load time of one server
-    clients_per_server: int = 64  # requests in flight per server
+    clients_per_server: int = 256  # requests in flight per server, and the server's --max-num-seqs
     retries: int = 2  # extra tries after a transport failure or a 5xx reply
     free_limit_mib: int = 1024  # a GPU above this is still in use
     free_timeout_s: float = 120.0
     grade_tries: int = 3  # times a reply is graded when the grader's worker process dies on it
 
 
-def server_argv(base_dir: str, port: int, params: Params) -> list[str]:
+def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeSettings.clients_per_server) -> list[str]:
     rank = params.recipe.bound("rank")
     max_rank = int(rank.high) if rank else params.recipe.rank
     return [
@@ -92,7 +92,7 @@ def server_argv(base_dir: str, port: int, params: Params) -> list[str]:
         *("--model", base_dir, "--served-model-name", NULL_MODEL),
         *("--host", "127.0.0.1", "--port", str(port)),
         *("--dtype", params.dtype, "--max-model-len", str(params.max_context_tokens)),
-        *("--enable-prefix-caching", "--enable-lora"),
+        *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
         *("--max-loras", str(params.max_loras_per_box), "--max-lora-rank", str(max_rank)),
         # Text only. v1 lesson: without this limit vLLM does not load this checkpoint.
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
@@ -111,9 +111,12 @@ def server_env(gpu: int, work_dir: Path) -> dict[str, str]:
     return env
 
 
+WORKER_DIED = "worker-died"  # Grade.machine_cause of the env's grader when its worker process died
+
+
 def box_fault(grade: Any) -> bool:
     """True when this grade says nothing about the text: the worker process that graded it died."""
-    return getattr(grade, "rule", "") == "grade-worker-died"
+    return getattr(grade, "machine_cause", None) == WORKER_DIED
 
 
 def chat_body(model: str, messages: list[dict[str, str]], seed: int, params: Params) -> dict:
@@ -167,19 +170,24 @@ class VllmEvaluator:
     def evaluate(self, request: EvalRequest) -> EvalChunk:
         params, tasks = request.params, request.task_ids
         check_pins(self.config.image_digest, params)
+        started, written = time.monotonic(), []
         if any(lora.head_version_id != request.head.version_id for lora in request.loras):
             raise ContractError("a LoRA of this look was trained on another head")
         models = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
         if len(set(models)) != len(models) or len(request.loras) > params.max_loras_per_box:
             raise ContractError("the LoRAs of a look must be distinct and inside max_loras_per_box")
         self._serve(request.head, params)
-        for lora in request.loras:
-            if lora.lora_hash not in self._loaded:
-                path = self.resident.tree(lora.prefix, lora.lora_hash)
-                for url in self._urls:
-                    self._call(url + "/v1/load_lora_adapter", {"lora_name": lora.lora_hash, "lora_path": str(path)}, 600.0)
-                self._loaded.add(lora.lora_hash)
+        fresh = [(lora.lora_hash, str(self.resident.tree(lora.prefix, lora.lora_hash))) for lora in request.loras if lora.lora_hash not in self._loaded]
+
+        def load(url: str) -> None:  # one server loads its adapters one after another; the servers load side by side
+            for name, path in fresh:
+                self._call(url + "/v1/load_lora_adapter", {"lora_name": name, "lora_path": path}, 600.0)
+
+        with ThreadPoolExecutor(len(self._urls)) as threads:
+            list(threads.map(load, self._urls))
+        self._loaded.update(name for name, _ in fresh)
         jobs = [(model, sample, index) for model in models for sample in range(params.samples_per_task) for index in range(len(tasks))]
+        served = time.monotonic()
 
         def rollout(job: tuple[str, int, int]) -> tuple[str, bool] | None:
             model, sample, index = job
@@ -188,7 +196,11 @@ class VllmEvaluator:
             url = self._urls[index % len(self._urls)] + "/v1/chat/completions"
             for _ in range(self.settings.retries + 1):
                 try:
-                    return read_reply(self.http(url, body, float(params.eval_time_budget_s)))
+                    reply = self.http(url, body, float(params.eval_time_budget_s))
+                    result = read_reply(reply)
+                    usage = reply.get("usage")
+                    written.append(int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0)
+                    return result
                 except HttpError as exc:
                     if exc.status < 500:
                         return None
@@ -201,11 +213,15 @@ class VllmEvaluator:
         if not all(server.alive() for server in self._servers):
             self.close()
             raise InfraError("a vLLM server died during the look; nothing of it can be scored")
+        generated = time.monotonic()
         codes = self._grade(tasks, jobs, replies)
         outcomes = {
             model: tuple("".join(codes[model, sample, index] for index in range(len(tasks))) for sample in range(params.samples_per_task))
             for model in models
         }
+        times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
+        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "output_tokens": sum(written), "capped": sum(code == CAP for code in codes.values())}
+        log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts)
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
     def close(self) -> None:
@@ -253,7 +269,7 @@ class VllmEvaluator:
         self._head = head
         for gpu in range(params.n_gpus):
             port = self.settings.first_port + gpu
-            self._servers.append(self.spawn(server_argv(str(base_dir), port, params), server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
+            self._servers.append(self.spawn(server_argv(str(base_dir), port, params, self.settings.clients_per_server), server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
             self._urls.append(f"http://127.0.0.1:{port}")
         waited = 0.0
         for server, url in zip(self._servers, self._urls):

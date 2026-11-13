@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -25,7 +26,7 @@ from ..errors import ContractError, VerifyError
 from ..params import Params
 from ..seams import ObjectStore
 from ..types import FoldArtifact, HeadVersion
-from .plan import BoxConfig, check_pins
+from .plan import BoxConfig, check_pins, log_phase
 from .resident import Resident, hash_tree, upload_tree
 
 _PREFIX, _A, _B = "base_model.model.", ".lora_A.weight", ".lora_B.weight"
@@ -124,6 +125,7 @@ class LoraFolder:
 
     def fold(self, head: HeadVersion, params: Params, out_prefix: str) -> FoldArtifact:
         check_pins(self.config.image_digest, params)
+        started = time.monotonic()
         if not head.loras:
             raise ContractError("the head has no LoRA to fold")
         hashes = [ref.lora_hash for ref in head.loras]
@@ -137,7 +139,9 @@ class LoraFolder:
         out = Path(self.config.work_dir) / "fold" / head.version_id
         shutil.rmtree(out, ignore_errors=True)
         try:
+            fetched = time.monotonic()
             fold_files(master_dir, base_dir, loras, out / "master", out / "base")
+            summed = time.monotonic()
             base_files, _ = upload_tree(self.store, out / "base", f"{out_prefix}/base")
             master_files, _ = upload_tree(self.store, out / "master", f"{out_prefix}/master")
             artifact = FoldArtifact(
@@ -151,6 +155,8 @@ class LoraFolder:
             )
             self.resident.adopt(out / "base", artifact.base_hash)  # the next round needs no download
             self.resident.adopt(out / "master", artifact.base_fp32_master_digest)
+            times = {"fetch_s": fetched - started, "sum_s": summed - fetched, "upload_s": time.monotonic() - summed, "wall_s": time.monotonic() - started}
+            log_phase(self.config.work_dir, "fold", version_id=head.version_id, loras=len(loras), **times)
             return artifact
         finally:
             shutil.rmtree(out, ignore_errors=True)

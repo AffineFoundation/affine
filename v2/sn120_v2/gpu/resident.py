@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
 
@@ -25,17 +26,21 @@ def hash_tree(path: Path) -> dict[str, str]:
     return {file.relative_to(path).as_posix(): file_sha256(file) for file in sorted(path.rglob("*")) if file.is_file()}
 
 
-def upload_tree(store: ObjectStore, path: Path, prefix: str) -> tuple[dict[str, str], dict[str, int]]:
+def upload_tree(store: ObjectStore, path: Path, prefix: str, workers: int = 4) -> tuple[dict[str, str], dict[str, int]]:
     """Upload every file to ``<prefix>/<file name>`` and check what the store holds.
 
     Returns the hashes and the sizes. The hash comes from the local file and
     must equal the hash the store computes: an upload is not trusted blind.
     """
     files = hash_tree(path)
-    for name, sha in files.items():
+
+    def one(name: str) -> None:
         store.put_file(f"{prefix}/{name}", path / name)
-        if store.sha256(f"{prefix}/{name}") != sha:
+        if store.sha256(f"{prefix}/{name}") != files[name]:
             raise InfraError(f"the stored copy of {prefix}/{name} differs from the local file")
+
+    with ThreadPoolExecutor(workers) as pool:
+        list(pool.map(one, files))
     return files, {name: (path / name).stat().st_size for name in files}
 
 

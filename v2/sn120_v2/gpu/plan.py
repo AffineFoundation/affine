@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import platform
+import threading
+import time
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
-from ..canonical import file_sha256, manifest_digest
+from ..canonical import digest, file_sha256, manifest_digest
 from ..errors import InfraError
 from ..params import Params, require_env
 
@@ -28,6 +33,33 @@ def code_digest() -> str:
     return manifest_digest({path.name: file_sha256(path) for path in sorted(Path(__file__).parent.glob("*.py"))})
 
 
+def install_digest() -> str:
+    """Identity of what is installed on this box: the Python version and every installed package with its version.
+
+    A box that was not started from a baked image uses this value as its
+    image digest. Two boxes with the same install line and the same lock
+    give the same value.
+    """
+    packages = {dist.metadata["Name"].lower(): dist.version for dist in metadata.distributions() if dist.metadata["Name"]}
+    return digest({"python": platform.python_version(), "packages": dict(sorted(packages.items()))})
+
+
+_LOG_LOCK = threading.Lock()
+
+
+def log_phase(work_dir: Path, phase: str, **facts: Any) -> None:
+    """Append one line to ``<work_dir>/logs/phases.jsonl``: what a phase did and how long it took.
+
+    Wall times live here and in the records, never in a hashed file. No
+    key, link or miner text goes into this log.
+    """
+    line = json.dumps({"at": round(time.time(), 3), "phase": phase, **facts}, sort_keys=True)
+    with _LOG_LOCK:
+        (Path(work_dir) / "logs").mkdir(parents=True, exist_ok=True)
+        with (Path(work_dir) / "logs" / "phases.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
+
 def check_pins(image_digest: str, params: Params) -> None:
     """Refuse to work from an image or code that the round did not pin.
 
@@ -42,4 +74,4 @@ def check_pins(image_digest: str, params: Params) -> None:
 
 
 if __name__ == "__main__":
-    print(code_digest())
+    print(json.dumps({"code_digest": code_digest(), "image_digest": install_digest()}))

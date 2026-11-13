@@ -106,16 +106,27 @@ def test_box_config_has_no_default():
     with pytest.raises(Exception, match="SN120_IMAGE_DIGEST"):
         plan.BoxConfig.from_env({"SN120_WORK_DIR": "/tmp/x"})
     assert plan.BoxConfig.from_env({"SN120_WORK_DIR": "/tmp/x", "SN120_IMAGE_DIGEST": "d"}).work_dir == Path("/tmp/x")
+    assert plan.install_digest() == plan.install_digest() and len(plan.install_digest()) == 64  # the image digest of a box without a baked image
 
 
 # ---- batch rows, token caps, derail mask ----
 
 
-def test_advantage_is_reward_minus_group_mean_and_a_group_of_one_keeps_its_reward():
+def test_advantage_is_reward_minus_the_mean_of_its_group():
     assert batch.advantages([1.0, 0.0, 0.0, 1.0]) == [0.5, -0.5, -0.5, 0.5]
-    assert batch.advantages([0.75]) == [0.75]
+    assert batch.advantages([0.75]) == [0.0]  # a group of one is its own mean
     rows = batch.training_rows(GROUPS)
-    assert [(row["prompt"], row["output"], row["advantage"]) for row in rows] == [("p1", "good", 0.5), ("p1", "bad", -0.5), ("p2", "alone", 1.0)]
+    assert [(row["prompt"], row["output"], row["advantage"]) for row in rows] == [("p1", "good", 0.5), ("p1", "bad", -0.5), ("p2", "alone", 0.0)]
+
+
+def test_group_size_cuts_the_rollouts_of_a_prompt_in_file_order_and_keeps_a_short_last_group():
+    rewards = [1.0, 0.0, 1.0, 1.0, 0.0]
+    assert batch.advantages(rewards, 0) == pytest.approx([0.4, -0.6, 0.4, 0.4, -0.6])  # 0: all rollouts of the prompt
+    assert batch.advantages(rewards, 2) == [0.5, -0.5, 0.0, 0.0, 0.0]  # (1, 0), (1, 1), (0)
+    assert batch.advantages(rewards, 4) == [0.25, -0.75, 0.25, 0.25, 0.0]
+    assert batch.advantages(rewards, 64) == batch.advantages(rewards, 0)  # larger than the prompt: one group
+    two_prompts = [["p1", [["a", 1.0], ["b", 0.0], ["c", 0.0]]], ["p2", [["d", 1.0], ["e", 0.0]]]]
+    assert [row["advantage"] for row in batch.training_rows(two_prompts, 2)] == [0.5, -0.5, 0.0, 0.5, -0.5]  # a group never spans two prompts
 
 
 @pytest.mark.parametrize(
@@ -132,9 +143,8 @@ def test_end_token_only_when_the_output_ended_and_long_rows_are_cut_not_rejected
     assert batch.fit_tokens(10, [5, 6, 7, 8], 99, max_output=4, max_context=100) == ([5, 6, 7, 8], True, False)  # exactly at the cap: cut, not ended
     assert batch.fit_tokens(10, [5, 6, 7, 8, 9, 9], 99, max_output=4, max_context=100) == ([5, 6, 7, 8], True, True)
     assert batch.fit_tokens(10, [5, 6, 7, 8], 99, max_output=4, max_context=12) == ([5, 6], True, True)  # a long prompt leaves less room
-    for n_prompt, output in ((10, []), (100, [5])):
-        with pytest.raises(BatchRejected):
-            batch.fit_tokens(n_prompt, output, 99, max_output=4, max_context=100)
+    for n_prompt, output in ((10, []), (100, [5]), (97, [5])):  # no output token left: the caller drops the row
+        assert batch.fit_tokens(n_prompt, output, 99, max_output=4, max_context=97) == ([], False, False)
 
 
 def test_derail_mask_keeps_the_tail_after_the_first_bad_window():
@@ -250,13 +260,27 @@ def test_train_uses_the_miner_values_the_request_gpus_and_uploads_what_it_hashed
     assert argv[:3] == [sys.executable, "-m", "sn120_v2.gpu.train_job"] and env["CUDA_VISIBLE_DEVICES"] == "2,3"
     recipe = Recipe.from_dict(sent["recipe"])
     assert (recipe.rank, recipe.lora_lr, recipe.steps, recipe.sample_temperature) == (8, 2e-5, 2, 0.8)
-    assert sent["seed"] == 11 and sent["base_hash"] == box.head.base_hash and [row["advantage"] for row in sent["rows"]] == [0.5, -0.5, 1.0]
+    assert sent["seed"] == 11 and sent["base_hash"] == box.head.base_hash and [row["advantage"] for row in sent["rows"]] == [0.5, -0.5, 0.0]
     assert (artifact.rank, artifact.alpha, artifact.target_modules) == (8, request.params.recipe.alpha, request.params.recipe.target_modules)
     assert artifact.recipe_id == request.params.recipe_id and artifact.head_version_id == box.head.version_id
     assert artifact.lora_hash == manifest_digest(artifact.files) and sorted(artifact.files) == sorted(LORA_FILES)
     assert all(box.store.sha256(f"{artifact.prefix}/{name}") == sha for name, sha in artifact.files.items())
     assert (artifact.report.seed, artifact.report.steps, artifact.report.step_norm, artifact.report.image_digest) == (11, 2, 0.5, box.build.image)
     assert not Path(argv[-1]).exists()  # the box keeps no copy of the LoRA or of the miner's rows
+    logged = [json.loads(line) for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()]
+    assert [(line["phase"], line["round_id"], line["queue_pos"], line["step_norm"]) for line in logged] == [("train", "r000001", 0, 0.5)] and logged[0]["wall_s"] >= 0
+
+
+def test_every_key_a_miner_may_set_trains_at_both_ends_of_its_bound(box):
+    for bound in box.build.params().recipe.miner_bounds:  # the published bounds: no number is copied here
+        ends = [list(bound.choices), [bound.choices[-1]]] if bound.choices else [bound.low, bound.high]
+        for value in ends:
+            value, job = int(value) if bound.integer else value, FakeJob()
+            trainer(box, job).train(train_request(box, train={bound.key: value}))
+            assert getattr(Recipe.from_dict(job.calls[0][2]["recipe"]), bound.key) == bound.check(value)
+    job = FakeJob()
+    trainer(box, job).train(train_request(box, train={"group_size": 2}, groups=[["p1", [["a", 1.0], ["b", 0.0], ["c", 1.0]]]]))
+    assert [row["advantage"] for row in job.calls[0][2]["rows"]] == [0.5, -0.5, 0.0]  # groups of 2 in file order; the last group is short
 
 
 @pytest.mark.parametrize(
@@ -282,8 +306,6 @@ def test_training_failures_are_sorted_into_miner_and_box(box):
         trainer(box, FakeJob(files=LORA_FILES[:2])).train(train_request(box))
     with pytest.raises(InfraError, match="global_norm_cap"):
         trainer(box, FakeJob()).train(train_request(box, recipe=Recipe(image_digests=(box.build.image,), global_norm_cap=0.1)))
-    with pytest.raises(BatchRejected, match="group_size"):
-        trainer(box, FakeJob()).train(train_request(box, train={"group_size": 4}))
     with pytest.raises(BatchRejected):  # outside the published bound: never clamped
         trainer(box, FakeJob()).train(train_request(box, train={"rank": 4096}))
     with pytest.raises(BatchRejected):
@@ -355,7 +377,7 @@ class Grades:
         self.seen.append([text for _, text, capped in jobs if not capped])
         dying = self.deaths > 0
         self.deaths -= 1
-        return [SimpleNamespace(code="E", rule="grade-worker-died") if text == "F died" and dying else SimpleNamespace(code=text[0], rule="x") for _, text, _ in jobs]
+        return [SimpleNamespace(code="E", machine_cause="worker-died") if text == "F died" and dying else SimpleNamespace(code=text[0], machine_cause=None) for _, text, _ in jobs]
 
 
 POOL = SimpleNamespace(task=lambda task_id: SimpleNamespace(messages=lambda: [{"role": "system", "content": "MANDATE"}, {"role": "user", "content": task_id}]))
@@ -403,6 +425,8 @@ def test_outcome_codes_capped_is_never_graded_and_errors_stay_in_the_count(box):
     chunk = evaluator(box, Farm(lambda model, task: replies[task]), grades).evaluate(eval_request(box, n_loras=1, tasks=tuple(replies)))
     assert set(chunk.outcomes.values()) == {("PFCEEE",)}
     assert len(grades.seen) == 1 and "P cut" not in grades.seen[0] and len(grades.seen[0]) == 8  # an E of the grader is graded one time
+    logged = json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert (logged["phase"], logged["look"], logged["models"], logged["rollouts"], logged["capped"]) == ("eval", 0, 2, 12, 2) and logged["wall_s"] >= logged["generate_s"]
     assert read_reply({"choices": [{"message": {"content": "<think>x</think>a<|im_end|>"}, "finish_reason": "stop"}]}) == ("<think>x</think>a", False)
 
 

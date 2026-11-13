@@ -89,6 +89,7 @@ def test_the_lora_has_the_names_of_the_weight_files_and_the_reported_norm(head_d
     assert {tensor.dtype for tensor in lora.values()} == {torch.float32} and all(a.shape[0] == 16 for key, a in lora.items() if "lora_A" in key)
     assert result["status"] == "ok" and 0 < result["step_norm"] == pytest.approx(update_norm(lora, 32 / 16), rel=1e-4)
     assert report["optimizer"].startswith("adam, fresh per LoRA") and report["truncated_rows"] == 0 and len(report["losses"]) == 2
+    assert report["step_norm_before_cap"] == report["step_norm"] == result["step_norm"]  # no cap: one norm
     assert report["recipe_values"]["lora_lr"] == 1e-4 and all(math.isfinite(n) and n > 0 for n in report["grad_norms"])
     config = json.loads((tmp_path / "lora" / "adapter_config.json").read_text())
     assert (config["r"], config["lora_alpha"], config["peft_type"]) == (16, 32.0, "LORA")
@@ -108,13 +109,35 @@ def test_miner_values_change_the_step_and_the_norm_cap_scales_the_whole_update(h
     hot, _, _ = run(head_dir, tmp_path / "hot", sample_temperature=1.5)
     small, _, report = run(head_dir, tmp_path / "small", rank=8, alpha=8.0, steps=1, target_modules=("q_proj",))
     assert hot["loss"] != base["loss"] and small["step_norm"] < base["step_norm"] and len(report["losses"]) == 1
-    capped, lora, _ = run(head_dir, tmp_path / "cap", global_norm_cap=base["step_norm"] / 4)
+    capped, lora, report = run(head_dir, tmp_path / "cap", global_norm_cap=base["step_norm"] / 4)
+    assert report["step_norm_before_cap"] == pytest.approx(base["step_norm"]) and report["step_norm"] == capped["step_norm"]  # both norms are stated
     assert capped["step_norm"] == pytest.approx(base["step_norm"] / 4) == pytest.approx(update_norm(lora, 2.0), rel=1e-4)
 
 
-def test_long_rows_are_cut_and_counted_and_a_batch_without_gradient_is_rejected(head_dir, tmp_path):
-    result, _, report = run(head_dir, tmp_path / "cut", train_max_output_tokens=3)
-    assert report["truncated_rows"] == 1 and result["status"] == "ok"  # "ccdd" is 4 tokens: cut to 3, not rejected
+def test_both_train_caps_cut_a_row_and_a_row_with_no_room_is_dropped_and_counted(head_dir, tmp_path):
+    _, _, report = run(head_dir, tmp_path / "out", train_max_output_tokens=3)
+    assert (report["truncated_rows"], report["dropped_rows"], report["rows"]) == (1, 0, 3)  # "ccdd" is 4 tokens: cut to 3, not rejected
+    tokenizer = transformers.AutoTokenizer.from_pretrained(head_dir)
+    chat = tokenizer.apply_chat_template([{"role": "user", "content": "x"}], add_generation_prompt=True, tokenize=False)
+    short = len(tokenizer.encode(chat, add_special_tokens=False))  # the prompt "ab c" is 3 tokens longer
+    result, _, report = run(head_dir, tmp_path / "context", train_max_output_tokens=3, train_max_context_tokens=short + 2)
+    # The context cap leaves 2 output tokens after "x", and none after "ab c": that prompt's two rows are dropped.
+    assert (report["truncated_rows"], report["dropped_rows"], report["rows"], result["status"]) == (1, 2, 1, "ok")
+    with pytest.raises(BatchRejected):  # no row keeps an output token
+        run(head_dir, tmp_path / "none", train_max_output_tokens=3, train_max_context_tokens=short)
+
+
+def test_the_job_runs_at_both_ends_of_every_number_a_miner_may_set(head_dir, tmp_path):
+    bounds = [bound for bound in Recipe().miner_bounds if not bound.choices]
+    for end in ("low", "high"):
+        values = {bound.key: int(getattr(bound, end)) if bound.integer else getattr(bound, end) for bound in bounds}
+        result, lora, report = run(head_dir, tmp_path / end, **values)
+        assert result["status"] == "ok" and math.isfinite(result["step_norm"]) and len(report["losses"]) == values["steps"]
+        assert {key: report["recipe_values"][key] for key in values} == values
+        assert all(a.shape[0] == values["rank"] for key, a in lora.items() if "lora_A" in key)
+
+
+def test_a_batch_without_gradient_is_rejected_and_a_wrong_layer_name_stops_the_job(head_dir, tmp_path):
     flat = [dict(row, advantage=0.0) for row in ROWS]
     with pytest.raises(BatchRejected):
         run(head_dir, tmp_path / "flat", rows=flat)
@@ -131,7 +154,7 @@ def test_support_renorm_temperature_and_the_clips():
     recipe = Recipe(support_top_k=3, support_top_p=0.9, sample_temperature=2.0)
     logits = torch.tensor([[4.0, 2.0, 0.0, -8.0], [4.0, 2.0, 0.0, -8.0]])
     log_p, log_q, inside = train_job.token_scores(logits, torch.tensor([1, 3]), recipe)
-    kept = torch.tensor([4.0, 2.0, 0.0]) / 2.0  # top-3 at temperature 2; top-p 0.9 keeps all three
+    kept = torch.tensor([4.0, 2.0]) / 2.0  # logits / T; of the top 3, the first two hold 0.9 of the probability
     assert log_q[0] == pytest.approx(float(1.0 - kept.logsumexp(0))) and log_p[0] == pytest.approx(float(2.0 - logits[0].logsumexp(0)))
     assert inside.tolist() == [True, False]  # a token the head could not sample does not train
     ratio = torch.tensor([0.0, math.log(2.0)])
@@ -146,7 +169,7 @@ def test_support_renorm_temperature_and_the_clips():
 def folded(head_dir, tmp_path, build):
     """A head in the store (base and fp32 master), one trained LoRA on it, and the fold of that head."""
     store, config = LocalStore(tmp_path / "store"), BoxConfig(tmp_path / "work", build.image)
-    master_digest = upcast(head_dir, tmp_path / "master", part_bytes=40_000)
+    master_digest = upcast(head_dir, tmp_path / "master", part_bytes=160_000)
     base_files, _ = upload_tree(store, head_dir, "tmp/base")
     base_hash = manifest_digest(base_files)
     upload_tree(store, head_dir, layout.public_base_prefix(base_hash))
@@ -162,7 +185,7 @@ def folded(head_dir, tmp_path, build):
 
 def test_fold_starts_from_the_fp32_master_and_rounds_one_time(folded, head_dir):
     store, config, head, params, tmp = folded
-    assert len(list((tmp / "master").iterdir())) > 1 and all(f.stat().st_size < 60_000 for f in (tmp / "master").iterdir())  # parts stay under one upload
+    assert len(list((tmp / "master").iterdir())) > 1 and all(f.stat().st_size < 200_000 for f in (tmp / "master").iterdir())  # parts stay under one upload
     artifact = LoraFolder(store, config).fold(head, params, "pending/folds/v1")
     assert artifact.parent_version_id == head.version_id and artifact.base_hash == manifest_digest(artifact.base_files) != head.base_hash
     assert artifact.base_fp32_master_digest == manifest_digest(artifact.master_files) != head.base_fp32_master_digest
@@ -220,7 +243,14 @@ def test_fold_fails_closed(folded, damage):
     assert store.list("pending") == []  # nothing of a failed fold is uploaded
 
 
-def test_genesis_command_checks_the_base_hash_then_prints_the_master_digest(head_dir, tmp_path, monkeypatch, capsys):
+class BadStore(LocalStore):
+    """A store that returns other bytes for one weight file."""
+
+    def sha256(self, key: str) -> str:
+        return "0" * 64 if key.endswith("model.part00.safetensors") else super().sha256(key)
+
+
+def test_genesis_command_checks_the_base_hash_writes_the_manifests_and_stages_checked_files(head_dir, tmp_path, monkeypatch, capsys):
     asked = []
 
     def download(repo, revision, local_dir, allow_patterns):
@@ -232,12 +262,26 @@ def test_genesis_command_checks_the_base_hash_then_prints_the_master_digest(head
     with pytest.raises(VerifyError):  # the default pin is the launch model: other files are refused, and no master is written
         genesis.main(["--out", str(tmp_path / "wrong")])
     assert asked[0][:2] == (genesis.GENESIS_MODEL_REPO, genesis.GENESIS_MODEL_REVISION) and "*.safetensors" in asked[0][2]
-    assert not (tmp_path / "wrong" / "master").exists()
-    base_hash = manifest_digest(hash_tree(head_dir))
-    genesis.main(["--out", str(tmp_path / "out"), "--base-hash", base_hash])
+    assert not (tmp_path / "wrong" / "master").exists() and not (tmp_path / "wrong" / "genesis_files.json").exists()
+    base_hash, out = manifest_digest(hash_tree(head_dir)), tmp_path / "out"
+    genesis.main(["--out", str(out), "--base-hash", base_hash])  # no --upload: no store is opened
     printed = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    master = tmp_path / "out" / "master"
-    assert printed["base_hash"] == base_hash and printed["master_digest"] == manifest_digest(hash_tree(master))
-    tensors = load_file(str(master / "model.part00.safetensors"))
+    assert printed["base_hash"] == base_hash and printed["master_digest"] == manifest_digest(hash_tree(out / "master")) and printed["uploaded_files"] == 0
+    files = json.loads((out / "genesis_files.json").read_text())
+    assert files == {"base_files": hash_tree(head_dir), "master_files": hash_tree(out / "master")} and printed["genesis_files"] == str(out / "genesis_files.json")
+    tensors = load_file(str(out / "master" / "model.part00.safetensors"))
     old = load_file(str(head_dir / "model.safetensors"))
     assert {t.dtype for t in tensors.values()} == {torch.float32} and all(torch.equal(tensors[name], old[name].float()) for name in old)
+
+    store = LocalStore(tmp_path / "store")
+    genesis.main(["--out", str(out), "--base-hash", base_hash, "--upload"], open_store=lambda: store)
+    printed = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    base_keys = {layout.public_base_file(base_hash, name): sha for name, sha in files["base_files"].items()}
+    master_keys = {layout.public_master_file(printed["master_digest"], name): sha for name, sha in files["master_files"].items()}
+    assert printed["uploaded_files"] == len(base_keys) + len(master_keys) and all(store.sha256(key) == sha for key, sha in (base_keys | master_keys).items())
+    # A box finds the staged files under the prefixes it reads.
+    assert store.list(layout.public_base_prefix(base_hash)) == sorted(base_keys) and store.list(layout.public_master_prefix(printed["master_digest"])) == sorted(master_keys)
+    bad = BadStore(tmp_path / "bad")
+    with pytest.raises(VerifyError, match="differs"):
+        genesis.main(["--out", str(out), "--base-hash", base_hash, "--upload"], open_store=lambda: bad)
+    assert not bad.exists(layout.public_master_file(printed["master_digest"], "model.part00.safetensors"))  # the wrong object is removed

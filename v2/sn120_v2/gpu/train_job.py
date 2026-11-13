@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Sequence
@@ -149,13 +150,13 @@ class Replica:
         return loss, trained
 
 
-def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> list[dict]:
-    """Token ids of every row. The prompt is one user message with the generation prompt."""
+def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict], int]:
+    """Token ids of every row that trains, and the count of dropped rows. The prompt is one user message with the generation prompt."""
     eos = tokenizer.convert_tokens_to_ids(END_OF_TURN)
     if not isinstance(eos, int) or eos < 0 or eos == tokenizer.unk_token_id:
         raise InfraError(f"the tokenizer has no {END_OF_TURN} token")
     prompts: dict[str, list[int]] = {}
-    out = []
+    out, dropped = [], 0
     for row in rows:
         if row["prompt"] not in prompts:
             text = tokenizer.apply_chat_template([{"role": "user", "content": row["prompt"]}], add_generation_prompt=True, tokenize=False)
@@ -163,22 +164,26 @@ def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> list[dict]:
         prompt_ids = prompts[row["prompt"]]
         output = tokenizer.encode(row["output"], add_special_tokens=False)
         tokens, capped, cut = fit_tokens(len(prompt_ids), output, eos, recipe.train_max_output_tokens, recipe.train_max_context_tokens)
+        if not tokens:  # no output token is left inside the training caps
+            dropped += 1
+            continue
         out.append({"prompt_ids": prompt_ids, "tokens": tokens, "capped": capped, "truncated": cut, "advantage": row["advantage"]})
-    return out
+    return out, dropped
 
 
 def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
-    recipe = Recipe.from_dict(job["recipe"])
+    recipe, started = Recipe.from_dict(job["recipe"]), time.monotonic()
     torch.manual_seed(job["seed"])
-    rows = encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe)
+    rows, dropped = encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe)
     active = sorted((row for row in rows if row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
     if not active:
-        raise BatchRejected("every rollout has advantage zero: the batch gives no gradient")
+        raise BatchRejected("no rollout is left with an advantage other than zero: the batch gives no gradient")
     devices = list(devices or [f"cuda:{i}" for i in range(torch.cuda.device_count())] or ["cpu"])[: len(active)]
     replicas = [Replica(job["base_dir"], device, job["dtype"], recipe, job["seed"]) for device in devices]
     first = replicas[0]
     check_names(job["base_dir"], list(first.layers))
     optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr)
+    loaded = time.monotonic()
     losses, grad_norms, trained = [], [], 0
     with ThreadPoolExecutor(len(replicas)) as pool:
         for _ in range(recipe.steps):
@@ -201,15 +206,20 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
             grad_norms.append(norm)
             trained = sum(count for _, count in results)
     facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows)}
-    facts["truncated_rows"] = sum(row["truncated"] for row in rows)  # rows cut to the training token cap
-    return save(first, recipe, job, out_dir, facts)
+    # Rows cut to a training token cap, and rows with no output token left inside the caps.
+    facts.update(truncated_rows=sum(row["truncated"] for row in rows), dropped_rows=dropped)
+    result = save(first, recipe, job, out_dir, facts)
+    # Times and sizes for the box log. They are not part of the LoRA files: a LoRA hash never depends on a clock.
+    result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(replicas), rows=len(rows))
+    result.update(forward_tokens=sum(len(row["prompt_ids"]) + len(row["tokens"]) for row in active) * recipe.steps)
+    return result
 
 
 def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict) -> dict:
     """Apply the update cap, check the weights and write the LoRA in the PEFT file layout."""
     scale = recipe.alpha / recipe.rank
     squares = [((layer.lora_B.T @ layer.lora_B) * (layer.lora_A @ layer.lora_A.T)).sum().double() for layer in replica.layers.values()]
-    norm = scale * math.sqrt(max(0.0, float(torch.stack(squares).sum())))
+    norm = uncapped = scale * math.sqrt(max(0.0, float(torch.stack(squares).sum().detach())))
     if recipe.global_norm_cap is not None and norm > recipe.global_norm_cap:
         for layer in replica.layers.values():
             layer.lora_B.data.mul_(recipe.global_norm_cap / norm)
@@ -231,14 +241,16 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
         "target_modules": list(recipe.target_modules),
         "inference_mode": True,
     }
-    used = {key: getattr(recipe, key) for key in ("lora_lr", "steps", "sample_temperature", "rank", "alpha", "max_grad_norm", "global_norm_cap")}
-    report = {"optimizer": OPTIMIZER, "seed": job["seed"], "step_norm": norm, "recipe_values": used, **facts}
+    used = {key: getattr(recipe, key) for key in ("lora_lr", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap")}
+    # step_norm_before_cap is the norm that training gave; step_norm is the norm of the stored LoRA.
+    report = {"optimizer": OPTIMIZER, "seed": job["seed"], "step_norm": norm, "step_norm_before_cap": uncapped, "recipe_values": used, **facts}
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "adapter_model.safetensors"))
     (out_dir / "adapter_config.json").write_bytes(canonical_json(config))
     (out_dir / "train_report.json").write_bytes(canonical_json(report))
     gpu_class = torch.cuda.get_device_name(0) if replica.device != "cpu" else "cpu"
-    return {"status": "ok", "loss": facts["losses"][-1], "step_norm": norm, "tokens": facts["trained_tokens"], "gpu_class": gpu_class}
+    result = {"status": "ok", "loss": facts["losses"][-1], "step_norm": norm, "step_norm_before_cap": uncapped}
+    return {**result, "tokens": facts["trained_tokens"], "gpu_class": gpu_class}
 
 
 def main(job_dir: Path) -> None:

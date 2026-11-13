@@ -22,7 +22,7 @@ from ..params import Params, Recipe
 from ..seams import ObjectStore
 from ..types import LoRAArtifact, TrainReport, TrainRequest
 from .batch import Groups, training_rows
-from .plan import BoxConfig, check_pins
+from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, stop_all
 from .resident import Resident, resident_head, upload_tree
 
@@ -49,12 +49,9 @@ class LoraTrainer:
         recipe = params.recipe.for_miner(entry.batch.train)
         if recipe.method != "grpo-lora" or recipe.dropout or recipe.kl:
             raise InfraError("this trainer runs grpo-lora with dropout 0 and KL off only")
-        if recipe.group_size:
-            # Not decided yet: the trainer never guesses what a miner's value means, and never ignores it.
-            raise BatchRejected("train.group_size is not supported yet: each prompt's rollouts are one group")
         self.resident.prune({head.base_hash, head.base_fp32_master_digest})
         base_dir = resident_head(self.resident, head)
-        rows = self._rows(request)
+        rows = self._rows(request, recipe.group_size)
         job_dir = self.jobs / f"{request.round_id}-{entry.queue_pos:03d}"
         shutil.rmtree(job_dir, ignore_errors=True)
         (job_dir / "lora").mkdir(parents=True)
@@ -67,6 +64,8 @@ class LoraTrainer:
             files, sizes = upload_tree(self.store, job_dir / "lora", request.out_prefix)
             if sorted(files) != sorted(LORA_FILES):
                 raise InfraError(f"the training job wrote {sorted(files)}, not the LoRA files")
+            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap")}
+            log_phase(self.config.work_dir, "train", round_id=request.round_id, queue_pos=entry.queue_pos, wall_s=time.monotonic() - started, **facts)
             return LoRAArtifact(
                 lora_hash=manifest_digest(files),
                 files=files,
@@ -97,7 +96,7 @@ class LoraTrainer:
             procs, self._procs = self._procs, []
         stop_all(procs)
 
-    def _rows(self, request: TrainRequest) -> list[dict]:
+    def _rows(self, request: TrainRequest, group_size: int) -> list[dict]:
         batch = request.entry.batch
         try:
             raw = self.store.get(batch.uri)
@@ -109,7 +108,7 @@ class LoraTrainer:
             groups = self.read_groups(raw, batch.hotkey, request.params)
         except ValueError as exc:
             raise BatchRejected(f"the frozen batch is not valid: {exc}") from exc
-        return training_rows(groups)
+        return training_rows(groups, group_size)
 
     def _run(self, job_dir: Path, request: TrainRequest) -> dict:
         argv = [sys.executable, "-m", "sn120_v2.gpu.train_job", str(job_dir)]
