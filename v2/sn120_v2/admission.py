@@ -39,9 +39,22 @@ _BOXED = "\\boxed"
 
 Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward), ...))
 
-# The official grade of one rollout: (prompt, output) -> reward.
+# The official grade of one rollout: (prompt, output, capped) -> reward.
+# The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
 # None means the prompt is not a task of the environment, so there is no official grade.
-Grader = Callable[[str, str], float | None]
+Grader = Callable[[str, str, bool], float | None]
+
+
+def env_grader(pool: Any, grade: Callable[..., Any]) -> Grader:
+    """The ``Grader`` of an environment, from its task pool and its ``grade(task, output, capped)`` function.
+
+    The controller and the miner's tool both build the grader with this one call, so they cannot differ.
+    """
+    def official(prompt: str, output: str, capped: bool) -> float | None:
+        task = pool.task_for_prompt(prompt)
+        return None if task is None else float(grade(task, output, capped).reward)
+
+    return official
 
 
 class Tokens(Protocol):
@@ -216,11 +229,12 @@ def final_answer(text: str) -> str | None:
     return None
 
 
-def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> None:
-    """Text, token and content rules on the kept groups."""
+def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set[tuple[int, int]]:
+    """Text, token and content rules on the kept groups. Return the (group, rollout) places of the capped outputs."""
     cap, context = params.max_output_tokens, params.max_context_tokens
     n_rollouts = answer_only = reasoning = total = 0
     answers: Counter[str] = Counter()
+    capped: set[tuple[int, int]] = set()
     for i, (prompt, rollouts) in enumerate(groups):
         _text(prompt, f"groups[{i}].prompt")
         n_prompt = tokens.prompt_tokens(prompt) if tokens else 0
@@ -236,6 +250,7 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> Non
             n = tokens.output_tokens(output)
             _need(n <= cap, "output_tokens", f"{here}.output is {n} tokens; the cap is {cap}")
             used = n_prompt + n + (n < cap)  # an output below the cap gets one end-of-sequence token; at the cap it is cut
+            capped.update({(i, j)} if n == cap else ())
             _need(used <= context, "context_tokens", f"{here}: prompt + output is {used} tokens; the cap is {context}")
             cut = output.find(_BOXED)
             before = n if cut < 0 else tokens.output_tokens(output[:cut])  # reasoning comes before the first boxed answer
@@ -250,14 +265,15 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> Non
     limit = max(params.max_answer_repeat_count, params.max_answer_repeat_frac * n_rollouts)
     worst = max(answers.values(), default=0)
     _need(worst <= limit, "answer_repeat", f"one boxed answer is the final answer of {worst} rollouts; the limit is {limit:g}")
+    return capped
 
 
-def _graded(groups: Sequence[Group], params: Params, grader: Grader) -> None:
+def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
     """Every submitted reward must be the official grade. A prompt the environment does not know has no grade."""
     known = 0
     for i, (prompt, rollouts) in enumerate(groups):
         for j, (output, reward) in enumerate(rollouts):
-            official = grader(prompt, output)
+            official = grader(prompt, output, (i, j) in capped)
             if official is None:
                 break
             _need(abs(reward - official) <= params.reward_tolerance, "grader", f"groups[{i}].rollouts[{j}].reward is not the official grade")
@@ -270,17 +286,17 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader) -> None:
 def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None) -> Batch:
     """Check one file against every rule. Return the ``Batch`` or raise ``Invalid``.
 
-    Without ``tokens`` the token caps and the reasoning rules do not run.
-    Without ``grader`` the grader match does not run. ``Batch.checked`` says
-    what ran. The validator always passes ``tokens``.
+    Without ``tokens`` the token caps and the reasoning rules do not run, and
+    no output counts as capped. Without ``grader`` the grader match does not
+    run. ``Batch.checked`` says what ran. The validator always passes ``tokens``.
     """
     value = _load(raw, params.max_batch_bytes)
     version, train = _header(value, params.recipe)
     groups = _groups(value, hotkey)
     kept = _cap(groups, params.max_prompts, params.max_rollouts)
-    _kept(kept, params, tokens)
+    capped = _kept(kept, params, tokens)
     if grader is not None:
-        _graded(kept, params, grader)
+        _graded(kept, params, grader, capped)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
     return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked)
 
@@ -362,5 +378,6 @@ class StoreAdmission:
         if source != frozen_key:
             self.store.put(frozen_key, raw)
         if self.store.sha256(frozen_key) != batch.sha256:
+            self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
         return FrozenBatch(reg.hotkey, batch.sha256, frozen_key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))
