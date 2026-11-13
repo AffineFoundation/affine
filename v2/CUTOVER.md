@@ -10,14 +10,13 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 
 ## Not in this file yet
 
-Each point is a fact or a command that did not exist when this file was written. Do not guess it. Each place below that needs one says **Not landed yet**.
+Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The preflight command (hard gate, "GPU box", step 5).
 2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
-3. The command of the public pull on AffineValidator, and the steps that reset the site ("AffineValidator", steps 11 and 12). The website worker writes them.
-4. The setting on the GPU box that puts the address of the link files into `llms.txt` ("GPU box", step 2).
-5. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
-6. Unit files for `run`, the public pull and the site builder. The repository has unit files for the weights writer and the upload links job (`v2/systemd/`).
+3. The code that reads `SN120_LINKS_URL` on the GPU box. The variable is in this file; the code of this commit does not read it yet ("Before the mainnet bootstrap", check 4).
+4. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
+5. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
 
 ## Hosts
 
@@ -29,13 +28,13 @@ This file names no machine address. Jacob has them.
 | **AffineValidator** (the validator host) | The website, and three v2 jobs: the hourly weights writer, the upload links job, the public pull. v1's weight writer and v1's `affine-ff.service` run here until the cutover. | The validator hotkey. The public file of its coldkey. Three credentials files, one for each job. | A state directory from the GPU box. |
 
 - The GPU box is disposable. Its state directory is a cache of the journal. The durable copy of the journal is in R2 (`private/journal/`), one object for each record. A new box runs the same `run` command and continues from that copy ("A new GPU box").
-- Each job on AffineValidator has its own credentials file and its own directory for its copy of the journal. No job shares a directory with another, and nothing is copied from the GPU box.
+- Each job on AffineValidator has its own credentials file. The weights writer and the links job each have their own directory for their copy of the journal. No job shares a directory with another, and nothing is copied from the GPU box.
 
 | Job on AffineValidator | Credentials file | Directory |
 | --- | --- | --- |
 | Weights writer | Its own env file with a read-only R2 token. The unit never reads another credentials file. | Its own, for example `$HOME/sn120-v2-weights` |
 | Upload links job | v1's file `/home/const/subnet120-rewrite/state/private/r2-direct.env`, read in place (`--credentials-file`). It can sign an upload; v1's `affine-ff.service` signs with it. | Its own, for example `$HOME/sn120-v2-links` |
-| Public pull | Its own env file with a read-only R2 token. | Its own |
+| Public pull | Its own env file with a read-only R2 token, for example `$HOME/sn120-v2-site-pull.env`. | None: it reads no journal. It writes only in the site directory. |
 
 ## Production values (Jacob, 13 Nov 2026)
 
@@ -46,6 +45,7 @@ This file names no machine address. Jacob has them.
 | `SN120_R2_PREFIX` | Empty. Leave the variable out, or set it to nothing. The smoke test has its own prefix in the same bucket. |
 | `SN120_R2_ACCESS_KEY_ID`, `SN120_R2_SECRET_ACCESS_KEY` | From the secret store. Never in the repository. |
 | `SN120_PUBLIC_URL` | `https://affine.io` |
+| `SN120_LINKS_URL` (GPU box only) | `https://affine.io/ff/links`. The publisher puts it into `llms.txt` and `mining.json`. |
 | Site directory on AffineValidator | `/home/const/subnet120/affine/website` |
 | Address of the link files (`--links-url`) | `https://affine.io/ff/links` |
 | Address of `llms.txt` | `https://affine.io/llms.txt`, as in v1 |
@@ -123,11 +123,17 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    nvidia-smi --query-gpu=index,name,memory.used --format=csv     # 8 GPUs, almost no memory in use
    ```
 
-4. The head pointer. It must print `public/head.json`. If it prints `public/current.json`, this build would overwrite a v1 object: stop. (**Not landed yet** at the commit of this file.)
+4. Three changes that the build must hold. (**Not landed yet** at the commit of this file.) Stop if one of them is wrong.
 
    ```
    python -c "from sn120_v2 import layout; print(layout.CURRENT)"
+   grep -c SN120_LINKS_URL sn120_v2/assembly.py
+   python -m sn120_v2.r2 --help | grep -c preflight
    ```
+
+   - The first line must print `public/head.json`. With `public/current.json`, this build would overwrite a v1 object.
+   - The second must print a count of 1 or more. With 0, this build does not read `SN120_LINKS_URL`, and `llms.txt` does not name the link files.
+   - The third must print a count of 1 or more. With 0, this build has no preflight command.
 
 5. A new parameter file, `$CUT/params.json`. Do not use the smoke test's file: it holds the old digests and `batch_cap` 8. The coordinator names `global_norm_cap` (about 4 times the update norm that the smoke test measured, SMOKE.md step 9) and any other value that the smoke test changed.
 
@@ -155,12 +161,13 @@ Run every command from `v2/`, inside the virtual environment.
    export SN120_R2_ACCESS_KEY_ID=... SN120_R2_SECRET_ACCESS_KEY=...     # read and write; from the secret store
    unset SN120_R2_PREFIX                     # production has no prefix
    export SN120_PUBLIC_URL=https://affine.io
+   export SN120_LINKS_URL=https://affine.io/ff/links     # the address of the link files, for llms.txt
    export SN120_V2_CHAIN_NETWORK=finney      # read-only chain reads; the box has no wallet
    ```
 
    Check: `echo "[$SN120_R2_PREFIX]"` prints `[]`. Do not run `python -m sn120_v2.r2 --self-test` here: the smoke test proved the store, and with no prefix the self-test would write test keys at the top of v1's bucket.
 
-   **Not landed yet:** the variable that gives the publisher the address of the link files (`https://affine.io/ff/links`). Without it, `llms.txt` says `Where to get the link: not published yet`.
+   Without `SN120_LINKS_URL`, `llms.txt` says `Where to get the link: not published yet`, and a miner cannot find its link. Step 8 checks the published text.
 3. **Chain snapshot.** It needs no wallet.
 
    ```
@@ -180,7 +187,19 @@ Run every command from `v2/`, inside the virtual environment.
    - The front seats are the turns that v1 did not judge. Each line shows the v1 epoch of the turn, and how many turns that hotkey had in v1. The seat of epoch 1157 (UID 923) must be among them.
    - `first weights` must show 10 UIDs.
    - The last line of the report must say `UID 0 is <address>: it has no seat and gets no weight; it is the given owner hotkey`.
-5. **Preflight (hard gate).** A read-only command lists every key and prefix that v2 writes, and fails when one of them already exists in the bucket. Run it before the first production write, which is step 6. If it fails, stop the cutover: v2 would write over an object that is not its own. **Not landed yet:** the command line. Do not go on without it.
+5. **Preflight (hard gate).** A read-only command lists every key and prefix that v2 writes, and fails when one of them already exists in the bucket. Run it before the first production write, which is step 6. If it fails, stop the cutover: v2 would write over an object that is not its own. Do not go on without it.
+
+   **Not landed yet** at the commit of this file (PR #131). Nobody has run it against the real bucket: this run is the first. It only lists; it writes nothing.
+
+   ```
+   python -m sn120_v2.r2 --preflight
+   ```
+
+   Check: exit code 0 (`echo $?`), and the last line is `PASS  no object at a key that v2 writes`. The first line names the bucket and the key prefix: the bucket is the production one and the prefix is `''`. Each key or prefix of v2 has one line `ok`; the line for `private/ff/v1/miners` shows the count of miner files, which v2 reads in place.
+
+   A line `EXISTS  <key or prefix>  N objects` and the last line `FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix`: stop, and send the output to the coordinator. Do not delete anything to make it pass.
+
+   After step 6, a second run finds v2's own genesis files. Then name them as expected, one `--allow` for each: `python -m sn120_v2.r2 --preflight --allow public/bases/ --allow public/masters/`.
 6. **Genesis files** (57 GB of disk, 30 GB of RAM, no GPU). With the genesis directory of the smoke test, nothing is downloaded or built again; the files are uploaded to `public/bases/<base hash>/` and `public/masters/<master digest>/` of the production store, and each stored file is read back and compared.
 
    ```
@@ -220,11 +239,11 @@ Run every command from `v2/`, inside the virtual environment.
 
 ## AffineValidator: the order at the cutover
 
-One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Steps 1 to 3 can be done before the cutover. Steps 4 to 13 need step 8 of "GPU box" (the bootstrap).
+One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Steps 1 to 3 can be done before the cutover. Steps 4 to 12 need step 8 of "GPU box" (the bootstrap).
 
-The detail of the weights writer is in the workers' document `api-weights.md`, and that of the links job in `api-links.md`; the commands here are the same.
+The workers' documents hold more detail on each job: `api-weights.md`, `api-links.md` and `api-site.md`. The commands here are the same.
 
-Run every step as the Linux user that runs v1's `affine-ff.service`: that user can read v1's credentials file and owns the site directory. Names for this session (full paths, no spaces):
+Run every step as the Linux user that runs v1's `affine-ff.service`: that user can read v1's credentials file and owns the site directory. The weights writer runs as the same user, so that user must be able to read the hotkey file. Names for this session (full paths, no spaces):
 
 ```
 RUNUSER=$(whoami)
@@ -239,8 +258,11 @@ SITE=/home/const/subnet120/affine/website
 LINKS_URL=https://affine.io/ff/links
 ENDPOINT=https://00523074f51300584834607253cae0fa.r2.cloudflarestorage.com
 BUCKET=affine-verification-mock-20260930
-KEEP=$HOME/sn120-v1-archive                # where files of v1 are kept
-mkdir -p "$KEEP/site"
+PENV=$HOME/sn120-v2-site-pull.env          # the pull's own credentials file
+KEEP=$HOME/sn120-v1-archive                # where files of v1 are kept, outside the site directory
+BACKUP=$KEEP/website-v1                    # the copy of v1's whole site directory
+V1FILE=$KEEP/v1-history.json               # the frozen v1 history
+mkdir -p "$KEEP"
 ```
 
 1. **Install.** The same commit as the GPU box.
@@ -313,7 +335,7 @@ mkdir -p "$KEEP/site"
    ```
 
    Check: stderr says `kings: read from the journal copy in the store`. The JSON line has `"status": "would set"`; `weights` holds the 10 UIDs of the import at 0.1 each, and no UID 0; `validator_hotkey` is the hotkey above; `"validator_registered": true`. The parentheses keep the token out of the shell that the later steps use.
-5. **Dry run with the wallet.** It also reads the hotkey file and runs every check that comes before a submission. Still no chain write.
+5. **Dry run with the wallet, and the chain check.** The dry run also reads the hotkey file and runs every check that comes before a submission. Still no chain write.
 
    ```
    ( set -a; . "$WENV"; set +a
@@ -322,6 +344,25 @@ mkdir -p "$KEEP/site"
    ```
 
    Check: `wallet_hotkey` equals `validator_hotkey`, and either `"preflight": "passed"`, or `"status": "would defer"` with the reason `recent write: the rate limit allows the next one in N blocks`. That reason is normal while v1's writer still writes. Any other reason, or `nothing submitted: the hotkey file ...`: stop and correct it.
+
+   Save the chain check script: the block in "The chain check" below. It only reads the chain and needs no wallet. Step 7 runs it several times. Then run it:
+
+   ```
+   python "$HOME/sn120-v2-chain-check.py"
+   ```
+
+   Check: it prints `commit-reveal on: True` and `rate limit in blocks: 100`. On 13 Nov 2026 at 23:09 UTC, while v1's writer ran, it printed:
+
+   ```
+   block: 9500636 | validator UID: 0
+   commit-reveal on: True | reveal period in epochs: 1
+   rate limit in blocks: 100 | last write block: 9500593 | next write allowed in blocks: 57
+   next epoch in blocks: 111
+   commit that waits for its reveal: block 9500593 | opens at 2026-11-13 23:32:27+00:00
+   weights on chain: {821: 0.1, 822: 0.1, 851: 0.1, 852: 0.1, 909: 0.1, 918: 0.1, 920: 0.1, 942: 0.1, 955: 0.1, 956: 0.1}
+   ```
+
+   If it prints `commit-reveal on: False`, stop and tell the coordinator: that path was not tested. A larger rate limit is not a fault: the writer reads it from the chain, and the wait of step 7 is longer.
 6. **Rehearsal of the links job into an empty directory.** It writes nothing to the store and nothing to the website.
 
    ```
@@ -338,16 +379,37 @@ mkdir -p "$KEEP/site"
    ```
 
    Check: one line `links: issued N of M waiting hotkeys (not activated ..., not Ed25519 ...), removed 0, valid 86400 s`, exit code 0. `M` is the queue of the bootstrap. If the second count is most of v1's files, stop and ask: then the v2 queue is not what the import promised.
-7. **Move the weights writer from v1 to v2. This is one step: do not pause inside it.** Two writers on one hotkey overwrite each other. The chain allows one write per 100 blocks for one hotkey (20 minutes), and v1's writer writes each hour (300 blocks). So do this step when `blocks_since_last_write` of step 4 is between 100 and 250: v1's last write is then old enough for v2's first write, and v1's next write has not come yet.
-   1. Stop and disable v1's hourly weight writer ("v1 units", group B). Check: `systemctl --user list-timers --all` shows no v1 writer, and the `grep` of group B finds no enabled unit. `affine-hourly-burn.timer` and `affine-transition-weights.timer` stay masked.
-   2. One run of v2's writer, at once. This is the first real weight write of v2. A write waits about one minute for the block to be final.
+7. **Move the weights writer from v1 to v2. This is one step: do not pause inside it.** Only one writer can set weights: two writers on one hotkey block each other at the rate limit, and each overwrites the other. While v1's writer runs, every v2 run defers at the rate limit, so v1 stops first.
+
+   **The best time: between minute 25 and minute 55 of an hour.** v1 writes at minute 01. The chain allows one write per 100 blocks for one hotkey (20 minutes), so from minute 21 the next write is allowed. Before minute 55, v1's next run is still far.
+
+   SN120 has commit-reveal on: the weights go to the chain hidden (the commit), and the chain opens them by itself after one epoch, at most 72 minutes later (the reveal). So `set` means that the chain accepted the commit; the weights change at the reveal.
+
+   1. **Check before the stop.** Run the chain check and the dry run with the wallet (step 5) again.
+
+      Check: write down `last write block`; this is v1's last write. The `weights` of the dry run hold the 10 UIDs of the import, and before v2's first winner they are the UIDs of `weights on chain`; if the two sets differ, stop and ask the coordinator. The dry run gives `"preflight": "passed"` or the reason `recent write`.
+   2. **Stop v1's writer.** "v1 units", group B, gives the candidate names; the host is the truth. For the timer and the service that the first two commands show:
+
+      ```
+      systemctl --user list-timers --all
+      grep -rlE 'weights_flip|live_reward_writer|current_assessment_writer|set_weights' ~/.config/systemd/user/
+      systemctl --user is-active <v1 writer>.service     # must print "inactive": do not stop a write that is in progress
+      systemctl --user disable --now <v1 writer>.timer
+      systemctl --user stop <v1 writer>.service
+      ```
+
+      Check: `systemctl --user list-timers --all` does not list the v1 writer's timer, and `systemctl --user is-enabled <v1 writer>.timer` prints `disabled`. `affine-hourly-burn.timer` and `affine-transition-weights.timer` stay disabled and masked. Never start them.
+   3. **Wait for the rate limit.** Run the chain check again.
+
+      Check: `last write block` is still the block of 7.1. If it moved, a v1 writer is still alive: go back to 7.2. Wait until it prints `next write allowed in blocks: 0`. Do not start v2 before this: a first run inside the rate limit submits nothing, and it uses the attempt of the hour.
+   4. **First run of v2's writer.** This is the first real weight write of v2. The command returns when the run ends; a write waits about one minute for the block to be final.
 
       ```
       sudo systemctl start sn120-v2-weights.service
       journalctl -u sn120-v2-weights.service -n 20 --no-pager
       ```
 
-      Check: the last line is JSON with `"status":"set"`. With `"status":"deferred"`, nothing was written and the reason is in the line; v1's last weights stay on chain meanwhile. Each clock hour has one attempt; for a second one in the same hour, correct the cause and run by hand:
+      Check: the log shows `kings: read from the journal copy in the store`, then one JSON line with `"status":"set"`. With `"status":"deferred"`, nothing was submitted and the reason is in the line; v1's last weights stay on chain. Correct the cause, then run one more attempt by hand. `--force` only skips the rule of one attempt for each clock hour; every other check stays.
 
       ```
       ( set -a; . "$WENV"; set +a
@@ -355,32 +417,46 @@ mkdir -p "$KEEP/site"
             --wallet "$WALLET" --wallet-path "$WALLETS" --force )
       ```
 
-   3. The timer: one run each hour at minute 5, also after a reboot. Enable the timer, never the service.
+   5. **Enable the timer.** One run each hour at minute 5, also after a reboot. Enable the timer, never the service.
 
       ```
       sudo systemctl enable --now sn120-v2-weights.timer
-      systemctl list-timers sn120-v2-weights.timer
+      systemctl list-timers sn120-v2-weights.timer --no-pager
       ```
 
-      Check: the timer is listed with its next run. After the next hour, `python -m json.tool "$WSTATE/weights_state.json"` shows `last_receipt.status` `set`.
-8. **Stop v1's upload links and v1's publishers, and move `ff/status.json` away.** Stop and disable `affine-ff.service`, `affine-k1.service` and the other units of group C in "v1 units". `ff/status.json` is written by `affine-ff.service`: after the stop it would show v1's last view for ever, and v2 has no file of this kind.
+      Check: the timer is listed with its next run. If the first run and the first timer run are in the same clock hour, the timer run prints `this hour already had its attempt`; this is normal.
+   6. **Check the commit, then the reveal.** Run the chain check at once.
+
+      Check: `last write block` is a few blocks after the `block` of the `set` line, and a line `commit that waits for its reveal: block <the same block> | opens at <time>` is there. About 3 minutes after that time, run the chain check again: the `commit that waits` line is gone, and `weights on chain` equals the `weights` of the dry run.
+   7. **Check the first timer run**, after the next minute 05: `journalctl -u sn120-v2-weights.service --since "70 minutes ago" --no-pager`.
+
+      Check: the timer's run shows `"status":"set"`. A run that shows `recent write` means that another writer wrote in the last 20 minutes: find that writer and stop it (7.2).
+
+   Go on with step 8 after the check of 7.5. The checks of 7.6 and 7.7 come later by the clock; do them when their time comes.
+8. **Stop v1's upload links and v1's publishers.** Stop and disable `affine-ff.service`, `affine-k1.service` and each other unit of group C in "v1 units". Two writers of one public file are never allowed: a v1 unit that still runs writes `index.html` or `mining.json` over the v2 files, and the pull writes them back a minute later.
 
    ```
-   systemctl --user disable --now affine-ff.service        # and each other unit of group C
-   mv "$SITE/ff/status.json" "$KEEP/ff-status-v1.json"
+   systemctl --user disable --now affine-ff.service affine-k1.service        # and each other unit of group C
    ```
 
-   Check: `systemctl --user is-active affine-ff.service` prints `inactive`, and `is-enabled` prints `disabled`. `ls "$SITE/ff/status.json"` finds no file, and `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
-9. **Save v1's site files and freeze the v1 history.** Do it before the first run of the pull and of the site builder: the pull writes `llms.txt` and `mining.json` at the root of the site, over v1's files, and the builder writes the nine files of the `for` line.
+   Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more.
+9. **Save v1's site, freeze the v1 history, move v1's stale files away.** Do it after the import's real run (the import reads `https://affine.io/k1.json`) and before the first run of the pull. The pull replaces these files at the root of the site with no check of who wrote them: `llms.txt`, `mining.json`, `index.html`, `v1.html`, `site.js`, `site.css`, `favicon.svg`, `network-haffer.ttf`, `network-mono.ttf`, `site-data.json`, `v1-data.json`.
 
    ```
-   for f in mining.json k1.json llms.txt scores.json benchmarks.json \
-            index.html v1.html site.css site.js favicon.svg network-haffer.ttf network-mono.ttf site-data.json v1-data.json; do
-     [ -e "$SITE/$f" ] && cp -a "$SITE/$f" "$KEEP/site/"; done
-   python site/v1_archive.py --from "$SITE" --out "$KEEP/v1-history.json"
+   du -sh "$SITE"; df -h "$KEEP"                 # the copy needs the first size; the disk must have it
+   cp -a "$SITE" "$BACKUP"
+   python site/v1_archive.py --from "$SITE" --out "$V1FILE"
+   ls "$SITE/public"                             # v1 should have no such directory
+   mkdir -p "$KEEP/moved"
+   mv "$SITE/ff/status.json" "$SITE/k1.json" "$SITE/scores.json" "$SITE/benchmarks.json" "$SITE/k1" "$KEEP/moved/"
    ```
 
-   Check: `ls "$KEEP/site"` shows at least `mining.json`, `k1.json` and `llms.txt`. The second command prints `v1 archive: wrote ... 10 kings, N turns, M benchmark rows`; it reads `k1.json`, `k1/turns/index.json`, `scores.json` and `benchmarks.json`, and writes nothing unless all four are readable. Keep the file: it cannot be made again. On 13 Nov 2026 the same command on `https://affine.io` gave 10 kings, 857 turns and 261 benchmark rows.
+   - The copy holds v1's `mining.json`, `k1.json`, `llms.txt` and pages as they were at the stop.
+   - `v1_archive.py` reads `k1.json`, `k1/turns/index.json`, `scores.json` and `benchmarks.json`, and writes nothing unless all four are readable. So it runs before the `mv`.
+   - If `ls` shows a `public/` directory of v1, move it into `$KEEP/moved/` too: the pull refuses to replace a file there that it did not write.
+   - The `mv` takes away the files that would show an old state as if it were live. `ff/status.json` was written by `affine-ff.service`; v2 has no file of this kind. `k1.json`, `scores.json`, `benchmarks.json` and `k1/` were written by v1's publishers; the v1 history page of the v2 site reads only the frozen file.
+
+   Check: `ls "$BACKUP/mining.json" "$BACKUP/k1.json" "$BACKUP/llms.txt"` shows the three files. The archive command prints `v1 archive: wrote ... 10 kings, N turns, M benchmark rows` (on 13 Nov 2026 the same command on `https://affine.io` gave 10 kings, 857 turns and 261 benchmark rows). Keep `$V1FILE`: it cannot be made again. `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
 10. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped (step 8), and the bootstrap is done. See "Upload links job" for the reason.
 
     ```
@@ -392,20 +468,104 @@ mkdir -p "$KEEP/site"
     ```
 
     Check: the log shows the `links: issued ...` line of step 6; `removed` is now the second count of step 6. In `ff/links.json`, `issued_at` is new and `link_file` is `https://affine.io/ff/links/<hotkey>.json`. One link opens with a test hotkey that you own: `python -m sn120_v2.links open --hotkey <address> --key <key file> --links-url https://affine.io/ff/links`. The timer is listed (minute 10 and minute 40 of each hour).
-11. **Start the public pull.** With its own read-only token and its own directory, it writes `llms.txt` and `mining.json` at the root of the site, and `public/read_links.json`: signed read links for the weight files, new on every run. It does not copy a weight file, and it takes only keys that v2 writes ("Store"), not everything under `public/`. **Not landed yet:** the command.
+11. **The public pull: one run by hand, then its timer.** One run copies v2's public files from the store into the site directory, writes `public/read_links.json` (signed read links for the weight files of the current head, new on every run), and builds the status site. It never writes to the store, it never copies a weight file, and it takes only keys that v2's code names, never everything under `public/`. See "Public pull and site".
 
-    Check: `curl -fsS https://affine.io/llms.txt | head -n 5` shows the v2 text. `curl -fsS https://affine.io/mining.json | head -c 300` shows `snapshot_digest` and the v2 head. `curl -fsS https://affine.io/public/read_links.json | head -c 300` answers.
-12. **Build the v2 site.** **Not landed yet:** the steps that reset the site, and the value of `--source`. The builder of this commit reads `<source>/public/mining.json`; the form is:
+    Write the pull's own credentials file `$PENV` with these four lines, with no quotes and no `export`, then `chmod 600 "$PENV"`. The token is a read-only one. Do not use v1's credentials file here.
 
     ```
-    python site/build.py --source <the root that holds the v2 snapshot> --public-url https://affine.io --out "$SITE" \
-        --v1-history "$KEEP/v1-history.json" --every 60
+    SN120_R2_ENDPOINT=https://00523074f51300584834607253cae0fa.r2.cloudflarestorage.com
+    SN120_R2_BUCKET=affine-verification-mock-20260930
+    SN120_R2_ACCESS_KEY_ID=
+    SN120_R2_SECRET_ACCESS_KEY=
     ```
 
-    The builder writes its seven static files, `site-data.json` and `v1-data.json`, and nothing else; it leaves `ff/links/` alone. With `--every 60` it builds the data again each minute, and a failed read keeps the last good `site-data.json`. Until a benchmark file exists it says one time `site: no benchmark table`.
+    One run by hand:
 
-    Check: `https://affine.io` shows the v2 page with the 10 kings and the queue, and `https://affine.io/v1.html` shows the v1 history.
-13. **Read the public files as a miner does.** `https://affine.io/llms.txt` names `https://affine.io/ff/links/<hotkey>.json` in the line `Where to get the link`. If that line says `not published yet`, tell the coordinator before the announcement.
+    ```
+    ( set -a; . "$PENV"; set +a
+      "$REPO/v2/.venv/bin/python" "$REPO/v2/site/pull.py" --site-dir "$SITE" --public-url https://affine.io --v1-history "$V1FILE"; echo "exit=$?" )
+    ```
+
+    Check: `pull: wrote N, unchanged N, removed N, failed steps 0; site built` and `exit=0`. With `exit=1`, each failed step is one line `pull: FAILED ...` on stderr, and the last good files of that step stay; `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong.
+
+    Then the unit and the timer: one run each minute.
+
+    ```
+    for unit in sn120-v2-site-pull.service sn120-v2-site-pull.timer; do
+      sed -e "s|SN120_USER|$RUNUSER|g" -e "s|SN120_ENV_FILE|$PENV|g" -e "s|SN120_PYTHON|$REPO/v2/.venv/bin/python|g" \
+          -e "s|SN120_V2_DIR|$REPO/v2|g" -e "s|SN120_SITE_DIR|$SITE|g" -e "s|SN120_PUBLIC_URL|https://affine.io|g" \
+          -e "s|SN120_V1_HISTORY|$V1FILE|g" "$REPO/v2/systemd/$unit" | sudo tee "/etc/systemd/system/$unit" > /dev/null
+    done
+    systemd-analyze verify /etc/systemd/system/sn120-v2-site-pull.service /etc/systemd/system/sn120-v2-site-pull.timer
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now sn120-v2-site-pull.timer
+    systemctl list-timers sn120-v2-site-pull.timer --no-pager
+    ```
+
+    Check, from outside the host:
+
+    ```
+    curl -fsS https://affine.io/llms.txt | head -5
+    curl -fsS https://affine.io/public/mining.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_digest"])'
+    curl -fsS https://affine.io/public/read_links.json | python3 -c 'import json,sys,time; d=json.load(sys.stdin); print(d["head_version_id"], d["expires_at"]-int(time.time()), "seconds left")'
+    ```
+
+    - `llms.txt` shows the v2 text. The second command prints a digest. The third prints the head and about 86000 seconds.
+    - `https://affine.io` shows the v2 page with the 10 kings and the queue. `https://affine.io/v1.html` shows the v1 history.
+    - Take one small file from `base.files` of `public/read_links.json`, download it with its `url`, and compare the sha256 and the size.
+    - If a file is on the disk under `$SITE/public/` and its address gives 404, the web server does not serve the new directory: stop and tell the coordinator. Nobody could test this before the cutover.
+    - Look at the `cache-control` and `age` headers of `https://affine.io/public/read_links.json` (`curl -sI`). If a cache holds the file for more than a few minutes, tell the coordinator: a links file that is cached for longer than its life gives dead links.
+12. **Read the public files as a miner does.**
+
+    ```
+    curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
+    ```
+
+    Check: the line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, the GPU box runs without `SN120_LINKS_URL`: set it there, start `run` again, and do not announce before this check passes.
+
+## The chain check
+
+A script for step 5 and step 7 of "AffineValidator". It only reads the chain. It needs no wallet. Paste the block as it is, from the first column:
+
+```
+cat > "$HOME/sn120-v2-chain-check.py" <<'EOF'
+import bittensor
+from bittensor import storage, timelock
+
+NETUID, VALIDATOR = 120, "5HmYnmUYT6qe3yFMg1Ad8WLLqDvnwtjYakXBpDvoRW1Qqzb8"
+item, chain = storage.SubtensorModule, bittensor.Subtensor("finney")
+block = int(chain.block_info(chain.block).number)
+
+
+def read(name, *keys):
+    return chain.query(getattr(item, name), [NETUID, *keys], block=block)
+
+
+uid = next(int(u) for u, hotkey in chain.query_map(item.Keys, [NETUID], block=block) if str(hotkey) == VALIDATOR)
+last, limit, tempo = int(read("LastUpdate")[uid]), int(read("WeightsSetRateLimit")), int(read("Tempo"))
+epoch, epoch_start = int(read("SubnetEpochIndex")), int(read("LastEpochBlock"))
+print("block:", block, "| validator UID:", uid)
+print("commit-reveal on:", bool(read("CommitRevealWeightsEnabled")), "| reveal period in epochs:", int(read("RevealPeriodEpochs")))
+print("rate limit in blocks:", limit, "| last write block:", last, "| next write allowed in blocks:", max(0, last + limit - block))
+print("next epoch in blocks:", max(0, epoch_start + tempo - block))
+for index in (epoch - 1, epoch):
+    for commit in read("TimelockedWeightCommits", index) or []:
+        if str(commit[0]) == VALIDATOR:
+            print("commit that waits for its reveal: block", int(commit[1]), "| opens at", timelock.reveal_time(int(commit[3])))
+row = sorted((int(u), int(w)) for u, w in read("Weights", uid))
+total = sum(w for _, w in row) or 1
+print("weights on chain:", {u: round(w / total, 4) for u, w in row})
+EOF
+```
+
+Run it with the virtual environment of the checkout: `"$REPO/v2/.venv/bin/python" "$HOME/sn120-v2-chain-check.py"`.
+
+| Line of its output | Meaning |
+| --- | --- |
+| `commit-reveal on`, `reveal period in epochs` | The weights go to the chain hidden, and the chain opens them after that many epochs. An epoch is 360 blocks, 72 minutes. |
+| `rate limit in blocks`, `last write block`, `next write allowed in blocks` | The last weight write of the validator hotkey, by any writer, and how long the chain refuses the next one. |
+| `commit that waits for its reveal` | A write that the chain has accepted and not opened yet. |
+| `weights on chain` | The weights that count now. |
 
 ## After the start
 
@@ -423,6 +583,15 @@ On the GPU box, in the shell of step 2 of "GPU box".
 
 On AffineValidator: `journalctl -u sn120-v2-weights.service --since "3 hours ago" --no-pager` shows the last runs. The dry run of step 4 of "AffineValidator" shows `blocks_since_last_write`; one hour is 300 blocks, so it stays below about 310 while each hourly run sets. If the first log line of a run says `read from the cache of the journal copy`, the store did not answer or the store settings are wrong: the writer then pays the last kings that it read.
 
+### A new commit on the GPU box
+
+Change the commit only when `status` shows `"phase": "IDLE"`. A round that an older commit opened can be refused by a newer one (`VerifyError: the stored ticket of lease ... does not match the journal`). The rule costs nothing, so keep it also when a later build accepts such a round.
+
+1. Wait for `"phase": "IDLE"`, then stop `run`.
+2. Check out the commit, then do checks 1 to 4 of "Before the mainnet bootstrap" again: the install line, the test suite, the digest block.
+3. If the digests changed, pin them with `set-params` (the file holds the whole set of overrides), and export the new `SN120_IMAGE_DIGEST`.
+4. Start `run` again. Never run `bootstrap` again.
+
 ### A new GPU box
 
 1. Stop `run` on the old box, if the box still answers.
@@ -436,11 +605,11 @@ Two `run` processes never both write: the newer one takes over the journal, and 
 
 Before the first v2 round ends:
 
-1. `sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-links.timer`. Stop `run`, the pull and the site builder.
-2. Put the files of `$KEEP/site` back into the site directory, and `ff-status-v1.json` back as `ff/status.json`.
+1. `sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-links.timer sn120-v2-site-pull.timer`. Stop `run` on the GPU box.
+2. Put v1's site back: move the files of `$KEEP/moved/` to their places (`ff/status.json`, `k1.json`, `scores.json`, `benchmarks.json`, `k1/`), and copy from `$BACKUP` each root file that the pull replaced ("AffineValidator", step 9 names them). Move the pull's `$SITE/public/` directory away.
 3. Start v1's weight writer, `affine-ff.service` and v1's publishers again. `affine-ff.service` writes the link files again at its next run.
 
-The import only read public files, and v2 writes no key that v1 wrote, so v1's state in the bucket did not change. The objects that v2 wrote stay in the bucket under v2's own keys.
+The import only read public files, and v2 writes no key that v1 wrote, so v1's state in the bucket did not change. The objects that v2 wrote stay in the bucket under v2's own keys. The weights that are on chain stay until the next write.
 
 ## Upload links job
 
@@ -451,7 +620,9 @@ A miner uploads its file through a link that only its hotkey can open. The job w
 - **`--site-dir`** writes `ff/links/<hotkey>.json` and `ff/links.json` under the site directory. These are the paths and the format of v1, so the address of a miner's link file does not change. The job removes each other `.json` file in `ff/links/`: the link file of a hotkey that has no seat in v2.
 - **`--network finney`** reads the activations. When the chain cannot be read, the run fails and writes nothing; the old links work for up to 23 hours more.
 
-A failed run prints `issue failed: <reason>`, writes nothing and removes nothing. After a replacement of the token every link stops at once: start one run, then test one upload from a machine outside the host.
+A failed run prints `issue failed: <reason>`, writes nothing and removes nothing.
+
+**Do not replace the token in v1's credentials file without one test upload from a machine outside the host.** v1's notes record a token with a limit on the source address: its links worked on the host and gave HTTP 403 to every miner. The token that is in the file now works for the miners. After a replacement, every link signed with the old token stops at once: start one run (`sudo systemctl start sn120-v2-links.service`), then make the test upload.
 
 **Why `affine-ff.service` must be stopped before the first run.** The v1 service and this job write the same files in the same directory. Every 30 minutes v1 writes `ff/links/<hotkey>.json` and `ff/links.json`, and removes the file of each hotkey that is not eligible in v1's view. v1's view of the queue is frozen since the teardown. There is no lock between the two. If both run:
 
@@ -462,6 +633,29 @@ A failed run prints `issue failed: <reason>`, writes nothing and removes nothing
 A link that v1 issued before the stop works until its own end, 24 hours at most. It points to the same object that v2 reads (the same bucket, no prefix, the same key), so a file uploaded through it reaches v2. The activations are on chain: nothing is copied.
 
 Never run two link jobs that write to the same place. Never run `links activate --execute` as the operator: it is the miner's own chain write. Never paste an opened link into a log or a chat. Never copy the credentials file, and never show its content.
+
+## Public pull and site
+
+Nothing serves the bucket to the public. The pull (`site/pull.py`) is the one way from the store to `https://affine.io`. One run, then exit; the timer starts a run each minute, at second 30.
+
+What one run does:
+
+1. It copies `public/mining.json` and `public/llms.txt`, only as a pair of the same snapshot. Each goes to the path of its key and also to the root of the site, so `https://affine.io/llms.txt` stays the address of `llms.txt`.
+2. It copies the head pointer and writes `public/read_links.json`. The links are for the base, the LoRAs and the master of the current head, and each works for 24 hours (`--ttl-s`).
+3. It copies the head manifests, the round files, the task tables that `mining.json` names, and `public/benchmarks.json` when it exists.
+4. It builds the status site (`site/build.py`): the v2 page, and `v1.html` from the frozen v1 history.
+
+What it may touch in the site directory:
+
+- Under `public/`, only files that its own list `public/pull_index.json` names. A file that it did not write is left as it is, and the run exits 1 with the name of the file.
+- At the root, the eleven files that step 9 of "AffineValidator" names. It replaces them with no check of who wrote them.
+- Nothing else: not `ff/links/`, `ff/links.json`, `k1.json`, `scores.json`, `k1/`, or any other file.
+
+How it knows v2's keys: it reads four fixed keys (the constants of `sn120_v2/layout.py`), lists only `public/heads/` and `public/rounds/`, and takes from a list only a key that a function of `layout.py` builds. The head pointer must be a v2 head manifest; if v1's object is at that key, the run fails at that step and writes no pointer and no links file. This is one more reason for check 4 of "Before the mainnet bootstrap".
+
+Disk: the pull keeps the newest 200 rounds (`--keep-rounds`) and removes its own older round files. The worst case is 200 times 64 MiB; the real size is far less.
+
+Stop: `sudo systemctl disable --now sn120-v2-site-pull.timer`. The files stay as they are.
 
 ## v1 units
 
