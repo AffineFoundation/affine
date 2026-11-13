@@ -339,6 +339,8 @@ def written_roots() -> tuple[list[str], str]:
         elif inspect.isfunction(value) and value.__module__ == layout.__name__:
             found.add(_fixed_prefix(value))
     roots = sorted(root for root in found if not any(root.startswith(other + "/") for other in found))
+    if {"public", "private"} & set(roots):  # v1 has objects in both zones: v2 never lists a whole one
+        raise ContractError("layout.py names a whole zone, public/ or private/, as a key prefix; name the directory under it")
     return roots, _fixed_prefix(layout.miner_object)
 
 

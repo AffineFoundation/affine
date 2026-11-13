@@ -64,8 +64,8 @@ class HeadTokens:
     exactly the files that the trainer and the evaluator load.
     """
 
-    def __init__(self, store: ObjectStore, cache: Path) -> None:
-        self.store, self.cache = store, cache
+    def __init__(self, store: ObjectStore, cache: Path, journal_manifest: HeadManifest | None = None) -> None:
+        self.store, self.cache, self.journal_manifest = store, cache, journal_manifest
         self._tokens: HFTokens | None = None
 
     def _load(self) -> HFTokens:
@@ -73,7 +73,11 @@ class HeadTokens:
             try:
                 manifest = get_record(self.store, layout.CURRENT, HeadManifest)
             except KeyError:
-                raise ConfigError("the store has no current head yet; run bootstrap first") from None
+                # A store that was bootstrapped when the pointer had another key has none at this key until the
+                # controller's next tick writes it. The journal's manifest is what that pointer will hold.
+                manifest = self.journal_manifest
+                if manifest is None:
+                    raise ConfigError("the store has no current head yet; run bootstrap first") from None
             base_hash = manifest.head.base_hash
             directory = self.cache / base_hash
             for name, sha in sorted(manifest.base_files.items()):
@@ -128,7 +132,7 @@ def stack(context: StackContext) -> Stack:
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
     params = context.params
     pool = load_pool()
-    tokens = HeadTokens(store, context.state_dir / "tokenizer")
+    tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades))
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))

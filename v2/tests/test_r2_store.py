@@ -273,6 +273,31 @@ def test_preflight_only_lists_and_passes_only_when_no_v2_key_exists(env, store, 
     assert preflight(store) is False and "FAIL    pending  r2 list" in capsys.readouterr().out
 
 
+def test_preflight_asks_for_each_key_and_prefix_by_name_and_reads_every_page(store, capsys):
+    """A listing of the bucket's top levels stops at 1000 names. The preflight asks for each root by name and follows the pages."""
+    sent = []
+    store._s3.meta.events.register("before-parameter-build.s3", lambda params, model, **kw: sent.append((model.name, dict(params))))
+    v1 = [f"public/checkpoints/{n:06d}/model.safetensors" for n in range(1001)]  # more of v1 than one page, before every public key of v2
+    for key in v1:
+        raw_put(store, key, b"")
+    del sent[:]
+    assert preflight(store) is True
+    roots, _ = written_roots()
+    assert all(name == "ListObjectsV2" for name, _ in sent) and [params["Prefix"] for _, params in sent] == roots
+    assert not any({"Delimiter", "MaxKeys", "StartAfter"} & set(params) for _, params in sent), "no top-level listing and no cut"
+    last = layout.frozen_batch("r000001", "zzz")  # the last of 1001 names under one prefix of v2: on the second page
+    for key in [layout.frozen_batch("r000001", f"hk{n:04d}") for n in range(1000)] + [last, layout.round_file("r000001")]:
+        raw_put(store, key, b"")
+    del sent[:]
+    capsys.readouterr()
+    assert preflight(store, show=2000) is False
+    out = capsys.readouterr().out
+    assert "EXISTS  private/rounds  1001 objects" in out and f"          {last}" in out and "EXISTS  public/rounds  1 objects" in out
+    paged = [params for _, params in sent if params["Prefix"] == "private/rounds"]
+    assert len(paged) == 2 and "ContinuationToken" not in paged[0] and paged[1]["ContinuationToken"], "the second page was asked for"
+    assert len(sent) == len(roots) + 1 and len(store.list("")) == 2003
+
+
 def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
     """A key that is added to ``layout.py`` is checked with no change to the preflight."""
     roots, miners = written_roots()
@@ -297,4 +322,8 @@ def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
     assert {"public/new-zone", "public/new-pointer.json"} <= set(written_roots()[0])
     monkeypatch.setattr(layout, "anywhere", anywhere, raising=False)
     with pytest.raises(ContractError, match="anywhere"):
+        written_roots()
+    monkeypatch.delattr(layout, "anywhere")
+    monkeypatch.setattr(layout, "WHOLE_ZONE", "public/", raising=False)  # v1 has objects in public/ and private/
+    with pytest.raises(ContractError, match="whole zone"):
         written_roots()
