@@ -518,7 +518,12 @@ Pass: `round.txt` has one row for each batch with its delta, z, cap-hit rate and
 3. The `queued_files` counts of step 5.
 4. The norm of the default recipe (step 9).
 5. The dry-run line of step 8.
-6. The `eval` lines of `$SN120_WORK_DIR/logs/phases.jsonl` (the wall time of each block of tasks).
+6. Three things for the launch sizes of a round. Send them after the largest stage that you ran, and again from `5-full`:
+   - The whole file `$SN120_WORK_DIR/logs/phases.jsonl`. It has one line for each training, each block of tasks and each fold, with the times and the token counts. In `5-full`, send it as soon as the first 500 tasks end (the first `"phase": "eval"` line of that round). Do not wait for the end of the round.
+   - `$SMOKE/copied.txt`. Step 5 writes this file again, so send the earlier one before step 5.
+   - The output of `grep "Avg generation throughput" $SN120_WORK_DIR/logs/vllm-*.log`. Send these lines only, with the file name in front, not the whole logs. Each vLLM server writes its speed there every 10 seconds.
+
+   Keep the files in `$SN120_WORK_DIR/logs` between the stages.
 7. Any step that did not pass, with its output.
 
 ## After a green test: the restart loop of `run`
