@@ -246,7 +246,22 @@ def test_self_test_checks_every_rule_and_leaves_nothing(env, store, capsys):
     assert "SN120_R2_BUCKET" in capsys.readouterr().out
 
 
-def test_preflight_only_lists_and_passes_only_when_no_v2_key_exists(env, store, capsys):
+def test_opening_the_store_asks_for_one_name_at_the_prefix_and_reads_no_object(env, store, monkeypatch, capsys):
+    """With an empty prefix the start-up check is at the bucket root, beside v1: one name is asked for, never used, never shown."""
+    store.put("public/current.json", b"v1")
+    sent, make = [], boto3.client
+
+    def client(*args, **options):
+        s3 = make(*args, **options)
+        s3.meta.events.register("before-parameter-build.s3", lambda params, model, **kw: sent.append((model.name, dict(params))))
+        return s3
+
+    monkeypatch.setattr(boto3, "client", client)
+    R2Store.from_env(env)
+    assert sent == [("ListObjectsV2", {"Bucket": env["SN120_R2_BUCKET"], "Prefix": "", "MaxKeys": 1})]
+    assert main(["--preflight"], env) == 0 and {name for name, _ in sent} == {"ListObjectsV2"}
+    assert "public/current.json" not in capsys.readouterr().out
+
     """The cutover gate for a bucket that v1 also used: read-only, and exit 0 only when no key that v2 writes holds an object."""
     for key in V1_KEYS:
         store.put(key, b"v1")
