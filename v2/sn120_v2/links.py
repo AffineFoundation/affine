@@ -24,8 +24,16 @@ evaluated yet), except the burn UID, that has a valid activation. The miner may
 upload again as often as it likes; the object is overwritten each time.
 
 There is no inbound service. ``python -m sn120_v2.links issue`` runs on a timer
-and writes static files. A presigned address is a secret: it is never printed
-by ``issue`` and never stored outside the sealed box.
+and writes static files: into a local web directory (``--site-dir``) or into the
+store under ``public/`` (``--to-store``). The operator gives the public address
+of the link files (``--links-url``); this module names no host and derives no
+address. A presigned address is a secret: it is never printed by ``issue`` and
+never stored outside the sealed box.
+
+The job needs three things: read-only chain access, store credentials that can
+sign a PUT, and the queue. The queue comes from the controller's journal: the
+local file in ``--state-dir``, or with ``--journal-from-store`` the copy that
+the store holds, so the job can run on a host without the controller.
 
 Commands:
 ``issue``     the operator's job: write the link files (see ``--help``)
@@ -51,9 +59,9 @@ from . import layout
 from .admission import FORMATS
 from .chain import SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
+from .journal import JOURNAL_FILE
 from .seams import ObjectStore, Presigner
-from .sim import JOURNAL_FILE
-from .state import State, load
+from .state import State, load, load_from_store
 from .store import LocalStore
 
 try:
@@ -77,13 +85,20 @@ LINK_VERSION = "affine-ff-link-v1"
 LINK_TTL_S = 24 * 3600  # how long one link works
 REISSUE_S = 30 * 60  # how often the job writes fresh links
 MAX_TTL_S = 7 * 24 * 3600  # the store signs no link for longer than this
-SITE = "https://affine.io"
 LINKS_DIR = "ff/links/"  # one file per hotkey, under the site root
 INDEX = "ff/links.json"
 PUBLIC_PREFIX = "public/"  # where the files go when the site is served from the object store
 ACTIVATION_MARK = "affine2|activate|"
 REVEAL_IN = "180s"  # the chain shows the commitment after this delay
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _links_url(text: str) -> str:
+    """The public address of the link files, checked. It is always given, never derived from another setting."""
+    url = text.strip().rstrip("/")
+    if not url.startswith(("https://", "http://")) or url.endswith(".json"):
+        raise ConfigError(f"the public address of the link files must be like https://<site>/ff/links, got {text!r}")
+    return url
 
 
 def _need_nacl() -> None:
@@ -264,12 +279,14 @@ def eligible(state: State, burn_uid: int) -> list[str]:
 
 
 def link_files(
-    hotkeys: Iterable[str], presigner: Presigner, now: int, ttl_s: int = LINK_TTL_S, reissue_s: int = REISSUE_S, site: str = SITE
+    hotkeys: Iterable[str], presigner: Presigner, now: int, links_url: str, ttl_s: int = LINK_TTL_S, reissue_s: int = REISSUE_S
 ) -> dict[str, bytes]:
     """Build one sealed link file per hotkey, and the index. Returns site path -> file content. Writes nothing.
 
+    ``links_url`` is the public address under which a miner reads the files: ``<links_url>/<hotkey>.json``.
     A hotkey that is not an Ed25519 key gets no file. The index lists the hotkeys that got one.
     """
+    link_file = f"{_links_url(links_url)}/<hotkey>.json"
     if not 0 < reissue_s < ttl_s <= MAX_TTL_S:
         raise ConfigError(f"need 0 < reissue ({reissue_s}) < ttl ({ttl_s}) <= {MAX_TTL_S} seconds")
     as_json = lambda value: (json.dumps(value, indent=1, sort_keys=True) + "\n").encode()
@@ -287,7 +304,7 @@ def link_files(
                 "put_headers": put_headers,
                 "get_url": presigner.presign_get(key, ttl_s),
                 "format": " | ".join(FORMATS),
-                "spec": f"{site}/llms.txt",
+                "spec": "llms.txt and mining.json of the subnet (batch file)",
             }
             outer = stamp | {"hotkey": hotkey, "sealed_to": sealed_to, "sealed": seal(link, hotkey)}
         except ContractError:
@@ -295,7 +312,8 @@ def link_files(
         files[f"{LINKS_DIR}{hotkey}.json"] = as_json(outer)
     names = sorted(Path(name).stem for name in files)
     local = time.strftime("%Y-%m-%d %H:%M:%S CR (UTC-6)", time.gmtime(now - 6 * 3600))
-    files[INDEX] = as_json(stamp | {"issued_at_cr": local, "hotkeys": names, "reissue_every_seconds": reissue_s})
+    index = {"issued_at_cr": local, "hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
+    files[INDEX] = as_json(stamp | index)
     return files
 
 
@@ -310,11 +328,15 @@ def write_files(files: dict[str, bytes], sink: ObjectStore, prefix: str = "") ->
     return len(stale)
 
 
-def upload_entry(site: str = SITE, ttl_s: int = LINK_TTL_S, reissue_s: int = REISSUE_S) -> dict[str, Any]:
-    """The ``upload`` entry of the public snapshot. Public words only: no address that can write."""
+def upload_entry(links_url: str, ttl_s: int = LINK_TTL_S, reissue_s: int = REISSUE_S) -> dict[str, Any]:
+    """The ``upload`` entry of the public snapshot. Public words only: no address that can write.
+
+    ``links_url`` is the public address of the link files, as given to ``issue --links-url``.
+    """
+    links_url = _links_url(links_url)
     return {
-        "sealed_links": f"{site}/{LINKS_DIR}<hotkey>.json",
-        "index": f"{site}/{INDEX}",
+        "sealed_links": f"{links_url}/<hotkey>.json",
+        "index": f"{links_url}.json",
         "version": LINK_VERSION,
         "who": "every registered SN120 hotkey (not the burn UID) with the one-time Ed25519 activation, until its queue entry is evaluated",
         "sealed_to": "the Ed25519 public key of the hotkey (libsodium sealed box, base64); open it with the hotkey's secret seed",
@@ -325,7 +347,7 @@ def upload_entry(site: str = SITE, ttl_s: int = LINK_TTL_S, reissue_s: int = REI
         "reissue_every_seconds": reissue_s,
         "replace": "upload again as often as you like until your entry is evaluated; each upload replaces the file before",
         "activation": "python -m sn120_v2.links activate --wallet NAME --hotkey NAME --execute (one time; an activation made for v1 stays valid)",
-        "open": "python -m sn120_v2.links open --hotkey HOTKEY --key SEED_FILE",
+        "open": f"python -m sn120_v2.links open --hotkey HOTKEY --key SEED_FILE --links-url {links_url}",
     }
 
 
@@ -350,16 +372,19 @@ def _issue_once(args: argparse.Namespace) -> int:
     if R2Store is None:
         raise ConfigError("boto3 is not installed: install the 'r2' extra")
     store = R2Store.from_env()
+    journal = Path(args.state_dir) / JOURNAL_FILE
     try:
-        state = load(Path(args.state_dir) / JOURNAL_FILE)
+        state = load_from_store(store, journal) if args.journal_from_store else load(journal)
     except OSError as exc:
         raise ConfigError(f"cannot read the journal in {args.state_dir}: {type(exc).__name__}") from exc
+    if state.genesis is None:  # an empty journal would look like "nobody waits" and remove every link file
+        raise ConfigError("the journal has no genesis: is this the right state directory and the right store?")
     waiting = eligible(state, args.burn_uid)
     hotkeys = waiting
     if not args.no_activation_check:
         ready = _chain_activated(args.network, waiting, args.netuid)
         hotkeys = [hotkey for hotkey in waiting if hotkey in ready]
-    files = link_files(hotkeys, store, int(time.time()), args.ttl_s, args.reissue_s, args.site)
+    files = link_files(hotkeys, store, int(time.time()), args.links_url, args.ttl_s, args.reissue_s)
     sink, prefix = (LocalStore(args.site_dir), "") if args.site_dir else (store, PUBLIC_PREFIX)
     removed = write_files(files, sink, prefix)
     issued = len(files) - 1  # every file but the index
@@ -394,7 +419,9 @@ def _activate(args: argparse.Namespace) -> int:
 
 
 def _open(args: argparse.Namespace) -> int:
-    address = f"{args.site}/{LINKS_DIR}{args.hotkey}.json"
+    if not args.file and not args.links_url:
+        raise ConfigError("give --links-url (the public address of the link files, from llms.txt), or --file")
+    address = "" if args.file else f"{_links_url(args.links_url)}/{args.hotkey}.json"
     try:
         if args.file:
             doc = json.loads(Path(args.file).read_text())
@@ -416,17 +443,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     issue = commands.add_parser("issue", help="operator: write a sealed link file for each hotkey that may upload")
-    issue.add_argument("--state-dir", required=True, help="the controller's state directory (the journal is read, never written)")
+    issue.add_argument("--state-dir", required=True, help="the directory that holds the controller's journal (it is read, never written)")
+    issue.add_argument(
+        "--journal-from-store",
+        action="store_true",
+        help="read the journal copy in the object store; --state-dir is then only a cache, and never the controller's own directory",
+    )
+    issue.add_argument("--links-url", required=True, help="the public address of the link files, like https://<site>/ff/links (never derived)")
     where = issue.add_mutually_exclusive_group(required=True)
-    where.add_argument("--site-dir", help="write under this local directory: the root of the public website")
-    where.add_argument("--to-store", action="store_true", help=f"write under {PUBLIC_PREFIX} in the object store instead")
+    where.add_argument("--site-dir", help=f"write {LINKS_DIR}<hotkey>.json and {INDEX} under this local directory: the root of the public website")
+    where.add_argument("--to-store", action="store_true", help=f"write the same two paths under {PUBLIC_PREFIX} in the object store instead")
     issue.add_argument("--network", default="", help="the chain to read the activations from: finney, or the address of a node")
     issue.add_argument("--no-activation-check", action="store_true", help="issue to every waiting hotkey; use only when the chain cannot be read")
     issue.add_argument("--netuid", type=int, default=120, help="the subnet (default 120)")
     issue.add_argument("--burn-uid", type=int, default=0, help="the UID that never gets a link (default 0)")
     issue.add_argument("--ttl-s", type=int, default=LINK_TTL_S, help=f"seconds one link works (default {LINK_TTL_S}, at most {MAX_TTL_S})")
     issue.add_argument("--reissue-s", type=int, default=REISSUE_S, help=f"seconds between two issues (default {REISSUE_S})")
-    issue.add_argument("--site", default=SITE, help=f"the public address of the website (default {SITE})")
     issue.add_argument("--loop", action="store_true", help="issue again every --reissue-s seconds, and keep going after an error")
     issue.set_defaults(run=_issue)
 
@@ -442,8 +474,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     opened = commands.add_parser("open", help="miner: open your link and print the upload address (a secret: do not share it)")
     opened.add_argument("--hotkey", required=True, help="your hotkey, as an SS58 address")
     opened.add_argument("--key", required=True, help="a file with the hotkey's Ed25519 seed (64 hex characters), or the bittensor hotkey file")
-    opened.add_argument("--site", default=SITE, help=f"the public address of the website (default {SITE})")
-    opened.add_argument("--file", help="read the link file from this path instead of the website")
+    opened.add_argument("--links-url", default="", help="the public address of the link files, as llms.txt gives it")
+    opened.add_argument("--file", help="read the link file from this path instead of the public address")
     opened.add_argument("--json", action="store_true", help="print every field of the link, not only the upload address")
     opened.set_defaults(run=_open)
 

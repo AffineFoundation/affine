@@ -18,6 +18,7 @@ from sn120_v2.state import State
 from sn120_v2.store import LocalStore
 
 NOW = 1_800_000_000
+URL = "https://site.test/ff/links"  # the public address of the link files
 # Public chain data, read from Finney: one real v1 activation on subnet 120.
 REAL_HOTKEY = "5C5BmN1XCueA5BC1dxEYztCRWhHcYXy8BYbZ6PP9xTnu5VHE"
 REAL_ACTIVATION = f"affine2|activate|{REAL_HOTKEY}|96dT4mRhb_vF7kyFzvfhDGz08ox7iblxLMDUmrxWVVGrYT8oP5YU65wwjZ85efYT1Unp2rlwFgSQDjIE3sHLCg"
@@ -214,7 +215,7 @@ def test_activate_refuses_an_unregistered_hotkey_and_a_key_that_is_not_ed25519()
 
 def test_link_files_have_the_v1_shape_and_only_the_owner_can_open_them():
     presigner = FakePresigner()
-    files = links.link_files([B.hotkey, A.hotkey], presigner, NOW)
+    files = links.link_files([B.hotkey, A.hotkey], presigner, NOW, URL)
     assert sorted(files) == sorted([f"ff/links/{A.hotkey}.json", f"ff/links/{B.hotkey}.json", "ff/links.json"])
     raw = files[f"ff/links/{A.hotkey}.json"]
     outer = json.loads(raw)
@@ -235,13 +236,13 @@ def test_link_files_have_the_v1_shape_and_only_the_owner_can_open_them():
 
 
 def test_no_public_file_shows_an_address_in_the_clear():
-    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW)
+    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW, URL)
     for content in files.values():
         assert b"r2.test" not in content and b"SECRET" not in content and b"private/" not in content
 
 
 def test_the_index_lists_the_hotkeys_that_have_a_link():
-    index = json.loads(links.link_files([B.hotkey, A.hotkey, A.hotkey], FakePresigner(), NOW, ttl_s=7200, reissue_s=600)["ff/links.json"])
+    index = json.loads(links.link_files([B.hotkey, A.hotkey, A.hotkey], FakePresigner(), NOW, URL, ttl_s=7200, reissue_s=600)["ff/links.json"])
     assert index == {
         "version": "affine-ff-link-v1",
         "issued_at": NOW,
@@ -249,28 +250,29 @@ def test_the_index_lists_the_hotkeys_that_have_a_link():
         "expires_at": NOW + 7200,
         "hotkeys": sorted([A.hotkey, B.hotkey]),
         "reissue_every_seconds": 600,
+        "link_file": "https://site.test/ff/links/<hotkey>.json",
     }
-    assert json.loads(links.link_files([], FakePresigner(), NOW)["ff/links.json"])["hotkeys"] == []
+    assert json.loads(links.link_files([], FakePresigner(), NOW, URL)["ff/links.json"])["hotkeys"] == []
 
 
 @pytest.mark.parametrize("ttl_s, reissue_s", [(7 * 86400 + 1, 1800), (0, 0), (1800, 1800), (600, 1800), (86400, 0)])
 def test_link_times_have_limits(ttl_s, reissue_s):
     with pytest.raises(ConfigError):
-        links.link_files([A.hotkey], FakePresigner(), NOW, ttl_s=ttl_s, reissue_s=reissue_s)
-    assert links.link_files([A.hotkey], FakePresigner(), NOW, ttl_s=7 * 86400, reissue_s=1800)
+        links.link_files([A.hotkey], FakePresigner(), NOW, URL, ttl_s=ttl_s, reissue_s=reissue_s)
+    assert links.link_files([A.hotkey], FakePresigner(), NOW, URL, ttl_s=7 * 86400, reissue_s=1800)
 
 
 def test_a_hotkey_that_cannot_be_sealed_to_gets_no_link_and_stops_no_other():
     presigner = FakePresigner()
     not_a_curve_point = ss58(b"\x02" + bytes(31))  # a valid address whose key is not an Ed25519 public key
-    files = links.link_files([A.hotkey, "not-an-address", "../../etc", not_a_curve_point], presigner, NOW)
+    files = links.link_files([A.hotkey, "not-an-address", "../../etc", not_a_curve_point], presigner, NOW, URL)
     assert set(files) == {f"ff/links/{A.hotkey}.json", "ff/links.json"}
     assert json.loads(files["ff/links.json"])["hotkeys"] == [A.hotkey]
     assert all("etc" not in key and "not-an-address" not in key for _, key, _ in presigner.calls)  # a bad name signs nothing
 
 
 def test_open_link_refuses_the_wrong_key_another_hotkey_an_old_link_and_a_changed_file():
-    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW)
+    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW, URL)
     mine, theirs = (json.loads(files[f"ff/links/{m.hotkey}.json"]) for m in (A, B))
     with pytest.raises(ConfigError, match="not the Ed25519 key"):
         links.open_link(mine, A.hotkey, B.seed, NOW)
@@ -331,23 +333,32 @@ def test_write_files_replaces_links_and_removes_those_of_hotkeys_that_left(tmp_p
     sink.put(prefix + f"ff/links/{A.hotkey}.json", b"old")
     sink.put(prefix + "ff/status.json", b"not mine")
     sink.put(prefix + "llms.txt", b"not mine")
-    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW)
+    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW, URL)
     assert links.write_files(files, sink, prefix) == 1
     assert sink.list(prefix + "ff/") == sorted(prefix + name for name in [*files, "ff/status.json"])
     assert sink.get(prefix + f"ff/links/{A.hotkey}.json") == files[f"ff/links/{A.hotkey}.json"]
     assert sink.get(prefix + "llms.txt") == b"not mine"
-    assert links.write_files(links.link_files([], FakePresigner(), NOW), sink, prefix) == 2  # nobody waits: no link file stays
+    assert links.write_files(links.link_files([], FakePresigner(), NOW, URL), sink, prefix) == 2  # nobody waits: no link file stays
 
 
 # ---- the public snapshot ----
 
 
 def test_upload_entry_is_public_and_names_the_link_file():
-    entry = links.upload_entry()
-    assert entry["sealed_links"] == "https://affine.io/ff/links/<hotkey>.json" and entry["index"] == "https://affine.io/ff/links.json"
+    entry = links.upload_entry("https://site.test/ff/links/")
+    assert entry["sealed_links"] == "https://site.test/ff/links/<hotkey>.json" and entry["index"] == "https://site.test/ff/links.json"
     assert (entry["method"], entry["content_type"]) == ("PUT", "application/octet-stream")
     assert (entry["link_ttl_seconds"], entry["reissue_every_seconds"]) == (86400, 1800)
+    assert entry["open"].endswith("--links-url https://site.test/ff/links")
     refuse_private({"upload": entry})  # the publisher's own guard: no upload address, no private object key
     assert json.loads(json.dumps(entry)) == entry
-    other = links.upload_entry("https://example.test", ttl_s=3600, reissue_s=600)
-    assert other["sealed_links"] == "https://example.test/ff/links/<hotkey>.json" and other["link_ttl_seconds"] == 3600
+    other = links.upload_entry("https://example.test/public/ff/links", ttl_s=3600, reissue_s=600)
+    assert other["sealed_links"] == "https://example.test/public/ff/links/<hotkey>.json" and other["link_ttl_seconds"] == 3600
+
+
+@pytest.mark.parametrize("bad", ["", "site.test/ff/links", "ff/links", "https://site.test/ff/links.json", "private/ff/links"])
+def test_the_public_address_of_the_link_files_is_given_and_checked(bad):
+    with pytest.raises(ConfigError):
+        links.upload_entry(bad)
+    with pytest.raises(ConfigError):
+        links.link_files([A.hotkey], FakePresigner(), NOW, bad)
