@@ -11,11 +11,10 @@ from sn120_v2 import layout
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import FencedError, InfraError, JournalCorrupt, V2Error
 from sn120_v2.journal import JOURNAL_FILE, Journal, Mirror, pull, read_journal
-from sn120_v2.kings import main as kings_main
 from sn120_v2.params import Params
 from sn120_v2.public import round_text
 from sn120_v2.sim import SimWorld, sim_params
-from sn120_v2.state import replay
+from sn120_v2.state import load_from_store, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
 
@@ -73,25 +72,27 @@ def test_a_journal_without_a_copy_is_copied_and_a_different_history_is_refused(t
         pull(store, tmp_path / "fresh" / JOURNAL_FILE)
 
 
-def test_the_weights_host_reads_the_kings_from_the_store(tmp_path, capsys):
+def test_the_weights_host_reads_the_kings_from_the_store(tmp_path):
     world = SimWorld(tmp_path / "box", sim_params())
     world.controller.journal.mirror = Mirror(world.store)
     with open(world.root / JOURNAL_FILE, "rb") as handle:
         Mirror(world.store).catch_up(handle, backfill=True)
     world.register(1, 0.3)
     assert world.round().outcome == "applied"
-    host = tmp_path / "validator-host"
-    assert kings_main(["--state-dir", str(host)], open_store=lambda: world.store) == 0
-    assert [king["uid"] for king in json.loads(capsys.readouterr().out)["kings"]] == [1]
-    kings, validator_hotkey = load_kings(host)  # the weights writer's own reader
-    assert kings == list(world.controller.state.kings) and validator_hotkey == world.controller.state.genesis.validator_hotkey
-    before = (host / JOURNAL_FILE).read_bytes()
+    host = tmp_path / "AffineValidator"  # a host with no journal of its own
+    keys = world.store.list("")
+    state = load_from_store(world.store, host / JOURNAL_FILE)
+    assert state.kings == world.controller.state.kings and world.store.list("") == keys, "the read never writes to the store"
+    kings, validator_hotkey = load_kings(host)  # the weights writer's own reader, on the pulled file
+    assert kings == list(state.kings) and validator_hotkey == state.genesis.validator_hotkey
 
-    def down():
+    def down(prefix):
         raise InfraError("the store does not answer")
 
-    assert kings_main(["--state-dir", str(host)], open_store=down) == 1
-    assert (host / JOURNAL_FILE).read_bytes() == before and load_kings(host)[0] == kings, "the last valid kings stay when the store is down"
+    world.store.list = down
+    with pytest.raises(InfraError):
+        load_from_store(world.store, host / JOURNAL_FILE)
+    assert load_kings(host)[0] == kings, "the last valid kings stay when the store is down"
 
 
 # ------------------------------------------------------------ the batch rule (Jacob's rule 6)
