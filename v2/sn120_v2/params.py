@@ -171,7 +171,7 @@ class Params(Record):
     eval_time_budget_s: int = 3600  # placeholder
     samples_per_task: int = 1
     looks: tuple[float, ...] = (0.25, 0.5, 1.0)  # shares of n_tasks; the win test runs at the last look only
-    futility_z: float = -1.0  # at an earlier look, drop a LoRA whose z is at or below this
+    drop_alpha: float = 0.05  # PLACEHOLDER: total chance, over all early looks, to drop a LoRA that is truly on the win bar
     max_output_tokens: int = 65536
     max_context_tokens: int = 69632
     temperature: float = 1.0
@@ -185,7 +185,7 @@ class Params(Record):
 
     # Judging.
     z_bar: float = 1.0  # a winner needs z strictly above this
-    cap_hit_floor: float = 0.33  # reject when cap rate >= max(cap_hit_floor, null cap rate + cap_hit_margin)
+    cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
     cap_hit_margin: float = 0.02
     min_scored_tasks: int = 100  # fewer scored tasks than this can never produce a winner
     min_cover: float = 0.95  # share of rollouts that must resolve; below it the entry is no_decision
@@ -231,7 +231,7 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
-        _need(math.isfinite(self.futility_z), "futility_z must be a number")
+        _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
         _need(self.min_scored_tasks >= 2, "min_scored_tasks must be at least 2: one task has no standard error")
