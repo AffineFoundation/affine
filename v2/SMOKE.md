@@ -127,6 +127,19 @@ Expected last line:
 
 Pass: that line is printed, `uploaded_files` is above 0, and `echo $MASTER_DIGEST` prints 64 hex characters.
 
+Optional, and it saves time: put the two file sets into the model cache of the box now. Without this block, the first round downloads the 56 GB again from R2 before it trains.
+
+```
+export BASE_HASH=$(tail -n 1 $SMOKE/genesis.log | python -c "import json,sys; print(json.load(sys.stdin)['base_hash'])")
+mkdir -p $SN120_WORK_DIR/cache
+cp -alT $SMOKE/genesis/base $SN120_WORK_DIR/cache/$BASE_HASH
+cp -alT $SMOKE/genesis/master $SN120_WORK_DIR/cache/$MASTER_DIGEST
+```
+
+`cp -alT` makes hard links: a second name for the same file, with no second copy on the disk. It needs `$SMOKE/genesis` and `$SN120_WORK_DIR` on the same disk. If it prints `Invalid cross-device link`, use `cp -aT` (a real copy, 56 GB). The box hashes every file in the cache before it uses it. It deletes a directory that does not match and downloads it from R2; the files in `$SMOKE/genesis` stay as they are.
+
+Pass: `ls $SN120_WORK_DIR/cache` shows two directories, with the names `$BASE_HASH` and `$MASTER_DIGEST`.
+
 ## 4. Import dry run from v1, then bootstrap
 
 The import reads two public v1 files (`https://affine.io/k1.json` and `https://affine.io/mining.json`) and one chain snapshot. It needs no credential and writes nothing to v1 or to the chain.
