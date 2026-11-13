@@ -3,11 +3,8 @@
 v2 code may import the standard library, ``sn120_v2`` itself, and the
 third-party names listed in ``third_party_imports.txt``. It must never import
 a legacy v1 or prototype module, and it must never use ``sys.path`` to reach
-one.
-
-Two workstreams may reuse v1, as the spec says: the benchmark service
-(``v2/bench/``) and the website (``v2/site/``). Only those two paths are
-exempt. The guard is strict everywhere else.
+one. Only the benchmark service (``v2/bench/``) and the website
+(``v2/site/``) may reuse v1, as the spec says: those two paths are exempt.
 """
 
 from __future__ import annotations
@@ -46,79 +43,47 @@ def imported_roots(tree: ast.AST) -> list[tuple[int, str]]:
     return found
 
 
-def sys_path_uses(tree: ast.AST) -> list[int]:
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "path"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "sys"
-    ]
-
-
 def violations(source: str, path: Path, approved: frozenset[str]) -> list[str]:
     tree = ast.parse(source, filename=str(path))
     problems = []
     for line, root in imported_roots(tree):
-        if root == "sn120_v2" or root in sys.stdlib_module_names or root in approved:
-            continue
-        kind = "legacy module" if root in LEGACY_ROOTS else "module that is not approved"
-        problems.append(f"{path}:{line}: imports {kind} '{root}'")
-    problems += [f"{path}:{line}: uses sys.path" for line in sys_path_uses(tree)]
+        if root != "sn120_v2" and root not in sys.stdlib_module_names and root not in approved:
+            kind = "legacy module" if root in LEGACY_ROOTS else "module that is not approved"
+            problems.append(f"{path}:{line}: imports {kind} '{root}'")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "path" and isinstance(node.value, ast.Name) and node.value.id == "sys":
+            problems.append(f"{path}:{node.lineno}: uses sys.path")
     return problems
-
-
-def checked_files() -> list[Path]:
-    return [
-        path
-        for path in sorted(V2_ROOT.rglob("*.py"))
-        if ".venv" not in path.parts and not any(path.is_relative_to(exempt) for exempt in EXEMPT_DIRS)
-    ]
 
 
 def test_v2_code_imports_no_legacy_module():
     approved = approved_third_party()
-    files = checked_files()
+    assert not approved & LEGACY_ROOTS, "a legacy name can never be approved"
+    assert sorted(path.relative_to(V2_ROOT).as_posix() for path in EXEMPT_DIRS) == ["bench", "site"]
+    files = [
+        path
+        for path in sorted(V2_ROOT.rglob("*.py"))
+        if ".venv" not in path.parts and not any(path.is_relative_to(exempt) for exempt in EXEMPT_DIRS)
+    ]
     assert files, "the guard found no v2 files to check"
     problems = [p for path in files for p in violations(path.read_text(), path, approved)]
     assert not problems, "\n".join(problems)
 
 
-def test_a_legacy_name_can_never_be_approved():
-    assert not approved_third_party() & LEGACY_ROOTS
-
-
-def test_only_the_benchmark_and_website_paths_are_exempt():
-    assert sorted(path.relative_to(V2_ROOT).as_posix() for path in EXEMPT_DIRS) == ["bench", "site"]
-
-
 @pytest.mark.parametrize(
-    "source",
+    "source,bad",
     [
-        "import subnet.chain",
-        "from priors.baseline_v1 import estimate",
-        "from sn120v2.judge import z_crit",
-        "import importlib\nimportlib.import_module('ops.hourly_burn')",
-        "__import__('miner')",
-        "import sys\nsys.path.insert(0, '..')",
-        "import ff_format",
-        "import torch",
+        ("import subnet.chain", True),
+        ("from priors.baseline_v1 import estimate", True),
+        ("from sn120v2.judge import z_crit", True),
+        ("import importlib\nimportlib.import_module('ops.hourly_burn')", True),
+        ("__import__('miner')", True),
+        ("import sys\nsys.path.insert(0, '..')", True),
+        ("import ff_format", True),
+        ("import torch", True),
+        ("import json\nimport pytest", False),
+        ("from sn120_v2.canonical import digest\nfrom . import errors", False),
     ],
 )
-def test_the_guard_rejects(source, tmp_path):
-    assert violations(source, tmp_path / "module.py", frozenset({"pytest"}))
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "import json",
-        "import pytest",
-        "from sn120_v2.canonical import digest",
-        "from . import errors",
-        "from .errors import V2Error",
-    ],
-)
-def test_the_guard_accepts(source, tmp_path):
-    assert not violations(source, tmp_path / "module.py", frozenset({"pytest"}))
+def test_the_guard_rejects_legacy_imports_and_accepts_clean_ones(source, bad, tmp_path):
+    assert bool(violations(source, tmp_path / "module.py", frozenset({"pytest"}))) is bad

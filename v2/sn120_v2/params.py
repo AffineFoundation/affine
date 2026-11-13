@@ -58,12 +58,14 @@ class MinerBound(Record):
     def check(self, value: Any) -> Any:
         """Return the value to store, or raise ``BatchRejected``. A value is never clamped."""
         if self.choices:
-            names = list(value) if isinstance(value, (list, tuple)) else None
-            if not names or len(set(names)) != len(names) or not set(names) <= set(self.choices):
+            names = list(value) if isinstance(value, (list, tuple)) else []
+            known = bool(names) and all(isinstance(name, str) and name in self.choices for name in names)
+            if not known or len(set(names)) != len(names):
                 raise BatchRejected(f"train.{self.key} must be a non-empty subset of {list(self.choices)}")
             return tuple(name for name in self.choices if name in names)
         wanted = (int,) if self.integer else (int, float)
-        if type(value) not in wanted or not math.isfinite(value) or not self.low <= value <= self.high:
+        # The range test comes first: it is safe for a whole number too large to be a float.
+        if type(value) not in wanted or not self.low <= value <= self.high:
             kind = "a whole number" if self.integer else "a number"
             raise BatchRejected(f"train.{self.key} must be {kind} from {self.low:g} to {self.high:g}")
         return value if self.integer else float(value)
@@ -147,7 +149,7 @@ class Recipe(Record):
         for key, value in train.items():
             bound = self.bound(key)
             if bound is None:
-                raise BatchRejected(f"train.{key} is not a miner-settable field")
+                raise BatchRejected("train has a key that a miner may not set")  # never repeat the miner's own text
             changes[key] = bound.check(value)
         return dataclasses.replace(self, **changes) if changes else self
 
