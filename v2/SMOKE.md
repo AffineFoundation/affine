@@ -203,14 +203,14 @@ The four small files also set these values. They are for the smoke test only:
 
 `5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it one of the small files.
 
-Write the five files. Run this again each time the digest block of step 1 ran:
+Write the files. Run this again each time the digest block of step 1 ran:
 
 ```
 python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE
 export V1_R2_ENDPOINT=... V1_R2_BUCKET=... V1_R2_ACCESS_KEY_ID=... V1_R2_SECRET_ACCESS_KEY=...   # read-only token
 ```
 
-Expected: five lines, `$SMOKE/params-1-tiny.json` to `$SMOKE/params-5-full.json`.
+Expected: seven lines. Five are the stages, `$SMOKE/params-1-tiny.json` to `$SMOKE/params-5-full.json`. Two are for the rounds that hit the time limit on purpose (below): `params-limit-judged.json` and `params-limit-not-scored.json`.
 
 Each stage is the same three commands. Run them for `1-tiny`, then `2-two`, `3-eight`, `4-multi`:
 
@@ -252,7 +252,54 @@ In every stage: no row has the verdict `no_decision`, `not_trained` or `not_scor
 
 ### A round that hits the time limit on purpose
 
-This stage is optional, and its place is between `4-multi` and `5-full`. It proves the rule at the round's time limit with a round that is too long for a short limit. Its parameter file and its pass lines are not in this section yet.
+This stage is optional, and its place is between `4-multi` and `5-full`. It proves the rule at the round's time limit on the real box. It is two rounds. Each one is `2-two` (2 batches, 2 GPUs, reply cap 2048) with a test of 2000 tasks and a short time limit. 2000 tasks can never be scored inside these limits, so each round hits its limit.
+
+The rule (step 6 has it in full): the box stops scoring at the **stop time**. That is the time limit minus `promote_reserve_s`, counted from the lease. A block of tasks that still runs then is stopped and is not used. Then:
+
+- A LoRA with the first look complete is judged on the blocks that null M and every open LoRA finished. It is charged, win or lose.
+- A LoRA with fewer scored tasks than the first look is `not_scored`. It is not charged and it is first in the next round.
+
+| Stage | Proves | Time limit (`round_time_limit_s`) | Stop time | Training time (`train_time_budget_s`) | First look | Block (`eval_chunk_tasks`) | Expected time |
+|---|---|---|---|---|---|---|---|
+| `limit-judged` | the judgment on the blocks finished | 1500 s (25 minutes) | minute 23 | 600 s | 4 tasks (`looks` 0.002 and 1) | 4 tasks | 26 to 28 minutes |
+| `limit-not-scored` | `not_scored`: not charged, place kept | 480 s (8 minutes) | minute 6 | 300 s | 2000 tasks (`looks` 1) | 2000 tasks | 9 to 11 minutes |
+
+Other values of the two files: `promote_reserve_s` 120 in both, so the box stops 2 minutes before the time limit. `lease_timeout_s` is 2 times the time limit (3000 and 960): a result that arrives later than this is not used. `limit-judged` also sets `z_bar` 1 (the launch win rule) and `min_scored_tasks` 8: with fewer than 8 scored tasks no LoRA can win, and no LoRA is dropped at the first look of 4 tasks.
+
+Run `limit-judged` first. It is the main proof: it also shows that the box stops a running block at the stop time. Run it only after `1-tiny` and `2-two` passed on this box: the first replies of a new vLLM server can take minutes, and `limit-judged` leaves the first block that time. Then run `limit-not-scored`. Each round is the same three commands as a stage:
+
+```
+export STAGE=limit-judged
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
+python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
+```
+
+Pass for `limit-judged`, all of these:
+
+1. The first line ends with `(stopped at the time limit)`: `SN120 v2 round r00000N: NULL (stopped at the time limit)` or `... APPLIED (stopped at the time limit)`. Both are a pass.
+2. The line `batches: 2 | tasks scored: N of 2000`. N is a multiple of 4 and far below 2000. Expect some tens.
+3. Two rows, each `lost` or `winner`. The `tasks` column shows the same N in both rows: both LoRAs and null M were judged on the same tasks.
+4. A `lost` row has a note with the reason, most often `z ... is not above 1`. If N is below 8, the note also says `scored on N tasks; the rule needs 8`; that is still a pass.
+5. In the `wall time` line with no winner, `total` is at most `25m00s`. With a winner, `lease to promotion` is at most `25m00s`; the fold comes after it and is not in the limit.
+6. The JSON summary shows `"phase": "IDLE"`, and `served` is 2 more than before: both seats are charged.
+
+Pass for `limit-not-scored`, all of these:
+
+1. The first line is `SN120 v2 round r00000N: NO_DECISION (stopped at the time limit)`.
+2. The line `not scored: 2 of 2 batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
+3. Two rows with the verdict `not_scored` and the note `the round's time limit ended the scoring after 0 tasks, before the first look of 2000`.
+4. In the `wall time` line, `total` is at most `8m00s`.
+5. The JSON summary shows `"phase": "IDLE"`, and `last_outcomes` ends with `"no_decision"`. `served` and `heads` are the same as before the round: nobody is charged, and both seats are still in the queue. The next round takes these two seats first.
+
+Not a pass, and what to do:
+
+- `limit-judged` shows rows with `not_scored`: the first block did not finish before minute 23. That is not a fault of the rule. Send the `eval` lines of `phases.jsonl` and the `wall time` line; the time limit of this file must be higher. Nobody is charged.
+- `limit-not-scored` shows rows with `lost` or `winner`: the box scored 2000 tasks in 6 minutes, or it did not stop. Send `run-limit-not-scored.log`.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training of a small copy took longer than the training time of the file. Send the `train` lines of `phases.jsonl`.
+- `total` is above the time limit by more than a few seconds: the steps after the stop (the stop of the vLLM servers, the result) took more than `promote_reserve_s`. Send the `wall time` line.
+
+After these two rounds, go on with `5-full`: its `set-params` puts the launch values back.
 
 Things to know:
 

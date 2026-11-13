@@ -48,8 +48,15 @@ def bootstrap(directory: Path, params: Path) -> None:
 def test_the_five_parameter_files_of_the_ramp_run_one_round_each_on_one_bootstrap(tmp_path, start, capsys):
     (tmp_path / "plan.json").write_text(json.dumps({"image_digest": SIM_IMAGE, "code_digest": ""}))
     assert smoke.main(["params", "--plan", str(tmp_path / "plan.json"), "--out", str(tmp_path)]) == 0
-    files = {stage: tmp_path / f"params-{stage}.json" for stage in STAGES}
+    files = {stage: tmp_path / f"params-{stage}.json" for stage in [*STAGES, *smoke.LIMIT]}
     assert capsys.readouterr().out.split() == [str(path) for path in files.values()]
+    for stage, stop_s, first_look in (("limit-judged", 1380, 4), ("limit-not-scored", 360, 2000)):
+        at_limit, two = load_params(files[stage]), load_params(files["2-two"])
+        assert (at_limit.batch_cap, at_limit.n_gpus, at_limit.max_output_tokens) == (two.batch_cap, two.n_gpus, two.max_output_tokens)
+        assert at_limit.round_time_limit_s - at_limit.promote_reserve_s == stop_s and at_limit.train_time_budget_s < stop_s
+        assert (at_limit.n_tasks, at_limit.look_sizes()[0]) == (2000, first_look) and first_look % at_limit.eval_chunk_tasks == 0
+    judged = load_params(files["limit-judged"])
+    assert judged.min_scored_tasks > judged.look_sizes()[0] and judged.z_bar == Params().z_bar, "no drop at the first look; the launch win rule"
     directory = tmp_path / "state"
     stack = ["--state-dir", str(directory), "--stack", "sn120_v2.sim:stack"]
     if start == "a new bootstrap":
