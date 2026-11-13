@@ -89,13 +89,46 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
-    assert "training reads at most 777 output tokens" in text and "A longer rollout is valid. The trainer" in text
+    assert "Training reads at most 777 output tokens" in text and "A longer rollout is valid: the trainer" in text
     header = doc["contract"]["batch_file"]["upload_headers"]
     assert header == {"Content-Type": "application/octet-stream"} and "`Content-Type: application/octet-stream`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds")
     for key in doc["contract"]["objects"].values():
         assert key.startswith("public/") and key in text
+
+
+def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_path):
+    recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777, train_max_context_tokens=888, sample_temperature=0.75)
+    text = published(world(tmp_path, temperature=0.9, recipe=recipe).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+    flat = " ".join(text.split())  # the rules as sentences, whatever the line breaks
+    assert "A value G above 0 cuts the rollouts of each prompt, in file order, into groups of G" in flat
+    assert "its reward minus the mean reward of its group. The default is 0." in flat
+    assert "divides the logits of the head by T" in flat and "`params.temperature` (0.9). The default T is 0.75." in flat
+    assert "every B matrix is multiplied by cap / norm" in flat and "It is unset now: there is no cap." in flat
+    assert "`train_max_output_tokens` (777) or `train_max_context_tokens` (888, prompt + output) is truncated, not rejected" in flat
+    assert "A rollout with no output token left is dropped and counted." in flat
+    assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
+    assert "reads the latest file at lease time" in flat and "The admission checks run again on each new file." in flat
+    capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
+    assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+
+
+def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):
+    made = world(tmp_path)
+    doc, text, _ = published(made.publisher.snapshots[-1])
+    assert doc["irt_snapshot_id"] == "" and "No round has used a snapshot yet." in text  # bootstrap: nothing to name
+    made.register(11, 0.4)
+    made.round()
+    running, idle = made.publisher.snapshots[-2:]
+    for snap, name, found in ((running, "the open round", running["round"]["irt_snapshot_id"]), (idle, "the last closed round", idle["irt_snapshot_id"])):
+        doc, text, _ = published(snap)
+        key = layout.irt_snapshot(found)
+        assert made.store.exists(key) and f"- Snapshot of {name}: id `{found}`, object `{key}`" in " ".join(text.split())
+        assert "tasks" not in doc and "tasks" not in json.dumps(doc["contract"])  # the table stays in its own object
+    store = MemStore({layout.head_manifest(idle["head"]["head"]["version_id"]): b"{}"})
+    publisher.StorePublisher(store, "https://files.example/").publish(idle)
+    assert f"https://files.example/{layout.irt_snapshot(idle['irt_snapshot_id'])}" in store.get(layout.LLMS_TXT).decode()
 
 
 @pytest.mark.parametrize(

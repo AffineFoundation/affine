@@ -15,6 +15,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import re
+import textwrap
 import time
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -23,7 +25,7 @@ from .admission import CONTROL_TOKENS, FORMATS
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
-from .irt import draw_from_snapshot
+from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .judging import drop_margin
 from .params import MinerBound, Params, Recipe
 from .seams import ObjectStore
@@ -49,9 +51,16 @@ RECIPE_NOTES = {
     "sample_temperature": "temperature your rollouts were sampled at",
     "rank": "LoRA rank",
     "alpha": "LoRA scale",
+    "dropout": "LoRA dropout",
     "target_modules": "layers that get an adapter",
+    "ppo_clip": "the probability ratio (trained policy / head) of a token is clipped to 1 +- this value",
+    "dual_clip": "a rollout with a negative advantage: its loss per token is at most this many times its advantage",
     "kl": "KL term; 0 = off",
     "support_top_k": "the policy-gradient term uses only tokens the head could sample (top-k, then top-p)",
+    "support_top_p": "top-p of that support",
+    "derail_window": "a rollout that hit the cap, with a negative advantage: window of the derail test, in tokens",
+    "derail_threshold": "the derail point is the first token where the mean log-probability of the window is below this",
+    "derail_tail": "tokens later than this many after the derail point do not train",
     "train_max_output_tokens": "training reads at most this many output tokens of a rollout; it is not the scoring cap",
     "train_max_context_tokens": "training reads at most this many prompt + output tokens of a rollout",
     "code_digest": "sha256 of the training code",
@@ -79,6 +88,25 @@ def utc(seconds: Any) -> str:
 def table(columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
     lines = ["| " + " | ".join(columns) + " |", "|" + " --- |" * len(columns)]
     return lines + ["| " + " | ".join(show(cell) for cell in row) + " |" for row in rows]
+
+
+def reflow(lines: Iterable[str], width: int = 112) -> list[str]:
+    """Join each paragraph and each list item, then wrap it. Headings, tables and code blocks stay as they are."""
+    out: list[str] = []
+    block: list[str] = []
+    fenced = False
+    for line in [*lines, ""]:
+        fixed = fenced or not line or line.startswith(("|", "#", "```"))
+        fenced ^= line.startswith("```")
+        if block and (fixed or line.startswith("- ")):
+            indent = "  " if block[0].startswith("- ") else ""
+            # A lone operator stays on the line of the word before it: a line that starts with "- " reads as a new item.
+            text = re.sub(r" (?=[-+*/=<>x] )", "\xa0", " ".join(part.strip() for part in block))
+            wrapped = textwrap.wrap(text, width, subsequent_indent=indent, break_long_words=False, break_on_hyphens=False)
+            out += [part.replace("\xa0", " ") for part in wrapped]
+            block = []
+        (out if fixed else block).append(line)
+    return out[:-1]
 
 
 def bound_text(bound: MinerBound) -> str:
@@ -164,7 +192,9 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "") -> dict[s
     return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url)}
 
 
-def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
+def _recipe_lines(params: Params) -> list[str]:
+    recipe, recipe_id = params.recipe, params.recipe_id
+    cap = recipe.global_norm_cap
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [
@@ -196,6 +226,24 @@ def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
         "  `train` makes the whole file invalid.",
         f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
         "- Your `train` values are published only if your batch wins.",
+        "- The `train` keys of v1 (`lr`, `kl`, `step_mult`) are not keys here. A file that carries one is invalid.",
+        "",
+        "### What the trainer does with them",
+        "",
+        "- `group_size`: 0 means one group per prompt, with all rollouts of the prompt as the file has them. A value G",
+        "  above 0 cuts the rollouts of each prompt, in file order, into groups of G; a last group with fewer than G",
+        "  rollouts stays a group. The advantage of a rollout is its reward minus the mean reward of its group. The",
+        f"  default is {recipe.group_size}.",
+        "- `sample_temperature` T: you state the temperature at which you sampled your rollouts. The trainer divides the",
+        "  logits of the head by T before it scores the tokens of a rollout. Evaluation always uses",
+        f"  `params.temperature` ({show(params.temperature)}). The default T is {show(recipe.sample_temperature)}.",
+        "- `global_norm_cap`: the largest allowed Frobenius norm of the whole adapter update,",
+        "  sqrt(sum over all target modules of ||(alpha / rank) * B @ A||_F^2), in the units of the model weights. If the",
+        "  trained update is larger, every B matrix is multiplied by cap / norm. `step_norm` in the train report is the",
+        f"  norm after the cap. {'It is unset now: there is no cap.' if cap is None else f'The cap is now {show(cap)}.'}",
+        f"- Train caps: a rollout above `train_max_output_tokens` ({recipe.train_max_output_tokens}) or",
+        f"  `train_max_context_tokens` ({recipe.train_max_context_tokens}, prompt + output) is truncated, not rejected. The",
+        "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
     ]
 
 
@@ -250,8 +298,11 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     return [
         "## 5. Your file",
         "",
-        "You have one private object for each hotkey. You can overwrite it until a round copies it. The copy is what",
-        "is trained. The file stays private unless it wins. Then the exact file and the LoRA are published.",
+        "You have one private object for each hotkey. A hotkey whose queue entry is not evaluated yet keeps its queue",
+        "position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed",
+        "window. The validator reads the latest file at lease time (the moment a round takes the entry): that copy is",
+        "what is trained. The admission checks run again on each new file. The file stays private unless it wins.",
+        "Then the exact file and the LoRA are published.",
         "",
         "```json",
         json.dumps(example, indent=1),
@@ -266,16 +317,16 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
         f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
         f"  {params.max_context_tokens} tokens. The prompt is counted as one user message in the chat template of the",
-        f"  head. Train cap: training reads at most {recipe.train_max_output_tokens} output tokens and",
-        f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid. The trainer",
-        "  truncates it: it trains on the tokens up to the cap only.",
+        f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
+        f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid: the trainer",
+        "  truncates it (section 2).",
         "- Reasoning: the reasoning of an output is the text before its first `\\boxed`. A rollout with fewer than",
         f"  {params.min_reasoning_tokens} reasoning tokens is answer-only. At most {show(params.max_answer_only_frac)} of the",
         f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
         "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
-        "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output),",
-        f"  within {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
+        "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output). The",
+        f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
@@ -306,7 +357,12 @@ def _pool_lines(params: Params) -> list[str]:
 
 
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    irt_id, kings, keys = doc.get("irt_snapshot_id"), doc.get("kings") or [], object_keys()
+    kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
+    snapshots = {"the open round": (doc.get("round") or {}).get("irt_snapshot_id"), "the last closed round": doc.get("irt_snapshot_id")}
+    where = [
+        f"- Snapshot of {name}: id `{found}`, object `{layout.irt_snapshot(found)}`" + (f", {url}/{layout.irt_snapshot(found)}" if url else "")
+        for name, found in snapshots.items() if found
+    ]
     looks, n = params.look_sizes(), params.n_tasks
     drops = [
         f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
@@ -355,10 +411,14 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 8. The IRT snapshot",
         "",
-        "It is public every round: task difficulties, model abilities and sampling weights, tagged with the head.",
-        f"Object: `{keys['irt_snapshot']}`. With it and the round seed you can rebuild the draw. A round names its",
-        "snapshot (`irt_snapshot_id`) and its seed (`round_seed`) in section 3, in `history` and in its round file.",
-        f"Snapshot of the last closed round: `{show(irt_id)}`.",
+        "The task table of the sampler is public for every round. It is one JSON object for each snapshot id:",
+        f"`{keys['irt_snapshot']}`. mining.json names the id (`irt_snapshot_id`); it does not hold the table.",
+        "",
+        *(where or ["- No round has used a snapshot yet. The first round names its snapshot in section 3."]),
+        f"- Model: {MODEL}. The object holds the ability of each head and LoRA, and for each task: {show(TASK_COLUMNS)}.",
+        f"- Draw rule: {DRAW_RULE}.",
+        "- A round names its snapshot (`irt_snapshot_id`) and its seed (`round_seed`) in section 3, in `history` and in",
+        "  its round file. With the snapshot object and the round seed you can rebuild the draw of the round.",
         "",
         "## 9. Objects and how to verify them",
         "",
@@ -373,8 +433,10 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "## 10. Reproduce a round at home",
         "",
         "`python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> --irt-snapshot irt.json",
-        "--round-seed <seed> --backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it against null M. It",
-        "uses the same check, trainer, evaluator and judging code as the validator, and your `train` values.",
+        "--round-seed <seed> --backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it",
+        "against null M. It uses the same check, round runner and judging code as the validator, and your `train` values.",
+        "`--backend` names a function that returns (store, trainer, evaluator, image digest). It has no default: a",
+        "backend for real GPUs is not published yet.",
         "`python v2/miner/affine_miner.py bounds --mining-json mining.json` prints the bounds of section 2.",
     ]
 
@@ -405,11 +467,11 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         f"- Made by round `{head.round_id}` at {utc(head.applied_at)}.",
         f"- Head manifest (every file with its sha256): `{layout.head_manifest(head.version_id)}`",
         f"- `params_hash`: `{params.params_hash}`; `recipe_id`: `{params.recipe_id}`",
-        f"- Public objects are served under `{show(doc['contract']['public_url'])}`.",
+        f"- Public objects are served under: {doc['contract']['public_url'] or 'not set in this file'}. Each key below is a path under it.",
         "",
         *(table(("stacked LoRA", "round", "miner uid", "batch sha256"), loras) if loras else ["No LoRA is stacked on the base."]),
         "",
-        *_recipe_lines(params.recipe, params.recipe_id),
+        *_recipe_lines(params),
         "",
         *_state_lines(doc, params),
         "",
@@ -424,7 +486,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         *table(("parameter", "value"), numbers),
         "",
     ]
-    return "\n".join(lines)
+    return "\n".join(reflow(lines)) + "\n"
 
 
 def render(snapshot: Mapping[str, Any], public_url: str = "") -> tuple[bytes, bytes]:
