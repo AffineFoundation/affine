@@ -15,6 +15,7 @@ from sn120_v2.errors import FencedError, InfraError, JournalCorrupt, V2Error
 from sn120_v2.journal import JOURNAL_FILE, Journal, Mirror, pull, read_journal
 from sn120_v2.params import Params
 from sn120_v2.public import round_text
+from sn120_v2.queue import waiting
 from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
 from sn120_v2.state import load_from_store, replay
 from sn120_v2.store import LocalStore
@@ -128,11 +129,11 @@ def test_a_waiting_seat_may_replace_its_file_until_it_is_evaluated(tmp_path):
     assert world.controller.state.queue == {} and world.round() is None
 
 
-# ------------------------------------------------------------ the round time limit: a round always decides
+# ------------------------------------------------------------ the round time limit
 
 
-def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False, jump: int | None = None) -> SimWorld:
-    """A world whose clock jumps right after ``stop_after_chunks`` scored chunks, by default to the round's time limit."""
+def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False) -> SimWorld:
+    """A world whose clock jumps to the round's time limit right after ``stop_after_chunks`` scored chunks."""
     world = SimWorld(tmp_path, sim_params(eval_chunk_tasks=16))  # 64 tasks, looks at 32 and 64, so 4 chunks
     real, calls = world.evaluator.evaluate, []
 
@@ -143,7 +144,7 @@ def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False, jump: int
         chunk = real(request)
         calls.append(request)
         if len(calls) == stop_after_chunks:
-            world.now += jump or world.params.round_time_limit_s - world.params.promote_reserve_s
+            world.now += world.params.round_time_limit_s - world.params.promote_reserve_s
         return chunk
 
     world.evaluator.evaluate = evaluate
@@ -158,9 +159,8 @@ def test_at_the_time_limit_a_live_lora_is_judged_on_the_whole_chunks_scored_so_f
     world.register(2, 0.0)
     record = world.round()
     params = world.params
-    lease_end = record.opened_at + params.lease_timeout_s - params.promote_reserve_s
     limit = record.opened_at + params.round_time_limit_s - params.promote_reserve_s
-    assert [request.deadline for request in world.calls] == [lease_end, lease_end, limit], "only the end of the lease cuts the first look"
+    assert [request.deadline for request in world.calls] == [limit] * 3, "the limit cuts every look, the first one too"
     assert {entry.uid: entry.score.n_tasks for entry in record.decision.entries} == {1: 48, 2: 48}, "the same prefix for every LoRA and for null M"
     assert record.outcome == "applied" and record.decision.winner.uid == 1, "the final rule, z > 1, on what was scored"
     assert world.controller.state.served_hotkeys == {"hk1", "hk2"} and world.controller.state.queue == {}
@@ -169,25 +169,26 @@ def test_at_the_time_limit_a_live_lora_is_judged_on_the_whole_chunks_scored_so_f
     assert report["wall_s"]["lease_to_promotion"] <= params.round_time_limit_s
 
 
-def test_the_first_look_is_always_scored_in_full_so_every_trained_lora_gets_a_decision(tmp_path):
-    world = limited(tmp_path, 1)  # the round's time limit passes inside the first look
+def test_the_limit_cuts_the_first_look_too_and_those_loras_are_not_charged_and_never_put_on_hold(tmp_path):
+    world = limited(tmp_path, 1)  # the round's time limit passes inside the first look, after 16 of its 32 tasks
     world.register(1, 0.4)
     world.register(2, 0.0)
-    record = world.round()
-    assert len(world.calls) == 2, "the first look was finished, and nothing after it was started"
-    assert {entry.uid: (entry.status, entry.score.n_tasks) for entry in record.decision.entries} == {1: ("winner", 32), 2: ("lost", 32)}
-    assert world.controller.state.served_hotkeys == {"hk1", "hk2"} and world.controller.state.queue == {}
-
-
-def test_only_the_end_of_the_lease_can_leave_trained_loras_with_no_decision(tmp_path):
-    world = limited(tmp_path, 1, jump=Params().lease_timeout_s)
-    world.register(1, 0.4)
-    world.register(2, 0.0)
-    record = world.round()
-    assert record.outcome == "no_decision" and len(world.controller.state.heads) == 1
-    queue = world.controller.state.queue
-    assert set(queue) == {(1, 1001), (2, 1002)} and all(seat.front and not seat.leased for seat in queue.values())
-    assert world.controller.state.served_hotkeys == set() and world.store.list("pending/") == []
+    for _ in range(world.params.max_infra_attempts + 1):
+        world.calls.clear()
+        record = world.round()
+        assert len(world.calls) == 1, "no block of tasks starts after the limit"
+        assert record.outcome == "no_decision" and {entry.status for entry in record.decision.entries} == {"not_scored"}
+        assert "after 16 tasks, before the first look of 32" in record.decision.entries[0].reason
+        queue = world.controller.state.queue
+        assert set(queue) == {(1, 1001), (2, 1002)}, "both keep their place"
+        assert all(seat.front and not seat.leased and not seat.held and seat.infra_attempts == 0 for seat in queue.values())
+    assert world.controller.state.served_hotkeys == set() and len(world.controller.state.heads) == 1 and world.store.list("pending/") == []
+    report = json.loads(world.store.get(layout.round_file(record.round_id)))
+    assert report["wall_s"]["total"] <= world.params.round_time_limit_s
+    assert "not scored: 2 of 2 batches" in round_text(report) and "(stopped at the time limit)" in round_text(report)
+    world.register(7, 0.0, block=900)  # registered earlier than both, and it never had a turn
+    order = [seat.reg.uid for seat in waiting(world.controller.state.queue)]
+    assert order == [1, 2, 7], "the not_scored seats keep their order among themselves, ahead of the rest of the queue"
 
 
 def slow_first_job(world: SimWorld) -> None:
@@ -269,7 +270,7 @@ def test_a_box_that_starts_a_round_after_its_training_time_charges_nobody(tmp_pa
 def test_the_launch_limits_are_32_batches_100_minutes_and_temperature_1():
     params = Params()
     assert (params.batch_cap, params.round_time_limit_s, params.temperature) == (32, 6000, 1.0)
-    assert params.train_time_budget_s < params.round_time_limit_s - params.promote_reserve_s < params.round_time_limit_s <= params.lease_timeout_s
+    assert params.train_time_budget_s < params.round_time_limit_s - params.promote_reserve_s < params.round_time_limit_s <= params.lease_timeout_s <= 2 * 3600
     assert params.eval_chunk_tasks == params.look_sizes(params.n_tasks)[0], "the first look is one chunk"
     with pytest.raises(V2Error):
         Params(train_time_budget_s=5400)  # no time left for the scoring

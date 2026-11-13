@@ -32,7 +32,7 @@ from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
-from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
+from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
 # The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
@@ -261,12 +261,12 @@ def _recipe_lines(params: Params) -> list[str]:
 def _round_time_lines(params: Params) -> list[str]:
     """What the clock does to a round. Every word here follows ``worker.LocalRunner.run``.
 
-    When the rule of the time limit changes, change this function. Two sentences elsewhere depend on it: the
-    ``not_trained`` bullet of section 4 and the "time limit" bullet of section 6. Both refer to this section.
+    When the rule of the time limit changes, change this function. Three sentences elsewhere depend on it: the
+    ``not_trained`` and ``not_scored`` bullets of section 4 and the "time limit" bullet of section 6. They refer to
+    this section.
     """
-    # The three times of worker.LocalRunner.run, in seconds from the lease.
-    last = params.lease_timeout_s - params.promote_reserve_s
-    stop = min(last, params.round_time_limit_s - params.promote_reserve_s)
+    # The two times of worker.LocalRunner.run, in seconds from the lease.
+    stop = min(params.lease_timeout_s, params.round_time_limit_s) - params.promote_reserve_s
     train_end = min(stop, params.train_time_budget_s)
     limit, reserve, first_look = show(params.round_time_limit_s / 60), show(params.promote_reserve_s / 60), params.look_sizes()[0]
     return [
@@ -275,8 +275,9 @@ def _round_time_lines(params: Params) -> list[str]:
         "All times count from the lease: the moment a round takes its entries. A round ends early, as soon as every",
         "LoRA is dropped or decided.",
         "",
-        f"- Time limit: {limit} minutes from the lease to the promotion of the winner. The box stops {reserve} minutes",
-        f"  before it, at minute {show(stop / 60)} (the stop time), so that judging and promotion fit.",
+        f"- Time limit: {limit} minutes from the lease to the promotion of the winner. The box stops scoring {reserve} minutes",
+        f"  before it, at minute {show(stop / 60)} (the stop time). The stop is hard. The {reserve} minutes are for the grading of the last",
+        "  chunk, the judging and the promotion.",
         f"- Training time: the first {show(train_end / 60)} minutes. Batches train in queue order. Each batch trains on its own slot of",
         f"  GPUs, and the slots train at the same time. A slot is floor({params.n_gpus} / batches) GPUs, and at least 1. So with",
         f"  {params.n_gpus} batches or more, each batch trains on one GPU, {params.n_gpus} batches at a time, and each other batch waits for a",
@@ -288,17 +289,17 @@ def _round_time_lines(params: Params) -> list[str]:
         f"  is a failure of ours: `{NO_DECISION}`.",
         f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. An open LoRA is a",
         "  LoRA that was not dropped at a look (section 6).",
-        f"- The first look ({first_look} tasks) is always scored in full for null M and every trained LoRA. The time limit does",
-        "  not cut it. So each trained LoRA gets a decision.",
-        "- After the first look, the stop time applies. The box starts no new chunk after it, and a chunk that is not",
-        "  finished at the stop time is not used. Each open LoRA is then judged by the win rule of section 6 on the",
-        "  whole chunks that null M and every open LoRA finished. Those tasks are then the whole test: z strictly",
-        f"  above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
-        f"- So a round is longer than {limit} minutes only when the training time and the first look together are longer",
-        "  than that.",
-        f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. If the first look is not complete {reserve} minutes before",
-        f"  that, each trained LoRA is `{NO_DECISION}`. A box result that arrives after the end of the lease is never used:",
-        f"  each entry of that box is `{NO_DECISION}`.",
+        "- The stop time cuts every look, the first one too. The box starts no new chunk after the stop time, and a",
+        "  chunk that is not finished at the stop time is not used. There are no further looks.",
+        f"- At the stop time, with the first look ({first_look} tasks) complete: each open LoRA is judged by the win rule of",
+        "  section 6 on the whole chunks that null M and every open LoRA finished. Those tasks are then the whole",
+        f"  test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
+        f"- At the stop time, with fewer than {first_look} tasks scored: each trained LoRA is `{NOT_SCORED}`. You are not charged,",
+        "  your seat is first in the next round, and no failure is counted for the seat.",
+        f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. A box result that arrives after the end of the lease is",
+        f"  never used: each entry of that box is `{NO_DECISION}`. No task is scored after the stop time: the time between",
+        "  the stop time and the end of the lease is only a reserve, so that a round that stopped in time does not lose",
+        "  its result.",
         f"- `{NO_DECISION}` means: not charged, and the seat goes to the front of the queue (section 4).",
         "",
     ]
@@ -344,6 +345,8 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  turn until the operator releases it.",
         f"- `{NOT_TRAINED}`: the training time of the round ended before your batch was trained (section 3). You are not",
         "  charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
+        f"- `{NOT_SCORED}`: the time limit of the round came before the first look of the scoring (section 3). You are",
+        "  not charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
         "",
         "### Your place while you wait",
         "",
@@ -550,8 +553,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
         f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
         f"  total level {show(params.drop_alpha)}. For this draw, a LoRA is dropped when z is at or below: {show(drops)}.",
-        "- When the time limit of the round stops the scoring after the first look, the win rule runs on the tasks",
-        "  scored by then (section 3).",
+        "- When the time limit of the round stops the scoring, the win rule runs on the tasks scored by then, with no",
+        f"  further look. With fewer tasks than the first look, there is no decision: `{NOT_SCORED}` (section 3).",
         f"- If fewer than {show(params.min_cover)} of the rollouts resolve without an infrastructure error, the entry is",
         "  `no_decision`.",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",

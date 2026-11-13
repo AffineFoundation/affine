@@ -57,6 +57,7 @@ from .types import (
     LOST,
     NO_DECISION,
     NOT_RUN,
+    NOT_SCORED,
     PASS,
     SCORED,
     SKIP,
@@ -341,7 +342,7 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
             if problems:
                 rows.append((seat, entry, NO_DECISION, problems[0], score))
             elif result.stopped_at_limit and full < first_look:
-                rows.append((seat, entry, NO_DECISION, f"the time limit ended the scoring after {full} tasks, before the first look of {first_look}", score))
+                rows.append((seat, entry, NOT_SCORED, f"the round's time limit ended the scoring after {full} tasks, before the first look of {first_look}", score))
             elif not cover_ok(entry.outcomes, score.n_tasks, params):
                 rows.append((seat, entry, NO_DECISION, f"only {score.cover:.3f} of this LoRA's rollouts resolved", score))
             else:
