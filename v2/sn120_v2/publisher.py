@@ -22,7 +22,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -449,12 +449,12 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
         "",
         f"Not a final verdict: {', '.join(f'`{code}`' for code in TRANSIENT)}. Such a code comes from one check on our machine at one",
-        "moment, so the validator checks the file again each time it tries to open a round. While no round runs, two",
-        "tries can be seconds apart. A failed check is counted only when our checker passes its own known-good case",
-        f"at that moment. The reason shows the count: `(check 1 of {FAULT_TRIES})`. After {FAULT_TRIES} counted checks in a row that fail at",
-        "the same place of the same file, the verdict stays until you upload a new file. With such a code, before",
-        "and after that, a round does not take the file: you are not charged and the seat keeps its place",
-        "(section 4). Every other code is final for those bytes: upload a new file.",
+        f"moment, so the validator checks the file again when it tries to open a round, at most once each {FAULT_HOLD_S // 60} minutes.",
+        "A failed check is counted only when our checker passes its own known-good case at that moment. The reason",
+        f"shows the count: `(check 1 of {FAULT_TRIES})`. After {FAULT_TRIES} counted checks in a row that fail at the same place of the same",
+        "file, the verdict stays until you upload a new file. A new file is checked at the next try, with no wait.",
+        "With such a code, before and after that, a round does not take the file: you are not charged and the seat",
+        "keeps its place (section 4). Every other code is final for those bytes: upload a new file.",
         "",
         "### How to upload",
         "",

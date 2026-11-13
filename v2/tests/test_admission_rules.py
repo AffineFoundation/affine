@@ -8,7 +8,7 @@ import math
 import pytest
 
 from sn120_v2 import layout
-from sn120_v2.admission import GraderTimeLimit, Invalid, StoreAdmission, check_batch, final_answer, verdict
+from sn120_v2.admission import FAULT_HOLD_S, GraderTimeLimit, Invalid, StoreAdmission, check_batch, final_answer, verdict
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError, VerifyError
 
@@ -145,11 +145,14 @@ def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(b
         raw = flat([solved(n) | {"reward": reward if n in (3, 7) else 1} for n in range(20)])
         assert rule(raw, build.params(), grader=timed) == "grader_time_limit"
         assert seen == ["double 0", "double 1", "double 2", "double 3"]  # the check stops at the first such row
-    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=timed)
+    now = [1000.0]
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=timed, clock=lambda: now[0])
     adm.store.put(layout.miner_object(HOTKEY), file())
     assert "groups[3].rollouts[0]" in adm.verdicts([HOTKEY])[HOTKEY].reason and "time limit" in adm.verdicts([HOTKEY])[HOTKEY].reason
     assert adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is None and list(adm.store) == [layout.miner_object(HOTKEY)]  # a skip
-    slow.clear()  # the machine is fast again: the same bytes are checked again and pass
+    slow.clear()  # the machine is fast again
+    assert not adm.verdicts([HOTKEY])[HOTKEY].valid, "the verdict holds for 10 minutes"
+    now[0] += FAULT_HOLD_S  # then the same bytes are checked again and pass
     assert adm.verdicts([HOTKEY])[HOTKEY].valid and adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is not None
 
 

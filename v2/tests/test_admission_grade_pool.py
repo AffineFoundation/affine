@@ -12,7 +12,7 @@ import time
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_TRIES, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
+from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import InfraError
@@ -79,7 +79,8 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
     try:
         official = pool_grader(pool, grade_pool)
         official.probe()  # the first pool tasks pass with their own answers
-        adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=official)
+        now = [1000.0]
+        adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=official, clock=lambda: now[0])
         files = {"good": groups(), "hangs": groups("hang"), "dies": groups("die"), "raises": groups("raise"), "also_good": groups()}
         for hotkey, content in files.items():
             adm.store.put(layout.miner_object(hotkey), file(content, hotkey))
@@ -89,7 +90,11 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
         assert {hotkey: verdict.rule for hotkey, verdict in got.items()} == {"good": "", "hangs": TIME_LIMIT, "dies": FAULT, "raises": FAULT, "also_good": ""}
         assert adm.freeze(build.reg(1, hotkey="hangs"), "r000001") is None and adm.freeze(build.reg(2, hotkey="also_good"), "r000001") is not None
         assert all(got[hotkey].reason == f"groups[2].rollouts[1]: {what} (check 1 of 3)" for hotkey, what in (("hangs", "the official grader did not finish this row inside its time limit"), ("dies", "the official grader fails on this row")))
+        started = time.monotonic()
+        assert all(adm.verdicts(list(files))[hotkey] is got[hotkey] for hotkey in files) and time.monotonic() - started < 1.0, "inside the hold no file is checked again"
+        now[0] += FAULT_HOLD_S
         adm.verdicts(list(files))
+        now[0] += FAULT_HOLD_S
         kept = adm.verdicts(list(files))  # the third failed check in a row, at the same row: the verdict stays
         assert all(kept[hotkey].reason.endswith(f"(checked {FAULT_TRIES} times: this verdict stays until a new file is uploaded)") for hotkey in ("hangs", "dies", "raises"))
         started = time.monotonic()
@@ -104,7 +109,7 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
             for _ in range(2):  # loud each time, and nothing is held against the honest file
                 with pytest.raises(InfraError, match="known-good"):
                     adm.verdicts(["good"])
-            assert adm._tries == {} and adm._seen == {}
+            assert adm._tries == {} and adm._seen == {} and adm._held == {}
         finally:
             down.close()
 

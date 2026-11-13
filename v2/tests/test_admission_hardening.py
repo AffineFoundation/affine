@@ -7,16 +7,23 @@ import inspect
 import json
 import random
 import re
+import shutil
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_TRIES, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, TRANSIENT, GraderFault, GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
+from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, TRANSIENT, GraderFault, GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
 from sn120_v2.canonical import sha256_hex
+from sn120_v2.cli import main
 from sn120_v2.errors import InfraError
 from sn120_v2.gpu.batch import fit_tokens, training_rows
+from sn120_v2.journal import JOURNAL_FILE
+from sn120_v2.sim import STORE_DIR, SimAdmission
+from sn120_v2.state import load
+from sn120_v2.store import LocalStore
 
 HOTKEY = "5MinerA"
 THINK = "step " * 40
@@ -28,6 +35,19 @@ class WordTokens:
 
     def output_tokens(self, text: str) -> int:
         return len(text.split())
+
+
+class Clock:
+    """A clock that the test moves. ``wait()`` ends the hold of a fault verdict."""
+
+    def __init__(self, now: float = 7.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def wait(self, seconds: float = FAULT_HOLD_S) -> None:
+        self.now += seconds
 
 
 class Store(dict):
@@ -122,7 +142,7 @@ def test_env_grader_joins_the_pool_and_the_grade_function(build):
 @pytest.mark.parametrize("name", ["env_grader", "pool_grader"])
 @pytest.mark.parametrize("poison, code", [("raise", FAULT), ("die", FAULT), ("slow", TIME_LIMIT)])
 def test_a_file_that_breaks_the_grader_is_skipped_and_the_other_files_are_checked(name, poison, code, build):
-    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=graders()[name], clock=lambda: 5)
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=graders()[name], clock=Clock())
     bad = file([{"prompt": f"double {n}", "rollouts": [row(2 * n, 1), row(-1, 0, THINK + poison + " " if n == 3 else THINK)]} for n in range(10)], "bad")
     for hotkey, raw in (("first", file(hotkey="first")), ("bad", bad), ("last", file(hotkey="last"))):
         adm.store.put(layout.miner_object(hotkey), raw)
@@ -132,9 +152,11 @@ def test_a_file_that_breaks_the_grader_is_skipped_and_the_other_files_are_checke
     assert adm.freeze(build.reg(2, hotkey="bad"), "r000001") is None  # a skip: not charged, the place is kept
     assert adm.freeze(build.reg(3, hotkey="last"), "r000001") is not None
     assert got["bad"].reason.endswith("(check 1 of 3)")
-    assert adm.verdicts(["bad"])["bad"] is not got["bad"], "the verdict holds for one call: the file is checked again"
+    assert adm.verdicts(["bad"])["bad"] is got["bad"], "the verdict holds for 10 minutes"
+    adm.clock.wait()
+    assert adm.verdicts(["bad"])["bad"].reason.endswith("(check 2 of 3)"), "then the file is checked again"
     assert adm.verdicts(["first"])["first"] is got["first"]
-    adm.store.put(layout.miner_object("bad"), file(hotkey="bad"))  # the miner uploads a file the grader can read
+    adm.store.put(layout.miner_object("bad"), file(hotkey="bad"))  # the miner uploads a file the grader can read: checked with no wait
     assert adm.verdicts(["bad"])["bad"].valid and adm.freeze(build.reg(2, hotkey="bad"), "r000001") is not None
 
 
@@ -257,7 +279,7 @@ def bug_in(monkeypatch, step: str, error: type[BaseException], every_file: bool 
 
 def three_files(bad: list, **inputs) -> StoreAdmission:
     store = Store({layout.miner_object("5A"): file(hotkey="5A"), layout.miner_object("5B"): file(bad, hotkey="5B"), layout.miner_object("5C"): file(hotkey="5C")})
-    return StoreAdmission(store, inputs.pop("params"), tokens=WordTokens(), clock=lambda: 7, **inputs)
+    return StoreAdmission(store, inputs.pop("params"), tokens=WordTokens(), clock=Clock(), **inputs)
 
 
 @pytest.mark.parametrize("error", [KeyError, RecursionError, MemoryError, Panic])
@@ -270,7 +292,9 @@ def test_file_that_breaks_the_checker_is_skipped_and_the_other_files_are_checked
     counted = "" if error is MemoryError else r" \(check 1 of 3\)"
     assert re.fullmatch(rf"the checker fails on this file: {error.__name__} in buggy, test_admission_hardening\.py line \d+{counted}", found["5B"].reason), "the class and the place in the code, never the message"
     assert "5B" not in adm._seen and {"5A", "5C"} <= set(adm._seen), "the fault verdict is not kept at the first check"
-    assert adm.verdicts(["5B"])["5B"] is not found["5B"] and adm.verdicts(["5A"])["5A"] is found["5A"]
+    assert adm.verdicts(["5B"])["5B"] is found["5B"] and adm.verdicts(["5A"])["5A"] is found["5A"]
+    adm.clock.wait()
+    assert adm.verdicts(["5B"])["5B"] is not found["5B"], "after the hold the file is checked again"
     assert adm.freeze(build.reg(2, hotkey="5B"), "r000001") is None and layout.frozen_batch("r000001", "5B") not in adm.store  # a skip: not charged, the place is kept
     assert adm.freeze(build.reg(3, hotkey="5C"), "r000001") is not None
     adm.store.put(layout.miner_object("5B"), file(hotkey="5B"))  # the miner uploads a file that does not hit the bug
@@ -353,11 +377,20 @@ def poisoned(word: str, at: int = 3) -> bytes:
 
 
 def one_file(raw: bytes, params, **inputs) -> StoreAdmission:
-    return StoreAdmission(CountingStore({layout.miner_object(HOTKEY): raw}), params, **{"tokens": WordTokens(), "grader": None, "clock": lambda: 7} | inputs)
+    return StoreAdmission(CountingStore({layout.miner_object(HOTKEY): raw}), params, **{"tokens": WordTokens(), "grader": None, "clock": Clock()} | inputs)
+
+
+def checks(adm: StoreAdmission, calls: int) -> list:
+    """The verdict of each of ``calls`` checks. The clock moves past the hold after each one."""
+    found = []
+    for _ in range(calls):
+        found.append(adm.verdicts([HOTKEY])[HOTKEY])
+        adm.clock.wait()
+    return found
 
 
 def reasons(adm: StoreAdmission, calls: int) -> list[str]:
-    return [adm.verdicts([HOTKEY])[HOTKEY].reason for _ in range(calls)]
+    return [verdict.reason for verdict in checks(adm, calls)]
 
 
 def with_fault(code: str, build, monkeypatch) -> StoreAdmission:
@@ -373,7 +406,7 @@ def with_fault(code: str, build, monkeypatch) -> StoreAdmission:
 @pytest.mark.parametrize("code", TRANSIENT)
 def test_same_fault_three_times_in_a_row_is_a_verdict_that_stays(code, build, monkeypatch):
     adm = with_fault(code, build, monkeypatch)
-    first, second, third = (adm.verdicts([HOTKEY])[HOTKEY] for _ in range(FAULT_TRIES))
+    first, second, third = checks(adm, FAULT_TRIES)
     assert {first.rule, second.rule, third.rule} == {code} and not third.valid
     assert first.reason.endswith("(check 1 of 3)") and second.reason.endswith("(check 2 of 3)") and third.reason.endswith(STAYS)
     assert first.reason.split(" (")[0] == third.reason.split(" (")[0], "the reason names the same place each time"
@@ -383,9 +416,11 @@ def test_same_fault_three_times_in_a_row_is_a_verdict_that_stays(code, build, mo
     again = StoreAdmission(adm.store, adm.params, tokens=adm.tokens, grader=adm.grader, clock=lambda: 7)  # the controller starts again
     assert again.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)")
     adm.params = build.params(max_prompts=adm.params.max_prompts + 1)  # new params: the file is checked again, from zero
-    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)") and adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 2 of 3)")
+    assert [reason.rsplit(" (", 1)[1] for reason in reasons(adm, 2)] == ["check 1 of 3)", "check 2 of 3)"]
     adm.store.put(layout.miner_object(HOTKEY), file() + b" ")  # a new file
     assert adm.verdicts([HOTKEY])[HOTKEY].valid and HOTKEY not in adm._tries and adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is not None
+    adm.store.pop(layout.miner_object(HOTKEY))  # the file is gone: nothing is remembered
+    assert adm.verdicts([HOTKEY]) == {} and (adm._seen, adm._tries, adm._held) == ({}, {}, {})
 
 
 @pytest.mark.parametrize("code", TRANSIENT)
@@ -410,9 +445,9 @@ def test_failure_with_a_cause_on_our_machine_is_never_counted(error, build, monk
 
     lost_pool = one_file(poisoned("pipe"), build.params(), grader=pool_grader(Pool(), LostPool()))
     for adm, code in ((broken_tokens, TOKENIZER_FAULT), (broken_check, CHECK_FAULT), (lost_pool, FAULT)):
-        found = [adm.verdicts([HOTKEY])[HOTKEY] for _ in range(3 * FAULT_TRIES)]
+        found = checks(adm, 3 * FAULT_TRIES)
         assert {verdict.rule for verdict in found} == {code} and not any("(check" in verdict.reason for verdict in found)
-        assert adm._seen == {} and adm.store.reads == 3 * FAULT_TRIES, "checked again at every call, never kept"
+        assert adm._seen == {} and adm.store.reads == 3 * FAULT_TRIES, "checked again after each hold, never kept"
 
 
 def test_time_limit_of_a_grader_with_no_known_good_case_is_never_counted(build):
@@ -435,8 +470,8 @@ def test_grade_pool_that_is_slow_or_dead_for_every_row_is_loud_and_counts_nothin
     for _ in range(3 * FAULT_TRIES):
         with pytest.raises(InfraError, match="known-good"):
             adm.verdicts([HOTKEY])
-    assert adm._tries == {} and adm._seen == {}
-    state["down"] = False  # the pool is back: the honest file passes
+    assert adm._tries == {} and adm._seen == {} and adm._held == {}, "our failure leaves no count and no hold"
+    state["down"] = False  # the pool is back: the honest file passes, with no wait
     assert adm.verdicts([HOTKEY])[HOTKEY].valid
 
 
@@ -515,6 +550,97 @@ def test_check_that_is_not_counted_or_that_passes_starts_the_count_again(build):
     mode["now"] = "fine"
     passed = adm.verdicts([HOTKEY])[HOTKEY]
     assert passed.valid and adm.verdicts([HOTKEY])[HOTKEY] is passed and HOTKEY not in adm._tries, "the same bytes pass: a valid verdict, kept"
+
+
+def test_run_names_the_cause_at_each_try_when_our_failure_stops_the_opening_of_a_round(build, tmp_path, monkeypatch, capsys):
+    """What the operator sees: one "waiting:" line with the cause at each try. ``run`` goes on and opens no round."""
+    directory = tmp_path / "state"
+    shutil.copytree(Path(__file__).parent / "data" / "state_515d7e9f" / "idle", directory)
+    SimAdmission(LocalStore(directory / STORE_DIR)).upload("hk4", 0.3)
+    dead = pool_grader(Pool(), ToyGradePool(lambda task, output, capped: SimpleNamespace(reward=0.0, machine_cause="time-limit")))  # too slow for every row
+    monkeypatch.setattr(SimAdmission, "verdicts", lambda self, hotkeys: check_batch(file(), HOTKEY, build.params(), tokens=WordTokens(), grader=dead))
+    rounds = len(load(directory / JOURNAL_FILE).rounds)
+    assert main(["run", "--state-dir", str(directory), "--stack", "sn120_v2.sim:stack", "--rounds", "1", "--max-idle", "3", "--idle-sleep", "0"]) == 0
+    lines = capsys.readouterr().err.splitlines()
+    assert [line for line in lines if line.startswith("waiting")] == ["waiting: the official grader gives no known-good case its reward"] * 3
+    assert sum(line.startswith("idle: ") for line in lines) == 3 and len(load(directory / JOURNAL_FILE).rounds) == rounds, "no round opens"
+
+
+# --- the hold: 10 minutes between two checks of a file with such a code, counted or not ---
+
+
+def polled(adm: StoreAdmission, seconds: int, every: int = 30) -> list:
+    """The verdicts that ``run`` gets when it tries to open a round each ``every`` seconds."""
+    found = []
+    for _ in range(0, seconds, every):
+        found.append(adm.verdicts([HOTKEY])[HOTKEY])
+        adm.clock.wait(every)
+    return found
+
+
+@pytest.mark.parametrize("code", TRANSIENT)
+def test_file_with_a_fault_code_is_checked_again_only_after_the_hold(code, build, monkeypatch):
+    adm = with_fault(code, build, monkeypatch)
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    adm.clock.wait(FAULT_HOLD_S - 1)
+    assert adm.verdicts([HOTKEY])[HOTKEY] is first and adm.store.reads == 1, "inside the hold: the same verdict, no download, no check"
+    assert not first.valid and first.rule == code, "the file keeps its code, so no round takes it"
+    adm.clock.wait(1)
+    second = adm.verdicts([HOTKEY])[HOTKEY]
+    assert second.reason.endswith("(check 2 of 3)") and adm.store.reads == 2 and second.checked_at == first.checked_at + FAULT_HOLD_S
+
+
+@pytest.mark.parametrize("code", TRANSIENT)
+def test_verdict_that_stays_needs_a_fault_that_lasts_two_holds(code, build, monkeypatch):
+    adm = with_fault(code, build, monkeypatch)
+    found = polled(adm, 3 * FAULT_HOLD_S)  # 30 minutes of tries, one each 30 s
+    notes = [verdict.reason.rsplit(" (", 1)[1] for verdict in found]
+    per_hold = FAULT_HOLD_S // 30
+    assert notes == ["check 1 of 3)"] * per_hold + ["check 2 of 3)"] * per_hold + [STAYS[1:]] * per_hold
+    assert adm.store.reads == FAULT_TRIES and {verdict.rule for verdict in found} == {code}
+
+
+def test_stall_of_our_machine_that_is_shorter_than_the_hold_never_makes_a_verdict_stay(build):
+    """The reason for the hold: the machine is too slow for one heavy row of an honest file, for 3 tries in a row."""
+    clock = Clock()
+
+    def job(task, output, capped):
+        stalled = clock.now < 7.0 + 90 and "heavy" in output
+        return SimpleNamespace(reward=0.0, machine_cause="time-limit") if stalled else toy_grade(task, output, capped)
+
+    adm = one_file(poisoned("heavy"), build.params(), grader=pool_grader(Pool(), ToyGradePool(job)), clock=clock)
+    found = polled(adm, 2 * FAULT_HOLD_S)
+    per_hold = FAULT_HOLD_S // 30
+    assert [verdict.rule for verdict in found] == [TIME_LIMIT] * per_hold + [""] * per_hold, "one counted check; after the hold the file passes"
+    assert found[0].reason.endswith("(check 1 of 3)") and found[-1].valid and adm.store.reads == 2 and adm._held == {}
+
+
+@pytest.mark.parametrize("error", [MemoryError, OSError])
+def test_failed_check_that_is_not_counted_is_held_too(error, build):
+    adm = one_file(poisoned("poison"), build.params(), tokens=FragileTokens(error))
+    found = polled(adm, 2 * FAULT_HOLD_S)
+    assert {verdict.reason for verdict in found} == {"groups[3].rollouts[1].output: the tokenizer fails on this text"} and adm.store.reads == 2
+
+
+def test_new_file_new_params_or_a_clock_that_goes_back_end_the_hold(build, monkeypatch):
+    adm = with_fault(TIME_LIMIT, build, monkeypatch)
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    adm.clock.wait(-3600)  # the clock of the machine was set back: the hold must not last an hour more
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 2 of 3)") and adm.store.reads == 2
+    adm.params = build.params(max_prompts=adm.params.max_prompts + 1)
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)") and adm.store.reads == 3, "new params: checked with no wait"
+    adm.store.put(layout.miner_object(HOTKEY), poisoned("slow") + b" ")
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)") and adm.store.reads == 4, "new bytes with the same fault: checked with no wait"
+    adm.store.put(layout.miner_object(HOTKEY), file())
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid and adm.store.reads == 5 and adm._held == {}, "a new good file: valid with no wait"
+    adm.store.put(layout.miner_object(HOTKEY), poisoned("slow"))  # the first bytes again, 0 s after their last check
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)") and first.reason.endswith("(check 1 of 3)")
+
+
+def test_hold_in_the_texts_is_the_number_in_the_code():
+    assert FAULT_HOLD_S == 600 and FAULT_TRIES == 3
+    for code in TRANSIENT:
+        assert RULES[code].endswith("; checked again at a try to open a round, at most once each 10 minutes; after 3 failed checks in a row the verdict stays until a new file is uploaded")
 
 
 # --- a file must be able to train: the trainer's own arithmetic on the rewards ---

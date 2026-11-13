@@ -19,8 +19,9 @@ One file never stops the check of the others. When a file makes the grader,
 the tokenizer or the checker itself fail, the same part is tried on a
 known-good case. It passes: only that file is invalid, for this call. It
 fails: the failure is ours, and ``InfraError`` is raised. Such a file is
-checked again at the next call. After ``FAULT_TRIES`` failed checks in a row,
-each one with that proof and at the same place, the verdict stays.
+checked again at a later call, ``FAULT_HOLD_S`` after its last check at the
+earliest. After ``FAULT_TRIES`` failed checks in a row, each one with that
+proof and at the same place, the verdict stays.
 """
 
 from __future__ import annotations
@@ -66,8 +67,8 @@ NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can chang
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
-# These verdicts depend on this machine at this moment. Each holds for one call, and the file is checked again
-# at the next call, until FAULT_TRIES is reached.
+# These verdicts depend on this machine at this moment. Each holds for FAULT_HOLD_S, then the file is checked
+# again at the next call, until FAULT_TRIES is reached.
 TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT, CHECK_FAULT)
 # After this many failed checks in a row of the same bytes with the same params, the verdict stays like any other:
 # until the file changes, the params change or the process starts again. A failed check counts only when it is
@@ -76,7 +77,10 @@ FAULT_TRIES = 3
 # Exceptions that tell of the state of this machine (no memory, no file handle, a dead pipe), not of the file.
 # A failed check with such a cause is never counted toward FAULT_TRIES.
 MACHINE = (MemoryError, OSError)
-_AGAIN = f"checked again at the next try to open a round; after {FAULT_TRIES} failed checks in a row the verdict stays until a new file is uploaded"
+# The seconds between two checks of the same bytes with the same params, after a verdict in TRANSIENT, counted or
+# not. So FAULT_TRIES counted checks need a fault that lasts (FAULT_TRIES - 1) * FAULT_HOLD_S, not one short stall.
+FAULT_HOLD_S = 600
+_AGAIN = f"checked again at a try to open a round, at most once each {FAULT_HOLD_S // 60} minutes; after {FAULT_TRIES} failed checks in a row the verdict stays until a new file is uploaded"
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
 ENV_TIME_LIMIT = "time-limit"
@@ -685,6 +689,7 @@ class StoreAdmission:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
+        self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
 
     def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
         """The object's bytes and their check, or None when there is no object."""
@@ -701,8 +706,10 @@ class StoreAdmission:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
-        depends on this machine at this moment, so it is not kept: the next call checks the file again. After
-        ``FAULT_TRIES`` such checks in a row the verdict is kept like any other (``_tried``).
+        depends on this machine at this moment, so it is not kept. It holds for ``FAULT_HOLD_S``: during that
+        time the same bytes with the same params keep the verdict and are not read. Then the next call checks
+        the file again. After ``FAULT_TRIES`` such checks in a row the verdict is kept like any other
+        (``_tried``). The hold is in memory only, and a clock that goes back ends it.
         """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
@@ -711,20 +718,25 @@ class StoreAdmission:
                 oversized = self.store.size(key) > self.params.max_batch_bytes
                 tag = ("oversized" if oversized else self.store.sha256(key), self.params.params_hash)
             except KeyError:
-                self._seen.pop(hotkey, None)
-                self._tries.pop(hotkey, None)
+                for memory in (self._seen, self._tries, self._held):
+                    memory.pop(hotkey, None)
                 continue
-            kept = self._seen.get(hotkey)
-            if kept is None or kept[0] != tag:
+            kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+            if held is not None and held[0] == tag and 0 <= self.clock() - held[2] < FAULT_HOLD_S:
+                kept = held[:2]
+            elif kept is None or kept[0] != tag:
                 found = self._read(hotkey, key)
                 if found is None:
                     continue
                 result, final = self._tried(hotkey, tag, found[1])
-                kept = (tag, _verdict(hotkey, found[0], result, int(self.clock())))
+                now = self.clock()
+                kept = (tag, _verdict(hotkey, found[0], result, int(now)))
+                self._seen.pop(hotkey, None)
+                self._held.pop(hotkey, None)
                 if final:
                     self._seen[hotkey] = kept
                 else:
-                    self._seen.pop(hotkey, None)
+                    self._held[hotkey] = (*kept, now)
             out[hotkey] = kept[1]
         return out
 
