@@ -26,7 +26,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
-from .errors import BatchRejected, VerifyError
+from .errors import BatchRejected, InfraError, VerifyError
 from .params import Params, Recipe
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
@@ -42,7 +42,13 @@ Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward),
 # The official grade of one rollout: (prompt, output, capped) -> reward.
 # The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
 # None means the prompt is not a task of the environment, so there is no official grade.
+# It raises GraderTimeLimit when the grade did not finish in time. Any other exception is our failure: InfraError.
 Grader = Callable[[str, str, bool], float | None]
+TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
+
+
+class GraderTimeLimit(Exception):
+    """Raised by a ``Grader``: the official grade of this row did not finish inside its time limit."""
 
 
 def env_grader(pool: Any, grade: Callable[..., Any]) -> Grader:
@@ -269,14 +275,24 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set
 
 
 def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
-    """Every submitted reward must be the official grade. A prompt the environment does not know has no grade."""
+    """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
+
+    A row that the grader cannot grade in time is not allowed, whatever its reward. The check stops at the
+    first one, so a file cannot make the checker wait at every row.
+    """
     known = 0
     for i, (prompt, rollouts) in enumerate(groups):
         for j, (output, reward) in enumerate(rollouts):
-            official = grader(prompt, output, (i, j) in capped)
+            here = f"groups[{i}].rollouts[{j}]"
+            try:
+                official = grader(prompt, output, (i, j) in capped)
+            except GraderTimeLimit:
+                raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit") from None
+            except Exception as exc:
+                raise InfraError(f"the official grader failed: {type(exc).__name__}") from exc
             if official is None:
                 break
-            _need(abs(reward - official) <= params.reward_tolerance, "grader", f"groups[{i}].rollouts[{j}].reward is not the official grade")
+            _need(abs(reward - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
         else:
             known += 1
     share = params.min_pool_prompt_frac
@@ -344,7 +360,10 @@ class StoreAdmission:
         return raw, _judge(raw, hotkey, self.params, self.tokens, self.grader)
 
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
-        """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change."""
+        """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
+
+        A grader time limit depends on the speed of this machine, so that verdict is not kept: the next call checks again.
+        """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
             key = layout.miner_object(hotkey)
@@ -354,12 +373,17 @@ class StoreAdmission:
             except KeyError:
                 self._seen.pop(hotkey, None)
                 continue
-            if self._seen.get(hotkey, (None,))[0] != tag:
+            kept = self._seen.get(hotkey)
+            if kept is None or kept[0] != tag:
                 found = self._read(hotkey, key)
                 if found is None:
                     continue
-                self._seen[hotkey] = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
-            out[hotkey] = self._seen[hotkey][1]
+                kept = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
+                if getattr(found[1], "rule", "") == TIME_LIMIT:
+                    self._seen.pop(hotkey, None)
+                else:
+                    self._seen[hotkey] = kept
+            out[hotkey] = kept[1]
         return out
 
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:

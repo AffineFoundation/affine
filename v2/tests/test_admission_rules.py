@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from sn120_v2 import layout
-from sn120_v2.admission import Invalid, StoreAdmission, check_batch, env_grader, final_answer, verdict
+from sn120_v2.admission import GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, verdict
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError, VerifyError
 
@@ -128,6 +128,39 @@ def test_env_grader_joins_the_pool_and_the_grade_function(build):
     official = env_grader(pool, lambda task, output, capped: SimpleNamespace(reward=grade(f"double {task}", output, capped)))
     assert (official("double 2", "\\boxed{4}", False), official("double 2", "\\boxed{4}", True), official("other", "x", False)) == (1.0, 0.0, None)
     assert rule(file(), build.params(), grader=official) == ""
+
+
+def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(build):
+    seen, slow = [], {"double 3"}
+
+    def timed(prompt: str, output: str, capped: bool) -> float | None:
+        seen.append(prompt)
+        if prompt in slow:
+            raise GraderTimeLimit
+        return grade(prompt, output, capped)
+
+    for reward in (0, 1):  # whatever reward the file gives the row
+        seen.clear()
+        raw = flat([solved(n) | {"reward": reward if n in (3, 7) else 1} for n in range(20)])
+        assert rule(raw, build.params(), grader=timed) == "grader_time_limit"
+        assert seen == ["double 0", "double 1", "double 2", "double 3"]  # the check stops at the first such row
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=timed)
+    adm.store.put(layout.miner_object(HOTKEY), file())
+    assert "groups[3].rollouts[0]" in adm.verdicts([HOTKEY])[HOTKEY].reason and "time limit" in adm.verdicts([HOTKEY])[HOTKEY].reason
+    assert adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is None and list(adm.store) == [layout.miner_object(HOTKEY)]  # a skip
+    slow.clear()  # the machine is fast again: the same bytes are checked again and pass
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid and adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is not None
+
+
+def test_failure_of_the_grader_itself_is_an_infra_error(build):
+    def broken(prompt: str, output: str, capped: bool) -> float | None:
+        raise RuntimeError("the grader process is gone")
+
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=broken)
+    adm.store.put(layout.miner_object(HOTKEY), file())
+    for call in (lambda: rule(file(), build.params(), grader=broken), lambda: adm.verdicts([HOTKEY]), lambda: adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001")):
+        with pytest.raises(InfraError, match="RuntimeError"):
+            call()
 
 
 def test_prompts_outside_the_pool_follow_the_pool_share(build):
