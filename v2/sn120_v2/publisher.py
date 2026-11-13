@@ -236,7 +236,7 @@ def _recipe_lines(params: Params) -> list[str]:
         "  rollouts stays a group. The advantage of a rollout is its reward minus the mean reward of its group. The",
         f"  default is {recipe.group_size}.",
         "- `sample_temperature` T: you state the temperature at which you sampled your rollouts. The trainer divides the",
-        f"  logits of the head by T before it scores the tokens of a rollout. Evaluation always samples at temperature",
+        "  logits of the head by T before it scores the tokens of a rollout. Evaluation always samples at temperature",
         f"  {show(params.temperature)}. The default T is {show(recipe.sample_temperature)}.",
         "- `global_norm_cap`: the largest allowed Frobenius norm of the whole adapter update,",
         "  sqrt(sum over all target modules of ||(alpha / rank) * B @ A||_F^2), in the units of the model weights. If the",

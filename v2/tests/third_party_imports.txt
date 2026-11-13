@@ -17,6 +17,7 @@ botocore
 moto
 
 # chain: weights writer and chain reader
+bittensor
 
 # miner: miner tooling and llms.txt
 transformers
