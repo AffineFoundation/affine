@@ -203,7 +203,7 @@ def stack(context: StackContext) -> Stack:
     context.load(store)  # the journal copy in the store is the record, as with the real parts
     ticks = iter(range(1, 10**9))
     runner = LocalRunner(SimTrainer(store), SimEvaluator(store), lambda: int(time.time()), SIM_IMAGE)
-    sampler = UniformSampler([f"sim:{i}" for i in range(400)])
+    sampler = UniformSampler([f"sim:{i}" for i in range(max(400, 2 * context.params.n_tasks))])  # enough for a round of launch size
     entropy = lambda: f"sim-entropy-{next(ticks)}"
     return Stack(store, SimAdmission(store), sampler, runner, SimFolder(store), SimPublisher(), entropy=entropy, mirror=True)
 
