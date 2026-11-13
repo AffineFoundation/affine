@@ -9,7 +9,8 @@
   round       print the summary of a closed round as a short text to paste
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
-              seats are first in the next round (this command takes over the journal)
+              seats are first in the next round (this command takes over the journal). With a box result
+              of that round in the store it ends nothing and exits with 3: ``run`` judges that result
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -232,11 +233,19 @@ def cmd_set_params(args: argparse.Namespace) -> int:
     return 0
 
 
+RESULT_STORED = 3  # exit code of end-round when it ends nothing because a box result waits for run
+
+
 def cmd_end_round(args: argparse.Namespace) -> int:
-    controller, _ = open_controller(args, "end-round")
+    controller, stack = open_controller(args, "end-round")
     record = controller.state.round
     if record is None or record.decision is not None:
         raise V2Error("no round is open and undecided; a decided round is finished by run")
+    stored = [lease.lease_id for lease in record.leases if lease.status == "open" and stack.store.exists(layout.sealed_result(record.round_id, lease.lease_id))]
+    if stored and not args.discard_result:
+        note = f"kept: round {record.round_id} has a box result in the store ({', '.join(stored)}); run judges it."
+        print(note + " Nothing was ended. --discard-result ends the round without it.", file=sys.stderr)
+        return RESULT_STORED
     while (record := controller.state.round) is not None and record.decision is None:
         lease = next(lease for lease in record.leases if lease.status == "open")
         controller.fail_lease(lease.lease_id, "ended by the operator", now())
@@ -280,7 +289,8 @@ def main(argv: list[str] | None = None) -> int:
     one.add_argument("--json", action="store_true", help="print the stored JSON record instead of the text")
     setp = command("set-params", cmd_set_params, stack=True)
     setp.add_argument("--params", required=True, help="JSON file of parameter overrides on the defaults; the result replaces the pinned set")
-    command("end-round", cmd_end_round, stack=True)
+    end = command("end-round", cmd_end_round, stack=True)
+    end.add_argument("--discard-result", action="store_true", help="end the round also when a box result of it is in the store; that result is never judged")
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
