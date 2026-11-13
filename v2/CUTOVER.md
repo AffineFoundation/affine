@@ -16,9 +16,8 @@ Each point is a fact or a command that is not on `v2` at the commit of this file
 2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
 3. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
 4. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-5. The site reset steps: the hand copy of the new `llms.txt` ("AffineValidator", step 8), and the block that moves v1's stale files away (step 12). The copy of v1's site in step 4 only reads; it is complete.
-6. The pull reads the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` of its credentials file ("AffineValidator", step 12). The pull of this commit reads only the `SN120_R2_` names.
-7. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
+5. The pull and `site/reset.py llms` read the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` of the pull's credentials file ("AffineValidator", steps 8 and 12). The code of this commit reads only the `SN120_R2_` names.
+6. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
 
 ## Hosts
 
@@ -399,7 +398,14 @@ mkdir -p "$KEEP"
    Check: one line `links: issued N of M waiting hotkeys (not activated ..., not Ed25519 ...), removed 0, valid 86400 s`, exit code 0. `M` is the queue of the bootstrap. If the second count is most of v1's files, stop and ask: then the v2 queue is not what the import promised.
 8. **The new `llms.txt` alone, by a hand copy.** Only this one file goes up here: the rendered `llms.txt` that the bootstrap published into the store. v1's `mining.json`, `index.html` and every other file of the site stay as they are.
 
-   **Not landed yet.** The commands of this copy come with the site reset steps. Do not run the pull for it: one run of the pull also replaces `mining.json` and `index.html`.
+   ```
+   ( set -a; . "$PENV"; set +a
+     "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" llms --site-dir "$SITE"; echo "exit=$?" )
+   ```
+
+   It reads the store with the pull's read-only token (the check of that file is in step 12; do it here first). It copies the file only when it is of the same snapshot as the store's `mining.json`, so the pull later finds the same bytes. Do not run the pull for this: one run of the pull also replaces `mining.json` and `index.html`.
+
+   Check: one line `reset llms: <site directory>/llms.txt is the store's public/llms.txt: N bytes, sha256 ...` and `exit=0`. With `exit=1` the line starts with `reset: llms.txt not copied:` and v1's file stays; `not of the same snapshot` means: run it again in a moment. **Not landed yet:** see the note on the names of the credentials file in step 12; it holds for this command too.
 
    Check: `curl -fsS https://affine.io/llms.txt | head -5` shows the v2 text, and `https://affine.io` still shows v1's page. `curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'` names `https://affine.io/ff/links/<your hotkey>.json`; if it says `not published yet`, see step 13.
 9. **Move the weights writer from v1 to v2. This is one step: do not pause inside it.** Only one writer can set weights: two writers on one hotkey block each other at the rate limit, and each overwrites the other. While v1's writer runs, every v2 run defers at the rate limit, so v1 stops first.
@@ -482,18 +488,7 @@ mkdir -p "$KEEP"
     - step 7 of "GPU box": the import has read v1's `mining.json`;
     - step 10: v1's publishers are stopped.
 
-    First move away v1's files that would show an old state as if it were live. **Not landed yet:** the site reset steps replace this block; until they are on `v2`, it is this first form.
-
-    ```
-    ls "$SITE/public"                             # v1 should have no such directory
-    mkdir -p "$KEEP/moved"
-    mv "$SITE/ff/status.json" "$SITE/k1.json" "$SITE/scores.json" "$SITE/benchmarks.json" "$SITE/k1" "$KEEP/moved/"
-    ```
-
-    - If `ls` shows a `public/` directory of v1, move it into `$KEEP/moved/` too: the pull refuses to replace a file there that it did not write.
-    - `ff/status.json` was written by `affine-ff.service`; v2 has no file of this kind. `k1.json`, `scores.json`, `benchmarks.json` and `k1/` were written by v1's publishers.
-
-    Check: `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
+    Before the first run, look for a `public/` directory of v1: `ls "$SITE/public"`. v1 should have none. If it has one, move it to `$KEEP` first: the pull refuses to replace a file there that it did not write.
 
     The pull's credentials file exists already: `$PENV`. Do not make a new one, and do not show its content. Check it:
 
@@ -514,6 +509,19 @@ mkdir -p "$KEEP"
     ```
 
     Check: `pull: wrote N, unchanged N, removed N, failed steps 0; site built` and `exit=0`. With `exit=1`, each failed step is one line `pull: FAILED ...` on stderr, and the last good files of that step stay; `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong.
+
+    Then move v1's entries out of the site directory. The command runs after the pull wrote the v2 site, and it refuses when the v2 site is not there. It never deletes and never replaces: it renames each entry into `--to`, so `--to` is a new directory on the file system of the site directory.
+
+    ```
+    "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$KEEP/moved" --scores --dry-run
+    "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$KEEP/moved" --scores; echo "exit=$?"
+    ```
+
+    - `--scores` also moves `scores.json`. v1's weight writer read that file; it is stopped since step 9. Leave the option out if step 9 is not done.
+    - v1's `.js` and `.css` files stay. The option `--assets` moves them too; use it only when the way back is not needed any more.
+    - These stay: the v2 site, `llms.txt`, `mining.json`, `public/`, `ff/links/`, `ff/links.json`, and a few files that the web server needs. The last line names all of them.
+
+    Check: the dry run prints one `would move <entry>` line for each entry, with `ff/status.json`, `k1.json`, `benchmarks.json` and `k1` among them, and no line for `ff/links`, `llms.txt`, `mining.json`, `index.html` or `public`. The real run ends with `reset out: moved N of N entries to ...` and `exit=0`. A line `reset: refused: ...` and exit code 2: nothing changed. `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
 
     Then the unit and the timer: one run each minute. From here the site follows the store.
 
@@ -647,7 +655,14 @@ Two `run` processes never both write: the newer one takes over the journal, and 
 Before the first v2 round ends:
 
 1. `sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-links.timer sn120-v2-site-pull.timer`. Stop `run` on the GPU box.
-2. Put v1's site back: move the files of `$KEEP/moved/` to their places (`ff/status.json`, `k1.json`, `scores.json`, `benchmarks.json`, `k1/`), and copy from `$BACKUP` each root file that the pull or the hand copy replaced ("AffineValidator", step 12 names them). Move the pull's `$SITE/public/` directory away.
+2. Put v1's site back, after the pull's timer is stopped. The command copies every file of the copy of step 4 into the site directory again, `index.html` last. It leaves the link files and the v2 files as they are.
+
+   ```
+   "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP" --dry-run
+   "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP"; echo "exit=$?"
+   ```
+
+   Check: `reset back: copied N files from ..., 0 failed; ...` and `exit=0`; `https://affine.io` shows v1's page.
 3. Start v1's weight writer, `affine-ff.service` and v1's publishers again. `affine-ff.service` writes the link files again at its next run.
 
 The import only read public files, and v2 writes no key that v1 wrote, so v1's state in the bucket did not change. The objects that v2 wrote stay in the bucket under v2's own keys. The weights that are on chain stay until the next write.
