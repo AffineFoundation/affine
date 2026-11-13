@@ -28,21 +28,13 @@ class ChainClient(Protocol):
     """The few chain calls v2 needs. Every read names its block, so one snapshot is one block."""
 
     def head(self) -> tuple[int, str, int]: ...  # the newest block: number, hash, Unix time
-
     def block_hash(self, block: int) -> str: ...
-
     def uid_count(self, block: int) -> int: ...
-
     def hotkeys(self, block: int) -> Mapping[int, str]: ...  # UID -> hotkey
-
     def registration_blocks(self, block: int) -> Mapping[int, int]: ...  # UID -> block of its registration
-
     def last_update(self, block: int) -> Sequence[int]: ...  # by UID: block of its last weight write
-
     def rate_limit(self, block: int) -> int: ...  # blocks a validator must wait between two weight writes
-
     def plan(self, weights: Mapping[int, float]) -> tuple[str, list[str]]: ...  # dry run: signer address, refusals
-
     def submit(self, weights: Mapping[int, float]) -> tuple[bool, str]: ...  # one signed submission: accepted, message
 
 
