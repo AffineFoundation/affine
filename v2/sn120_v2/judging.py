@@ -218,7 +218,11 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(lora.head_version_id == ticket.head.version_id, f"{what}: LoRA was trained on another head")
         _need(lora.batch_sha256 == seat.batch.batch_sha256, f"{what}: LoRA was trained on another batch")
         _need(lora.recipe_id == params.recipe_id, f"{what}: LoRA was trained with another recipe")
-        _need(lora.rank == params.recipe.rank, f"{what}: LoRA rank differs from the recipe")
+        recipe = params.recipe.for_miner(seat.batch.train)
+        _need(
+            (lora.rank, lora.alpha, tuple(lora.target_modules)) == (recipe.rank, recipe.alpha, recipe.target_modules),
+            f"{what}: LoRA rank, alpha or target modules differ from the recipe with the miner's values",
+        )
         _need(lora.report.image_digest in params.recipe.image_digests, f"{what}: trainer image is not pinned")
         _need(math.isfinite(lora.report.loss) and math.isfinite(lora.report.step_norm), f"{what}: non-finite train report")
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")

@@ -10,7 +10,8 @@ Times are whole seconds since the Unix epoch, in UTC.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from .canonical import Record, digest, is_sha256, manifest_digest, to_jsonable
 from .errors import ContractError, VerifyError
@@ -104,7 +105,7 @@ class FrozenBatch(Record):
     format: str
     n_prompts: int
     n_rollouts: int
-    train: tuple[tuple[str, float], ...] = ()  # miner-set recipe keys, already checked against the bounds
+    train: dict[str, Any] = field(default_factory=dict)  # the miner's values; apply with Recipe.for_miner(train)
 
     def __post_init__(self) -> None:
         _need(is_sha256(self.batch_sha256), "FrozenBatch.batch_sha256 must be a 64-hex sha256")

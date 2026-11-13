@@ -9,15 +9,16 @@ measurements.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from .canonical import Record, is_sha256
-from .errors import ConfigError
+from .errors import BatchRejected, ConfigError
 
 # Identity of the launch model. The base hash is the manifest digest of the
 # published checkpoint files (see canonical.manifest_digest).
@@ -35,14 +36,60 @@ def _unit(value: float) -> bool:
     return math.isfinite(value) and 0.0 <= value <= 1.0
 
 
+ATTENTION_AND_MLP_PROJECTIONS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+
+
+@dataclass(frozen=True)
+class MinerBound(Record):
+    """One recipe field that a miner may set under ``train`` in the batch file.
+
+    A number must be inside [``low``, ``high``], both ends included. A list
+    must be a non-empty subset of ``choices``. ``decided`` is False while the
+    bound is a placeholder that waits for a decision.
+    """
+
+    key: str  # the recipe field, and the key under "train"
+    low: float = 0.0
+    high: float = 0.0
+    integer: bool = False  # the number must be a whole number
+    choices: tuple[str, ...] = ()
+    decided: bool = False
+
+    def check(self, value: Any) -> Any:
+        """Return the value to store, or raise ``BatchRejected``. A value is never clamped."""
+        if self.choices:
+            names = list(value) if isinstance(value, (list, tuple)) else None
+            if not names or len(set(names)) != len(names) or not set(names) <= set(self.choices):
+                raise BatchRejected(f"train.{self.key} must be a non-empty subset of {list(self.choices)}")
+            return tuple(name for name in self.choices if name in names)
+        wanted = (int,) if self.integer else (int, float)
+        if type(value) not in wanted or not math.isfinite(value) or not self.low <= value <= self.high:
+            kind = "a whole number" if self.integer else "a number"
+            raise BatchRejected(f"train.{self.key} must be {kind} from {self.low:g} to {self.high:g}")
+        return value if self.integer else float(value)
+
+
+# The five things a miner may set: learning rate; steps; GRPO group size and
+# sampling temperature; LoRA rank and alpha; target modules.
+# PLACEHOLDER marks a bound the spec does not give. It is not a decision.
+DEFAULT_MINER_BOUNDS = (
+    MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
+    MinerBound("steps", 1, 4, integer=True),  # PLACEHOLDER
+    MinerBound("group_size", 2, 64, integer=True),  # PLACEHOLDER
+    MinerBound("sample_temperature", 0.5, 1.5),  # PLACEHOLDER
+    MinerBound("rank", 8, 64, integer=True, decided=True),  # spec: "suggested 8-64"
+    MinerBound("alpha", 8.0, 128.0),  # PLACEHOLDER
+    MinerBound("target_modules", choices=ATTENTION_AND_MLP_PROJECTIONS, decided=True),  # spec: these 7 projections
+)
+
+
 @dataclass(frozen=True)
 class Recipe(Record):
     """The published training recipe. Its digest is the ``recipe_id``.
 
-    The validator owns every field. A miner may set only the keys in
-    ``miner_bounds``, each inside its inclusive range. Values are never
-    clamped: a key outside the set or a value outside its range makes the
-    batch file invalid.
+    The validator owns every field. A miner may set only the fields named in
+    ``miner_bounds``, each inside its bound. ``miner_bounds`` is the one
+    place that the batch checker, the trainer and the publisher read.
     """
 
     method: str = "grpo-lora"
@@ -50,10 +97,12 @@ class Recipe(Record):
     lora_lr: float = 1e-5
     max_grad_norm: float = 1.0
     global_norm_cap: float | None = None  # optional cap on the norm of the whole adapter update
+    group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
+    sample_temperature: float = 1.0  # temperature the batch's rollouts were sampled at
     rank: int = 16
     alpha: float = 32.0
     dropout: float = 0.0
-    target_modules: tuple[str, ...] = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+    target_modules: tuple[str, ...] = ATTENTION_AND_MLP_PROJECTIONS
     ppo_clip: float = 0.2
     dual_clip: float = 3.0
     kl: float = 0.0
@@ -64,7 +113,7 @@ class Recipe(Record):
     derail_tail: int = 64
     train_max_output_tokens: int = 32768  # the training cap is independent of the scoring cap
     train_max_context_tokens: int = 36864
-    miner_bounds: tuple[tuple[str, float, float], ...] = (("lr", 1e-6, 1e-4),)
+    miner_bounds: tuple[MinerBound, ...] = DEFAULT_MINER_BOUNDS
     code_digest: str = ""  # sha256 of the training code, set by the train/eval workstream
     image_digests: tuple[str, ...] = ()  # worker images allowed to produce LoRAs and scores
 
@@ -74,19 +123,33 @@ class Recipe(Record):
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
         _need(bool(self.target_modules), "recipe.target_modules must not be empty")
-        for key, low, high in self.miner_bounds:
-            _need(bool(key) and math.isfinite(low) and math.isfinite(high) and low <= high, f"bad miner bound for {key!r}")
+        settable = {f.name for f in dataclasses.fields(self)} - {"miner_bounds", "code_digest", "image_digests", "method"}
+        keys = [bound.key for bound in self.miner_bounds]
+        _need(len(set(keys)) == len(keys) and set(keys) <= settable, "miner_bounds must name distinct recipe fields")
+        for bound in self.miner_bounds:
+            _need(bool(bound.choices) or bound.low <= bound.high, f"bad miner bound for {bound.key!r}")
 
     @property
     def recipe_id(self) -> str:
         return self.digest()
 
-    def miner_range(self, key: str) -> tuple[float, float] | None:
-        """The inclusive range a miner may set for ``key``, or None if the key is not miner-settable."""
-        for name, low, high in self.miner_bounds:
-            if name == key:
-                return (low, high)
-        return None
+    def bound(self, key: str) -> MinerBound | None:
+        """The bound of a miner-settable field, or None when a miner may not set ``key``."""
+        return next((bound for bound in self.miner_bounds if bound.key == key), None)
+
+    def for_miner(self, train: Mapping[str, Any]) -> Recipe:
+        """This recipe with one miner's ``train`` values applied.
+
+        Every key must be miner-settable and every value inside its bound.
+        Anything else raises ``BatchRejected``: the whole file is invalid.
+        """
+        changes = {}
+        for key, value in train.items():
+            bound = self.bound(key)
+            if bound is None:
+                raise BatchRejected(f"train.{key} is not a miner-settable field")
+            changes[key] = bound.check(value)
+        return dataclasses.replace(self, **changes) if changes else self
 
 
 @dataclass(frozen=True)

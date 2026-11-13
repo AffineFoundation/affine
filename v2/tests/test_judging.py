@@ -447,13 +447,25 @@ def with_lora(build, result, **lora_changes):
         (dict(head_version_id="0" * 64), "another head"),
         (dict(batch_sha256="0" * 64), "another batch"),
         (dict(recipe_id="0" * 64), "another recipe"),
-        (dict(rank=64), "rank differs"),
+        (dict(rank=64), "rank, alpha or target modules"),
+        (dict(target_modules=("q_proj",)), "rank, alpha or target modules"),
     ],
 )
 def test_a_lora_that_does_not_belong_to_its_entry_is_refused(build, change, match):
     ticket, result = good_case(build)
     with pytest.raises(ContractError, match=match):
         check_result(ticket, with_lora(build, result, **change))
+
+
+def test_a_lora_must_have_the_shape_the_miner_asked_for(build):
+    params = build.params(n_tasks=8)
+    ticket = build.ticket(1, 8, params, train={0: {"rank": 32, "alpha": 64, "target_modules": ["q_proj", "v_proj"]}})
+    result = build.result(ticket, "PFPFPFPF", {0: "PPPPPFPF"})
+    lora = result.entries[0].lora
+    assert (lora.rank, lora.alpha, lora.target_modules) == (32, 64.0, ("q_proj", "v_proj"))
+    check_result(ticket, result)
+    with pytest.raises(ContractError, match="rank, alpha or target modules"):
+        check_result(ticket, with_lora(build, result, rank=params.recipe.rank))
 
 
 def test_a_lora_from_an_unpinned_trainer_image_or_with_a_non_finite_report_is_refused(build):

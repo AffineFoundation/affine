@@ -7,6 +7,7 @@ same data always compute the same id.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import hashlib
 import json
 import math
@@ -84,14 +85,35 @@ def file_sha256(path: str | Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def to_jsonable(obj: Any) -> Any:
-    """Turn records, tuples and mappings into plain JSON values."""
+@functools.lru_cache(maxsize=None)
+def _hints(cls: type) -> dict[str, Any]:
+    return typing.get_type_hints(cls)
+
+
+def to_jsonable(obj: Any, tp: Any = Any) -> Any:
+    """Turn records, tuples and mappings into plain JSON values.
+
+    ``tp`` is the declared type. A whole number in a float field is written
+    as a float, so a record's digest is the same before and after a JSON
+    round trip.
+    """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {f.name: to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+        hints = _hints(type(obj))
+        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in dataclasses.fields(obj)}
+    if tp is float and type(obj) is int:
+        return float(obj)
+    origin, args = typing.get_origin(tp), typing.get_args(tp)
+    if origin in (typing.Union, types.UnionType):
+        inner = [a for a in args if a is not type(None)]
+        return to_jsonable(obj, inner[0] if len(inner) == 1 else Any)
     if isinstance(obj, (list, tuple)):
-        return [to_jsonable(item) for item in obj]
+        if origin is tuple and args and args[-1] is not Ellipsis and len(args) == len(obj):
+            return [to_jsonable(item, item_type) for item, item_type in zip(obj, args)]
+        item_type = args[0] if origin is tuple and args else Any
+        return [to_jsonable(item, item_type) for item in obj]
     if isinstance(obj, Mapping):
-        return {key: to_jsonable(item) for key, item in obj.items()}
+        item_type = args[1] if origin is dict and len(args) == 2 else Any
+        return {key: to_jsonable(item, item_type) for key, item in obj.items()}
     return obj
 
 
@@ -124,7 +146,7 @@ def from_jsonable(tp: Any, data: Any, where: str = "value") -> Any:
     if dataclasses.is_dataclass(tp):
         if not isinstance(data, Mapping):
             raise ContractError(f"{where}: expected an object for {tp.__name__}")
-        hints = typing.get_type_hints(tp)
+        hints = _hints(tp)
         unknown = sorted(set(data) - set(hints))
         if unknown:
             raise ContractError(f"{where}: unknown field(s) {unknown} for {tp.__name__}")
