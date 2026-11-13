@@ -16,9 +16,8 @@ Each point is a fact or a command that is not on `v2` at the commit of this file
 2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
 3. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
 4. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-5. The pull's unit reads the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` of the pull's credentials file ("AffineValidator", step 12). The pull of this commit reads only the `SN120_R2_` names. The commands by hand do not wait for it: the helper `with_store` gives both sets of names.
-6. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
-7. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
+5. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
+6. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
 
 ## Hosts
 
@@ -108,7 +107,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable (`env | grep ^SN120_` prints nothing): with `SN120_R2_PREFIX` of the smoke test still set, 5 tests of `tests/test_site_pull.py` fail.
+2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable of the smoke test (`env | grep ^SN120_` prints nothing).
 
    ```
    python -m pytest
@@ -273,17 +272,13 @@ PY=$REPO/v2/.venv/bin/python               # the Python of the checkout
 mkdir -p "$KEEP"
 ```
 
-The site commands read the store settings from the names `SN120_R2_ENDPOINT`, `SN120_R2_BUCKET`, `SN120_R2_ACCESS_KEY_ID` and `SN120_R2_SECRET_ACCESS_KEY`. The pull's credentials file has the names without `SN120_`. Run this block once; it defines a helper named `with_store` that accepts both. The round brackets keep the token out of your shell: the helper runs each command in a shell of its own.
+The pull's credentials file has the store settings under the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Two commands read these names: the pull (`site/pull.py`) and `site/reset.py llms`. No other v2 command does. Use the file as it is: no copy and no second file. Run this block once; it defines a helper named `with_store` that loads the file for one command. The round brackets keep the token out of your shell: the helper runs each command in a shell of its own.
 
 ```
-with_store() (
-  set -a; . "$PENV"; set +a
-  export SN120_R2_ENDPOINT="${SN120_R2_ENDPOINT:-$R2_ENDPOINT}" SN120_R2_BUCKET="${SN120_R2_BUCKET:-$R2_BUCKET}" \
-         SN120_R2_ACCESS_KEY_ID="${SN120_R2_ACCESS_KEY_ID:-$R2_ACCESS_KEY_ID}" \
-         SN120_R2_SECRET_ACCESS_KEY="${SN120_R2_SECRET_ACCESS_KEY:-$R2_SECRET_ACCESS_KEY}"
-  "$@"
-)
+with_store() ( set -a; . "$PENV"; set +a; "$@" )
 ```
+
+A variable with `SN120_R2_` at its start wins over the plain name. So the shell of these steps must hold none: `env | grep ^SN120_R2_` prints nothing.
 
 1. **Install.** The same commit as the GPU box.
 
@@ -637,7 +632,7 @@ with_store() (
 
        Check: `systemctl list-timers sn120-v2-site-pull.timer --no-pager` lists the timer. After two minutes, `journalctl -u sn120-v2-site-pull.service -n 5 --no-pager` shows `failed steps 0`.
 
-       **Not landed yet:** the unit loads `$PENV` as it is, and the pull of this commit reads only the `SN120_R2_` names. With a build that lacks the change, the log shows an error about a missing `SN120_R2_ENDPOINT` and no run writes anything: disable the timer (`sudo systemctl disable --now sn120-v2-site-pull.timer`), tell the coordinator, and do not edit the credentials file. The site stays as the run by hand left it.
+       The unit loads `$PENV` as it is. If the log shows `the store setting SN120_R2_ENDPOINT is not set`, the checkout is older than the cutover commit: disable the timer (`sudo systemctl disable --now sn120-v2-site-pull.timer`), tell the coordinator, and do not edit the credentials file. The site stays as the run by hand left it.
     3. **Move v1's stale files out of the site directory.** After the switch, v1's data files still answer at their old addresses and look live. This moves them to `$MOVED`. Nothing is deleted.
 
        ```
