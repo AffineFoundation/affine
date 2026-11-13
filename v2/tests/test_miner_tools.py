@@ -69,7 +69,7 @@ class WordTokens:
 
 
 def batch_bytes(train: dict | None = None, hotkey: str = HOTKEY) -> bytes:
-    body = {"version": "affine-batch-v2", "hotkey": hotkey, "groups": [{"prompt": "What is 1+1?", "rollouts": [{"output": OUTPUT, "reward": 1.0}]}]}
+    body = {"version": "affine-batch-v2", "hotkey": hotkey, "groups": [{"prompt": "What is 1+1?", "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT + " again", "reward": 0.0}]}]}
     return json.dumps(body if train is None else body | {"train": train}).encode()
 
 
@@ -187,7 +187,7 @@ def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp
 def test_the_reward_rule_runs_with_the_official_grader(build):
     pytest.importorskip("math_verify")
     grader, task = tool.official_grader(build.params()), load_pool().task("math:0")
-    rows = lambda reward: [{"output": "step " * 40 + f"\\boxed{{{task.answer}}}", "reward": reward}]
+    rows = lambda reward: [{"output": "step " * 40 + f"\\boxed{{{task.answer}}}", "reward": reward}, {"output": "step " * 40 + "\\boxed{no answer}", "reward": 1.0 - reward}]
     raw = lambda reward: json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [{"prompt": task.batch_prompt(), "rollouts": rows(reward)}]}).encode()
     assert tool.check(raw(1.0), HOTKEY, build.params(), WordTokens(), grader)["rules_not_run"] == []
     with pytest.raises(Invalid) as caught:

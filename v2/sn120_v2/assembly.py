@@ -130,7 +130,8 @@ def stack(context: StackContext) -> Stack:
     pool = load_pool()
     tokens = HeadTokens(store, context.state_dir / "tokenizer")
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades))
+    # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     publisher = StorePublisher(store, "" if public_url == NONE else public_url)
