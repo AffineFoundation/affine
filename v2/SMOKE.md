@@ -248,7 +248,7 @@ Pass, for each stage:
 - `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
 - `5-full`: the pass lines of steps 6 to 9.
 
-In every stage: no row has the verdict `no_decision` or `not_trained`, and the first line is not `NO_DECISION`.
+In every stage: no row has the verdict `no_decision`, `not_trained` or `not_scored`, and the first line is not `NO_DECISION`.
 
 ### A round that hits the time limit on purpose
 
