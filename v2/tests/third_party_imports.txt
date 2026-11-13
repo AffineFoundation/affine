@@ -1,0 +1,18 @@
+# Import names that v2 code may use besides the standard library and sn120_v2.
+# One import name per line (the name you write after "import", not the package
+# name on PyPI). When you add a dependency to your extra in pyproject.toml, add
+# its import name under your workstream here.
+#
+# A legacy v1 or prototype module can never be listed here.
+# tests/test_no_legacy.py enforces that.
+
+# dev
+pytest
+
+# gpu: train/eval workers
+
+# r2: R2 head store
+
+# chain: weights writer and chain reader
+
+# miner: miner tooling and llms.txt
