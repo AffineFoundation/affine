@@ -27,11 +27,11 @@ from typing import Callable
 from transformers import AutoTokenizer
 
 from . import layout
-from .admission import HFTokens, StoreAdmission, check_batch, env_grader
+from .admission import HFTokens, LazyPool, StoreAdmission, check_batch, pool_grader
 from .canonical import file_sha256
 from .chain import Reader, SubtensorClient
 from .controller import Stack, StackContext, stored_irt_snapshot
-from .envs.math_grader import GradePool, grade
+from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
 from .gpu.evaluator import VllmEvaluator
@@ -48,6 +48,11 @@ from .types import ChainSnapshot, HeadManifest
 from .worker import LocalRunner
 
 NONE = "none"
+# Admission grades the rewards of miner files in its own worker processes, apart from the evaluator's pool.
+# A row that is not graded inside the limit makes its file invalid for that check (rule grader_time_limit).
+# A normal row takes milliseconds, and math-verify stops itself after 5 seconds per step.
+ADMISSION_GRADE_WORKERS = min(8, os.cpu_count() or 1)
+ADMISSION_GRADE_TIMEOUT_S = 20.0
 WEIGHT_SUFFIX = ".safetensors"
 
 
@@ -124,7 +129,8 @@ def stack(context: StackContext) -> Stack:
     params = context.params
     pool = load_pool()
     tokens = HeadTokens(store, context.state_dir / "tokenizer")
-    admission = StoreAdmission(store, params, tokens=tokens, grader=env_grader(pool, grade))
+    grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades))
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     publisher = StorePublisher(store, "" if public_url == NONE else public_url)

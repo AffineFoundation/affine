@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-from types import SimpleNamespace
 
 import pytest
 
 from sn120_v2 import layout
-from sn120_v2.admission import GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, verdict
+from sn120_v2.admission import GraderTimeLimit, Invalid, StoreAdmission, check_batch, final_answer, verdict
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError, VerifyError
 
@@ -36,8 +35,17 @@ def solved(n: int, k: int = 0) -> dict:
     return {"output": f"{THINK}{k} \\boxed{{{2 * n}}}", "reward": 1}
 
 
+def missed(k: int = 0) -> dict:
+    return {"output": f"{THINK}{k} \\boxed{{-1}}", "reward": 0}
+
+
+# One prompt with a right and a wrong rollout. A file needs two rewards that differ inside one group, or it trains nothing.
+SIGNAL = {"prompt": "double 1000", "rollouts": [{"output": THINK + "\\boxed{2000}", "reward": 1}, {"output": THINK + "\\boxed{-1}", "reward": 0}]}
+
+
 def file(groups=None, train=None, version="affine-batch-v3", hotkey=HOTKEY) -> bytes:
-    groups = [{"prompt": f"double {n}", "rollouts": [solved(n, 0), solved(n, 1)]} for n in range(10)] if groups is None else groups
+    """By default 10 prompts with 2 rollouts each. All are right but the last rollout of the last prompt."""
+    groups = [{"prompt": f"double {n}", "rollouts": [solved(n, 0), solved(n, 1) if n < 9 else missed(1)]} for n in range(10)] if groups is None else groups
     return json.dumps({"version": version, "hotkey": hotkey, "groups": groups} | ({} if train is None else {"train": train})).encode()
 
 
@@ -51,8 +59,8 @@ def rule(raw: bytes, params, **inputs) -> str:
 
 
 def flat(rollouts: list[dict]) -> bytes:
-    """One rollout per prompt, so a test controls every output of the file."""
-    return file([{"prompt": f"double {n}", "rollouts": [rollout]} for n, rollout in enumerate(rollouts)])
+    """One rollout per prompt, so a test controls every output of the file. ``SIGNAL`` comes last: 2 more rollouts."""
+    return file([{"prompt": f"double {n}", "rollouts": [rollout]} for n, rollout in enumerate(rollouts)] + [SIGNAL])
 
 
 # --- train: only the published keys, only inside the published bounds, never clamped ---
@@ -123,23 +131,6 @@ def test_output_at_the_token_cap_is_graded_as_capped(build):
     assert rule(flat([solved(n) for n in range(20)]), build.params(max_output_tokens=43, max_context_tokens=60), grader=grade) == ""
 
 
-def test_env_grader_joins_the_pool_and_the_grade_function(build):
-    pool = SimpleNamespace(task_for_prompt=lambda prompt: int(prompt.split()[1]) if prompt.startswith("double ") else None)
-    cause = {}  # task -> the machine cause of its grade
-
-    def env_grade(task, output, capped):
-        return SimpleNamespace(reward=grade(f"double {task}", output, capped), machine_cause=cause.get(task))
-
-    official = env_grader(pool, env_grade)
-    assert (official("double 2", "\\boxed{4}", False), official("double 2", "\\boxed{4}", True), official("other", "x", False)) == (1.0, 0.0, None)
-    assert rule(file(), build.params(), grader=official) == ""
-    cause[4] = "time-limit"  # the value that the math env gives when a time limit expired
-    assert rule(file(), build.params(), grader=official) == "grader_time_limit"
-    cause[4] = "worker-died"  # any other machine cause is our failure, not the row's
-    with pytest.raises(InfraError, match="worker-died"):
-        rule(file(), build.params(), grader=official)
-
-
 def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(build):
     seen, slow = [], {"double 3"}
 
@@ -174,7 +165,7 @@ def test_failure_of_the_grader_itself_is_an_infra_error(build):
 
 
 def test_prompts_outside_the_pool_follow_the_pool_share(build):
-    mixed = file([{"prompt": f"double {n}", "rollouts": [solved(n)]} for n in range(3)] + [{"prompt": "my own task", "rollouts": [solved(1)]}])
+    mixed = file([{"prompt": f"double {n}", "rollouts": [solved(n)]} for n in range(3)] + [{"prompt": "my own task", "rollouts": [solved(1), missed()]}])
     assert rule(mixed, build.params(), grader=grade) == ""  # the default share is 0
     assert rule(mixed, build.params(min_pool_prompt_frac=0.75), grader=grade) == ""
     assert rule(mixed, build.params(min_pool_prompt_frac=0.8), grader=grade) == "pool"
@@ -184,20 +175,20 @@ def test_bare_answers_are_limited(build):
     bare = {"output": "\\boxed{4}", "reward": 1}
     short = {"output": "step " * 31 + "\\boxed{4}", "reward": 1}  # 31 reasoning tokens: one under the least
     just = {"output": "step " * 32 + "\\boxed{4}", "reward": 1}
-    assert rule(flat([solved(n) for n in range(19)] + [bare]), build.params()) == ""  # 1 of 20 is the 5% limit
-    assert rule(flat([solved(n) for n in range(18)] + [bare, short]), build.params()) == "answer_only"
-    assert rule(flat([solved(n) for n in range(18)] + [bare, just]), build.params()) == ""
-    assert rule(flat([solved(n) for n in range(18)] + [bare, short]), build.params(max_answer_only_frac=0.1)) == ""
+    assert rule(flat([solved(n) for n in range(17)] + [bare]), build.params()) == ""  # 1 of 20 is the 5% limit
+    assert rule(flat([solved(n) for n in range(16)] + [bare, short]), build.params()) == "answer_only"
+    assert rule(flat([solved(n) for n in range(16)] + [bare, just]), build.params()) == ""
+    assert rule(flat([solved(n) for n in range(16)] + [bare, short]), build.params(max_answer_only_frac=0.1)) == ""
 
 
 def test_reasoning_must_be_the_larger_part_of_the_output(build):
-    tail = [{"output": THINK + "\\boxed{4} " + "after " * 60, "reward": 1}]
-    assert rule(flat(tail), build.params()) == "reasoning_share"  # 40 of 101 tokens come before the answer
-    assert rule(flat(tail), build.params(reasoning_token_share=0.25)) == ""
+    tail = file([{"prompt": "double 2", "rollouts": [{"output": THINK + f"\\boxed{{{answer}}} " + "after " * 60, "reward": int(answer == 4)} for answer in (4, 5)]}])
+    assert rule(tail, build.params()) == "reasoning_share"  # 40 of 101 tokens come before the answer
+    assert rule(tail, build.params(reasoning_token_share=0.25)) == ""
 
 
 def test_one_answer_may_not_fill_the_file(build):
-    def same(n: int, total: int = 40) -> bytes:
+    def same(n: int, total: int = 38) -> bytes:  # flat() adds 2 rollouts: 40 in the file
         return flat([{"output": f"{THINK}{k} \\boxed{{ 4 }}" if k % 2 else f"{THINK}{k} \\boxed{{4}}", "reward": 0} for k in range(n)]
                     + [solved(100 + k) for k in range(total - n)])
 

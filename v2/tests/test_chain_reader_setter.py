@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
+from sn120_v2 import chain as chain_module
 from sn120_v2.chain import BLOCK_SECONDS, FakeChain, Reader, Setter, SubtensorClient, main
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.seams import ChainReader, WeightSetter
@@ -156,7 +158,7 @@ STUB_SDK = SimpleNamespace(
 
 def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     chain = StubSubtensor()
-    wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="hk0"))
+    wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="hk0", sign=lambda payload: b"signature"))
     client = SubtensorClient(120, chain, wallet=wallet, sdk=STUB_SDK)
     assert client.signer() == "hk0"
     snap = Reader(client, 120, clock=lambda: 1_800_000_000).snapshot()
@@ -171,6 +173,34 @@ def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     for call in (lambda reader: reader.submit({1: 1.0}), lambda reader: reader.signer()):
         with pytest.raises(ConfigError):
             call(SubtensorClient(120, chain, sdk=STUB_SDK))  # no wallet: this client can only read
+
+
+def refuse(error):
+    def sign(payload):
+        raise error
+
+    return sign
+
+
+@pytest.mark.parametrize(
+    "error, message",
+    [
+        (FileNotFoundError("keyfile does not exist"), "the hotkey file /wallets/cold/hotkeys/hot does not exist"),
+        (PermissionError("keyfile is not readable"), "is not readable by this user"),
+        (ValueError("no private key set to create signatures"), "cannot sign (ValueError)"),  # only the public key
+        (EOFError("a password prompt with no terminal"), "cannot sign (EOFError)"),  # a file with a password
+    ],
+)
+def test_a_hotkey_file_that_cannot_sign_is_a_clear_error_before_any_connection(error, message, monkeypatch):
+    class Wallet:
+        def __init__(self, name, path):
+            self.hotkey_file = SimpleNamespace(path=f"{path}/{name.replace('/', '/hotkeys/')}")
+            self.hotkey = SimpleNamespace(ss58_address="hk0", sign=refuse(error))
+
+    monkeypatch.setattr(chain_module, "bittensor", SimpleNamespace(Wallet=Wallet, Subtensor=fail))
+    with pytest.raises(ConfigError, match=re.escape(message)) as caught:
+        SubtensorClient.connect(120, "a-node", "cold/hot", "/wallets")  # ``fail`` would raise if a connection opened
+    assert str(error) not in str(caught.value)  # the message never repeats what the key code said
 
 
 def test_the_snapshot_command_needs_no_wallet_and_writes_only_after_a_complete_read(tmp_path, monkeypatch):

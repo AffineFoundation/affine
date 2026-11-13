@@ -6,6 +6,10 @@ client for tests and the CPU simulation. ``SubtensorClient`` is the client
 over the bittensor SDK: it is the only code here that needs the SDK or a
 wallet, and the wallet's private key never leaves the SDK.
 
+A weight write is signed by the hotkey. So the wallet needs its hotkey file
+and nothing else: this module and the SDK's weight path never read the
+coldkey, and the machine that sets weights does not need to hold it.
+
 ``python -m sn120_v2.chain --netuid 120 --network finney --out FILE`` writes
 one snapshot to a file. It only reads the chain and it uses no wallet.
 """
@@ -29,6 +33,7 @@ except ImportError:  # the SDK is the optional "chain" extra: the control plane 
     bittensor = None
 
 BLOCK_SECONDS = 12  # Bittensor block time, used to estimate the time of an old block
+SIGN_CHECK = b"sn120-v2 weights writer: a check that the hotkey file can sign. This is not a transaction."
 
 
 class ChainClient(Protocol):
@@ -91,14 +96,19 @@ class Setter:
     def __init__(self, client: ChainClient, validator_hotkey: str, min_gap_blocks: int = 0) -> None:
         self.client, self.validator_hotkey, self.min_gap_blocks = client, validator_hotkey, min_gap_blocks
 
-    def set_weights(self, weights: Mapping[int, float]) -> WeightReceipt:
+    def preflight(self, weights: Mapping[int, float]) -> tuple[int, str]:
+        """Every check before a submission, with no chain write: the block, and the reason to defer or ""."""
         table = check_weights(weights)  # an empty or all-zero table raises here and is never submitted
         block = 0
         try:
             block = self.client.head()[0]
-            refusal = self._plan(table, block)
+            return block, self._plan(table, block)
         except Exception as exc:
-            refusal = f"plan failed: {exc}"
+            return block, f"plan failed: {exc}"
+
+    def set_weights(self, weights: Mapping[int, float]) -> WeightReceipt:
+        table = check_weights(weights)
+        block, refusal = self.preflight(table)
         if refusal:
             return WeightReceipt("deferred", block, refusal)
         try:
@@ -194,6 +204,30 @@ class FakeChain:
         return True, f"accepted at block {self.block}"
 
 
+def hotkey_address(wallet: Any) -> str:
+    """The address that ``wallet`` signs weights as. It reads the hotkey file and no other key file.
+
+    The message of a failure names the file and never its content.
+    """
+    where = getattr(getattr(wallet, "hotkey_file", None), "path", "of the wallet")
+    try:
+        keypair = wallet.hotkey
+        keypair.sign(SIGN_CHECK)  # a file with only the public key loads, but it cannot sign; the signature is dropped
+        return str(keypair.ss58_address)
+    except FileNotFoundError as exc:
+        raise ConfigError(
+            f"the hotkey file {where} does not exist. The writer signs with the validator hotkey: "
+            "put its file there, or correct --wallet (NAME/HOTKEY) and --wallet-path"
+        ) from exc
+    except PermissionError as exc:
+        raise ConfigError(f"the hotkey file {where} is not readable by this user") from exc
+    except Exception as exc:
+        raise ConfigError(
+            f"the hotkey file {where} cannot sign ({type(exc).__name__}). It must be the plain hotkey file: "
+            "a file with a password or with only the public key cannot sign in an unattended run"
+        ) from exc
+
+
 class SubtensorClient:
     """``ChainClient`` over the bittensor SDK. Without a wallet it can only read."""
 
@@ -204,11 +238,27 @@ class SubtensorClient:
         self.items = self.sdk.storage.SubtensorModule
 
     @classmethod
-    def connect(cls, netuid: int, network: str, wallet: str = "") -> SubtensorClient:
-        """Open a connection. ``wallet`` is a ``name/hotkey`` wallet on this machine, or "" to read only."""
+    def connect(cls, netuid: int, network: str, wallet: str = "", wallet_path: str = "") -> SubtensorClient:
+        """Open a connection. ``wallet`` is a ``name/hotkey`` wallet on this machine, or "" to read only.
+
+        ``wallet_path`` is the directory that holds the wallets; "" means the SDK's own, ``~/.bittensor/wallets``.
+        A wallet whose hotkey file is missing or unusable is ``ConfigError``, before any connection opens.
+        A chain that does not answer is ``InfraError``.
+        """
         if bittensor is None:
             raise ConfigError("the bittensor SDK is not installed: install the 'chain' extra")
-        return cls(netuid, bittensor.Subtensor(network), bittensor.Wallet(wallet) if wallet else None)
+        holder = None
+        if wallet:
+            try:
+                holder = bittensor.Wallet(wallet, path=wallet_path) if wallet_path else bittensor.Wallet(wallet)
+            except ValueError as exc:
+                raise ConfigError(f"bad wallet {wallet!r}: {exc}") from exc
+            hotkey_address(holder)
+        try:
+            chain = bittensor.Subtensor(network)
+        except Exception as exc:
+            raise InfraError(f"no connection to the chain at {network!r}: {type(exc).__name__}: {exc}") from exc
+        return cls(netuid, chain, holder)
 
     def _query(self, item: str, block: int | None = None) -> Any:
         return self.chain.query(getattr(self.items, item), [self.netuid], block=block)
@@ -248,10 +298,7 @@ class SubtensorClient:
     def signer(self) -> str:
         if self.wallet is None:
             raise ConfigError("this chain client has no wallet: it can only read")
-        try:
-            return str(self.wallet.hotkey.ss58_address)
-        except Exception as exc:
-            raise ConfigError(f"cannot read the hotkey of the wallet: {exc}") from exc
+        return hotkey_address(self.wallet)
 
     def plan(self, weights: Mapping[int, float]) -> tuple[str, list[str]]:
         plan = self.chain.plan(self._intent(weights), self.wallet)
