@@ -257,28 +257,18 @@ def _recipe_lines(params: Params) -> list[str]:
     ]
 
 
-def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
-    entries, seats = round_now.get("entries") or [], queue.get("next") or []
+def _round_time_lines(params: Params) -> list[str]:
+    """What the clock does to a round. Every word here follows ``worker.LocalRunner.run``.
+
+    When the rule of the time limit changes, change this function. Two sentences elsewhere depend on it: the
+    ``not_trained`` bullet of section 4 and the "time limit" bullet of section 6. Both refer to this section.
+    """
     # The three times of worker.LocalRunner.run, in seconds from the lease.
     last = params.lease_timeout_s - params.promote_reserve_s
     stop = min(last, params.round_time_limit_s - params.promote_reserve_s)
     train_end = min(stop, params.train_time_budget_s)
     limit, reserve, first_look = show(params.round_time_limit_s / 60), show(params.promote_reserve_s / 60), params.look_sizes()[0]
-    checked = queue.get("files_checked_at")
     return [
-        "## 3. The round now",
-        "",
-        f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
-        "  new head is being published). The last closed rounds are in mining.json under `history`.",
-        *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
-        *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
-        f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
-        "  for a full round. Registrations for the next round are always open.",
-        "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
-        "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
-        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
-        "",
         "### The time of a round",
         "",
         "All times count from the lease: the moment a round takes its entries. A round ends early, as soon as every",
@@ -310,6 +300,27 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  each entry of that box is `{NO_DECISION}`.",
         f"- `{NO_DECISION}` means: not charged, and the seat goes to the front of the queue (section 4).",
         "",
+    ]
+
+
+def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
+    entries, seats = round_now.get("entries") or [], queue.get("next") or []
+    checked = queue.get("files_checked_at")
+    return [
+        "## 3. The round now",
+        "",
+        f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
+        "  new head is being published). The last closed rounds are in mining.json under `history`.",
+        *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
+        *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
+        f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
+        "  for a full round. Registrations for the next round are always open.",
+        "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
+        "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
+        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        "",
+        *_round_time_lines(params),
         "## 4. The queue",
         "",
         f"Seats that wait: {show(queue.get('length'))}. The next seats, in order:",
