@@ -108,6 +108,8 @@ def server_env(gpu: int, work_dir: Path) -> dict[str, str]:
     env = gpu_env([gpu])
     env.update({key: str(cache / name) for key, name in names.items()})
     env.update(HF_HUB_OFFLINE="1", VLLM_NO_USAGE_STATS="1", DO_NOT_TRACK="1")
+    # Without this variable, vLLM does not make the route /v1/load_lora_adapter. The server listens on 127.0.0.1 only.
+    env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "1"
     return env
 
 
@@ -180,8 +182,12 @@ class VllmEvaluator:
         fresh = [(lora.lora_hash, str(self.resident.tree(lora.prefix, lora.lora_hash))) for lora in request.loras if lora.lora_hash not in self._loaded]
 
         def load(url: str) -> None:  # one server loads its adapters one after another; the servers load side by side
+            # vLLM refuses a name that it holds. A server holds one when an earlier try of this look failed on another server.
+            cards = self._call(url + "/v1/models", None, 60.0).get("data")
+            held = {card.get("id") for card in cards if isinstance(card, dict)} if isinstance(cards, list) else set()
             for name, path in fresh:
-                self._call(url + "/v1/load_lora_adapter", {"lora_name": name, "lora_path": path}, 600.0)
+                if name not in held:
+                    self._call(url + "/v1/load_lora_adapter", {"lora_name": name, "lora_path": path}, 600.0)
 
         with ThreadPoolExecutor(len(self._urls)) as threads:
             list(threads.map(load, self._urls))
@@ -296,7 +302,7 @@ class VllmEvaluator:
                     self.sleep(5.0)
                     waited += 5.0
 
-    def _call(self, url: str, body: dict, timeout_s: float) -> dict:
+    def _call(self, url: str, body: dict | None, timeout_s: float) -> dict:
         try:
             return self.http(url, body, timeout_s)
         except (OSError, HttpError) as exc:

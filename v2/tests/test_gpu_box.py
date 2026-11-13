@@ -357,6 +357,7 @@ class Farm:
     def __init__(self, script, boot_ok: bool = True):
         self.script, self.boot_ok = script, boot_ok
         self.servers, self.bodies, self.loads, self.freed, self.lock = [], [], [], [], threading.Lock()
+        self.broken: set[tuple[int, str]] = set()  # (port, LoRA name): the next load of this name on this server fails
 
     def spawn(self, argv, env, log):
         self.servers.append(SimpleNamespace(argv=list(argv), env=dict(env), up=self.boot_ok, alive=lambda: self.servers[index].up, stop=lambda: setattr(self.servers[index], "up", False)))
@@ -369,8 +370,18 @@ class Farm:
             raise ConnectionRefusedError(url)
         if url.endswith("/health"):
             return {}
+        server = next(s for s in self.servers if s.up and str(port) in s.argv)
         with self.lock:
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": NULL_MODEL}, *({"id": name} for p, name, _ in self.loads if p == port)]}
             if url.endswith("/v1/load_lora_adapter"):
+                if server.env.get("VLLM_ALLOW_RUNTIME_LORA_UPDATING") != "1":
+                    raise HttpError(404)  # vLLM 0.32.0 makes this route only with this variable
+                if (port, body["lora_name"]) in self.broken:
+                    self.broken.remove((port, body["lora_name"]))
+                    raise HttpError(500)
+                if any((p, name) == (port, body["lora_name"]) for p, name, _ in self.loads):
+                    raise HttpError(400)  # vLLM refuses a name that it holds
                 self.loads.append((port, body["lora_name"], sorted(p.name for p in Path(body["lora_path"]).iterdir())))
                 return {}
             self.bodies.append((port, body))
@@ -504,6 +515,16 @@ def test_servers_start_after_the_gpus_are_free_one_per_gpu_and_close_frees_every
     assert sorted(p.name for p in seam.resident.root.iterdir()) == sorted([box.head.base_hash, box.head.base_fp32_master_digest])  # LoRAs leave; the head stays
 
 
+def test_a_look_that_failed_while_it_loaded_its_loras_can_run_again(box):
+    farm = Farm(lambda model, task: ("P", "stop"))
+    seam, request = evaluator(box, farm), eval_request(box)
+    farm.broken.add((8101, request.loras[1].lora_hash))
+    with pytest.raises(InfraError, match="load_lora_adapter failed: HTTP 500"):
+        seam.evaluate(request)
+    seam.evaluate(request)  # the same servers: each one loads only what it does not hold
+    assert len(farm.servers) == 2 and sorted(farm.loads) == sorted((port, lora.lora_hash, ["adapter_config.json", "adapter_model.safetensors"]) for port in (8100, 8101) for lora in request.loras)
+
+
 def test_server_command_line_and_refused_requests(box):
     request = eval_request(box)
     argv = server_argv("/base", 8100, request.params)
@@ -512,6 +533,7 @@ def test_server_command_line_and_refused_requests(box):
     assert argv[argv.index("--max-lora-rank") + 1] == str(int(request.params.recipe.bound("rank").high)) and "--enable-lora" in argv
     assert argv[argv.index("--limit-mm-per-prompt") + 1] == '{"image":0,"video":0}'  # v1: vLLM does not load the checkpoint without it
     assert server_env(3, box.config.work_dir)["HF_HUB_OFFLINE"] == "1"
+    assert server_env(3, box.config.work_dir)["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] == "1"  # vLLM 0.32.0: no LoRA load route without it
     assert chat_body("m", [], 5, request.params)["chat_template_kwargs"] == {"enable_thinking": True}
     other_head = box.build.replace(request.loras[0], head_version_id="0" * 64)
     with pytest.raises(ContractError):

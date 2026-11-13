@@ -47,7 +47,8 @@ def test_the_controller_publishes_through_the_real_store(tmp_path):
     made.round()
     assert made.controller.last_error == ""  # each head manifest was public before the contract named the head
     doc, text = json.loads(made.store.get(layout.MINING_JSON)), made.store.get(layout.LLMS_TXT).decode()
-    snap = public.snapshot(made.controller.state, made.params, doc["generated_at"])
+    controller = made.controller
+    snap = public.snapshot(controller.state, made.params, doc["generated_at"], controller._verdicts, controller._verdicts_at)
     assert {key: doc[key] for key in snap} == to_jsonable(snap)  # the website reads the snapshot's own keys
     assert doc["snapshot_digest"] in text and doc["head"]["head"]["version_id"] in text and doc["irt_snapshot_id"] in text
     assert [king["uid"] for king in doc["kings"]] == [11] and "| 11 | hk11 |" in text

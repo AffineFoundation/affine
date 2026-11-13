@@ -147,9 +147,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     if chain is not None:
         controller.sync_registrations(chain, now())
     params = controller.params
-    if stack.publisher is not None:  # llms.txt and mining.json go out before the first round, with the first queue in them
-        stack.publisher.publish(snapshot(controller.state, params, now()))
-    print(json.dumps(summary(controller.state, params) | {"published": stack.publisher is not None}, indent=2))
+    # llms.txt and mining.json go out before the first round, with the first queue and the verdict on each waiting file.
+    published = controller.publish(now(), check_files=True)
+    print(json.dumps(summary(controller.state, params) | {"published": published}, indent=2))
     if controller.last_error:
         print(f"not finished: {controller.last_error}", file=sys.stderr)
         return 1
@@ -176,6 +176,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             state = controller.state
             note = f"idle: {len(waiting(state.queue))} seats wait, phase {phase(state)}"
             print(note + (f", last problem: {controller.last_error}" if controller.last_error else ""), file=sys.stderr, flush=True)
+            controller.publish(now(), only_changes=True)  # a new or changed miner file shows up while no round runs
             if args.max_idle is not None and idle >= args.max_idle:
                 break
             time.sleep(args.idle_sleep)
@@ -201,8 +202,11 @@ def cmd_publish(args: argparse.Namespace) -> int:
     state, params, stack = read_state(args, "publish")
     if stack.publisher is None:
         raise ConfigError("this stack has no publisher")
-    stack.publisher.publish(snapshot(state, params, now()))
-    print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue)}))
+    checked = now()  # this reads the file of every waiting seat
+    verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
+    stack.publisher.publish(snapshot(state, params, now(), verdicts, checked))
+    valid = sum(verdict.valid for verdict in verdicts.values())
+    print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
     return 0
 
 

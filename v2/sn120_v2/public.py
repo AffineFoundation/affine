@@ -14,7 +14,7 @@ from .params import Params
 from .payout import payees
 from .queue import waiting
 from .state import RoundRecord, State
-from .types import WINNER, BoxResult, EntryDecision, RoundTicket, Verdict
+from .types import NOT_TRAINED, WINNER, BoxResult, EntryDecision, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
@@ -74,8 +74,15 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
     return view
 
 
-def snapshot(state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None) -> dict[str, Any]:
-    """Everything a miner, the website or the benchmark service may see."""
+def snapshot(
+    state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None
+) -> dict[str, Any]:
+    """Everything a miner, the website or the benchmark service may see.
+
+    ``verdicts`` is admission's last check of the waiting files, taken at
+    ``files_checked_at``. A file that a miner stored after that time shows
+    the old verdict until the next check.
+    """
     verdicts = verdicts or {}
     line = waiting(state.queue)
     return {
@@ -94,6 +101,7 @@ def snapshot(state: State, params: Params, now: int, verdicts: Mapping[str, Verd
         "history": [round_view(record) for record in state.rounds[-HISTORY_PREVIEW:]],
         "queue": {
             "length": len(line),
+            "files_checked_at": files_checked_at,
             "next": [
                 {
                     "position": position,
@@ -156,6 +164,9 @@ def round_text(report: Mapping[str, Any]) -> str:
         f"batches: {report['seats']} | tasks scored: {scored} of {report['n_tasks']}"
         + (f" | null M: pass {report['null_pass_rate']:.2%}, cap-hit {report['null_cap_rate']:.2%}" if "null_pass_rate" in report else "")
     )
+    waiting = sum(e["status"] == NOT_TRAINED for e in entries)
+    if waiting:
+        lines.append(f"not trained: {waiting} of {report['seats']} batches. The training time of the round ended first. They are not charged and are first in the next round.")
     lines.append(f"{'pos':>3} {'uid':>4}  {'hotkey':<12} {'verdict':<11} {'delta':>8} {'z':>6} {'cap-hit':>7} {'tasks':>5} {'norm':>9}  note")
     for e in entries:
         hotkey = e["hotkey"] if len(e["hotkey"]) <= 12 else e["hotkey"][:5] + ".." + e["hotkey"][-5:]

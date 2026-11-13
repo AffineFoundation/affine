@@ -213,9 +213,16 @@ class Params(Record):
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
+    # PLACEHOLDER: training time of a round, from the lease. At its end no training starts and a job that still runs
+    # is stopped; that batch is not charged and is first in the next round. Then the scoring starts.
+    train_time_budget_s: int = 40 * 60
     promote_reserve_s: int = 600  # PLACEHOLDER: the box stops scoring this long before the limit, so judging and promotion fit
-    eval_chunk_tasks: int = 250  # PLACEHOLDER: the box scores this many tasks, then looks at the clock
-    lease_timeout_s: int = 100 * 60  # a box result that arrives later than this is never used
+    # PLACEHOLDER: the box scores this many tasks, then looks at the clock. One chunk lasts at least as long as its
+    # longest rollout, so fewer and larger chunks waste less time. 500 = the first look of 2000 tasks in one chunk.
+    eval_chunk_tasks: int = 500
+    # A box result that arrives later than this is never used. It is longer than the round's time limit, because the
+    # first look is always scored in full: only the end of the lease cuts it.
+    lease_timeout_s: int = 4 * 3600
     max_infra_attempts: int = 3  # no_decision outcomes before an entry is held for the operator
     squat_min_wait_s: int = 86400
     squat_age_factor: float = 2.0
@@ -248,6 +255,11 @@ class Params(Record):
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
         _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")
+        _need(self.lease_timeout_s >= self.round_time_limit_s, "lease_timeout_s must not be below round_time_limit_s")
+        _need(
+            0 < self.train_time_budget_s < self.round_time_limit_s - self.promote_reserve_s,
+            "train_time_budget_s must leave time for the scoring inside round_time_limit_s",
+        )
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
