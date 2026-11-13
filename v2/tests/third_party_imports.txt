@@ -30,3 +30,6 @@ transformers
 math_verify
 latex2sympy2_extended
 sympy
+
+# links: sealed upload links and activation
+nacl
