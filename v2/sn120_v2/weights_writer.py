@@ -48,6 +48,7 @@ from typing import Any, Callable, Iterator, Sequence
 from . import payout
 from .chain import Reader, Setter, SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
+from .journal import Mirror
 from .params import Params, load_params
 from .seams import ChainReader, ObjectStore, WeightSetter
 from .state import load as replay_journal
@@ -84,7 +85,9 @@ def read_view(state_dir: Path, open_store: Callable[[], ObjectStore] | None = No
 
     With ``open_store``: the journal copy in the store, pulled into that file, which is then a cache.
     The store is only read. When it does not answer (``InfraError``), the last valid journal in the
-    cache is used. With no journal in the cache, that error is raised.
+    cache is used. With no journal in the cache, that error is raised. A store that answers with
+    fewer records than the cache (a wrong prefix, for example) also leaves the cache in use, and
+    ``source`` says so: the journal copy never gets shorter.
 
     A journal that cannot be read, or that has no genesis, raises.
     """
@@ -93,12 +96,18 @@ def read_view(state_dir: Path, open_store: Callable[[], ObjectStore] | None = No
         state, source = replay_journal(path), "the journal file"
     else:
         try:
-            state, source = load_from_store(open_store(), path), "the journal copy in the store"
+            store = open_store()
+            state = load_from_store(store, path)
+            stored, held = Mirror(store).count(), state.last_seq + 1
         except InfraError as exc:
             state = replay_journal(path) if path.exists() else None
             if state is None or state.genesis is None:
                 raise InfraError(f"the store did not answer, and this host has no cache of the journal: {exc}") from exc
             source = f"the cache of the journal copy, because the store did not answer ({exc})"
+        else:
+            source = "the journal copy in the store"
+            if stored < held:
+                source = f"the cache of the journal copy, because the store holds fewer records ({stored}) than the cache ({held})"
     if state.genesis is None:
         raise ContractError("the journal holds no genesis: the state is not bootstrapped")
     return View(tuple(state.kings), state.genesis.validator_hotkey, state.params, source)
