@@ -13,11 +13,16 @@ from pathlib import Path
 
 import pytest
 
-from sn120_v2 import cutover
-from sn120_v2.cutover import CutoverError, build_genesis, build_import, chain_report, preview_queue
+from sn120_v2 import cli, cutover, layout
+from sn120_v2.canonical import manifest_digest
+from sn120_v2.cutover import CutoverError, build_genesis, build_import, chain_report, copy_miner_files, preview_queue
 from sn120_v2.errors import ConfigError
-from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, Params
+from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec, Params
 from sn120_v2.payout import weights
+from sn120_v2.queue import waiting
+from sn120_v2.sim import JOURNAL_FILE
+from sn120_v2.state import load as load_state
+from sn120_v2.store import LocalStore
 from sn120_v2.types import ChainSnapshot, Registration, V1Import
 
 DATA = Path(__file__).parent / "data" / "cutover"
@@ -26,6 +31,7 @@ NOW = RAW["k1"]["generated_at"] + 600
 KING_EPOCHS = [1121, 1122, 1162, 1165, 1166, 1167, 1169, 1170, 1174, 1211]  # v1's 10 payees, oldest first
 KING_UIDS = [955, 956, 942, 821, 851, 909, 822, 852, 918, 920]
 VALIDATOR = "5G8McktkLiwrkhtmFJuS79CCYmjeLVCbRzqWCJ8jDXp2bPbn"  # any valid address: the fixtures do not name the real one
+OWNER = "5HmYnmUYT6qe3yFMg1Ad8WLLqDvnwtjYakXBpDvoRW1Qqzb8"  # the owner hotkey that ops/HOURLY_BURN.md expects at UID 0
 DIGEST = "ab" * 32
 FILES = ["--k1", str(DATA / "k1.json"), "--mining", str(DATA / "mining.json"), "--max-age-s", str(10**10)]
 
@@ -223,22 +229,37 @@ def test_genesis_is_fresh_mimo_with_the_given_hotkey_and_no_defaults():
 
 def test_dry_run_prints_and_writes_nothing(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert cutover.main([*FILES, "--dry-run"]) == 2  # 14 open turns and no decision
+    assert cutover.main([*FILES, "--max-age-s", "60", "--dry-run"]) == 2  # the fixture is older than a minute
     assert "CUTOVER IMPORT REFUSED" in capsys.readouterr().err
     snapshot = tmp_path / "chain.json"
     snapshot.write_bytes(chain(RAW).to_json())
-    assert cutover.main([*FILES, "--undecided", "front", "--chain", str(snapshot), "--dry-run"]) == 0
+    assert cutover.main([*FILES, "--chain", str(snapshot), "--dry-run"]) == 0  # the 14 open turns go to the front by default
     out = capsys.readouterr().out
     assert "v1-e1211 uid 920" in out and "front of the queue: 14 seats" in out and "first weights" in out and "DRY RUN" in out
-    assert "UID 0 is owner" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
+    assert "UID 0 is owner: it gets weight only if no king is registered; not checked" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
     assert sorted(path.name for path in tmp_path.iterdir()) == ["chain.json"]
+    assert cutover.main([*FILES, "--undecided", "front", "--owner-hotkey", OWNER, "--dry-run"]) == 2  # nothing to check it against
+    assert "--owner-hotkey needs --chain" in capsys.readouterr().err
+
+
+def test_a_uid_0_that_is_not_the_owner_hotkey_is_refused(tmp_path, capsys):
+    """v2 sends unearned weight to UID 0. The operator names the owner hotkey; another hotkey at UID 0 stops the cutover."""
+    args = [*FILES, "--undecided", "front", "--dry-run", "--chain"]
+    for name, holder in (("owner.json", OWNER), ("other.json", VALIDATOR)):
+        (tmp_path / name).write_bytes(chain(RAW, (Registration(0, holder, 1),)).to_json())
+    assert cutover.main([*args, str(tmp_path / "owner.json"), "--owner-hotkey", OWNER]) == 0
+    assert f"UID 0 is {OWNER}: it gets weight only if no king is registered; it is the given owner hotkey" in capsys.readouterr().out
+    assert cutover.main([*args, str(tmp_path / "other.json"), "--owner-hotkey", OWNER]) == 2
+    assert f"UID 0 is {VALIDATOR}, not the owner hotkey {OWNER}" in capsys.readouterr().err
+    assert cutover.main([*args, str(tmp_path / "owner.json"), "--owner-hotkey", OWNER[:-1] + "9"]) == 2  # a typing error
+    assert "ConfigError" in capsys.readouterr().err
 
 
 def test_real_run_writes_both_records_once(tmp_path, capsys):
     out = tmp_path / "import"
     genesis = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR]
     assert cutover.main([*FILES, "--undecided", "front", "--out", str(out)]) == 2  # no genesis inputs, no defaults
-    assert cutover.main([*FILES, *genesis, "--out", str(out)]) == 2  # no decision for the open turns
+    assert cutover.main([*FILES, "--master-digest", DIGEST, "--validator-hotkey", VALIDATOR[:-1] + "m", "--out", str(out)]) == 2
     assert not out.exists()
     assert cutover.main([*FILES, *genesis, "--undecided", "front", "--earlier-k1", str(DATA / "k1.json"), "--out", str(out)]) == 0
     assert sorted(path.name for path in out.iterdir()) == ["earlier-1-k1.json", "genesis.json", "k1.json", "mining.json", "v1_import.json"]
@@ -247,3 +268,38 @@ def test_real_run_writes_both_records_once(tmp_path, capsys):
     assert (out / "k1.json").read_bytes() == (DATA / "k1.json").read_bytes()
     assert cutover.main([*FILES, *genesis, "--undecided", "front", "--out", str(out)]) == 2  # never replaces an import
     assert "exists already" in capsys.readouterr().err
+
+
+def test_the_controller_starts_from_the_written_files_with_the_previewed_queue(tmp_path, capsys):
+    """One real run, then the foundation's ``bootstrap`` on its files: kings, served seats and queue order are the import's."""
+    out, state_dir = tmp_path / "import", tmp_path / "state"
+    snapshot = chain(RAW, (Registration(0, OWNER, 1), Registration(23, "a-new-hotkey", 2)))
+    (tmp_path / "snapshot.json").write_bytes(snapshot.to_json())
+    base_files = {"model.bin": DIGEST}  # made-up model files: the real base hash needs the real model
+    (tmp_path / "genesis_files.json").write_text(json.dumps({"base_files": base_files, "master_files": {"master.bin": DIGEST}}))
+    inputs = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR, "--undecided", "front", "--owner-hotkey", OWNER]
+    assert cutover.main([*FILES, *inputs, "--chain", str(tmp_path / "snapshot.json"), "--out", str(out)]) == 0
+    assert (out / "chain.json").read_bytes() == snapshot.to_json()
+    genesis = replace(GenesisSpec.from_json((out / "genesis.json").read_bytes()), base_hash=manifest_digest(base_files))
+    (tmp_path / "genesis.json").write_bytes(genesis.to_json())
+    files = [f"--genesis={tmp_path / 'genesis.json'}", f"--genesis-files={tmp_path / 'genesis_files.json'}"]
+    files += [f"--v1-import={out / 'v1_import.json'}", f"--chain={out / 'chain.json'}"]
+    assert cli.main(["bootstrap", "--state-dir", str(state_dir), "--stack", "sn120_v2.sim:stack", *files]) == 0
+    imp, state = V1Import.from_json((out / "v1_import.json").read_bytes()), load_state(state_dir / JOURNAL_FILE)
+    assert tuple(state.kings) == imp.kings and state.genesis.validator_hotkey == VALIDATOR
+    assert state.served_regs == set(imp.served_regs) and state.served_hotkeys == set(imp.served_hotkeys)
+    seats = waiting(state.queue)
+    assert seats == preview_queue(imp, snapshot, Params()) and [seat.reg.key for seat in seats[:14]] == list(imp.front)
+    assert not set(state.queue) & state.served_regs and (23, 2) in state.queue  # a seat v1 never saw waits behind the 14
+
+
+def test_queued_miner_files_are_copied_in_queue_order_and_the_source_is_only_read(tmp_path):
+    src, dst = LocalStore(tmp_path / "v1"), LocalStore(tmp_path / "v2")
+    files = {"hkA": b'{"format": "affine-batch-v1"}', "hkC": b'{"train": {"lr": 1}}', "hkD": b"not json", "hkE": b"{}"}
+    for hotkey, data in files.items():
+        src.put(layout.miner_object(hotkey), data)
+    before = {key: src.get(key) for key in src.list("")}
+    lines = copy_miner_files(src, dst, ["hkA", "hkB", "hkC", "hkD", "hkE"], limit=3)  # hkB has no file; hkE is past the limit
+    assert [line.split()[1] for line in lines] == ["hkA", "hkC", "hkD"] and dst.list("") == [layout.miner_object(h) for h in ("hkA", "hkC", "hkD")]
+    assert lines[0].endswith("default recipe") and lines[1].endswith('train={"lr": 1}') and "not a JSON object" in lines[2]
+    assert all(dst.get(key) == before[key] for key in dst.list("")) and {key: src.get(key) for key in src.list("")} == before

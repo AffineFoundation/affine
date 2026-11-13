@@ -7,13 +7,16 @@ One command builds the two records that the controller starts from:
                served, the seats v1 moved to the back of the queue, and the
                seats that are owed a turn at the front
 
-It reads v1's public files only (k1.json and mining.json). It never reads a
-v1 host, the object store or a credential, and it never writes to the chain.
-If v1's data is incomplete or inconsistent, it raises ``CutoverError`` and
-writes nothing.
+The command reads v1's public files only (k1.json and mining.json). It never
+reads a v1 host, the object store or a credential, and it never writes to the
+chain. If v1's data is incomplete or inconsistent, it raises ``CutoverError``
+and writes nothing.
 
-    python -m sn120_v2.cutover --dry-run --undecided front --earlier-k1 <saved k1.json>
-    python -m sn120_v2.cutover --master-digest <sha256> --validator-hotkey <ss58> --undecided front --out <dir>
+    python -m sn120_v2.cutover --dry-run --earlier-k1 <saved k1.json> --chain <chain snapshot> --owner-hotkey <ss58>
+    python -m sn120_v2.cutover --master-digest <sha256> --validator-hotkey <ss58> --chain <chain snapshot> --owner-hotkey <ss58> --out <dir>
+
+``copy_miner_files`` is not part of the command. It carries queued miner files
+from v1's store to v2's store, and it only reads the store it copies from.
 
 The runbook is v2/CUTOVER.md.
 """
@@ -31,11 +34,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from . import layout
 from .canonical import is_sha256, sha256_hex
 from .errors import ConfigError, InfraError, V2Error, VerifyError
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec, Params
 from .payout import weights
 from .queue import BACK, FRONT, NORMAL, plan_sync, waiting, zone
+from .seams import ObjectStore
 from .types import ChainSnapshot, King, QueueEntry, V1Import
 
 K1_URL = "https://affine.io/k1.json"
@@ -233,18 +238,49 @@ def preview_queue(imp: V1Import, snapshot: ChainSnapshot, params: Params) -> lis
     return waiting({reg.key: QueueEntry(reg, front=reg.key in front, demoted=reg.key in demoted) for reg in plan.added})
 
 
-def chain_report(imp: V1Import, genesis: GenesisSpec | None, snapshot: ChainSnapshot, params: Params) -> list[str]:
-    """Starting queue and first weights for one chain snapshot. Refuses a start that would pay no king."""
+def chain_report(
+    imp: V1Import, genesis: GenesisSpec | None, snapshot: ChainSnapshot, params: Params, owner_hotkey: str | None = None
+) -> list[str]:
+    """Starting queue and first weights for one chain snapshot. Refuses a start that would pay no king or the wrong owner."""
     seats, registered = preview_queue(imp, snapshot, params), snapshot.hotkeys()
     _need(genesis is None or genesis.validator_hotkey in registered.values(), "the validator hotkey is not registered on the subnet")
     table = weights(imp.kings, registered, params)
     _need(table != {params.burn_uid: 1.0}, "no imported king is still registered: v2 would burn all weight")
     _need(params.burn_uid in registered, f"UID {params.burn_uid} is not in the chain snapshot")
+    holder = registered[params.burn_uid]
+    _need(owner_hotkey in (None, holder), f"UID {params.burn_uid} is {holder}, not the owner hotkey {owner_hotkey}: unearned weight would go to {holder}")
     count = [sum(zone(seat) == z for seat in seats) for z in (FRONT, NORMAL, BACK)]
     lines = [f"CHAIN at block {snapshot.block}: {len(seats)} seats wait ({count[0]} front, {count[1]} normal, {count[2]} back). First 20:"]
     lines += [f"    {i}. uid {s.reg.uid} block {s.reg.registration_block} {s.reg.hotkey}" for i, s in enumerate(seats[:20], 1)]
     lines.append(f"  first weights: {len(table)} UIDs, {1 / len(table):.4f} each: {sorted(table)}")
-    return lines + [f"  UID {params.burn_uid} is {registered[params.burn_uid]}: unearned weight goes there, so it must be the subnet owner hotkey"]
+    checked = "it is the given owner hotkey" if owner_hotkey else "not checked (no --owner-hotkey)"
+    return lines + [f"  UID {params.burn_uid} is {holder}: it gets weight only if no king is registered; {checked}"]
+
+
+def copy_miner_files(src: ObjectStore, dst: ObjectStore, hotkeys: Sequence[str], limit: int | None = None) -> list[str]:
+    """Copy queued miner files from v1's store to v2's store, in the given order. ``src`` is only read.
+
+    A hotkey with no file is skipped. Each copy is read back and compared. The
+    report names the files with no ``train`` object: those use the default recipe.
+    """
+    lines: list[str] = []
+    for hotkey in hotkeys:
+        if limit is not None and len(lines) >= limit:
+            break
+        key = layout.miner_object(hotkey)
+        try:
+            data = src.get(key)
+        except KeyError:
+            continue
+        dst.put(key, data)
+        _need(dst.sha256(key) == sha256_hex(data), f"the copy of {key} does not read back as written")
+        try:
+            train = json.loads(data).get("train")
+        except (ValueError, AttributeError):
+            train = "not a JSON object"
+        recipe = "default recipe" if train is None else f"train={json.dumps(train, sort_keys=True)}"
+        lines.append(f"copied {hotkey} {len(data)} bytes sha256={sha256_hex(data)} {recipe}")
+    return lines
 
 
 def describe(imp: V1Import, genesis: GenesisSpec | None, copies: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -280,6 +316,10 @@ def read_source(location: str) -> bytes:
 
 
 def run(args: argparse.Namespace) -> list[str]:
+    if args.owner_hotkey:
+        check_ss58(args.owner_hotkey)
+        if not args.chain:
+            raise ConfigError("--owner-hotkey needs --chain: the owner is checked against UID 0 of the chain snapshot")
     raw = {"k1.json": read_source(args.k1), "mining.json": read_source(args.mining)}
     raw |= {f"earlier-{i}-k1.json": read_source(path) for i, path in enumerate(args.earlier_k1, 1)}
     try:
@@ -290,15 +330,16 @@ def run(args: argparse.Namespace) -> list[str]:
     imp = build_import(k1, mining, now=time.time(), undecided=args.undecided, max_age_s=args.max_age_s, source=source, earlier=earlier)
     genesis = build_genesis(args.master_digest, args.validator_hotkey) if args.out or args.master_digest or args.validator_hotkey else None
     lines = describe(imp, genesis, [*sorted(earlier, key=lambda old: old["generated_at"]), k1])
-    if args.chain:
-        lines += chain_report(imp, genesis, ChainSnapshot.from_json(read_source(args.chain)), Params())
+    chain = {"chain.json": read_source(args.chain)} if args.chain else {}
+    if chain:
+        lines += chain_report(imp, genesis, ChainSnapshot.from_json(chain["chain.json"]), Params(), args.owner_hotkey)
     if args.out is None:
         return lines + ["DRY RUN: nothing was written."]
     out = Path(args.out)
     if out.exists():
         raise ConfigError(f"{out} exists already: refusing to replace an earlier import")
     out.mkdir(parents=True)
-    files = raw | {"genesis.json": genesis.to_json(), "v1_import.json": imp.to_json()}
+    files = raw | chain | {"genesis.json": genesis.to_json(), "v1_import.json": imp.to_json()}
     for name, data in files.items():
         (out / name).write_bytes(data)
     return lines + [f"WROTE {out / name} sha256={sha256_hex(data)}" for name, data in files.items()]
@@ -309,14 +350,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--k1", default=K1_URL, help="v1 k1.json: https URL or file (default: %(default)s)")
     parser.add_argument("--mining", default=MINING_URL, help="v1 mining.json: https URL or file (default: %(default)s)")
     parser.add_argument("--earlier-k1", action="append", default=[], metavar="FILE", help="a saved earlier copy of k1.json; give it once per copy")
-    parser.add_argument("--chain", help="file with a ChainSnapshot as JSON: also check and print the starting queue and weights")
+    parser.add_argument("--chain", help="file with a ChainSnapshot as JSON: check and print the starting queue and weights; --out copies it as chain.json")
+    parser.add_argument("--owner-hotkey", help="SS58 address of the subnet owner hotkey: refuse when UID 0 of --chain is another hotkey")
     parser.add_argument("--master-digest", help="sha256 digest of the genesis fp32 master files")
     parser.add_argument("--validator-hotkey", help="SS58 address of the validator hotkey that v1 used")
-    parser.add_argument("--undecided", choices=("front", "served"), help="what to do with v1 turns that have no verdict")
+    parser.add_argument(
+        "--undecided", choices=("front", "served"), default="front",
+        help="v1 turns that have no verdict: front = not charged, first in the queue (default, Jacob's rule); served = charged",
+    )
     parser.add_argument("--max-age-s", type=int, default=3600, help="oldest k1.json accepted, in seconds (default: %(default)s)")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="print what would be imported; write nothing")
-    mode.add_argument("--out", help="new directory for genesis.json, v1_import.json and the v1 files that were read")
+    mode.add_argument("--out", help="new directory for genesis.json, v1_import.json, chain.json and the v1 files that were read")
     args = parser.parse_args(argv)
     try:
         print("\n".join(run(args)))
