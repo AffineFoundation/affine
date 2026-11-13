@@ -76,17 +76,19 @@ class Build:
         return {hotkey: Verdict(hotkey, True, batch_sha256=h(hotkey)) for hotkey in hotkeys}
 
     @staticmethod
-    def batch(reg: Registration, round_id: str = "r000001") -> FrozenBatch:
-        return FrozenBatch(reg.hotkey, h(f"batch-{reg.hotkey}"), f"private/rounds/{round_id}/batches/{reg.hotkey}.json", "affine-batch-v2", 5, 10)
+    def batch(reg: Registration, round_id: str = "r000001", train: dict | None = None) -> FrozenBatch:
+        uri = f"private/rounds/{round_id}/batches/{reg.hotkey}.json"
+        return FrozenBatch(reg.hotkey, h(f"batch-{reg.hotkey}"), uri, "affine-batch-v2", 5, 10, train or {})
 
     @staticmethod
-    def entry(position: int, uid: int | None = None) -> Entry:
+    def entry(position: int, uid: int | None = None, train: dict | None = None) -> Entry:
         reg = Build.reg(10 + position if uid is None else uid)
-        return Entry(position, reg, Build.batch(reg))
+        return Entry(position, reg, Build.batch(reg, train=train))
 
     @staticmethod
     def artifact(head: HeadVersion, entry: Entry, params: Params, tag: str = "") -> LoRAArtifact:
         files = {"adapter_config.json": h(f"cfg-{entry.reg.hotkey}{tag}"), "adapter_model.safetensors": h(f"w-{entry.reg.hotkey}{tag}")}
+        recipe = params.recipe.for_miner(entry.batch.train)
         return LoRAArtifact(
             lora_hash=manifest_digest(files),
             files=files,
@@ -95,9 +97,9 @@ class Build:
             head_version_id=head.version_id,
             batch_sha256=entry.batch.batch_sha256,
             recipe_id=params.recipe_id,
-            rank=params.recipe.rank,
-            alpha=params.recipe.alpha,
-            target_modules=params.recipe.target_modules,
+            rank=recipe.rank,
+            alpha=recipe.alpha,
+            target_modules=recipe.target_modules,
             report=TrainReport(seed=1, steps=1, loss=0.5, step_norm=0.01, tokens=100, wall_s=1.0, gpu_class="cpu", image_digest=IMAGE),
         )
 
@@ -109,9 +111,11 @@ class Build:
         weights: tuple[float, ...] | None = None,
         lease: int = 0,
         first_pos: int = 0,
+        train: dict[int, dict] | None = None,
     ) -> RoundTicket:
         params = params or Build.params(n_tasks=n_tasks)
         task_ids = tuple(f"t{i:03d}" for i in range(n_tasks))
+        positions = range(first_pos, first_pos + n_entries)
         return RoundTicket(
             round_id="r000001",
             lease_id=f"r000001-l{lease}",
@@ -119,7 +123,7 @@ class Build:
             head=Build.head(),
             params=params,
             draw=Draw("snap-0", "seed-0", task_ids, weights or (1.0,) * n_tasks),
-            entries=tuple(Build.entry(first_pos + i) for i in range(n_entries)),
+            entries=tuple(Build.entry(pos, train=(train or {}).get(pos)) for pos in positions),
             issued_at=1000,
             expires_at=5000,
         )
