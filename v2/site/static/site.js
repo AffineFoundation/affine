@@ -23,16 +23,18 @@
     lost: ['LOST', 'dn', 'Had a fair tournament and did not win. The registration is used up.'],
     no_decision: ['NO DECISION', 'wait', 'Our infrastructure failed. Not charged; the seat goes back to the front of the queue.'],
     skip: ['SKIP', 'private', 'The file was missing or invalid when the round froze it. Not charged; the seat keeps its place.'],
+    not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this batch was trained. Not charged; the seat is first in the next round.'],
+    not_scored: ['NOT SCORED', 'wait', 'The time limit of the round came before the first look of the scoring. Not charged; the seat is first in the next round.'],
   };
   const OUTCOME = {
     applied: r => pill('UID ' + r.winner_uid + ' applied', 'up', 'The winning LoRA is on the head now.'),
     null: () => mute('M stays', 'No LoRA cleared the bar. The head did not change.'),
-    no_decision: () => pill('no decision', 'wait', 'Our infrastructure failed. Nobody is charged.'),
+    no_decision: () => pill('no decision', 'wait', 'No LoRA was judged: a failure on our side, or the time of the round ended first. Nobody is charged.'),
     abandoned: () => pill('abandoned', 'wait', 'The files of the named winner could not be verified. Nobody is charged.'),
   };
   const FLAG = {
     leased: ['in round', 'up', 'In the round that runs now.'],
-    front: ['front', 'wait', 'Sent back to the front after an infrastructure failure on our side.'],
+    front: ['front', 'wait', 'Sent back to the front, not charged: a failure on our side, or the time of the round ended first.'],
     demoted: ['back of queue', 'wait', 'Moved to the back: no valid file for too long. A seat with a valid file is never moved back.'],
     held: ['held', 'wait', 'Parked for the operator after repeated infrastructure failures. Not charged.'],
   };

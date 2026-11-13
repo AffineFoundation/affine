@@ -14,7 +14,7 @@ from .params import Params
 from .payout import payees
 from .queue import waiting
 from .state import RoundRecord, State
-from .types import NOT_TRAINED, WINNER, BoxResult, EntryDecision, RoundTicket, Verdict
+from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
@@ -167,6 +167,9 @@ def round_text(report: Mapping[str, Any]) -> str:
     waiting = sum(e.get("status") == NOT_TRAINED for e in entries)
     if waiting:
         lines.append(f"not trained: {waiting} of {report['seats']} batches. The training time of the round ended first. They are not charged and are first in the next round.")
+    cut = sum(e.get("status") == NOT_SCORED for e in entries)
+    if cut:
+        lines.append(f"not scored: {cut} of {report['seats']} batches. The time limit of the round came before the first look. They are not charged and are first in the next round.")
     lines.append(f"{'pos':>3} {'uid':>4}  {'hotkey':<12} {'verdict':<11} {'delta':>8} {'z':>6} {'cap-hit':>7} {'tasks':>5} {'norm':>9}  note")
     for e in entries:
         hotkey = e["hotkey"] if len(e["hotkey"]) <= 12 else e["hotkey"][:5] + ".." + e["hotkey"][-5:]

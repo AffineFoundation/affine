@@ -135,7 +135,7 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0, max_train_token_steps=123456)
     flat = " ".join(published(world(tmp_path, **changes).publisher.snapshots[-1])[1].split())
     assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
-    assert "The box stops 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
+    assert "The box stops scoring 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
     assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
@@ -144,8 +144,12 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
     assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
     assert "Scoring runs in chunks of 40 tasks." in flat
-    assert "The first look (100 tasks) is always scored in full for null M and every trained LoRA." in flat
-    assert "judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
+    assert "at minute 75 (the stop time). The stop is hard." in flat and "The stop time cuts every look, the first one too." in flat
+    assert "At the stop time, with the first look (100 tasks) complete: each open LoRA is judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
+    assert "At the stop time, with fewer than 100 tasks scored: each trained LoRA is `not_scored`. You are not charged, your seat is first in the next round, and no failure is counted for the seat." in flat
+    assert "always scored in full" not in flat and "longer than 80 minutes only when" not in flat, "no exemption for the first look"
+    assert "`not_scored`: the time limit of the round came before the first look of the scoring (section 3)." in flat
+    assert "With fewer tasks than the first look, there is no decision: `not_scored` (section 3)." in flat
     assert "The lease ends 150 minutes after it starts." in flat
     assert "reported `no_decision` for your entry 5 times" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
