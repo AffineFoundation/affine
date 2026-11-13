@@ -41,7 +41,22 @@ from .types import (
 class ObjectStore(Protocol):
     """A flat key/value store of bytes (R2 in production). Keys come from ``layout.py``.
 
-    A missing key raises ``KeyError``. An unreachable store raises ``InfraError``.
+    Every implementation behaves the same way, because the simulation runs
+    on the local store and production runs on R2:
+
+    * ``list(prefix)`` returns sorted full keys. It matches by path segment:
+      a key matches when it equals ``prefix`` or starts with ``prefix + "/"``.
+      So lease ``r000001-l1`` never matches lease ``r000001-l10``. An empty
+      prefix, or one that ends in "/", is a plain string prefix.
+    * ``get``, ``get_file``, ``size``, ``sha256`` and ``copy`` raise
+      ``KeyError(key)`` when the source key is missing. ``exists`` returns False.
+    * ``delete`` of a missing key is not an error.
+    * ``put``, ``put_file`` and ``copy`` overwrite an existing key.
+      ``copy(k, k)`` does nothing once the key is known to exist.
+    * ``get_file`` creates parent directories and writes through a temporary
+      file and a rename, so a failed download leaves no partial file.
+    * Every other failure (network, permission, server error, short read,
+      size mismatch after a write) raises ``InfraError``.
     """
 
     def put(self, key: str, data: bytes) -> None: ...
