@@ -1,6 +1,6 @@
 """Host side: the single queue-driven daemon of the per-green benchmark, plus its CLI commands.
 
-Loop (every 30 s): read the applied kings from v2's public head log (source.py; no call into the controller), build the
+Loop (every 30 s): read the applied kings from v2's journal (source.py; no call into the controller), build the
 queue, keep exactly one king running on the node, collect finished benchmarks into BENCH_STATE/results/, write
 BENCH_SITE/benchmarks.json. Idempotent and resumable: a result file per (king, benchmark, version) is the only "done"
 marker, so a king is benchmarked once however often it is listed; a crashed run is resumed in place

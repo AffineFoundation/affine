@@ -1,14 +1,14 @@
-"""The one place where the benchmark service reads v2 state. It only reads: `get` and `presign_get`, nothing else.
+"""The one place where the benchmark service reads v2 state. It only reads: the journal file, and `get` and `presign_get`
+on the store.
 
-Applied kings come from the public head log. The walk starts at the current-head pointer and follows the parent links.
-Every head version after genesis exists because a round winner was applied, so the walk gives the applied kings with
-no call into the controller. When `sn120_v2.public` lands, `heads()` is the only function to change.
+Applied kings come from `sn120_v2.state.load`. It replays the controller's journal read-only, so it is safe while the
+controller writes and when the controller is down. There is no call into the controller.
 
 The node serves plain weights. So a king is benchmarked from the FOLDED head of its round (its LoRA merged into the
-base). A round whose head still has a stacked LoRA is not listed; it appears when its fold is published.
+base). The file hashes of that head come from its manifest in the store.
 """
-import functools, importlib, json, re
-from sn120_v2 import layout
+import functools, importlib, re
+from sn120_v2 import layout, state
 from sn120_v2.errors import VerifyError
 from sn120_v2.types import HeadManifest
 from . import config as C
@@ -20,33 +20,25 @@ _manifests = {}  # version_id -> HeadManifest. A head version is content-address
 
 @functools.cache
 def store():
-    module, _, factory = C.STORE.partition(":")
-    return getattr(importlib.import_module(module), factory)()
-
-
-def heads():
-    """Verified head manifests from the current head back to genesis, newest first. Genesis is left out."""
-    try:
-        raw = store().get(layout.CURRENT)
-    except KeyError:
-        return []  # v2 has not published a head yet
-    current = json.loads(raw)
-    version_id, out = current.get("version_id") or current["head"]["version_id"], []
-    while version_id:
-        if version_id not in _manifests:
-            _manifests[version_id] = HeadManifest.from_json(store().get(layout.head_manifest(version_id)))
-        m = _manifests[version_id]
-        if m.head.version_id != version_id:
-            raise VerifyError(f"head manifest {version_id[:12]} holds another head")
-        if m.head.parent_version_id is None:
-            break
-        out.append(m); version_id = m.head.parent_version_id
-    return out
+    module, _, factory = C.STORE.partition(":")  # "module:function" or "module:Class.method"
+    return functools.reduce(getattr, factory.split("."), importlib.import_module(module))()
 
 
 def folded():
-    """{base_hash: manifest} of each applied round's folded head."""
-    return {m.head.base_hash: m for m in heads() if m.head.folded}
+    """{base_hash: manifest} of each applied round's folded head. Genesis and a head with a stacked LoRA are left out."""
+    out = {}
+    for head in state.load(C.JOURNAL).heads:
+        if head.folded and head.parent_version_id and head.version_id not in _manifests:
+            try:
+                m = HeadManifest.from_json(store().get(layout.head_manifest(head.version_id)))
+            except KeyError:
+                continue  # the controller has not published this head yet; it is listed on a later poll
+            if m.head != head:
+                raise VerifyError(f"the published manifest of head {head.version_id[:12]} does not match the journal")
+            _manifests[head.version_id] = m
+        if head.version_id in _manifests:
+            out[head.base_hash] = _manifests[head.version_id]
+    return out
 
 
 def kings():

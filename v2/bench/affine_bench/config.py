@@ -9,7 +9,8 @@ a price cap or a store. The paths on the rented node are fixed, because the node
   BENCH_LIUM       path of the Lium CLI (its key stays in the operator's Lium config)
   BENCH_MAX_PRICE  highest price in $/h this service may rent at
   BENCH_REPO_REF   git commit of this repository that the node checks out (the pinned runtime)
-  BENCH_STORE      "module:function"; the function returns the v2 object store (it needs get and presign_get)
+  BENCH_STORE      factory of the v2 object store, as "module:Class.method" (sn120_v2.r2:R2Store.from_env reads SN120_R2_*)
+  BENCH_JOURNAL    the controller's journal file, <state_dir>/journal.jsonl; this service only reads it
 """
 from sn120_v2.params import require_env
 
@@ -20,6 +21,7 @@ LIUM = require_env("BENCH_LIUM")
 MAX_PRICE = float(require_env("BENCH_MAX_PRICE"))
 REPO_REF = require_env("BENCH_REPO_REF")
 STORE = require_env("BENCH_STORE")
+JOURNAL = require_env("BENCH_JOURNAL")
 REPO_URL = "https://github.com/AffineFoundation/affine.git"
 NODE_ROOT = "/data/bench"
 NODE_CLONE = NODE_ROOT + "/repo"
