@@ -1,18 +1,21 @@
-"""Admission at launch: one file never stops the others, and a hard time limit on every grade."""
+"""Admission at launch: one file never stops the others, a hard time limit, no file that trains nothing, and a cap on the training cost."""
 
 from __future__ import annotations
 
 import ast
 import inspect
 import json
+import random
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import FAULT, RULES, TIME_LIMIT, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader
+from sn120_v2.admission import FAULT, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError
+from sn120_v2.gpu.batch import fit_tokens, training_rows
 
 HOTKEY = "5MinerA"
 THINK = "step " * 40
@@ -175,6 +178,111 @@ def test_the_grade_pool_gets_the_rows_in_chunks_and_the_check_stops_at_the_first
     assert pool.calls == [14], "the bad row is in the first chunk: the other rows are never graded"
 
 
+# --- a file must be able to train: the trainer's own arithmetic on the rewards ---
+
+
+def test_file_with_no_training_signal_is_invalid(build):
+    params = build.params()
+    one_each = file([{"prompt": f"double {n}", "rollouts": [row(2 * n, 1)]} for n in range(10)])
+    assert rule(one_each, params) == NO_SIGNAL, "one rollout per prompt: every reward is its own mean"
+    same = [{"prompt": f"double {n}", "rollouts": [row(2 * n, n % 2), row(2 * n + 1, n % 2)]} for n in range(10)]
+    assert rule(file(same), params) == NO_SIGNAL, "the rewards differ between prompts but not inside one prompt"
+    assert rule(file(same + [{"prompt": "double 77", "rollouts": [row(154, 1), row(-1, 0)]}]), params) == ""
+    assert rule(file(same + [{"prompt": "double 77", "rollouts": [row(154, 0.25), row(-1, 0.75)]}]), params) == ""
+    assert rule(one_each, params, tokens=None) == NO_SIGNAL, "the rule needs no tokenizer and no grader"
+    reason = admission.verdict(one_each, HOTKEY, params)
+    assert (reason.valid, reason.rule) == (False, NO_SIGNAL) and "mean reward of its training group" in reason.reason
+
+
+def test_training_signal_follows_the_group_size_of_the_file(build):
+    def four(rewards) -> bytes:
+        return lambda train=None: file([{"prompt": "double 4", "rollouts": [row(k, reward, f"{THINK}{k} ") for k, reward in enumerate(rewards)]}], train=train)
+
+    params = build.params()
+    assert rule(four([1, 1, 0, 0])(), params) == ""  # one group of 4: the mean is 0.5
+    assert rule(four([1, 1, 0, 0])({"group_size": 2}), params) == NO_SIGNAL  # groups (1, 1) and (0, 0)
+    assert rule(four([1, 0, 1, 0])({"group_size": 2}), params) == ""
+    assert rule(four([1, 1, 1, 1, 0])({"group_size": 4}), params) == NO_SIGNAL  # a last group of one rollout stays a group
+    assert rule(four([1, 1, 1, 1, 0])({"group_size": 5}), params) == ""
+
+
+def test_training_signal_is_the_trainers_own_answer(build):
+    """For any rewards and any group size: the file is valid exactly when the trainer finds a row with an advantage."""
+    rng, params, seen = random.Random(7), build.params(), set()
+    for _ in range(300):
+        size = rng.choice([0, 2, 3, 4])
+        rewards = [[rng.choice([0, 1, 1, 0.1, 0.3]) for _ in range(rng.randint(1, 6))] for _ in range(rng.randint(1, 3))]
+        groups = [{"prompt": f"double {n}", "rollouts": [row(k, reward, f"{THINK}{k} ") for k, reward in enumerate(group)]} for n, group in enumerate(rewards)]
+        raw = file(groups, train={"group_size": size} if size else None)
+        batch_groups = [(group["prompt"], [(r["output"], r["reward"]) for r in group["rollouts"]]) for group in groups]
+        trains = any(training_row["advantage"] != 0 for training_row in training_rows(batch_groups, size))
+        assert (rule(raw, params) == "") == trains, (size, rewards)
+        seen.add(trains)
+    assert seen == {True, False}
+
+
+def test_rollout_that_the_trainer_drops_gives_no_signal(build):
+    """The trainer drops a rollout with no output token, or with a prompt that fills the training context."""
+    quiet = [{"prompt": f"double {n}", "rollouts": [row(2 * n, 1), row(2 * n, 1, THINK + "again ")]} for n in range(20)]
+    empty = file(quiet + [{"prompt": "double 77", "rollouts": [{"output": "", "reward": 1}, {"output": "", "reward": 0}]}])
+    assert rule(empty, build.params()) == NO_SIGNAL
+    assert rule(empty, build.params(), tokens=None) == ""  # without a tokenizer the checker cannot know
+    params = build.params()
+    short = replace(params, recipe=replace(params.recipe, train_max_output_tokens=8, train_max_context_tokens=12))
+    long_prompt = file(quiet + [{"prompt": "double 77 " + "and " * 5, "rollouts": [row(154, 1), row(-1, 0)]}])  # 5 + 7 words = 12 tokens
+    assert (rule(long_prompt, params), rule(long_prompt, short)) == ("", NO_SIGNAL)
+    assert rule(file(quiet + [{"prompt": "double 77 " + "and " * 4, "rollouts": [row(154, 1), row(-1, 0)]}]), short) == ""
+
+
+# --- one valid file must fit the training time of one seat: steps x the tokens that the trainer runs ---
+
+
+def test_trained_tokens_is_the_trainers_own_cut(build):
+    """For any sizes: the count is the prompt plus exactly the output tokens that ``fit_tokens`` keeps, or 0 for a dropped row."""
+    rng, params = random.Random(11), build.params()
+    recipe = replace(params.recipe, train_max_output_tokens=8, train_max_context_tokens=12)
+    seen = set()
+    for _ in range(2000):
+        n_prompt, n_output = rng.randint(1, 14), rng.randint(0, 12)
+        kept, capped, cut = fit_tokens(n_prompt, list(range(n_output)), -1, recipe.train_max_output_tokens, recipe.train_max_context_tokens)
+        assert trained_tokens(n_prompt, n_output, recipe) == (n_prompt + len(kept) if kept else 0), (n_prompt, n_output)
+        seen.add((bool(kept), capped, cut))
+    assert seen == {(False, False, False), (True, False, False), (True, True, False), (True, True, True)}
+    assert trained_tokens(100, 32767, params.recipe) == 100 + 32768, "below the cap: the output and one end-of-turn token"
+    assert trained_tokens(100, 32768, params.recipe) == 100 + 32768, "at the cap: no end-of-turn token"
+    assert trained_tokens(100, 65536, params.recipe) == 100 + 32768, "above the training cap: cut, not rejected"
+    assert trained_tokens(36864 - 10, 500, params.recipe) == 36864, "a long prompt leaves less room"
+
+
+def test_file_above_the_training_cost_cap_is_invalid(build):
+    """Default file: 10 prompts of 7 tokens, each with two rollouts of 41 words (+1 end token) that both train: 20 x 49 = 980."""
+    raw = file()
+    assert check_batch(raw, HOTKEY, build.params(), tokens=WordTokens()).train_token_steps == 980
+    assert rule(raw, build.params(max_train_token_steps=980)) == ""
+    assert rule(raw, build.params(max_train_token_steps=979)) == TRAIN_COST
+    assert rule(raw, build.params(max_train_token_steps=0)) == "", "0 means no limit"
+    found = admission.verdict(raw, HOTKEY, build.params(max_train_token_steps=979), tokens=WordTokens())
+    assert (found.valid, found.rule) == (False, TRAIN_COST)
+    assert "costs 980 token-steps (1 steps times 980 tokens in 20 rollouts that train); the cap is 979" in found.reason
+    steps = file(train={"steps": 3})
+    assert check_batch(steps, HOTKEY, build.params(), tokens=WordTokens()).train_token_steps == 3 * 980, "the miner's own steps count"
+    assert (rule(steps, build.params(max_train_token_steps=2940)), rule(steps, build.params(max_train_token_steps=2939))) == ("", TRAIN_COST)
+    blind = check_batch(raw, HOTKEY, build.params(max_train_token_steps=1), tokens=None)
+    assert (blind.train_token_steps, blind.checked) == (0, ("format",)), "without a tokenizer the cost rule does not run"
+
+
+def test_only_rollouts_that_train_count_toward_the_cost(build):
+    """A rollout with advantage zero is never run through the model, and a long output counts only up to the training cap."""
+    params = build.params()
+    flat = [{"prompt": f"double {n}", "rollouts": [row(2 * n, 1), row(2 * n, 1, THINK + "again ")]} for n in range(20)]
+    mixed = file(flat + [{"prompt": "double 77", "rollouts": [row(154, 1), row(-1, 0)]}])
+    assert check_batch(mixed, HOTKEY, params, tokens=WordTokens()).train_token_steps == 2 * (7 + 41 + 1)
+    short = replace(params, recipe=replace(params.recipe, train_max_output_tokens=8, train_max_context_tokens=12))
+    assert check_batch(mixed, HOTKEY, short, tokens=WordTokens()).train_token_steps == 2 * (7 + 5), "room: min(8, 12 - 7) = 5 output tokens"
+    grouped = file(train={"group_size": 2, "steps": 2})  # every prompt is one group of a right and a wrong rollout
+    assert check_batch(grouped, HOTKEY, params, tokens=WordTokens()).train_token_steps == 2 * 980
+
+
 # --- the rule codes ---
 
 
@@ -187,7 +295,7 @@ def test_rules_table_names_every_rule_code_of_the_checker():
                 used.add(code.value if isinstance(code, ast.Constant) else getattr(admission, code.id))
     assert used == set(RULES) and all(isinstance(code, str) and code for code in used)
     order = list(RULES)
-    assert order.index("answer_repeat") < order.index(TIME_LIMIT) < order.index(FAULT) < order.index("grader") < order.index("pool")
+    assert order.index("answer_repeat") < order.index(NO_SIGNAL) < order.index(TRAIN_COST) < order.index(TIME_LIMIT) < order.index(FAULT) < order.index("grader") < order.index("pool")
 
 
 def test_verdict_carries_the_rule_code(build):

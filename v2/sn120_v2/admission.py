@@ -11,8 +11,9 @@ A batch file is one JSON object::
 that fails. Nothing is ever repaired or clamped: one bad value makes the whole
 file invalid. Every limit comes from ``Params``.
 
-This module uses the standard library only, so a miner can run the same check
-on their own machine. The tokenizer and the official grader are inputs.
+This module uses the standard library and plain Python modules of this package
+only, so a miner can run the same check on their own machine. The tokenizer
+and the official grader are inputs.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequenc
 from . import layout
 from .canonical import sha256_hex
 from .errors import BatchRejected, InfraError, VerifyError
+from .gpu.batch import advantages
 from .params import Params, Recipe
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
@@ -39,6 +41,7 @@ _TOP_KEYS = frozenset(("version", "hotkey", "groups"))
 _BOXED = "\\boxed"
 
 Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward), ...))
+Sizes = dict[tuple[int, int], tuple[int, int]]  # (group, rollout) place -> (prompt tokens, output tokens)
 
 # The official grade of one rollout: (prompt, output, capped) -> reward.
 # The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
@@ -50,6 +53,8 @@ Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward),
 Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
+NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
+TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 # These two verdicts depend on this machine at this moment. They hold for one call and are never kept.
 TRANSIENT = (TIME_LIMIT, FAULT)
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
@@ -82,6 +87,8 @@ RULES: dict[str, str] = {
     "answer_only": "too many rollouts have almost no reasoning before the first boxed answer",
     "reasoning_share": "too small a share of the output tokens is reasoning",
     "answer_repeat": "one final answer is in too many rollouts",
+    NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
+    TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
     TIME_LIMIT: "the official grader cannot grade a rollout inside its time limit; the file is checked again later",
     FAULT: "a rollout makes the official grader fail; the file is checked again later",
     "grader": "a reward is not the official grade",
@@ -244,6 +251,7 @@ class Batch:
     dropped_groups: int  # whole groups past max_prompts / max_rollouts, dropped in file order
     train: dict[str, Any]  # the miner's "train" object as given; apply with Recipe.for_miner
     checked: tuple[str, ...]  # rule families that ran: "format", plus "tokens" and "grader" when given
+    train_token_steps: int = 0  # the training cost that rule train_cost compares with its cap; 0 without a tokenizer
 
     @property
     def n_prompts(self) -> int:
@@ -366,12 +374,17 @@ def final_answer(text: str) -> str | None:
     return None
 
 
-def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set[tuple[int, int]]:
-    """Text, token and content rules on the kept groups. Return the (group, rollout) places of the capped outputs."""
+def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tuple[set[tuple[int, int]], Sizes | None]:
+    """Text, token and content rules on the kept groups.
+
+    Return the (group, rollout) places of the capped outputs, and the prompt and output token counts of every
+    rollout by its place. Without a tokenizer there are no counts: ``None``.
+    """
     cap, context = params.max_output_tokens, params.max_context_tokens
     n_rollouts = answer_only = reasoning = total = 0
     answers: Counter[str] = Counter()
     capped: set[tuple[int, int]] = set()
+    sizes: Sizes = {}
     for i, (prompt, rollouts) in enumerate(groups):
         _text(prompt, f"groups[{i}].prompt")
         n_prompt = tokens.prompt_tokens(prompt) if tokens else 0
@@ -388,6 +401,7 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set
             _need(n <= cap, "output_tokens", f"{here}.output is {n} tokens; the cap is {cap}")
             used = n_prompt + n + (n < cap)  # an output below the cap gets one end-of-sequence token; at the cap it is cut
             capped.update({(i, j)} if n == cap else ())
+            sizes[i, j] = (n_prompt, n)
             _need(used <= context, "context_tokens", f"{here}: prompt + output is {used} tokens; the cap is {context}")
             cut = output.find(_BOXED)
             before = n if cut < 0 else tokens.output_tokens(output[:cut])  # reasoning comes before the first boxed answer
@@ -402,7 +416,48 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set
     limit = max(params.max_answer_repeat_count, params.max_answer_repeat_frac * n_rollouts)
     worst = max(answers.values(), default=0)
     _need(worst <= limit, "answer_repeat", f"one boxed answer is the final answer of {worst} rollouts; the limit is {limit:g}")
-    return capped
+    return capped, (sizes if tokens is not None else None)
+
+
+def trained_tokens(n_prompt: int, n_output: int, recipe: Recipe) -> int:
+    """The tokens of one rollout that the trainer runs through the model in one step. 0: the trainer drops the rollout.
+
+    This is the arithmetic of ``gpu.batch.fit_tokens``. The room for the output is ``train_max_output_tokens``,
+    or less when the prompt is long: ``train_max_context_tokens`` minus the prompt. An output shorter than the
+    room gets one end-of-turn token. An output that fills the room or is longer is cut to the room. With no
+    output token or no room, nothing is left to train on.
+    """
+    room = min(recipe.train_max_output_tokens, recipe.train_max_context_tokens - n_prompt)
+    if n_output < 1 or room < 1:
+        return 0
+    return n_prompt + (room if n_output >= room else n_output + 1)
+
+
+def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
+    """The file must train something, and must not cost more training than one seat may use. Return the cost.
+
+    Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
+    trainer does not drop it. The advantage is the reward minus the mean reward of the training group
+    (``gpu.batch.advantages``). A file in which no rollout trains gives no gradient: the trainer rejects it, so
+    it must not take a slot. The cost is ``steps`` times the tokens of the rollouts that train
+    (``trained_tokens``): the trainer runs exactly these tokens through the model in each step. Without a
+    tokenizer the checker cannot know the tokens: no rollout counts as dropped and the cost rule does not run.
+    """
+    recipe = params.recipe.for_miner(train)
+    active = tokens = 0
+    for i, (_, rollouts) in enumerate(groups):
+        for j, advantage in enumerate(advantages([reward for _, reward in rollouts], recipe.group_size)):
+            if advantage == 0:
+                continue
+            row = trained_tokens(*sizes[i, j], recipe) if sizes is not None else 1
+            active, tokens = active + (row > 0), tokens + row
+    _need(active > 0, NO_SIGNAL, "no rollout has a reward that differs from the mean reward of its training group, so the file trains nothing")
+    if sizes is None:
+        return 0
+    cost, cap = recipe.steps * tokens, params.max_train_token_steps
+    _need(cap <= 0 or cost <= cap, TRAIN_COST,
+          f"training this file costs {cost} token-steps ({recipe.steps} steps times {tokens} tokens in {active} rollouts that train); the cap is {cap}")
+    return cost
 
 
 def _grades(grader: Grader, rows: Sequence[tuple[str, str, bool]]) -> Iterable[float | None | Exception]:
@@ -462,11 +517,12 @@ def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | Non
     version, train = _header(value, params.recipe)
     groups = _groups(value, hotkey)
     kept = _cap(groups, params.max_prompts, params.max_rollouts)
-    capped = _kept(kept, params, tokens)
+    capped, sizes = _kept(kept, params, tokens)
+    cost = _trains(kept, params, train, sizes)
     if grader is not None:
         _graded(kept, params, grader, capped)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
-    return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked)
+    return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost)
 
 
 def verdict(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None, now: int = 0) -> Verdict:
