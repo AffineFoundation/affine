@@ -249,6 +249,10 @@ Pass, for each stage:
 
 In every stage: no row has the verdict `no_decision` or `not_trained`, and the first line is not `NO_DECISION`.
 
+### A round that hits the time limit on purpose
+
+This stage is optional, and its place is between `4-multi` and `5-full`. It proves the rule at the round's time limit with a round that is too long for a short limit. Its parameter file and its pass lines are not in this section yet.
+
 Things to know:
 
 - Whole files that are already in the smoke prefix are not valid under the cap of 2048 (rule `output_tokens`). They are passed over in stages 1, 2 and 4. That is correct. Under the launch cap they are valid again, so stage 3 can take some of them.
