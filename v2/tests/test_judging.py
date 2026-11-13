@@ -465,7 +465,7 @@ def test_a_result_against_another_head_is_refused(build):
         (dict(lease_id="r000001-l9"), "another round, lease or box"),
         (dict(round_id="r000002"), "another round, lease or box"),
         (dict(null_outcomes=("PFPF",)), "outcome string has 4 codes"),
-        (dict(null_outcomes=("PFPFPF--",)), "null M must be scored on every task"),
+        (dict(null_outcomes=("PFPFPF--",)), "scored on more tasks than null M"),
         (dict(null_outcomes=("PFPFPFPF", "PFPFPFPF")), "one outcome string per sample"),
     ],
 )
