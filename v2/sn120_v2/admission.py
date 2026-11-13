@@ -45,6 +45,9 @@ Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward),
 # It raises GraderTimeLimit when the grade did not finish in time. Any other exception is our failure: InfraError.
 Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
+# The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
+# import the env, which needs extra packages. If the env renames the value, a time-out becomes InfraError: loud.
+ENV_TIME_LIMIT = "time-limit"
 
 
 class GraderTimeLimit(Exception):
@@ -55,10 +58,19 @@ def env_grader(pool: Any, grade: Callable[..., Any]) -> Grader:
     """The ``Grader`` of an environment, from its task pool and its ``grade(task, output, capped)`` function.
 
     The controller and the miner's tool both build the grader with this one call, so they cannot differ.
+    The grade's ``machine_cause`` says when the machine, not the row, decided: an expired time limit
+    raises ``GraderTimeLimit``, and any other cause (a dead worker) raises ``InfraError``.
     """
     def official(prompt: str, output: str, capped: bool) -> float | None:
         task = pool.task_for_prompt(prompt)
-        return None if task is None else float(grade(task, output, capped).reward)
+        if task is None:
+            return None
+        result = grade(task, output, capped)
+        if result.machine_cause == ENV_TIME_LIMIT:
+            raise GraderTimeLimit
+        if result.machine_cause is not None:
+            raise InfraError(f"the official grader failed: {result.machine_cause}")
+        return float(result.reward)
 
     return official
 
@@ -288,6 +300,8 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
                 official = grader(prompt, output, (i, j) in capped)
             except GraderTimeLimit:
                 raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit") from None
+            except InfraError:
+                raise
             except Exception as exc:
                 raise InfraError(f"the official grader failed: {type(exc).__name__}") from exc
             if official is None:

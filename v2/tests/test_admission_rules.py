@@ -125,9 +125,19 @@ def test_output_at_the_token_cap_is_graded_as_capped(build):
 
 def test_env_grader_joins_the_pool_and_the_grade_function(build):
     pool = SimpleNamespace(task_for_prompt=lambda prompt: int(prompt.split()[1]) if prompt.startswith("double ") else None)
-    official = env_grader(pool, lambda task, output, capped: SimpleNamespace(reward=grade(f"double {task}", output, capped)))
+    cause = {}  # task -> the machine cause of its grade
+
+    def env_grade(task, output, capped):
+        return SimpleNamespace(reward=grade(f"double {task}", output, capped), machine_cause=cause.get(task))
+
+    official = env_grader(pool, env_grade)
     assert (official("double 2", "\\boxed{4}", False), official("double 2", "\\boxed{4}", True), official("other", "x", False)) == (1.0, 0.0, None)
     assert rule(file(), build.params(), grader=official) == ""
+    cause[4] = "time-limit"  # the value that the math env gives when a time limit expired
+    assert rule(file(), build.params(), grader=official) == "grader_time_limit"
+    cause[4] = "worker-died"  # any other machine cause is our failure, not the row's
+    with pytest.raises(InfraError, match="worker-died"):
+        rule(file(), build.params(), grader=official)
 
 
 def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(build):
