@@ -31,9 +31,10 @@ address. A presigned address is a secret: it is never printed by ``issue`` and
 never stored outside the sealed box.
 
 The job needs three things: read-only chain access, store credentials that can
-sign a PUT, and the queue. The queue comes from the controller's journal: the
-local file in ``--state-dir``, or with ``--journal-from-store`` the copy that
-the store holds, so the job can run on a host without the controller.
+sign a PUT, and the queue. The queue comes from the copy of the controller's
+journal that the store holds (``state.load_from_store``), so the job can run on
+a host without the controller. ``--state-dir`` is the directory of the job's
+local copy of that journal; it only saves downloads.
 
 Commands:
 ``issue``     the operator's job: write the link files (see ``--help``)
@@ -61,7 +62,7 @@ from .chain import SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .journal import JOURNAL_FILE
 from .seams import ObjectStore, Presigner
-from .state import State, load, load_from_store
+from .state import State, load_from_store
 from .store import LocalStore
 
 try:
@@ -372,13 +373,12 @@ def _issue_once(args: argparse.Namespace) -> int:
     if R2Store is None:
         raise ConfigError("boto3 is not installed: install the 'r2' extra")
     store = R2Store.from_env()
-    journal = Path(args.state_dir) / JOURNAL_FILE
-    try:
-        state = load_from_store(store, journal) if args.journal_from_store else load(journal)
+    try:  # the journal copy that the store holds; the file in --state-dir only saves downloads
+        state = load_from_store(store, Path(args.state_dir) / JOURNAL_FILE)
     except OSError as exc:
-        raise ConfigError(f"cannot read the journal in {args.state_dir}: {type(exc).__name__}") from exc
+        raise ConfigError(f"cannot use {args.state_dir} for the local copy of the journal: {type(exc).__name__}") from exc
     if state.genesis is None:  # an empty journal would look like "nobody waits" and remove every link file
-        raise ConfigError("the journal has no genesis: is this the right state directory and the right store?")
+        raise ConfigError("the store holds no journal with a genesis: are these the controller's store settings?")
     waiting = eligible(state, args.burn_uid)
     hotkeys = waiting
     if not args.no_activation_check:
@@ -443,12 +443,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     issue = commands.add_parser("issue", help="operator: write a sealed link file for each hotkey that may upload")
-    issue.add_argument("--state-dir", required=True, help="the directory that holds the controller's journal (it is read, never written)")
     issue.add_argument(
-        "--journal-from-store",
-        action="store_true",
-        help="read the journal copy in the object store; --state-dir is then only a cache, and never the controller's own directory",
+        "--state-dir",
+        required=True,
+        help=f"the directory of the job's local copy of the journal ({JOURNAL_FILE}); the journal is read from the store, and the store is not written",
     )
+    issue.add_argument("--journal-from-store", action="store_true", help=argparse.SUPPRESS)  # accepted and ignored: it is the only way now
     issue.add_argument("--links-url", required=True, help="the public address of the link files, like https://<site>/ff/links (never derived)")
     where = issue.add_mutually_exclusive_group(required=True)
     where.add_argument("--site-dir", help=f"write {LINKS_DIR}<hotkey>.json and {INDEX} under this local directory: the root of the public website")

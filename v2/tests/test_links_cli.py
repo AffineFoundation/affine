@@ -72,10 +72,10 @@ def bucket(endpoint, monkeypatch):
 
 @pytest.fixture
 def queue(build, monkeypatch):
-    """The controller's state: A and B wait, C had its turn, UID 0 is the burn UID."""
+    """The state in the journal copy that the store holds: A and B wait, C had its turn, UID 0 is the burn UID."""
     seats = build.queue(build.seat(0, hotkey=C.hotkey), build.seat(3, hotkey=A.hotkey), build.seat(4, hotkey=B.hotkey, leased=True))
     state = State(genesis=build.genesis_spec(), queue=seats)
-    monkeypatch.setattr(links, "load", lambda path: state)
+    monkeypatch.setattr(links, "load_from_store", lambda store, cache_path: state)
     return state
 
 
@@ -207,41 +207,52 @@ def test_open_reads_a_local_file_and_refuses_the_wrong_key(bucket, queue, site, 
     assert "cannot read the link file" in capsys.readouterr().err
 
 
-def test_issue_needs_the_journal(bucket, site, tmp_path, capsys):
+def controller(root, miners: int, rounds: int):
+    """A controller's host: its own journal on disk, and the copy of it in the store."""
+    world = SimWorld(root, sim_params())
+    for uid in range(1, miners + 1):
+        world.register(uid, 0.1)
+    for _ in range(rounds):
+        world.round()  # every entry is evaluated
+    Journal(root / JOURNAL_FILE, "test", world.now, Mirror(R2Store.from_env()))
+
+
+def old_link(site):
     (site[0] / "ff" / "links").mkdir(parents=True)
     (site[0] / "ff" / "links" / "old.json").write_text("{}")
-    assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path / "wrong"), "--site-dir", str(site[0]), "--no-activation-check"]) == 1
-    assert "cannot read the journal" in capsys.readouterr().err
-    assert (site[0] / "ff" / "links" / "old.json").exists()  # a wrong state directory removes no link
+    return site[0] / "ff" / "links" / "old.json"
 
 
-def test_issue_reads_the_queue_from_a_real_journal(bucket, site, tmp_path, capsys):
-    world = SimWorld(tmp_path / "state", sim_params())
-    for uid in (1, 2, 3):
-        world.register(uid, 0.1)
-    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path / "state"), "--site-dir", str(site[0]), "--no-activation-check"]
-    assert links.main(args) == 0  # the simulation's hotkeys are not SS58 addresses: they wait, but cannot get a link
-    assert "issued 0 of 3 waiting hotkeys (not activated 0, not Ed25519 3)" in capsys.readouterr().out
-    world.round()  # every entry is evaluated
+def test_issue_needs_a_journal_in_the_store(bucket, site, tmp_path, capsys):
+    old = old_link(site)
+    assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path / "copy"), "--site-dir", str(site[0]), "--no-activation-check"]) == 1
+    assert "no journal with a genesis" in capsys.readouterr().err
+    assert old.exists()  # a store without a journal is not "nobody waits": no link is removed
+
+
+@pytest.mark.parametrize("rounds, waiting", [(0, 3), (1, 0)])
+def test_issue_reads_the_queue_from_the_journal_copy_in_the_store(bucket, site, tmp_path, capsys, rounds, waiting):
+    old, copy = old_link(site), tmp_path / "job" / "copy"
+    controller(tmp_path / "controller", 3, rounds)
+    keys = bucket.keys()
+    # a host without the controller; --journal-from-store is accepted and changes nothing
+    args = ["issue", "--links-url", URL, "--state-dir", str(copy), "--site-dir", str(site[0]), "--no-activation-check", "--journal-from-store"]
+    for _ in range(2):  # the second run finds its local copy up to date
+        assert links.main(args) == 0  # the simulation's hotkeys are not SS58 addresses: they wait, but cannot get a link
+        assert f"issued 0 of {waiting} waiting hotkeys (not activated 0, not Ed25519 {waiting})" in capsys.readouterr().out
+    assert (copy / JOURNAL_FILE).read_bytes() == (tmp_path / "controller" / JOURNAL_FILE).read_bytes()
+    assert bucket.keys() == keys and not old.exists()  # the read wrote nothing to the store
+
+
+def test_a_local_copy_of_another_journal_stops_the_run(bucket, site, tmp_path, monkeypatch, capsys):
+    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path / "copy"), "--site-dir", str(site[0]), "--no-activation-check"]
+    controller(tmp_path / "smoke", 3, 0)
     assert links.main(args) == 0
-    assert "issued 0 of 0 waiting hotkeys" in capsys.readouterr().out
-
-
-def test_issue_reads_the_journal_copy_in_the_store_on_a_host_without_the_controller(bucket, site, tmp_path, capsys):
-    cache = tmp_path / "cache"
-    args = ["issue", "--links-url", URL, "--state-dir", str(cache), "--journal-from-store", "--site-dir", str(site[0]), "--no-activation-check"]
-    (site[0] / "ff" / "links").mkdir(parents=True)
-    (site[0] / "ff" / "links" / "old.json").write_text("{}")
-    assert links.main(args) == 1  # the store holds no journal yet: that is not "nobody waits"
-    assert "no genesis" in capsys.readouterr().err and (site[0] / "ff" / "links" / "old.json").exists()
-
-    world = SimWorld(tmp_path / "controller", sim_params())  # the controller's host: its journal, and a copy in the store
-    for uid in (1, 2, 3):
-        world.register(uid, 0.1)
-    Journal(tmp_path / "controller" / JOURNAL_FILE, "test", world.now, Mirror(R2Store.from_env()))
-    assert links.main(args) == 0
-    assert "issued 0 of 3 waiting hotkeys (not activated 0, not Ed25519 3), removed 1" in capsys.readouterr().out
-    assert (cache / JOURNAL_FILE).exists() and not (site[0] / "ff" / "links" / "old.json").exists()
+    before = (site[0] / "ff" / "links.json").read_bytes()
+    monkeypatch.setenv("SN120_R2_PREFIX", "production/")  # the same job directory, now with the settings of another store
+    controller(tmp_path / "production", 2, 0)
+    assert links.main(args) == 1
+    assert "differ" in capsys.readouterr().err and (site[0] / "ff" / "links.json").read_bytes() == before
 
 
 def test_issue_needs_the_public_address_of_the_link_files(bucket, queue, site, tmp_path, capsys):
