@@ -13,13 +13,14 @@ for a full run.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import layout
 from .canonical import canonical_json, manifest_digest, sha256_hex
-from .controller import Controller, stored_irt_snapshot
+from .controller import Controller, Stack, StackContext, stored_irt_snapshot
 from .errors import BatchRejected, InfraError
 from .journal import Journal
 from .params import GenesisSpec, Params, Recipe
@@ -194,6 +195,15 @@ class SimPublisher:
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
         self.snapshots.append(snapshot)
+
+
+def stack(context: StackContext) -> Stack:
+    """The CPU stack for ``python -m sn120_v2 run --stack sn120_v2.sim:stack``. Miner files come from ``SimAdmission.upload``."""
+    store = LocalStore(context.state_dir / STORE_DIR)
+    ticks = iter(range(1, 10**9))
+    runner = LocalRunner(SimTrainer(store), SimEvaluator(store), lambda: int(time.time()), SIM_IMAGE)
+    sampler = UniformSampler([f"sim:{i}" for i in range(400)])
+    return Stack(store, SimAdmission(store), sampler, runner, SimFolder(store), SimPublisher(), entropy=lambda: f"sim-entropy-{next(ticks)}")
 
 
 @dataclass

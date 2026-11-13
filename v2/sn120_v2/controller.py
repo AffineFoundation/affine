@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
@@ -82,6 +83,29 @@ from .types import (
 )
 
 Leases = list[tuple[RoundTicket, BoxResult]]
+
+
+@dataclasses.dataclass
+class StackContext:
+    """What a stack builder gets: where the state lives, the pinned parameters, and the replayed state."""
+
+    state_dir: Path
+    params: Params
+    state: State
+
+
+@dataclasses.dataclass
+class Stack:
+    """Every part the controller needs. ``python -m sn120_v2 run --stack module:function`` builds one."""
+
+    store: ObjectStore
+    admission: Admission
+    sampler: TaskSampler
+    runner: RoundRunner
+    folder: Folder | None = None
+    publisher: Publisher | None = None
+    entropy: Callable[[], str] | None = None  # a value the validator cannot choose, such as the latest block hash
+    chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:

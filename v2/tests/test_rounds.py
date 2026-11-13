@@ -8,15 +8,18 @@ from dataclasses import replace
 import pytest
 
 from sn120_v2 import layout
+from sn120_v2.canonical import manifest_digest
+from sn120_v2.cli import main
 from sn120_v2.errors import ConfigError, ContractError, FencedError, HeadMismatchError, InfraError, LeaseError, V2Error
 from sn120_v2.journal import read_journal
-from sn120_v2.params import Recipe
+from sn120_v2.params import GenesisSpec, Recipe
 from sn120_v2.payout import weights
 from sn120_v2.public import snapshot
 from sn120_v2.queue import waiting
-from sn120_v2.sim import JOURNAL_FILE, SimWorld, sim_params
+from sn120_v2.sim import JOURNAL_FILE, SimAdmission, SimWorld, sim_params
 from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
-from sn120_v2.types import HeadManifest, King, V1Import
+from sn120_v2.store import LocalStore
+from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
 
 
 @pytest.fixture
@@ -353,3 +356,33 @@ def test_no_round_opens_without_a_pinned_worker_image(tmp_path):
     world.register(1, 0.3)
     with pytest.raises(ConfigError):
         world.controller.open_round(world.clock(), "entropy")
+
+
+def test_the_command_line_runs_the_cpu_simulation(tmp_path, capsys):
+    assert main(["sim", "--state-dir", str(tmp_path), "--rounds", "3", "--miners", "3", "--seed", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["replay_matches"] is True
+
+
+def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, capsys, build):
+    state_dir, write = tmp_path / "state", lambda name, text: (tmp_path / name).write_text(text if isinstance(text, str) else text.decode())
+    base_files, master_files = {"model.bin": build.h("base")}, {"master.bin": build.h("master")}
+    write("genesis.json", GenesisSpec("org/model", "rev", manifest_digest(base_files), build.h("digest"), "5Validator").to_json())
+    write("genesis_files.json", json.dumps({"base_files": base_files, "master_files": master_files}))
+    write("v1_import.json", V1Import("k1.json", 1, kings=(King(9, "hk9", "v1-e1", "", 5),), served_regs=(), served_hotkeys=()).to_json())
+    chain = ChainSnapshot(120, 50, 60, (Registration(0, "owner", 1), *(Registration(uid, f"hk{uid}", 100 + uid, 1) for uid in (1, 2, 3))))
+    write("chain.json", chain.to_json())
+    write("params.json", sim_params().to_json())
+    admission = SimAdmission(LocalStore(state_dir / "store"))
+    admission.upload("hk1", 0.3)
+    admission.upload("hk2", 0.0)
+    common = ["--state-dir", str(state_dir), "--params", str(tmp_path / "params.json")]
+    stack = [*common, "--stack", "sn120_v2.sim:stack"]
+    files = [f"--{name}={tmp_path / file}" for name, file in (("genesis", "genesis.json"), ("genesis-files", "genesis_files.json"), ("v1-import", "v1_import.json"), ("chain", "chain.json"))]
+    assert main(["bootstrap", *stack, *files]) == 0
+    assert main(["bootstrap", *stack, *files]) == 2, "a second bootstrap is refused"
+    assert main(["run", *stack, "--rounds", "1", "--max-idle", "1", "--idle-sleep", "0"]) == 0
+    state = load(state_dir / JOURNAL_FILE)
+    assert [king.uid for king in state.kings] == [9, 1] and state.head.folded and set(state.queue) == {(3, 103)}
+    capsys.readouterr()
+    assert main(["status", *common]) == 0
+    assert json.loads(capsys.readouterr().out)["kings"] == [1, 9]
