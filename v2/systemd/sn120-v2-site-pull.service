@@ -1,0 +1,30 @@
+# SN120 v2 public pull: one run copies the public files of the store into the website directory,
+# writes the signed read links for the weight files, builds the status site, then exits.
+#
+# Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
+#   SN120_USER        the Linux user that owns the website directory
+#   SN120_ENV_FILE    a file on the host, mode 600, with the SN120_R2_* variables of a read-only store token
+#   SN120_PYTHON      the python of the virtual environment where sn120_v2 is installed, as a full path
+#   SN120_V2_DIR      the directory v2/ of the checkout on this host, as a full path
+#   SN120_SITE_DIR    the directory that the web server serves; it must exist
+#   SN120_PUBLIC_URL  the address under which a browser reaches that directory
+#   SN120_V1_HISTORY  the file that v1_archive.py wrote: the frozen v1 history
+#
+# The token stays on the host. This file holds no secret. A signed read link is never written to the journal.
+
+[Unit]
+Description=SN120 v2 public pull and status site (one run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=SN120_USER
+EnvironmentFile=SN120_ENV_FILE
+ExecStart=SN120_PYTHON SN120_V2_DIR/site/pull.py --site-dir SN120_SITE_DIR --public-url SN120_PUBLIC_URL --v1-history SN120_V1_HISTORY
+# A run that fails keeps the last good files. The next run is the timer's next minute. Do not add Restart= here.
+Restart=no
+TimeoutStartSec=300
+# The web server reads these files as another user: they must be readable by all.
+UMask=0022
+NoNewPrivileges=true
