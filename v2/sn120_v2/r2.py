@@ -111,6 +111,12 @@ class R2Store:
         with self._guard("head", key):
             return self._s3.head_object(Bucket=self._bucket, Key=self._k(key))
 
+    def _stat(self, key: str) -> dict[str, Any]:
+        """Like ``_head``, but a missing key gives an empty dict."""
+        with contextlib.suppress(KeyError):
+            return self._head(key)
+        return {}
+
     def _reject(self, action: str, key: str, why: str) -> None:
         """A write went wrong after the store accepted it: remove the object, then fail."""
         with contextlib.suppress(InfraError):
@@ -119,10 +125,7 @@ class R2Store:
 
     def _settle(self, action: str, key: str, want: int) -> None:
         """After a write: the stored size must equal the intended size."""
-        try:
-            got = self.size(key)
-        except KeyError:
-            got = -1
+        got = self._stat(key).get("ContentLength", -1)
         if got != want:
             self._reject(action, key, f"store holds {got} bytes, expected {want}")
 
@@ -157,9 +160,7 @@ class R2Store:
                 raise InfraError(f"r2 get_file {key!r}: short download")
 
     def exists(self, key: str) -> bool:
-        with contextlib.suppress(KeyError):
-            return bool(self._head(key))
-        return False
+        return bool(self._stat(key))
 
     def size(self, key: str) -> int:
         return int(self._head(key)["ContentLength"])
@@ -187,11 +188,7 @@ class R2Store:
                 self._s3.copy_object(CopySource=source, **target)
             else:
                 self._copy_parts(source, target, size)
-        try:
-            unchanged = self._head(src)["ETag"] == before["ETag"]
-        except KeyError:
-            unchanged = False
-        if not unchanged:  # parts may come from two versions of the source
+        if self._stat(src).get("ETag") != before["ETag"]:  # parts may come from two versions of the source
             self._reject("copy", dst, "the source changed during the copy")
         self._settle("copy", dst, size)
 
@@ -222,11 +219,7 @@ class R2Store:
             self._s3.delete_object(Bucket=self._bucket, Key=self._k(key))
 
     def list(self, prefix: str) -> list[str]:
-        """Sorted keys that equal ``prefix`` or sit under ``prefix + "/"``.
-
-        The match is by path segment, so lease ``l1`` never lists lease ``l10``.
-        An empty prefix, or one that ends in "/", is a plain string prefix.
-        """
+        """Sorted keys, matched by path segment as ``ObjectStore`` states: ``l1`` never lists ``l10``."""
         whole = not prefix or prefix.endswith("/")
         keys = []
         with self._guard("list", prefix):

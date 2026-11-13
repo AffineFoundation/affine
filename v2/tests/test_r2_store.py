@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import urllib.request
 import uuid
+from unittest.mock import Mock
 
 import boto3
 import pytest
@@ -24,13 +25,6 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def raiser(error: Exception):
-    def call(*args, **kwargs):
-        raise error
-
-    return call
-
-
 @pytest.fixture(scope="module")
 def endpoint():
     server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
@@ -41,8 +35,7 @@ def endpoint():
 
 
 @pytest.fixture
-def env(endpoint):
-    """Environment for one fresh bucket."""
+def env(endpoint):  # the environment for one fresh bucket
     env = {"SN120_R2_ENDPOINT": endpoint, "SN120_R2_BUCKET": f"b-{uuid.uuid4().hex}",
            "SN120_R2_ACCESS_KEY_ID": "fake-id", "SN120_R2_SECRET_ACCESS_KEY": SECRET}
     raw = boto3.client("s3", endpoint_url=endpoint, region_name="auto", aws_access_key_id="fake-id", aws_secret_access_key=SECRET)
@@ -99,7 +92,7 @@ def test_large_file_upload_download_and_multipart_copy(store, tmp_path):
     assert store._head("pending/folds/v1/base/shard")["ETag"].strip('"').endswith("-3")  # a multipart upload
     ranges, real = [], store._s3.upload_part_copy
     store._s3.upload_part_copy = lambda **kw: ranges.append(kw["CopySourceRange"]) or real(**kw)
-    store._s3.copy_object = raiser(AssertionError("a large copy must not use one CopyObject call"))
+    store._s3.copy_object = Mock(side_effect=AssertionError("a large copy must not use one CopyObject call"))
     store.copy("pending/folds/v1/base/shard", "public/bases/h/shard")
     assert sorted(ranges) == [f"bytes=0-{5 * MIB - 1}", f"bytes={10 * MIB}-{len(BIG) - 1}", f"bytes={5 * MIB}-{10 * MIB - 1}"]
     assert store.size("public/bases/h/shard") == len(BIG) and store.sha256("public/bases/h/shard") == sha(BIG)
@@ -113,7 +106,7 @@ def test_failed_copy_promotes_nothing(store, error):
     """v1 lesson: never promote on a timeout. A copy that fails part-way leaves no object at the target."""
     store.put("pending/big", BIG)
     real = store._s3.upload_part_copy
-    store._s3.upload_part_copy = lambda **kw: real(**kw) if kw["PartNumber"] == 1 else raiser(error)()
+    store._s3.upload_part_copy = lambda **kw: real(**kw) if kw["PartNumber"] == 1 else Mock(side_effect=error)()
     with pytest.raises(InfraError):
         store.copy("pending/big", "public/big")
     assert not store.exists("public/big")
@@ -147,10 +140,10 @@ def test_copy_fails_when_the_source_changes_under_it(store):
 
 def test_failed_download_leaves_no_partial_file(store, tmp_path):
     store.put("public/a", b"abc")
-    store._s3.download_file = raiser(TIMEOUT)
+    store._s3.download_file = Mock(side_effect=TIMEOUT)
     with pytest.raises(InfraError):
         store.get_file("public/a", tmp_path / "a")
-    assert list(tmp_path.iterdir()) == []
+    assert not list(tmp_path.iterdir())
 
 
 def test_list_matches_whole_path_segments(store):
@@ -203,7 +196,7 @@ def test_bad_configuration_fails_closed_and_hides_the_secret(env):
     with pytest.raises(InfraError) as unreachable:
         R2Store.from_env(env | {"SN120_R2_ENDPOINT": "http://127.0.0.1:1"}, attempts=1)
     store = R2Store.from_env(env, attempts=1)
-    store._s3.head_object = store._s3.get_object = raiser(TIMEOUT)
+    store._s3.head_object = store._s3.get_object = Mock(side_effect=TIMEOUT)
     for call in (store.exists, store.size, store.sha256, store.get):
         with pytest.raises(InfraError) as outage:
             call("private/ff/v1/miners/hk1/batch.json")
