@@ -244,6 +244,7 @@ Pass, for each stage:
 - `1-tiny`: the summary starts with `SN120 v2 round r00000N: NULL`. One row, verdict `lost`, `tasks scored: 1 of 1`. `NULL` is the only correct result: one task has no standard error, so this round can have no winner. The JSON summary shows `"phase": "IDLE"`.
 - `2-two`: `NULL` or `APPLIED`. Two rows, each `lost` or `winner`. With the cap of 2048 most replies are cut, so expect `NULL`.
 - `3-eight`: `APPLIED`, 8 rows, a `winner` line, `"heads"` is 2 more than before, `"head_folded": true`, and `kings` holds the winner's UID. The chance of a winner is about 80 to 93 percent, when null M passes between 5 and 90 percent of the 32 tasks: with `z_bar` 0, one of 8 LoRAs is above null M by chance alone. If the result is `NULL`, that is not a fault: run the three commands of this stage again. They take the next 8 seats.
+  One case to know: every row shows `delta +0.0000`. Then the small copies trained an update too small to change one reply. Run the stage again with whole files: use `python -m sn120_v2.smoke copy --state-dir $STATE --whole` as the copy command. Whole files train a real update. Some of them can be invalid under the v2 rules, so the round can then have fewer than 8 rows.
 - `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
 - `5-full`: the pass lines of steps 6 to 9.
 
