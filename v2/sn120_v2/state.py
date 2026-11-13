@@ -17,8 +17,9 @@ from typing import Any, Callable, Iterable
 
 from .canonical import Record
 from .errors import JournalCorrupt, V2Error
-from .journal import LEADER, JournalRecord, read_journal
-from .params import GenesisSpec
+from .journal import LEADER, JournalRecord, pull, read_journal
+from .params import GenesisSpec, Params
+from .seams import ObjectStore
 from .types import Entry, HeadManifest, HeadVersion, King, QueueEntry, Registration, RoundDecision, V1Import
 
 RegKey = tuple[int, int]
@@ -27,6 +28,7 @@ DAY = 86400
 
 # Journal record kinds.
 GENESIS = "genesis"
+PARAMS_SET = "params_set"
 V1_IMPORTED = "v1_imported"
 REGISTRATIONS_SYNCED = "registrations_synced"
 SEATS_DEMOTED = "seats_demoted"
@@ -87,6 +89,7 @@ class RoundRecord(Record):
 @dataclass
 class State:
     genesis: GenesisSpec | None = None
+    params: Params | None = None  # the pinned parameters; every process reads them from here, not from a file
     heads: list[HeadVersion] = field(default_factory=list)  # every head, oldest first
     manifest: HeadManifest | None = None  # file maps of the current head; the store's pointer follows it
     queue: dict[RegKey, QueueEntry] = field(default_factory=dict)  # seats that have not had their turn
@@ -140,6 +143,11 @@ def _genesis(state: State, data: dict, at: int) -> None:
     state.genesis = GenesisSpec.from_dict(data["genesis"])
     head = _new_head(state, data)
     _need(head.parent_version_id is None and head.base_hash == state.genesis.base_hash, "genesis head does not match its spec")
+
+
+def _params_set(state: State, data: dict, at: int) -> None:
+    _need(state.round is None, "the parameters changed while a round was open")
+    state.params = Params.from_dict(data["params"])
 
 
 def _v1_imported(state: State, data: dict, at: int) -> None:
@@ -263,6 +271,7 @@ def _round_closed(state: State, data: dict, at: int) -> None:
 
 HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     GENESIS: _genesis,
+    PARAMS_SET: _params_set,
     V1_IMPORTED: _v1_imported,
     REGISTRATIONS_SYNCED: _registrations_synced,
     SEATS_DEMOTED: _seats_demoted,
@@ -303,3 +312,12 @@ def replay(records: Iterable[JournalRecord]) -> State:
 def load(path: str | Path) -> State:
     """Read-only: the state of a journal file. Safe while a controller is writing to it."""
     return replay(read_journal(path))
+
+
+def load_from_store(store: ObjectStore, cache_path: str | Path) -> State:
+    """Read-only for the store: the state of the journal copy that the store holds.
+
+    ``cache_path`` is a local journal file that only saves downloads. For a
+    machine that does not run the controller, such as the host that sets weights.
+    """
+    return replay(pull(store, cache_path))

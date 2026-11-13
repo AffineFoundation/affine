@@ -268,6 +268,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         scored = scored_prefix(entry.outcomes)
         _need(scored <= null_scored, f"{what}: scored on more tasks than null M")
         look = entry.eliminated_at_look
+        if look is None and result.stopped_at_limit:
+            _need(scored == null_scored >= 1, f"{what}: at the time limit, a LoRA that was not dropped is scored on the tasks of null M")
+            continue
         if look is None:
             _need(scored == n, f"{what}: not dropped, so it must be scored on every task")
             continue
@@ -331,9 +334,14 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))
                 continue
-            score = score_entry(first.draw.weights, result.null_outcomes, entry.outcomes, params, n_total=n)
+            # At the round's time limit the box stops early. What it scored is then the whole test, by the same final rule.
+            full = scored_prefix(result.null_outcomes) if result.stopped_at_limit else n
+            score = score_entry(first.draw.weights, result.null_outcomes, entry.outcomes, params, n_total=full)
+            first_look = params.look_sizes(n)[0]
             if problems:
                 rows.append((seat, entry, NO_DECISION, problems[0], score))
+            elif result.stopped_at_limit and full < first_look:
+                rows.append((seat, entry, NO_DECISION, f"the time limit ended the scoring after {full} tasks, before the first look of {first_look}", score))
             elif not cover_ok(entry.outcomes, score.n_tasks, params):
                 rows.append((seat, entry, NO_DECISION, f"only {score.cover:.3f} of this LoRA's rollouts resolved", score))
             else:

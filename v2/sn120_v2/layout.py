@@ -120,5 +120,13 @@ def irt_snapshot(snapshot_id: str) -> str:
     return f"public/irt/{_part(snapshot_id)}.json"
 
 
+JOURNAL = "private/journal"
+
+
 def journal_segment(name: str) -> str:
-    return f"private/journal/{_part(name)}"
+    return f"{JOURNAL}/{_part(name)}"
+
+
+def journal_record(seq: int) -> str:
+    """One journal record. The store keeps the journal as one object per record, never rewritten."""
+    return journal_segment(f"{seq:012d}.json")

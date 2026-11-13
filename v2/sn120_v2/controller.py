@@ -23,6 +23,8 @@ Rules:
 * A hash that does not match stops the apply. The round is then abandoned
   and nobody is charged.
 * No round opens while a fold is due: boxes train and score on a folded head.
+* The parameters are pinned in the journal at the first start. Every later
+  process reads them from there, so two machines can never use two sets.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from . import layout
 from .canonical import canonical_json, to_jsonable
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
-from .journal import Journal
+from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide
 from .params import GenesisSpec, Params
 from .public import round_report, snapshot
@@ -53,6 +55,7 @@ from .state import (
     LEASE_FAILED,
     NO_DECISION,
     NULL,
+    PARAMS_SET,
     REGISTRATIONS_SYNCED,
     ROUND_CLOSED,
     ROUND_OPENED,
@@ -64,6 +67,7 @@ from .state import (
     RoundRecord,
     State,
     apply,
+    load,
     replay,
 )
 from .store import delete_pending, get_record, promote_fold, promote_lora, publish_head, put_record
@@ -87,11 +91,22 @@ Leases = list[tuple[RoundTicket, BoxResult]]
 
 @dataclasses.dataclass
 class StackContext:
-    """What a stack builder gets: where the state lives, the pinned parameters, and the replayed state."""
+    """What a stack builder gets: where the state lives, the parameters, and the command that runs."""
 
     state_dir: Path
-    params: Params
-    state: State
+    params: Params  # after ``load``: the parameters pinned in the journal, when it has them
+    command: str = "run"  # a builder may leave out the runner and the folder for any other command
+
+    def load(self, store: ObjectStore | None = None) -> State:
+        """The replayed state. Call it before ``params`` is read.
+
+        Give the store when it keeps the journal copy (``Stack.mirror``):
+        the local journal is first brought up to date from that copy.
+        """
+        path = self.state_dir / JOURNAL_FILE
+        state = replay(pull(store, path)) if store is not None else load(path) if path.exists() else State()
+        self.params = state.params or self.params
+        return state
 
 
 @dataclasses.dataclass
@@ -101,11 +116,12 @@ class Stack:
     store: ObjectStore
     admission: Admission
     sampler: TaskSampler
-    runner: RoundRunner
+    runner: RoundRunner | None = None  # needed by ``run`` only
     folder: Folder | None = None
     publisher: Publisher | None = None
     entropy: Callable[[], str] | None = None  # a value the validator cannot choose, such as the latest block hash
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
+    mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
@@ -126,11 +142,21 @@ class Controller:
         folder: Folder | None = None,
         publisher: Publisher | None = None,
     ) -> None:
-        self.journal, self.store, self.admission, self.sampler, self.params = journal, store, admission, sampler, params
+        self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
         self.folder, self.publisher = folder, publisher
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
+        self._pin()
+
+    @property
+    def params(self) -> Params:
+        """The parameters pinned in the journal. Before the first start: the ones this process was given."""
+        return self.state.params or self._params
+
+    def _pin(self) -> None:
+        if hasattr(self.admission, "params"):
+            self.admission.params = self.params
 
     def _log(self, kind: str, data: dict[str, Any], now: int) -> None:
         apply(self.state, self.journal.append(kind, data, now))
@@ -150,11 +176,21 @@ class Controller:
             raise V2Error("this journal already has a genesis; refusing to bootstrap again")
         manifest = HeadManifest(genesis_head(genesis, now), dict(base_files), dict(master_files), {})
         self._log(GENESIS, {"genesis": genesis.to_dict(), "manifest": manifest.to_dict()}, now)
+        self._log(PARAMS_SET, {"params": self._params.to_dict()}, now)
         if v1 is not None:
             self._log(V1_IMPORTED, {"v1": v1.to_dict()}, now)
         self._sync_pointer()
         self._publish(now)
         return manifest.head
+
+    def set_params(self, params: Params, now: int) -> None:
+        """Operator action: pin new parameters. Refused while a round is open, because a round pins one set."""
+        if self.state.round is not None:
+            raise V2Error("a round is open; set the parameters when it has closed")
+        if not self.state.heads:
+            raise V2Error("the journal has no genesis yet; give the parameters to bootstrap")
+        self._log(PARAMS_SET, {"params": params.to_dict()}, now)
+        self._pin()
 
     def sync_registrations(self, chain: ChainSnapshot, now: int, force: bool = False) -> SyncPlan:
         """Bring the queue in line with the chain. A suspicious read is refused unless ``force``."""
@@ -363,13 +399,32 @@ class Controller:
         if outcome in (APPLIED, NULL) and pairs:
             snapshot_id = self._update_sampler(pairs, outcome)
         closed = dataclasses.replace(record, outcome=outcome, closed_at=now)
-        self.store.put(layout.round_file(record.round_id), canonical_json(round_report(closed, pairs) | {"note": reason}))
+        report = round_report(closed, pairs) | {"note": reason, "wall_s": self._wall(pairs, now)}
+        report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
+        self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
         self._sync_pointer()
         delete_pending(self.store, layout.pending_round_prefix(record.round_id))
         self._publish(now)
+
+    def _wall(self, pairs: Leases, now: int) -> dict[str, int]:
+        """Wall seconds of each phase of the open round. Box phases come from the box; the others from the journal."""
+        at: dict[str, int] = {}
+        for item in reversed(self.journal.records):
+            at.setdefault(item.kind, item.at)
+            if item.kind == ROUND_OPENED:
+                break
+        opened = at[ROUND_OPENED]
+        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation")}
+        wall["total"] = now - opened
+        if HEAD_APPLIED in at:
+            wall["promote"] = at[HEAD_APPLIED] - at[ROUND_SETTLED]
+            wall["lease_to_promotion"] = at[HEAD_APPLIED] - opened
+        if HEAD_FOLDED in at:
+            wall["fold"] = at[HEAD_FOLDED] - at[HEAD_APPLIED]
+        return wall
 
     def _update_sampler(self, pairs: Leases, outcome: str) -> str:
         """Fold the round's outcomes into the task table and store the new public snapshot."""

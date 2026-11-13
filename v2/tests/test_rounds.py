@@ -378,6 +378,11 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     common = ["--state-dir", str(state_dir), "--params", str(tmp_path / "params.json")]
     stack = [*common, "--stack", "sn120_v2.sim:stack"]
     files = [f"--{name}={tmp_path / file}" for name, file in (("genesis", "genesis.json"), ("genesis-files", "genesis_files.json"), ("v1-import", "v1_import.json"), ("chain", "chain.json"))]
+    store = LocalStore(state_dir / "store")
+    store.put(layout.public_master_file(build.h("digest"), "master.bin"), b"master")
+    assert main(["bootstrap", *stack, *files]) == 2, "a genesis file that is not in the store stops the first start"
+    assert not load(state_dir / JOURNAL_FILE).heads
+    store.put(layout.public_base_file(manifest_digest(base_files), "model.bin"), b"base")
     assert main(["bootstrap", *stack, *files]) == 0
     assert main(["bootstrap", *stack, *files]) == 2, "a second bootstrap is refused"
     assert main(["run", *stack, "--rounds", "1", "--max-idle", "1", "--idle-sleep", "0"]) == 0
@@ -386,3 +391,16 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     capsys.readouterr()
     assert main(["status", *common]) == 0
     assert json.loads(capsys.readouterr().out)["kings"] == [1, 9]
+    SimAdmission(store).upload("hk3", 0.0, valid=False)
+    assert main(["status", *stack]) == 0
+    assert json.loads(capsys.readouterr().out)["queued_files"] == {"sim_invalid": 1}, "status counts the queued files per verdict rule"
+    assert main(["round", *stack]) == 0
+    text = capsys.readouterr().out
+    assert text.startswith("SN120 v2 round r000001: APPLIED\nwinner: UID 1 (hk1)") and "wall time: train " in text
+    assert main(["publish", *stack]) == 0
+    assert len(store.list(layout.JOURNAL)) == len(read_journal(state_dir / JOURNAL_FILE)), "status, round and publish never write to the journal"
+    other = sim_params(n_tasks=32)
+    write("other.json", other.to_json())
+    assert main(["run", "--state-dir", str(state_dir), "--params", str(tmp_path / "other.json"), "--stack", "sn120_v2.sim:stack", "--max-idle", "1"]) == 2
+    assert main(["set-params", "--state-dir", str(state_dir), "--params", str(tmp_path / "other.json"), "--stack", "sn120_v2.sim:stack"]) == 0
+    assert load(state_dir / JOURNAL_FILE).params == other, "new parameters are pinned by a journal record, not by a file on one machine"
