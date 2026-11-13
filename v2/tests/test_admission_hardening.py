@@ -1,4 +1,4 @@
-"""Admission at launch: one file never stops the others, a hard time limit, no file that trains nothing, and a cap on the training cost."""
+"""Admission at launch: one file never stops the others (grader, tokenizer or checker fault), a hard time limit, no file that trains nothing, and a cap on the training cost."""
 
 from __future__ import annotations
 
@@ -6,13 +6,14 @@ import ast
 import inspect
 import json
 import random
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import FAULT, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
+from sn120_v2.admission import CHECK_FAULT, FAULT, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError
 from sn120_v2.gpu.batch import fit_tokens, training_rows
@@ -70,7 +71,8 @@ class Pool:
     task_ids = tuple(f"t{n}" for n in range(50))
 
     def task(self, task_id: str) -> SimpleNamespace:
-        return SimpleNamespace(n=int(task_id[1:]), answer=str(2 * int(task_id[1:])))
+        n = int(task_id[1:])  # "double x" is a prompt that breaks this pool: a fault of the checker, not of the grade function
+        return SimpleNamespace(n=n, answer=str(2 * n), batch_prompt=lambda: f"double {n}")
 
     def task_for_prompt(self, prompt: str) -> SimpleNamespace | None:
         return self.task(f"t{prompt.split()[1]}") if prompt.startswith("double ") else None
@@ -234,6 +236,100 @@ def test_tokenizer_that_is_broken_for_every_file_stays_loud(build):
         check_batch(file(), HOTKEY, build.params(), tokens=FragileTokens(KeyboardInterrupt, dead=True))
 
 
+# --- a file that breaks the checker itself, with any exception, skips its own file only ---
+
+BUG = "marker"  # the prompt of the one file that hits the bug
+
+
+def bug_in(monkeypatch, step: str, error: type[BaseException], every_file: bool = False) -> None:
+    """Put a bug in one step of the checker: it raises on a file that holds the ``BUG`` prompt, or on every file."""
+    real = getattr(admission, step)
+
+    def buggy(first, *rest):
+        prompts = [group["prompt"] for group in first["groups"]] if isinstance(first, dict) else [prompt for prompt, _ in first]
+        if every_file or BUG in prompts:
+            raise error("secret text of the batch")
+        return real(first, *rest)
+
+    monkeypatch.setattr(admission, step, buggy)
+
+
+def three_files(bad: list, **inputs) -> StoreAdmission:
+    store = Store({layout.miner_object("5A"): file(hotkey="5A"), layout.miner_object("5B"): file(bad, hotkey="5B"), layout.miner_object("5C"): file(hotkey="5C")})
+    return StoreAdmission(store, inputs.pop("params"), tokens=WordTokens(), clock=lambda: 7, **inputs)
+
+
+@pytest.mark.parametrize("error", [KeyError, RecursionError, MemoryError, Panic])
+@pytest.mark.parametrize("step", ["_groups", "_cap", "_kept", "_trains", "_graded"])
+def test_file_that_breaks_the_checker_is_skipped_and_the_other_files_are_checked(build, monkeypatch, step, error):
+    bug_in(monkeypatch, step, error)
+    adm = three_files([{"prompt": BUG, "rollouts": [row(6, 1), row(-1, 0)]}], params=build.params(), grader=graders()["pool_grader"])
+    found = adm.verdicts(["5A", "5B", "5C"])
+    assert [(found[key].valid, found[key].rule) for key in ("5A", "5B", "5C")] == [(True, ""), (False, CHECK_FAULT), (True, "")]
+    assert re.fullmatch(rf"the checker fails on this file: {error.__name__} in buggy, test_admission_hardening\.py line \d+", found["5B"].reason), "the class and the place in the code, never the message"
+    assert "5B" not in adm._seen and {"5A", "5C"} <= set(adm._seen), "the fault verdict is not kept"
+    assert adm.verdicts(["5B"])["5B"] is not found["5B"] and adm.verdicts(["5A"])["5A"] is found["5A"]
+    assert adm.freeze(build.reg(2, hotkey="5B"), "r000001") is None and layout.frozen_batch("r000001", "5B") not in adm.store  # a skip: not charged, the place is kept
+    assert adm.freeze(build.reg(3, hotkey="5C"), "r000001") is not None
+    adm.store.put(layout.miner_object("5B"), file(hotkey="5B"))  # the miner uploads a file that does not hit the bug
+    assert adm.verdicts(["5B"])["5B"].valid and adm.freeze(build.reg(2, hotkey="5B"), "r000001") is not None
+
+
+@pytest.mark.parametrize("name", ["env_grader", "pool_grader"])
+def test_prompt_that_breaks_the_pool_lookup_skips_its_own_file_only(build, name):
+    adm = three_files([{"prompt": "double x", "rollouts": [row(6, 1), row(-1, 0)]}], params=build.params(), grader=graders()[name])
+    found = adm.verdicts(["5A", "5B", "5C"])
+    assert [(found[key].valid, found[key].rule) for key in ("5A", "5B", "5C")] == [(True, ""), (False, CHECK_FAULT), (True, "")]
+    assert found["5B"].reason.startswith("the checker fails on this file: ValueError in task, test_admission_hardening.py line ")
+    assert rule(file([{"prompt": "double x", "rollouts": [row(6, 1), row(-1, 0)]}]), build.params()) == "", "with no grader the same file hits no fault"
+
+
+@pytest.mark.parametrize("step", ["_groups", "_cap", "_kept", "_trains", "_graded"])
+def test_checker_that_is_broken_for_every_file_stays_loud(build, monkeypatch, step):
+    bug_in(monkeypatch, step, KeyError, every_file=True)
+    adm = StoreAdmission(Store({layout.miner_object(HOTKEY): file()}), build.params(), tokens=WordTokens(), grader=graders()["pool_grader"])
+    for call in (lambda: rule(file(), build.params(), grader=adm.grader), lambda: adm.verdicts([HOTKEY]), lambda: adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001")):
+        with pytest.raises(InfraError, match=r"KeyError in buggy.* does not pass its known-good file \(KeyError in buggy") as caught:
+            call()
+        assert "secret" not in str(caught.value)
+    assert adm._seen == {} and list(adm.store) == [layout.miner_object(HOTKEY)]
+
+
+def test_stop_request_and_our_own_failure_pass_through_the_net(build, monkeypatch):
+    for error in (KeyboardInterrupt, SystemExit, InfraError):
+        bug_in(monkeypatch, "_cap", error)
+        with pytest.raises(error):
+            check_batch(file([{"prompt": BUG, "rollouts": [row(6, 1), row(-1, 0)]}]), HOTKEY, build.params(), tokens=WordTokens())
+        monkeypatch.undo()
+
+
+def test_known_good_file_passes_every_rule_with_every_set_of_inputs(build):
+    plain = lambda prompt, output, capped: None  # noqa: E731 - a grader with no known-good cases: it knows no prompt
+    for tokens in (None, WordTokens()):
+        for grader, n_files in ((None, 1), (plain, 1), (graders()["env_grader"], admission.PROBE_TASKS), (graders()["pool_grader"], admission.PROBE_TASKS)):
+            files = list(admission._known_good(build.params(), grader))
+            assert len(files) == n_files
+            for raw in files:
+                batch = check_batch(raw, admission.PROBE_HOTKEY, build.params(), tokens=tokens, grader=grader)
+                assert (batch.n_prompts, batch.n_rollouts, batch.format) == (1, 2, "affine-batch-v1")
+                assert batch.checked == ("format",) + (("tokens",) if tokens else ()) + (("grader",) if grader else ())
+    pool_task = json.loads(next(admission._known_good(build.params(), graders()["env_grader"])))["groups"][0]
+    assert pool_task["prompt"] == "double 0" and final_answer(pool_task["rollouts"][0]["output"]) == "0" and final_answer(pool_task["rollouts"][1]["output"]) is None
+
+
+def test_known_good_file_that_the_rules_reject_stays_loud(build, monkeypatch):
+    bug_in(monkeypatch, "_cap", KeyError)
+    bad = file([{"prompt": BUG, "rollouts": [row(6, 1), row(-1, 0)]}])
+    assert rule(bad, build.params()) == CHECK_FAULT
+    with pytest.raises(InfraError, match=r"does not pass its known-good file \(rule train_cost\)"):  # no file passes these params
+        rule(bad, build.params(max_train_token_steps=1))
+    wrong = env_grader(Pool(), lambda task, output, capped: SimpleNamespace(reward=0.0, machine_cause=None))  # it answers, but wrongly
+    with pytest.raises(InfraError, match=r"does not pass its known-good file \(rule grader\)"):
+        rule(bad, build.params(), grader=wrong)
+    one_good = env_grader(Pool(), lambda task, output, capped: SimpleNamespace(reward=float(task.n == 3 and "boxed" in output), machine_cause=None))
+    assert rule(bad, build.params(), grader=one_good) == CHECK_FAULT, "one known-good case that passes is enough, as in the probe of the grader"
+
+
 # --- a file must be able to train: the trainer's own arithmetic on the rewards ---
 
 
@@ -359,6 +455,7 @@ def test_rules_table_names_every_rule_code_of_the_checker():
                 used.add(code.value if isinstance(code, ast.Constant) else getattr(admission, code.id))
     assert used == set(RULES) and all(isinstance(code, str) and code for code in used)
     order = list(RULES)
+    assert order[-1] == CHECK_FAULT, "it can come from any step, so it is last"
     assert order.index("answer_repeat") < order.index(NO_SIGNAL) < order.index(TRAIN_COST) < order.index(TIME_LIMIT) < order.index(FAULT) < order.index("grader") < order.index("pool")
 
 
