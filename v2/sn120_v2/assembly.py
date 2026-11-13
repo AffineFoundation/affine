@@ -10,6 +10,7 @@ Every setting comes from the environment. A missing one is an error.
   SN120_R2_ENDPOINT, SN120_R2_BUCKET, SN120_R2_ACCESS_KEY_ID,
   SN120_R2_SECRET_ACCESS_KEY, SN120_R2_PREFIX (optional)    the store
   SN120_PUBLIC_URL          where the public zone is served; "none" before a public address exists
+  SN120_LINKS_URL (optional)  where the upload link files are served; not set or "none": not published
   SN120_V2_CHAIN_NETWORK    "finney" or a node address: the queue follows the chain and the round
                             seed uses a block hash. "none": no chain read (the smoke test)
   SN120_WORK_DIR, SN120_IMAGE_DIGEST                        the box; read by ``run`` only
@@ -64,8 +65,8 @@ class HeadTokens:
     exactly the files that the trainer and the evaluator load.
     """
 
-    def __init__(self, store: ObjectStore, cache: Path) -> None:
-        self.store, self.cache = store, cache
+    def __init__(self, store: ObjectStore, cache: Path, journal_manifest: HeadManifest | None = None) -> None:
+        self.store, self.cache, self.journal_manifest = store, cache, journal_manifest
         self._tokens: HFTokens | None = None
 
     def _load(self) -> HFTokens:
@@ -73,7 +74,11 @@ class HeadTokens:
             try:
                 manifest = get_record(self.store, layout.CURRENT, HeadManifest)
             except KeyError:
-                raise ConfigError("the store has no current head yet; run bootstrap first") from None
+                # A store that was bootstrapped when the pointer had another key has none at this key until the
+                # controller's next tick writes it. The journal's manifest is what that pointer will hold.
+                manifest = self.journal_manifest
+                if manifest is None:
+                    raise ConfigError("the store has no current head yet; run bootstrap first") from None
             base_hash = manifest.head.base_hash
             directory = self.cache / base_hash
             for name, sha in sorted(manifest.base_files.items()):
@@ -128,13 +133,14 @@ def stack(context: StackContext) -> Stack:
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
     params = context.params
     pool = load_pool()
-    tokens = HeadTokens(store, context.state_dir / "tokenizer")
+    tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
-    publisher = StorePublisher(store, "" if public_url == NONE else public_url)
+    links_url = os.environ.get("SN120_LINKS_URL", "").strip()
+    publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
     network = require_env("SN120_V2_CHAIN_NETWORK")
     feed = None if network == NONE else ChainFeed(params.netuid, network)
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None

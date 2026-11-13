@@ -12,6 +12,11 @@ Three zones:
 A losing LoRA never leaves ``pending/``. The controller deletes a round's
 pending prefix when the round closes. The fp32 master has its own prefix: it
 is never stored beside the bf16 base files.
+
+Production shares one bucket with v1, with no key prefix. Every key that v2
+writes is named in this file: ``python -m sn120_v2.r2 --preflight`` reads the
+public names of this module and lists each one in the bucket. So name a new
+key here, as a constant or a function, and never as a literal elsewhere.
 """
 
 from __future__ import annotations
@@ -22,10 +27,15 @@ from .errors import ContractError
 
 _PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
-CURRENT = "public/current.json"  # the current head: the bytes of HeadManifest.to_json()
+# The current head: the bytes of HeadManifest.to_json(). Not ``public/current.json``: v1 has an object at that key.
+CURRENT = "public/head.json"
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
 BENCHMARKS = "public/benchmarks.json"  # written by the benchmark service, read by the website
+# The upload link files, only when the link job runs with ``--to-store`` (``links.py`` builds the same two keys).
+LINK_FILES = "public/ff/links"
+LINK_INDEX = "public/ff/links.json"
+PENDING = "pending"  # the staging zone. The only zone in which v2 lists and deletes by prefix.
 
 
 def _part(value: object) -> str:
@@ -55,7 +65,7 @@ def sealed_result(round_id: str, lease_id: str) -> str:
 
 
 def pending_round_prefix(round_id: str) -> str:
-    return f"pending/rounds/{_part(round_id)}"
+    return f"{PENDING}/rounds/{_part(round_id)}"
 
 
 def pending_lease_prefix(round_id: str, lease_id: str) -> str:
@@ -71,7 +81,7 @@ def pending_lora_prefix(round_id: str, lease_id: str, queue_pos: int) -> str:
 
 
 def pending_fold_prefix(version_id: str) -> str:
-    return f"pending/folds/{_part(version_id)}"
+    return f"{PENDING}/folds/{_part(version_id)}"
 
 
 def public_lora_prefix(lora_hash: str) -> str:

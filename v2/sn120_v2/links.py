@@ -66,6 +66,7 @@ from .admission import FORMATS
 from .chain import SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .journal import JOURNAL_FILE
+from .r2_names import PLAIN_NAMES
 from .seams import ObjectStore, Presigner
 from .state import State, load_from_store
 from .store import LocalStore
@@ -97,7 +98,7 @@ PUBLIC_PREFIX = "public/"  # where the files go when the site is served from the
 ACTIVATION_MARK = "affine2|activate|"
 REVEAL_IN = "180s"  # the chain shows the commitment after this delay
 # The two parts of the store token: the name that R2Store.from_env reads, and the name in a v1 credentials file.
-TOKEN_NAMES = {"SN120_R2_ACCESS_KEY_ID": "R2_ACCESS_KEY_ID", "SN120_R2_SECRET_ACCESS_KEY": "R2_SECRET_ACCESS_KEY"}
+TOKEN_NAMES = {name: PLAIN_NAMES[name] for name in ("SN120_R2_ACCESS_KEY_ID", "SN120_R2_SECRET_ACCESS_KEY")}
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
