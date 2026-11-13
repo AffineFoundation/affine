@@ -11,8 +11,8 @@ import time
 
 import pytest
 
-from sn120_v2 import layout
-from sn120_v2.admission import FAULT, TIME_LIMIT, Invalid, StoreAdmission, check_batch, pool_grader
+from sn120_v2 import admission, layout
+from sn120_v2.admission import CHECK_FAULT, FAULT, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import InfraError
@@ -91,3 +91,30 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
             check_batch(file(groups(), "good"), "good", build.params(), tokens=WordTokens(), grader=pool_grader(pool, broken))
     finally:
         broken.close()
+
+
+def test_known_good_file_of_the_checker_passes_with_the_real_math_env(build, monkeypatch):
+    pool, params = load_pool(), build.params(min_pool_prompt_frac=1.0)
+    grade_pool = math_grader.GradePool(workers=2, timeout_s=20.0)
+    try:
+        for official in (env_grader(pool, math_grader.grade), pool_grader(pool, grade_pool)):
+            files = list(admission._known_good(params, official))
+            assert len(files) == admission.PROBE_TASKS
+            for raw in files:  # every one passes: the right answer gets reward 1, and the try with no answer gets reward 0
+                assert check_batch(raw, admission.PROBE_HOTKEY, params, tokens=WordTokens(), grader=official).checked == ("format", "tokens", "grader")
+        real = admission._cap
+
+        def buggy(groups, *limits):  # a bug of the checker that only a file with 3 groups hits
+            return real(groups, *limits) if len(groups) != 3 else groups[3]
+
+        monkeypatch.setattr(admission, "_cap", buggy)
+        tasks = [pool.task(task_id) for task_id in pool.task_ids[:4]]
+        content = [{"prompt": task.batch_prompt(), "rollouts": [row(task.answer, 1, "step " * 40), {"output": "step " * 40, "reward": 0}]} for task in tasks]
+        adm = StoreAdmission(Store(), params, tokens=WordTokens(), grader=official)
+        adm.store.put(layout.miner_object("good"), file(content, "good"))
+        adm.store.put(layout.miner_object("hits_the_bug"), file(content[:3], "hits_the_bug"))
+        got = adm.verdicts(["hits_the_bug", "good"])
+        assert {hotkey: verdict.rule for hotkey, verdict in got.items()} == {"hits_the_bug": CHECK_FAULT, "good": ""}
+        assert got["hits_the_bug"].reason.startswith("the checker fails on this file: IndexError in buggy, ")
+    finally:
+        grade_pool.close()
