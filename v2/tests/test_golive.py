@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import replace
 
 import pytest
@@ -126,11 +127,11 @@ def test_a_waiting_seat_may_replace_its_file_until_it_is_evaluated(tmp_path):
     assert world.controller.state.queue == {} and world.round() is None
 
 
-# ------------------------------------------------------------ the round time limit
+# ------------------------------------------------------------ the round time limit: a round always decides
 
 
-def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False) -> SimWorld:
-    """A world whose clock reaches the box deadline right after ``stop_after_chunks`` scored chunks."""
+def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False, jump: int | None = None) -> SimWorld:
+    """A world whose clock jumps right after ``stop_after_chunks`` scored chunks, by default to the round's time limit."""
     world = SimWorld(tmp_path, sim_params(eval_chunk_tasks=16))  # 64 tasks, looks at 32 and 64, so 4 chunks
     real, calls = world.evaluator.evaluate, []
 
@@ -141,7 +142,7 @@ def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False) -> SimWor
         chunk = real(request)
         calls.append(request)
         if len(calls) == stop_after_chunks:
-            world.now += world.params.round_time_limit_s - world.params.promote_reserve_s
+            world.now += jump or world.params.round_time_limit_s - world.params.promote_reserve_s
         return chunk
 
     world.evaluator.evaluate = evaluate
@@ -155,17 +156,30 @@ def test_at_the_time_limit_a_live_lora_is_judged_on_the_whole_chunks_scored_so_f
     world.register(1, 0.4)
     world.register(2, 0.0)
     record = world.round()
-    assert len(world.calls) == 3 and all(request.deadline == record.opened_at + 5400 for request in world.calls)
+    params = world.params
+    lease_end = record.opened_at + params.lease_timeout_s - params.promote_reserve_s
+    limit = record.opened_at + params.round_time_limit_s - params.promote_reserve_s
+    assert [request.deadline for request in world.calls] == [lease_end, lease_end, limit], "only the end of the lease cuts the first look"
     assert {entry.uid: entry.score.n_tasks for entry in record.decision.entries} == {1: 48, 2: 48}, "the same prefix for every LoRA and for null M"
     assert record.outcome == "applied" and record.decision.winner.uid == 1, "the final rule, z > 1, on what was scored"
     assert world.controller.state.served_hotkeys == {"hk1", "hk2"} and world.controller.state.queue == {}
     report = json.loads(world.store.get(layout.round_file(record.round_id)))
     assert report["stopped_at_limit"] and "(stopped at the time limit)" in round_text(report)
-    assert report["wall_s"]["lease_to_promotion"] <= world.params.round_time_limit_s
+    assert report["wall_s"]["lease_to_promotion"] <= params.round_time_limit_s
 
 
-def test_a_time_limit_before_the_first_look_charges_nobody(tmp_path):
-    world = limited(tmp_path, 1)
+def test_the_first_look_is_always_scored_in_full_so_every_trained_lora_gets_a_decision(tmp_path):
+    world = limited(tmp_path, 1)  # the round's time limit passes inside the first look
+    world.register(1, 0.4)
+    world.register(2, 0.0)
+    record = world.round()
+    assert len(world.calls) == 2, "the first look was finished, and nothing after it was started"
+    assert {entry.uid: (entry.status, entry.score.n_tasks) for entry in record.decision.entries} == {1: ("winner", 32), 2: ("lost", 32)}
+    assert world.controller.state.served_hotkeys == {"hk1", "hk2"} and world.controller.state.queue == {}
+
+
+def test_only_the_end_of_the_lease_can_leave_trained_loras_with_no_decision(tmp_path):
+    world = limited(tmp_path, 1, jump=Params().lease_timeout_s)
     world.register(1, 0.4)
     world.register(2, 0.0)
     record = world.round()
@@ -175,27 +189,89 @@ def test_a_time_limit_before_the_first_look_charges_nobody(tmp_path):
     assert world.controller.state.served_hotkeys == set() and world.store.list("pending/") == []
 
 
-def test_a_batch_that_cannot_start_training_before_the_limit_keeps_its_place(tmp_path):
-    world = SimWorld(tmp_path, sim_params(n_gpus=1))
+def slow_first_job(world: SimWorld) -> None:
+    """Each training takes the whole training time of the round."""
     real = world.trainer.train
 
-    def slow(request):
+    def train(request):
         artifact = real(request)
-        world.now += world.params.round_time_limit_s - world.params.promote_reserve_s
+        world.now += world.params.train_time_budget_s
         return artifact
 
-    world.trainer.train = slow
-    world.register(1, 0.4)
-    world.register(2, 0.0)
+    world.trainer.train = train
+
+
+def test_a_batch_that_was_not_trained_for_lack_of_time_is_first_next_round_and_is_never_put_on_hold(tmp_path):
+    world = SimWorld(tmp_path, sim_params(n_gpus=1, batch_cap=5))  # one GPU: one batch trains at a time
+    slow_first_job(world)
+    for uid in range(1, 6):
+        world.register(uid, 0.0)
+    for trained, waiting_seats in ((1, [2, 3, 4, 5]), (2, [3, 4, 5]), (3, [4, 5])):
+        record = world.round()
+        statuses = {entry.uid: entry.status for entry in record.decision.entries}
+        assert statuses == {trained: "lost"} | {uid: "not_trained" for uid in waiting_seats}, "the trained LoRA got its full test"
+        assert record.decision.entries[0].score.n_tasks == 64 and record.outcome == "null"
+        queue = world.controller.state.queue
+        assert sorted(key[0] for key in queue) == waiting_seats and world.controller.state.served_hotkeys == {f"hk{uid}" for uid in range(1, trained + 1)}
+        assert all(seat.front and not seat.leased and not seat.held and seat.infra_attempts == 0 for seat in queue.values())
+    assert world.params.max_infra_attempts == 3, "seats 4 and 5 were not trained three times, and that is not a failure of theirs or ours"
+    report = json.loads(world.store.get(layout.round_file(record.round_id)))
+    assert "not trained: 2 of 3 batches" in round_text(report) and "the training time of the round ended before this batch could start" in round_text(report)
+    world.register(6, 0.0, block=1)  # an older registration does not pass the seats that wait at the front
+    assert [entry.reg.uid for lease in world.round().leases for entry in lease.entries] == [4, 5, 6]
+
+
+def test_at_the_end_of_the_training_time_a_running_job_is_stopped_and_the_scoring_starts(tmp_path):
+    world = SimWorld(tmp_path, sim_params(n_gpus=2))  # two slots: A and B start at the lease, C starts when A is done
+    world.runner.poll_s = 0.01
+    real, close, stopped, started = world.trainer.train, world.trainer.close, threading.Event(), []
+
+    def train(request):
+        hotkey = request.entry.reg.hotkey
+        started.append(hotkey)
+        if hotkey == "hk1":
+            return real(request)
+        if hotkey == "hk3":
+            world.now += world.params.train_time_budget_s  # the training time ends while B and C still run
+        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
+        raise InfraError("the training job was stopped")
+
+    world.trainer.train = train
+    world.trainer.close = lambda: (stopped.set(), close())
+    for uid in (1, 2, 3):
+        world.register(uid, 0.3)
     record = world.round()
-    statuses = {entry.uid: entry.status for entry in record.decision.entries}
-    assert statuses == {1: "no_decision", 2: "no_decision"} and set(world.controller.state.queue) == {(1, 1001), (2, 1002)}
+    by_uid = {entry.uid: entry for entry in record.decision.entries}
+    assert sorted(started) == ["hk1", "hk2", "hk3"], "a stopped job is not started again"
+    assert (by_uid[1].status, by_uid[1].score.n_tasks, record.outcome) == ("winner", 64, "applied"), "the trained LoRA had its whole test"
+    assert by_uid[2].status == "no_decision" and "had the whole training time" in by_uid[2].reason
+    assert by_uid[3].status == "not_trained" and "while this batch trained" in by_uid[3].reason
+    queue = world.controller.state.queue
+    assert {key[0]: (seat.front, seat.infra_attempts) for key, seat in queue.items()} == {2: (True, 1), 3: (True, 0)}
+    assert world.controller.state.served_hotkeys == {"hk1"} and world.store.list("pending/") == []
+
+
+def test_a_box_that_starts_a_round_after_its_training_time_charges_nobody(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, 0.3)
+    world.register(2, 0.0)
+    ticket = world.controller.open_round(world.clock(), "entropy")[0]
+    world.now += world.params.train_time_budget_s  # for example a box that started again in the middle of the round
+    world.controller.submit_result(world.runner.run(ticket), world.clock())
+    world.controller.tick(world.clock())
+    record = world.controller.state.rounds[-1]
+    assert record.outcome == "no_decision" and {entry.status for entry in record.decision.entries} == {"not_trained"}
+    queue = world.controller.state.queue
+    assert len(queue) == 2 and all(seat.front and seat.infra_attempts == 0 and not seat.leased for seat in queue.values())
 
 
 def test_the_launch_limits_are_32_batches_100_minutes_and_temperature_1():
     params = Params()
-    assert (params.batch_cap, params.round_time_limit_s, params.lease_timeout_s, params.temperature) == (32, 6000, 6000, 1.0)
-    assert params.promote_reserve_s < params.round_time_limit_s
+    assert (params.batch_cap, params.round_time_limit_s, params.temperature) == (32, 6000, 1.0)
+    assert params.train_time_budget_s < params.round_time_limit_s - params.promote_reserve_s < params.round_time_limit_s <= params.lease_timeout_s
+    assert params.eval_chunk_tasks == params.look_sizes(params.n_tasks)[0], "the first look is one chunk"
+    with pytest.raises(V2Error):
+        Params(train_time_budget_s=5400)  # no time left for the scoring
 
 
 def test_batches_train_at_the_same_time_on_separate_gpu_slots(tmp_path):
@@ -252,3 +328,49 @@ def test_the_round_summary_has_every_lora_the_winner_and_the_wall_times(tmp_path
     null = world.round()
     assert null.outcome == "null" and world.controller.state.kings == kings, "a round with no winner leaves the kings as they are"
     assert "no winner: null round" in round_text(json.loads(world.store.get(layout.round_file(null.round_id))))
+
+
+# ------------------------------------------------------------ the file verdicts in the public snapshot
+
+
+def shown(world: SimWorld) -> dict[str, bool]:
+    return {seat["hotkey"]: seat["file_valid"] for seat in world.publisher.snapshots[-1]["queue"]["next"]}
+
+
+def test_the_public_snapshot_shows_admissions_verdict_on_each_waiting_file(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, None)  # no file
+    world.register(2, 0.0, valid=False)
+    assert world.round() is None, "no valid file, so no round"
+    assert world.controller.publish(world.clock(), only_changes=True) and shown(world) == {"hk1": False, "hk2": False}
+    count = len(world.publisher.snapshots)
+    assert world.round() is None and not world.controller.publish(world.clock(), only_changes=True)
+    assert len(world.publisher.snapshots) == count, "nothing changed, so nothing is published again"
+    world.admission.upload("hk1", 0.0)
+    assert world.controller.publish(world.clock(), check_files=True, only_changes=True)
+    assert shown(world) == {"hk1": True, "hk2": False}, "a new file shows as valid before any round takes it"
+    checked = world.publisher.snapshots[-1]["queue"]["files_checked_at"]
+    assert checked is not None and checked <= world.now
+
+
+def test_the_waiting_files_are_read_before_the_lease_starts_and_never_inside_a_round(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, 0.3)
+    world.register(2, None)
+    real, calls = world.admission.verdicts, []
+
+    def slow(hotkeys):
+        calls.append(world.now)
+        world.now += 1000  # reading and checking every waiting file takes time
+        return real(hotkeys)
+
+    world.admission.verdicts = slow
+    record = world.round()
+    assert record.outcome == "applied" and len(calls) == 1, "one read of the waiting files for the whole round"
+    assert record.opened_at > calls[0] + 1000, "the lease, and so the round's time limit, starts after the files are read"
+    assert all(lease.expires_at == record.opened_at + world.params.lease_timeout_s for lease in record.leases)
+    assert shown(world) == {"hk2": False} and world.publisher.snapshots[-1]["queue"]["files_checked_at"] == calls[0]
+    world.register(3, 0.0)
+    world.controller.open_round(world.clock(), "entropy")
+    with pytest.raises(V2Error, match="round is open"):
+        world.controller.publish(world.clock(), check_files=True)

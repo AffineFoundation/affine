@@ -16,6 +16,7 @@ from sn120_v2.errors import ConfigError, InfraError
 from sn120_v2.journal import Mirror
 from sn120_v2.params import Params
 from sn120_v2.sim import SimWorld, sim_params
+from sn120_v2.store import LocalStore
 from sn120_v2.types import King
 from sn120_v2.weights_writer import JOURNAL_FILE, STATE_FILE, View, load_kings, load_state, main, read_view, run_once, single_writer
 
@@ -326,6 +327,16 @@ def test_a_store_that_does_not_answer_uses_the_last_valid_journal_in_the_cache(h
     assert json.loads(out)["status"] == "set" and host.chain.weights == {1: 1.0}  # the last valid kings are paid
     assert "kings: read from the cache of the journal copy, because the store did not answer" in log
     assert "the store did not answer" in load_state(host.state_dir)["last_valid"]["kings_from"]
+
+
+def test_a_store_with_fewer_records_than_the_cache_is_logged_as_the_cache(host, tmp_path, capsys):
+    assert main(host.argv + ["--dry-run"], lambda: host.world.store) == 0  # the first pull fills the cache
+    held = len((host.state_dir / JOURNAL_FILE).read_bytes().splitlines())
+    capsys.readouterr()
+    assert main(host.argv, lambda: LocalStore(tmp_path / "wrong-prefix")) == 0  # a store that answers, with no journal copy
+    out, log = capsys.readouterr()
+    assert json.loads(out)["status"] == "set" and host.chain.weights == {1: 1.0}
+    assert f"kings: read from the cache of the journal copy, because the store holds fewer records (0) than the cache ({held})" in log
 
 
 @pytest.mark.parametrize("cache", [None, b""])

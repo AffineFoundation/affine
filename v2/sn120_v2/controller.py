@@ -147,6 +147,9 @@ class Controller:
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
+        self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
+        self._verdicts_at: int | None = None
+        self._published: object = None  # what the last snapshot showed of the queue and its files
         self._pin()
 
     @property
@@ -222,8 +225,24 @@ class Controller:
             return None
         return batch if batch.hotkey == reg.hotkey else None
 
-    def open_round(self, now: int, entropy: str, boxes: Sequence[str] = ("box-0",)) -> list[RoundTicket]:
-        """Start a round with the seats that are ready now. Returns no ticket when nothing can start."""
+    def check_files(self, now: int) -> Mapping[str, Verdict]:
+        """Admission's verdict on the stored file of every waiting seat, kept for the public snapshot.
+
+        It reads every waiting file from the store. So it runs before a round's
+        lease starts or between rounds, never inside a round's time.
+        """
+        verdicts = dict(self.admission.verdicts([seat.reg.hotkey for seat in waiting(self.state.queue)]))
+        self._verdicts, self._verdicts_at = verdicts, now
+        return verdicts
+
+    def open_round(
+        self, now: int, entropy: str, boxes: Sequence[str] = ("box-0",), clock: Callable[[], int] | None = None
+    ) -> list[RoundTicket]:
+        """Start a round with the seats that are ready now. Returns no ticket when nothing can start.
+
+        With ``clock``, the lease time is read after the waiting files are read
+        and checked, so that work does not use the round's time limit.
+        """
         state, params = self.state, self.params
         if state.round is not None:
             raise V2Error("a round is already open")
@@ -233,7 +252,7 @@ class Controller:
             return []
         if state.failed_leases and now < state.last_failure_at + params.apply_retry_s:
             return []
-        verdicts = self.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
+        verdicts = self.check_files(now)
         moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
@@ -241,6 +260,8 @@ class Controller:
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
             return []
+        if clock is not None:
+            now = clock()  # the lease starts here
         head = state.head
         draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
         self._store_snapshot(draw.snapshot_id)
@@ -462,13 +483,39 @@ class Controller:
         except (InfraError, VerifyError) as exc:
             self.last_error = f"head pointer not published yet: {exc}"
 
+    def _shown(self) -> object:
+        """What a snapshot shows of the queue and its files. A change here is a reason to publish between rounds."""
+        seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
+        return seats, {hotkey: (verdict.valid, verdict.batch_sha256) for hotkey, verdict in self._verdicts.items()}
+
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
+        shown = self._shown()
         try:
-            self.publisher.publish(snapshot(self.state, self.params, now))
+            self.publisher.publish(snapshot(self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self._published = shown
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"
+
+    def publish(self, now: int, check_files: bool = False, only_changes: bool = False) -> bool:
+        """Publish the public snapshot outside a round's own steps. Returns True when it published.
+
+        ``check_files`` reads the file of every waiting seat first; it is
+        refused while a round is open. ``only_changes`` publishes only when
+        the queue or a file verdict differs from the last published snapshot.
+        """
+        if check_files:
+            if self.state.round is not None:
+                raise V2Error("a round is open; the waiting files are not read inside a round's time")
+            try:
+                self.check_files(now)
+            except InfraError as exc:
+                self.last_error = f"file check failed: {exc}"
+        if self.publisher is None or (only_changes and self._shown() == self._published):
+            return False
+        self._publish(now)
+        return True
 
     # ------------------------------------------------------------ the loop
 
@@ -494,7 +541,7 @@ class Controller:
     def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str) -> RoundRecord | None:
         """One round on one box, start to end. Returns the closed round, or None when no round could start."""
         self.tick(clock())
-        tickets = self.open_round(clock(), entropy) if self.state.round is None else self.tickets()
+        tickets = self.open_round(clock(), entropy, clock=clock) if self.state.round is None else self.tickets()
         for ticket in tickets:
             try:
                 self.submit_result(runner.run(ticket), clock())
