@@ -28,10 +28,10 @@ from .errors import ContractError, InfraError, V2Error
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .judging import drop_margin
 from .links import upload_entry
-from .params import MinerBound, Params, Recipe
+from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
-from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadManifest
+from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
@@ -201,10 +201,7 @@ def _recipe_lines(params: Params) -> list[str]:
     cap = recipe.global_norm_cap
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
-    settable = [
-        (f"`train.{row['key']}`", row["default"], row["allowed"], "decided" if row["decided"] else "placeholder: it can change")
-        for row in miner_settable(recipe)
-    ]
+    settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
     return [
         f"## 2. The training recipe (recipe_id `{recipe_id}`)",
         "",
@@ -223,8 +220,10 @@ def _recipe_lines(params: Params) -> list[str]:
         "You may set only these fields, in the `train` object of your file. Each one replaces the recipe value above",
         "for your LoRA only.",
         "",
-        *table(("key", "default", "allowed", "status"), settable),
+        *table(("key", "default", "allowed"), settable),
         "",
+        "- These are the bounds for launch. The bounds are part of the recipe: a change of a bound gives a new",
+        "  `recipe_id`.",
         "- Every key is optional. A key that you do not set keeps its default.",
         "- Values are never clamped. A value outside its bound, a value of the wrong type, or any other key under",
         "  `train` makes the whole file invalid.",
@@ -256,7 +255,12 @@ def _recipe_lines(params: Params) -> list[str]:
 def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
     entries, seats = round_now.get("entries") or [], queue.get("next") or []
-    stop = min(params.lease_timeout_s, params.round_time_limit_s) - params.promote_reserve_s  # worker.LocalRunner.run
+    # The three times of worker.LocalRunner.run, in seconds from the lease.
+    last = params.lease_timeout_s - params.promote_reserve_s
+    stop = min(last, params.round_time_limit_s - params.promote_reserve_s)
+    train_end = min(stop, params.train_time_budget_s)
+    limit, reserve, first_look = show(params.round_time_limit_s / 60), show(params.promote_reserve_s / 60), params.look_sizes()[0]
+    checked = queue.get("files_checked_at")
     return [
         "## 3. The round now",
         "",
@@ -270,25 +274,36 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
         "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
         "",
-        "### The time limit of a round",
+        "### The time of a round",
         "",
-        f"- A round takes at most {show(params.round_time_limit_s / 60)} minutes from the lease to the promotion of the winner. The lease is",
-        "  the moment a round takes its entries. A round ends early, as soon as every LoRA is dropped or decided.",
-        f"- The stop time is minute {show(stop / 60)}: {show(params.promote_reserve_s / 60)} minutes before the limit, so that judging and promotion",
-        "  fit. After the stop time the box starts nothing new: no training and no chunk of tasks.",
-        "- Training: each batch trains on its own slot of GPUs, and the slots train at the same time. A slot is",
-        f"  floor({params.n_gpus} / batches) GPUs, and at least 1. So with {params.n_gpus} batches or more, each batch trains on one GPU,",
-        f"  {params.n_gpus} batches at a time, and each other batch waits for a free GPU. Scoring starts when all training is done.",
-        "- A batch whose training did not start before the stop time is `no_decision`.",
-        f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. After each chunk the box",
-        "  looks at the clock. A chunk that is not finished at the stop time is not used.",
-        "- An open LoRA is a LoRA that was not dropped at a look (section 6). At the limit, each open LoRA is judged by",
-        "  the win rule of section 6 on the whole chunks that null M and every open LoRA finished. Those tasks are then",
-        f"  the whole test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
-        f"- If fewer tasks than the first look ({params.look_sizes()[0]}) are scored at the limit, each open LoRA is `no_decision`.",
-        f"- A box result that arrives later than {show(params.lease_timeout_s / 60)} minutes after the lease is never used: each entry of that",
-        "  box is `no_decision`.",
-        "- `no_decision` means: not charged, and the seat goes to the front of the queue (section 4).",
+        "All times count from the lease: the moment a round takes its entries. A round ends early, as soon as every",
+        "LoRA is dropped or decided.",
+        "",
+        f"- Time limit: {limit} minutes from the lease to the promotion of the winner. The box stops {reserve} minutes",
+        f"  before it, at minute {show(stop / 60)} (the stop time), so that judging and promotion fit.",
+        f"- Training time: the first {show(train_end / 60)} minutes. Batches train in queue order. Each batch trains on its own slot of",
+        f"  GPUs, and the slots train at the same time. A slot is floor({params.n_gpus} / batches) GPUs, and at least 1. So with",
+        f"  {params.n_gpus} batches or more, each batch trains on one GPU, {params.n_gpus} batches at a time, and each other batch waits for a",
+        "  free GPU.",
+        "- At the end of the training time no new training starts, and each training that still runs is stopped. Such",
+        f"  a batch is `{NOT_TRAINED}`: you are not charged, your seat is first in the next round, and no failure is counted",
+        "  for the seat. Scoring starts when all training is done or stopped.",
+        "- One exception: a batch that started at the lease had the whole training time. If it did not finish, that",
+        f"  is a failure of ours: `{NO_DECISION}`.",
+        f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. An open LoRA is a",
+        "  LoRA that was not dropped at a look (section 6).",
+        f"- The first look ({first_look} tasks) is always scored in full for null M and every trained LoRA. The time limit does",
+        "  not cut it. So each trained LoRA gets a decision.",
+        "- After the first look, the stop time applies. The box starts no new chunk after it, and a chunk that is not",
+        "  finished at the stop time is not used. Each open LoRA is then judged by the win rule of section 6 on the",
+        "  whole chunks that null M and every open LoRA finished. Those tasks are then the whole test: z strictly",
+        f"  above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
+        f"- So a round is longer than {limit} minutes only when the training time and the first look together are longer",
+        "  than that.",
+        f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. If the first look is not complete {reserve} minutes before",
+        f"  that, each trained LoRA is `{NO_DECISION}`. A box result that arrives after the end of the lease is never used:",
+        f"  each entry of that box is `{NO_DECISION}`.",
+        f"- `{NO_DECISION}` means: not charged, and the seat goes to the front of the queue (section 4).",
         "",
         "## 4. The queue",
         "",
@@ -296,18 +311,22 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         *(table(tuple(seats[0]), (row.values() for row in seats)) if seats else ["The queue is empty."]),
         "",
-        "- `file_valid`: the validator's verdict on the file that is stored for the hotkey now. It checks a stored file",
-        "  again about every minute. It never publishes batch content or `train` values. To see the rule that a file",
-        "  breaks, run the `check` command of section 5: it prints the rule code and the reason.",
+        "- `file_valid`: the validator's verdict on the file that was stored for the hotkey at its last check of the",
+        f"  files: {utc(checked) if checked else 'no check yet'} (`queue.files_checked_at` in mining.json). The validator reads the waiting files when it picks the entries",
+        "  of a round, and again and again while no round runs. It does not read them while a round runs: a file that",
+        "  you store then shows the old verdict until the round ends. The validator never publishes batch content or",
+        "  `train` values. To see the rule that a file breaks, run the `check` command of section 5: it prints the",
+        "  rule code and the reason.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  To enter again, register again.",
         f"- Order: registration block, then UID. UID {params.burn_uid} has no seat.",
         "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
-        "- `no_decision`: our infrastructure failed, or the time limit of the round came first (section 3). You are",
-        f"  not charged and you go to the front of the queue. When the box has reported `no_decision` for your entry {params.max_infra_attempts}",
-        "  times (the training failed, or the time limit came first), the seat is held: it takes no turn until the",
-        "  operator releases it.",
+        f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
+        f"  queue. When the box has reported `{NO_DECISION}` for your entry {params.max_infra_attempts} times, the seat is held: it takes no",
+        "  turn until the operator releases it.",
+        f"- `{NOT_TRAINED}`: the training time of the round ended before your batch was trained (section 3). You are not",
+        "  charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
         "",
         "### Your place while you wait",
         "",
@@ -329,7 +348,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
 
 
 def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    recipe, upload = params.recipe, (doc["contract"].get("upload") or {}).get("sealed_links")
+    recipe = params.recipe
     example = {
         "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
@@ -341,7 +360,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "You have one private object for each hotkey. A hotkey whose queue entry is not evaluated yet keeps its queue",
         "position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed",
-        "window. The validator reads the latest file at lease time (the moment a round takes the entry): that copy is",
+        "window. The validator copies the latest file when a round takes the entry: that copy is",
         "what is trained. The admission checks run again on each new file. The only rule that moves a waiting seat",
         "back is squat-trim (section 4): it applies to a seat with no valid file stored, never to a seat with a valid",
         "file. The file stays private unless it wins. Then the exact file and the LoRA are published.",
@@ -378,13 +397,52 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
         "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
         "  `--tokenizer`: only a token count can tell that an output stopped at the cap.",
-        "- Upload: each registered hotkey has a sealed link. It is a SealedBox that only the private key of the hotkey",
-        "  can open. It holds a time-limited upload URL for your object. PUT the file bytes to that URL with the header",
-        f"  {show([f'`{name}: {value}`' for name, value in UPLOAD_HEADERS.items()])}. The link is signed for that header: an upload",
-        "  without it is refused. `python v2/miner/affine_miner.py upload --mining-json mining.json --hotkey <ss58>",
-        "  --tokenizer <head directory> --grade batch.json` checks the file, reads the URL from the environment variable",
-        "  `AFFINE_PUT_URL` and sends the file with that header. Then read `file_valid` in section 4.",
-        f"  Where to get the link: {upload or 'not published yet'}.",
+        "",
+        "### How to upload",
+        "",
+        *_upload_lines(doc["contract"]),
+    ]
+
+
+def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
+    """The upload steps. The addresses and the two times come from ``links.upload_entry``."""
+    upload, links_url = contract_block.get("upload"), contract_block.get("links_url")
+    header = show([f"`{name}: {value}`" for name, value in UPLOAD_HEADERS.items()])
+    tool = "`python v2/miner/affine_miner.py upload --mining-json mining.json --hotkey <ss58> --tokenizer <head directory> --grade batch.json`"
+    if not upload:
+        return [
+            "- Each registered hotkey gets a sealed link: a public file that only the secret key of the hotkey can",
+            "  open. It holds a time-limited upload URL for your object.",
+            "- Where to get the link: not published yet. This file gives the address and the steps when the link files",
+            "  exist.",
+            f"- Upload: an HTTP PUT of the file bytes to the opened URL with the header {header}. {tool} checks the file,",
+            "  reads the URL from the environment variable `AFFINE_PUT_URL` and sends the file with that header.",
+        ]
+    return [
+        "You upload with a sealed link: a public file that only the secret key of your hotkey can open. It holds a",
+        "time-limited upload URL for your object.",
+        "",
+        "- Activation (one time): your hotkey must be an Ed25519 key. Run",
+        "  `python -m sn120_v2.links activate --wallet <wallet name> --hotkey <hotkey name>` to see the activation. Add",
+        "  `--execute` to write it to the chain. It costs the fee of one commitment. The chain shows it after about 3",
+        "  minutes. An activation made for v1 stays valid: do not make it again. Install:",
+        '  `pip install -e "v2[links,chain]"`.',
+        f"- Where to get the link: {upload['sealed_links']}. The file is public, but only the secret key of your hotkey",
+        f"  opens it. A new file is written every {show(upload['reissue_every_seconds'] / 60)} minutes. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
+        "- You have a link while your hotkey is registered, has the activation, and its queue entry is not evaluated",
+        "  yet. You may upload again as often as you like. Each upload replaces the file before. The file that is",
+        "  stored when a round takes your entry is the file that is trained.",
+        "- Open the link:",
+        f'  `export AFFINE_PUT_URL="$(python -m sn120_v2.links open --hotkey <ss58> --key <seed file> --links-url {links_url})"`.',
+        "  The seed file holds the 32-byte Ed25519 seed of your hotkey as 64 hex characters. A bittensor hotkey file",
+        '  that is not encrypted also works. Install: `pip install -e "v2[links]"`.',
+        f"- Upload: {tool} checks the file, reads the URL from the environment variable `AFFINE_PUT_URL` and sends the",
+        f"  file. Or use any HTTP tool: an HTTP {upload['method']} of the file bytes to that URL with the header {header}. The link",
+        "  is signed for that header: without it the store refuses the upload.",
+        "- The opened URL is a secret. Anyone who has it can replace your file until the link expires.",
+        "- HTTP 404 on your link file means one of three things: the hotkey is not registered, it has no activation, or",
+        "  its entry was evaluated. After a new registration or activation, wait for the next link file.",
+        "- After the upload, read `file_valid` in section 4.",
     ]
 
 
@@ -440,8 +498,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
         f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
         f"  total level {show(params.drop_alpha)}. For this draw, a LoRA is dropped when z is at or below: {show(drops)}.",
-        "- When the time limit of the round stops the scoring early, the win rule runs on the tasks scored by then",
-        "  (section 3).",
+        "- When the time limit of the round stops the scoring after the first look, the win rule runs on the tasks",
+        "  scored by then (section 3).",
         f"- If fewer than {show(params.min_cover)} of the rollouts resolve without an infrastructure error, the entry is",
         "  `no_decision`.",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
@@ -494,6 +552,17 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     ]
 
 
+def _genesis_lines(head: HeadVersion) -> list[str]:
+    """Where the base files are while the base is the launch model. Nothing when the base is a folded one."""
+    if head.base_hash != GENESIS_BASE_HASH:
+        return []
+    return [
+        f"- The base of this head is the genesis model: the files of `{GENESIS_MODEL_REPO}` on Hugging Face at revision",
+        f"  `{GENESIS_MODEL_REVISION}`. Get the base files there. `base_hash` is the id of that file set (section 9)."
+        + ("" if head.parent_version_id else " No winner is applied yet: head M is this model as it is."),
+    ]
+
+
 def llms_text(doc: Mapping[str, Any]) -> str:
     """llms.txt from a mining.json document. Pure: the same document always gives the same text."""
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
@@ -518,9 +587,12 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         f"- Head M `version_id`: `{head.version_id}` (parent `{show(head.parent_version_id)}`)",
         f"- `base_hash`: `{head.base_hash}`; fp32 master digest: `{head.base_fp32_master_digest}`",
         f"- Made by round `{head.round_id}` at {utc(head.applied_at)}.",
+        *_genesis_lines(head),
         f"- Head manifest (every file with its sha256): `{layout.head_manifest(head.version_id)}`",
         f"- `params_hash`: `{params.params_hash}`; `recipe_id`: `{params.recipe_id}`",
-        f"- Public objects are served under: {doc['contract']['public_url'] or 'not set in this file'}. Each key below is a path under it.",
+        f"- Public objects are served under: {doc['contract']['public_url'] or 'not set in this file'}. Each key below is a path under it,",
+        "  with one exception: the weight files are not served at the path of their key, and this file does not give",
+        "  their address yet.",
         "",
         *(table(("stacked LoRA", "round", "miner uid", "batch sha256"), loras) if loras else ["No LoRA is stacked on the base."]),
         "",
