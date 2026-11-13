@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from .canonical import Record, digest, is_sha256, manifest_digest, to_jsonable
+from .canonical import Record, digest, is_sha256, manifest_digest, sha256_hex, to_jsonable
 from .errors import ContractError, VerifyError
 from .params import Params
 
@@ -345,6 +345,21 @@ class RoundTicket(Record):
         positions = [entry.queue_pos for entry in self.entries]
         _need(positions == sorted(set(positions)), "ticket entries must be in queue order, without repeats")
         _need(self.expires_at > self.issued_at, "a lease must expire after it is issued")
+
+    @classmethod
+    def from_json(cls, raw: bytes | str) -> RoundTicket:
+        """A ticket that is read back keeps the hash of its stored bytes as its seal.
+
+        A later version of the code may add a field to ``Params`` or to a
+        ticket type. The stored ticket of a round that is still open then
+        still matches the seal in the journal, and its result still answers it.
+        """
+        ticket = super().from_json(raw)
+        object.__setattr__(ticket, "_sealed", sha256_hex(raw if isinstance(raw, bytes) else raw.encode()))
+        return ticket
+
+    def digest(self) -> str:
+        return getattr(self, "_sealed", "") or super().digest()
 
 
 @dataclass(frozen=True)
