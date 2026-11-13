@@ -417,6 +417,8 @@ def _issue_once(args: argparse.Namespace) -> int:
         ready = _chain_activated(args.network, waiting, args.netuid)
         hotkeys = [hotkey for hotkey in waiting if hotkey in ready]
     files = link_files(hotkeys, store, int(time.time()), args.links_url, args.ttl_s, args.reissue_s)
+    if args.site_dir and not Path(args.site_dir).is_dir():  # LocalStore would make it: a site reset that moved it away would find a new one
+        raise ConfigError(f"the site directory {args.site_dir} does not exist; this job never makes it")
     sink, prefix = (LocalStore(args.site_dir), "") if args.site_dir else (store, PUBLIC_PREFIX)
     removed = write_files(files, sink, prefix)
     issued = len(files) - 1  # every file but the index
