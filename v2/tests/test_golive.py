@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import replace
 
 import pytest
 
-from sn120_v2 import layout
+from sn120_v2 import layout, sim
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import FencedError, InfraError, JournalCorrupt, V2Error
 from sn120_v2.journal import JOURNAL_FILE, Journal, Mirror, pull, read_journal
 from sn120_v2.params import Params
 from sn120_v2.public import round_text
-from sn120_v2.sim import SimWorld, sim_params
+from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
 from sn120_v2.state import load_from_store, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
@@ -374,3 +375,65 @@ def test_the_waiting_files_are_read_before_the_lease_starts_and_never_inside_a_r
     world.controller.open_round(world.clock(), "entropy")
     with pytest.raises(V2Error, match="round is open"):
         world.controller.publish(world.clock(), check_files=True)
+
+
+# ------------------------------------------------------------ a bucket shared with v1
+
+V1_OBJECTS = {  # keys that v1's source names for its bucket (CUTOVER.md, "Store"), and the file of a hotkey that does not wait
+    "public/current.json": b"an old mock of v1",
+    "public/streams/nonpayable-live-reward-math-v1-/current.json": b"v1's live pointer",
+    "public/checkpoints/000123/model.safetensors": b"v1 weights",
+    "public/epoch-evidence/000123.json": b"v1 evidence",
+    "private/ff/v1/turns/000123/hkA/batch.json": b"a turn of v1",
+    "private/ff/v1/miners/hkGone/batch.json": b"the file of a hotkey that left",
+}
+STORE_CALLS = ("put", "put_file", "get", "get_file", "exists", "size", "sha256", "copy", "delete", "list")
+NARROW_LIST = re.compile(r"private/journal|pending/(rounds|folds)/[^/]+")
+
+
+class WatchedStore(LocalStore):
+    """Notes every call as (method, key or prefix). ``copy`` notes both keys."""
+
+    def __init__(self, root) -> None:
+        self.calls: list[tuple[str, str]] = []
+        super().__init__(root)
+
+    def __getattribute__(self, name):
+        method = super().__getattribute__(name)
+        if name not in STORE_CALLS:
+            return method
+
+        def noted(*args, **kwargs):
+            self.calls.extend((name, key) for key in args[: 2 if name == "copy" else 1])
+            return method(*args, **kwargs)
+
+        return noted
+
+
+@pytest.mark.skipif(layout.CURRENT in V1_OBJECTS, reason="the head pointer still has a key of v1; this test starts when layout.CURRENT moves")
+def test_on_a_bucket_shared_with_v1_nothing_lists_a_broad_prefix_or_touches_an_object_of_v1(tmp_path, monkeypatch):
+    seed = LocalStore(tmp_path / STORE_DIR)
+    for key, data in V1_OBJECTS.items():
+        seed.put(key, data)
+    monkeypatch.setattr(sim, "LocalStore", WatchedStore)
+    world = SimWorld(tmp_path, sim_params())  # bootstraps on the shared bucket
+
+    def mirror() -> None:
+        world.controller.journal.mirror = Mirror(world.store)
+        with open(world.root / JOURNAL_FILE, "rb") as handle:
+            Mirror(world.store).catch_up(handle, backfill=True)
+
+    mirror()
+    for uid, quality in ((1, 0.3), (2, 0.0), (3, None)):
+        world.register(uid, quality)
+    assert world.round().outcome == "applied" and len(world.controller.state.heads) > 1, "a winner: promotion, a fold, a new head"
+    world.reopen()  # a restart reads the journal copy and the task table back
+    mirror()
+    world.register(4, 0.25)
+    assert world.round().outcome == "applied"
+    load_from_store(world.store, tmp_path / "AffineValidator" / JOURNAL_FILE)
+    calls = world.store.calls
+    assert {key: seed.get(key) for key in V1_OBJECTS} == V1_OBJECTS
+    assert [call for call in calls if call[1] in V1_OBJECTS] == [], "no probe, read, write or delete of an object of v1"
+    lists = {prefix for name, prefix in calls if name == "list"}
+    assert lists and all(NARROW_LIST.fullmatch(prefix) for prefix in lists), "a list names the journal, or one round or one fold in pending/"
