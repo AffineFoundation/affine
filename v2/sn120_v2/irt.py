@@ -235,19 +235,12 @@ class IRTSampler:
             check_outcomes(tuple(texts), n, f"IRT update, model {key[:12]}")
         _need(bool(winner_lora_hash) == bool(new_head_version_id), "a winner and its new head version come together")
         _need(not winner_lora_hash or winner_lora_hash in outcomes, "the winning LoRA has no outcomes")
-        stamp = digest(
-            {
-                "head": head.version_id,
-                "round_seed": draw.round_seed,
-                "task_ids": list(draw.task_ids),
-                "outcomes": {key: list(texts) for key, texts in outcomes.items()},
-                "winner": winner_lora_hash,
-                "new_head": new_head_version_id,
-            }
-        )
+        # One draw is one round, and a round teaches the table once. The stamp names the draw only,
+        # so a second call for the same draw (a replay after a crash) changes nothing, whatever else it carries.
+        stamp = digest({"snapshot_id": draw.snapshot_id, "round_seed": draw.round_seed, "task_ids": list(draw.task_ids)})
         old = self._body
         if stamp in old["updates"]:
-            return self._id  # the same round again (a replay after a crash): already folded in
+            return self._id
 
         # Only resolved rollouts teach anything. A cap hit is not a pass. An infrastructure
         # error or a rollout that was not run says nothing about the task or the model.

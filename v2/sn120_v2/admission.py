@@ -26,7 +26,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
-from .errors import BatchRejected, VerifyError
+from .errors import BatchRejected, InfraError, VerifyError
 from .params import Params, Recipe
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
@@ -42,17 +42,35 @@ Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward),
 # The official grade of one rollout: (prompt, output, capped) -> reward.
 # The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
 # None means the prompt is not a task of the environment, so there is no official grade.
+# It raises GraderTimeLimit when the grade did not finish in time. Any other exception is our failure: InfraError.
 Grader = Callable[[str, str, bool], float | None]
+TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
+# The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
+# import the env, which needs extra packages. If the env renames the value, a time-out becomes InfraError: loud.
+ENV_TIME_LIMIT = "time-limit"
+
+
+class GraderTimeLimit(Exception):
+    """Raised by a ``Grader``: the official grade of this row did not finish inside its time limit."""
 
 
 def env_grader(pool: Any, grade: Callable[..., Any]) -> Grader:
     """The ``Grader`` of an environment, from its task pool and its ``grade(task, output, capped)`` function.
 
     The controller and the miner's tool both build the grader with this one call, so they cannot differ.
+    The grade's ``machine_cause`` says when the machine, not the row, decided: an expired time limit
+    raises ``GraderTimeLimit``, and any other cause (a dead worker) raises ``InfraError``.
     """
     def official(prompt: str, output: str, capped: bool) -> float | None:
         task = pool.task_for_prompt(prompt)
-        return None if task is None else float(grade(task, output, capped).reward)
+        if task is None:
+            return None
+        result = grade(task, output, capped)
+        if result.machine_cause == ENV_TIME_LIMIT:
+            raise GraderTimeLimit
+        if result.machine_cause is not None:
+            raise InfraError(f"the official grader failed: {result.machine_cause}")
+        return float(result.reward)
 
     return official
 
@@ -269,14 +287,26 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set
 
 
 def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
-    """Every submitted reward must be the official grade. A prompt the environment does not know has no grade."""
+    """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
+
+    A row that the grader cannot grade in time is not allowed, whatever its reward. The check stops at the
+    first one, so a file cannot make the checker wait at every row.
+    """
     known = 0
     for i, (prompt, rollouts) in enumerate(groups):
         for j, (output, reward) in enumerate(rollouts):
-            official = grader(prompt, output, (i, j) in capped)
+            here = f"groups[{i}].rollouts[{j}]"
+            try:
+                official = grader(prompt, output, (i, j) in capped)
+            except GraderTimeLimit:
+                raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit") from None
+            except InfraError:
+                raise
+            except Exception as exc:
+                raise InfraError(f"the official grader failed: {type(exc).__name__}") from exc
             if official is None:
                 break
-            _need(abs(reward - official) <= params.reward_tolerance, "grader", f"groups[{i}].rollouts[{j}].reward is not the official grade")
+            _need(abs(reward - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
         else:
             known += 1
     share = params.min_pool_prompt_frac
@@ -344,7 +374,10 @@ class StoreAdmission:
         return raw, _judge(raw, hotkey, self.params, self.tokens, self.grader)
 
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
-        """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change."""
+        """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
+
+        A grader time limit depends on the speed of this machine, so that verdict is not kept: the next call checks again.
+        """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
             key = layout.miner_object(hotkey)
@@ -354,29 +387,33 @@ class StoreAdmission:
             except KeyError:
                 self._seen.pop(hotkey, None)
                 continue
-            if self._seen.get(hotkey, (None,))[0] != tag:
+            kept = self._seen.get(hotkey)
+            if kept is None or kept[0] != tag:
                 found = self._read(hotkey, key)
                 if found is None:
                     continue
-                self._seen[hotkey] = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
-            out[hotkey] = self._seen[hotkey][1]
+                kept = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
+                if getattr(found[1], "rule", "") == TIME_LIMIT:
+                    self._seen.pop(hotkey, None)
+                else:
+                    self._seen[hotkey] = kept
+            out[hotkey] = kept[1]
         return out
 
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
 
-        A second call for the same seat and round returns the same frozen copy, so a replay is safe.
+        It always reads the miner's file as it is now. A miner may replace the file until the round opens, so
+        a copy from an earlier try of the same round id is replaced, or removed on a skip. Call it only for a
+        round that has not opened yet: an open round's tickets name the frozen copy.
         """
         frozen_key = layout.frozen_batch(round_id, reg.hotkey)
-        for source in (frozen_key, layout.miner_object(reg.hotkey)):
-            found = self._read(reg.hotkey, source)
-            if found is not None and isinstance(found[1], Batch):
-                break
-        else:
+        found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
+        if found is None or not isinstance(found[1], Batch):
+            self.store.delete(frozen_key)
             return None
         raw, batch = found
-        if source != frozen_key:
-            self.store.put(frozen_key, raw)
+        self.store.put(frozen_key, raw)
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")

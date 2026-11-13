@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from sn120_v2 import layout
-from sn120_v2.admission import Invalid, StoreAdmission, check_batch, env_grader, final_answer, verdict
+from sn120_v2.admission import GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, verdict
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError, VerifyError
 
@@ -125,9 +125,52 @@ def test_output_at_the_token_cap_is_graded_as_capped(build):
 
 def test_env_grader_joins_the_pool_and_the_grade_function(build):
     pool = SimpleNamespace(task_for_prompt=lambda prompt: int(prompt.split()[1]) if prompt.startswith("double ") else None)
-    official = env_grader(pool, lambda task, output, capped: SimpleNamespace(reward=grade(f"double {task}", output, capped)))
+    cause = {}  # task -> the machine cause of its grade
+
+    def env_grade(task, output, capped):
+        return SimpleNamespace(reward=grade(f"double {task}", output, capped), machine_cause=cause.get(task))
+
+    official = env_grader(pool, env_grade)
     assert (official("double 2", "\\boxed{4}", False), official("double 2", "\\boxed{4}", True), official("other", "x", False)) == (1.0, 0.0, None)
     assert rule(file(), build.params(), grader=official) == ""
+    cause[4] = "time-limit"  # the value that the math env gives when a time limit expired
+    assert rule(file(), build.params(), grader=official) == "grader_time_limit"
+    cause[4] = "worker-died"  # any other machine cause is our failure, not the row's
+    with pytest.raises(InfraError, match="worker-died"):
+        rule(file(), build.params(), grader=official)
+
+
+def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(build):
+    seen, slow = [], {"double 3"}
+
+    def timed(prompt: str, output: str, capped: bool) -> float | None:
+        seen.append(prompt)
+        if prompt in slow:
+            raise GraderTimeLimit
+        return grade(prompt, output, capped)
+
+    for reward in (0, 1):  # whatever reward the file gives the row
+        seen.clear()
+        raw = flat([solved(n) | {"reward": reward if n in (3, 7) else 1} for n in range(20)])
+        assert rule(raw, build.params(), grader=timed) == "grader_time_limit"
+        assert seen == ["double 0", "double 1", "double 2", "double 3"]  # the check stops at the first such row
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=timed)
+    adm.store.put(layout.miner_object(HOTKEY), file())
+    assert "groups[3].rollouts[0]" in adm.verdicts([HOTKEY])[HOTKEY].reason and "time limit" in adm.verdicts([HOTKEY])[HOTKEY].reason
+    assert adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is None and list(adm.store) == [layout.miner_object(HOTKEY)]  # a skip
+    slow.clear()  # the machine is fast again: the same bytes are checked again and pass
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid and adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is not None
+
+
+def test_failure_of_the_grader_itself_is_an_infra_error(build):
+    def broken(prompt: str, output: str, capped: bool) -> float | None:
+        raise RuntimeError("the grader process is gone")
+
+    adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=broken)
+    adm.store.put(layout.miner_object(HOTKEY), file())
+    for call in (lambda: rule(file(), build.params(), grader=broken), lambda: adm.verdicts([HOTKEY]), lambda: adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001")):
+        with pytest.raises(InfraError, match="RuntimeError"):
+            call()
 
 
 def test_prompts_outside_the_pool_follow_the_pool_share(build):
@@ -180,7 +223,9 @@ class Store(dict):
 
     put = dict.__setitem__
     get = dict.__getitem__
-    delete = dict.pop
+
+    def delete(self, key: str) -> None:
+        self.pop(key, None)
 
     def size(self, key: str) -> int:
         return len(self[key])
@@ -226,6 +271,11 @@ def test_verdicts_check_a_file_again_only_when_it_changes(build):
     assert adm.verdicts([HOTKEY])[HOTKEY] is first and adm.tokens.calls == calls
     adm.store.put(layout.miner_object(HOTKEY), b"{}")  # the miner overwrites the file
     assert not adm.verdicts([HOTKEY])[HOTKEY].valid
+    for train in ({"rank": 16}, {"rank": 32}, {"rank": 16}):  # each new file is checked, also one that was there before
+        calls = adm.tokens.calls
+        adm.store.put(layout.miner_object(HOTKEY), file(train=train))
+        got = adm.verdicts([HOTKEY])[HOTKEY]
+        assert got.valid and got.batch_sha256 == sha256_hex(file(train=train)) and adm.tokens.calls > calls
     adm.store.put(layout.miner_object(HOTKEY), file())
     adm.params = build.params(max_rollouts=1)  # new parameters: the same bytes are checked again
     assert not adm.verdicts([HOTKEY])[HOTKEY].valid
@@ -246,7 +296,7 @@ def test_oversized_object_is_never_downloaded(build):
     assert adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001") is None
 
 
-def test_freeze_copies_the_checked_bytes_and_is_safe_to_repeat(build):
+def test_freeze_copies_the_checked_bytes_and_reads_the_latest_file_each_time(build):
     adm, reg = admission(build), build.reg(1, hotkey=HOTKEY)
     raw = file(train={"rank": 16, "target_modules": ["q_proj"]})
     adm.store.put(layout.miner_object(HOTKEY), raw)
@@ -255,9 +305,16 @@ def test_freeze_copies_the_checked_bytes_and_is_safe_to_repeat(build):
     assert adm.store[frozen.uri] == raw and frozen.batch_sha256 == sha256_hex(raw)
     assert (frozen.hotkey, frozen.format, frozen.n_prompts, frozen.n_rollouts) == (HOTKEY, "affine-batch-v3", 10, 20)
     assert frozen.train == {"rank": 16, "target_modules": ["q_proj"]}
-    adm.store.put(layout.miner_object(HOTKEY), b"{}")  # a later overwrite does not touch the frozen round
-    assert adm.freeze(reg, "r000001") == frozen and adm.store[frozen.uri] == raw
-    assert adm.freeze(reg, "r000002") is None  # the next round reads the new, invalid file: a skip
+    assert adm.freeze(reg, "r000001") == frozen  # the same file again: the same result
+    newer = file(train={"rank": 32})
+    adm.store.put(layout.miner_object(HOTKEY), newer)  # the miner replaces the file while round 1 runs; round 1 ends in no_decision
+    second = adm.freeze(reg, "r000002")  # the next round takes the file as it is now
+    assert second.batch_sha256 == sha256_hex(newer) and second.train == {"rank": 32} and adm.store[second.uri] == newer
+    assert adm.store[frozen.uri] == raw  # the copy of round 1 is not touched
+    assert adm.freeze(reg, "r000001").batch_sha256 == sha256_hex(newer)  # a round id that never opened is tried again: also the latest file
+    adm.store.put(layout.miner_object(HOTKEY), b"{}")
+    assert adm.freeze(reg, "r000001") is None and frozen.uri not in adm.store  # now invalid: a skip, and no old copy stays for this try
+    assert adm.store[second.uri] == newer
 
 
 def test_freeze_skips_a_missing_or_invalid_file_and_writes_nothing(build):

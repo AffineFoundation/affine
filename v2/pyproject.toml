@@ -14,7 +14,7 @@ dev = ["pytest>=8", "boto3>=1.36", "moto[server]>=5"]
 # One line per sibling workstream. Edit only your own line, and add each new
 # import name to tests/third_party_imports.txt.
 gpu = []    # train/eval workers
-r2 = []     # R2 head store
+r2 = ["boto3>=1.36"]  # R2 head store
 chain = []  # weights writer and chain reader
 miner = ["transformers>=4.44"]  # miner tooling and llms.txt: the tokenizer for the local token rules
 bench = []  # per-green benchmark service
