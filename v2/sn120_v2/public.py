@@ -124,4 +124,51 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         (list(entry.outcomes) for _, result in leases for entry in result.entries if winner and entry.queue_pos == winner.queue_pos),
         None,
     )
+    report["stopped_at_limit"] = any(result.stopped_at_limit for _, result in leases)
+    # The summary a person relays: per LoRA the verdict, its reason and the size of the trained update.
+    trained = {entry.queue_pos: entry.lora.report for _, result in leases for entry in result.entries if entry.lora is not None}
+    reasons = {entry.queue_pos: entry.reason for entry in record.decision.entries} if record.decision else {}
+    for view in report["entries"]:
+        view["reason"] = reasons.get(view["queue_pos"], "")
+        if view["queue_pos"] in trained:
+            train = trained[view["queue_pos"]]
+            view |= {"step_norm": train.step_norm, "norm_before_cap": train.norm_before_cap, "train_wall_s": train.wall_s}
     return report
+
+
+def _span(seconds: float) -> str:
+    return f"{int(seconds) // 60}m{int(seconds) % 60:02d}s"
+
+
+def round_text(report: Mapping[str, Any]) -> str:
+    """The round summary as a short text to paste. ``report`` is the public round file."""
+    entries = report.get("entries", [])
+    winner = next((e for e in entries if e["status"] == WINNER), None)
+    lines = [f"SN120 v2 round {report['round_id']}: {str(report['outcome']).upper()}" + (" (stopped at the time limit)" if report.get("stopped_at_limit") else "")]
+    if winner:
+        lines.append(f"winner: UID {winner['uid']} ({winner['hotkey']}), delta {winner['delta']:+.4f}, z {winner['z']:.2f}")
+        lines.append(f"head: {report['head_version_id'][:12]} -> {str(report.get('new_head_version_id'))[:12]}")
+    else:
+        lines.append(f"no winner: {report.get('reason') or report.get('note') or 'the head and the kings stay as they are'}")
+        lines.append(f"head: {report['head_version_id'][:12]} (unchanged)")
+    scored = max((e.get("n_tasks", 0) for e in entries), default=0)
+    lines.append(
+        f"batches: {report['seats']} | tasks scored: {scored} of {report['n_tasks']}"
+        + (f" | null M: pass {report['null_pass_rate']:.2%}, cap-hit {report['null_cap_rate']:.2%}" if "null_pass_rate" in report else "")
+    )
+    lines.append(f"{'pos':>3} {'uid':>4}  {'hotkey':<12} {'verdict':<11} {'delta':>8} {'z':>6} {'cap-hit':>7} {'tasks':>5} {'norm':>9}  note")
+    for e in entries:
+        hotkey = e["hotkey"] if len(e["hotkey"]) <= 12 else e["hotkey"][:5] + ".." + e["hotkey"][-5:]
+        numbers = f"{e['delta']:>+8.4f} {e['z']:>6.2f} {e['cap_rate']:>7.2%} {e['n_tasks']:>5}" if "z" in e else f"{'-':>8} {'-':>6} {'-':>7} {'-':>5}"
+        before = e.get("norm_before_cap") or e.get("step_norm")  # the norm that training gave: the number that recipe.global_norm_cap is set from
+        norm = f"{before:>9.4g}" if before is not None else f"{'-':>9}"
+        note = e.get("reason", "")
+        if before and e.get("step_norm", before) < before * (1 - 1e-9):
+            note = f"update capped to norm {e['step_norm']:.4g}" + (f"; {note}" if note else "")
+        if e.get("eliminated_at_look") is not None:
+            note = f"dropped at look {e['eliminated_at_look']}" + (f"; {note}" if note else "")
+        lines.append(f"{e['queue_pos']:>3} {e['uid']:>4}  {hotkey:<12} {e['status']:<11} {numbers} {norm}  {note}".rstrip())
+    wall = report.get("wall_s") or {}
+    names = [("training", "train"), ("evaluation", "eval"), ("promote", "promote"), ("fold", "fold"), ("lease_to_promotion", "lease to promotion"), ("total", "total")]
+    lines.append("wall time: " + " | ".join(f"{label} {_span(wall[key])}" for key, label in names if key in wall))
+    return "\n".join(lines)

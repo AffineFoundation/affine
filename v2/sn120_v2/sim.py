@@ -22,7 +22,7 @@ from . import layout
 from .canonical import canonical_json, manifest_digest, sha256_hex
 from .controller import Controller, Stack, StackContext, stored_irt_snapshot
 from .errors import BatchRejected, InfraError
-from .journal import Journal
+from .journal import JOURNAL_FILE, Journal
 from .params import GenesisSpec, Params, Recipe
 from .sampling import UniformSampler, rollout_seed
 from .state import RoundRecord
@@ -48,7 +48,6 @@ from .types import (
 from .worker import LocalRunner
 
 SIM_IMAGE = "sim-image"
-JOURNAL_FILE = "journal.jsonl"
 STORE_DIR = "store"
 
 
@@ -82,7 +81,8 @@ class SimAdmission:
 
     def verdicts(self, hotkeys: Sequence[str]) -> dict[str, Verdict]:
         found = {hotkey: self._read(hotkey) for hotkey in hotkeys}
-        return {h: Verdict(h, bool(f[1]["valid"]), batch_sha256=sha256_hex(f[0])) for h, f in found.items() if f}
+        rule = lambda body: "" if body["valid"] else "sim_invalid"
+        return {h: Verdict(h, bool(f[1]["valid"]), batch_sha256=sha256_hex(f[0]), rule=rule(f[1])) for h, f in found.items() if f}
 
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         found = self._read(reg.hotkey)
@@ -200,10 +200,12 @@ class SimPublisher:
 def stack(context: StackContext) -> Stack:
     """The CPU stack for ``python -m sn120_v2 run --stack sn120_v2.sim:stack``. Miner files come from ``SimAdmission.upload``."""
     store = LocalStore(context.state_dir / STORE_DIR)
+    context.load(store)  # the journal copy in the store is the record, as with the real parts
     ticks = iter(range(1, 10**9))
     runner = LocalRunner(SimTrainer(store), SimEvaluator(store), lambda: int(time.time()), SIM_IMAGE)
     sampler = UniformSampler([f"sim:{i}" for i in range(400)])
-    return Stack(store, SimAdmission(store), sampler, runner, SimFolder(store), SimPublisher(), entropy=lambda: f"sim-entropy-{next(ticks)}")
+    entropy = lambda: f"sim-entropy-{next(ticks)}"
+    return Stack(store, SimAdmission(store), sampler, runner, SimFolder(store), SimPublisher(), entropy=entropy, mirror=True)
 
 
 @dataclass

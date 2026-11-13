@@ -163,7 +163,7 @@ class Params(Record):
     env_pin: str = ""  # sha256 that pins the public task pool and grader of ``env``; set by the train/eval workstream
 
     # Round size.
-    batch_cap: int = 32  # placeholder: most batches (LoRAs) in one round
+    batch_cap: int = 32  # launch rule: at most 32 batches (LoRAs) in one round
     max_loras_per_box: int = 32  # serving limit; batch_cap may never exceed it
     n_min_start: int = 1  # a short queue runs right away; a round never starts with 0 batches
     n_gpus: int = 8
@@ -211,7 +211,10 @@ class Params(Record):
     min_pool_prompt_frac: float = 0.0  # 0 = prompts need not come from the public pool
 
     # Queue and leases.
-    lease_timeout_s: int = 4 * 3600  # placeholder for the measured round wall clock
+    round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
+    promote_reserve_s: int = 600  # PLACEHOLDER: the box stops scoring this long before the limit, so judging and promotion fit
+    eval_chunk_tasks: int = 250  # PLACEHOLDER: the box scores this many tasks, then looks at the clock
+    lease_timeout_s: int = 100 * 60  # a box result that arrives later than this is never used
     max_infra_attempts: int = 3  # no_decision outcomes before an entry is held for the operator
     squat_min_wait_s: int = 86400
     squat_age_factor: float = 2.0
@@ -220,7 +223,7 @@ class Params(Record):
 
     # Payout.
     kings_window: int = 10
-    burn_uid: int = 0
+    burn_uid: int = 0  # the owner's UID: it has no queue seat. No burn: the weights writer refuses a table with weight on it and sets nothing
     weights_cadence_s: int = 3600
     weights_rate_limit_blocks: int = 100
 
@@ -243,6 +246,8 @@ class Params(Record):
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
+        _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")
+        _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
         _need(self.weights_cadence_s > 0, "weights_cadence_s must be positive")
