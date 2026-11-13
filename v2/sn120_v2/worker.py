@@ -12,15 +12,16 @@ Rules it keeps:
   batches than slots, a batch waits for a free slot.
 * The trainer is closed before evaluation starts, so its GPUs are free.
 * Null M is scored in every look, with the same tasks and seeds as the LoRAs.
-* A round always reaches a decision for the LoRAs that it trained:
+* The round's time limit is hard. It cuts every look, the first one too:
   - Training has its own time, ``train_time_budget_s`` from the lease. At its
     end no new training starts and every job that still runs is stopped. Such
     a batch is ``not_trained``: not charged, first in the next round, and no
-    failure is counted for its seat.
-  - The first look is always scored in full for null M and every trained
-    LoRA. The round's time limit does not cut it; only the end of the lease does.
-  - After the first look the round's time limit applies: past it the box
-    starts no new chunk of tasks, and what is scored by then is the whole test.
+    failure is counted for its seat. So the scoring always starts on time.
+  - Past the limit the box starts no new chunk of tasks, and a chunk that
+    still runs is not used. What is scored by then is the whole test.
+  - A LoRA with fewer scored tasks than the first look at the limit is
+    ``not_scored``: not charged, first in the next round, and no failure is
+    counted for its seat.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from .seams import Evaluator, Trainer
 from .types import (
     NO_DECISION,
     NOT_RUN,
+    NOT_SCORED,
     NOT_TRAINED,
     NULL_MODEL,
     SCORED,
@@ -67,24 +69,22 @@ class LocalRunner:
 
     def run(self, ticket: RoundTicket) -> BoxResult:
         started, params = self.clock(), ticket.params
-        # Three times, all counted from the lease. ``last``: the box must be done, so that judging and promotion fit
-        # before the lease ends. ``limit``: the round's time limit, for everything after the first look.
-        # ``train_end``: the end of the training time.
-        last = ticket.expires_at - params.promote_reserve_s
-        limit = min(last, ticket.issued_at + params.round_time_limit_s - params.promote_reserve_s)
+        # Two times, both counted from the lease. ``limit``: the box stops scoring, early enough that judging and
+        # promotion still fit inside the round's time limit. ``train_end``: the end of the training time.
+        limit = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
         train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
         reports = self._train_all(ticket, train_end)
         trained = {pos: report for pos, report in reports.items() if isinstance(report, LoRAArtifact)}
         train_done = self.clock()
-        null, scored, dropped, stopped = self._evaluate(ticket, trained, limit, last) if trained else ((), {}, {}, False)
+        null, scored, dropped, stopped = self._evaluate(ticket, trained, limit) if trained else ((), {}, {}, False)
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
         entries = []
         for entry in ticket.entries:
             report = reports[entry.queue_pos]
             if isinstance(report, LoRAArtifact) and stopped and n_scored < first_look:
-                reason = f"the lease ended the scoring after {n_scored} tasks, before the first look of {first_look}"
-                report = EntryResult(entry.queue_pos, NO_DECISION, reason=reason)
+                reason = f"the round's time limit ended the scoring after {n_scored} tasks, before the first look of {first_look}"
+                report = EntryResult(entry.queue_pos, NOT_SCORED, reason=reason)
             elif isinstance(report, LoRAArtifact):
                 report = EntryResult(entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos))
             entries.append(report)
@@ -184,12 +184,8 @@ class LocalRunner:
             return chunk
         raise InfraError(f"evaluation failed {self.attempts} times: {reason}")
 
-    def _evaluate(self, ticket: RoundTicket, trained: dict[int, LoRAArtifact], limit: int, last: int):
-        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit).
-
-        The first look runs until ``last`` (the end of the lease), so a round
-        that trained a LoRA decides on it. Later looks stop at ``limit``.
-        """
+    def _evaluate(self, ticket: RoundTicket, trained: dict[int, LoRAArtifact], deadline: int):
+        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit)."""
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
         null = [""] * samples
@@ -198,7 +194,6 @@ class LocalRunner:
         alive, start, stopped = sorted(trained), 0, False
         try:
             for look, stop in enumerate(params.look_sizes(n)):
-                deadline = last if look == 0 else limit
                 while start < stop and not stopped:
                     if self.clock() >= deadline:
                         stopped = True

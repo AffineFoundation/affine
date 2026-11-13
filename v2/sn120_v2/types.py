@@ -33,7 +33,8 @@ SCORED = "scored"
 NO_DECISION = "no_decision"  # infrastructure failed: not charged, back to the front of the queue
 SKIP = "skip"  # the frozen batch failed a check: not charged, keeps its place
 NOT_TRAINED = "not_trained"  # the round's training time ended first: not charged, front of the queue, no failure counted
-# Status of one entry in a round decision (NO_DECISION and SKIP also apply).
+NOT_SCORED = "not_scored"  # the round's time limit came before the first look: not charged, front of the queue, no failure counted
+# Status of one entry in a round decision (NO_DECISION, SKIP, NOT_TRAINED and NOT_SCORED also apply).
 WINNER = "winner"
 LOST = "lost"
 
@@ -352,7 +353,7 @@ class EntryResult(Record):
     """What a box reports for one entry."""
 
     queue_pos: int
-    status: str  # SCORED, NO_DECISION, SKIP or NOT_TRAINED
+    status: str  # SCORED, NO_DECISION, SKIP, NOT_TRAINED or NOT_SCORED
     reason: str = ""
     lora: LoRAArtifact | None = None
     outcomes: tuple[str, ...] = ()  # one string per sample index over the round's task order
@@ -360,7 +361,7 @@ class EntryResult(Record):
     attempts: int = 1
 
     def __post_init__(self) -> None:
-        _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED), f"unknown entry status {self.status!r}")
+        _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown entry status {self.status!r}")
         _need((self.status == SCORED) == (self.lora is not None), "exactly the scored entries carry a LoRA")
         _need(self.status == SCORED or bool(self.reason), "a no_decision or skip entry must give a reason")
 
@@ -409,14 +410,14 @@ class EntryDecision(Record):
     hotkey: str
     registration_block: int
     batch_sha256: str
-    status: str  # WINNER, LOST, NO_DECISION, SKIP or NOT_TRAINED
+    status: str  # WINNER, LOST, NO_DECISION, SKIP, NOT_TRAINED or NOT_SCORED
     reason: str = ""
     lora_hash: str = ""
     score: Score | None = None
     eliminated_at_look: int | None = None
 
     def __post_init__(self) -> None:
-        _need(self.status in (WINNER, LOST, NO_DECISION, SKIP, NOT_TRAINED), f"unknown decision status {self.status!r}")
+        _need(self.status in (WINNER, LOST, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown decision status {self.status!r}")
 
     @property
     def charged(self) -> bool:
