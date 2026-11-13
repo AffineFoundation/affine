@@ -274,6 +274,13 @@ def test_issue_needs_the_store_settings(queue, site, tmp_path, monkeypatch, caps
     assert "SN120_R2_ENDPOINT" in capsys.readouterr().err and not (site[0] / "ff").exists()
 
 
+def test_issue_never_makes_the_site_directory(bucket, queue, tmp_path, capsys):
+    """A site reset moves the directory away for a moment. The job must not put a new one in its place."""
+    gone = tmp_path / "moved-away"
+    assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(gone), "--no-activation-check"]) == 1
+    assert "does not exist" in capsys.readouterr().err and not gone.exists()
+
+
 # ------------------------------------------------------------ the store token from a file, and the unit files
 
 V1_FILE = f"""# the v1 link job's credentials file: KEY=VALUE lines, read in place
