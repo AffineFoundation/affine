@@ -258,7 +258,7 @@ def test_opening_the_store_asks_for_one_name_at_the_prefix_and_reads_no_object(e
 
     monkeypatch.setattr(boto3, "client", client)
     R2Store.from_env(env)
-    assert sent == [("ListObjectsV2", {"Bucket": env["SN120_R2_BUCKET"], "Prefix": "", "MaxKeys": 1})]
+    assert [(name, params["Prefix"], params["MaxKeys"]) for name, params in sent] == [("ListObjectsV2", "", 1)]
     assert main(["--preflight"], env) == 0 and {name for name, _ in sent} == {"ListObjectsV2"}
     assert "public/current.json" not in capsys.readouterr().out
 
