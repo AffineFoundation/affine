@@ -11,9 +11,11 @@ from pathlib import Path
 import pytest
 
 from sn120_v2 import layout, publisher, sampling
-from sn120_v2.admission import StoreAdmission
+from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
+from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import BatchRejected, InfraError
+from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Recipe
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
 
@@ -165,16 +167,29 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
         tool.main(["check", "--hotkey", HOTKEY, str(batch)])
 
 
-def test_cli_reproduce_loads_the_backend_and_the_draw(build, tmp_path, capsys, monkeypatch):
+def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp_path, capsys, monkeypatch):
     box = Box(build)
     monkeypatch.setitem(sys.modules, "fake_backend", types.SimpleNamespace(make=lambda workdir: (box, box, box)))
-    batch, draw_file = tmp_path / "batch.json", tmp_path / "round.json"
+    batch, irt_file = tmp_path / "batch.json", tmp_path / "irt.json"
     batch.write_bytes(batch_bytes())
-    draw_file.write_text(json.dumps({"draw": draw(12).to_dict()}))
-    argv = ["reproduce", "--mining-json", mining_json(build, tmp_path), "--hotkey", HOTKEY, "--draw", str(draw_file)]
-    code, out = cli(capsys, *argv, "--tasks", "8", "--backend", "fake_backend:make", "--train", '{"rank": 8}', str(batch))
+    snapshot = IRTSampler([f"t{i:03d}" for i in range(40)], build.params()).public_snapshot()
+    irt_file.write_text(json.dumps(snapshot))
+    argv = ["reproduce", "--mining-json", mining_json(build, tmp_path), "--hotkey", HOTKEY, "--irt-snapshot", str(irt_file)]
+    code, out = cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", "--train", '{"rank": 8}', str(batch))
     assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8
-    assert box.requests[1].task_ids == draw(8).task_ids
+    expected = draw_from_snapshot(snapshot, "seed-9", build.params().n_tasks)  # n_tasks comes from the contract
+    assert (box.requests[1].task_ids, box.requests[1].round_seed) == (expected.task_ids, "seed-9")
+
+
+def test_the_reward_rule_runs_with_the_official_grader(build):
+    pytest.importorskip("math_verify")
+    grader, task = tool.official_grader(build.params()), load_pool().task("math:0")
+    rows = lambda reward: [{"output": "step " * 40 + f"\\boxed{{{task.answer}}}", "reward": reward}]
+    raw = lambda reward: json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [{"prompt": task.batch_prompt(), "rollouts": rows(reward)}]}).encode()
+    assert tool.check(raw(1.0), HOTKEY, build.params(), WordTokens(), grader)["rules_not_run"] == []
+    with pytest.raises(Invalid) as caught:
+        tool.check(raw(0.0), HOTKEY, build.params(), WordTokens(), grader)
+    assert caught.value.rule == "grader"
 
 
 def test_a_miner_needs_only_the_two_public_files(build, tmp_path):

@@ -3,7 +3,7 @@
     python v2/miner/affine_miner.py bounds --mining-json mining.json
     python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json
     python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> \
-        --draw draw.json --backend <module>:<function> batch.json
+        --irt-snapshot irt.json --round-seed <seed> --backend <module>:<function> batch.json
 
 Every rule and every number comes from mining.json and from the validator's
 own code in ``sn120_v2``: the same batch check, the same ``Trainer`` and
@@ -23,9 +23,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from sn120_v2 import judging, layout, sampling
-from sn120_v2.admission import Batch, HFTokens, Invalid, Tokens, check_batch
+from sn120_v2.admission import Batch, Grader, HFTokens, Invalid, Tokens, check_batch, env_grader
 from sn120_v2.canonical import to_jsonable
-from sn120_v2.errors import ContractError, V2Error
+from sn120_v2.envs.math_pool import ENV_ID, load_pool
+from sn120_v2.errors import ConfigError, ContractError, V2Error
+from sn120_v2.irt import draw_from_snapshot
 from sn120_v2.params import Params
 from sn120_v2.publisher import miner_settable
 from sn120_v2.seams import Evaluator, ObjectStore, Trainer
@@ -74,9 +76,9 @@ def applied_train(params: Params, train: Mapping[str, Any]) -> dict[str, Any]:
     return {bound.key: to_jsonable(getattr(recipe, bound.key)) for bound in params.recipe.miner_bounds}
 
 
-def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None) -> dict[str, Any]:
+def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None, grader: Grader | None = None) -> dict[str, Any]:
     """The validator's check of one file, as a report. Raises ``Invalid`` when the file breaks a rule."""
-    return check_report(check_batch(raw, hotkey, params, tokens=tokens), params)
+    return check_report(check_batch(raw, hotkey, params, tokens=tokens, grader=grader), params)
 
 
 def check_report(batch: Batch, params: Params) -> dict[str, Any]:
@@ -105,13 +107,14 @@ def reproduce(
     *,
     train: Mapping[str, Any] | None = None,
     tokens: Tokens | None = None,
+    grader: Grader | None = None,
 ) -> dict[str, Any]:
     """Run one batch as a one-entry round: check, train, score against null M, decide.
 
     ``train`` replaces the ``train`` object of the file. It has the same
     shape and passes the same gate (``Recipe.for_miner``).
     """
-    batch = check_batch(raw, hotkey, params, tokens=tokens)
+    batch = check_batch(raw, hotkey, params, tokens=tokens, grader=grader)
     train = dict(batch.train if train is None else train)
     report = check_report(batch, params) | {"train_applied": applied_train(params, train)}
     key = layout.frozen_batch(ROUND_ID, hotkey)
@@ -159,11 +162,11 @@ def load_tokens(path: str | None) -> Tokens | None:
     return HFTokens(importlib.import_module("transformers").AutoTokenizer.from_pretrained(path)) if path else None
 
 
-def load_draw(path: str, n_tasks: int | None) -> Draw:
-    """A ``Draw`` record, or a round file that holds one under ``draw``. ``n_tasks`` keeps the first tasks only."""
-    data = json.loads(Path(path).read_bytes())
-    draw = Draw.from_dict(data.get("draw", data))
-    return draw if n_tasks is None else Draw(draw.snapshot_id, draw.round_seed, draw.task_ids[:n_tasks], draw.weights[:n_tasks])
+def official_grader(params: Params) -> Grader:
+    """The validator's grader of the environment, built with the validator's own call. Needs the ``envs`` extra."""
+    if params.env != ENV_ID:
+        raise ConfigError(f"this tool has no grader for environment {params.env!r}")
+    return env_grader(load_pool(), importlib.import_module("sn120_v2.envs.math_grader").grade)
 
 
 def load_backend(spec: str, workdir: str) -> tuple[ObjectStore, Trainer, Evaluator]:
@@ -183,9 +186,11 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("batch", help="your batch file")
         command.add_argument("--hotkey", required=True, help="the ss58 address of your hotkey")
         command.add_argument("--tokenizer", help="tokenizer of the head (directory or model id); without it the token rules do not run")
+        command.add_argument("--grade", action="store_true", help="match your rewards with the official grader (needs the envs extra)")
         if name == "reproduce":
-            command.add_argument("--draw", required=True, help="a task draw: a Draw record or a public round file")
-            command.add_argument("--tasks", type=int, help="score only the first N tasks of the draw")
+            command.add_argument("--irt-snapshot", required=True, help="the published IRT snapshot of the round (a JSON file)")
+            command.add_argument("--round-seed", required=True, help="the public seed of the round")
+            command.add_argument("--tasks", type=int, help="draw N tasks (default: n_tasks of the contract)")
             command.add_argument("--train", help='a JSON object that replaces "train" of the file')
             command.add_argument("--backend", required=True, help="module:function that returns (store, trainer, evaluator)")
             command.add_argument("--work", help="work directory (default: a temporary directory)")
@@ -196,14 +201,16 @@ def main(argv: list[str] | None = None) -> int:
             print(bounds_text(params))
             return 0
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer)
+        grader = official_grader(params) if args.grade else None
         if args.command == "check":
-            report = check(raw, args.hotkey, params, tokens)
+            report = check(raw, args.hotkey, params, tokens, grader)
         else:
             print(bounds_text(params), file=sys.stderr)
             store, trainer, evaluator = load_backend(args.backend, args.work or tempfile.mkdtemp(prefix="affine-reproduce-"))
             train = json.loads(args.train) if args.train else None
-            draw = load_draw(args.draw, args.tasks)
-            report = reproduce(raw, args.hotkey, params, head, draw, store, trainer, evaluator, train=train, tokens=tokens)
+            snapshot = json.loads(Path(args.irt_snapshot).read_bytes())
+            draw = draw_from_snapshot(snapshot, args.round_seed, args.tasks or params.n_tasks)
+            report = reproduce(raw, args.hotkey, params, head, draw, store, trainer, evaluator, train=train, tokens=tokens, grader=grader)
     except Invalid as exc:
         print(json.dumps({"valid": False, "rule": exc.rule, "reason": str(exc)}, indent=1))
         return 1

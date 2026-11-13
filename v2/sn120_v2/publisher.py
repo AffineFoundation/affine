@@ -21,7 +21,9 @@ from typing import Any, Iterable, Mapping, Sequence
 from . import layout
 from .admission import CONTROL_TOKENS, FORMATS
 from .canonical import digest, sha256_hex, to_jsonable
+from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error, VerifyError
+from .irt import draw_from_snapshot
 from .judging import drop_margin
 from .params import MinerBound, Params, Recipe
 from .seams import ObjectStore
@@ -277,14 +279,28 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
         "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output),",
-        f"  within {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. At least",
+        f"  within {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
+        f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
-        "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`",
+        "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
+        "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule.",
         "- Upload: each registered hotkey has a sealed link. It is a SealedBox that only the private key of the hotkey",
         "  can open. It holds a time-limited upload URL for your object and the headers to send. PUT the file bytes",
         f"  to that URL. Then read your verdict in section 4. Where to get the link: {upload or 'not published yet'}.",
+    ]
+
+
+def _pool_lines(params: Params) -> list[str]:
+    if params.env != ENV_ID:
+        return []
+    return [
+        f"- Task pool: `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
+        f"  instruction as the system message and the problem as the user message: {json.dumps(MANDATE)}",
+        "- A prompt of your file is a pool task when it is the problem text, with or without that instruction and one",
+        "  blank line before it. The official grader is `sn120_v2.envs.math_grader.grade(task, output, capped)`. It",
+        "  grades model outputs in scoring and the rewards in your file.",
     ]
 
 
@@ -299,9 +315,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "## 6. Judging",
         "",
         "- All tasks are public. There is no hidden task set.",
+        *_pool_lines(params),
         f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`, {params.samples_per_task} sample(s) per task.",
         "  The draw is a fixed function of the public sampler snapshot and the public round seed. Both are frozen at",
-        f"  round start. Sampling method of the current snapshot: {show(irt.get('method'))}.",
+        f"  round start. Rebuild a draw with `{draw_from_snapshot.__module__}.{draw_from_snapshot.__name__}(snapshot,",
+        "  round_seed, n_tasks)`.",
         f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
         f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
         "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
@@ -353,8 +371,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 10. Reproduce a round at home",
         "",
-        "`python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> --draw draw.json",
-        "--backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it against null M. It",
+        "`python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> --irt-snapshot irt.json",
+        "--round-seed <seed> --backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it against null M. It",
         "uses the same check, trainer, evaluator and judging code as the validator, and your `train` values.",
         "`python v2/miner/affine_miner.py bounds --mining-json mining.json` prints the bounds of section 2.",
     ]
