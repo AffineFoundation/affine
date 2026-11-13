@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -210,6 +211,27 @@ def test_the_cache_serves_only_files_that_hash_to_the_identity(box, tmp_path, mo
     with pytest.raises(VerifyError):  # a master that differs: fail closed, and keep nothing of it
         resident_head(fresh, box.head)
     assert list(fresh.root.iterdir()) == []
+
+
+def test_hard_links_to_the_genesis_files_serve_without_a_download_and_wrong_ones_are_replaced(box, tmp_path, monkeypatch):
+    """SMOKE.md step 3 links the genesis directories into the cache with ``cp -alT``."""
+    genesis = Resident(box.store, tmp_path / "genesis")  # stands in for the local output of the genesis command
+    source = {identity: genesis.root / identity for identity in (box.head.base_hash, box.head.base_fp32_master_digest)}
+    resident_head(genesis, box.head)
+    before = {identity: hash_tree(path) for identity, path in source.items()}
+    downloads = []
+    monkeypatch.setattr(box.store, "get_file", lambda key, path: downloads.append(key) or LocalStore.get_file(box.store, key, path))
+    cache = tmp_path / "w" / "cache"
+    for identity, path in source.items():
+        shutil.copytree(path, cache / identity, copy_function=os.link)
+    base_dir = resident_head(Resident(box.store, tmp_path / "w"), box.head)
+    assert downloads == [] and (base_dir / "config.json").samefile(source[box.head.base_hash] / "config.json")
+    resident_module._SHARED.clear()  # a new process finds the master's files under the name of the base
+    shutil.rmtree(cache / box.head.base_hash)
+    shutil.copytree(source[box.head.base_fp32_master_digest], cache / box.head.base_hash, copy_function=os.link)
+    base_dir = resident_head(Resident(box.store, tmp_path / "w"), box.head)
+    assert len(downloads) == 2 and (base_dir / "model.safetensors").read_bytes() == b"bf16"  # replaced by a download of the base
+    assert {identity: hash_tree(path) for identity, path in source.items()} == before  # the genesis files are as they were
 
 
 def test_a_missing_master_or_a_stacked_head_stops_the_box(box, tmp_path):
