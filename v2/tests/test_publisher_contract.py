@@ -8,7 +8,7 @@ import json
 import pytest
 
 from sn120_v2 import layout, links, public, publisher, r2, sim
-from sn120_v2.admission import TIME_LIMIT
+from sn120_v2.admission import RULES, TIME_LIMIT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
@@ -173,6 +173,19 @@ def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_
     text = " ".join(publisher._genesis_lines(genesis))
     assert GENESIS_MODEL_REPO in text and GENESIS_MODEL_REVISION in text and "No winner is applied yet" in text
     assert "No winner is applied yet" not in " ".join(publisher._genesis_lines(later))
+
+
+def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
+    made = world(tmp_path)
+    doc, text, _ = published(made.publisher.snapshots[-1])
+    example = json.loads(text.split("```json\n")[1].split("```")[0])
+    rewards = [rollout["reward"] for rollout in example["groups"][0]["rollouts"]]
+    assert len(set(rewards)) > 1  # one rollout, or equal rewards, trains nothing
+    check_batch(json.dumps(example | {"hotkey": "hk1"}).encode(), "hk1", made.params)
+    assert all(f"| `{code}` | {meaning} |" in text for code, meaning in RULES.items())
+    flat = " ".join(text.split())
+    assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
+    assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat
 
 
 def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):

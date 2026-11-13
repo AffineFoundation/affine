@@ -7,7 +7,8 @@ that the two files belong together.
 
 Every number in the text comes from the ``Params`` in the snapshot. The
 miner-settable bounds come from ``Recipe.miner_bounds`` and the object keys
-from ``layout.py``. No cap, bound or key is typed here.
+from ``layout.py``. No cap, bound or key is typed here. The one exception is
+``READ_LINKS``: the site pull job owns that file, and no module names it yet.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FORMATS, TIME_LIMIT
+from .admission import CONTROL_TOKENS, FORMATS, RULES, TIME_LIMIT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -34,6 +35,9 @@ from .seams import ObjectStore
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
+# The site pull job writes this file on the web host, under the public address. It is not a store key, and the
+# publisher never writes it: it holds signed download links for the weight files of the current head.
+READ_LINKS = "public/read_links.json"
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
@@ -164,6 +168,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
         "objects": object_keys(),
+        "read_links": READ_LINKS,
         "code": REPO + "/tree/v2/v2",
     }
 
@@ -353,7 +358,15 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
         "train": {recipe.miner_bounds[0].key: getattr(recipe, recipe.miner_bounds[0].key)} if recipe.miner_bounds else {},
-        "groups": [{"prompt": "<problem text>", "rollouts": [{"output": "<reasoning> \\boxed{<answer>}", "reward": 1.0}]}],
+        "groups": [
+            {
+                "prompt": "<problem text>",
+                "rollouts": [
+                    {"output": "<reasoning> \\boxed{<right answer>}", "reward": 1.0},
+                    {"output": "<reasoning> \\boxed{<wrong answer>}", "reward": 0.0},
+                ],
+            }
+        ],
     }
     return [
         "## 5. Your file",
@@ -392,11 +405,21 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
+        "- Signal: your file must train something. A rollout trains when its advantage is not 0. The advantage is the",
+        "  reward minus the mean reward of its group (`group_size`, section 2). A file in which no rollout trains gives",
+        "  no LoRA: it is not trained and you are not charged. One rollout per prompt never trains. So the example",
+        "  above has two rollouts with different rewards.",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
         "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
         "  `--tokenizer`: only a token count can tell that an output stopped at the cap.",
+        "",
+        "### Rule codes",
+        "",
+        "The validator and the `check` command name the first rule that a file breaks. The rules run in this order:",
+        "",
+        *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
         "",
         "### How to upload",
         "",
@@ -568,6 +591,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
+    url = doc["contract"]["public_url"]
+    where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
         "# Affine (Bittensor SN120) v2: the miner contract",
         "",
@@ -590,9 +615,13 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         *_genesis_lines(head),
         f"- Head manifest (every file with its sha256): `{layout.head_manifest(head.version_id)}`",
         f"- `params_hash`: `{params.params_hash}`; `recipe_id`: `{params.recipe_id}`",
-        f"- Public objects are served under: {doc['contract']['public_url'] or 'not set in this file'}. Each key below is a path under it,",
-        "  with one exception: the weight files are not served at the path of their key, and this file does not give",
-        "  their address yet.",
+        f"- Public objects are served under: {url or 'not set in this file'}. Each key below is a path under it, except",
+        "  the weight files.",
+        "- Weight files are not served under the public address. Signed download links for the files of the current",
+        f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
+        "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
+        f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
+        "  always a matching pair.",
         "",
         *(table(("stacked LoRA", "round", "miner uid", "batch sha256"), loras) if loras else ["No LoRA is stacked on the base."]),
         "",
