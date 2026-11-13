@@ -334,6 +334,10 @@ def test_the_whole_run_passes_with_a_token_that_cannot_write_and_a_file_with_the
     item = json.loads((site / LINKS).read_text())["base"]["files"][0]
     with urllib.request.urlopen(item["url"]) as response:  # a link signed with that token reads the file
         assert hashlib.sha256(response.read()).hexdigest() == item["sha256"] and item["url"].startswith(proxy)
+    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_R2_", "R2_"))}
+    (site / "llms.txt").unlink()  # the reset tool's copy of llms.txt takes the same names and makes no write call either
+    reset = subprocess.run([sys.executable, str(PULL.with_name("reset.py")), "llms", "--site-dir", str(site)], capture_output=True, text=True, env={**ours, **token})
+    assert reset.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT) and read_only.denied == [], reset.stderr
 
     writer = R2Store.from_env({**env, "SN120_R2_ENDPOINT": proxy}, attempts=1)  # the same store does refuse a write
     for call in (lambda: writer.put("public/x", b"x"), lambda: writer.delete(layout.MINING_JSON), lambda: writer.copy(layout.MINING_JSON, "public/y")):
