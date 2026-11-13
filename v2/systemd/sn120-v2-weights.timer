@@ -1,0 +1,15 @@
+# Starts sn120-v2-weights.service one time each hour, also after a reboot.
+# Enable this timer and not the service: a service that is enabled runs at each boot, outside the hourly schedule.
+
+[Unit]
+Description=SN120 v2 weights writer (each hour)
+
+[Timer]
+OnCalendar=*-*-* *:05:00
+AccuracySec=1min
+# A run that was missed while the host was off is not made up: the next hour runs as usual.
+Persistent=false
+Unit=sn120-v2-weights.service
+
+[Install]
+WantedBy=timers.target

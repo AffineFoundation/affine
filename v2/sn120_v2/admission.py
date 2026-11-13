@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
@@ -42,37 +43,155 @@ Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward),
 # The official grade of one rollout: (prompt, output, capped) -> reward.
 # The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
 # None means the prompt is not a task of the environment, so there is no official grade.
-# It raises GraderTimeLimit when the grade did not finish in time. Any other exception is our failure: InfraError.
+# It raises GraderTimeLimit when the grade did not finish in time, and any other exception when grading the row
+# made it fail. A grader may also have two optional methods, as EnvGrader has:
+#   many(rows) -> the outcome of each (prompt, output, capped) row, in order: the reward, None, or the exception
+#   probe()    -> raises InfraError unless the grader works now
 Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
+FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
+# These two verdicts depend on this machine at this moment. They hold for one call and are never kept.
+TRANSIENT = (TIME_LIMIT, FAULT)
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
-# import the env, which needs extra packages. If the env renames the value, a time-out becomes InfraError: loud.
+# import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
 ENV_TIME_LIMIT = "time-limit"
+PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
+
+# Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
+RULES: dict[str, str] = {
+    "size": "the file is empty or larger than the byte cap",
+    "json": "the file is not UTF-8 JSON",
+    "nonfinite": "the file holds NaN or Infinity",
+    "top_keys": "the top level is not an object with exactly version, hotkey, groups and (v2, v3) the optional train",
+    "version": "version is not a known format",
+    "train": "train is not an object, has a key that is not settable, or has a value outside its published bound",
+    "hotkey": "hotkey is not the owner of the stored object",
+    "groups": "groups is not a non-empty list",
+    "group_keys": "a group does not have exactly the keys prompt, rollouts",
+    "prompt": "a prompt is not non-empty text",
+    "duplicate_prompt": "two groups have the same prompt",
+    "rollouts": "rollouts is not a non-empty list",
+    "rollout_keys": "a rollout does not have exactly the keys output, reward",
+    "output": "an output is not text",
+    "reward": "a reward is not a finite number",
+    "cap": "the first group alone is larger than the rollout cap",
+    "text": "a prompt or an output is not valid Unicode text",
+    "control_token": "a prompt or an output holds a chat control token",
+    "output_tokens": "an output is longer than the output token cap",
+    "context_tokens": "prompt + output is longer than the context token cap",
+    "answer_only": "too many rollouts have almost no reasoning before the first boxed answer",
+    "reasoning_share": "too small a share of the output tokens is reasoning",
+    "answer_repeat": "one final answer is in too many rollouts",
+    TIME_LIMIT: "the official grader cannot grade a rollout inside its time limit; the file is checked again later",
+    FAULT: "a rollout makes the official grader fail; the file is checked again later",
+    "grader": "a reward is not the official grade",
+    "pool": "too small a share of the prompts are tasks of the public pool",
+}
 
 
 class GraderTimeLimit(Exception):
     """Raised by a ``Grader``: the official grade of this row did not finish inside its time limit."""
 
 
-def env_grader(pool: Any, grade: Callable[..., Any]) -> Grader:
+class GraderFault(Exception):
+    """Raised by a ``Grader``: grading this row made the grader fail (its worker process died, or it raised)."""
+
+
+class EnvGrader:
+    """The ``Grader`` of an environment, over its task pool and a function that grades a list of jobs.
+
+    ``grade_many(jobs)`` takes ``(task, output, capped)`` jobs and returns one grade for each, in order. A grade
+    has ``reward`` and ``machine_cause``: an expired time limit gives ``GraderTimeLimit`` for that row, and any
+    other cause (a dead worker) gives ``GraderFault``. The rows go out ``chunk`` at a time, so a caller that
+    stops at the first bad row does not wait for the rest of the file.
+    """
+
+    def __init__(self, pool: Any, grade_many: Callable[[Sequence[tuple[Any, str, bool]]], Sequence[Any]], chunk: int) -> None:
+        self.pool, self.grade_many, self.chunk = pool, grade_many, max(1, chunk)
+
+    def __call__(self, prompt: str, output: str, capped: bool) -> float | None:
+        outcome = next(self.many([(prompt, output, capped)]))
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def many(self, rows: Sequence[tuple[str, str, bool]]) -> Iterator[float | None | Exception]:
+        for start in range(0, len(rows), self.chunk):
+            jobs = [(self.pool.task_for_prompt(prompt), output, capped) for prompt, output, capped in rows[start : start + self.chunk]]
+            known = [job for job in jobs if job[0] is not None]
+            try:
+                grades = list(self.grade_many(known)) if known else []
+            except InfraError:
+                raise
+            except Exception as exc:  # the whole call failed: every row of it has no grade, and the probe says whose fault it is
+                grades = [exc] * len(known)
+            if len(grades) != len(known):
+                raise InfraError(f"the official grader returned {len(grades)} grades for {len(known)} rows")
+            answers = iter(grades)
+            for task, _, _ in jobs:
+                yield None if task is None else self._outcome(next(answers))
+
+    @staticmethod
+    def _outcome(grade: Any) -> float | Exception:
+        if isinstance(grade, Exception):
+            return grade
+        if grade.machine_cause == ENV_TIME_LIMIT:
+            return GraderTimeLimit()
+        if grade.machine_cause is not None:
+            return GraderFault(str(grade.machine_cause))
+        return float(grade.reward)
+
+    def probe(self) -> None:
+        """Raise ``InfraError`` unless the grader works now: a pool task with its own answer must get reward 1."""
+        tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
+        try:
+            grades = self.grade_many([(task, _BOXED + "{" + task.answer + "}", False) for task in tasks])
+            works = any(grade.machine_cause is None and grade.reward == 1.0 for grade in grades)
+        except Exception as exc:
+            raise InfraError(f"the official grader failed on a known-good case: {type(exc).__name__}") from exc
+        if not works:
+            raise InfraError("the official grader gives no known-good case its reward")
+
+
+def env_grader(pool: Any, grade: Callable[..., Any]) -> EnvGrader:
     """The ``Grader`` of an environment, from its task pool and its ``grade(task, output, capped)`` function.
 
-    The controller and the miner's tool both build the grader with this one call, so they cannot differ.
-    The grade's ``machine_cause`` says when the machine, not the row, decided: an expired time limit
-    raises ``GraderTimeLimit``, and any other cause (a dead worker) raises ``InfraError``.
+    The grades run one at a time in the calling process. This is the miner's tool. The validator uses ``pool_grader``.
     """
-    def official(prompt: str, output: str, capped: bool) -> float | None:
-        task = pool.task_for_prompt(prompt)
-        if task is None:
-            return None
-        result = grade(task, output, capped)
-        if result.machine_cause == ENV_TIME_LIMIT:
-            raise GraderTimeLimit
-        if result.machine_cause is not None:
-            raise InfraError(f"the official grader failed: {result.machine_cause}")
-        return float(result.reward)
+    return EnvGrader(pool, lambda jobs: [grade(*job) for job in jobs], chunk=1)
 
-    return official
+
+class LazyPool:
+    """A grade pool that starts at the first grade and serves one caller at a time.
+
+    ``start()`` builds the pool, for example ``lambda: GradePool(workers=8, timeout_s=20.0)``. So a command that
+    checks no file starts no worker process, and two threads cannot mix their jobs in one pool.
+    """
+
+    def __init__(self, start: Callable[[], Any]) -> None:
+        self._start, self._pool, self._lock = start, None, threading.Lock()
+
+    def grade_many(self, jobs: Sequence[tuple[Any, str, bool]]) -> Sequence[Any]:
+        with self._lock:
+            if self._pool is None:
+                self._pool = self._start()
+            return self._pool.grade_many(jobs)
+
+    def close(self) -> None:
+        with self._lock:
+            pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.close()
+
+
+def pool_grader(pool: Any, grade_pool: Any, chunk: int = 32) -> EnvGrader:
+    """The same ``Grader`` over the environment's ``GradePool``: worker processes, each grade under a hard time limit.
+
+    A row that hangs is killed at ``GradePool.timeout_s`` and the rows of a file are graded in parallel. At most
+    ``chunk`` rows are sent before the checker looks at the results, so the worst wait for one file that hangs on
+    every row is ``chunk / workers * timeout_s``.
+    """
+    return EnvGrader(pool, grade_pool.grade_many, chunk)
 
 
 class Tokens(Protocol):
@@ -286,30 +405,49 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> set
     return capped
 
 
+def _grades(grader: Grader, rows: Sequence[tuple[str, str, bool]]) -> Iterable[float | None | Exception]:
+    """The outcome of each row, in order and on demand: the reward, None, or the exception that says why there is no grade."""
+    if hasattr(grader, "many"):
+        yield from grader.many(rows)
+        return
+    for row in rows:
+        try:
+            yield grader(*row)
+        except InfraError:
+            raise
+        except Exception as exc:
+            yield exc
+
+
+def _fault(grader: Grader, cause: Exception) -> None:
+    """The grader failed on one row. Return when the grader still works, so the row is at fault. If not, raise ``InfraError``."""
+    if not hasattr(grader, "probe"):  # no way to tell the row from the grader: stay loud
+        raise InfraError(f"the official grader failed: {type(cause).__name__}") from cause
+    grader.probe()
+
+
 def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
     """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
 
-    A row that the grader cannot grade in time is not allowed, whatever its reward. The check stops at the
-    first one, so a file cannot make the checker wait at every row.
+    A row that the grader cannot grade, in time or at all, is not allowed, whatever its reward. The check stops
+    at the first one, so a file cannot make the checker wait at every row. That verdict is about this file
+    only: if the grader fails on its known-good case too, the failure is ours and ``InfraError`` is raised.
     """
-    known = 0
-    for i, (prompt, rollouts) in enumerate(groups):
-        for j, (output, reward) in enumerate(rollouts):
-            here = f"groups[{i}].rollouts[{j}]"
-            try:
-                official = grader(prompt, output, (i, j) in capped)
-            except GraderTimeLimit:
-                raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit") from None
-            except InfraError:
-                raise
-            except Exception as exc:
-                raise InfraError(f"the official grader failed: {type(exc).__name__}") from exc
-            if official is None:
-                break
-            _need(abs(reward - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
+    places = [(i, j) for i, (_, rollouts) in enumerate(groups) for j in range(len(rollouts))]
+    rows = [(groups[i][0], groups[i][1][j][0], (i, j) in capped) for i, j in places]
+    unknown: set[int] = set()
+    for (i, j), official in zip(places, _grades(grader, rows)):
+        here = f"groups[{i}].rollouts[{j}]"
+        if isinstance(official, GraderTimeLimit):
+            raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit")
+        if isinstance(official, Exception):
+            _fault(grader, official)
+            raise Invalid(FAULT, f"{here}: the official grader fails on this row")
+        if official is None:
+            unknown.add(i)
         else:
-            known += 1
-    share = params.min_pool_prompt_frac
+            _need(abs(groups[i][1][j][1] - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
+    known, share = len(groups) - len(unknown), params.min_pool_prompt_frac
     _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
 
 
@@ -347,7 +485,7 @@ def _verdict(hotkey: str, raw: bytes, result: Batch | Invalid, now: int) -> Verd
     if isinstance(result, Batch):
         return Verdict(hotkey, True, "", result.format, result.n_prompts, result.n_rollouts, result.sha256, now)
     file_hash = sha256_hex(bytes(raw)) if isinstance(raw, (bytes, bytearray)) and raw else ""
-    return Verdict(hotkey, False, str(result), batch_sha256=file_hash, checked_at=now)
+    return Verdict(hotkey, False, str(result), batch_sha256=file_hash, checked_at=now, rule=result.rule)
 
 
 class StoreAdmission:
@@ -376,7 +514,8 @@ class StoreAdmission:
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
-        A grader time limit depends on the speed of this machine, so that verdict is not kept: the next call checks again.
+        A verdict in ``TRANSIENT`` (a grader time limit or a grader fault) depends on this machine at this moment,
+        so it is not kept: the next call checks the file again.
         """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
@@ -393,7 +532,7 @@ class StoreAdmission:
                 if found is None:
                     continue
                 kept = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
-                if getattr(found[1], "rule", "") == TIME_LIMIT:
+                if getattr(found[1], "rule", "") in TRANSIENT:
                     self._seen.pop(hotkey, None)
                 else:
                     self._seen[hotkey] = kept
