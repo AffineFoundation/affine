@@ -62,21 +62,23 @@ class HeadTokens:
 
     The tokenizer files are read from the public store on first use, each one
     checked against the head manifest. So the checker counts tokens with
-    exactly the files that the trainer and the evaluator load. ``manifest``
-    is the head manifest of the journal; without it, the head pointer in the
-    store is read.
+    exactly the files that the trainer and the evaluator load.
     """
 
-    def __init__(self, store: ObjectStore, cache: Path, manifest: HeadManifest | None = None) -> None:
-        self.store, self.cache, self.manifest = store, cache, manifest
+    def __init__(self, store: ObjectStore, cache: Path, journal_manifest: HeadManifest | None = None) -> None:
+        self.store, self.cache, self.journal_manifest = store, cache, journal_manifest
         self._tokens: HFTokens | None = None
 
     def _load(self) -> HFTokens:
         if self._tokens is None:
             try:
-                manifest = self.manifest or get_record(self.store, layout.CURRENT, HeadManifest)
+                manifest = get_record(self.store, layout.CURRENT, HeadManifest)
             except KeyError:
-                raise ConfigError("the store has no current head yet; run bootstrap first") from None
+                # A store that was bootstrapped when the pointer had another key has none at this key until the
+                # controller's next tick writes it. The journal's manifest is what that pointer will hold.
+                manifest = self.journal_manifest
+                if manifest is None:
+                    raise ConfigError("the store has no current head yet; run bootstrap first") from None
             base_hash = manifest.head.base_hash
             directory = self.cache / base_hash
             for name, sha in sorted(manifest.base_files.items()):

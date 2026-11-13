@@ -129,6 +129,18 @@ def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head
     assert not (directory / "tokenizer.json").exists()
 
 
+def test_a_store_bootstrapped_with_the_old_pointer_key_needs_no_new_bootstrap(tmp_path, box, capsys):
+    """The head pointer moved from ``public/current.json``. ``status`` and ``publish`` write no pointer: they take the head from the journal."""
+    common = start(tmp_path, box)
+    box.put(layout.miner_object("hk1"), b'{"rows": []}')
+    box.put("public/current.json", box.get(layout.CURRENT))
+    box.delete(layout.CURRENT)
+    assert main(["status", *common]) == 0 and "queued_files" in capsys.readouterr().out
+    assert main(["publish", *common]) == 0 and not box.exists(layout.CURRENT)
+    stack = assembly.stack(StackContext(tmp_path / "another-machine", Params(), "status"))
+    assert stack.admission.tokens.output_tokens("a b c") == 3 and len(box.loaded) == 1, "the tokenizer of the journal's head"
+
+
 def test_the_round_seed_uses_the_block_hash_of_the_last_chain_read():
     class Reader:
         def snapshot(self):

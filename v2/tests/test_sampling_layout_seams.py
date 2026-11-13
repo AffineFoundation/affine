@@ -62,7 +62,7 @@ def test_store_keys_keep_their_zones(build):
     base, master = layout.public_base_prefix("a" * 64), layout.public_master_prefix("a" * 64)
     assert not master.startswith(base) and not base.startswith(master), "the fp32 master never shares a prefix with the base"
     assert layout.public_base_file("a" * 64, "model.safetensors") == f"public/bases/{'a' * 64}/model.safetensors"
-    assert (layout.CURRENT, layout.BENCHMARKS) == ("public/current.json", "public/benchmarks.json")
+    assert (layout.CURRENT, layout.BENCHMARKS) == ("public/head.json", "public/benchmarks.json")
     for bad in ("", ".", "..", "../x", "a/b", "a b", ".hidden", "x\ny"):
         with pytest.raises(ContractError):
             layout.frozen_batch("r000001", bad)
