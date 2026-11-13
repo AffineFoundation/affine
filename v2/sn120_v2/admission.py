@@ -14,12 +14,18 @@ file invalid. Every limit comes from ``Params``.
 This module uses the standard library and plain Python modules of this package
 only, so a miner can run the same check on their own machine. The tokenizer
 and the official grader are inputs.
+
+One file never stops the check of the others. When a file makes the grader,
+the tokenizer or the checker itself fail, the same part is tried on a
+known-good case. It passes: only that file is invalid, for this call. It
+fails: the failure is ours, and ``InfraError`` is raised.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import threading
 import time
 from collections import Counter
@@ -47,22 +53,25 @@ Sizes = dict[tuple[int, int], tuple[int, int]]  # (group, rollout) place -> (pro
 # The checker sets capped: True when the output is exactly max_output_tokens long, so it stopped at the cap.
 # None means the prompt is not a task of the environment, so there is no official grade.
 # It raises GraderTimeLimit when the grade did not finish in time, and any other exception when grading the row
-# made it fail. A grader may also have two optional methods, as EnvGrader has:
+# made it fail. A grader may also have three optional methods, as EnvGrader has:
 #   many(rows) -> the outcome of each (prompt, output, capped) row, in order: the reward, None, or the exception
 #   probe()    -> raises InfraError unless the grader works now
+#   cases()    -> known-good (prompt, right answer) pairs, for the known-good file of the checker
 Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
+CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
 # These verdicts depend on this machine at this moment. They hold for one call and are never kept.
-TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT)
+TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT, CHECK_FAULT)
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
 ENV_TIME_LIMIT = "time-limit"
 PROBE_TEXT = "What is 1 + 1?"  # the tokenizer works when it counts at least one token in this text, as a prompt and as an output
 PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
+PROBE_HOTKEY = "known-good"  # the owner named in the known-good file of the checker
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
 RULES: dict[str, str] = {
@@ -96,6 +105,7 @@ RULES: dict[str, str] = {
     FAULT: "a rollout makes the official grader fail; the file is checked again later",
     "grader": "a reward is not the official grade",
     "pool": "too small a share of the prompts are tasks of the public pool",
+    CHECK_FAULT: "the file makes the checker itself fail, at any step; the file is checked again later",
 }
 
 
@@ -150,6 +160,11 @@ class EnvGrader:
         if grade.machine_cause is not None:
             return GraderFault(str(grade.machine_cause))
         return float(grade.reward)
+
+    def cases(self) -> list[tuple[str, str]]:
+        """Known-good cases: the batch prompt and the reference answer of the first pool tasks."""
+        tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
+        return [(task.batch_prompt(), task.answer) for task in tasks]
 
     def probe(self) -> None:
         """Raise ``InfraError`` unless the grader works now: a pool task with its own answer must get reward 1."""
@@ -541,7 +556,60 @@ def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | Non
     Without ``tokens`` the token caps and the reasoning rules do not run, and
     no output counts as capped. Without ``grader`` the grader match does not
     run. ``Batch.checked`` says what ran. The validator always passes ``tokens``.
+
+    A file that makes the checker fail with an exception of any other kind is invalid with rule ``check_fault``,
+    when the checker still passes a known-good file. If it does not, the failure is ours: ``InfraError``.
     """
+    try:
+        return _check(raw, hotkey, params, tokens, grader)
+    except (Invalid, InfraError, KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as cause:
+        _still_works(params, tokens, grader, cause)
+        raise Invalid(CHECK_FAULT, f"the checker fails on this file: {_where(cause)}") from cause
+
+
+def _where(cause: BaseException) -> str:
+    """The class of an exception and the place in the code that raised it. Never its message: that can hold batch text."""
+    trace = cause.__traceback__
+    if trace is None:
+        return type(cause).__name__
+    while trace.tb_next is not None:
+        trace = trace.tb_next
+    code = trace.tb_frame.f_code
+    return f"{type(cause).__name__} in {code.co_name}, {os.path.basename(code.co_filename)} line {trace.tb_lineno}"
+
+
+def _known_good(params: Params, grader: Grader | None) -> Iterator[bytes]:
+    """Small files that must pass every rule: one prompt, a right answer with reward 1 and a try with no answer with reward 0.
+
+    With the grader of an environment the prompts are its known-good cases (the first pool tasks), one file for
+    each. Without one there is one file with a plain sum, which no environment grades.
+    """
+    think = "".join(f"Step {k}. " for k in range(params.min_reasoning_tokens + 32))  # two words or more for each step
+    for prompt, answer in grader.cases() if hasattr(grader, "cases") else [(PROBE_TEXT, "2")]:
+        rollouts = [{"output": f"{think}{_BOXED}{{{answer}}}", "reward": 1.0}, {"output": think.strip(), "reward": 0.0}]
+        yield json.dumps({"version": FORMAT_V1, "hotkey": PROBE_HOTKEY, "groups": [{"prompt": prompt, "rollouts": rollouts}]}).encode()
+
+
+def _still_works(params: Params, tokens: Tokens | None, grader: Grader | None, cause: BaseException) -> None:
+    """The checker failed on one file. Return when it still passes a known-good file, so the file is at fault. If not, raise ``InfraError``."""
+    problem = "it has no known-good file"
+    try:
+        for raw in _known_good(params, grader):
+            try:
+                _check(raw, PROBE_HOTKEY, params, tokens, grader)
+                return
+            except Invalid as exc:
+                problem = f"rule {exc.rule}"
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        problem = _where(exc)
+    raise InfraError(f"the checker fails on a file ({_where(cause)}) and does not pass its known-good file ({problem})") from cause
+
+
+def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grader: Grader | None) -> Batch:
     value = _load(raw, params.max_batch_bytes)
     version, train = _header(value, params.recipe)
     groups = _groups(value, hotkey)
@@ -599,8 +667,8 @@ class StoreAdmission:
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
-        A verdict in ``TRANSIENT`` (a grader time limit, a grader fault or a tokenizer fault) depends on this
-        machine at this moment, so it is not kept: the next call checks the file again.
+        A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
+        depends on this machine at this moment, so it is not kept: the next call checks the file again.
         """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
