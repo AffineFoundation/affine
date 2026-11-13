@@ -5,14 +5,21 @@ seams on top of a narrow ``ChainClient``. ``FakeChain`` is the in-memory
 client for tests and the CPU simulation. ``SubtensorClient`` is the client
 over the bittensor SDK: it is the only code here that needs the SDK or a
 wallet, and the wallet's private key never leaves the SDK.
+
+``python -m sn120_v2.chain --netuid 120 --network finney --out FILE`` writes
+one snapshot to a file. It only reads the chain and it uses no wallet.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
+import sys
 import time
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from .errors import ConfigError, InfraError
+from .errors import ConfigError, InfraError, V2Error
 from .payout import check_weights
 from .types import ChainSnapshot, Registration, WeightReceipt
 
@@ -49,9 +56,7 @@ def _read(what: str, call: Callable[[], Any]) -> Any:
 class Reader:
     """``ChainReader``: every registration of the subnet, read at one block."""
 
-    def __init__(
-        self, client: ChainClient, netuid: int, *, max_lag_s: int = 600, clock: Callable[[], float] = time.time
-    ) -> None:
+    def __init__(self, client: ChainClient, netuid: int, *, max_lag_s: int = 600, clock: Callable[[], float] = time.time) -> None:
         self.client, self.netuid, self.max_lag_s, self.clock = client, netuid, max_lag_s, clock
 
     def snapshot(self) -> ChainSnapshot:
@@ -124,13 +129,7 @@ class FakeChain:
     """An in-memory ``ChainClient`` for tests and the CPU simulation. It keeps the rate limit as the real chain does."""
 
     def __init__(
-        self,
-        hotkeys: Mapping[int, str],
-        validator_hotkey: str,
-        *,
-        block: int = 5000,
-        limit: int = 100,
-        now: int = 1_800_000_000,
+        self, hotkeys: Mapping[int, str], validator_hotkey: str, *, block: int = 5000, limit: int = 100, now: int = 1_800_000_000
     ) -> None:
         self.keys = dict(hotkeys)
         self.born = {uid: block - 1000 + uid for uid in self.keys}
@@ -249,7 +248,29 @@ class SubtensorClient:
     def submit(self, weights: Mapping[int, float]) -> tuple[bool, str]:
         # retries=0: one submission. The SDK sends a timelocked commit when the subnet has commit-reveal on;
         # the chain reveals it later, so an accepted commit is not yet a change of the weights.
-        result = self.chain.execute(
-            self._intent(weights), self.wallet, wait_for_inclusion=True, wait_for_finalization=True, retries=0
-        )
+        result = self.chain.execute(self._intent(weights), self.wallet, wait_for_inclusion=True, wait_for_finalization=True, retries=0)
         return bool(result.success), str(result.message or result.block_hash or "")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Read one snapshot, then write its record as JSON. A partial or failed read writes nothing."""
+    parser = argparse.ArgumentParser(prog="python -m sn120_v2.chain", description="Write one chain snapshot to a file.")
+    parser.add_argument("--netuid", type=int, required=True, help="the subnet to read: 120 for SN120")
+    parser.add_argument("--network", required=True, help="the chain to read: finney, or the address of a node")
+    parser.add_argument("--out", type=Path, required=True, help="the file for the ChainSnapshot record, as JSON")
+    args = parser.parse_args(argv)
+    try:
+        client = _read("the connection", lambda: SubtensorClient.connect(args.netuid, args.network))  # no wallet
+        snapshot = Reader(client, args.netuid).snapshot()
+    except V2Error as exc:
+        print(f"no snapshot written: {exc}", file=sys.stderr)
+        return 1
+    scratch = args.out.with_name(args.out.name + ".tmp")
+    scratch.write_bytes(snapshot.to_json())
+    os.replace(scratch, args.out)
+    print(f"wrote {args.out}: netuid {snapshot.netuid}, block {snapshot.block}, {len(snapshot.registrations)} registrations")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

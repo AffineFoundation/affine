@@ -7,9 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from sn120_v2.chain import BLOCK_SECONDS, FakeChain, Reader, Setter, SubtensorClient
+from sn120_v2.chain import BLOCK_SECONDS, FakeChain, Reader, Setter, SubtensorClient, main
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.seams import ChainReader, WeightSetter
+from sn120_v2.types import ChainSnapshot
 
 VALIDATOR = "hk0"
 TABLE = {1: 0.5, 4: 0.5}
@@ -166,3 +167,17 @@ def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     assert options["retries"] == 0
     with pytest.raises(ConfigError):
         SubtensorClient(120, chain, sdk=STUB_SDK).submit({1: 1.0})  # no wallet: this client can only read
+
+
+def test_the_snapshot_command_needs_no_wallet_and_writes_only_after_a_complete_read(tmp_path, monkeypatch):
+    chain, out, calls = fake(), tmp_path / "chain_snapshot.json", []
+    monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: calls.append(settings) or chain)
+    argv = ["--netuid", "120", "--network", "a-node", "--out", str(out)]
+    chain.born.pop(2)  # a partial read
+    assert main(argv) == 1 and list(tmp_path.iterdir()) == []
+    chain.born[2] = 4002
+    assert main(argv) == 0 and calls == [(120, "a-node")] * 2  # no wallet goes to the connection
+    written = out.read_bytes()
+    assert ChainSnapshot.from_json(written) == Reader(chain, 120).snapshot()
+    chain.down = "connection refused"
+    assert main(argv) == 1 and out.read_bytes() == written and list(tmp_path.iterdir()) == [out]
