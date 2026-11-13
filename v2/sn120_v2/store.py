@@ -169,9 +169,13 @@ def publish_head(store: ObjectStore, manifest: HeadManifest) -> None:
 
 
 def delete_pending(store: ObjectStore, prefix: str) -> int:
-    """Delete staged objects under a ``pending/`` prefix. Any other prefix is refused."""
-    if not prefix.startswith("pending/"):
-        raise ContractError(f"refusing to delete outside pending/: {prefix!r}")
+    """Delete the staged objects of one round or one fold: ``pending/<kind>/<id>`` or deeper.
+
+    Any other prefix is refused. That includes ``pending/`` itself: no call can empty the zone.
+    """
+    parts = prefix.split("/")
+    if parts[0] != layout.PENDING or len(parts) < 3 or not all(parts):
+        raise ContractError(f"refusing to delete outside one round or fold under pending/: {prefix!r}")
     keys = store.list(prefix)
     for key in keys:
         store.delete(key)

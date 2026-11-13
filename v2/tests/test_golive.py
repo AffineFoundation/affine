@@ -437,3 +437,20 @@ def test_on_a_bucket_shared_with_v1_nothing_lists_a_broad_prefix_or_touches_an_o
     assert [call for call in calls if call[1] in V1_OBJECTS] == [], "no probe, read, write or delete of an object of v1"
     lists = {prefix for name, prefix in calls if name == "list"}
     assert lists and all(NARROW_LIST.fullmatch(prefix) for prefix in lists), "a list names the journal, or one round or one fold in pending/"
+
+
+def test_a_store_bootstrapped_with_the_old_pointer_key_gets_the_new_pointer_at_the_next_tick(tmp_path):
+    """A state made before ``layout.CURRENT`` moved replays as it is. The first tick writes the pointer; the old key stays as it was."""
+    world = SimWorld(tmp_path, sim_params())
+    old, pointer = "public/current.json", world.store.get(layout.CURRENT)
+    world.store.put(old, pointer)
+    world.store.delete(layout.CURRENT)
+    with open(world.root / JOURNAL_FILE, "rb") as handle:
+        Mirror(world.store).catch_up(handle, backfill=True)
+    head = world.controller.state.head
+    assert load_from_store(world.store, tmp_path / "weights-writer" / JOURNAL_FILE).head == head, "the weights writer reads the journal, not the pointer"
+    world.reopen()
+    world.register(1, 0.3)
+    assert world.round().outcome == "applied", "run_round ticks before it reads any file"
+    assert world.store.get(layout.CURRENT) == world.controller.state.manifest.to_json() != pointer
+    assert world.store.get(old) == pointer
