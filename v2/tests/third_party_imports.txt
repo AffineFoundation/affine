@@ -10,6 +10,10 @@
 pytest
 
 # gpu: train/eval workers
+huggingface_hub
+safetensors
+torch
+transformers
 
 # r2: R2 head store
 
