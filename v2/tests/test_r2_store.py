@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError, ReadTimeoutError
 from moto.server import ThreadedMotoServer
 
 from sn120_v2.errors import ConfigError, ContractError, InfraError
-from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store
+from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store, main, self_test
 from sn120_v2.seams import ObjectStore, Presigner
 
 SECRET = "fake-secret-value-never-shown"
@@ -204,3 +204,18 @@ def test_bad_configuration_fails_closed_and_hides_the_secret(env):
         assert SECRET not in str(caught.value) and SECRET not in repr(caught.value.__cause__)
     with pytest.raises(ContractError):
         R2Store.from_env(env, part_size=MIB)
+
+
+def test_self_test_checks_every_rule_and_leaves_nothing(env, store, capsys):
+    """The first smoke-test step: one line per check, no link or secret printed, nothing left in the bucket."""
+    assert main(["--self-test"], env) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 10 and all(line.startswith("ok  ") for line in lines[:9]) and lines[9].startswith("PASS")
+    assert store.list("") == [] and SECRET not in "".join(lines) and "X-Amz" not in "".join(lines)
+    store._s3.upload_part_copy = Mock(side_effect=ClientError({"Error": {"Code": "SignatureDoesNotMatch"}}, "UploadPartCopy"))
+    assert self_test(store) is False
+    failed = [line for line in capsys.readouterr().out.splitlines() if line.startswith("FAIL")]
+    assert len(failed) == 3 and "multipart copy" in failed[0] and "SignatureDoesNotMatch" in failed[0]  # copy, download, summary
+    assert store.list("") == []
+    assert main(["--self-test"], {k: v for k, v in env.items() if k != "SN120_R2_BUCKET"}) == 1
+    assert "SN120_R2_BUCKET" in capsys.readouterr().out
