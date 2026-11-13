@@ -7,7 +7,8 @@ that the two files belong together.
 
 Every number in the text comes from the ``Params`` in the snapshot. The
 miner-settable bounds come from ``Recipe.miner_bounds`` and the object keys
-from ``layout.py``. No cap, bound or key is typed here.
+from ``layout.py``. No cap, bound or key is typed here. The one exception is
+``READ_LINKS``: the site pull job owns that file, and no module names it yet.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FORMATS, TIME_LIMIT
+from .admission import CONTROL_TOKENS, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -34,6 +35,10 @@ from .seams import ObjectStore
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
+# The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
+# is not a store key, and the publisher never writes it: it holds signed download links for the weight files of
+# the current head. The pull is a command outside this package, so the path is typed here; a test compares the two.
+READ_LINKS = "public/read_links.json"
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
@@ -164,6 +169,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
         "objects": object_keys(),
+        "read_links": READ_LINKS,
         "code": REPO + "/tree/v2/v2",
     }
 
@@ -252,28 +258,18 @@ def _recipe_lines(params: Params) -> list[str]:
     ]
 
 
-def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
-    entries, seats = round_now.get("entries") or [], queue.get("next") or []
+def _round_time_lines(params: Params) -> list[str]:
+    """What the clock does to a round. Every word here follows ``worker.LocalRunner.run``.
+
+    When the rule of the time limit changes, change this function. Two sentences elsewhere depend on it: the
+    ``not_trained`` bullet of section 4 and the "time limit" bullet of section 6. Both refer to this section.
+    """
     # The three times of worker.LocalRunner.run, in seconds from the lease.
     last = params.lease_timeout_s - params.promote_reserve_s
     stop = min(last, params.round_time_limit_s - params.promote_reserve_s)
     train_end = min(stop, params.train_time_budget_s)
     limit, reserve, first_look = show(params.round_time_limit_s / 60), show(params.promote_reserve_s / 60), params.look_sizes()[0]
-    checked = queue.get("files_checked_at")
     return [
-        "## 3. The round now",
-        "",
-        f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
-        "  new head is being published). The last closed rounds are in mining.json under `history`.",
-        *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
-        *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
-        f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
-        "  for a full round. Registrations for the next round are always open.",
-        "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
-        "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
-        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
-        "",
         "### The time of a round",
         "",
         "All times count from the lease: the moment a round takes its entries. A round ends early, as soon as every",
@@ -305,6 +301,27 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  each entry of that box is `{NO_DECISION}`.",
         f"- `{NO_DECISION}` means: not charged, and the seat goes to the front of the queue (section 4).",
         "",
+    ]
+
+
+def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
+    entries, seats = round_now.get("entries") or [], queue.get("next") or []
+    checked = queue.get("files_checked_at")
+    return [
+        "## 3. The round now",
+        "",
+        f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
+        "  new head is being published). The last closed rounds are in mining.json under `history`.",
+        *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
+        *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
+        f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
+        "  for a full round. Registrations for the next round are always open.",
+        "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
+        "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
+        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        "",
+        *_round_time_lines(params),
         "## 4. The queue",
         "",
         f"Seats that wait: {show(queue.get('length'))}. The next seats, in order:",
@@ -353,8 +370,20 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
         "train": {recipe.miner_bounds[0].key: getattr(recipe, recipe.miner_bounds[0].key)} if recipe.miner_bounds else {},
-        "groups": [{"prompt": "<problem text>", "rollouts": [{"output": "<reasoning> \\boxed{<answer>}", "reward": 1.0}]}],
+        "groups": [
+            {
+                "prompt": "<problem text>",
+                "rollouts": [
+                    {"output": "<reasoning> \\boxed{<right answer>}", "reward": 1.0},
+                    {"output": "<reasoning> \\boxed{<wrong answer>}", "reward": 0.0},
+                ],
+            }
+        ],
     }
+    cost_cap = [
+        f"  A file with a cost above {show(params.max_train_token_steps)} token-steps is invalid. To get below the cap: fewer steps, fewer",
+        "  rollouts, or shorter outputs. The rule needs token counts, so `check` runs it only with `--tokenizer`.",
+    ] if params.max_train_token_steps > 0 else ["  There is no cap on the cost now (`max_train_token_steps` is 0)."]
     return [
         "## 5. Your file",
         "",
@@ -386,17 +415,40 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
         "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
-        "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output). The",
+        "- `reward`: a finite number. The rewards of one prompt must be small enough to take their mean. A reward must",
+        "  equal the grade that the official grader gives to (prompt, output). The",
         f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
+        f"- `{NO_SIGNAL}`: your file must train something. A rollout trains when its advantage is not 0 and it has at",
+        "  least 1 output token inside the training caps. The advantage is the reward minus the mean reward of its",
+        "  group (`group_size`, section 2). A file in which no rollout trains is invalid. One rollout per prompt never",
+        "  trains. So the example above has two rollouts with different rewards.",
+        f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
+        f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
+        f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
+        "  (the end-of-turn token). A longer output counts the room. A rollout with advantage 0 counts 0.",
+        *cost_cap,
+        f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
+        f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
         "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
         "  `--tokenizer`: only a token count can tell that an output stopped at the cap.",
+        "",
+        "### Rule codes",
+        "",
+        "The validator and the `check` command name the first rule that a file breaks. The rules run in this order:",
+        "",
+        *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
+        "",
+        f"Not a final verdict: {', '.join(f'`{code}`' for code in TRANSIENT)}. Such a code comes from one check on our machine at one",
+        "moment. The validator does not keep it: it checks the file again at its next check. While a file has such a",
+        "code, a round does not take it: you are not charged and the seat keeps its place (section 4). Every other",
+        "code is final for those bytes: upload a new file.",
         "",
         "### How to upload",
         "",
@@ -568,6 +620,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
+    url = doc["contract"]["public_url"]
+    where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
         "# Affine (Bittensor SN120) v2: the miner contract",
         "",
@@ -590,9 +644,15 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         *_genesis_lines(head),
         f"- Head manifest (every file with its sha256): `{layout.head_manifest(head.version_id)}`",
         f"- `params_hash`: `{params.params_hash}`; `recipe_id`: `{params.recipe_id}`",
-        f"- Public objects are served under: {doc['contract']['public_url'] or 'not set in this file'}. Each key below is a path under it,",
-        "  with one exception: the weight files are not served at the path of their key, and this file does not give",
-        "  their address yet.",
+        f"- Public objects are served under: {url or 'not set in this file'}. Each key below is a path under it, except",
+        "  the weight files.",
+        "- Weight files are not served under the public address. Signed download links for the files of the current",
+        f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
+        "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
+        "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
+        "  You do not need the `master`: it is only for a check of a fold.",
+        f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
+        "  always a matching pair.",
         "",
         *(table(("stacked LoRA", "round", "miner uid", "batch sha256"), loras) if loras else ["No LoRA is stacked on the base."]),
         "",
