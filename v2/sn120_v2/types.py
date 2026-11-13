@@ -93,6 +93,7 @@ class Verdict(Record):
     n_rollouts: int = 0
     batch_sha256: str = ""
     checked_at: int = 0
+    rule: str = ""  # stable code of the rule that failed; empty for a valid file
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,9 @@ class TrainReport(Record):
     wall_s: float
     gpu_class: str
     image_digest: str
+    norm_before_cap: float = 0.0  # norm of the update before recipe.global_norm_cap cut it; 0 = not reported
+    truncated_rows: int = 0  # rows cut at a training token cap
+    dropped_rows: int = 0  # rows with no output token left after the cut
 
 
 @dataclass(frozen=True)
@@ -284,6 +288,7 @@ class EvalRequest(Record):
     round_seed: str  # rollout seeds come from sampling.rollout_seed(round_seed, task_id, j)
     look: int
     params: Params  # pinned snapshot: decode settings and caps
+    deadline: int = 0  # Unix seconds; past it the evaluator gives up with InfraError and the chunk is not used. 0 = none
 
 
 @dataclass(frozen=True)
@@ -373,6 +378,8 @@ class BoxResult(Record):
     entries: tuple[EntryResult, ...]
     started_at: int
     finished_at: int
+    stopped_at_limit: bool = False  # the round's time limit ended the scoring before the full draw
+    phase_s: dict[str, int] = field(default_factory=dict)  # wall seconds of each phase on the box: training, evaluation
 
 
 @dataclass(frozen=True)

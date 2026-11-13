@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from sn120_v2 import cli, cutover, layout
-from sn120_v2.canonical import manifest_digest
+from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.cutover import CutoverError, build_genesis, build_import, chain_report, copy_miner_files, preview_queue
 from sn120_v2.errors import ConfigError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec, Params
@@ -275,8 +275,12 @@ def test_the_controller_starts_from_the_written_files_with_the_previewed_queue(t
     out, state_dir = tmp_path / "import", tmp_path / "state"
     snapshot = chain(RAW, (Registration(0, OWNER, 1), Registration(23, "a-new-hotkey", 2)))
     (tmp_path / "snapshot.json").write_bytes(snapshot.to_json())
-    base_files = {"model.bin": DIGEST}  # made-up model files: the real base hash needs the real model
-    (tmp_path / "genesis_files.json").write_text(json.dumps({"base_files": base_files, "master_files": {"master.bin": DIGEST}}))
+    base_files = {"model.bin": sha256_hex(b"base")}  # made-up model files: the real base hash needs the real model
+    master_files = {"master.bin": sha256_hex(b"master")}
+    store = LocalStore(state_dir / "store")  # bootstrap checks that the genesis files are in the store
+    store.put(layout.public_base_file(manifest_digest(base_files), "model.bin"), b"base")
+    store.put(layout.public_master_file(DIGEST, "master.bin"), b"master")
+    (tmp_path / "genesis_files.json").write_text(json.dumps({"base_files": base_files, "master_files": master_files}))
     inputs = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR, "--undecided", "front", "--owner-hotkey", OWNER]
     assert cutover.main([*FILES, *inputs, "--chain", str(tmp_path / "snapshot.json"), "--out", str(out)]) == 0
     assert (out / "chain.json").read_bytes() == snapshot.to_json()

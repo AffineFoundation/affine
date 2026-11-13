@@ -195,8 +195,13 @@ class VllmEvaluator:
             body = chat_body(model, messages, rollout_seed(request.round_seed, tasks[index], sample), params)
             url = self._urls[index % len(self._urls)] + "/v1/chat/completions"
             for _ in range(self.settings.retries + 1):
+                budget = float(params.eval_time_budget_s)
+                if request.deadline:  # the round's time limit: no rollout of this chunk may run past it
+                    budget = min(budget, request.deadline - time.time())
+                    if budget <= 0:
+                        return None
                 try:
-                    reply = self.http(url, body, float(params.eval_time_budget_s))
+                    reply = self.http(url, body, budget)
                     result = read_reply(reply)
                     usage = reply.get("usage")
                     written.append(int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0)
@@ -213,6 +218,9 @@ class VllmEvaluator:
         if not all(server.alive() for server in self._servers):
             self.close()
             raise InfraError("a vLLM server died during the look; nothing of it can be scored")
+        if request.deadline and time.time() >= request.deadline and any(reply is None for reply in replies):
+            # A rollout that the limit cut is not an error of its model. Long outputs are cut first, so this chunk is not scored at all.
+            raise InfraError("the round's time limit passed during this chunk; an unfinished chunk is not scored")
         generated = time.monotonic()
         codes = self._grade(tasks, jobs, replies)
         outcomes = {

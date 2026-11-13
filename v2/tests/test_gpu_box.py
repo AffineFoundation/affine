@@ -446,6 +446,19 @@ def test_a_server_error_is_retried_and_a_dead_server_voids_the_look(box):
     assert not any(server.up for server in farm.servers)
 
 
+def test_a_chunk_that_the_round_time_limit_cut_is_not_scored(box):
+    budgets = []
+    farm = Farm(lambda model, task: ("P", "stop"))
+    http = farm.http
+    farm.http = lambda url, body, timeout_s: budgets.append(timeout_s) or http(url, body, timeout_s)
+    request = box.build.replace(eval_request(box), deadline=int(time.time()) + 50)
+    assert set(evaluator(box, farm).evaluate(request).outcomes.values()) == {("PPP",)}
+    assert 0 < min(budgets) <= 50, "no rollout may run past the deadline"
+    late = box.build.replace(eval_request(box), deadline=int(time.time()) - 1)
+    with pytest.raises(InfraError, match="time limit"):  # never a row of E: a cut rollout is not an error of its model
+        evaluator(box, Farm(lambda model, task: ("P", "stop"))).evaluate(late)
+
+
 def test_a_dead_grader_worker_is_graded_again_and_never_writes_a_code(box):
     farm = Farm(lambda model, task: ("F died" if task == "t1" else "P", "stop"))
     grades = Grades(deaths=2)

@@ -250,7 +250,7 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
     (out_dir / "train_report.json").write_bytes(canonical_json(report))
     gpu_class = torch.cuda.get_device_name(0) if replica.device != "cpu" else "cpu"
     result = {"status": "ok", "loss": facts["losses"][-1], "step_norm": norm, "step_norm_before_cap": uncapped}
-    return {**result, "tokens": facts["trained_tokens"], "gpu_class": gpu_class}
+    return {**result, "tokens": facts["trained_tokens"], "gpu_class": gpu_class, "truncated_rows": facts["truncated_rows"], "dropped_rows": facts["dropped_rows"]}
 
 
 def main(job_dir: Path) -> None:
