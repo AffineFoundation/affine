@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -161,6 +162,29 @@ def env_grader(pool: Any, grade: Callable[..., Any]) -> EnvGrader:
     The grades run one at a time in the calling process. This is the miner's tool. The validator uses ``pool_grader``.
     """
     return EnvGrader(pool, lambda jobs: [grade(*job) for job in jobs], chunk=1)
+
+
+class LazyPool:
+    """A grade pool that starts at the first grade and serves one caller at a time.
+
+    ``start()`` builds the pool, for example ``lambda: GradePool(workers=8, timeout_s=20.0)``. So a command that
+    checks no file starts no worker process, and two threads cannot mix their jobs in one pool.
+    """
+
+    def __init__(self, start: Callable[[], Any]) -> None:
+        self._start, self._pool, self._lock = start, None, threading.Lock()
+
+    def grade_many(self, jobs: Sequence[tuple[Any, str, bool]]) -> Sequence[Any]:
+        with self._lock:
+            if self._pool is None:
+                self._pool = self._start()
+            return self._pool.grade_many(jobs)
+
+    def close(self) -> None:
+        with self._lock:
+            pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.close()
 
 
 def pool_grader(pool: Any, grade_pool: Any, chunk: int = 32) -> EnvGrader:
