@@ -12,7 +12,7 @@ import time
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import CHECK_FAULT, FAULT, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
+from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import InfraError
@@ -61,6 +61,11 @@ def scripted_job(task, output: str, capped: bool):
     return math_grader.grade(task, output, capped)
 
 
+def hang(task, output: str, capped: bool):
+    """A grade job that never ends: a pool that is too slow for every row."""
+    time.sleep(600)
+
+
 def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
     pool = load_pool()
     tasks = [pool.task(task_id) for task_id in pool.task_ids[:6]]
@@ -74,7 +79,8 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
     try:
         official = pool_grader(pool, grade_pool)
         official.probe()  # the first pool tasks pass with their own answers
-        adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=official)
+        now = [1000.0]
+        adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=official, clock=lambda: now[0])
         files = {"good": groups(), "hangs": groups("hang"), "dies": groups("die"), "raises": groups("raise"), "also_good": groups()}
         for hotkey, content in files.items():
             adm.store.put(layout.miner_object(hotkey), file(content, hotkey))
@@ -83,14 +89,29 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
         assert time.monotonic() - started < 60
         assert {hotkey: verdict.rule for hotkey, verdict in got.items()} == {"good": "", "hangs": TIME_LIMIT, "dies": FAULT, "raises": FAULT, "also_good": ""}
         assert adm.freeze(build.reg(1, hotkey="hangs"), "r000001") is None and adm.freeze(build.reg(2, hotkey="also_good"), "r000001") is not None
+        assert all(got[hotkey].reason == f"groups[2].rollouts[1]: {what} (check 1 of 3)" for hotkey, what in (("hangs", "the official grader did not finish this row inside its time limit"), ("dies", "the official grader fails on this row")))
+        started = time.monotonic()
+        assert all(adm.verdicts(list(files))[hotkey] is got[hotkey] for hotkey in files) and time.monotonic() - started < 1.0, "inside the hold no file is checked again"
+        now[0] += FAULT_HOLD_S
+        adm.verdicts(list(files))
+        now[0] += FAULT_HOLD_S
+        kept = adm.verdicts(list(files))  # the third failed check in a row, at the same row: the verdict stays
+        assert all(kept[hotkey].reason.endswith(f"(checked {FAULT_TRIES} times: this verdict stays until a new file is uploaded)") for hotkey in ("hangs", "dies", "raises"))
+        started = time.monotonic()
+        assert all(adm.verdicts(list(files))[hotkey] is kept[hotkey] for hotkey in files) and time.monotonic() - started < 1.0, "no file is checked again: no wait at the hung row"
     finally:
         grade_pool.close()
-    broken = math_grader.GradePool(workers=2, timeout_s=3.0, job=os._exit)  # every job kills its worker: the grader is broken for all
-    try:
-        with pytest.raises(InfraError, match="known-good"):
-            check_batch(file(groups(), "good"), "good", build.params(), tokens=WordTokens(), grader=pool_grader(pool, broken))
-    finally:
-        broken.close()
+    one_group = file(groups()[:1], "good")
+    for job in (os._exit, hang):  # every job kills its worker, or never ends: the pool is dead, or too slow, for every row
+        down = math_grader.GradePool(workers=4, timeout_s=0.5, job=job)
+        adm = StoreAdmission(Store({layout.miner_object("good"): one_group}), build.params(), tokens=WordTokens(), grader=pool_grader(pool, down))
+        try:
+            for _ in range(2):  # loud each time, and nothing is held against the honest file
+                with pytest.raises(InfraError, match="known-good"):
+                    adm.verdicts(["good"])
+            assert adm._tries == {} and adm._seen == {} and adm._held == {}
+        finally:
+            down.close()
 
 
 def test_known_good_file_of_the_checker_passes_with_the_real_math_env(build, monkeypatch):
