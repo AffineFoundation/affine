@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import FAULT, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
+from sn120_v2.admission import FAULT, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, GraderFault, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import InfraError
 from sn120_v2.gpu.batch import fit_tokens, training_rows
@@ -178,6 +178,62 @@ def test_the_grade_pool_gets_the_rows_in_chunks_and_the_check_stops_at_the_first
     assert pool.calls == [14], "the bad row is in the first chunk: the other rows are never graded"
 
 
+# --- a text that breaks the tokenizer skips its own file only ---
+
+
+class Panic(BaseException):
+    """A Rust tokenizer reports a panic with an exception that is not an ``Exception``."""
+
+
+class FragileTokens(WordTokens):
+    """Fails on a text that ``breaks`` it. With ``dead`` it fails on every text."""
+
+    def __init__(self, error: type[BaseException], breaks=lambda text: "poison" in text, dead: bool = False) -> None:
+        self.error, self.breaks, self.dead = error, breaks, dead
+
+    def prompt_tokens(self, prompt: str) -> int:
+        self.output_tokens(prompt)
+        return super().prompt_tokens(prompt)
+
+    def output_tokens(self, text: str) -> int:
+        if self.dead or self.breaks(text):
+            raise self.error("secret text of the batch")
+        return super().output_tokens(text)
+
+
+BREAKS_THE_TOKENIZER = {
+    "prompt": ([{"prompt": "double 3 poison", "rollouts": [row(6, 1), row(-1, 0)]}], lambda text: "poison" in text),
+    "output": ([{"prompt": "double 3", "rollouts": [row(6, 1), row(-1, 0, THINK + "poison ")]}], lambda text: "poison" in text),
+    # Only the count of the text before the first boxed answer fails: the whole output is counted first, and passes.
+    "reasoning": ([{"prompt": "double 3", "rollouts": [row(6, 1), row(-1, 0, THINK + "poison ")]}], lambda text: "poison" in text and "boxed" not in text),
+}
+
+
+@pytest.mark.parametrize("error", [ValueError, MemoryError, Panic])
+@pytest.mark.parametrize("where", sorted(BREAKS_THE_TOKENIZER))
+def test_file_that_breaks_the_tokenizer_is_skipped_and_the_other_files_are_checked(build, error, where):
+    groups, breaks = BREAKS_THE_TOKENIZER[where]
+    store = Store({layout.miner_object("5A"): file(hotkey="5A"), layout.miner_object("5B"): file(groups, hotkey="5B"), layout.miner_object("5C"): file(hotkey="5C")})
+    adm = StoreAdmission(store, build.params(), tokens=FragileTokens(error, breaks), grader=None, clock=lambda: 7)
+    found = adm.verdicts(["5A", "5B", "5C"])
+    assert [(found[key].valid, found[key].rule) for key in ("5A", "5B", "5C")] == [(True, ""), (False, TOKENIZER_FAULT), (True, "")]
+    assert "secret" not in found["5B"].reason and "poison" not in found["5B"].reason, "a reason never holds batch text"
+    assert "5B" not in adm._seen and {"5A", "5C"} <= set(adm._seen), "the fault verdict is not kept"
+    assert adm.freeze(build.reg(2, hotkey="5B"), "r000001") is None and layout.frozen_batch("r000001", "5B") not in store
+    assert adm.freeze(build.reg(1, hotkey="5A"), "r000001") is not None
+
+
+def test_tokenizer_that_is_broken_for_every_file_stays_loud(build):
+    store = Store({layout.miner_object("5A"): file(hotkey="5A")})
+    adm = StoreAdmission(store, build.params(), tokens=FragileTokens(ValueError, dead=True), grader=None)
+    with pytest.raises(InfraError, match="known-good"):
+        adm.verdicts(["5A"])
+    with pytest.raises(InfraError, match="known-good"):
+        adm.freeze(build.reg(1, hotkey="5A"), "r000001")
+    with pytest.raises(KeyboardInterrupt):
+        check_batch(file(), HOTKEY, build.params(), tokens=FragileTokens(KeyboardInterrupt, dead=True))
+
+
 # --- a file must be able to train: the trainer's own arithmetic on the rewards ---
 
 
@@ -192,6 +248,14 @@ def test_file_with_no_training_signal_is_invalid(build):
     assert rule(one_each, params, tokens=None) == NO_SIGNAL, "the rule needs no tokenizer and no grader"
     reason = admission.verdict(one_each, HOTKEY, params)
     assert (reason.valid, reason.rule) == (False, NO_SIGNAL) and "mean reward of its training group" in reason.reason
+
+
+def test_rewards_too_large_for_a_mean_make_the_file_invalid(build):
+    """Each reward is finite but their sum is not. The trainer's mean raises an error; one file must never stop the check of the others."""
+    huge = file([{"prompt": "double 4", "rollouts": [row(k, 1e308, f"{THINK}{k} ") for k in range(3)]}])
+    assert rule(huge, build.params()) == "reward" and rule(huge, build.params(), tokens=None) == "reward"
+    apart = file([{"prompt": "double 4", "rollouts": [row(0, 1e308), row(1, -1e308), row(2, 1.0)]}])
+    assert rule(apart, build.params()) == "", "rewards that are far apart are fine: the mean exists"
 
 
 def test_training_signal_follows_the_group_size_of_the_file(build):
