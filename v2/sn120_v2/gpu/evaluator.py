@@ -96,6 +96,9 @@ def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeS
         *("--max-loras", str(params.max_loras_per_box), "--max-lora-rank", str(max_rank)),
         # Text only. v1 lesson: without this limit vLLM does not load this checkpoint.
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
+        # The Triton kernel for the linear-attention layers, on every GPU type. Without the flag, vLLM 0.32.0
+        # takes the FlashInfer kernel on a Blackwell GPU, which it compiles at the first request.
+        *("--gdn-prefill-backend", "triton"),
     ]
 
 
