@@ -3,7 +3,10 @@
 #
 # Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
 #   SN120_USER        the Linux user that owns the website directory
-#   SN120_ENV_FILE    a file on the host, mode 600, with the SN120_R2_* variables of a read-only store token
+#   SN120_ENV_FILE    a file on the host, mode 600, with a read-only store token. It holds SN120_R2_ENDPOINT,
+#                     SN120_R2_BUCKET, SN120_R2_ACCESS_KEY_ID, SN120_R2_SECRET_ACCESS_KEY, or the same four with
+#                     no "SN120_" (R2_ENDPOINT can be a URL or a host name; without it, R2_ACCOUNT_ID is used).
+#                     Use the file as it is: no copy and no second file.
 #   SN120_PYTHON      the python of the virtual environment where sn120_v2 is installed, as a full path
 #   SN120_V2_DIR      the directory v2/ of the checkout on this host, as a full path
 #   SN120_SITE_DIR    the directory that the web server serves; it must exist

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -10,16 +11,20 @@ import subprocess
 import sys
 import time
 import urllib.request
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import boto3
 import pytest
 from moto.server import ThreadedMotoServer
 
-from sn120_v2 import layout, sim
+from sn120_v2 import layout, links, sim
+from sn120_v2.errors import ConfigError, InfraError
 from sn120_v2.publisher import render
 from sn120_v2.r2 import R2Store
+from sn120_v2.r2_names import PLAIN_NAMES, store_env
 from sn120_v2.types import HeadManifest
 
 PULL = Path(__file__).parents[1] / "site" / "pull.py"
@@ -81,7 +86,8 @@ def pull(env: dict, site: Path, *more: str) -> subprocess.CompletedProcess:
     if site.parent.is_dir():
         site.mkdir(exist_ok=True)
     args = [sys.executable, str(PULL), "--site-dir", str(site), "--public-url", URL, *more]
-    done = subprocess.run(args, capture_output=True, text=True, env={**os.environ, **env})
+    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_R2_", "R2_"))}
+    done = subprocess.run(args, capture_output=True, text=True, env={**ours, **env})
     assert "X-Amz" not in done.stdout + done.stderr and SECRET not in done.stdout + done.stderr  # no signed link in a log
     return done
 
@@ -278,3 +284,108 @@ def test_a_store_with_the_pointer_only_at_its_old_key_fails_one_step_until_the_c
     assert "SN120_V2_DIR/site/pull.py" in start and flags and all(f'"{flag}"' in PULL.read_text() for flag in flags)
     assert set(re.findall(r"SN120_[A-Z0-9_]+", unit.split("[Unit]")[1])) == set(re.findall(r"^#   (SN120_[A-Z0-9_]+)", unit, re.M))
     assert "Unit=sn120-v2-site-pull.service" in (units / "sn120-v2-site-pull.timer").read_text()
+
+
+class ReadOnlyToken(BaseHTTPRequestHandler):
+    """The store as a token with object read only sees it: GET and HEAD go to the fake, every other call is denied."""
+
+    def forward(self):
+        upstream = http.client.HTTPConnection(*self.server.target)
+        upstream.request(self.command, self.path, headers=dict(self.headers))
+        answer = upstream.getresponse()
+        body = answer.read()
+        self.send_response(answer.status)
+        for name, value in answer.getheaders():
+            if name.lower() not in ("transfer-encoding", "connection", "content-length", "server", "date"):
+                self.send_header(name, value)
+        self.send_header("Content-Length", answer.getheader("Content-Length") or str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+        upstream.close()
+
+    def deny(self):
+        self.server.denied.append(f"{self.command} {self.path}")
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        body = b'<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>'
+        self.send_response(403)
+        self.send_header("Content-Type", "application/xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_HEAD = forward
+    do_PUT = do_POST = do_DELETE = do_PATCH = deny  # PUT: object, part, copy. POST: multipart, delete of many. DELETE.
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def read_only(endpoint):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ReadOnlyToken)
+    host, _, port = endpoint.removeprefix("http://").partition(":")
+    server.target, server.denied = (host, int(port)), []
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+def test_the_whole_run_passes_with_a_token_that_cannot_write_and_a_file_with_the_plain_names(env, store, read_only, tmp_path):
+    site, proxy = tmp_path / "site", f"http://127.0.0.1:{read_only.server_address[1]}"
+    for number in range(2, 6):  # more rounds than --keep-rounds, so that the run also trims
+        store.put(layout.round_file(f"r{number:06d}"), b"{}")
+        store.put(layout.winner_batch(f"r{number:06d}"), b"[]")
+    store.put(layout.BENCHMARKS, b"{}")
+    token = {"R2_ACCOUNT_ID": "0123abcd", "R2_ACCESS_KEY_ID": "fake-id", "R2_SECRET_ACCESS_KEY": SECRET,
+             "R2_BUCKET": env["SN120_R2_BUCKET"], "R2_ENDPOINT": proxy}  # the names of the operator's file; no SN120_R2_* name
+    first = pull(token, site, "--keep-rounds", "4")
+    second = pull(token, site, "--keep-rounds", "2")
+    assert first.returncode == 0 and second.returncode == 0, first.stderr + second.stderr
+    assert "removed 2," in second.stdout and read_only.denied == []  # the run made no write call, and no call was refused
+    item = json.loads((site / LINKS).read_text())["base"]["files"][0]
+    with urllib.request.urlopen(item["url"]) as response:  # a link signed with that token reads the file
+        assert hashlib.sha256(response.read()).hexdigest() == item["sha256"] and item["url"].startswith(proxy)
+    ours = {name: value for name, value in os.environ.items() if not name.startswith(("SN120_R2_", "R2_"))}
+    (site / "llms.txt").unlink()  # the reset tool's copy of llms.txt takes the same names and makes no write call either
+    reset = subprocess.run([sys.executable, str(PULL.with_name("reset.py")), "llms", "--site-dir", str(site)], capture_output=True, text=True, env={**ours, **token})
+    assert reset.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT) and read_only.denied == [], reset.stderr
+
+    writer = R2Store.from_env({**env, "SN120_R2_ENDPOINT": proxy}, attempts=1)  # the same store does refuse a write
+    for call in (lambda: writer.put("public/x", b"x"), lambda: writer.delete(layout.MINING_JSON), lambda: writer.copy(layout.MINING_JSON, "public/y")):
+        with pytest.raises(InfraError):
+            call()
+    assert [line.split()[0] for line in read_only.denied] == ["PUT", "DELETE", "PUT"] and store.exists(layout.MINING_JSON)
+
+    done = pull({name: value for name, value in token.items() if name not in ("R2_ENDPOINT", "R2_ACCOUNT_ID")}, site)
+    assert done.returncode == 1 and "nothing written" in done.stderr  # a missing name is named, and no value is shown
+    assert all(name in done.stderr for name in ("SN120_R2_ENDPOINT", "R2_ENDPOINT", "R2_ACCOUNT_ID")) and env["SN120_R2_BUCKET"] not in done.stderr
+
+
+def test_a_store_setting_comes_from_its_plain_name_only_when_the_v2_name_is_not_set():
+    host = "0123abcd.r2.cloudflarestorage.com"
+    plain = {"R2_ENDPOINT": host, "R2_BUCKET": "bucket-a", "R2_ACCESS_KEY_ID": "plain-id", "R2_SECRET_ACCESS_KEY": SECRET, "PATH": "/bin"}
+    want = {"SN120_R2_ENDPOINT": f"https://{host}", "SN120_R2_BUCKET": "bucket-a", "SN120_R2_ACCESS_KEY_ID": "plain-id", "SN120_R2_SECRET_ACCESS_KEY": SECRET}
+    for form in (host, f" {host}/ ", f"https://{host}", f"https://{host}/", f"{host}/bucket-a", f"https://{host}/bucket-a/"):
+        assert store_env({**plain, "R2_ENDPOINT": form}) == want  # a host name or a URL, with or without the bucket
+    assert store_env({**plain, "R2_ENDPOINT": "", "R2_ACCOUNT_ID": "0123abcd"}) == want  # no endpoint: built from the account id
+    assert store_env({**plain, "R2_ACCOUNT_ID": "ffff"}) == want  # the endpoint wins over the account id
+    assert store_env({**plain, "R2_ENDPOINT": "http://127.0.0.1:5000"})["SN120_R2_ENDPOINT"] == "http://127.0.0.1:5000"
+    v2 = {"SN120_R2_ENDPOINT": "http://127.0.0.1:1", "SN120_R2_BUCKET": "bucket-b", "SN120_R2_ACCESS_KEY_ID": "v2-id",
+          "SN120_R2_SECRET_ACCESS_KEY": "v2-secret", "SN120_R2_PREFIX": "smoke"}
+    assert store_env({**plain, **v2}) == v2  # a set v2 name wins, one name at a time
+    assert store_env({**plain, "SN120_R2_BUCKET": "bucket-b"}) == {**want, "SN120_R2_BUCKET": "bucket-b"}
+    for name, plain_name in PLAIN_NAMES.items():
+        with pytest.raises(ConfigError) as caught:
+            store_env({key: value for key, value in plain.items() if key != plain_name})
+        text = str(caught.value)
+        assert name in text and plain_name in text and SECRET not in text and "plain-id" not in text and host not in text
+    for bad in (f"https://{host}/other/path", f"ftp://{host}", f"https://user:{SECRET}@{host}", f"{host}?x=1", "https://", f"{host}:port"):
+        with pytest.raises(ConfigError) as caught:
+            store_env({**plain, "R2_ENDPOINT": bad})
+        assert "R2_ENDPOINT" in str(caught.value) and bad not in str(caught.value) and SECRET not in str(caught.value)
+    with pytest.raises(ConfigError, match="R2_ACCOUNT_ID"):
+        store_env({**plain, "R2_ENDPOINT": "", "R2_ACCOUNT_ID": "evil.example/x"})
+    assert links.TOKEN_NAMES == {name: PLAIN_NAMES[name] for name in ("SN120_R2_ACCESS_KEY_ID", "SN120_R2_SECRET_ACCESS_KEY")}
+    assert "store_env" not in (PULL.parents[1] / "sn120_v2" / "r2.py").read_text()  # R2Store.from_env reads only SN120_R2_*
