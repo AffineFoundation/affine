@@ -243,6 +243,18 @@ def test_prune_keeps_what_is_named_and_adopt_checks_the_hash(box, tmp_path):
     assert resident.tree("nowhere", identity).name == identity  # served from disk: no download
 
 
+def test_files_hashed_side_by_side_give_the_hashes_and_the_order_of_one_by_one(tmp_path):
+    files = {f"d{index % 3}/f{index:02d}": f"data {index}".encode() * index for index in range(40)}
+    for name, data in files.items():
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_bytes(data)
+    found = hash_tree(tmp_path)
+    assert found == {name: sha256_hex(data) for name, data in files.items()} and list(found) == sorted(files)
+    assert manifest_digest(found) == manifest_digest(hash_tree(tmp_path, workers=1))
+    (tmp_path / "empty").mkdir()
+    assert hash_tree(tmp_path / "empty") == {}
+
+
 def test_an_upload_is_checked_against_the_store(box, tmp_path):
     (tmp_path / "f").write_bytes(b"data")
 

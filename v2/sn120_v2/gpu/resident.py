@@ -21,9 +21,11 @@ from ..seams import ObjectStore
 from ..types import HeadVersion
 
 
-def hash_tree(path: Path) -> dict[str, str]:
-    """``{file name: sha256}`` of every file below ``path``."""
-    return {file.relative_to(path).as_posix(): file_sha256(file) for file in sorted(path.rglob("*")) if file.is_file()}
+def hash_tree(path: Path, workers: int = 8) -> dict[str, str]:
+    """``{file name: sha256}`` of every file below ``path``. Files are hashed side by side: a head is 56 GB."""
+    files = [file for file in sorted(path.rglob("*")) if file.is_file()]
+    with ThreadPoolExecutor(workers) as pool:
+        return {file.relative_to(path).as_posix(): sha for file, sha in zip(files, pool.map(file_sha256, files))}
 
 
 def upload_tree(store: ObjectStore, path: Path, prefix: str, workers: int = 4) -> tuple[dict[str, str], dict[str, int]]:
