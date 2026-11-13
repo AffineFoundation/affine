@@ -178,8 +178,8 @@ class IRTSampler:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
         params = params or Params()
         config = {
-            "middle_band": list(params.irt_middle_band),
-            "explore_frac": params.irt_explore_frac,
+            "middle_band": [float(edge) for edge in params.irt_middle_band],  # always decimals: one JSON form
+            "explore_frac": float(params.irt_explore_frac),
             "explore_below": EXPLORE_BELOW,
             "band_floor": BAND_FLOOR,
             "prior_precision": PRIOR_PRECISION,
