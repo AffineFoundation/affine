@@ -16,3 +16,4 @@ pytest
 # chain: weights writer and chain reader
 
 # miner: miner tooling and llms.txt
+transformers

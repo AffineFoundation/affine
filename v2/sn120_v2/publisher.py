@@ -14,21 +14,22 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
+from .admission import CONTROL_TOKENS, FORMATS
 from .canonical import digest, sha256_hex, to_jsonable
 from .errors import ContractError, InfraError, V2Error, VerifyError
+from .judging import drop_margin
 from .params import MinerBound, Params, Recipe
 from .seams import ObjectStore
-from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadVersion
+from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadVersion, Verdict
 
 SCHEMA = "affine-mining-v2"
 REPO = "https://github.com/AffineFoundation/affine"
-BATCH_VERSIONS = ("affine-batch-v1", "affine-batch-v2", "affine-batch-v3")
-TRAIN_VERSIONS = BATCH_VERSIONS[1:]  # a v1 file may not carry "train"
-CONTROL_TOKENS = ("<|im_start|>", "<|im_end|>", "<|endoftext|>")
+TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
 PRIVATE_ZONES = ("private/", "pending/")
@@ -117,8 +118,8 @@ def contract(params: Params, public_url: str) -> dict[str, Any]:
         "recipe_id": params.recipe_id,
         "miner_settable": miner_settable(recipe),
         "batch_file": {
-            "versions": list(BATCH_VERSIONS),
-            "train_allowed_in": list(TRAIN_VERSIONS),
+            "versions": list(FORMATS),
+            "train_allowed_in": list(TRAIN_FORMATS),
             "forbidden_text": list(CONTROL_TOKENS),
             "private_object": layout.miner_object("HOTKEY"),
         },
@@ -155,6 +156,8 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "") -> dict[s
     if "head" not in plain:
         raise ContractError("the snapshot has no head")
     HeadVersion.from_dict(plain["head"])  # a head whose id does not match its content is refused
+    for verdict in (plain.get("verdicts") or {}).values():
+        Verdict.from_dict(verdict)  # a verdict has no field for batch content or train values
     return {"schema": SCHEMA, "snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url)}
 
 
@@ -177,9 +180,6 @@ def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
         "",
         f"- Training code: `sn120_v2/gpu/` in {REPO}/tree/v2/v2 (sha256 `{show(recipe.code_digest)}`).",
         "- Each prompt is one user message, rendered with the chat template of the head and the generation prompt.",
-        "  The advantage of a rollout comes from its reward. The official grader has already checked the reward.",
-        f"- An output with fewer than {recipe.train_max_output_tokens} tokens ends with the end-of-sequence token.",
-        "  A longer output is cut at that cap and gets no end-of-sequence token.",
         "",
         "### What you may set",
         "",
@@ -191,7 +191,7 @@ def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
         "- Every key is optional. A key that you do not set keeps its default.",
         "- Values are never clamped. A value outside its bound, a value of the wrong type, or any other key under",
         "  `train` makes the whole file invalid.",
-        f"- `train` is allowed in {show(TRAIN_VERSIONS)}. It is not allowed in {BATCH_VERSIONS[0]}.",
+        f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
         "- Your `train` values are published only if your batch wins.",
     ]
 
@@ -245,7 +245,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
 def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     recipe, upload = params.recipe, (doc.get("upload") or {}).get("sealed_links")
     example = {
-        "version": TRAIN_VERSIONS[0],
+        "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
         "train": {recipe.miner_bounds[0].key: getattr(recipe, recipe.miner_bounds[0].key)} if recipe.miner_bounds else {},
         "groups": [{"prompt": "<problem text>", "rollouts": [{"output": "<reasoning> \\boxed{<answer>}", "reward": 1.0}]}],
@@ -260,25 +260,28 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         json.dumps(example, indent=1),
         "```",
         "",
-        f"- UTF-8 JSON, at most {params.max_batch_bytes} bytes. `version` is one of {show(BATCH_VERSIONS)}.",
-        "  `hotkey` must be the owner of the object.",
-        "- `groups`: a list of {prompt, rollouts}. Each prompt is non-empty text and differs from every other prompt.",
-        "  Each prompt has at least 1 rollout. A rollout is {output, reward}.",
-        f"- `output`: the assistant text. {show(CONTROL_TOKENS)} may not appear in a prompt or an output.",
-        f"- Training reads at most {recipe.train_max_output_tokens} output tokens and {recipe.train_max_context_tokens}",
-        "  prompt + output tokens of a rollout.",
-        f"- Caps: {params.max_prompts} prompts and {params.max_rollouts} rollouts. Prompts over a cap are dropped whole,",
-        "  in file order. The part that is kept must be valid.",
-        "- `reward`: a finite number. It must equal the reward that the official grader gives to (prompt, output),",
-        f"  within {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid.",
-        f"- Reasoning: each output needs at least {params.min_reasoning_tokens} tokens of reasoning before the first",
-        f"  `\\boxed{{}}`, and at least {show(params.reasoning_token_share)} of the tokens of the file must be reasoning.",
-        f"- At most {show(params.max_answer_only_frac)} of the rollouts may be an answer with no reasoning.",
-        f"- No boxed answer may repeat in more than {show(params.max_answer_repeat_frac)} of the rollouts or in more than",
-        f"  {params.max_answer_repeat_count} rollouts, whichever limit is higher.",
-        f"- At least {show(params.min_pool_prompt_frac)} of the prompts must come from the public task pool (0 = no rule).",
+        f"- UTF-8 JSON, at most {params.max_batch_bytes} bytes. Top keys: `version`, `hotkey`, `groups`, and the optional",
+        f"  `train`. `version` is one of {show(FORMATS)}. `hotkey` must be the owner of the object.",
+        "- `groups`: a non-empty list of {prompt, rollouts}, with no other key. Each prompt is non-empty text and",
+        "  differs from every other prompt. Each prompt has at least 1 rollout: {output, reward}, with no other key.",
+        f"- {show(CONTROL_TOKENS)} may not appear in a prompt or an output.",
+        f"- Caps: {params.max_prompts} prompts and {params.max_rollouts} rollouts. Whole groups are kept in file order while",
+        "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
+        f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
+        f"  {params.max_context_tokens} tokens. The prompt is counted as one user message in the chat template of the",
+        f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
+        f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout.",
+        f"- Reasoning: the reasoning of an output is the text before its first `\\boxed`. A rollout with fewer than",
+        f"  {params.min_reasoning_tokens} reasoning tokens is answer-only. At most {show(params.max_answer_only_frac)} of the",
+        f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
+        "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
+        f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
+        "- `reward`: a finite number. It must equal the grade that the official grader gives to (prompt, output),",
+        f"  within {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. At least",
+        f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
+        "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
-        "  `python v2/miner/check_batch.py --mining-json mining.json --hotkey <ss58> batch.json`",
+        "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`",
         "- Upload: each registered hotkey has a sealed link. It is a SealedBox that only the private key of the hotkey",
         "  can open. It holds a time-limited upload URL for your object and the headers to send. PUT the file bytes",
         f"  to that URL. Then read your verdict in section 4. Where to get the link: {upload or 'not published yet'}.",
@@ -287,7 +290,11 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
 
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     irt, kings, keys = doc.get("irt") or {}, doc.get("kings") or [], object_keys()
-    looks = params.look_sizes()
+    looks, n = params.look_sizes(), params.n_tasks
+    drops = [
+        f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
+        for look, size in enumerate(looks[:-1])
+    ] or "no early look"
     return [
         "## 6. Judging",
         "",
@@ -306,12 +313,14 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
         "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
         f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
-        f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA must",
-        f"  be below max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
+        f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
         "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round.",
-        f"- Looks: scores are checked after {show(looks)} tasks. At an early look with at least {params.min_scored_tasks}",
-        f"  tasks, a LoRA is dropped if z is at or below {show(params.futility_z)}. The win rule runs only at the last look.",
+        f"- Looks: scores are checked after {show(looks)} tasks. The win rule runs only at the last look. An early",
+        "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
+        f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
+        f"  total level {show(params.drop_alpha)}. For this draw, a LoRA is dropped when z is at or below: {show(drops)}.",
         f"- If fewer than {show(params.min_cover)} of the rollouts resolve without an infrastructure error, the entry is",
         "  `no_decision`.",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
@@ -344,9 +353,10 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 10. Reproduce a round at home",
         "",
-        "`python v2/miner/reproduce.py --mining-json mining.json --hotkey <ss58> batch.json` checks your file, trains",
-        "the LoRA and scores it against null M, with the same trainer and evaluator code as the validator.",
-        "`python v2/miner/reproduce.py --mining-json mining.json --bounds` prints the bounds of section 2.",
+        "`python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> --draw draw.json",
+        "--backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it against null M. It",
+        "uses the same check, trainer, evaluator and judging code as the validator, and your `train` values.",
+        "`python v2/miner/affine_miner.py bounds --mining-json mining.json` prints the bounds of section 2.",
     ]
 
 
