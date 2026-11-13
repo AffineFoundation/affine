@@ -163,6 +163,7 @@ class Build:
         return EntryResult(position, SCORED, lora=artifact, outcomes=(outcomes,), eliminated_at_look=look)
 
     replace = staticmethod(dataclasses.replace)
+    h = staticmethod(h)
 
 
 @pytest.fixture
