@@ -162,7 +162,7 @@ def build_import(
     when = {turn["epoch_index"]: turn.get("turn_at") for turn in turns}
     score = {p["green_epoch"]: p.get("z") for p in payees}
     kings = tuple(
-        King(uid, hotkey, f"v1-e{epoch}", "", int(when.get(epoch) or 0), float(score[epoch]) if type(score[epoch]) is float else 0.0)
+        King(uid, hotkey, f"v1-e{epoch}", "", int(when.get(epoch) or 0), float(score[epoch]) if type(score[epoch]) in (int, float) else 0.0)
         for epoch, uid, hotkey in reversed(listed)
     )
 

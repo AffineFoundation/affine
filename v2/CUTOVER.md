@@ -1,0 +1,65 @@
+# Cutover: start v2 from v1's state
+
+Do the smoke test first: [SMOKE.md](SMOKE.md). Cut over only after it passes.
+
+One command builds the two records that v2 starts from. It reads two public files, `https://affine.io/k1.json` and `https://affine.io/mining.json`. It needs no credential, reads no v1 host and no bucket, and writes nothing to the chain.
+
+- `genesis.json` (`GenesisSpec`): the fresh MiMo genesis head and the validator hotkey.
+- `v1_import.json` (`V1Import`): v1's last 10 kings; each registration and hotkey that had its turn in v1; the seats v1 moved to the back; the seats that are owed a turn at the front.
+
+v2 builds its queue from the chain: each registration that is not in the served lists waits, in order of registration block, then UID. Thus each paid registration gets one turn, and no registration gets two.
+
+## Steps
+
+1. **Stop v1's round service** (Jacob, on the v1 host). v1 must not start a turn after the import. Keep v1's hourly weight writer on until step 6.
+2. **Dry run.** It prints the import and writes nothing. Run it two times; the kings and the seats must be the same.
+
+   ```
+   cd v2 && source .venv/bin/activate
+   python -m sn120_v2.cutover --dry-run --undecided front
+   ```
+
+3. **Read the output.** Make sure that the 10 kings are the miners that v1 pays now, and that the front seats are the turns that v1 did not judge.
+4. **Real run.** `--out` must be a new directory. The command writes the two records and a copy of the two v1 files (the evidence).
+
+   ```
+   python -m sn120_v2.cutover --master-digest <sha256> --validator-hotkey <address> \
+       --undecided front --chain <snapshot.json> --out <new directory>
+   ```
+
+5. **Keep the directory.** Put it in the durable bucket with the v2 run records.
+6. **Start v2** from `genesis.json` and `v1_import.json` (see SMOKE.md for the start command), and **stop v1's hourly weight writer in the same change**. Only one service can set weights.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--dry-run` or `--out <dir>` | Exactly one. Print only, or write the records to a new directory. |
+| `--master-digest` | sha256 digest of the genesis fp32 master files. The node computes it when it builds the genesis (SMOKE.md). No default. |
+| `--validator-hotkey` | Public SS58 address of the validator hotkey that v1 uses. v2 keeps it. A wrong character is refused. No default. |
+| `--undecided front` or `served` | For turns that v1 took and did not judge. `front`: not charged, first in the v2 queue. `served`: charged, no new turn. |
+| `--chain <file>` | A `ChainSnapshot` as JSON from v2's chain reader. Adds checks, and prints the start queue and the first weights. |
+| `--max-age-s` | Oldest `k1.json` accepted, in seconds. Default 3600. |
+| `--k1`, `--mining` | Another URL or a local file, instead of the public URLs. |
+
+## What Jacob must give or decide
+
+- The validator hotkey address, and the wallet for that hotkey on the v2 host (step 6 only; this command never reads a wallet).
+- The fp32 master digest, from the genesis build on the node.
+- `--undecided`. On 13 Nov 2026, v1 had 14 turns without a verdict. We recommend `front`: those miners paid, and v1 did not judge them.
+- `--max-age-s`, only if v1's publisher stopped and `k1.json` is old. Use the smallest value that accepts the file.
+- Miner files. v2 reads them at the same key as v1: `private/ff/v1/miners/<hotkey>/batch.json`. If v2 uses another bucket, copy that prefix with the bucket credentials. This command does not copy objects.
+- Stop of v1's round service (step 1) and of v1's weight writer (step 6).
+
+## When the command refuses
+
+It exits with code 2, prints `CUTOVER IMPORT REFUSED` and the reason, and writes nothing. It refuses when:
+
+- a v1 file cannot be read, has an unknown version or lacks a field;
+- `k1.json` is older than `--max-age-s`, or `mining.json` is from another epoch or shows a head that `k1.json` does not know;
+- the served lists, their counts and the turn history do not agree, or a waiting seat is also listed as served;
+- the payees are not the last 10 distinct GREEN turns (a `pending` or timeout verdict is never a king);
+- a turn has no verdict and `--undecided` is absent;
+- with `--chain`: the snapshot is older than v1's chain read, the validator hotkey is not registered, or no king is registered (v2 would burn all weight).
+
+Do not edit a v1 file to make the command pass. Find the cause in v1, or ask.
