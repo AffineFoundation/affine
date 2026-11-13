@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import math
+import random
 import statistics
+from statistics import NormalDist
 
 import pytest
 
 from sn120_v2.errors import ContractError, HeadMismatchError
-from sn120_v2.judging import check_result, decide, drop_at_look, estimate, pick_winner, score_entry, scored_prefix
+from sn120_v2.judging import (
+    check_result,
+    decide,
+    drop_at_look,
+    estimate,
+    pick_winner,
+    score_entry,
+    scored_prefix,
+    upper_final_z,
+)
 from sn120_v2.types import LOST, NO_DECISION, SKIP, WINNER, EntryResult, Score
 
 
@@ -149,25 +160,25 @@ def test_the_bar_has_no_correction_for_the_number_of_candidates(build):
     assert alone.winner_queue_pos == crowd.winner_queue_pos == 0
 
 
-@pytest.mark.parametrize("caps,ok", [(32, True), (33, False), (40, False)])
-def test_cap_hit_must_be_below_the_floor_when_m_caps_rarely(build, caps, ok):
+@pytest.mark.parametrize("caps,ok", [(32, True), (33, True), (34, False)])
+def test_cap_hit_on_the_floor_passes_and_only_a_share_above_it_is_rejected(build, caps, ok):
     null = runs(("C", 10), ("F", 50), ("P", 40))
     lora = runs(("C", caps), ("P", 100 - caps))
     score = one_score(build, null, lora)
     assert score.cap_rate == pytest.approx(caps / 100) and score.null_cap_rate == pytest.approx(0.10)
-    assert score.z > 1
+    assert score.z > 1, "limit is max(0.33, 0.10 + 0.02) = 0.33; a share of exactly 0.33 is not greater than it"
     assert score.eligible is ok
 
 
-@pytest.mark.parametrize("caps,ok", [(41, True), (42, False)])
-def test_cap_hit_limit_follows_m_when_m_caps_often(build, caps, ok):
+@pytest.mark.parametrize("caps,ok", [(41, True), (42, True), (43, False)])
+def test_cap_hit_on_the_head_relative_limit_passes_and_only_above_it_is_rejected(build, caps, ok):
     null = runs(("C", 40), ("F", 40), ("P", 20))
     lora = runs(("C", caps), ("P", 100 - caps))
     score = one_score(build, null, lora)
     assert score.null_cap_rate == pytest.approx(0.40), "limit is max(0.33, 0.40 + 0.02) = 0.42"
     assert score.eligible is ok
     if not ok:
-        assert any("cap-hit" in reason for reason in score.reasons)
+        assert any("cap-hit rate 0.4300 is above 0.4200" in reason for reason in score.reasons)
 
 
 def test_cap_hit_settings_are_parameters(build):
@@ -302,19 +313,59 @@ def test_the_decision_is_a_pure_function_of_its_inputs(build):
 LOOKS = dict(looks=(0.25, 0.5, 1.0), min_scored_tasks=20)
 
 
-def test_an_early_look_can_only_drop_a_lora_that_is_clearly_behind(build):
+def at_look(z: float, n_tasks: int) -> Score:
+    """A score at an early look with a given z."""
+    return Score(n_tasks, z * 0.01, 0.01, z, 0.5, 0.5, 0.0, 0.0, 1.0, False)
+
+
+def test_a_lora_is_dropped_only_when_its_upper_bound_cannot_reach_the_bar(build):
     params = build.params(n_tasks=100, **LOOKS)
-    behind = score_entry((1.0,) * 100, (runs(("P", 20), ("F", 80)),), (runs(("F", 25), ("-", 75)),), params)
-    assert behind.n_tasks == 25 and behind.z <= -1
-    assert drop_at_look(behind, params)
-    level = score_entry((1.0,) * 100, (runs(("P", 100)),), (runs(("P", 25), ("-", 75)),), params)
-    assert not drop_at_look(level, params)
+    spent = lambda share: 0.05 * math.log(1 + (math.e - 1) * share)
+    for look, share, earlier in ((0, 0.25, 0.0), (1, 0.5, 0.25)):
+        margin = NormalDist().inv_cdf(1 - (spent(share) - spent(earlier)))
+        # upper bound of the final z is (z + margin) / sqrt(share); it reaches the bar of 1 at this z:
+        edge = math.sqrt(share) - margin
+        n = int(share * 100)
+        assert upper_final_z(at_look(edge, n), look, 100, params) == pytest.approx(1.0)
+        assert drop_at_look(at_look(edge - 1e-6, n), look, 100, params)
+        assert not drop_at_look(at_look(edge + 1e-6, n), look, 100, params)
+        assert edge < -1.4, "a LoRA must be well behind M before it is dropped"
 
 
-def test_a_look_with_too_few_tasks_drops_nothing(build):
-    params = build.params(n_tasks=100, looks=(0.1, 1.0), min_scored_tasks=20)
-    behind = score_entry((1.0,) * 100, (runs(("P", 100)),), (runs(("F", 10), ("-", 90)),), params)
-    assert behind.n_tasks == 10 and not drop_at_look(behind, params)
+def test_only_an_early_look_with_enough_tasks_can_drop(build):
+    params = build.params(n_tasks=100, **LOOKS)
+    assert drop_at_look(at_look(-9.0, 25), 0, 100, params)
+    assert not drop_at_look(at_look(-9.0, 100), 2, 100, params), "never at the last look"
+    assert not drop_at_look(at_look(-9.0, 30), 0, 100, params), "the score must be the score of that look"
+    few = build.params(n_tasks=100, looks=(0.1, 1.0), min_scored_tasks=20)
+    assert not drop_at_look(at_look(-9.0, 10), 0, 100, few), "too few tasks to judge"
+    no_spread = Score(25, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, False)
+    assert not drop_at_look(no_spread, 0, 100, params), "no standard error, no drop"
+
+
+def early_drop_rate(build, final_z: float, paths: int = 8000) -> float:
+    """Share of LoRAs dropped at an early look, when the z they are truly heading for is ``final_z``."""
+    params = build.params(n_tasks=1000, **LOOKS)
+    rng = random.Random(7)
+    dropped = 0
+    for _ in range(paths):
+        walk = 0.0
+        for look, (start, stop) in enumerate(((0.0, 0.25), (0.25, 0.5))):
+            walk += final_z * (stop - start) + rng.gauss(0.0, math.sqrt(stop - start))
+            if drop_at_look(at_look(walk / math.sqrt(stop), int(stop * 1000)), look, 1000, params):
+                dropped += 1
+                break
+    return dropped / paths
+
+
+def test_a_lora_on_the_bar_is_dropped_early_less_often_than_drop_alpha(build):
+    assert early_drop_rate(build, final_z=1.0) < 0.05
+    assert early_drop_rate(build, final_z=2.0) < 0.015, "a real winner is almost never dropped"
+
+
+def test_a_lora_far_behind_is_dropped_early_and_one_level_with_m_rarely(build):
+    assert early_drop_rate(build, final_z=-4.0) > 0.85
+    assert early_drop_rate(build, final_z=0.0) < 0.15
 
 
 def test_the_win_test_is_never_used_at_an_early_look(build):
@@ -322,17 +373,14 @@ def test_the_win_test_is_never_used_at_an_early_look(build):
     ahead = score_entry((1.0,) * 100, (runs(("F", 100)),), (runs(("P", 10), ("F", 15), ("-", 75)),), params)
     assert ahead.z > 1, "far ahead at the look"
     assert not ahead.eligible, "but a part of the draw can never make a winner"
-    assert not drop_at_look(ahead, params)
+    assert not drop_at_look(ahead, 0, 100, params)
 
 
-def test_the_futility_bound_is_a_parameter(build):
-    null, lora = (runs(("P", 30), ("F", 70)),), (runs(("P", 22), ("F", 3), ("-", 75)),)
-    weights = (1.0,) * 100
-    mild = score_entry(weights, null, lora, build.params(n_tasks=100, **LOOKS))
-    assert -1 < mild.z < 0 or mild.z <= -1
-    strict = build.params(n_tasks=100, futility_z=mild.z + 0.01, **LOOKS)
-    loose = build.params(n_tasks=100, futility_z=mild.z - 0.01, **LOOKS)
-    assert drop_at_look(mild, strict) and not drop_at_look(mild, loose)
+def test_drop_alpha_is_a_parameter(build):
+    loose = build.params(n_tasks=100, drop_alpha=0.5, **LOOKS)
+    strict = build.params(n_tasks=100, drop_alpha=0.001, **LOOKS)
+    assert drop_at_look(at_look(-1.0, 25), 0, 100, loose)
+    assert not drop_at_look(at_look(-1.0, 25), 0, 100, strict)
 
 
 def looks_case(build, dropped_outcomes: str, look: int):

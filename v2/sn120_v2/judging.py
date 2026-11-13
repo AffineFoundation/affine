@@ -18,21 +18,35 @@ term, so it is slightly on the safe side. With equal weights it is the
 paired standard error: sd(d) / sqrt(n).
 
 Win rule. A LoRA is eligible when it was scored on every task, z is strictly
-above ``z_bar``, and its cap-hit rate is below
-max(cap_hit_floor, null cap-hit rate + cap_hit_margin). The eligible LoRA
-with the highest delta wins. A tie goes to the earlier-queued entry. With no
-eligible LoRA, M stays.
+above ``z_bar``, and its cap-hit rate is not above
+max(cap_hit_floor, null cap-hit rate + cap_hit_margin). Only a rate strictly
+greater than that limit is rejected. The eligible LoRA with the highest
+delta wins. A tie goes to the earlier-queued entry. With no eligible LoRA,
+M stays. The bar has no correction for the number of LoRAs in the round.
 
 Early looks. The win rule runs only at the last look. At an earlier look a
-LoRA is only ever dropped, and only when it is at least ``-futility_z``
-standard errors behind M. Dropping cannot create a winner, so the final test
-needs no correction.
+LoRA can only be dropped, and only when it can no longer reach the bar:
+
+* A look that has scored a share t of the draw gives z_t. The z this LoRA
+  is heading for at the end of the eval is estimated by z_t / sqrt(t), with
+  standard error 1 / sqrt(t).
+* Its upper confidence bound is (z_t + c_k) / sqrt(t). The LoRA is dropped
+  when that bound is at or below ``z_bar``.
+* c_k comes from an alpha-spending function. Look k may spend
+  a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = drop_alpha * ln(1 + (e - 1) * t)
+  (Lan-DeMets, Pocock type), and c_k is the normal quantile of 1 - a_k.
+  The a_k add up to less than ``drop_alpha``. So a LoRA whose true level is
+  on the bar or above it is dropped early with a total chance below
+  ``drop_alpha``, however many looks there are.
+
+Dropping cannot create a winner, so the final test needs no correction.
 """
 
 from __future__ import annotations
 
 import math
 from fractions import Fraction
+from statistics import NormalDist
 from typing import Sequence
 
 from .errors import ContractError, HeadMismatchError
@@ -94,13 +108,14 @@ def _as_written(value: float) -> Fraction:
 
 
 def cap_hit_ok(lora_caps: int, null_caps: int, rollouts: int, params: Params) -> bool:
-    """Exact test of: cap rate < max(cap_hit_floor, null cap rate + cap_hit_margin).
+    """Exact test of: cap rate <= max(cap_hit_floor, null cap rate + cap_hit_margin).
 
-    It uses whole-number counts, so a LoRA exactly on the limit is rejected
-    and no rounding error can move the limit.
+    A LoRA is rejected only when its cap-hit share is strictly greater than
+    the limit. A share exactly on the limit passes. The test uses
+    whole-number counts, so no rounding error can move the limit.
     """
     limit = max(_as_written(params.cap_hit_floor), Fraction(null_caps, rollouts) + _as_written(params.cap_hit_margin))
-    return Fraction(lora_caps, rollouts) < limit
+    return Fraction(lora_caps, rollouts) <= limit
 
 
 def cover_ok(outcomes: Sequence[str], n: int, params: Params) -> bool:
@@ -157,7 +172,7 @@ def score_entry(
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
     if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params):
-        reasons.append(f"cap-hit rate {cap_rate:.4f} is not below {cap_limit(null_cap_rate, params):.4f}")
+        reasons.append(f"cap-hit rate {cap_rate:.4f} is above {cap_limit(null_cap_rate, params):.4f}")
     return Score(
         n_tasks=n,
         delta=delta,
@@ -173,9 +188,32 @@ def score_entry(
     )
 
 
-def drop_at_look(score: Score, params: Params) -> bool:
-    """At an early look, drop a LoRA that is clearly behind M. This never names a winner."""
-    return score.n_tasks >= params.min_scored_tasks and score.z <= params.futility_z
+def spent_alpha(share: float, alpha: float) -> float:
+    """Error that early drops may have spent once ``share`` of the draw is scored (Lan-DeMets, Pocock type)."""
+    return alpha * math.log(1.0 + (math.e - 1.0) * share)
+
+
+def drop_margin(look: int, n_total: int, params: Params) -> float:
+    """c_k: how many standard errors the upper confidence bound sits above the estimate at early look k."""
+    sizes = params.look_sizes(n_total)
+    earlier = sizes[look - 1] / n_total if look else 0.0
+    allowed = spent_alpha(sizes[look] / n_total, params.drop_alpha) - spent_alpha(earlier, params.drop_alpha)
+    return NormalDist().inv_cdf(1.0 - allowed)
+
+
+def upper_final_z(score: Score, look: int, n_total: int, params: Params) -> float:
+    """Upper confidence bound on the z this LoRA is heading for at the end of the eval."""
+    return (score.z + drop_margin(look, n_total, params)) / math.sqrt(score.n_tasks / n_total)
+
+
+def drop_at_look(score: Score, look: int, n_total: int, params: Params) -> bool:
+    """True when a LoRA can no longer reach the win bar. Only an early look can drop, and it never names a winner."""
+    sizes = params.look_sizes(n_total)
+    if not 0 <= look < len(sizes) - 1 or score.n_tasks != sizes[look]:
+        return False
+    if score.n_tasks < params.min_scored_tasks or score.se <= 0:
+        return False
+    return upper_final_z(score, look, n_total, params) <= params.z_bar
 
 
 def pick_winner(candidates: Sequence[tuple[int, Score]]) -> int | None:
@@ -235,7 +273,7 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(0 <= look < len(look_sizes) - 1, f"{what}: can only be dropped at an early look")
         _need(scored == look_sizes[look], f"{what}: dropped at look {look} but scored on {scored} tasks")
         partial = score_entry(draw.weights, result.null_outcomes, entry.outcomes, params)
-        _need(drop_at_look(partial, params), f"{what}: the drop rule does not hold at look {look}")
+        _need(drop_at_look(partial, look, n, params), f"{what}: the drop rule does not hold at look {look}")
 
 
 def _entry_decision(seat, entry: EntryResult, status: str, reason: str, score: Score | None) -> EntryDecision:
