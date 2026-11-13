@@ -257,7 +257,20 @@ def test_a_store_that_does_not_answer_keeps_the_last_good_files(env, store, tmp_
     assert pull(env, site).returncode == 0  # the benchmark file that was copied stays; the site is built again
 
 
-def test_the_unit_starts_the_command_with_flags_that_it_has_and_lists_every_blank():
+def test_a_store_with_the_pointer_only_at_its_old_key_fails_one_step_until_the_controller_writes_the_new_key(env, store, tmp_path):
+    """The head pointer moved from ``public/current.json``. The pull never reads the old key: at an empty prefix it is an object of v1."""
+    site, old, pointer = tmp_path / "site", "public/current.json", store.get(layout.CURRENT)
+    store.put(old, pointer)
+    store.delete(layout.CURRENT)
+    done = pull(env, site)
+    assert done.returncode == 1 and f"pull: FAILED head and read links: missing in the store: '{layout.CURRENT}'" in done.stderr
+    assert "failed steps 1;" in done.stdout
+    files = tree(site)
+    assert not {old, layout.CURRENT, LINKS} & set(files) and {layout.MINING_JSON, "llms.txt", "index.html"} <= set(files)
+    store.put(layout.CURRENT, pointer)  # what the first pass of ``run`` does
+    done = pull(env, site)
+    assert done.returncode == 0 and tree(site)[layout.CURRENT] == pointer and old not in tree(site)
+
     units = PULL.parents[1] / "systemd"
     unit = (units / "sn120-v2-site-pull.service").read_text()
     start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))

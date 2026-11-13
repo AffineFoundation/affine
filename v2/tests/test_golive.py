@@ -445,6 +445,10 @@ def test_a_store_bootstrapped_with_the_old_pointer_key_gets_the_new_pointer_at_t
     old, pointer = "public/current.json", world.store.get(layout.CURRENT)
     world.store.put(old, pointer)
     world.store.delete(layout.CURRENT)
+    with open(world.root / JOURNAL_FILE, "rb") as handle:
+        Mirror(world.store).catch_up(handle, backfill=True)
+    head = world.controller.state.head
+    assert load_from_store(world.store, tmp_path / "weights-writer" / JOURNAL_FILE).head == head, "the weights writer reads the journal, not the pointer"
     world.reopen()
     world.register(1, 0.3)
     assert world.round().outcome == "applied", "run_round ticks before it reads any file"
