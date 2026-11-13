@@ -4,10 +4,11 @@ One run is one attempt. It ends in ``set`` or ``deferred`` and it never loops:
 the next attempt is the next hourly run.
 
 The table is the payout formula over the kings and one complete chain
-snapshot. The burn table (all weight to ``burn_uid`` when no payee is paid) is
-a result of that formula. It is never a fallback: when the chain read fails
-or is partial, or the state does not load, the run submits nothing, so the
-last valid weights stay on chain.
+snapshot: the registered kings of the window split all the weight. There is
+no burn, in any case: no table with weight on ``burn_uid`` (UID 0, the owner)
+is ever submitted. When no king of the window is registered, when the chain
+read fails or is partial, or when the state does not load, the run submits
+nothing, so the last valid weights stay on chain.
 
 Run it from one hourly timer, on the machine that holds the validator wallet:
 
@@ -94,6 +95,8 @@ def build_table(
 ) -> tuple[dict[int, float], ChainSnapshot, int, int, str]:
     """The payout table from one complete chain snapshot and a state that loaded. Anything less raises ``Keep``.
 
+    So does a table with no registered king: it would put weight on ``burn_uid``, and the writer never burns.
+
     Returns the table, the snapshot, the number of kings, the time of the newest king, and the validator hotkey.
     """
     try:
@@ -108,7 +111,7 @@ def build_table(
         newest = max((king.applied_at for king in kings), default=0)
     except Exception as exc:  # a corrupt journal, a missing file, a state with no genesis
         raise Keep(snapshot.block, f"the state failed to load: {exc}") from exc
-    # The kings list only grows. A shorter or older list means a bad state read, which must not turn into a burn.
+    # The kings list only grows. A shorter or older list means a bad state read.
     last = last_valid or {}
     if len(kings) < last.get("kings", 0) or newest < last.get("newest_king_at", 0):
         raise Keep(snapshot.block, "the kings list went backwards, so the state did not load correctly")
@@ -116,6 +119,8 @@ def build_table(
         table = payout.weights(kings, snapshot.hotkeys(), params)
     except V2Error as exc:
         raise Keep(snapshot.block, f"the payout refused the table: {exc}") from exc
+    if not table or params.burn_uid in table:
+        raise Keep(snapshot.block, "no king of the window is registered on chain, and the writer never burns")
     return table, snapshot, len(kings), newest, validator_hotkey
 
 

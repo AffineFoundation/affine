@@ -83,9 +83,12 @@ def test_a_king_whose_hotkey_left_its_uid_drops_and_the_rest_split(rig):
     assert rig.run().status == "set" and rig.chain.weights == {1: 0.5, 3: 0.5}
 
 
-def test_no_paid_payee_burns_when_the_snapshot_is_complete_and_the_state_loaded(rig):
-    rig.kings = []
-    assert rig.run().status == "set" and rig.chain.weights == {0: 1.0}
+def test_fewer_kings_than_the_window_split_all_the_weight_and_uid_0_gets_none(rig):
+    rig.kings.append(king(0, 2))  # even a king on UID 0 is never paid
+    assert rig.run().status == "set" and rig.chain.weights == {1: 0.5, 2: 0.5}
+    rig.chain.advance(HOUR_BLOCKS)
+    rig.chain.keys[1] = "a-new-miner"  # one of the two kings left: the other gets all of it, not UID 0
+    assert rig.run().status == "set" and rig.chain.weights == {2: 1.0}
 
 
 @pytest.mark.parametrize(
@@ -97,6 +100,7 @@ def test_no_paid_payee_burns_when_the_snapshot_is_complete_and_the_state_loaded(
         lambda rig: rig.kings.clear(),  # the state loads empty: the kings vanished
         lambda rig: rig.kings.pop(),  # the state loads a shorter kings list
         lambda rig: rig.kings.__setitem__(1, king(2, 0)),  # the state loads an older kings list
+        lambda rig: rig.chain.keys.update({1: "new-miner-a", 2: "new-miner-b"}),  # no king is registered: no burn
     ],
 )
 def test_an_outage_keeps_the_last_valid_weights_and_defers(rig, damage):
@@ -109,8 +113,16 @@ def test_an_outage_keeps_the_last_valid_weights_and_defers(rig, damage):
     assert rig.last_valid() == {"1": 0.5, "2": 0.5}
 
 
-@pytest.mark.parametrize("damage", [lambda rig: setattr(rig.chain, "down", "x"), lambda rig: setattr(rig, "load_kings", fail)])
-def test_a_first_run_in_an_outage_submits_nothing(rig, damage):
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda rig: setattr(rig.chain, "down", "x"),
+        lambda rig: setattr(rig, "load_kings", fail),
+        lambda rig: rig.kings.clear(),  # no king yet: nothing to pay, and no burn
+        lambda rig: rig.chain.keys.update({1: "new-miner-a", 2: "new-miner-b"}),  # no king is registered: no burn
+    ],
+)
+def test_a_first_run_with_an_outage_or_with_no_registered_king_submits_nothing(rig, damage):
     damage(rig)
     assert rig.run().status == "deferred"
     assert rig.chain.submissions == 0 and "last_valid" not in load_state(rig.state_dir)
