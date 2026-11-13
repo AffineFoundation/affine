@@ -12,15 +12,21 @@ Rules it keeps:
   batches than slots, a batch waits for a free slot.
 * The trainer is closed before evaluation starts, so its GPUs are free.
 * Null M is scored in every look, with the same tasks and seeds as the LoRAs.
-* The round's time limit is a backstop. The box looks at the clock before
-  each training and after each chunk of tasks. Past the deadline it starts
-  nothing new: what is scored by then is the whole test.
+* A round always reaches a decision for the LoRAs that it trained:
+  - Training has its own time, ``train_time_budget_s`` from the lease. At its
+    end no new training starts and every job that still runs is stopped. Such
+    a batch is ``not_trained``: not charged, first in the next round, and no
+    failure is counted for its seat.
+  - The first look is always scored in full for null M and every trained
+    LoRA. The round's time limit does not cut it; only the end of the lease does.
+  - After the first look the round's time limit applies: past it the box
+    starts no new chunk of tasks, and what is scored by then is the whole test.
 """
 
 from __future__ import annotations
 
 import queue
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Callable
 
 from . import layout
@@ -31,6 +37,7 @@ from .seams import Evaluator, Trainer
 from .types import (
     NO_DECISION,
     NOT_RUN,
+    NOT_TRAINED,
     NULL_MODEL,
     SCORED,
     SKIP,
@@ -52,25 +59,31 @@ def gpu_slots(n_gpus: int, n_batches: int) -> list[tuple[int, ...]]:
 
 
 class LocalRunner:
-    def __init__(self, trainer: Trainer, evaluator: Evaluator, clock: Callable[[], int], image_digest: str, attempts: int = 3) -> None:
+    def __init__(
+        self, trainer: Trainer, evaluator: Evaluator, clock: Callable[[], int], image_digest: str, attempts: int = 3, poll_s: float = 1.0
+    ) -> None:
         self.trainer, self.evaluator = trainer, evaluator
-        self.clock, self.image_digest, self.attempts = clock, image_digest, attempts
+        self.clock, self.image_digest, self.attempts, self.poll_s = clock, image_digest, attempts, poll_s
 
     def run(self, ticket: RoundTicket) -> BoxResult:
         started, params = self.clock(), ticket.params
-        # The box stops early enough that judging and promotion still fit inside the round's limit.
-        deadline = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
-        reports = self._train_all(ticket, deadline)
+        # Three times, all counted from the lease. ``last``: the box must be done, so that judging and promotion fit
+        # before the lease ends. ``limit``: the round's time limit, for everything after the first look.
+        # ``train_end``: the end of the training time.
+        last = ticket.expires_at - params.promote_reserve_s
+        limit = min(last, ticket.issued_at + params.round_time_limit_s - params.promote_reserve_s)
+        train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
+        reports = self._train_all(ticket, train_end)
         trained = {pos: report for pos, report in reports.items() if isinstance(report, LoRAArtifact)}
         train_done = self.clock()
-        null, scored, dropped, stopped = self._evaluate(ticket, trained, deadline) if trained else ((), {}, {}, False)
+        null, scored, dropped, stopped = self._evaluate(ticket, trained, limit, last) if trained else ((), {}, {}, False)
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
         entries = []
         for entry in ticket.entries:
             report = reports[entry.queue_pos]
             if isinstance(report, LoRAArtifact) and stopped and n_scored < first_look:
-                reason = f"the round's time limit ended the scoring after {n_scored} tasks, before the first look of {first_look}"
+                reason = f"the lease ended the scoring after {n_scored} tasks, before the first look of {first_look}"
                 report = EntryResult(entry.queue_pos, NO_DECISION, reason=reason)
             elif isinstance(report, LoRAArtifact):
                 report = EntryResult(entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos))
@@ -91,30 +104,43 @@ class LocalRunner:
             phase_s={"training": train_done - started, "evaluation": finished - train_done},
         )
 
-    def _train_all(self, ticket: RoundTicket, deadline: int) -> dict[int, EntryResult | LoRAArtifact]:
-        """Train every batch, as many at a time as there are GPU slots. Returns one report per queue position."""
+    def _train_all(self, ticket: RoundTicket, train_end: int) -> dict[int, EntryResult | LoRAArtifact]:
+        """Train the batches in queue order until ``train_end``, as many at a time as there are GPU slots.
+
+        Returns one report per queue position. At ``train_end`` every job that
+        still runs is stopped, so the scoring always starts on time.
+        """
         slots = gpu_slots(ticket.params.n_gpus, len(ticket.entries))
         free: queue.SimpleQueue[tuple[int, ...]] = queue.SimpleQueue()
         for slot in slots:
             free.put(slot)
 
-        def one(entry: Entry) -> EntryResult | LoRAArtifact:
+        def one(index: int, entry: Entry) -> EntryResult | LoRAArtifact:
             slot = free.get()
             try:
-                if self.clock() >= deadline:
-                    return EntryResult(entry.queue_pos, NO_DECISION, reason="the round's time limit came before this batch could train")
-                return self._train(ticket, entry, slot)
+                # The first batches start at the lease, so each of them has the whole training time.
+                return self._train(ticket, entry, slot, train_end, whole_time=index < len(slots))
             finally:
                 free.put(slot)
 
         try:
             with ThreadPoolExecutor(len(slots)) as threads:
-                reports = list(threads.map(one, ticket.entries))
+                jobs = [threads.submit(one, index, entry) for index, entry in enumerate(ticket.entries)]
+                running = set(jobs)
+                while running:
+                    _, running = wait(running, timeout=self.poll_s)
+                    if running and self.clock() >= train_end:
+                        self.trainer.close()  # the training time is over: stop every job that still runs
+                reports = [job.result() for job in jobs]
         finally:
             self.trainer.close()
         return {entry.queue_pos: report for entry, report in zip(ticket.entries, reports)}
 
-    def _train(self, ticket: RoundTicket, entry: Entry, gpu_ids: tuple[int, ...]) -> EntryResult | LoRAArtifact:
+    def _train(
+        self, ticket: RoundTicket, entry: Entry, gpu_ids: tuple[int, ...], train_end: int, whole_time: bool
+    ) -> EntryResult | LoRAArtifact:
+        if self.clock() >= train_end:
+            return EntryResult(entry.queue_pos, NOT_TRAINED, reason="the training time of the round ended before this batch could start")
         request = TrainRequest(
             round_id=ticket.round_id,
             head=ticket.head,
@@ -132,6 +158,13 @@ class LocalRunner:
                 return EntryResult(entry.queue_pos, SKIP, reason=f"batch rejected at train time: {exc}", attempts=attempt)
             except InfraError as exc:
                 reason = str(exc)
+            if self.clock() >= train_end and whole_time:
+                # Admission's cost cap says that a valid batch fits. This one did not: a fault of ours, counted for the seat.
+                budget = ticket.params.train_time_budget_s
+                reason = f"this batch had the whole training time of the round ({budget} s) and did not finish"
+                return EntryResult(entry.queue_pos, NO_DECISION, reason=reason, attempts=attempt)
+            if self.clock() >= train_end:
+                return EntryResult(entry.queue_pos, NOT_TRAINED, reason="the training time of the round ended while this batch trained", attempts=attempt)
         return EntryResult(entry.queue_pos, NO_DECISION, reason=f"training failed {self.attempts} times: {reason}", attempts=self.attempts)
 
     def _look(self, request: EvalRequest) -> EvalChunk | None:
@@ -151,8 +184,12 @@ class LocalRunner:
             return chunk
         raise InfraError(f"evaluation failed {self.attempts} times: {reason}")
 
-    def _evaluate(self, ticket: RoundTicket, trained: dict[int, LoRAArtifact], deadline: int):
-        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit)."""
+    def _evaluate(self, ticket: RoundTicket, trained: dict[int, LoRAArtifact], limit: int, last: int):
+        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit).
+
+        The first look runs until ``last`` (the end of the lease), so a round
+        that trained a LoRA decides on it. Later looks stop at ``limit``.
+        """
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
         null = [""] * samples
@@ -161,6 +198,7 @@ class LocalRunner:
         alive, start, stopped = sorted(trained), 0, False
         try:
             for look, stop in enumerate(params.look_sizes(n)):
+                deadline = last if look == 0 else limit
                 while start < stop and not stopped:
                     if self.clock() >= deadline:
                         stopped = True
