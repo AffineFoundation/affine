@@ -74,8 +74,15 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
     return view
 
 
-def snapshot(state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None) -> dict[str, Any]:
-    """Everything a miner, the website or the benchmark service may see."""
+def snapshot(
+    state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None
+) -> dict[str, Any]:
+    """Everything a miner, the website or the benchmark service may see.
+
+    ``verdicts`` is admission's last check of the waiting files, taken at
+    ``files_checked_at``. A file that a miner stored after that time shows
+    the old verdict until the next check.
+    """
     verdicts = verdicts or {}
     line = waiting(state.queue)
     return {
@@ -94,6 +101,7 @@ def snapshot(state: State, params: Params, now: int, verdicts: Mapping[str, Verd
         "history": [round_view(record) for record in state.rounds[-HISTORY_PREVIEW:]],
         "queue": {
             "length": len(line),
+            "files_checked_at": files_checked_at,
             "next": [
                 {
                     "position": position,

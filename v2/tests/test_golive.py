@@ -252,3 +252,49 @@ def test_the_round_summary_has_every_lora_the_winner_and_the_wall_times(tmp_path
     null = world.round()
     assert null.outcome == "null" and world.controller.state.kings == kings, "a round with no winner leaves the kings as they are"
     assert "no winner: null round" in round_text(json.loads(world.store.get(layout.round_file(null.round_id))))
+
+
+# ------------------------------------------------------------ the file verdicts in the public snapshot
+
+
+def shown(world: SimWorld) -> dict[str, bool]:
+    return {seat["hotkey"]: seat["file_valid"] for seat in world.publisher.snapshots[-1]["queue"]["next"]}
+
+
+def test_the_public_snapshot_shows_admissions_verdict_on_each_waiting_file(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, None)  # no file
+    world.register(2, 0.0, valid=False)
+    assert world.round() is None, "no valid file, so no round"
+    assert world.controller.publish(world.clock(), only_changes=True) and shown(world) == {"hk1": False, "hk2": False}
+    count = len(world.publisher.snapshots)
+    assert world.round() is None and not world.controller.publish(world.clock(), only_changes=True)
+    assert len(world.publisher.snapshots) == count, "nothing changed, so nothing is published again"
+    world.admission.upload("hk1", 0.0)
+    assert world.controller.publish(world.clock(), check_files=True, only_changes=True)
+    assert shown(world) == {"hk1": True, "hk2": False}, "a new file shows as valid before any round takes it"
+    checked = world.publisher.snapshots[-1]["queue"]["files_checked_at"]
+    assert checked is not None and checked <= world.now
+
+
+def test_the_waiting_files_are_read_before_the_lease_starts_and_never_inside_a_round(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.register(1, 0.3)
+    world.register(2, None)
+    real, calls = world.admission.verdicts, []
+
+    def slow(hotkeys):
+        calls.append(world.now)
+        world.now += 1000  # reading and checking every waiting file takes time
+        return real(hotkeys)
+
+    world.admission.verdicts = slow
+    record = world.round()
+    assert record.outcome == "applied" and len(calls) == 1, "one read of the waiting files for the whole round"
+    assert record.opened_at > calls[0] + 1000, "the lease, and so the round's time limit, starts after the files are read"
+    assert all(lease.expires_at == record.opened_at + world.params.lease_timeout_s for lease in record.leases)
+    assert shown(world) == {"hk2": False} and world.publisher.snapshots[-1]["queue"]["files_checked_at"] == calls[0]
+    world.register(3, 0.0)
+    world.controller.open_round(world.clock(), "entropy")
+    with pytest.raises(V2Error, match="round is open"):
+        world.controller.publish(world.clock(), check_files=True)
