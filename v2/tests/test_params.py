@@ -201,6 +201,10 @@ def test_miner_values_inside_their_bounds_are_applied_with_both_ends_included():
         {"target_modules": ["q_proj", "lm_head"]},
         {"target_modules": ["q_proj", "q_proj"]},
         {"target_modules": "q_proj"},
+        {"target_modules": [["q_proj"]]},
+        {"rank": 10**400},
+        {"alpha": 10**400},
+        {"lora_lr": float("inf")},
         {"dropout": 0.1},
         {"kl": 0.02},
         {"image_digests": ["x"]},
@@ -209,6 +213,12 @@ def test_miner_values_inside_their_bounds_are_applied_with_both_ends_included():
 def test_a_miner_value_outside_its_bound_rejects_the_file_and_is_never_clamped(train):
     with pytest.raises(BatchRejected):
         Recipe().for_miner(train)
+
+
+def test_a_rejection_never_repeats_the_miners_own_key_text():
+    with pytest.raises(BatchRejected) as caught:
+        Recipe().for_miner({"secret-batch-text": 1})
+    assert "secret-batch-text" not in str(caught.value)
 
 
 def test_miner_bounds_must_name_distinct_recipe_fields():
