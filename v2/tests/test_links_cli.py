@@ -6,10 +6,14 @@ import functools
 import hashlib
 import http.server
 import json
+import os
+import re
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 import boto3
 import pytest
@@ -268,3 +272,95 @@ def test_issue_needs_the_store_settings(queue, site, tmp_path, monkeypatch, caps
         monkeypatch.delenv(f"SN120_R2_{name}", raising=False)
     assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(site[0]), "--no-activation-check"]) == 1
     assert "SN120_R2_ENDPOINT" in capsys.readouterr().err and not (site[0] / "ff").exists()
+
+
+# ------------------------------------------------------------ the store token from a file, and the unit files
+
+V1_FILE = f"""# the v1 link job's credentials file: KEY=VALUE lines, read in place
+R2_ACCOUNT_ID=not-used
+R2_ACCESS_KEY_ID=fake-id
+R2_SECRET_ACCESS_KEY="{SECRET}"
+"""
+SYSTEMD = Path(links.__file__).resolve().parents[1] / "systemd"
+
+
+def test_the_store_token_comes_from_a_v1_credentials_file_in_place(bucket, queue, site, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("SN120_R2_ACCESS_KEY_ID")
+    monkeypatch.delenv("SN120_R2_SECRET_ACCESS_KEY")
+    file = tmp_path / "r2.env"
+    file.write_text(V1_FILE)
+    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path / "copy"), "--site-dir", str(site[0]), "--no-activation-check"]
+    assert links.main(args) == 1 and "SN120_R2_ACCESS_KEY_ID" in capsys.readouterr().err  # without the file there is no token
+    assert links.main(args + ["--credentials-file", str(file)]) == 0
+    printed = capsys.readouterr()
+    assert SECRET not in printed.out + printed.err and "fake-id" not in printed.out + printed.err
+    assert "SN120_R2_SECRET_ACCESS_KEY" not in os.environ and file.read_text() == V1_FILE  # nothing is exported, nothing is copied
+    doc = json.loads((site[0] / "ff" / "links" / f"{A.hotkey}.json").read_text())
+    link = links.open_link(doc, A.hotkey, A.seed, int(time.time()))
+    assert "X-Amz-Credential=fake-id" in link["put_url"] and put(link["put_url"], b"{}", link["put_headers"]) == 200
+
+    file.write_text(f"export SN120_R2_ACCESS_KEY_ID = 'fake-id'\nSN120_R2_SECRET_ACCESS_KEY={SECRET}\n")  # the v2 names work too
+    assert links.store_token(file) == {"SN120_R2_ACCESS_KEY_ID": "fake-id", "SN120_R2_SECRET_ACCESS_KEY": SECRET}
+
+
+@pytest.mark.parametrize("text, missing", [("R2_ACCESS_KEY_ID=fake-id\n", "R2_SECRET_ACCESS_KEY"), (f"# R2_ACCESS_KEY_ID=x\nR2_SECRET_ACCESS_KEY={SECRET}\n", "R2_ACCESS_KEY_ID")])
+def test_a_credentials_file_without_a_token_part_stops_the_run_and_shows_no_value(bucket, queue, site, tmp_path, capsys, text, missing):
+    file = tmp_path / "r2.env"
+    file.write_text(text)
+    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path / "copy"), "--site-dir", str(site[0]), "--no-activation-check"]
+    assert links.main(args + ["--credentials-file", str(file)]) == 1  # the token in the environment does not fill the gap
+    error = capsys.readouterr().err
+    assert missing in error and SECRET not in error and "fake-id" not in error and not (site[0] / "ff").exists()
+    assert links.main(args + ["--credentials-file", str(tmp_path / "missing.env")]) == 1
+    assert "cannot read the credentials file" in capsys.readouterr().err
+
+
+def unit_lines(name: str) -> list[str]:
+    return [line for line in (SYSTEMD / name).read_text().splitlines() if line and not line.startswith("#")]
+
+
+def test_the_unit_runs_the_job_as_the_operator_installs_it(bucket, queue, site, tmp_path, monkeypatch, capsys):
+    file = tmp_path / "v1" / "r2-direct.env"
+    file.parent.mkdir()
+    file.write_text(V1_FILE)
+    blanks = {
+        "LINKS_R2_ENDPOINT": os.environ["SN120_R2_ENDPOINT"],
+        "LINKS_R2_BUCKET": os.environ["SN120_R2_BUCKET"],
+        "LINKS_STATE_DIR": str(tmp_path / "links-job"),
+        "LINKS_CREDENTIALS_FILE": str(file),
+        "LINKS_SITE_DIR": str(site[0]),
+        "LINKS_PUBLIC_URL": URL,
+        "LINKS_NETWORK": "finney",
+        "LINKS_PYTHON": "python",
+        "LINKS_USER": "operator",
+    }
+    text = (SYSTEMD / "sn120-v2-links.service").read_text()
+    lines = unit_lines("sn120-v2-links.service")
+    assert set(re.findall(r"LINKS_[A-Z0-9_]+", "\n".join(lines))) == set(blanks) == set(re.findall(r"^#   (LINKS_[A-Z0-9_]+)", text, re.M))
+    for blank in sorted(blanks, key=len, reverse=True):
+        lines = [line.replace(blank, blanks[blank]) for line in lines]
+    for name in [name for name in os.environ if name.startswith("SN120_R2_")]:
+        monkeypatch.delenv(name)  # systemd starts the job with the unit's variables only
+    for line in lines:
+        if line.startswith("Environment="):
+            monkeypatch.setenv(*line.removeprefix("Environment=").split("=", 1))
+    assert sorted(name for name in os.environ if name.startswith("SN120_R2_")) == ["SN120_R2_BUCKET", "SN120_R2_ENDPOINT"]
+    assert not any(line.startswith("EnvironmentFile=") for line in lines) and "UMask=0022" in lines and "Type=oneshot" in lines
+    (command,) = [line.removeprefix("ExecStart=").split() for line in lines if line.startswith("ExecStart=")]
+    assert command[:3] == ["python", "-m", "sn120_v2.links"] and "--loop" not in command  # one run; the timer makes the next
+
+    chain_with(monkeypatch, rows=[(A.hotkey, [(A.activation(), 7)])])
+    before = os.umask(0o022)  # the unit's UMask
+    try:
+        assert links.main(command[3:]) == 0
+    finally:
+        os.umask(before)
+    assert "issued 1 of 2 waiting hotkeys (not activated 1" in capsys.readouterr().out
+    written = site[0] / "ff" / "links" / f"{A.hotkey}.json"
+    assert written.stat().st_mode & 0o777 == 0o644 and (site[0] / "ff" / "links.json").stat().st_mode & 0o777 == 0o644  # the web server can read them
+    link = links.open_link(json.loads(written.read_text()), A.hotkey, A.seed, int(time.time()))
+    assert f"/{os.environ['SN120_R2_BUCKET']}/private/ff/v1/miners/{A.hotkey}/batch.json?" in link["put_url"]  # no prefix: the key that v1 used
+
+    timer = unit_lines("sn120-v2-links.timer")
+    assert "Unit=sn120-v2-links.service" in timer and "OnCalendar=*-*-* *:10,40:00" in timer  # two runs an hour
+    assert 3600 // 2 == links.REISSUE_S  # the index publishes this number, so the timer must keep it
