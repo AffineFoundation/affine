@@ -209,6 +209,7 @@ class Params(Record):
     max_answer_repeat_count: int = 32
     reward_tolerance: float = 0.0
     min_pool_prompt_frac: float = 0.0  # 0 = prompts need not come from the public pool
+    max_train_token_steps: int = 8_000_000  # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from sn120_v2 import admission
 from sn120_v2.admission import Invalid, check_batch
 
 RECORDED = json.loads((Path(__file__).parent / "data/admission_v1_verdicts.json").read_text())
@@ -42,6 +43,12 @@ class WordTokens:
 
     def output_tokens(self, text: str) -> int:
         return len(text.split())
+
+
+@pytest.fixture(autouse=True)
+def v1_rules_only(monkeypatch):
+    """v1 had no training-signal rule and no cost cap. Many recorded files give every rollout of a prompt the same reward."""
+    monkeypatch.setattr(admission, "_trains", lambda *inputs: 0)
 
 
 def judge(case, build) -> tuple:
