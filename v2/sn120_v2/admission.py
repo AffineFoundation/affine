@@ -403,18 +403,17 @@ class StoreAdmission:
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
 
-        A second call for the same seat and round returns the same frozen copy, so a replay is safe.
+        It always reads the miner's file as it is now. A miner may replace the file until the round opens, so
+        a copy from an earlier try of the same round id is replaced, or removed on a skip. Call it only for a
+        round that has not opened yet: an open round's tickets name the frozen copy.
         """
         frozen_key = layout.frozen_batch(round_id, reg.hotkey)
-        for source in (frozen_key, layout.miner_object(reg.hotkey)):
-            found = self._read(reg.hotkey, source)
-            if found is not None and isinstance(found[1], Batch):
-                break
-        else:
+        found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
+        if found is None or not isinstance(found[1], Batch):
+            self.store.delete(frozen_key)
             return None
         raw, batch = found
-        if source != frozen_key:
-            self.store.put(frozen_key, raw)
+        self.store.put(frozen_key, raw)
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
