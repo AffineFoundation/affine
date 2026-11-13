@@ -14,7 +14,7 @@ dev = ["pytest>=8"]
 # import name to tests/third_party_imports.txt.
 gpu = []    # train/eval workers
 r2 = []     # R2 head store
-chain = []  # weights writer and chain reader
+chain = ["bittensor==11.0.2"]  # weights writer and chain reader
 miner = []  # miner tooling and llms.txt
 bench = []  # per-green benchmark service
 

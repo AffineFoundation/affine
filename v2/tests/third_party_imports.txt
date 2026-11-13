@@ -14,5 +14,6 @@ pytest
 # r2: R2 head store
 
 # chain: weights writer and chain reader
+bittensor
 
 # miner: miner tooling and llms.txt
