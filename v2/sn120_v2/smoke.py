@@ -93,7 +93,15 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
         return None, "the file is not a batch file"
     if not source:
         return None, "no group has two different rewards"
-    longest = lambda group: max(count(row["output"]) for row in group["rollouts"])
+
+    def longest(group: Any) -> int:
+        try:
+            return max(count(row["output"]) for row in group["rollouts"])
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:  # a text that makes the tokenizer fail (a Rust panic is a BaseException): never use that group
+            return cap + 1
+
     # Tokens are counted for the groups with the shortest text first; a group far above the cap is never counted.
     source.sort(key=lambda group: max(len(row["output"]) for row in group["rollouts"]))
     kept: list[Any] = []
