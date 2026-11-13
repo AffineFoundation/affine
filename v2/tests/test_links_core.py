@@ -13,6 +13,7 @@ from nacl.signing import SigningKey
 
 from sn120_v2 import layout, links
 from sn120_v2.errors import ConfigError, ContractError, InfraError
+from sn120_v2.publisher import refuse_private
 from sn120_v2.state import State
 from sn120_v2.store import LocalStore
 
@@ -346,9 +347,7 @@ def test_upload_entry_is_public_and_names_the_link_file():
     assert entry["sealed_links"] == "https://affine.io/ff/links/<hotkey>.json" and entry["index"] == "https://affine.io/ff/links.json"
     assert (entry["method"], entry["content_type"]) == ("PUT", "application/octet-stream")
     assert (entry["link_ttl_seconds"], entry["reissue_every_seconds"]) == (86400, 1800)
-    # the publisher refuses these keys and these value prefixes in a public file
-    assert not set(entry) & {"groups", "rollouts", "put_url", "put_headers"}
-    assert not any(isinstance(value, str) and value.startswith(("private/", "pending/")) for value in entry.values())
+    refuse_private({"upload": entry})  # the publisher's own guard: no upload address, no private object key
     assert json.loads(json.dumps(entry)) == entry
     other = links.upload_entry("https://example.test", ttl_s=3600, reissue_s=600)
     assert other["sealed_links"] == "https://example.test/ff/links/<hotkey>.json" and other["link_ttl_seconds"] == 3600
