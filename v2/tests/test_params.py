@@ -5,12 +5,13 @@ import json
 
 import pytest
 
-from sn120_v2.errors import ConfigError, ContractError
+from sn120_v2.errors import BatchRejected, ConfigError, ContractError
 from sn120_v2.params import (
     GENESIS_BASE_HASH,
     GENESIS_MODEL_REPO,
     GENESIS_MODEL_REVISION,
     GenesisSpec,
+    MinerBound,
     Params,
     Recipe,
     load_params,
@@ -152,12 +153,73 @@ def test_an_invalid_recipe_fails_closed(change):
         Recipe(**change)
 
 
-def test_miner_bounds_are_inclusive_ranges_and_unknown_keys_have_none():
-    recipe = Recipe(miner_bounds=(("lr", 1e-6, 1e-4),))
-    assert recipe.miner_range("lr") == (1e-6, 1e-4)
-    assert recipe.miner_range("rank") is None
-    with pytest.raises(ConfigError):
-        Recipe(miner_bounds=(("lr", 1e-4, 1e-6),))
+def test_all_five_miner_settable_params_are_exposed_in_one_place():
+    recipe = Recipe()
+    keys = {bound.key for bound in recipe.miner_bounds}
+    assert keys == {"lora_lr", "steps", "group_size", "sample_temperature", "rank", "alpha", "target_modules"}
+    assert {b.key for b in recipe.miner_bounds if b.decided} == {"rank", "target_modules"}, "the spec gives only these two bounds"
+    assert (recipe.bound("rank").low, recipe.bound("rank").high) == (8, 64)
+    assert recipe.bound("target_modules").choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+    assert recipe.bound("dropout") is None
+
+
+def test_miner_values_inside_their_bounds_are_applied_with_both_ends_included():
+    recipe = Recipe()
+    train = {
+        "lora_lr": 1e-4,
+        "steps": 4,
+        "group_size": 2,
+        "sample_temperature": 0.5,
+        "rank": 64,
+        "alpha": 8,
+        "target_modules": ["v_proj", "q_proj"],
+    }
+    applied = recipe.for_miner(train)
+    assert (applied.lora_lr, applied.steps, applied.group_size, applied.sample_temperature) == (1e-4, 4, 2, 0.5)
+    assert (applied.rank, applied.alpha) == (64, 8.0)
+    assert applied.target_modules == ("q_proj", "v_proj"), "a subset is stored in one fixed order"
+    assert applied.ppo_clip == recipe.ppo_clip and applied.miner_bounds == recipe.miner_bounds
+    assert recipe.for_miner({}) is recipe
+    assert Recipe.from_json(applied.to_json()) == applied
+
+
+@pytest.mark.parametrize(
+    "train",
+    [
+        {"lora_lr": 2e-4},
+        {"lora_lr": 0.0},
+        {"steps": 5},
+        {"steps": 2.0},
+        {"steps": True},
+        {"rank": 7},
+        {"rank": 65},
+        {"rank": "16"},
+        {"alpha": float("nan")},
+        {"group_size": 1},
+        {"sample_temperature": 1.6},
+        {"target_modules": []},
+        {"target_modules": ["q_proj", "lm_head"]},
+        {"target_modules": ["q_proj", "q_proj"]},
+        {"target_modules": "q_proj"},
+        {"dropout": 0.1},
+        {"kl": 0.02},
+        {"image_digests": ["x"]},
+    ],
+)
+def test_a_miner_value_outside_its_bound_rejects_the_file_and_is_never_clamped(train):
+    with pytest.raises(BatchRejected):
+        Recipe().for_miner(train)
+
+
+def test_miner_bounds_must_name_distinct_recipe_fields():
+    for bounds in (
+        (MinerBound("no_such_field", 0, 1),),
+        (MinerBound("rank", 9, 8, integer=True),),
+        (MinerBound("rank", 8, 64, integer=True), MinerBound("rank", 8, 32, integer=True)),
+        (MinerBound("image_digests", choices=("x",)),),
+    ):
+        with pytest.raises(ConfigError):
+            Recipe(miner_bounds=bounds)
 
 
 def test_load_params_applies_overrides_and_keeps_other_defaults(tmp_path):

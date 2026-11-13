@@ -9,7 +9,8 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# boto3 and moto let the R2 store tests run against a local S3 fake instead of skipping.
+dev = ["pytest>=8", "boto3>=1.36", "moto[server]>=5"]
 # One line per sibling workstream. Edit only your own line, and add each new
 # import name to tests/third_party_imports.txt.
 gpu = []    # train/eval workers
