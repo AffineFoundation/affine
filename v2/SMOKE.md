@@ -18,7 +18,7 @@ Nothing here sets chain weights. Nothing here writes to a production key. Nothin
 
 ## Safety rules of this test
 
-- The box holds no wallet. It only reads the chain.
+- The box holds no wallet. It only reads the chain. The wallet is on AffineValidator, a separate machine. This test does not use that machine.
 - `SN120_R2_PREFIX` must be set, and must be a prefix that production does not use. Use a separate bucket if you have one.
 - The v1 bucket is read with a read-only token, in step 5 only.
 - The weights step is `--dry-run` only.
@@ -293,14 +293,24 @@ Expected: one JSON line, `{"dry_run": true, "status": "would set", "kings": <cou
 
 Pass: `status` is `would set`; `weights` has at most 10 UIDs with equal shares that sum to 1; UID 0 is not in `weights` (no burn); `validator_registered` is `true`. If the round had a winner, its UID is in the table.
 
-The hand-off to the validator host. At launch the wallet stays on the validator host, and that host has no journal of its own. It pulls the journal copy from the store (a read-only token is enough), and the writer reads the kings from it. Check that path here, with a second empty directory:
+The hand-off to AffineValidator. AffineValidator is the validator host: a separate machine that holds only the validator hotkey and the public file of the coldkey, and runs only the hourly weights writer. It is not the box. It has no journal of its own, so it reads the journal copy in the store. That read needs only a read-only token, and it never writes to the store.
+
+Check that read path here, on the box, with a second empty directory. The first command pulls the journal copy into it. The second is the writer's dry run on that copy.
 
 ```
-python -m sn120_v2.kings --state-dir $SMOKE/weights-host
+python - <<'EOF'
+import os
+from pathlib import Path
+from sn120_v2.r2 import R2Store
+from sn120_v2.state import load_from_store
+state = load_from_store(R2Store.from_env(), Path(os.environ["SMOKE"]) / "weights-host" / "journal.jsonl")
+print("kings, oldest first:", [king.uid for king in state.kings])
+print("head:", state.head.version_id)
+EOF
 python -m sn120_v2.weights_writer --state-dir $SMOKE/weights-host --network finney --params $SMOKE/params.json --dry-run
 ```
 
-Pass: the first command prints the kings and the head; the second prints the same `weights` as above.
+Pass: the first command prints the kings and the head of `status`; the second prints the same `weights` as above.
 
 ## 9. The round summary, and the measured update norm
 
