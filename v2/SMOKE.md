@@ -526,6 +526,74 @@ Pass: `round.txt` has one row for each batch with its delta, z, cap-hit rate and
    Keep the files in `$SN120_WORK_DIR/logs` between the stages.
 7. Any step that did not pass, with its output.
 
+## After a green test: the restart loop of `run`
+
+On mainnet nothing but this loop starts `run` again after a crash or a reboot. So on mainnet do not start `run` alone: start the loop. It is one script, `systemd/sn120-v2-run-loop.sh`; its head lists every rule and setting. The unit `systemd/sn120-v2-run.service` starts the same script.
+
+Before each start of `run` the loop does three things, in this order:
+
+1. It stops every process that the last `run` left (vLLM servers, training jobs) and waits until no GPU holds more than 1,024 MiB. If a GPU stays in use for 120 seconds, the loop stops and says which GPUs.
+2. It ends an open, undecided round with `end-round`: no decision, nobody is charged, no failure is counted, and the seats are first in the next round. If the box result of that round is already in the store, it does not end the round: `run` judges that result.
+3. It starts `run`.
+
+What a restart does to an open round:
+
+| The round when `run` died | `run` alone, started by hand | The loop |
+|---|---|---|
+| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`: **one counted failure** for that seat (3 hold the seat). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
+| After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. The scores are lost. | The same, at once. |
+| The box result is stored, not judged | `run` judges the stored result. Also after the lease end. | The same: the loop skips `end-round`. |
+| Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
+
+So a restart can never charge a seat. Only a restart of `run` by hand in the training time can count a failure. **When you restart `run` by hand with an open, undecided round, use the order of the loop: stop `run`, free the GPUs, `end-round`, start.** The loop does that order by itself.
+
+Which exit codes of `run` the loop does not start again:
+
+| Exit code of `run` | Meaning | The loop |
+|---|---|---|
+| 0 | Finished (`--rounds`, `--max-idle`) | stops, exit code 0 |
+| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again. |
+| 130, 143 | Stopped with SIGINT or SIGTERM | stops, exit code 0 |
+| every other code | A crash (1 is a Python error, 137 is SIGKILL or out of memory) | starts `run` again after 30 seconds |
+
+The loop counts the starts with no finished round between them. A round that `run` closed sets the count back to zero; a round that the loop ended with `end-round` does not. At 5 (`SN120_LOOP_MAX_STARTS`) the loop stops with exit code 3. A crash 30 minutes into every round stops it too. The last lines of `$SN120_WORK_DIR/logs/run.log` then say why, and what to run.
+
+**A box without systemd** (a rented container). In `v2/`, in the shell of step 2:
+
+```
+setsid nohup systemd/sn120-v2-run-loop.sh "$(command -v python)" --state-dir $STATE --stack sn120_v2.assembly:stack > /dev/null 2>&1 < /dev/null &
+tail -f $SN120_WORK_DIR/logs/run.log                  # the output of run, and the lines "run-loop: ..."
+cat $SN120_WORK_DIR/logs/run-loop.status              # one line: what the loop does now, or why it stopped
+kill $(cat $SN120_WORK_DIR/logs/run-loop.pid)         # the stop: run and its servers end, and nothing starts them again
+```
+
+After a reboot of such a box nothing starts the loop, unless the start command of the box holds the first line. If it does not, start the loop by hand.
+
+**A box with systemd.** In `v2/`, in the shell of step 2:
+
+```
+RENV=$SMOKE/run.env
+(umask 077; env | grep '^SN120_' > $RENV)             # the variables of run, mode 600. It holds the store token.
+sed -e "/^[^#]/s|SN120_USER|$(id -un)|" -e "/^[^#]/s|SN120_ENV_FILE|$RENV|" -e "/^[^#]/s|SN120_PYTHON|$(command -v python)|" \
+    -e "/^[^#]/s|SN120_V2_DIR|$PWD|" -e "/^[^#]/s|SN120_STATE_DIR|$STATE|" \
+    systemd/sn120-v2-run.service | sudo tee /etc/systemd/system/sn120-v2-run.service > /dev/null
+grep -v '^#' /etc/systemd/system/sn120-v2-run.service | grep SN120_      # must print nothing: every blank is filled
+systemd-analyze verify /etc/systemd/system/sn120-v2-run.service
+sudo systemctl daemon-reload && sudo systemctl enable --now sn120-v2-run
+systemctl status sn120-v2-run                         # "active (running)"; after the loop gave up: "failed"
+sudo systemctl stop sn120-v2-run                      # the stop. "sudo systemctl disable --now sn120-v2-run" also keeps it down after a reboot.
+```
+
+Stop the loop before `set-params`, before `end-round` by hand, and before a new commit. One box only: stop the loop on an old box (and `disable` its unit) before a new box starts.
+
+One trial on this box, with the smoke state (it costs one round, which ends with no decision). Start the loop, wait for the training of a round (`nvidia-smi` shows used memory), then:
+
+```
+kill -9 $(pgrep -f "sn120_v2 run")
+```
+
+Pass: `run.log` gets the lines `run-loop: stopping what the last run left: pids ...`, `run-loop: end-round: the open round is ended with no decision.` and `run-loop: start 2 of at most 5 ...`; `status` shows `no_decision` as the last entry of `last_outcomes`; the next round runs to its end.
+
 ## After a fix
 
 A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. The message for the fix says if it needs the install line and if it needs the digest block.
@@ -543,7 +611,9 @@ git fetch origin && git checkout <the commit of the fix>
 uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"    # only when the fix needs the install line
 ```
 
-The fix needs **no** digest block: run the `run` command again. It takes up an open round and finishes it.
+The fix needs **no** digest block: start `run` again. In phase `RUNNING`, end the round first with the `end-round` line below (stop `run`, free the GPUs, `end-round`, start): a start of `run` in the training time of an open round can count a failure for a seat. The restart loop does this order by itself.
+
+A fault in the judging of a round stops `run` with a Python error and keeps the round open, with the box result in the store. After the fix, `run` judges that stored result; no new round is needed. `end-round` leaves such a round alone and exits with 3. Only if the stored result itself is bad, `end-round --discard-result` ends the round with no decision and throws the result away; nobody is charged.
 
 The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
 
