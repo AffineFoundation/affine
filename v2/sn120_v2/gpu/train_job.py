@@ -178,7 +178,9 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     active = sorted((row for row in rows if row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
     if not active:
         raise BatchRejected("no rollout is left with an advantage other than zero: the batch gives no gradient")
-    devices = list(devices or [f"cuda:{i}" for i in range(torch.cuda.device_count())] or ["cpu"])[: len(active)]
+    devices = list(devices or [f"cuda:{i}" for i in range(torch.cuda.device_count())])[: len(active)]
+    if not devices:  # never train on the CPU by accident: it would run for hours and then pass the lease
+        raise InfraError("the training job sees no GPU")
     replicas = [Replica(job["base_dir"], device, job["dtype"], recipe, job["seed"]) for device in devices]
     first = replicas[0]
     check_names(job["base_dir"], list(first.layers))
