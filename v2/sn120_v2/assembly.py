@@ -10,6 +10,7 @@ Every setting comes from the environment. A missing one is an error.
   SN120_R2_ENDPOINT, SN120_R2_BUCKET, SN120_R2_ACCESS_KEY_ID,
   SN120_R2_SECRET_ACCESS_KEY, SN120_R2_PREFIX (optional)    the store
   SN120_PUBLIC_URL          where the public zone is served; "none" before a public address exists
+  SN120_LINKS_URL (optional)  where the upload link files are served; not set or "none": not published
   SN120_V2_CHAIN_NETWORK    "finney" or a node address: the queue follows the chain and the round
                             seed uses a block hash. "none": no chain read (the smoke test)
   SN120_WORK_DIR, SN120_IMAGE_DIGEST                        the box; read by ``run`` only
@@ -134,7 +135,8 @@ def stack(context: StackContext) -> Stack:
     admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
-    publisher = StorePublisher(store, "" if public_url == NONE else public_url)
+    links_url = os.environ.get("SN120_LINKS_URL", "").strip()
+    publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
     network = require_env("SN120_V2_CHAIN_NETWORK")
     feed = None if network == NONE else ChainFeed(params.netuid, network)
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None
