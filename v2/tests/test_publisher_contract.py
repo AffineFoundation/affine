@@ -131,13 +131,17 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
 def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     changes = dict(round_time_limit_s=4800, lease_timeout_s=9000, promote_reserve_s=300, train_time_budget_s=1500)
     changes |= dict(eval_chunk_tasks=40, n_gpus=4, n_tasks=400, looks=(0.25, 1.0))
-    changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0)
+    changes |= dict(max_infra_attempts=5, squat_min_wait_s=7200, squat_age_factor=3.0, max_train_token_steps=123456)
     flat = " ".join(published(world(tmp_path, **changes).publisher.snapshots[-1])[1].split())
     assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
     assert "The box stops 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
     assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
+    assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
+    assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
+    no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
+    assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
     assert "Scoring runs in chunks of 40 tasks." in flat
     assert "The first look (100 tasks) is always scored in full for null M and every trained LoRA." in flat
     assert "judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
@@ -183,6 +187,7 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     assert len(set(rewards)) > 1  # one rollout, or equal rewards, trains nothing
     check_batch(json.dumps(example | {"hotkey": "hk1"}).encode(), "hk1", made.params)
     assert all(f"| `{code}` | {meaning} |" in text for code, meaning in RULES.items())
+    assert "- `no_signal`: your file must train something." in text
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat

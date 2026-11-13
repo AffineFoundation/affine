@@ -22,7 +22,7 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FORMATS, RULES, TIME_LIMIT
+from .admission import CONTROL_TOKENS, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
 from .errors import ContractError, InfraError, V2Error
@@ -379,6 +379,10 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
             }
         ],
     }
+    cost_cap = [
+        f"  A file with a cost above {show(params.max_train_token_steps)} token-steps is invalid. To get below the cap: fewer steps, fewer",
+        "  rollouts, or shorter outputs. The rule needs token counts, so `check` runs it only with `--tokenizer`.",
+    ] if params.max_train_token_steps > 0 else ["  There is no cap on the cost now (`max_train_token_steps` is 0)."]
     return [
         "## 5. Your file",
         "",
@@ -416,10 +420,17 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
-        "- Signal: your file must train something. A rollout trains when its advantage is not 0. The advantage is the",
-        "  reward minus the mean reward of its group (`group_size`, section 2). A file in which no rollout trains gives",
-        "  no LoRA: it is not trained and you are not charged. One rollout per prompt never trains. So the example",
-        "  above has two rollouts with different rewards.",
+        f"- `{NO_SIGNAL}`: your file must train something. A rollout trains when its advantage is not 0 and it has at",
+        "  least 1 output token inside the training caps. The advantage is the reward minus the mean reward of its",
+        "  group (`group_size`, section 2). A file in which no rollout trains is invalid. One rollout per prompt never",
+        "  trains. So the example above has two rollouts with different rewards.",
+        f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
+        f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
+        f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
+        "  (the end-of-turn token). A longer output counts the room. A rollout with advantage 0 counts 0.",
+        *cost_cap,
+        f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
+        f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
