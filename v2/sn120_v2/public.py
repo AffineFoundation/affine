@@ -151,7 +151,7 @@ def _span(seconds: float) -> str:
 def round_text(report: Mapping[str, Any]) -> str:
     """The round summary as a short text to paste. ``report`` is the public round file."""
     entries = report.get("entries", [])
-    winner = next((e for e in entries if e["status"] == WINNER), None)
+    winner = next((e for e in entries if e.get("status") == WINNER), None)
     lines = [f"SN120 v2 round {report['round_id']}: {str(report['outcome']).upper()}" + (" (stopped at the time limit)" if report.get("stopped_at_limit") else "")]
     if winner:
         lines.append(f"winner: UID {winner['uid']} ({winner['hotkey']}), delta {winner['delta']:+.4f}, z {winner['z']:.2f}")
@@ -164,7 +164,7 @@ def round_text(report: Mapping[str, Any]) -> str:
         f"batches: {report['seats']} | tasks scored: {scored} of {report['n_tasks']}"
         + (f" | null M: pass {report['null_pass_rate']:.2%}, cap-hit {report['null_cap_rate']:.2%}" if "null_pass_rate" in report else "")
     )
-    waiting = sum(e["status"] == NOT_TRAINED for e in entries)
+    waiting = sum(e.get("status") == NOT_TRAINED for e in entries)
     if waiting:
         lines.append(f"not trained: {waiting} of {report['seats']} batches. The training time of the round ended first. They are not charged and are first in the next round.")
     lines.append(f"{'pos':>3} {'uid':>4}  {'hotkey':<12} {'verdict':<11} {'delta':>8} {'z':>6} {'cap-hit':>7} {'tasks':>5} {'norm':>9}  note")
@@ -178,7 +178,7 @@ def round_text(report: Mapping[str, Any]) -> str:
             note = f"update capped to norm {e['step_norm']:.4g}" + (f"; {note}" if note else "")
         if e.get("eliminated_at_look") is not None:
             note = f"dropped at look {e['eliminated_at_look']}" + (f"; {note}" if note else "")
-        lines.append(f"{e['queue_pos']:>3} {e['uid']:>4}  {hotkey:<12} {e['status']:<11} {numbers} {norm}  {note}".rstrip())
+        lines.append(f"{e['queue_pos']:>3} {e['uid']:>4}  {hotkey:<12} {e.get('status', 'no result'):<11} {numbers} {norm}  {note}".rstrip())
     wall = report.get("wall_s") or {}
     names = [("training", "train"), ("evaluation", "eval"), ("promote", "promote"), ("fold", "fold"), ("lease_to_promotion", "lease to promotion"), ("total", "total")]
     lines.append("wall time: " + " | ".join(f"{label} {_span(wall[key])}" for key, label in names if key in wall))
