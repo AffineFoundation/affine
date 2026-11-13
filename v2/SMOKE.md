@@ -70,7 +70,7 @@ export SN120_IMAGE_DIGEST=$(python -c "import json,os; print(json.load(open(os.e
 python - <<'EOF'
 import json, os
 plan = json.load(open(os.environ["SMOKE"] + "/plan.json"))
-params = {"recipe": {"image_digests": [plan["image_digest"]], "code_digest": plan["code_digest"]}}
+params = {"batch_cap": 8, "recipe": {"image_digests": [plan["image_digest"]], "code_digest": plan["code_digest"]}}
 json.dump(params, open(os.environ["SMOKE"] + "/params.json", "w"), indent=1)
 print(json.dumps(params, indent=1))
 EOF
@@ -78,7 +78,9 @@ EOF
 
 Pass: `plan.json` is one line, `{"code_digest": "<64 hex>", "image_digest": "<64 hex>"}`, and `params.json` holds the same two values.
 
-`params.json` changes nothing else. So the round has the launch size: at most 32 batches, 2000 tasks, at most 100 minutes. It sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
+`"batch_cap": 8` makes the first round small: at most 8 batches, one per GPU, all trained at the same time. Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
+
+`bootstrap` (step 4) pins these parameters. A change of `params.json` after step 4 has no effect by itself. To change a parameter later: stop `run`, edit the file, then run `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params.json`. It prints the old and the new `params_hash`.
 
 After any `uv pip install` or `git pull`, run this block again. A stale digest stops the first train call with an error; it never gives a wrong score.
 
@@ -217,12 +219,19 @@ python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --roun
 What happens:
 
 1. The controller reads the registrations from the chain, and gives the first 32 seats with a valid file a lease (the right to be trained and scored in this round). A seat with no valid file is skipped: it keeps its place and is not charged.
-2. Training: 8 batches at a time, one GPU each. One LoRA per batch.
-3. Evaluation: one vLLM server per GPU. Null M and every LoRA answer the same tasks with the same seeds, at temperature 1. There are 3 looks (after 500, 1000 and 2000 tasks). At each look a LoRA that is clearly not better is dropped.
+2. Training: 8 batches at a time, one GPU each, in queue order. One LoRA per batch. Training has its own time: 40 minutes from the lease (`train_time_budget_s`). At its end no new training starts, and a job that still runs is stopped.
+3. Evaluation: one vLLM server per GPU. Null M and every LoRA answer the same tasks with the same seeds, at temperature 1. There are 3 looks (after 500, 1000 and 2000 tasks). At each look a LoRA that is clearly not better is dropped. The tasks are scored in blocks of 500 (`eval_chunk_tasks`).
 4. Decision: the best LoRA wins if z > 1. Else there is no winner, and the head and the kings stay as they are.
 5. Promotion and fold: the winner's LoRA is published, then added to the master.
 
-The time limit: at most 100 minutes from the lease to the promotion. The box starts no new training and no new block of tasks after minute 90. A round ends early when every LoRA is dropped or decided. At the limit, a LoRA that is still open is judged by z > 1 on the blocks of tasks that null M and every open LoRA finished. A LoRA with fewer scored tasks than the first look is not charged and keeps its place.
+A round always reaches a decision for the LoRAs that it trained. The rules:
+
+- A batch that was not trained when the training time ended has the verdict `not_trained`. It is not charged, it is first in the next round, and no failure is counted for its seat.
+- The first look (500 tasks) is always scored in full for null M and every trained LoRA. The time limit does not cut it.
+- After the first look the time limit applies: at most 100 minutes from the lease to the promotion. The box starts no new block of tasks after minute 90. A LoRA that is still open then is judged by z > 1 on the blocks that null M and every open LoRA finished.
+- A round ends early when every LoRA is dropped or decided.
+
+So `lease to promotion` can be above 100 minutes only when the training time plus the first look are longer than that. The summary shows the time of each phase.
 
 Watch it from a second shell (same exports):
 
@@ -238,7 +247,7 @@ Expected at the end: the round summary as text (see step 9), then the JSON summa
 Pass, all of these:
 
 1. The first line of the round summary is `SN120 v2 round r000001: APPLIED` or `... NULL`. Both are a pass. `NULL` means no LoRA beat null M by more than one standard error.
-2. `lease to promotion` in the `wall time` line is at most `100m00s`.
+2. Every batch has a verdict: `winner`, `lost`, or `not_trained`. With 8 batches on 8 GPUs, expect no `not_trained`. `lease to promotion` in the `wall time` line is at most `100m00s`; if it is more, send the `wall time` line: the first look took too long for the parameters.
 3. The JSON summary shows `"phase": "IDLE"` and `"head_folded": true`.
 4. With `APPLIED`: `"heads": 3` (genesis, the head with the winner's LoRA, the folded head), and `kings` starts with the winner's UID.
 5. `nvidia-smi` shows the GPUs free after the command ends.
@@ -250,7 +259,8 @@ Pass, all of these:
 
 Not a pass, and what to do:
 
-- `NO_DECISION`: a failure of the box or the store, or the time limit came before the first look. Nobody is charged; the seats are back at the front. Read the `note` column and `run.log`, fix the cause, run step 6 again.
+- `NO_DECISION`: a failure of the box or the store, or no batch was trained inside the training time. Nobody is charged; the seats are back at the front. Read the `note` column and `run.log`, fix the cause, run step 6 again.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: one batch on one GPU needs more than 40 minutes. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change.
 - `ABANDONED`: the winner's files did not match their hash. The head did not change. Stop and report it.
 - `refused:` on the last line: a check failed closed. The line names the check.
 - Lines `waiting: ...` that repeat: the chain or the store does not answer. If the chain read is the cause, set `SN120_V2_CHAIN_NETWORK=none` (the queue then stays as bootstrap made it) and run again.
@@ -399,7 +409,7 @@ The code passes its tests on CPU with a tiny model and fake vLLM servers. This r
 3. The same task and seed give the same sampling for null M and for every LoRA.
 4. Memory and speed with long rows (up to 32,768 output tokens in training, up to 65,536 in generation).
 5. The GPUs are free between training and evaluation.
-6. A launch-size round (32 batches, 2000 tasks) fits in 100 minutes. If it does not, the time limit ends it and the summary says `(stopped at the time limit)`.
+6. The times: how long one batch trains on one GPU (against the 40 minutes of training time), how long a block of 500 tasks takes, and so how many batches and tasks fit in 100 minutes. If the tasks do not fit, the time limit ends the round after the first look and the summary says `(stopped at the time limit)`.
 7. Fold time and RAM with the real 37.6 GB master, and R2 speed for 56 GB.
 8. How many real v1 files are valid under the v2 rules.
 9. The update norm of the default recipe.
