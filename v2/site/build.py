@@ -66,7 +66,9 @@ def read(source: str, key: str) -> bytes:
 
 
 def write(path: Path, data: bytes) -> None:
-    """Atomic write: a reader sees the old file or the new file, never a part of one."""
+    """Atomic write: a reader sees the old file or the new file, never a part of one. The same bytes are not written again."""
+    if path.is_file() and not path.is_symlink() and path.read_bytes() == data:
+        return
     handle, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
     try:
         with os.fdopen(handle, "wb") as out:
@@ -190,7 +192,7 @@ def build_static(out: Path, link: Callable[[str], str]) -> None:
         write(out / name, data)
 
 
-def build_data(source: str, out: Path, link: Callable[[str], str]) -> None:
+def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
     snap = json.loads(read(source, layout.MINING_JSON))
     bench = None
     try:  # the benchmark table is informational: without it the rest of the page is still built
@@ -199,7 +201,8 @@ def build_data(source: str, out: Path, link: Callable[[str], str]) -> None:
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         bench = None
         note = f"site: no benchmark table: {type(error).__name__}: {error}"
-        if note != NOTED.get("bench"):  # say it once, not on every rebuild
+        quiet = quiet_missing and isinstance(error, FileNotFoundError)  # no file yet is the state at launch
+        if note != NOTED.get("bench") and not quiet:  # say it once, not on every rebuild
             print(note, file=sys.stderr)
         NOTED["bench"] = note
     write(out / DATA, json.dumps(view(snap, bench, link), separators=(",", ":"), allow_nan=False).encode())
