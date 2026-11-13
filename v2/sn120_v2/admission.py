@@ -18,7 +18,9 @@ and the official grader are inputs.
 One file never stops the check of the others. When a file makes the grader,
 the tokenizer or the checker itself fail, the same part is tried on a
 known-good case. It passes: only that file is invalid, for this call. It
-fails: the failure is ours, and ``InfraError`` is raised.
+fails: the failure is ours, and ``InfraError`` is raised. Such a file is
+checked again at the next call. After ``FAULT_TRIES`` failed checks in a row,
+each one with that proof and at the same place, the verdict stays.
 """
 
 from __future__ import annotations
@@ -64,8 +66,17 @@ NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can chang
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
-# These verdicts depend on this machine at this moment. They hold for one call and are never kept.
+# These verdicts depend on this machine at this moment. Each holds for one call, and the file is checked again
+# at the next call, until FAULT_TRIES is reached.
 TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT, CHECK_FAULT)
+# After this many failed checks in a row of the same bytes with the same params, the verdict stays like any other:
+# until the file changes, the params change or the process starts again. A failed check counts only when it is
+# proven to be the fault of the file (``Invalid.proven``), and only in a row of checks that fail at the same place.
+FAULT_TRIES = 3
+# Exceptions that tell of the state of this machine (no memory, no file handle, a dead pipe), not of the file.
+# A failed check with such a cause is never counted toward FAULT_TRIES.
+MACHINE = (MemoryError, OSError)
+_AGAIN = f"checked again at the next try to open a round; after {FAULT_TRIES} failed checks in a row the verdict stays until a new file is uploaded"
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
 ENV_TIME_LIMIT = "time-limit"
@@ -93,7 +104,7 @@ RULES: dict[str, str] = {
     "cap": "the first group alone is larger than the rollout cap",
     "text": "a prompt or an output is not valid Unicode text",
     "control_token": "a prompt or an output holds a chat control token",
-    TOKENIZER_FAULT: "a prompt or an output makes the tokenizer fail; the file is checked again later",
+    TOKENIZER_FAULT: f"a prompt or an output makes the tokenizer fail; {_AGAIN}",
     "output_tokens": "an output is longer than the output token cap",
     "context_tokens": "prompt + output is longer than the context token cap",
     "answer_only": "too many rollouts have almost no reasoning before the first boxed answer",
@@ -101,11 +112,11 @@ RULES: dict[str, str] = {
     "answer_repeat": "one final answer is in too many rollouts",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
     TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
-    TIME_LIMIT: "the official grader cannot grade a rollout inside its time limit; the file is checked again later",
-    FAULT: "a rollout makes the official grader fail; the file is checked again later",
+    TIME_LIMIT: f"the official grader cannot grade a rollout inside its time limit; {_AGAIN}",
+    FAULT: f"a rollout makes the official grader fail; {_AGAIN}",
     "grader": "a reward is not the official grade",
     "pool": "too small a share of the prompts are tasks of the public pool",
-    CHECK_FAULT: "the file makes the checker itself fail, at any step; the file is checked again later",
+    CHECK_FAULT: f"the file makes the checker itself fail, at any step; {_AGAIN}",
 }
 
 
@@ -166,16 +177,22 @@ class EnvGrader:
         tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
         return [(task.batch_prompt(), task.answer) for task in tasks]
 
-    def probe(self) -> None:
-        """Raise ``InfraError`` unless the grader works now: a pool task with its own answer must get reward 1."""
+    def probe(self) -> bool:
+        """Raise ``InfraError`` unless the grader works now: a pool task with its own answer must get reward 1.
+
+        Returns whether every known-good case got its reward. Only then is the grader proven sound enough to
+        count a failed row against its file (``FAULT_TRIES``): a pool that loses rows at random loses some of
+        these cases too.
+        """
         tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
         try:
             grades = self.grade_many([(task, _BOXED + "{" + task.answer + "}", False) for task in tasks])
-            works = any(grade.machine_cause is None and grade.reward == 1.0 for grade in grades)
+            works = [grade.machine_cause is None and grade.reward == 1.0 for grade in grades]
         except Exception as exc:
             raise InfraError(f"the official grader failed on a known-good case: {type(exc).__name__}") from exc
-        if not works:
+        if not any(works):
             raise InfraError("the official grader gives no known-good case its reward")
+        return len(works) == len(tasks) and all(works)
 
 
 def env_grader(pool: Any, grade: Callable[..., Any]) -> EnvGrader:
@@ -251,11 +268,14 @@ class Invalid(ValueError):
 
     ``rule`` is a stable code. ``str()`` is the public reason: it names
     positions, counts and published limits, never batch text or a train value.
+    ``proven`` is for a rule in ``TRANSIENT`` only: the part that failed passed its known-good case at that
+    moment, and the cause is not in ``MACHINE`` (for the grader, see ``_fault``). Only such a failure counts
+    toward ``FAULT_TRIES``.
     """
 
-    def __init__(self, rule: str, reason: str) -> None:
+    def __init__(self, rule: str, reason: str, proven: bool = False) -> None:
         super().__init__(reason)
-        self.rule = rule
+        self.rule, self.proven = rule, proven
 
 
 @dataclass(frozen=True)
@@ -411,7 +431,7 @@ def _count(tokens: Tokens, count: Callable[[str], int], text: str, where: str) -
             works = False
         if not works:
             raise InfraError(f"the tokenizer fails on its known-good case: {type(cause).__name__}") from cause
-        raise Invalid(TOKENIZER_FAULT, f"{where}: the tokenizer fails on this text") from None
+        raise Invalid(TOKENIZER_FAULT, f"{where}: the tokenizer fails on this text", proven=not isinstance(cause, MACHINE)) from None
 
 
 def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tuple[set[tuple[int, int]], Sizes | None]:
@@ -518,11 +538,24 @@ def _grades(grader: Grader, rows: Sequence[tuple[str, str, bool]]) -> Iterable[f
             yield exc
 
 
-def _fault(grader: Grader, cause: Exception) -> None:
-    """The grader failed on one row. Return when the grader still works, so the row is at fault. If not, raise ``InfraError``."""
-    if not hasattr(grader, "probe"):  # no way to tell the row from the grader: stay loud
+def _fault(grader: Grader, row: tuple[str, str, bool], cause: Exception) -> bool:
+    """The grader gave no grade for one row. Return whether that is proven to be the fault of the row.
+
+    First the known-good cases of the grader. None passes: the failure is ours and ``InfraError`` is raised.
+    The proof needs more: every known-good case passes now, and the cause is not in ``MACHINE``. For a row with
+    no grade at all (not a time limit), the same row, graded again alone, must also get no grade: a worker that
+    our machine killed does not die twice at the same row. A row over its time limit is not graded again: a slow
+    machine is slow for both tries, and a file that hangs would cost its time limit twice.
+    A grader with no ``probe`` method cannot give the proof: its time limit is a verdict for this call that is
+    never counted, and any other exception out of it is ``InfraError``.
+    """
+    if not hasattr(grader, "probe"):
+        if isinstance(cause, GraderTimeLimit):
+            return False
         raise InfraError(f"the official grader failed: {type(cause).__name__}") from cause
-    grader.probe()
+    if not grader.probe() or isinstance(cause, MACHINE):
+        return False
+    return isinstance(cause, GraderTimeLimit) or isinstance(next(iter(_grades(grader, [row]))), Exception)
 
 
 def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
@@ -535,13 +568,12 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
     places = [(i, j) for i, (_, rollouts) in enumerate(groups) for j in range(len(rollouts))]
     rows = [(groups[i][0], groups[i][1][j][0], (i, j) in capped) for i, j in places]
     unknown: set[int] = set()
-    for (i, j), official in zip(places, _grades(grader, rows)):
+    for (i, j), row, official in zip(places, rows, _grades(grader, rows)):
         here = f"groups[{i}].rollouts[{j}]"
         if isinstance(official, GraderTimeLimit):
-            raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit")
+            raise Invalid(TIME_LIMIT, f"{here}: the official grader did not finish this row inside its time limit", _fault(grader, row, official))
         if isinstance(official, Exception):
-            _fault(grader, official)
-            raise Invalid(FAULT, f"{here}: the official grader fails on this row")
+            raise Invalid(FAULT, f"{here}: the official grader fails on this row", _fault(grader, row, official))
         if official is None:
             unknown.add(i)
         else:
@@ -566,7 +598,7 @@ def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | Non
         raise
     except BaseException as cause:
         _still_works(params, tokens, grader, cause)
-        raise Invalid(CHECK_FAULT, f"the checker fails on this file: {_where(cause)}") from cause
+        raise Invalid(CHECK_FAULT, f"the checker fails on this file: {_where(cause)}", proven=not isinstance(cause, MACHINE)) from cause
 
 
 def _where(cause: BaseException) -> str:
@@ -652,6 +684,7 @@ class StoreAdmission:
     def __init__(self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
+        self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
 
     def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
         """The object's bytes and their check, or None when there is no object."""
@@ -668,7 +701,8 @@ class StoreAdmission:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
-        depends on this machine at this moment, so it is not kept: the next call checks the file again.
+        depends on this machine at this moment, so it is not kept: the next call checks the file again. After
+        ``FAULT_TRIES`` such checks in a row the verdict is kept like any other (``_tried``).
         """
         out: dict[str, Verdict] = {}
         for hotkey in hotkeys:
@@ -678,19 +712,43 @@ class StoreAdmission:
                 tag = ("oversized" if oversized else self.store.sha256(key), self.params.params_hash)
             except KeyError:
                 self._seen.pop(hotkey, None)
+                self._tries.pop(hotkey, None)
                 continue
             kept = self._seen.get(hotkey)
             if kept is None or kept[0] != tag:
                 found = self._read(hotkey, key)
                 if found is None:
                     continue
-                kept = (tag, _verdict(hotkey, found[0], found[1], int(self.clock())))
-                if getattr(found[1], "rule", "") in TRANSIENT:
-                    self._seen.pop(hotkey, None)
-                else:
+                result, final = self._tried(hotkey, tag, found[1])
+                kept = (tag, _verdict(hotkey, found[0], result, int(self.clock())))
+                if final:
                     self._seen[hotkey] = kept
+                else:
+                    self._seen.pop(hotkey, None)
             out[hotkey] = kept[1]
         return out
+
+    def _tried(self, hotkey: str, tag: tuple[str, str], result: Batch | Invalid) -> tuple[Batch | Invalid, bool]:
+        """Count a failed check with a rule in ``TRANSIENT``. Returns the result to show and whether it is final.
+
+        The count goes up only when the failure is proven (``Invalid.proven``) and is the same as the one before:
+        the same bytes, the same params, the same rule and the same reason, so the same place in the file. Any
+        other failure starts the count again, at 1 when proven and at 0 when not: a fault that moves from row to
+        row, or that comes with a sign of trouble on this machine, is not held against the file. At ``FAULT_TRIES``
+        the verdict is final. The count is in memory only: a new process starts at zero.
+        """
+        if not isinstance(result, Invalid) or result.rule not in TRANSIENT:
+            self._tries.pop(hotkey, None)
+            return result, True
+        same = (tag, f"{result.rule}: {result}")
+        tries = 0
+        if result.proven:
+            tries = (self._tries[hotkey][2] if self._tries.get(hotkey, ())[:2] == same else 0) + 1
+        self._tries[hotkey] = (*same, tries)
+        if not tries:
+            return result, False
+        note = f"check {tries} of {FAULT_TRIES}" if tries < FAULT_TRIES else f"checked {FAULT_TRIES} times: this verdict stays until a new file is uploaded"
+        return Invalid(result.rule, f"{result} ({note})"), tries >= FAULT_TRIES
 
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
