@@ -1,13 +1,15 @@
-"""Miner tools for Affine SN120 v2: see your bounds, check a file, reproduce a round at home.
+"""Miner tools for Affine SN120 v2: see your bounds, check a file, upload it, reproduce a round at home.
 
     python v2/miner/affine_miner.py bounds --mining-json mining.json
     python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json
+    AFFINE_PUT_URL=<link> python v2/miner/affine_miner.py upload --mining-json mining.json --hotkey <ss58> batch.json
     python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> \
         --irt-snapshot irt.json --round-seed <seed> --backend <module>:<function> batch.json
 
 Every rule and every number comes from mining.json and from the validator's
-own code in ``sn120_v2``: the same batch check, the same ``Trainer`` and
-``Evaluator`` seams, the same judging. This file holds no rule of its own.
+own code in ``sn120_v2``: the same batch check, the same box runner on the
+``Trainer`` and ``Evaluator`` seams, the same judging. This file holds no
+rule of its own.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -22,32 +25,20 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
-from sn120_v2 import judging, layout, sampling
+from sn120_v2 import judging, layout
 from sn120_v2.admission import Batch, Grader, HFTokens, Invalid, Tokens, check_batch, env_grader
 from sn120_v2.canonical import to_jsonable
 from sn120_v2.envs.math_pool import ENV_ID, load_pool
-from sn120_v2.errors import ConfigError, ContractError, V2Error
+from sn120_v2.errors import ConfigError, ContractError, InfraError, V2Error
 from sn120_v2.irt import draw_from_snapshot
 from sn120_v2.params import Params
-from sn120_v2.publisher import miner_settable
-from sn120_v2.seams import Evaluator, ObjectStore, Trainer
-from sn120_v2.types import (
-    LOST,
-    NULL_MODEL,
-    SCORED,
-    BoxResult,
-    Draw,
-    Entry,
-    EntryResult,
-    EvalRequest,
-    FrozenBatch,
-    HeadVersion,
-    Registration,
-    RoundTicket,
-    TrainRequest,
-)
+from sn120_v2.publisher import UPLOAD_HEADERS, miner_settable
+from sn120_v2.seams import Evaluator, ObjectStore, RoundRunner, Trainer
+from sn120_v2.types import Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
+from sn120_v2.worker import LocalRunner
 
 ROUND_ID, LEASE_ID, BOX_ID = "local", "local-l0", "local-box"
+PUT_URL_ENV = "AFFINE_PUT_URL"  # the opened upload link; it is a secret, so it is not a command-line argument
 
 
 def load_contract(source: str) -> tuple[Params, HeadVersion]:
@@ -58,7 +49,7 @@ def load_contract(source: str) -> tuple[Params, HeadVersion]:
     else:
         raw = Path(source).read_bytes()
     doc = json.loads(raw)
-    return Params.from_dict(doc["params"]), HeadVersion.from_dict(doc["head"])
+    return Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
 
 
 def bounds_text(params: Params) -> str:
@@ -102,14 +93,13 @@ def reproduce(
     head: HeadVersion,
     draw: Draw,
     store: ObjectStore,
-    trainer: Trainer,
-    evaluator: Evaluator,
+    runner: RoundRunner,
     *,
     train: Mapping[str, Any] | None = None,
     tokens: Tokens | None = None,
     grader: Grader | None = None,
 ) -> dict[str, Any]:
-    """Run one batch as a one-entry round: check, train, score against null M, decide.
+    """Run one batch as a one-entry round: check, then the validator's box code and judging.
 
     ``train`` replaces the ``train`` object of the file. It has the same
     shape and passes the same gate (``Recipe.for_miner``).
@@ -117,44 +107,31 @@ def reproduce(
     batch = check_batch(raw, hotkey, params, tokens=tokens, grader=grader)
     train = dict(batch.train if train is None else train)
     report = check_report(batch, params) | {"train_applied": applied_train(params, train)}
-    key = layout.frozen_batch(ROUND_ID, hotkey)
+    key, now = layout.frozen_batch(ROUND_ID, hotkey), int(time.time())
     store.put(key, raw)
     frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, train)
-    entry, started = Entry(0, Registration(0, hotkey, 0), frozen), int(time.time())
-    ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, params, draw, (entry,), started, started + params.lease_timeout_s)
-    seed = sampling.train_seed(draw.round_seed, frozen.batch_sha256)
-    gpu_ids = tuple(range(params.gpus_per_lora(1)))
-    out_prefix = layout.pending_lora_prefix(ROUND_ID, LEASE_ID, 0)
-    try:
-        lora = trainer.train(TrainRequest(ROUND_ID, head, entry, params, seed, gpu_ids, out_prefix))
-    finally:
-        trainer.close()  # every GPU is free before scoring starts
-    report |= {"lora_hash": lora.lora_hash, "train_report": lora.report.to_dict()}
-    n, done, image = len(draw.task_ids), 0, ""
-    null, mine = [""] * params.samples_per_task, [""] * params.samples_per_task
-    try:
-        for look, size in enumerate(params.look_sizes(n)):
-            chunk = evaluator.evaluate(EvalRequest(ROUND_ID, head, (lora,), draw.task_ids[done:size], draw.round_seed, look, params))
-            if lora.lora_hash not in chunk.outcomes:
-                raise ContractError("the evaluator did not score the LoRA")
-            null = [a + b for a, b in zip(null, chunk.outcomes[NULL_MODEL])]
-            mine = [a + b for a, b in zip(mine, chunk.outcomes[lora.lora_hash])]
-            done, image = size, chunk.image_digest
-            partial = judging.score_entry(draw.weights, null, mine, params)
-            if judging.drop_at_look(partial, look, n, params):
-                reason = f"dropped after {size} of {n} tasks: it can no longer reach the win bar"
-                return report | {"status": LOST, "reason": reason, "score": partial.to_dict()}
-    finally:
-        evaluator.close()
-    scored = EntryResult(0, SCORED, lora=lora, outcomes=tuple(mine))
-    result = BoxResult(ROUND_ID, LEASE_ID, BOX_ID, ticket.digest(), head.version_id, image, tuple(null), (scored,), started, int(time.time()))
+    entry = Entry(0, Registration(0, hotkey, 0), frozen)
+    ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, params, draw, (entry,), now, now + params.lease_timeout_s)
+    result = runner.run(ticket)
+    mine = result.entries[0]
+    if mine.lora is not None:
+        report |= {"lora_hash": mine.lora.lora_hash, "train_report": mine.lora.report.to_dict()}
     try:
         decision = judging.decide([(ticket, result)])
     except ContractError as exc:  # for example a worker image that the contract does not pin
-        score = judging.score_entry(draw.weights, null, mine, params, n_total=n)
-        return report | {"status": "unofficial", "reason": f"the validator would refuse this run: {exc}", "score": score.to_dict()}
+        score = judging.score_entry(draw.weights, result.null_outcomes, mine.outcomes, params, n_total=len(draw.task_ids)) if mine.outcomes else None
+        return report | {"status": "unofficial", "reason": f"the validator would refuse this run: {exc}", "score": score and score.to_dict()}
     row = decision.entries[0]
-    return report | {"status": row.status, "reason": row.reason or decision.reason, "score": row.score.to_dict()}
+    return report | {"status": row.status, "reason": row.reason or decision.reason, "eliminated_at_look": row.eliminated_at_look, "score": row.score and row.score.to_dict()}
+
+
+def upload(raw: bytes, url: str) -> None:
+    """PUT the file to the presigned link, with the headers the link is signed for. The URL is a secret: it is never printed."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=raw, method="PUT", headers=UPLOAD_HEADERS), timeout=300):
+            pass
+    except OSError as exc:
+        raise InfraError(f"the upload failed: {type(exc).__name__} {getattr(exc, 'code', '')}".strip()) from None
 
 
 def load_tokens(path: str | None) -> Tokens | None:
@@ -169,8 +146,8 @@ def official_grader(params: Params) -> Grader:
     return env_grader(load_pool(), importlib.import_module("sn120_v2.envs.math_grader").grade)
 
 
-def load_backend(spec: str, workdir: str) -> tuple[ObjectStore, Trainer, Evaluator]:
-    """``module:function``. The function takes a work directory and returns (store, trainer, evaluator)."""
+def load_backend(spec: str, workdir: str) -> tuple[ObjectStore, Trainer, Evaluator, str]:
+    """``module:function``. The function takes a work directory and returns (store, trainer, evaluator, image digest)."""
     module, _, name = spec.partition(":")
     return getattr(importlib.import_module(module), name)(workdir)
 
@@ -178,7 +155,7 @@ def load_backend(spec: str, workdir: str) -> tuple[ObjectStore, Trainer, Evaluat
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("bounds", "check", "reproduce"):
+    for name in ("bounds", "check", "upload", "reproduce"):
         command = commands.add_parser(name)
         command.add_argument("--mining-json", required=True, help="mining.json: a file or an http(s) URL")
         if name == "bounds":
@@ -186,13 +163,13 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("batch", help="your batch file")
         command.add_argument("--hotkey", required=True, help="the ss58 address of your hotkey")
         command.add_argument("--tokenizer", help="tokenizer of the head (directory or model id); without it the token rules do not run")
-        command.add_argument("--grade", action="store_true", help="match your rewards with the official grader (needs the envs extra)")
+        command.add_argument("--grade", action="store_true", help="match your rewards with the official grader (needs --tokenizer and the envs extra)")
         if name == "reproduce":
             command.add_argument("--irt-snapshot", required=True, help="the published IRT snapshot of the round (a JSON file)")
             command.add_argument("--round-seed", required=True, help="the public seed of the round")
             command.add_argument("--tasks", type=int, help="draw N tasks (default: n_tasks of the contract)")
             command.add_argument("--train", help='a JSON object that replaces "train" of the file')
-            command.add_argument("--backend", required=True, help="module:function that returns (store, trainer, evaluator)")
+            command.add_argument("--backend", required=True, help="module:function that returns (store, trainer, evaluator, image digest)")
             command.add_argument("--work", help="work directory (default: a temporary directory)")
     args = parser.parse_args(argv)
     try:
@@ -200,17 +177,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "bounds":
             print(bounds_text(params))
             return 0
+        if args.grade and not args.tokenizer:  # with no token count no row counts as capped: not the validator's verdict
+            raise ConfigError("--grade needs --tokenizer")
+        if args.command == "upload" and not os.environ.get(PUT_URL_ENV):
+            raise ConfigError(f"set {PUT_URL_ENV} to the upload URL of your sealed link")
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer)
         grader = official_grader(params) if args.grade else None
-        if args.command == "check":
+        if args.command in ("check", "upload"):
             report = check(raw, args.hotkey, params, tokens, grader)
+            if args.command == "upload":  # an invalid file is never sent
+                upload(raw, os.environ[PUT_URL_ENV])
+                report["uploaded"] = True
         else:
             print(bounds_text(params), file=sys.stderr)
-            store, trainer, evaluator = load_backend(args.backend, args.work or tempfile.mkdtemp(prefix="affine-reproduce-"))
+            store, trainer, evaluator, image = load_backend(args.backend, args.work or tempfile.mkdtemp(prefix="affine-reproduce-"))
+            runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), image)
             train = json.loads(args.train) if args.train else None
             snapshot = json.loads(Path(args.irt_snapshot).read_bytes())
             draw = draw_from_snapshot(snapshot, args.round_seed, args.tasks or params.n_tasks)
-            report = reproduce(raw, args.hotkey, params, head, draw, store, trainer, evaluator, train=train, tokens=tokens, grader=grader)
+            report = reproduce(raw, args.hotkey, params, head, draw, store, runner, train=train, tokens=tokens, grader=grader)
     except Invalid as exc:
         print(json.dumps({"valid": False, "rule": exc.rule, "reason": str(exc)}, indent=1))
         return 1

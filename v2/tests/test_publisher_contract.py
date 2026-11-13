@@ -7,11 +7,10 @@ import json
 
 import pytest
 
-from sn120_v2 import layout, publisher
-from sn120_v2.canonical import sha256_hex
-from sn120_v2.errors import ContractError, InfraError, VerifyError
+from sn120_v2 import layout, public, publisher, sim
+from sn120_v2.canonical import sha256_hex, to_jsonable
+from sn120_v2.errors import ContractError, InfraError
 from sn120_v2.params import MinerBound, Recipe
-from sn120_v2.types import King, Verdict
 
 
 class MemStore(dict):
@@ -21,46 +20,55 @@ class MemStore(dict):
         return sha256_hex(self[key])
 
 
-def snapshot(build, params=None, **changes) -> dict:
-    head = build.head()
-    base = {
-        "generated_at": 1763000000,
-        "params": (params or build.params()).to_dict(),
-        "head": head.to_dict(),
-        "round": {"round_id": "r000007", "state": "TRAIN", "seats_filled": 1, "round_seed": "seed-7"},
-        "queue": [{"position": 0, "uid": 11, "hotkey": "hk11", "file_valid": True, "squat_trimmed": False}],
-        "kings": [King(5, "hk5", "r000003", head.version_id, 900, 1.7).to_dict()],
-        "verdicts": {"hk11": Verdict("hk11", True, "", "affine-batch-v2", 3, 9, "ab" * 32, 1762999000).to_dict()},
-        "irt": {"snapshot_id": "uniform-1", "method": "uniform placeholder"},
-    }
-    return base | changes
+def world(tmp_path, play: bool = False, **changes) -> sim.SimWorld:
+    """The real controller on CPU. Its recorded snapshots are what the publisher gets in production."""
+    made = sim.SimWorld(tmp_path / "world", sim.sim_params(**changes))
+    if play:
+        made.register(11, 0.4)  # wins the round
+        made.register(12, None)  # no file: the seat waits
+        made.round()
+    return made
 
 
-def published(build, snap=None, store=None) -> tuple[dict, str, MemStore]:
-    snap = snap or snapshot(build)
+def published(snap, store=None) -> tuple[dict, str, MemStore]:
     store = MemStore() if store is None else store
-    store[layout.head_manifest(snap["head"]["version_id"])] = b"{}"
+    if snap["head"]:
+        store[layout.head_manifest(snap["head"]["head"]["version_id"])] = b"{}"
     publisher.StorePublisher(store, "https://files.example/").publish(snap)
     return json.loads(store[layout.MINING_JSON]), store[layout.LLMS_TXT].decode(), store
 
 
-def test_both_files_come_from_one_snapshot_and_change_together(build):
-    doc, text, store = published(build)
-    assert doc["snapshot_digest"] in text and doc["round"]["state"] == "TRAIN" and "- state: TRAIN" in text
-    assert doc["head"] == build.head().to_dict() and build.head().version_id in text
-    assert {key: doc[key] for key in snapshot(build)} == snapshot(build)  # the website reads the snapshot's own keys
-    moved = snapshot(build, round={"round_id": "r000007", "state": "EVAL"})
-    doc2, text2, _ = published(build, moved, store)
+def test_the_controller_publishes_through_the_real_store(tmp_path):
+    made = world(tmp_path)
+    made.controller.publisher = publisher.StorePublisher(made.store, "https://files.example/")
+    made.register(11, 0.4)
+    made.register(12, None)
+    made.round()
+    assert made.controller.last_error == ""  # each head manifest was public before the contract named the head
+    doc, text = json.loads(made.store.get(layout.MINING_JSON)), made.store.get(layout.LLMS_TXT).decode()
+    snap = public.snapshot(made.controller.state, made.params, doc["generated_at"])
+    assert {key: doc[key] for key in snap} == to_jsonable(snap)  # the website reads the snapshot's own keys
+    assert doc["snapshot_digest"] in text and doc["head"]["head"]["version_id"] in text and doc["irt_snapshot_id"] in text
+    assert [king["uid"] for king in doc["kings"]] == [11] and "| 11 | hk11 |" in text
+    assert doc["queue"]["length"] == 1 and "| 0 | 12 | hk12 | 1012 | no |" in text
+
+
+def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
+    running, idle = world(tmp_path, play=True).publisher.snapshots[-2:]
+    doc, text, store = published(running)
+    assert doc["phase"] == "RUNNING" and "- phase: RUNNING" in text and f"- round_seed: {doc['round']['round_seed']}" in text
+    assert doc["snapshot_digest"] in text and f"| 0 | 11 | hk11 | {doc['round']['entries'][0]['batch_sha256']} |" in text
+    doc2, text2, _ = published(idle, store)
     assert doc2["snapshot_digest"] != doc["snapshot_digest"] and doc2["snapshot_digest"] in text2
-    assert "- state: EVAL" in text2 and doc["snapshot_digest"] not in text2
+    assert "- phase: IDLE" in text2 and doc["snapshot_digest"] not in text2
 
 
-def test_every_miner_bound_is_published_from_the_records(build):
+def test_every_miner_bound_is_published_from_the_records(tmp_path):
     bounds = tuple(
         MinerBound("steps", 2, 7, integer=True) if bound.key == "steps" else bound for bound in Recipe().miner_bounds
     )
-    recipe = Recipe(image_digests=(build.image,), steps=3, miner_bounds=bounds)
-    doc, text, _ = published(build, snapshot(build, build.params(recipe=recipe)))
+    recipe = Recipe(image_digests=(sim.SIM_IMAGE,), steps=3, miner_bounds=bounds)
+    doc, text, _ = published(world(tmp_path, recipe=recipe).publisher.snapshots[-1])
     rows = {row["key"]: row for row in doc["contract"]["miner_settable"]}
     assert list(rows) == ["lora_lr", "steps", "group_size", "sample_temperature", "rank", "alpha", "target_modules"]
     for bound in bounds:
@@ -73,13 +81,18 @@ def test_every_miner_bound_is_published_from_the_records(build):
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
-def test_every_number_follows_the_pinned_params(build):
-    params = build.params(max_prompts=123, max_rollouts=4567, z_bar=1.25, kings_window=7, n_tasks=400, looks=(0.25, 1.0))
-    doc, text, _ = published(build, snapshot(build, params))
-    assert doc["contract"]["params_hash"] == params.params_hash
+def test_every_number_follows_the_pinned_params(tmp_path):
+    recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777)
+    changes = dict(max_prompts=123, max_rollouts=4567, z_bar=1.25, kings_window=7, n_tasks=400, looks=(0.25, 1.0), recipe=recipe)
+    made = world(tmp_path, **changes)
+    doc, text, _ = published(made.publisher.snapshots[-1])
+    assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
-    for field in dataclasses.fields(params) + dataclasses.fields(params.recipe):  # the full table and the full recipe
+    assert "training reads at most 777 output tokens" in text and "A longer rollout is valid. The trainer" in text
+    header = doc["contract"]["batch_file"]["upload_headers"]
+    assert header == {"Content-Type": "application/octet-stream"} and "`Content-Type: application/octet-stream`" in text
+    for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds")
     for key in doc["contract"]["objects"].values():
         assert key.startswith("public/") and key in text
@@ -88,29 +101,30 @@ def test_every_number_follows_the_pinned_params(build):
 @pytest.mark.parametrize(
     "bad",
     [
-        {"queue": [{"hotkey": "hk11", "groups": [{"prompt": "p"}]}]},
+        {"queue": {"length": 1, "next": [{"hotkey": "hk11", "groups": [{"prompt": "p"}]}]}},
         {"round": {"batch": "private/rounds/r000007/batches/hk11.json"}},
-        {"round": {"lora": "pending/rounds/r000007/l0/loras/000"}},
-        {"queue": [{"hotkey": "hk11", "put_url": "https://signed"}]},
-        {"verdicts": {"hk11": {"hotkey": "hk11", "valid": True, "train": {"rank": 64}}}},
+        {"history": [{"entries": [{"lora": "pending/rounds/r000007/l0/loras/000"}]}]},
+        {"queue": {"length": 1, "next": [{"hotkey": "hk11", "put_url": "https://signed"}]}},
         {"contract": {}},
+        {"head": None},
+        {"params": {"netuid": 120, "no_such_param": 1}},
     ],
 )
-def test_private_content_never_reaches_the_public_files(build, bad):
+def test_private_or_malformed_content_never_reaches_the_public_files(tmp_path, bad):
     store = MemStore()
     with pytest.raises(ContractError):
-        published(build, snapshot(build, **bad), store)
+        published(world(tmp_path).publisher.snapshots[-1] | bad, store)
     assert layout.MINING_JSON not in store and layout.LLMS_TXT not in store
 
 
-def test_a_head_is_named_only_after_its_manifest_is_public(build):
+def test_a_head_is_named_only_after_its_manifest_is_public(tmp_path):
     store = MemStore()
-    with pytest.raises(VerifyError, match="not public yet"):
-        publisher.StorePublisher(store).publish(snapshot(build))
+    with pytest.raises(InfraError, match="not public yet"):
+        publisher.StorePublisher(store).publish(world(tmp_path).publisher.snapshots[-1])
     assert not store
 
 
-def test_a_bad_write_is_an_error_not_a_silent_stale_contract(build):
+def test_a_bad_write_is_an_error_not_a_silent_stale_contract(tmp_path):
     class Corrupting(MemStore):
         def sha256(self, key: str) -> str:
             return "0" * 64
@@ -119,9 +133,8 @@ def test_a_bad_write_is_an_error_not_a_silent_stale_contract(build):
         def put(self, key: str, data: bytes) -> None:
             raise OSError("network")
 
-    with pytest.raises(VerifyError, match="read back"):
-        published(build, store=Corrupting())
-    with pytest.raises(InfraError):
-        published(build, store=Down())
-    with pytest.raises(ContractError):
-        published(build, snapshot(build) | {"params": {"netuid": 120, "no_such_param": 1}})
+    snap = world(tmp_path).publisher.snapshots[-1]
+    with pytest.raises(InfraError, match="read back"):
+        published(snap, Corrupting())
+    with pytest.raises(InfraError, match="cannot publish"):
+        published(snap, Down())

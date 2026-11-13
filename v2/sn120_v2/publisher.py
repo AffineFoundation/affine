@@ -22,20 +22,22 @@ from . import layout
 from .admission import CONTROL_TOKENS, FORMATS
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
-from .errors import ContractError, InfraError, V2Error, VerifyError
+from .errors import ContractError, InfraError, V2Error
 from .irt import draw_from_snapshot
 from .judging import drop_margin
 from .params import MinerBound, Params, Recipe
 from .seams import ObjectStore
-from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadVersion, Verdict
+from .types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, HeadManifest
 
-SCHEMA = "affine-mining-v2"
 REPO = "https://github.com/AffineFoundation/affine"
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
 PRIVATE_ZONES = ("private/", "pending/")
-OWN_KEYS = ("schema", "snapshot_digest", "contract")
+OWN_KEYS = ("snapshot_digest", "contract")
+# A presigned upload link signs these headers (``Presigner.presign_put``). An upload without them is refused.
+UPLOAD_HEADERS = {"Content-Type": "application/octet-stream"}
+ENTRY_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "status", "delta", "se", "z", "cap_rate")
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -50,8 +52,8 @@ RECIPE_NOTES = {
     "target_modules": "layers that get an adapter",
     "kl": "KL term; 0 = off",
     "support_top_k": "the policy-gradient term uses only tokens the head could sample (top-k, then top-p)",
-    "train_max_output_tokens": "training cap on output tokens; it is not the scoring cap",
-    "train_max_context_tokens": "training cap on prompt + output tokens",
+    "train_max_output_tokens": "training reads at most this many output tokens of a rollout; it is not the scoring cap",
+    "train_max_context_tokens": "training reads at most this many prompt + output tokens of a rollout",
     "code_digest": "sha256 of the training code",
     "image_digests": "worker images that may train and score",
 }
@@ -124,6 +126,7 @@ def contract(params: Params, public_url: str) -> dict[str, Any]:
             "train_allowed_in": list(TRAIN_FORMATS),
             "forbidden_text": list(CONTROL_TOKENS),
             "private_object": layout.miner_object("HOTKEY"),
+            "upload_headers": UPLOAD_HEADERS,
         },
         "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
         "null_model": NULL_MODEL,
@@ -148,19 +151,17 @@ def refuse_private(value: Any, where: str = "snapshot") -> None:
 
 
 def mining_document(snapshot: Mapping[str, Any], public_url: str = "") -> dict[str, Any]:
-    """mining.json: the snapshot itself, plus its digest and the contract block."""
+    """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block."""
     clash = [key for key in OWN_KEYS if key in snapshot]
     if clash:
         raise ContractError(f"the snapshot may not use the publisher's keys {clash}")
     refuse_private(snapshot)
     plain = to_jsonable(snapshot)
     params = Params.from_dict(plain.get("params") or {})
-    if "head" not in plain:
+    if not plain.get("head"):
         raise ContractError("the snapshot has no head")
-    HeadVersion.from_dict(plain["head"])  # a head whose id does not match its content is refused
-    for verdict in (plain.get("verdicts") or {}).values():
-        Verdict.from_dict(verdict)  # a verdict has no field for batch content or train values
-    return {"schema": SCHEMA, "snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url)}
+    HeadManifest.from_dict(plain["head"])  # a head whose ids do not match its content is refused
+    return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url)}
 
 
 def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
@@ -199,12 +200,15 @@ def _recipe_lines(recipe: Recipe, recipe_id: str) -> list[str]:
 
 
 def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    round_now, queue = doc.get("round") or {}, doc.get("queue") or []
-    verdicts = doc.get("verdicts") or {}
+    round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
+    entries, seats = round_now.get("entries") or [], queue.get("next") or []
     return [
         "## 3. The round now",
         "",
+        f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
+        "  new head is being published). The last closed rounds are in mining.json under `history`.",
         *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
+        *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
         "  for a full round. Registrations for the next round are always open.",
         "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
@@ -213,8 +217,13 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 4. The queue",
         "",
-        *(table(tuple(queue[0]), (row.values() for row in queue)) if queue else ["The queue is empty."]),
+        f"Seats that wait: {show(queue.get('length'))}. The next seats, in order:",
         "",
+        *(table(tuple(seats[0]), (row.values() for row in seats)) if seats else ["The queue is empty."]),
+        "",
+        "- `file_valid`: the validator's verdict on the file that is stored for the hotkey now. It checks a stored file",
+        "  again about every minute. It never publishes batch content or `train` values. To see the rule that a file",
+        "  breaks, run the `check` command of section 5: it prints the rule code and the reason.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  To enter again, register again.",
@@ -227,20 +236,6 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- Squat-trim: expected wait = max({params.squat_min_wait_s} s, seats ahead / turn rate of the last 24 h). A seat",
         f"  with no valid file that is older than {show(params.squat_age_factor)} x its expected wait moves to the back.",
         "  A seat with a valid file is never moved.",
-        "",
-        "### Live file verdicts",
-        "",
-        "The validator checks each stored file again within about a minute of an upload. A verdict never shows batch",
-        "content or `train` values.",
-        "",
-        *(
-            table(("hotkey", "valid", "reason", "format", "prompts", "rollouts", "checked"), (
-                (hotkey, v.get("valid"), v.get("reason"), v.get("format"), v.get("n_prompts"), v.get("n_rollouts"), utc(v.get("checked_at")))
-                for hotkey, v in sorted(verdicts.items())
-            ))
-            if verdicts
-            else ["No file is stored."]
-        ),
     ]
 
 
@@ -271,9 +266,10 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
         f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
         f"  {params.max_context_tokens} tokens. The prompt is counted as one user message in the chat template of the",
-        f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
-        f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout.",
-        f"- Reasoning: the reasoning of an output is the text before its first `\\boxed`. A rollout with fewer than",
+        f"  head. Train cap: training reads at most {recipe.train_max_output_tokens} output tokens and",
+        f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid. The trainer",
+        "  truncates it: it trains on the tokens up to the cap only.",
+        "- Reasoning: the reasoning of an output is the text before its first `\\boxed`. A rollout with fewer than",
         f"  {params.min_reasoning_tokens} reasoning tokens is answer-only. At most {show(params.max_answer_only_frac)} of the",
         f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
         "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
@@ -285,10 +281,15 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
-        "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule.",
+        "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
+        "  `--tokenizer`: only a token count can tell that an output stopped at the cap.",
         "- Upload: each registered hotkey has a sealed link. It is a SealedBox that only the private key of the hotkey",
-        "  can open. It holds a time-limited upload URL for your object and the headers to send. PUT the file bytes",
-        f"  to that URL. Then read your verdict in section 4. Where to get the link: {upload or 'not published yet'}.",
+        "  can open. It holds a time-limited upload URL for your object. PUT the file bytes to that URL with the header",
+        f"  {show([f'`{name}: {value}`' for name, value in UPLOAD_HEADERS.items()])}. The link is signed for that header: an upload",
+        "  without it is refused. `python v2/miner/affine_miner.py upload --mining-json mining.json --hotkey <ss58>",
+        "  --tokenizer <head directory> --grade batch.json` checks the file, reads the URL from the environment variable",
+        "  `AFFINE_PUT_URL` and sends the file with that header. Then read `file_valid` in section 4.",
+        f"  Where to get the link: {upload or 'not published yet'}.",
     ]
 
 
@@ -305,7 +306,7 @@ def _pool_lines(params: Params) -> list[str]:
 
 
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    irt, kings, keys = doc.get("irt") or {}, doc.get("kings") or [], object_keys()
+    irt_id, kings, keys = doc.get("irt_snapshot_id"), doc.get("kings") or [], object_keys()
     looks, n = params.look_sizes(), params.n_tasks
     drops = [
         f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
@@ -355,9 +356,9 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "## 8. The IRT snapshot",
         "",
         "It is public every round: task difficulties, model abilities and sampling weights, tagged with the head.",
-        f"Object: `{keys['irt_snapshot']}`. With it and the round seed you can rebuild the draw.",
-        "",
-        *(f"- {key}: {show(value)}" for key, value in irt.items() if not isinstance(value, (dict, list))),
+        f"Object: `{keys['irt_snapshot']}`. With it and the round seed you can rebuild the draw. A round names its",
+        "snapshot (`irt_snapshot_id`) and its seed (`round_seed`) in section 3, in `history` and in its round file.",
+        f"Snapshot of the last closed round: `{show(irt_id)}`.",
         "",
         "## 9. Objects and how to verify them",
         "",
@@ -380,7 +381,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
 
 def llms_text(doc: Mapping[str, Any]) -> str:
     """llms.txt from a mining.json document. Pure: the same document always gives the same text."""
-    params, head = Params.from_dict(doc["params"]), HeadVersion.from_dict(doc["head"])
+    params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
     lines = [
@@ -441,16 +442,19 @@ class StorePublisher:
         self.public_url = public_url.rstrip("/")
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
-        """Render both files first, so a bad snapshot changes nothing. Then write and read back each one."""
+        """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
+
+        A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
+        """
         mining, llms = render(snapshot, self.public_url)
-        head_key = layout.head_manifest(snapshot["head"]["version_id"])
+        head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
-                raise VerifyError(f"head manifest {head_key} is not public yet; the contract may not name this head")
+                raise InfraError(f"head manifest {head_key} is not public yet; the contract may not name this head")
             for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
-                    raise VerifyError(f"{key} does not read back as written")
+                    raise InfraError(f"{key} does not read back as written")
         except V2Error:
             raise
         except Exception as exc:  # any store failure is ours: the controller retries the same snapshot

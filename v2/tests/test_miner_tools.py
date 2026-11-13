@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sn120_v2 import layout, publisher, sampling
+from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
@@ -18,6 +19,7 @@ from sn120_v2.errors import BatchRejected, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Recipe
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
+from sn120_v2.worker import LocalRunner
 
 _SPEC = importlib.util.spec_from_file_location("affine_miner_tool", Path(__file__).resolve().parents[1] / "miner" / "affine_miner.py")
 tool = importlib.util.module_from_spec(_SPEC)
@@ -76,7 +78,8 @@ def draw(n: int = 8) -> Draw:
 
 
 def run(build, box: Box, raw: bytes | None = None, params=None, n: int = 8, **options) -> dict:
-    return tool.reproduce(raw or batch_bytes(), HOTKEY, params or build.params(), build.head(), draw(n), box, box, box, **options)
+    runner = LocalRunner(box, box, lambda: 7, box.image)  # the validator's own box code
+    return tool.reproduce(raw or batch_bytes(), HOTKEY, params or build.params(), build.head(), draw(n), box, runner, **options)
 
 
 def test_reproduce_is_the_validators_round_for_one_batch(build):
@@ -108,7 +111,7 @@ def test_reproduce_reports_the_validators_decision(build, null, lora, image, sta
 def test_reproduce_stops_at_an_early_look_like_the_validator(build):
     box = Box(build, "PPPPPPPP" * 2, "FFFFFFFP" * 2)
     report = run(build, box, params=build.params(n_tasks=16, looks=(0.5, 1.0)), n=16)
-    assert report["status"] == "lost" and "dropped after 8 of 16" in report["reason"]
+    assert (report["status"], report["eliminated_at_look"]) == ("lost", 0) and "scored on 8 tasks" in report["reason"]
     assert box.events == ["train", "close", "evaluate", "close"]
 
 
@@ -127,17 +130,17 @@ def test_train_values_pass_the_validators_gate_and_are_never_clamped(build):
         assert box.events == [] and not box
 
 
-def test_a_failed_trainer_frees_the_gpus_and_nothing_is_scored(build):
+def test_a_failed_trainer_is_no_decision_and_frees_the_gpus(build):
     box = Box(build, fail=True)
-    with pytest.raises(InfraError):
-        run(build, box)
-    assert box.events == ["train", "close"]
+    report = run(build, box)
+    assert report["status"] == "no_decision" and "out of memory" in report["reason"] and report["score"] is None
+    assert box.events == ["train", "train", "train", "close"]  # tried again, then freed; nothing is scored
 
 
 def mining_json(build, tmp_path, recipe: Recipe | None = None) -> str:
-    params = build.params(recipe=recipe or Recipe(image_digests=(build.image,)))
+    world = sim.SimWorld(tmp_path / "world", build.params(recipe=recipe or Recipe(image_digests=(build.image,))))
     path = tmp_path / "mining.json"
-    path.write_bytes(publisher.render({"params": params.to_dict(), "head": build.head().to_dict()})[0])
+    path.write_bytes(publisher.render(world.publisher.snapshots[-1])[0])  # the controller's own snapshot
     return str(path)
 
 
@@ -169,7 +172,7 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
 
 def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp_path, capsys, monkeypatch):
     box = Box(build)
-    monkeypatch.setitem(sys.modules, "fake_backend", types.SimpleNamespace(make=lambda workdir: (box, box, box)))
+    monkeypatch.setitem(sys.modules, "fake_backend", types.SimpleNamespace(make=lambda workdir: (box, box, box, box.image)))
     batch, irt_file = tmp_path / "batch.json", tmp_path / "irt.json"
     batch.write_bytes(batch_bytes())
     snapshot = IRTSampler([f"t{i:03d}" for i in range(40)], build.params()).public_snapshot()
@@ -192,25 +195,40 @@ def test_the_reward_rule_runs_with_the_official_grader(build):
     assert caught.value.rule == "grader"
 
 
-def test_a_miner_needs_only_the_two_public_files(build, tmp_path):
+def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys, monkeypatch):
+    sent, batch, link = [], tmp_path / "batch.json", "https://signed.example/put?sig=secret"
+    monkeypatch.setattr(tool.urllib.request, "urlopen", lambda request, timeout: sent.append(request) or contextlib.nullcontext())
+    batch.write_bytes(batch_bytes())
+    argv = ["upload", "--mining-json", mining_json(build, tmp_path), str(batch), "--hotkey"]
+    assert cli(capsys, *argv, HOTKEY)[0] == 2 and not sent  # no link, no upload
+    monkeypatch.setenv(tool.PUT_URL_ENV, link)
+    assert cli(capsys, *argv, "someone-else")[0] == 1 and not sent  # an invalid file is never sent
+    assert cli(capsys, *argv, HOTKEY, "--grade")[0] == 2 and not sent  # no token count: not the validator's verdict
+    code, out = cli(capsys, *argv, HOTKEY)
+    assert code == 0 and json.loads(out)["uploaded"] and "secret" not in out
+    assert (sent[0].full_url, sent[0].get_method(), sent[0].data) == (link, "PUT", batch_bytes())
+    assert dict(sent[0].header_items()) == {"Content-type": "application/octet-stream"}
+
+
+def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
     """Read the contract, check, upload, see the verdict, see the queue: with llms.txt and mining.json alone."""
-    store, params, head = Box(build), build.params(), build.head()
-    store[layout.head_manifest(head.version_id)] = b"{}"
-    public = publisher.StorePublisher(store)
-    base = {"params": params.to_dict(), "head": head.to_dict(), "queue": [], "verdicts": {}}
-    public.publish(base)
-    (tmp_path / "mining.json").write_bytes(store[layout.MINING_JSON])
-    doc = json.loads(store[layout.MINING_JSON])
+    world = sim.SimWorld(tmp_path / "world", build.params())
+    world.register(11, None)  # hk11 has a seat and no file yet
+    admission = StoreAdmission(world.store, world.params, tokens=WordTokens(), grader=None, clock=lambda: 5)
+    contract = publisher.StorePublisher(world.store)
+    files = lambda: (world.store.get(layout.MINING_JSON), world.store.get(layout.LLMS_TXT))
+    contract.publish(public.snapshot(world.controller.state, world.params, 5, admission.verdicts(["hk11"])))
+    (tmp_path / "mining.json").write_bytes(files()[0])
+    doc = json.loads(files()[0])
+    assert doc["queue"]["next"][0]["hotkey"] == "hk11" and not doc["queue"]["next"][0]["file_valid"]
     miner_params, _ = tool.load_contract(str(tmp_path / "mining.json"))
     train = {row["key"]: row["choices"][:1] or (int(row["high"]) if row["integer"] else row["high"]) for row in doc["contract"]["miner_settable"]}
-    raw = batch_bytes(train)
-    assert tool.check(raw, HOTKEY, miner_params, WordTokens())["rules_not_run"] == ["grader"]
-    key = doc["contract"]["batch_file"]["private_object"].replace("HOTKEY", HOTKEY)
-    store.put(key, raw)
-    verdicts = StoreAdmission(store, params, tokens=WordTokens(), grader=None, clock=lambda: 5).verdicts([HOTKEY])
-    queue = [{"position": 0, "uid": 11, "hotkey": HOTKEY, "file_valid": verdicts[HOTKEY].valid}]
-    public.publish(base | {"queue": queue, "verdicts": {HOTKEY: verdicts[HOTKEY].to_dict()}})
-    doc, text = json.loads(store[layout.MINING_JSON]), store[layout.LLMS_TXT].decode()
-    assert doc["verdicts"][HOTKEY]["valid"] and doc["verdicts"][HOTKEY]["n_rollouts"] == 1 and doc["queue"][0]["hotkey"] == HOTKEY
-    assert f"| {HOTKEY} | yes | none | affine-batch-v2 | 1 | 1 |" in text and doc["snapshot_digest"] in text
-    assert b"step step" not in store[layout.MINING_JSON] + store[layout.LLMS_TXT]  # the batch itself stays private
+    raw = batch_bytes(train, "hk11")
+    assert tool.check(raw, "hk11", miner_params, WordTokens())["rules_not_run"] == ["grader"]
+    key = doc["contract"]["batch_file"]["private_object"].replace("HOTKEY", "hk11")
+    monkeypatch.setattr(tool.urllib.request, "urlopen", lambda request, timeout: world.store.put(key, request.data) or contextlib.nullcontext())
+    tool.upload(raw, "https://signed.example/put")  # the link leads to the miner's private object
+    contract.publish(public.snapshot(world.controller.state, world.params, 6, admission.verdicts(["hk11"])))
+    doc, text = json.loads(files()[0]), files()[1].decode()
+    assert doc["queue"]["next"][0]["file_valid"] and "| 0 | 11 | hk11 | 1011 | yes |" in text and doc["snapshot_digest"] in text
+    assert b"step step" not in files()[0] + files()[1]  # the batch itself stays private
