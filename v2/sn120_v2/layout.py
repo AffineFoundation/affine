@@ -48,6 +48,11 @@ def ticket(round_id: str, lease_id: str) -> str:
     return f"private/rounds/{_part(round_id)}/{_part(lease_id)}/ticket.json"
 
 
+def sealed_result(round_id: str, lease_id: str) -> str:
+    """Where the controller keeps an accepted sealed result as private evidence."""
+    return f"private/rounds/{_part(round_id)}/{_part(lease_id)}/result.json"
+
+
 def pending_round_prefix(round_id: str) -> str:
     return f"pending/rounds/{_part(round_id)}"
 
