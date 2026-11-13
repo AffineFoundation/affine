@@ -16,7 +16,7 @@ Each point is a fact or a command that is not on `v2` at the commit of this file
 2. The head pointer at `public/head.json`. The code of this commit still writes `public/current.json`, which v1 owns ("Before the mainnet bootstrap", check 4).
 3. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap`, and any size that the smoke test changes.
 4. A unit file for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-5. The pull and `site/reset.py llms` read the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` of the pull's credentials file ("AffineValidator", steps 8 and 12). The code of this commit reads only the `SN120_R2_` names.
+5. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
 6. The section "After a fix" of SMOKE.md. "After a fix: a new commit on the GPU box" here holds the same order; it takes that section's wording when it is on `v2`.
 
 ## Hosts
@@ -107,7 +107,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable (`env | grep ^SN120_` prints nothing): with `SN120_R2_PREFIX` of the smoke test still set, 5 tests of `tests/test_site_pull.py` fail.
+2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable of the smoke test (`env | grep ^SN120_` prints nothing).
 
    ```
    python -m pytest
@@ -244,7 +244,7 @@ One list, in this order. Each step has its check. Do not start a step before the
 
 The order follows Jacob's sequence: the new `llms.txt` first (step 8), then the weights and the stop of v1 (steps 9 and 10), then the website (step 12). The first run of the pull is the site switch, so the pull does not run before step 12.
 
-The pull's credentials file exists already; step 12 only checks it.
+The pull's credentials file exists already; step 8 checks it.
 
 The workers' documents hold more detail on each job: `api-weights.md`, `api-links.md` and `api-site.md`. The commands here are the same.
 
@@ -267,8 +267,18 @@ PENV=/home/const/sn120-v2/secrets/r2-public-pull.env     # the pull's own creden
 KEEP=$HOME/sn120-v1-archive                # where files of v1 are kept, outside the site directory
 BACKUP=$KEEP/website-v1                    # the copy of v1's whole site directory
 V1FILE=$KEEP/v1-history.json               # the frozen v1 history
+MOVED=$KEEP/moved                          # where v1's stale files go after the site switch
+PY=$REPO/v2/.venv/bin/python               # the Python of the checkout
 mkdir -p "$KEEP"
 ```
+
+The pull's credentials file has the store settings under the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Two commands read these names: the pull (`site/pull.py`) and `site/reset.py llms`. No other v2 command does. Use the file as it is: no copy and no second file. Run this block once; it defines a helper named `with_store` that loads the file for one command. The round brackets keep the token out of your shell: the helper runs each command in a shell of its own.
+
+```
+with_store() ( set -a; . "$PENV"; set +a; "$@" )
+```
+
+A variable with `SN120_R2_` at its start wins over the plain name. So the shell of these steps must hold none: `env | grep ^SN120_R2_` prints nothing.
 
 1. **Install.** The same commit as the GPU box.
 
@@ -331,18 +341,57 @@ mkdir -p "$KEEP"
    systemd-analyze verify /etc/systemd/system/sn120-v2-links.service /etc/systemd/system/sn120-v2-links.timer
    ```
 
-4. **Save v1's site and freeze the v1 history.** Do it before step 7 of "GPU box" (the import's real run). It only reads the site directory.
+4. **Check the host, copy v1's site, and freeze the v1 history.** Do it before step 7 of "GPU box" (the import's real run). Nothing here changes the site directory.
+
+   First the checks of the host. They only read.
 
    ```
-   du -sh "$SITE"; df -h "$KEEP"                 # the copy needs the first size; the disk must have it
+   stat -c '%U %G %a %n' "$SITE" "$SITE/index.html" "$SITE/ff" "$SITE/ff/links"
+   ls -d "$SITE/public"
+   df --output=target "$SITE" "$KEEP"
+   du -sh "$SITE"; df -h "$KEEP"
+   curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://affine.io/ff/links/no-such-file.json
+   ps -o user= -p "$(systemctl --user show -p MainPID --value affine-ff.service)"
+   systemctl --user list-units 'affine-*' --no-pager; systemctl --user list-timers --all --no-pager
+   ```
+
+   Check, line by line:
+
+   - `stat` shows `$RUNUSER` as the owner of each of the four paths.
+   - `ls` says `No such file or directory`. If v1 has a `public/` directory, tell the coordinator before step 12: the pull refuses to replace a file there that it did not write.
+   - The first `df` prints the same mount point two times. If the two differ, set `MOVED` to a directory on the mount point of `$SITE`, outside `$SITE`: the reset tool renames files and never copies them across disks.
+   - The disk of `$KEEP` has more free space than the size of `$SITE`.
+   - `curl` prints `404 application/json`. If it prints `200`, the web server answers with a page for a missing file: tell the coordinator, because a miner's tool then reads a page as if it were a link file.
+   - `ps` prints the user that runs v1's `affine-ff.service`. It must be `$RUNUSER`. The v2 links job must run as the same user, or it cannot replace v1's link files.
+   - Keep the list of units. Step 10 uses it.
+
+   Then the copy and the frozen history. `$BACKUP` must not exist yet.
+
+   ```
    cp -a "$SITE" "$BACKUP"
-   "$REPO/v2/.venv/bin/python" "$REPO/v2/site/v1_archive.py" --from "$SITE" --out "$V1FILE"
+   "$PY" -c '
+   import json, pathlib, sys
+   n = bad = 0
+   for p in pathlib.Path(sys.argv[1]).rglob("*.json"):
+       n += 1
+       try: json.loads(p.read_bytes())
+       except ValueError: bad += 1; print("broken:", p)
+   print(n, "json files,", bad, "broken")' "$BACKUP"
+   ls -la "$BACKUP/k1.json" "$BACKUP/mining.json" "$BACKUP/llms.txt" "$BACKUP/index.html"
+   grep -c 'site.js?v=' "$BACKUP/index.html"
+   "$PY" "$REPO/v2/site/v1_archive.py" --from "$BACKUP" --out "$V1FILE"
    ```
 
-   - The copy holds v1's `mining.json`, `k1.json`, `llms.txt` and pages as they are now. v1's `mining.json` and `k1.json` must also stay in the site directory until step 7 of "GPU box" is done: the import reads them from `https://affine.io`.
-   - `v1_archive.py` reads `k1.json`, `k1/turns/index.json`, `scores.json` and `benchmarks.json`, and writes nothing unless all four are readable. The v1 history page of the v2 site reads only this frozen file.
+   - `cp -a` copies everything and keeps owners, modes and times. The copy is the source of the way back.
+   - `v1_archive.py` reads four files of the copy: `k1.json`, `k1/turns/index.json`, `scores.json` and `benchmarks.json`. It writes nothing unless all four are readable. The v1 history page of the v2 site reads only this frozen file.
+   - The copy is also the last home of v1's `k1.json` and `mining.json`: the import can read them from a file (`--k1 "$BACKUP/k1.json"`, `--mining "$BACKUP/mining.json"`).
 
-   Check: `ls "$BACKUP/mining.json" "$BACKUP/k1.json" "$BACKUP/llms.txt"` shows the three files. The archive command prints `v1 archive: wrote ... 10 kings, N turns, M benchmark rows` (on 13 Nov 2026 the same command on `https://affine.io` gave 10 kings, 857 turns and 261 benchmark rows). Keep `$BACKUP` and `$V1FILE`.
+   Check:
+
+   - The second command ends with `0 broken`. v1's writers still run, so one file can be caught in the middle of a write. For a broken file, copy that one file again with `cp -p`.
+   - `ls` shows the four files.
+   - `grep` prints `0`: the copy holds v1's page, not v2's.
+   - The last command prints `v1 archive: wrote ... 10 kings, N turns, M benchmark rows`. On 13 Nov 2026 a copy gave 10 kings, 856 turns and 261 benchmark rows.
 5. **Dry run of the weights writer, with no wallet.** It pulls the journal copy with the read-only token and writes nothing to the chain.
 
    ```
@@ -396,18 +445,62 @@ mkdir -p "$KEEP"
    ```
 
    Check: one line `links: issued N of M waiting hotkeys (not activated ..., not Ed25519 ...), removed 0, valid 86400 s`, exit code 0. `M` is the queue of the bootstrap. If the second count is most of v1's files, stop and ask: then the v2 queue is not what the import promised.
-8. **The new `llms.txt` alone, by a hand copy.** Only this one file goes up here: the rendered `llms.txt` that the bootstrap published into the store. v1's `mining.json`, `index.html` and every other file of the site stay as they are.
+8. **The new `llms.txt` alone.** Only this one file goes up here: the `llms.txt` that the bootstrap published into the store. v1's `mining.json`, `index.html` and every other file of the site stay as they are. Do not run the pull for this: one run of the pull also replaces `mining.json` and `index.html`.
 
-   ```
-   ( set -a; . "$PENV"; set +a
-     "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" llms --site-dir "$SITE"; echo "exit=$?" )
-   ```
+   1. **Check the pull's credentials file.** It exists already: `$PENV`. Do not make a new one, do not edit it, and do not show its content.
 
-   It reads the store with the pull's read-only token (the check of that file is in step 12; do it here first). It copies the file only when it is of the same snapshot as the store's `mining.json`, so the pull later finds the same bytes. Do not run the pull for this: one run of the pull also replaces `mining.json` and `index.html`.
+      ```
+      stat -c '%a %U' "$PENV"          # 600 and the run user
+      cut -d= -f1 "$PENV"              # the names only, no value
+      ```
 
-   Check: one line `reset llms: <site directory>/llms.txt is the store's public/llms.txt: N bytes, sha256 ...` and `exit=0`. With `exit=1` the line starts with `reset: llms.txt not copied:` and v1's file stays; `not of the same snapshot` means: run it again in a moment. **Not landed yet:** see the note on the names of the credentials file in step 12; it holds for this command too.
+      Check: the mode is `600`. The names are `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_ENDPOINT`. The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
+   2. **Check that the store's `llms.txt` comes from a build with the round time hard stop.** `llms.txt` must not go up from a store that an older commit published. **Not landed yet:** the coordinator gives the smallest commit and the text to look for in the store's `llms.txt`. Do not go on before you have both.
 
-   Check: `curl -fsS https://affine.io/llms.txt | head -5` shows the v2 text, and `https://affine.io` still shows v1's page. `curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'` names `https://affine.io/ff/links/<your hotkey>.json`; if it says `not published yet`, see step 13.
+      - The commit of the GPU box (`git rev-parse HEAD` there, check 1 of "Before the mainnet bootstrap") is that commit or a later one.
+      - The text check of the store's `llms.txt`: the command comes with the commit.
+   3. **Stop the v1 unit that puts v1's `llms.txt` back.** `affine-network-dashboard.service` writes `network-data.json` into the site directory every 15 seconds. In the same pass it compares `llms.txt` and `reward-policy.json` with its own copies and writes its copies back if they differ. While it runs, the new `llms.txt` lives for 15 seconds at most.
+
+      ```
+      systemctl --user disable --now affine-network-dashboard.service
+      ```
+
+      After this, v1's page shows `network-data.json` as it was at the stop. This is the cost of the new `llms.txt` going first.
+
+      Check: `systemctl --user is-active affine-network-dashboard.service` prints `inactive`. If no such unit exists, find the process: `pgrep -af dashboard.server`.
+   4. **Copy the file.**
+
+      ```
+      with_store "$PY" "$REPO/v2/site/reset.py" llms --site-dir "$SITE"; echo "exit=$?"
+      ```
+
+      - The command reads two objects from the store: v2's `llms.txt` and v2's `mining.json`. It writes one file: `$SITE/llms.txt`, in one move.
+      - It copies only when both are of one snapshot. This is the pull's own rule. So the pull later finds the same bytes and writes nothing.
+      - You can run it again at any time. If the GPU box published a newer snapshot, it puts the newer `llms.txt` up.
+
+      Check:
+
+      ```
+      sha256sum "$SITE/llms.txt"
+      curl -fsS https://affine.io/llms.txt | head -3
+      curl -fsS https://affine.io/llms.txt | sha256sum
+      curl -fsS -H 'Accept: text/html' https://affine.io/llms.txt | grep -o '<title>[^<]*</title>'
+      curl -fsS https://affine.io/ | grep -c 'site.js?v='
+      curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
+      sleep 60; sha256sum "$SITE/llms.txt"
+      ```
+
+      - The command printed `reset llms: ... is the store's public/llms.txt: N bytes, sha256 H` and `exit=0`.
+      - Both `sha256sum` lines and the `curl ... | sha256sum` line show `H`.
+      - `head` shows `# Affine (Bittensor SN120) v2: the miner contract`.
+      - The title line shows a page title: the browser view works.
+      - `grep -c` prints `0`: the root still shows v1's page.
+      - The `Where to get the link` line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, see step 13.
+      - After 60 seconds the hash is still `H`. If it changed, another v1 process writes `llms.txt`: v1's source speaks of "legacy website pushes". Find it (`pm2 ls`, `crontab -l`, `grep -rl llms ~/.config/systemd/user/`), stop it, and run the command again.
+
+      With `exit=1`, the file in the site directory did not change. `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong. `not of the same snapshot` means that a publish was in progress: run it again.
+
+   To take only this step back (the new `llms.txt` is up, the site is still v1's): `cp -p "$BACKUP/llms.txt" "$SITE/llms.txt.tmp" && mv "$SITE/llms.txt.tmp" "$SITE/llms.txt"`, then start `affine-network-dashboard.service` again.
 9. **Move the weights writer from v1 to v2. This is one step: do not pause inside it.** Only one writer can set weights: two writers on one hotkey block each other at the rate limit, and each overwrites the other. While v1's writer runs, every v2 run defers at the rate limit, so v1 stops first.
 
    **The best time: between minute 25 and minute 55 of an hour.** v1 writes at minute 01. The chain allows one write per 100 blocks for one hotkey (20 minutes), so from minute 21 the next write is allowed. Before minute 55, v1's next run is still far.
@@ -462,13 +555,15 @@ mkdir -p "$KEEP"
       Check: the timer's run shows `"status":"set"`. A run that shows `recent write` means that another writer wrote in the last 20 minutes: find that writer and stop it (9.2).
 
    Go on with step 10 after the check of 9.5. The checks of 9.6 and 9.7 come later by the clock; do them when their time comes.
-10. **Stop v1's upload links and v1's publishers.** Stop and disable `affine-ff.service`, `affine-k1.service` and each other unit of group C in "v1 units". Two writers of one public file are never allowed: a v1 unit that still runs writes `index.html` or `mining.json` over the v2 files, and the pull writes them back a minute later.
+10. **Stop v1's writers of the site directory, then check that nothing writes.** v1's weight writer is already stopped (step 9). Stop and disable `affine-ff.service`, `affine-k1.service` and each other unit of group C in "v1 units" that the list of step 4 shows as active. Two writers of one public file are never allowed: a v1 unit that still runs writes `mining.json` or `llms.txt` over v2's files, and the pull writes them back a minute later, so the public files change back and forth.
 
-   ```
-   systemctl --user disable --now affine-ff.service affine-k1.service        # and each other unit of group C
-   ```
+    ```
+    systemctl --user disable --now affine-ff.service affine-k1.service        # and each other unit of group C that is active
+    touch "$KEEP/mark"; sleep 90
+    find "$SITE" -newer "$KEEP/mark" -type f -not -path "$SITE/ff/links/*" -not -name links.json -not -path "$SITE/public/*"
+    ```
 
-   Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more.
+    Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
 11. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped (step 10), and the bootstrap is done. See "Upload links job" for the reason.
 
     ```
@@ -484,72 +579,89 @@ mkdir -p "$KEEP"
 
     Once the store holds `public/mining.json` and `public/llms.txt`, a run replaces these files at the root of the site, with no check of who wrote them: `llms.txt`, `mining.json`, `index.html`, `v1.html`, `site.js`, `site.css`, `favicon.svg`, `network-haffer.ttf`, `network-mono.ttf`, `site-data.json`, `v1-data.json`. So no run of the pull, by hand or by the timer, starts before all of these:
 
-    - step 4: v1's site is saved and the v1 history is frozen;
-    - step 7 of "GPU box": the import has read v1's `mining.json`;
-    - step 10: v1's publishers are stopped.
+    - step 4: the copy and the frozen history exist;
+    - step 7 of "GPU box": the import has read v1's `mining.json` from `https://affine.io/mining.json`;
+    - step 10: nothing of v1 writes into the site directory.
 
-    Before the first run, look for a `public/` directory of v1: `ls "$SITE/public"`. v1 should have none. If it has one, move it to `$KEEP` first: the pull refuses to replace a file there that it did not write.
+    The order inside this step: the pull first, then v1's files move out. Before the pull, v1's page still needs those files, and the reset tool refuses to move them until the v2 page is up.
 
-    The pull's credentials file exists already: `$PENV`. Do not make a new one, and do not show its content. Check it:
+    1. **One run of the pull by hand.**
+
+       ```
+       with_store "$PY" "$REPO/v2/site/pull.py" --site-dir "$SITE" --public-url https://affine.io --v1-history "$V1FILE"; echo "exit=$?"
+       ```
+
+       - The run writes the data files first (`mining.json`, `llms.txt`, the files under `public/`), then the fonts, the script and the style, and `index.html` and `v1.html` last. So no page is up before the files that it loads.
+       - Do not run `build.py` by hand for the switch. Without the pull's data it writes a page that says "No data yet."
+
+       Check on the host: the run prints `pull: wrote N, unchanged N, removed N, failed steps 0; site built` and `exit=0`. With `exit=1`, each failed step is one line `pull: FAILED ...` on stderr; before the GPU box has published, no root file was replaced, v1's page is still up, and you can run it again.
+
+       Check from outside the host:
+
+       ```
+       for path in / /v1.html /site-data.json /v1-data.json /llms.txt /mining.json /public/mining.json /public/llms.txt \
+                   /public/read_links.json /ff/links.json /robots.txt; do
+         curl -s -o /dev/null -w "%{http_code} %{content_type} $path\n" "https://affine.io$path"
+       done
+       for asset in $(curl -s https://affine.io/ | grep -oE '[a-z0-9.-]+\?v=[0-9a-f]+' | sort -u); do
+         curl -s -o /dev/null -w "%{http_code} /$asset\n" "https://affine.io/$asset"
+       done
+       curl -s -o /dev/null -w '%{http_code}\n' "https://affine.io/ff/links/$(ls "$SITE/ff/links" | head -1)"   # this one line on the host
+       curl -fsS -H 'Accept: text/html' https://affine.io/llms.txt | grep -o '<title>[^<]*</title>'
+       curl -fsS https://affine.io/public/read_links.json | python3 -c 'import json,sys,time; d=json.load(sys.stdin); print(d["head_version_id"], d["expires_at"]-int(time.time()), "seconds left")'
+       ```
+
+       - Every line of the loops starts with `200`. The pages are `text/html`, the `.json` files are `application/json`, `llms.txt` is `text/plain`.
+       - The second loop prints five lines: two fonts, `favicon.svg`, `site.css`, `site.js`.
+       - The last command prints the head and about 86000 seconds. Take one small file from `base.files` of `public/read_links.json`, download it with its `url`, and compare the sha256 and the size.
+       - In a browser, `https://affine.io` shows the v2 page with the 10 kings and the queue, and `https://affine.io/v1.html` shows v1's history.
+       - If a file is on the disk under `$SITE/public/` and its address gives 404, the real web server does not serve the new directory. Stop and tell the coordinator. Go back with "Go back" if the root page is broken.
+       - Look at the `cache-control` and `age` headers of `https://affine.io/public/read_links.json` (`curl -sI`). If a cache holds the file for more than a few minutes, tell the coordinator: a links file that is cached for longer than its life gives dead links.
+    2. **The unit and the timer: one run each minute.** From here the site follows the store.
+
+       ```
+       for unit in sn120-v2-site-pull.service sn120-v2-site-pull.timer; do
+         sed -e "s|SN120_USER|$RUNUSER|g" -e "s|SN120_ENV_FILE|$PENV|g" -e "s|SN120_PYTHON|$PY|g" \
+             -e "s|SN120_V2_DIR|$REPO/v2|g" -e "s|SN120_SITE_DIR|$SITE|g" -e "s|SN120_PUBLIC_URL|https://affine.io|g" \
+             -e "s|SN120_V1_HISTORY|$V1FILE|g" "$REPO/v2/systemd/$unit" | sudo tee "/etc/systemd/system/$unit" > /dev/null
+       done
+       systemd-analyze verify /etc/systemd/system/sn120-v2-site-pull.service /etc/systemd/system/sn120-v2-site-pull.timer
+       sudo systemctl daemon-reload
+       sudo systemctl enable --now sn120-v2-site-pull.timer
+       ```
+
+       Check: `systemctl list-timers sn120-v2-site-pull.timer --no-pager` lists the timer. After two minutes, `journalctl -u sn120-v2-site-pull.service -n 5 --no-pager` shows `failed steps 0`.
+
+       The unit loads `$PENV` as it is. If the log shows `the store setting SN120_R2_ENDPOINT is not set`, the checkout is older than the cutover commit: disable the timer (`sudo systemctl disable --now sn120-v2-site-pull.timer`), tell the coordinator, and do not edit the credentials file. The site stays as the run by hand left it.
+    3. **Move v1's stale files out of the site directory.** After the switch, v1's data files still answer at their old addresses and look live. This moves them to `$MOVED`. Nothing is deleted.
+
+       ```
+       "$PY" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$MOVED" --scores --dry-run
+       "$PY" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$MOVED" --scores; echo "exit=$?"
+       ```
+
+       - `--to` is the directory that takes the files. It must be outside the site directory and on the same disk.
+       - `--dry-run` prints what would move and changes nothing.
+       - `--scores` also moves `scores.json`. v1's weight writer reads that file. Give `--scores` only when v1's weight writer is stopped (step 9). Without the option, `scores.json` stays.
+       - The tool refuses when the v2 site is not in the directory yet. So it cannot leave the root with no page.
+       - It keeps a list of what stays, and moves everything else.
+       - What stays: the v2 site's files, `llms.txt`, `mining.json`, `public/`, `ff/links/`, `ff/links.json`, `llms-page.html`, `network.css`, `robots.txt`, two images, and v1's `.js` and `.css` files.
+
+       Check:
+
+       - Read the dry run first. No line names `ff/links`, `public`, `llms.txt`, `mining.json`, `llms-page.html` or `network.css`.
+       - The real run prints `reset out: moved N of N entries to ...` and `exit=0`. A line `reset: refused: ...` and exit code 2: nothing changed.
+       - `for p in /k1.json /scores.json /benchmarks.json /ff/status.json; do curl -s -o /dev/null -w "%{http_code} $p\n" "https://affine.io$p"; done` prints `404` four times.
+       - Run the two loops of 12.1 again: every line still starts with `200`.
+       - The next run of the pull still shows `failed steps 0`.
+
+    Later, only when the way back is no longer needed, move v1's scripts and styles out too:
 
     ```
-    stat -c '%a %U' "$PENV"          # 600 and the run user
-    cut -d= -f1 "$PENV"              # the names only, no value
+    "$PY" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$KEEP/moved-assets" --scores --assets; echo "exit=$?"
     ```
 
-    Check: the mode is `600`. The names are `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_ENDPOINT`. The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
-
-    **Not landed yet:** the pull of this commit reads only the names `SN120_R2_ENDPOINT`, `SN120_R2_BUCKET`, `SN120_R2_ACCESS_KEY_ID` and `SN120_R2_SECRET_ACCESS_KEY`. A change that makes it accept the names of this file is on its way. With a build that does not have it, the run by hand stops with an error about a missing store setting and replaces nothing: stop there and tell the coordinator. Do not edit the file.
-
-    One run by hand:
-
-    ```
-    ( set -a; . "$PENV"; set +a
-      "$REPO/v2/.venv/bin/python" "$REPO/v2/site/pull.py" --site-dir "$SITE" --public-url https://affine.io --v1-history "$V1FILE"; echo "exit=$?" )
-    ```
-
-    Check: `pull: wrote N, unchanged N, removed N, failed steps 0; site built` and `exit=0`. With `exit=1`, each failed step is one line `pull: FAILED ...` on stderr, and the last good files of that step stay; `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong.
-
-    Then move v1's entries out of the site directory. The command runs after the pull wrote the v2 site, and it refuses when the v2 site is not there. It never deletes and never replaces: it renames each entry into `--to`, so `--to` is a new directory on the file system of the site directory.
-
-    ```
-    "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$KEEP/moved" --scores --dry-run
-    "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" out --site-dir "$SITE" --to "$KEEP/moved" --scores; echo "exit=$?"
-    ```
-
-    - `--scores` also moves `scores.json`. v1's weight writer read that file; it is stopped since step 9. Leave the option out if step 9 is not done.
-    - v1's `.js` and `.css` files stay. The option `--assets` moves them too; use it only when the way back is not needed any more.
-    - These stay: the v2 site, `llms.txt`, `mining.json`, `public/`, `ff/links/`, `ff/links.json`, and a few files that the web server needs. The last line names all of them.
-
-    Check: the dry run prints one `would move <entry>` line for each entry, with `ff/status.json`, `k1.json`, `benchmarks.json` and `k1` among them, and no line for `ff/links`, `llms.txt`, `mining.json`, `index.html` or `public`. The real run ends with `reset out: moved N of N entries to ...` and `exit=0`. A line `reset: refused: ...` and exit code 2: nothing changed. `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/ff/status.json` prints `404` (a cache can serve the old file for a short time).
-
-    Then the unit and the timer: one run each minute. From here the site follows the store.
-
-    ```
-    for unit in sn120-v2-site-pull.service sn120-v2-site-pull.timer; do
-      sed -e "s|SN120_USER|$RUNUSER|g" -e "s|SN120_ENV_FILE|$PENV|g" -e "s|SN120_PYTHON|$REPO/v2/.venv/bin/python|g" \
-          -e "s|SN120_V2_DIR|$REPO/v2|g" -e "s|SN120_SITE_DIR|$SITE|g" -e "s|SN120_PUBLIC_URL|https://affine.io|g" \
-          -e "s|SN120_V1_HISTORY|$V1FILE|g" "$REPO/v2/systemd/$unit" | sudo tee "/etc/systemd/system/$unit" > /dev/null
-    done
-    systemd-analyze verify /etc/systemd/system/sn120-v2-site-pull.service /etc/systemd/system/sn120-v2-site-pull.timer
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now sn120-v2-site-pull.timer
-    systemctl list-timers sn120-v2-site-pull.timer --no-pager
-    ```
-
-    Check, from outside the host:
-
-    ```
-    curl -fsS https://affine.io/llms.txt | head -5
-    curl -fsS https://affine.io/public/mining.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_digest"])'
-    curl -fsS https://affine.io/public/read_links.json | python3 -c 'import json,sys,time; d=json.load(sys.stdin); print(d["head_version_id"], d["expires_at"]-int(time.time()), "seconds left")'
-    ```
-
-    - `llms.txt` shows the v2 text. The second command prints a digest. The third prints the head and about 86000 seconds.
-    - `https://affine.io` shows the v2 page with the 10 kings and the queue. `https://affine.io/v1.html` shows the v1 history.
-    - Take one small file from `base.files` of `public/read_links.json`, download it with its `url`, and compare the sha256 and the size.
-    - If a file is on the disk under `$SITE/public/` and its address gives 404, the web server does not serve the new directory: stop and tell the coordinator. Nobody could test this before the cutover.
-    - Look at the `cache-control` and `age` headers of `https://affine.io/public/read_links.json` (`curl -sI`). If a cache holds the file for more than a few minutes, tell the coordinator: a links file that is cached for longer than its life gives dead links.
+    They stay until then because the edge can keep an answer for a `.js` or `.css` address with `?v=` for one day, also a "not found" answer. After a way back, v1's page would then load a kept "not found" instead of its script. Check: `exit=0`, and the title line of 12.1 still shows a page title.
 13. **Read the public files as a miner does.**
 
     ```
@@ -652,20 +764,70 @@ Two `run` processes never both write: the newer one takes over the journal, and 
 
 ### Go back
 
-Before the first v2 round ends:
+Before the first v2 round ends. The weights part is "To go back" of the handover: stop v2's timer first, then start v1's writer.
 
-1. `sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-links.timer sn120-v2-site-pull.timer`. Stop `run` on the GPU box.
-2. Put v1's site back, after the pull's timer is stopped. The command copies every file of the copy of step 4 into the site directory again, `index.html` last. It leaves the link files and the v2 files as they are.
+1. **Stop v2's writers.** Stop `run` on the GPU box. On AffineValidator:
 
    ```
-   "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP" --dry-run
-   "$REPO/v2/.venv/bin/python" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP"; echo "exit=$?"
+   sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-site-pull.timer
+   systemctl is-active sn120-v2-site-pull.service
    ```
 
-   Check: `reset back: copied N files from ..., 0 failed; ...` and `exit=0`; `https://affine.io` shows v1's page.
-3. Start v1's weight writer, `affine-ff.service` and v1's publishers again. `affine-ff.service` writes the link files again at its next run.
+   Check: the second line prints `inactive` or `failed`. If it prints `activating`, wait and ask again. A pull that still runs replaces the files again.
+2. **Only if v1's `affine-ff.service` comes back: stop the v2 links job.** Two link jobs never write to the same place.
+
+   ```
+   sudo systemctl disable --now sn120-v2-links.timer
+   systemctl is-active sn120-v2-links.service
+   ```
+
+   Check: `inactive` or `failed`.
+3. **Put v1's files back from the copy.**
+
+   ```
+   "$PY" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP" --dry-run | tail -1
+   "$PY" "$REPO/v2/site/reset.py" back --site-dir "$SITE" --from "$BACKUP"; echo "exit=$?"
+   ```
+
+   - `--from` is the full copy of step 4 of "AffineValidator". `$MOVED` is not needed: the copy is complete.
+   - Each file is copied under a temporary name and then renamed. `index.html` goes last, after the files that it loads.
+   - It copies only a file that is missing or different. It never puts an old link file back. It refuses a `--from` directory that holds the v2 page.
+
+   Check: `reset back: copied N files from ..., 0 failed` and `exit=0`.
+4. **Move the pull's directory away**, if step 4 of "AffineValidator" showed that v1 had no `public/`.
+
+   ```
+   mv "$SITE/public" "$KEEP/public-v2-$(date -u +%Y%m%dT%H%M%SZ)"
+   ```
+
+   Check: `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/public/mining.json` prints `404`.
+5. **Start v1's units again**: v1's weight writer, and the units that steps 8 and 10 stopped, with `systemctl --user enable --now <unit>`. Their files in the site directory are as old as the copy; each unit makes its file fresh at its next run. `affine-ff.service` writes the link files again at its next run.
+
+   Check: `curl -fsS https://affine.io/k1.json | "$PY" -c 'import json,sys,time; print(int(time.time()-json.load(sys.stdin)["generated_at"]), "seconds old")'` prints a small number after `affine-k1.service` ran.
+6. **Check the site.**
+
+   ```
+   curl -fsS https://affine.io/ | grep -c 'site.js?v='
+   curl -fsS https://affine.io/llms.txt | head -3
+   curl -fsS https://affine.io/llms.txt | sha256sum; sha256sum "$BACKUP/llms.txt"
+   ```
+
+   Check: `grep -c` prints `0`. The two hashes are equal. In a browser, `https://affine.io` shows v1's page with its charts.
+
+Five v2 files stay in the site directory after the way back: `site.js`, `site.css`, `v1.html`, `site-data.json`, `v1-data.json`. No v1 page links them. Remove them with `rm` when you want, or leave them for the next switch.
+
+Forward again after a way back: do steps 10 and 12 again. The copy and the frozen history of step 4 stay valid. Give `reset.py out` a new `--to` directory: the tool refuses a directory that already holds one of the names.
 
 The import only read public files, and v2 writes no key that v1 wrote, so v1's state in the bucket did not change. The objects that v2 wrote stay in the bucket under v2's own keys. The weights that are on chain stay until the next write.
+
+Never, on the site:
+
+- Never run the pull, by hand or by the timer, before step 4 and before the import's real run.
+- Never delete or rename the site directory itself. v1's web server mounts it at its start, and the links job needs it.
+- Never move `llms-page.html` or `network.css`: the web server makes the browser view of `/llms.txt` from them.
+- Never move `scores.json` while v1's weight writer runs.
+- Never copy an old link file back by hand. The links job writes the full set on every run.
+- No DNS change, no caddy change and no restart of the web server. None is needed.
 
 ## Upload links job
 
@@ -730,9 +892,10 @@ The names come from documents in this repository. The repository does not show w
 - So find the writer on the host: `systemctl --user list-timers --all`, and `grep -rlE 'weights_flip|live_reward_writer|current_assessment_writer|set_weights' ~/.config/systemd/user/`. Stop and disable each timer and service that these show.
 - `affine-hourly-burn.timer` and `affine-transition-weights.timer` are old writers (`ops/HOURLY_BURN.md`, `ops/EQUAL_REGISTRATION_WEIGHTS.md`). They must stay disabled and masked.
 
-**Group C: upload links, publishers and side services ("AffineValidator", step 10).** Never run two writers of one public file.
+**Group C: upload links, publishers and side services ("AffineValidator", steps 8 and 10).** Never run two writers of one public file.
 
-- `affine-ff.service`: issues the miners' upload links, checks their files, writes `ff/status.json`.
+- `affine-network-dashboard.service`: writes `network-data.json` every 15 seconds, and writes v1's `llms.txt` and `reward-policy.json` back when they differ from its own copies. It stops first, in step 8, before the new `llms.txt` goes up.
+- `affine-ff.service`: issues the miners' upload links, checks their files, writes `ff/links/`, `ff/links.json` and `ff/status.json`.
 - `affine-k1.service`: writes `website/scores.json` and `website/k1.json`. It does not write to the chain. The import refuses a `k1.json` older than one hour, so stop it after the import's real run, or use `--max-age-s`.
 - `affine-mining-discovery.service` (`mining.json`), `affine-k1-transparency.service`, `affine-training-params.service`.
 - `affine-prior-table.service`, `affine-perf-eval.service`, `affine-perf-eval-2.service`, `affine-perf-watchdog.timer`, `affine-bench.service`.
