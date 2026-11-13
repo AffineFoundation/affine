@@ -241,11 +241,11 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         [e.queue_pos for e in result.entries] == [e.queue_pos for e in ticket.entries],
         "the result must report every ticket entry once, in queue order",
     )
-    any_scored = any(e.status == SCORED for e in result.entries)
-    if any_scored:
+    null_scored = 0
+    if any(e.status == SCORED for e in result.entries):
         _need(len(result.null_outcomes) == samples, "null M needs one outcome string per sample")
         check_outcomes(result.null_outcomes, n, "null M")
-        _need(scored_prefix(result.null_outcomes) == n, "null M must be scored on every task")
+        null_scored = scored_prefix(result.null_outcomes)
     look_sizes = params.look_sizes(n)
     for seat, entry in zip(ticket.entries, result.entries):
         what = f"entry {entry.queue_pos}"
@@ -266,6 +266,7 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")
         check_outcomes(entry.outcomes, n, what)
         scored = scored_prefix(entry.outcomes)
+        _need(scored <= null_scored, f"{what}: scored on more tasks than null M")
         look = entry.eliminated_at_look
         if look is None:
             _need(scored == n, f"{what}: not dropped, so it must be scored on every task")
@@ -314,10 +315,11 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
     for ticket, result in leases:
         if not any(e.status == SCORED for e in result.entries):
             continue
-        null_rates.append(weighted_mean(first.draw.weights, pass_rates(result.null_outcomes, n)))
-        null_caps.append(code_share(result.null_outcomes, CAP, n))
-        if not cover_ok(result.null_outcomes, n, params):
-            cover = 1.0 - code_share(result.null_outcomes, ERROR, n)
+        run = scored_prefix(result.null_outcomes)  # null M stops early only when every LoRA was dropped
+        null_rates.append(weighted_mean(first.draw.weights[:run], pass_rates(result.null_outcomes, run)))
+        null_caps.append(code_share(result.null_outcomes, CAP, run))
+        if not cover_ok(result.null_outcomes, run, params):
+            cover = 1.0 - code_share(result.null_outcomes, ERROR, run)
             problems.append(f"null M on {ticket.box_id}: only {cover:.3f} of rollouts resolved")
     if len(null_rates) > 1 and max(null_rates) - min(null_rates) > params.calibration_tol:
         problems.append("null-M pass rates differ between boxes by more than calibration_tol")
