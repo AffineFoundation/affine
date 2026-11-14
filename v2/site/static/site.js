@@ -65,7 +65,6 @@
     ? link(r.batch, 'batch.json', 'The winning batch, byte for byte') + (r.lora ? ' ' + key(r.lora, 6, 0) : '')
     : r.imported ? link('v1.html', 'v1 king', 'Carried over from v1 at cutover. The v1 history is on its own page.')
     : pill('private', 'private', 'Only a winner is published. This batch stays private.');
-  const dagger = (c, t) => c ? `<sup title="${esc(t)}">†</sup>` : '';
 
   // Batch size and train settings. Only the batch of a winner is public, so each other row says why it has no value.
   const closed = (r, what) => r.imported ? unscored(r)
@@ -168,12 +167,13 @@
     lo = Math.floor(lo / st + 1e-9) * st; hi = Math.ceil(hi / st - 1e-9) * st;
     return [lo, hi > lo ? hi : lo + st, st];
   };
-  // the top of a tooltip in its chart: under the sticky header of the page when the top of the chart is behind that header
-  const clear = (box, tip) => {
+  // The top of a tooltip in its chart: 4 px under the sticky header of the page when the top of the chart is behind that header.
+  // A tooltip that is higher than the part of the chart in view goes past the lower edge of the chart, never behind the header.
+  const clear = box => {
     const head = document.querySelector('body>header');
     if (!head || getComputedStyle(head).position !== 'sticky' || box.closest('.cx-open')) return '';
     const behind = head.getBoundingClientRect().bottom - box.getBoundingClientRect().top;
-    return behind > 0 ? Math.max(4, Math.min(behind + 4, box.clientHeight - tip.offsetHeight)) + 'px' : '';
+    return behind > 0 ? behind + 4 + 'px' : '';
   };
   function chart(box, o) {
     box.textContent = '';
@@ -219,7 +219,7 @@
       const hit = svg('rect', { x: l, y: P.t, width: Math.max(1, r - l), height: H - P.t - P.b, fill: 'transparent' });
       hit.addEventListener('mouseenter', () => { tip.innerHTML = o.tip(i); tip.hidden = false; tip.style.left = Math.min(Math.max(0, xs[i] - tip.offsetWidth / 2), Math.max(0, W - tip.offsetWidth)) + 'px'; });
       hit.addEventListener('mouseleave', () => { tip.hidden = true; });
-      hit.addEventListener('mouseenter', () => { tip.style.top = clear(box, tip); });
+      hit.addEventListener('mouseenter', () => { tip.style.top = clear(box); });
       g.append(hit);
     });
   }
@@ -231,7 +231,9 @@
      are the body, newest first, in a box about five rows deep. The reference models and the genesis head are a sticky footer, the
      genesis head last. The reference models are in the order of the v1 page: the largest first, then the higher average. As
      there, the footer holds only the ones that lead for their size; a link shows all. A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the
-     highest. A model with no score still has its row, and the name says the state of its run. The cards show, per column, the score
+     highest. A reference model and the genesis head with no score still have their row, and the name says the state of the run.
+     Three rules are the ones of bench.js: a king with no score that only waits for its run is not in the table; the result of a
+     partial run is not shown; Avg is the mean of the counted benchmarks that the row has. The cards show, per column, the score
      of the genesis head and of each scored king over time. */
   // The pill of the row, its colour, the tooltip, and the word of a cell that has no score. The page shows a state only when the
   // benchmark file gives the row that state: "queued", "evaluating" (shown as "running") or "failed". A model that the file does
@@ -261,6 +263,8 @@
     weights: 'The weight files of this model are not in the store yet: its run starts when they are.',
     source: 'The benchmark service cannot read the source of the weights of this model yet: it rents no machine for it.',
   };
+  // The states of the benchmark file in which a run did not start. A king in one of them, with no machine and no stop, only waits.
+  const IDLE = ['queued', 'waiting', 'none'];
   // The sampling of a score, from the settings profile that the benchmark file names: its presence penalty. One list for the tooltip
   // of a score, the note under the table and the second line of a row. The benchmark file gives only the name of a profile, so the
   // values are here; `profiles` of the data file wins when it is there. A profile that neither has is shown by its name.
@@ -269,6 +273,12 @@
   const penalty = name => (PROFILES[name] || {}).presence_penalty ?? PP[name] ?? null;
   const pp = name => penalty(name) == null ? `profile ${name}` : `presence penalty ${penalty(name)}`;
   const ppShort = name => penalty(name) == null ? name : penalty(name) ? `pp ${penalty(name)}` : 'pp0';
+  // The other values of a profile, for the sentence of the note: temperature, top_p, top_k. From the same settings file as PP.
+  const DRAW = { 'qwen3.5-family': [1, 0.95, 20] };
+  const draw = name => {
+    const v = PROFILES[name] || {}, [temperature, top_p, top_k] = v.temperature == null ? DRAW[name] || [] : [v.temperature, v.top_p, v.top_k];
+    return temperature == null || top_p == null || top_k == null ? null : `temperature ${Number(temperature).toFixed(1)}, top_p ${top_p}, top_k ${top_k}`;
+  };
   const V1_KING = 'A king of v1, scored by the benchmark service of v2. It won no round of v2, so it has no round and no head here.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
@@ -297,7 +307,15 @@
     PROFILES = b.profiles || {};
     if (!table('bench')) return;
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
-    const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
+    // The result of a partial run (`partial`: it lost samples) is not a score of the row: each part of the table, of the note and
+    // of the cards reads `cells`, so the page takes it out of there once. `cut` keeps it for the tooltip of the cell that stays empty.
+    const sift = (r, keep) => Object.fromEntries(Object.entries(r.cells).filter(([, x]) => !x.partial === keep));
+    const rows = b.rows.map(r => ({ ...r, cells: sift(r, true), cut: sift(r, false) }));
+    // Avg is the mean of the counted benchmarks that the row has a score in. `avg` of the data file is not read: it is there only
+    // for a row with every counted benchmark, and it counts a partial run.
+    const marks = b.columns.filter(c => c.in_avg), own = r => marks.filter(c => r.cells[c.id]);
+    const mean = r => own(r).length ? own(r).reduce((a, c) => a + r.cells[c.id].score, 0) / own(r).length : null;
+    const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? mean(r) : r.cells[c.id] ? r.cells[c.id].score : null;
     // The state of a row that is not scored. With no benchmark file at all, the tooltip of "no run yet" says that. A state word
     // that this page does not know is shown as it is.
     const since = r => r.pod.since ? ` Since ${utc(r.pod.since)}.` : '';
@@ -307,9 +325,12 @@
       : WAIT[r.waiting_for] ? [r.status, 'wait', WAIT[r.waiting_for], r.status]
       : r.status === 'none' && !b.updated_at && !V1 ? [...RUN.none.slice(0, 2), NO_FILE, RUN.none[3]]
       : RUN[r.status] || [r.status, 'wait', `The benchmark file gives this model the state "${r.status}".`, 'no score'];
-    const every = b.rows.filter(r => r.kind === 'king'), kings = V1 ? every.filter(r => Object.keys(r.cells).length) : every;
-    const genesis = b.rows.filter(r => r.kind === 'genesis'), old = b.rows.filter(r => r.kind === 'v1-king');  // old: a king of v1 that the benchmark service of v2 scores
-    const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (y.avg ?? -1) - (x.avg ?? -1));
+    // A king with no score is in the table only when its run is in work or was stopped: the row then says what happens. One that
+    // only waits (the benchmark file has it as queued or waiting, or does not name it) is counted in the line above the table.
+    const waits = r => !Object.keys(r.cells).length && IDLE.includes(r.status) && !(r.pod && POD[r.pod.state]) && !STOP[r.stopped];
+    const every = rows.filter(r => r.kind === 'king'), kings = every.filter(r => V1 ? Object.keys(r.cells).length : !waits(r));
+    const genesis = rows.filter(r => r.kind === 'genesis'), old = rows.filter(r => r.kind === 'v1-king');  // old: a king of v1 that the benchmark service of v2 scores
+    const refs = rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (mean(y) ?? -1) - (mean(x) ?? -1));
     // The rule of the v1 page: a reference model is in view when, in the average or in one counted benchmark, no reference
     // model of its size or smaller has a higher score. A model with no size in the table, or with no score, is not in view.
     const counted = cols.filter(c => c.in_avg), rated = refs.filter(r => size(r) != null && counted.some(c => val(r, c) != null));
@@ -331,7 +352,10 @@
       const sets = [[kings, 'the kings'], [old, old.length > 1 ? 'the v1 kings' : 'the v1 king'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head']]
         .map(([rows, name]) => [rows.map(had).filter(a => a.length), name]);
       const all = [...new Set(sets.flatMap(([n]) => n.flat()))], both = shown.filter(r => had(r).length > 1);
-      return all.length < 2 ? '' : 'Sampling: ' + all.map(p => `${pp(p)} for ${part(sets, a => a.includes(p))}`).join(', ') + '.'
+      const alike = a => new Set(a).size === 1 && a[0] != null, tokens = [...kings, ...old, ...genesis].filter(r => had(r).length).map(r => r.budget);
+      const same = [alike(all.map(draw)) && draw(all[0]), alike(tokens) && `${Number(tokens[0]).toLocaleString('en-US')}-token budget`].filter(Boolean);
+      return !all.length ? '' : 'Sampling: ' + all.map(p => `${pp(p)} for ${part(sets, a => a.includes(p))}`).join(', ') + '.'
+        + (same.length ? ` Each run: ${same.join(', ')}.` : '')
         + (both.length ? ` ${list(both.map(first))} ${both.length > 1 ? 'have' : 'has'} scores of more than one sampling: each score names its own in its tooltip.` : '')
         + (pinned.some(r => !had(r).length) ? ' The data does not name the sampling of the reference models.' : '') + ' ';
     };
@@ -355,14 +379,15 @@
     const cell = (r, c) => {
       const x = val(r, c), one = r.cells[c.id], s = span[c.id], avg = c === AVG ? ' avg' : '';
       if (x == null && c.full_of) return '<td class="num na" title="No full run of this model."></td>';
-      if (x == null) {  // no score: the state of the run in a word (a word of more than 7 letters is too wide for Avg); a scored row can lack one benchmark, and then it has no average
-        const [word, text] = run(r) ? [c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3], run(r)[2]] : c === AVG ? ['none', 'No average: a row has one only when it has every counted benchmark.'] : ['no score', `This model has no score in ${c.label}.`];
+      if (x == null && r.cut[c.id]) return `<td class="num na" title="${esc(`Partial run: ${r.cut[c.id].samples} of ${r.cut[c.id].expected} samples. The result of a partial run is not shown and not counted in Avg.`)}">partial</td>`;
+      if (x == null) {  // no score: the state of the run in a word (a word of more than 7 letters is too wide for Avg)
+        const [word, text] = run(r) ? [c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3], run(r)[2]] : c === AVG ? ['none', 'No average: this row has no score in a counted benchmark.'] : ['no score', `This model has no score in ${c.label}.`];
         return `<td class="num na${avg}" title="${esc(text)}">${esc(word)}</td>`;
       }
       const f = s && s[1] > s[0] ? (x - s[0]) / (s[1] - s[0]) : 1, top = s && Math.round(1000 * x) === Math.round(1000 * s[1]);
-      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') + (one.profile ? ` · ${pp(one.profile)}` : '') + (one.derived ? ` · computed from ${from(one, longer(c) && r.cells[longer(c).id])} of the full run` : '') : 'Mean of the counted benchmarks.');
-      return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
-        + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
+      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') + (one.profile ? ` · ${pp(one.profile)}` : '') + (one.derived ? ` · computed from ${from(one, longer(c) && r.cells[longer(c).id])} of the full run` : '')
+        : own(r).length < marks.length ? `Mean of the ${own(r).length} of ${marks.length} counted benchmarks that this row has a score in.` : 'Mean of the counted benchmarks.');
+      return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}</td>`;
     };
     // The second line under a name, as on the v1 site: `budget 65,536 tok · cut-off 3.3% · pp 1.5`. The budget is the token budget
     // of the run. The cut-off is the mean cap-hit of the scores of the row. The sampling is the presence penalty of the settings profile
@@ -385,9 +410,10 @@
     t.insertAdjacentHTML('afterbegin', `<colgroup><col style="width:${nameW}px"><col style="width:64px">${b.columns.map(() => '<col style="width:88px">').join('')}</colgroup>`);
     t.style.minWidth = nameW + 64 + 88 * b.columns.length + 'px';
     t.tHead.innerHTML = (suites.length > 1 ? `<tr class="suites"><th></th><th class="avg"></th>${suites.map(x => `<th class="suite" colspan="${b.columns.filter(c => c.suite === x).length}">${esc(x)}</th>`).join('')}</tr>` : '')
-      + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks, in percent. A row has it only when it has every counted benchmark.">Avg</th>`
+      + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks that the row has a score in, in percent. The tooltip of a mean over fewer benchmarks says how many.">Avg</th>`
       + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}${c.full_of ? ' The score of the full run, for a model that has one.' : ''}${esc(differ(c) && ' ' + differ(c).slice(c.label.length + 2))}">${esc(c.head || c.label)}</th>`).join('') + '</tr>';
-    t.tBodies[0].innerHTML = kings.map(row).join('') || `<tr><td colspan="${cols.length}" class="empty">${V1 ? 'No king was scored.' : 'No king yet: no round has applied a winner.'}</td></tr>`;
+    const waiting = V1 ? 0 : every.length - kings.length;
+    t.tBodies[0].innerHTML = kings.map(row).join('') || `<tr><td colspan="${cols.length}" class="empty">${V1 ? 'No king was scored.' : waiting ? `No king has a score yet: ${waiting} wait${waiting === 1 ? 's' : ''} for a benchmark run.` : 'No king yet: no round has applied a winner.'}</td></tr>`;
     t.tFoot.innerHTML = pinned.map(row).join('') + genesis.map(row).join('') + old.map(row).join('');
     let h = t.tHead.offsetHeight + t.tFoot.offsetHeight + 2 + (box.scrollWidth > box.clientWidth ? 12 : 0);
     for (const r of [...t.tBodies[0].rows].slice(0, 5)) h += r.offsetHeight;
@@ -399,7 +425,7 @@
     more.previousSibling.data = (old.length ? `v1 king: ${V1_KING[0].toLowerCase() + V1_KING.slice(1)} ` : '') + b.columns.map(c => differ(c) && differ(c) + ' ').join('') + sampling();
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
-      : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');
+      : `${scored} of ${every.length} kings scored · ` + (waiting ? `${waiting} wait${waiting === 1 ? 's' : ''} for a run · ` : '') + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');
 
     const past = [...(V1 ? [] : genesis), ...every].filter(r => r.at != null).sort((x, y) => x.at - y.at), cards = document.querySelector('#bench .sparks');
     const charted = cols.filter(c => !c.full_of);  // the full run of a benchmark has its column in the table and no card
@@ -499,7 +525,7 @@
     const full = i => Math.min(cap, took(rs[i]) / unit[1]);
     legend('c-time', !phased ? OUTCOMES : [...PHASES.filter((_, k) => rs.some(r => spent(r, k))).map(([, name, mark, , help]) => [mark, name, help]),
       ...(rs.some(r => r.phases == null) ? [['mid hollow', 'no phase times', 'The phase times of this round are not read yet. The bar is the time from round open to round close.']] : [])]);
-    tile('c-time', end && `${end.round_id} ${dur(took(end))} · median of the last ${five.length} ${median}`, round({
+    tile('c-time', end && `${end.round_id} ${dur(took(end))} · med${five.length} ${median}`, round({
       include: [0], least: 1, fmt: v => v + unit[0], bound: cap < Infinity ? [0, cap] : null,
       hint: end && `Newest closed round ${end.round_id}: ${dur(took(end))} from open to close. Median of the last ${five.length} closed rounds: ${median}.`,
       series: !phased ? [{ bar: 1, v: full, c: i => tone(rs[i]), hollow: i => undecided(rs[i]) }]

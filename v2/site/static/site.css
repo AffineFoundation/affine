@@ -120,7 +120,6 @@ td .bar i{display:inline-block;height:6px;border-radius:1px;background:currentCo
 .key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono)}
 .key:hover,.key:focus-visible{color:var(--ink)}
 .key.copied::after{content:' copied';font-size:9px;color:var(--performance)}
-sup{color:var(--accepted);cursor:help;line-height:0}
 .mute{color:var(--muted)}
 .up{color:var(--performance)}
 .dn{color:var(--rejected)}
