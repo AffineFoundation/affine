@@ -49,7 +49,7 @@ from .public import phase, round_text, snapshot
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
-from .store import verify_files
+from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
 
 
@@ -176,7 +176,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         record = None
         try:
             if stack.chain is not None:
-                controller.sync_registrations(stack.chain(), now())
+                with timed("the read of the chain and the sync of the registrations"):
+                    controller.sync_registrations(stack.chain(), now())
             record = controller.run_round(stack.runner, now, stack.entropy() if stack.entropy else os.urandom(16).hex())
         except FencedError:
             raise
