@@ -472,6 +472,37 @@ def judge_correctness(results: dict[str, dict[str, Any]], table: int) -> tuple[l
     return lines, verdicts
 
 
+def result_lines(results: dict[str, dict[str, Any]], verdicts: dict[str, Any], names: list[str]) -> list[str]:
+    """The end lines: one for the test of the flag, one for each speed case of each config."""
+    on = {key: verdict for key, verdict in verdicts.items() if verdict["flag"]}
+    failed = {key: verdict for key, verdict in on.items() if verdict["verdict"] == "FAIL"}
+    control = [key for key, verdict in verdicts.items() if not verdict["flag"] and verdict["verdict"] == "FAIL"]
+    unsound = [key for key, verdict in verdicts.items() if not verdict["sound"]]
+    slot = lambda adapter: f"{adapter} (slot {int(adapter.removeprefix('lora')) - 1})"  # noqa: E731
+    if not on:
+        test = "NOT RUN (no server with the flag ran the test)"
+    elif failed and not control:
+        test = "FAIL. With M in flight the text changed for: " + "; ".join(
+            f"{key.replace('/k', ', k = ')}: {', '.join(slot(adapter) for adapter in (verdict['changed']['M_inside'] or verdict['changed']['M_first']))}" for key, verdict in failed.items())
+    elif failed or control:
+        test = f"NOT DECIDED. The control without the flag changed its text too ({', '.join(control)}); with the flag: {', '.join(failed) or 'no change'}"
+    else:
+        test = f"PASS. No LoRA changed its text with M in flight, in {len(on)} cases with the flag" + ("" if any(not verdict["flag"] for verdict in verdicts.values()) else " (no control without the flag in this run)")
+    lines = [f"RESULT: test of {FLAG}: {test}" + (f"  NOT SOUND in {', '.join(unsound)}" if unsound else "")]
+    first: dict[str, float] = {}
+    for name in names:
+        for cases in (results.get(name, {}).get("phases") or {}).values():
+            for case, got in cases.items():
+                if not isinstance(got, dict) or "many_tok_s_sum" not in got:
+                    continue
+                step = got.get("many_ms_per_step")
+                base = first.setdefault(case, step) if step else None
+                against = f"; ms/step against {names[0]}: {100 * (step / base - 1):+.1f} %" if step and base and name != names[0] else ""
+                lines.append(f"RESULT: speed {name}, {case}: {cell(step)} ms/step, {cell(got['many_tok_s_sum'])} tok/s in {got['many_streams']} streams, "
+                             f"LoRA alone {cell(got.get('alone_lora_tok_s'))} tok/s, M alone {cell(got['alone_tok_s'][0])} tok/s{against}")
+    return lines
+
+
 # ---------------------------------------------------------------- one server
 
 
@@ -787,7 +818,8 @@ def main() -> int:
           f"'window s' = seconds in which all N streams decode (below 2: the N-stream speeds are not clean); 'twice' = the same request on M alone two times; 'in N' = alone against among N;\n"
           f"'M vs base', 'LoRA vs base' = the same seeded request alone, against the first case of {names[0]}")
     print(table(results, compare))
-    print(f"\nJSON: {temp / 'result.json'}   server logs: {temp / 'logs'}   (paste the table and the JSON file)", flush=True)
+    print(f"\nJSON: {temp / 'result.json'}   server logs: {temp / 'logs'}   (paste the output and the JSON file)\n")
+    print("\n".join(result_lines(results, verdicts, names)), flush=True)
     return 0 if results and all(result["ok"] for result in results.values()) else 1
 
 
