@@ -46,8 +46,8 @@ from .publisher import StorePublisher
 from .r2 import R2Store
 from .seams import ObjectStore
 from .store import get_record
-from .types import ChainSnapshot, HeadManifest
-from .worker import LocalRunner
+from .types import ChainSnapshot, Entry, HeadManifest
+from .worker import LocalRunner, TrainLoad
 
 NONE = "none"
 # Admission grades the rewards of miner files in its own worker processes, apart from the evaluator's pool.
@@ -112,6 +112,15 @@ def _read_groups(raw: bytes, hotkey: str, params: Params):
     return check_batch(raw, hotkey, params).groups
 
 
+def train_load(admission: StoreAdmission, entry: Entry, params: Params) -> TrainLoad:
+    """The load of one batch of a round: the source of the GPU plan (``worker.LoadOf``).
+
+    The arithmetic is admission's own, on the frozen bytes that the trainer reads, with the tokenizer of the head. So
+    the token-steps are the cost of rule ``train_cost``, and the rows are the rows that the training job counts.
+    """
+    return TrainLoad(*admission.train_cost(entry.batch, params))
+
+
 def box_pins(image_digest: str, params: Params) -> None:
     """The check of the trainer (``check_pins``), with the pinned value and the value of this box in the text.
 
@@ -150,7 +159,7 @@ def stack(context: StackContext) -> Stack:
         box = BoxConfig.from_env()
         trainer = LoraTrainer(store, box, _read_groups)
         evaluator = VllmEvaluator(store, box, pool, GradePool())
-        runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
+        runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest, load_of=functools.partial(train_load, admission))
         folder = LoraFolder(store, box)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
     return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True)

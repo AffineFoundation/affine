@@ -277,11 +277,6 @@ class Params(Record):
     def recipe_id(self) -> str:
         return self.recipe.recipe_id
 
-    def gpus_per_lora(self, n_batches: int) -> int:
-        """Elastic training on one box: floor(n_gpus / batches), and never less than one GPU."""
-        _need(n_batches >= 1, "a round needs at least one batch")
-        return max(1, self.n_gpus // n_batches)
-
     def look_sizes(self, n_tasks: int | None = None) -> tuple[int, ...]:
         """How many tasks are scored by the end of each look. The last look is always every task."""
         total = self.n_tasks if n_tasks is None else n_tasks

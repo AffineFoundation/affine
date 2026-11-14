@@ -78,7 +78,7 @@ EOF
 
 Pass: `plan.json` is one line, `{"code_digest": "<64 hex>", "image_digest": "<64 hex>"}`, and `params.json` holds the same two values.
 
-`"batch_cap": 8` makes the first round small: at most 8 batches, one per GPU, all trained at the same time. Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
+`"batch_cap": 8` makes the first round small: at most 8 batches, all trained at the same time. With 8 batches each has one GPU. With fewer, each batch has one GPU, and then each GPU that is left goes, one at a time, to the batch with the largest value of token-steps / the GPUs that it has now (llms.txt, section 3). Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
 
 For a first round that takes minutes, not hours, see "Tiny first" after step 4.
 
@@ -190,7 +190,7 @@ Do this after step 4. It uses the one bootstrap of step 4 for five rounds. Each 
 | `1-tiny` | 1 | 1 | 1 | 2048 | one training job on one GPU, one vLLM server, scoring, decision, publish | 10 to 20 minutes the first time, 5 to 8 after that |
 | `2-two` | 2 | 2 | 8 | 2048 | two training jobs at the same time, three looks | 6 to 10 minutes |
 | `3-eight` | 8 | 8 | 32 | 65,536 (the launch value) | 8 jobs, 8 servers, a winner, promotion, fold | 25 to 45 minutes |
-| `4-multi` | 2 | 8 | 8 | 2048 | 4 GPUs for each training job, on a folded head | 8 to 15 minutes |
+| `4-multi` | 2 | 8 | 8 | 2048 | more than one GPU for a training job (the 8 GPUs go to the 2 batches by their token-steps), on a folded head | 8 to 15 minutes |
 | `5-full` | 32 | 8 | 2000 | 65,536 | the launch values | up to 100 minutes, then the fold |
 
 Where the minutes come from (estimates, not measured): each `run` hashes the model files (1 minute) and starts the vLLM servers (2 to 4 minutes, 4 to 8 the first time). The first round downloads the model into the box cache (3 to 10 minutes). One training job is 1 to 1.5 minutes, plus a one-time compile on each GPU. A block of tasks lasts as long as its longest reply: about 1 minute at 2048 tokens, 11 to 18 minutes when one reply runs to 65,536. A fold is 8 to 16 minutes.
@@ -248,7 +248,7 @@ Pass, for each stage:
 - `2-two`: `NULL` or `APPLIED`. Two rows, each `lost` or `winner`. With the cap of 2048 most replies are cut, so expect `NULL`.
 - `3-eight`: `APPLIED`, 8 rows, a `winner` line, `"heads"` is 2 more than before, `"head_folded": true`, and `kings` holds the winner's UID. The chance of a winner is about 80 to 93 percent, when null M passes between 5 and 90 percent of the 32 tasks: with `z_bar` 0, one of 8 LoRAs is above null M by chance alone. If the result is `NULL`, that is not a fault: run the three commands of this stage again. They take the next 8 seats.
   One case to know: every row shows `delta +0.0000`. Then the small copies trained an update too small to change one reply. Run the stage again with whole files: use `python -m sn120_v2.smoke copy --state-dir $STATE --whole` as the copy command. Whole files train a real update. Some of them can be invalid under the v2 rules, so the round can then have fewer than 8 rows.
-- `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
+- `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with more than one GPU. Their two `n_gpus` values add up to 8, unless a file has fewer rollouts that train than the GPUs of its job. `run.log` has the line `<round>: the loads of the training jobs: ...` with the token-steps and the GPUs of each batch.
 - `5-full`: the pass lines of steps 6 to 9.
 
 In every stage: no row has the verdict `no_decision`, `not_trained` or `not_scored`, and the first line is not `NO_DECISION`.
@@ -364,7 +364,7 @@ python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --roun
 What happens:
 
 1. The controller reads the registrations from the chain, and gives the first 32 seats with a valid file a lease (the right to be trained and scored in this round). A seat with no valid file is skipped: it keeps its place and is not charged.
-2. Training: 8 batches at a time, one GPU each, in queue order. One LoRA per batch. Training has its own time: 40 minutes from the lease (`train_time_budget_s`). At its end no new training starts, and a job that still runs is stopped.
+2. Training: with more than 8 batches, 8 batches at a time, one GPU each, in queue order. With 8 batches or fewer, all batches at the same time: each batch has one GPU, and then each GPU that is left goes, one at a time, to the batch with the largest value of token-steps / the GPUs that it has now (llms.txt, section 3). One LoRA per batch. Training has its own time: 40 minutes from the lease (`train_time_budget_s`). At its end no new training starts, and a job that still runs is stopped.
 3. Evaluation: one vLLM server per GPU. Null M and every LoRA answer the same tasks with the same seeds, at temperature 1. There are 3 looks (after 500, 1000 and 2000 tasks). At each look a LoRA that is clearly not better is dropped. The tasks are scored in blocks of 500 (`eval_chunk_tasks`).
 4. Decision: the best LoRA wins if z > 1. Else there is no winner, and the head and the kings stay as they are.
 5. Promotion and fold: the winner's LoRA is published, then added to the master.
@@ -407,7 +407,7 @@ Not a pass, and what to do:
 
 - `NO_DECISION`: a failure of the box or the store, or no batch was trained inside the training time. Nobody is charged; the seats are back at the front. Read the `note` column and `run.log`, fix the cause, run step 6 again.
 - Rows with `not_scored`: the first block of 500 tasks did not finish before minute 90. Nobody is charged, and the same seats are first in the next round, so the next round would end the same way. Send the `wall time` line and the `eval` lines of `phases.jsonl`; `train_time_budget_s`, `batch_cap` or the number of tasks must change.
-- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: one batch on one GPU needs more than 40 minutes. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training job of one batch needs more than 40 minutes on its GPUs. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change.
 - `ABANDONED`: the winner's files did not match their hash. The head did not change. Stop and report it.
 - `refused:` on the last line: a check failed closed. The line names the check.
 - Lines `waiting: ...` that repeat: the chain or the store does not answer. If the chain read is the cause, set `SN120_V2_CHAIN_NETWORK=none` (the queue then stays as bootstrap made it) and run again.

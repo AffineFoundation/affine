@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,7 +29,7 @@ from sn120_v2.params import GenesisSpec, Params, Recipe  # noqa: E402
 from sn120_v2.state import load  # noqa: E402
 from sn120_v2.store import LocalStore  # noqa: E402
 from sn120_v2.types import ChainSnapshot, Registration  # noqa: E402
-from sn120_v2.worker import LocalRunner  # noqa: E402
+from sn120_v2.worker import LocalRunner, TrainLoad  # noqa: E402
 
 IMAGE = "sha256:" + "ab" * 32
 BASE = {"config.json": b"{}", "tokenizer.json": b"tokens", "model-00001.safetensors": b"weights"}
@@ -111,6 +112,12 @@ def test_the_run_command_gets_the_gpu_parts_and_needs_the_box_settings(tmp_path,
     assert isinstance(runner, LocalRunner) and isinstance(runner.trainer, LoraTrainer) and isinstance(runner.evaluator, VllmEvaluator)
     assert isinstance(stack.folder, LoraFolder) and runner.image_digest == IMAGE and runner.evaluator.grader == "grade-pool"
     assert stack.pins is not None and assembly.stack(StackContext(tmp_path / "state", Params(), "end-round")).pins is None
+    # The GPU plan of a round reads the cost of each frozen file from the admission of this process.
+    assert runner.load_of.func is assembly.train_load and runner.load_of.args == (stack.admission,)
+    asked = []
+    stack.admission.train_cost = lambda frozen, params: asked.append((frozen, params)) or (2940, 20)
+    assert runner.load_of(SimpleNamespace(batch="the frozen batch"), "the params") == TrainLoad(token_steps=2940, rows=20)
+    assert asked == [("the frozen batch", "the params")]
     monkeypatch.delenv("SN120_IMAGE_DIGEST")
     with pytest.raises(ConfigError):
         assembly.stack(StackContext(tmp_path / "state", Params(), "run"))

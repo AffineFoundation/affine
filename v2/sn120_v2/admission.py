@@ -80,6 +80,8 @@ MACHINE = (MemoryError, OSError)
 # The seconds between two checks of the same bytes with the same params, after a verdict in TRANSIENT, counted or
 # not. So FAULT_TRIES counted checks need a fault that lasts (FAULT_TRIES - 1) * FAULT_HOLD_S, not one short stall.
 FAULT_HOLD_S = 600
+# The costs of the frozen files that StoreAdmission keeps in memory for the GPU plan of a round: a few rounds of files.
+COSTS_KEPT = 256
 _AGAIN = f"checked again at a try to open a round, at most once each {FAULT_HOLD_S // 60} minutes; after {FAULT_TRIES} failed checks in a row the verdict stays until a new file is uploaded"
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
@@ -294,6 +296,7 @@ class Batch:
     train: dict[str, Any]  # the miner's "train" object as given; apply with Recipe.for_miner
     checked: tuple[str, ...]  # rule families that ran: "format", plus "tokens" and "grader" when given
     train_token_steps: int = 0  # the training cost that rule train_cost compares with its cap; 0 without a tokenizer
+    train_rows: int = 0  # the rollouts that train: advantage not zero, and not dropped by the trainer
 
     @property
     def n_prompts(self) -> int:
@@ -497,8 +500,10 @@ def trained_tokens(n_prompt: int, n_output: int, recipe: Recipe) -> int:
     return n_prompt + (room if n_output >= room else n_output + 1)
 
 
-def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
-    """The file must train something, and must not cost more training than one seat may use. Return the cost.
+def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> tuple[int, int]:
+    """The file must train something, and must not cost more training than one seat may use.
+
+    Return the cost and the number of rollouts that train.
 
     Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
     trainer does not drop it. The advantage is the reward minus the mean reward of the training group
@@ -521,11 +526,11 @@ def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], s
             active, tokens = active + (row > 0), tokens + row
     _need(active > 0, NO_SIGNAL, "no rollout has a reward that differs from the mean reward of its training group, so the file trains nothing")
     if sizes is None:
-        return 0
+        return 0, active
     cost, cap = recipe.steps * tokens, params.max_train_token_steps
     _need(cap <= 0 or cost <= cap, TRAIN_COST,
           f"training this file costs {cost} token-steps ({recipe.steps} steps times {tokens} tokens in {active} rollouts that train); the cap is {cap}")
-    return cost
+    return cost, active
 
 
 def _grades(grader: Grader, rows: Sequence[tuple[str, str, bool]]) -> Iterable[float | None | Exception]:
@@ -651,11 +656,11 @@ def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grade
     groups = _groups(value, hotkey)
     kept = _cap(groups, params.max_prompts, params.max_rollouts)
     capped, sizes = _kept(kept, params, tokens)
-    cost = _trains(kept, params, train, sizes)
+    cost, train_rows = _trains(kept, params, train, sizes)
     if grader is not None:
         _graded(kept, params, grader, capped)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
-    return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost)
+    return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost, train_rows)
 
 
 def verdict(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None, now: int = 0) -> Verdict:
@@ -690,6 +695,7 @@ class StoreAdmission:
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
+        self._costs: dict[tuple[str, str], tuple[int, int]] = {}  # (frozen sha256, params hash) -> (token-steps, rows that train); memory only
 
     def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
         """The object's bytes and their check, or None when there is no object."""
@@ -779,4 +785,31 @@ class StoreAdmission:
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
+        self._keep_cost(batch, self.params)
         return FrozenBatch(reg.hotkey, batch.sha256, frozen_key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))
+
+    def _keep_cost(self, batch: Batch, params: Params) -> tuple[int, int]:
+        cost = self._costs[batch.sha256, params.params_hash] = (batch.train_token_steps, batch.train_rows)
+        while len(self._costs) > COSTS_KEPT:
+            del self._costs[next(iter(self._costs))]
+        return cost
+
+    def train_cost(self, frozen: FrozenBatch, params: Params) -> tuple[int, int]:
+        """The token-steps of a frozen file (the cost of rule ``train_cost``) and its number of rollouts that train.
+
+        The numbers are those of the check that froze the file. When this process did not freeze it (``run`` started
+        again in the round), the frozen copy is read and counted again: the same arithmetic on the same bytes, so
+        the same numbers. The grader does not run for this. A copy that cannot be read, or that is not the frozen
+        bytes, raises: the caller decides.
+        """
+        kept = self._costs.get((frozen.batch_sha256, params.params_hash))
+        if kept is not None:
+            return kept
+        try:
+            raw = self.store.get(frozen.uri)
+        except KeyError as exc:
+            raise InfraError(f"the frozen batch {frozen.uri} is missing") from exc
+        batch = check_batch(raw, frozen.hotkey, params, tokens=self.tokens)
+        if batch.sha256 != frozen.batch_sha256:
+            raise VerifyError("the frozen batch does not hash to batch_sha256")
+        return self._keep_cost(batch, params)
