@@ -255,7 +255,7 @@ def test_a_fast_tokenizer_counts_each_text_of_a_call_as_it_counts_the_text_alone
     alone = [tokens.output_tokens(text) for text in texts]
     assert tokens.output_tokens_many(texts) == alone and max(alone) > 16, "no text is cut at the length of the model"
     assert tokens.output_tokens_many([]) == [] and tokens.output_tokens_many(texts[:1]) == alone[:1]
-    raw = file([{"prompt": f"double {n}", "rollouts": [row(2 * n, 1, texts[n] + " "), row(-1, 0, texts[n + 50] + " ")]} for n in range(40)])
+    raw = file([{"prompt": f"double {n}", "rollouts": [row(2 * n, 1, texts[n] + " "), row(-1 - n, 0, texts[n + 50] + " ")]} for n in range(40)])
     params = replace(build.params(), max_answer_only_frac=1.0, reasoning_token_share=0.0)
 
     class Alone:

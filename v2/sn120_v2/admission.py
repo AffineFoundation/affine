@@ -282,7 +282,10 @@ class HFTokens:
         count is the same. No thread is started here: the threads are the tokenizer's own. With
         ``TOKENIZERS_PARALLELISM=false`` in the environment it uses one thread, and nothing is gained.
         """
-        found = self._tokenizer(list(texts), add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False)
+        texts = list(texts)
+        if not texts:  # the tokenizer fails on a call with no text
+            return []
+        found = self._tokenizer(texts, add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False)
         return [len(ids) for ids in found["input_ids"]]
 
 
