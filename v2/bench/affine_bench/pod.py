@@ -20,6 +20,7 @@ from . import config as C
 
 LIUM = C.LIUM; MAX_PRICE = C.MAX_PRICE
 PREFIX = "affine-v2-bench-"
+NAME_MAX = 29  # the longest pod name that is known to work on Lium
 NAME = os.environ.get("BENCH_POD_NAME", PREFIX + "1")  # the one pod of the service before 2026-11-14; the row that ran on it keeps it
 # Whole 8-GPU nodes that run a row in about the same time. The cheapest offer at or below the cap is taken; at one
 # price the earlier kind of this list. (Before 2026-11-14 the list was walked best-first, so a dearer kind could win.)
@@ -130,6 +131,17 @@ def setup(ssh):
     return "BOOTSTRAP_OK" in b.stdout, (b.stdout + b.stderr)[-300:]
 
 
+def name_of(row):
+    """The pod name of a row: the first NAME_MAX characters of `affine-v2-bench-<model_id>`. For a king that is
+    `affine-v2-bench-king-` and the first 8 hex digits of its base hash, the 8 that the table's label shows."""
+    return (PREFIX + row)[:NAME_MAX]
+
+
+def claimed(pod_id):
+    """The records (of every row, and of the single-node service) that name this Lium id."""
+    return [f for f in glob.glob(C.ROWS + "/*/pod.json") + [C.STATE + "/pod.json"] if (_rj(f) or {}).get("id") == pod_id]
+
+
 class Pod:
     """The pod of one row. `first`: the row runs on the pod that the single-node service rented; that pod keeps its
     name, its record and its ssh script, and no new commit is put on it."""
@@ -137,7 +149,7 @@ class Pod:
     def __init__(self, row, first=False):
         self.row, self.first = row, first
         self.dir = f"{C.ROWS}/{row}"
-        self.name = NAME if first else PREFIX + row
+        self.name = NAME if first else name_of(row)
         self.record = C.STATE + "/pod.json" if first else self.dir + "/pod.json"
         self.ssh = C.NODE_SSH if first else self.dir + "/node-ssh"
 
@@ -200,6 +212,8 @@ class Pod:
             self._failed(S, log, f"{len(mine)} pods are named {self.name}: the operator decides"); return None
         if mine and rec and rec.get("id") != mine[0].get("id"):
             self._failed(S, log, f"the pod named {self.name} is not the pod of this row's record: the operator decides"); return None
+        if mine and not rec and claimed(mine[0].get("id")):  # two rows whose short names are equal: never two rows on one pod
+            self._failed(S, log, f"the pod named {self.name} is the pod of another row's record: the operator decides"); return None
         if mine:  # the row's pod is there (a lost answer, or a setup that did not end): take it, never rent a second
             p = mine[0]
             if not rec:

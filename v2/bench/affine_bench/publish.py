@@ -216,7 +216,7 @@ def publish(rows, S, max_fail=3):
             budget, profile = latest.get("budget"), latest.get("profile")
         else:
             st = R.resolve_settings(mid, m.get("kind"))
-            budget, profile = st["budget"], st["profile"]
+            budget, profile = st["budget"], (S.get("profiles") or {}).get(mid) or st["profile"]  # the first row: what its node runs with
         beat = (runs.get(mid) or {}).get("beat") or {}
         models.append({k: m.get(k) for k in ("model_id", "label", "kind", "base_hash", "round_id", "head_version_id", "crowned_at", "uid", "hotkey")}
                       | ({"v1_epoch": m["v1_epoch"]} if m.get("v1_epoch") else {})
@@ -271,7 +271,11 @@ def publish(rows, S, max_fail=3):
               "has every sample of every problem; it picks the samples of each problem by a hash of a constant and the problem's number, "
               "never by a result or by the order of the output. In such a row score_full, se_full and samples_full are the score, "
               "the standard error and the count of samples of the larger run. "
-              "Each result row carries env_version, budget, and cap_rate so the protocol is unambiguous. "
+              "Each result row carries env_version, budget, profile and cap_rate so the protocol is unambiguous. "
+              "profile names the sampling settings (v2/bench/config/model_settings.toml) that ran: a king, and the v1 king, run "
+              "with qwen3.5-family-pp0 (presence_penalty 0.0: the kings are not trained with a presence penalty); the launch model "
+              "runs with qwen3.5-family (presence_penalty 1.5, its model card); the two differ in nothing else. A king row that says "
+              "qwen3.5-family ran before this rule. "
               "Where two protocols exist, the table shows the latest; results_prior holds superseded rows. "
               "Score = mean over problems of the per-problem mean over rollouts (an errored rollout counts as wrong); "
               "se = task-clustered standard error; complete=false marks a row that lost samples. "

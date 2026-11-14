@@ -22,7 +22,8 @@ Informational only: this service reads kings and writes a table. It has no path 
 
 The first row: the row that ran on the one pod of the single-node service (before 2026-11-14) keeps that pod, its
 record (BENCH_STATE/pod.json) and its ssh wrapper (BENCH_NODE_SSH). No new commit is put on that pod and the run on it
-is not started again. A result that it makes with more samples a problem than the settings now ask for is brought to
+is not started again: it goes on with the settings of that pod's checkout (FIRST_ROW_PROFILE), and each of its
+results says so. A result that it makes with more samples a problem than the settings now ask for is brought to
 the settings' count by the fixed rule of derive.py.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
@@ -45,6 +46,7 @@ BEAT_S = 300  # while a row runs, the table gets the time and the counts of the 
 CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the store before its pod is given back
 RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again this often
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
+FIRST_ROW_PROFILE = "qwen3.5-family"  # the node of the single-node service has a checkout of before `king_profile` changed: its run is with this profile
 
 
 def now(): return time.time()
@@ -458,7 +460,8 @@ def plan(rows, wait):
 
 def view(rows, wait):
     """What the table says of the rows in work: read from the state files of the workers."""
-    v = dict(waiting=wait, queue=S.get("queue") or [], runs=[], fail={}, stopped={}, pods={}, history=list(S["history"]), max_pods=P.MAX_PODS)
+    v = dict(waiting=wait, queue=S.get("queue") or [], runs=[], fail={}, stopped={}, pods={}, history=list(S["history"]), max_pods=P.MAX_PODS,
+             profiles={mid: FIRST_ROW_PROFILE for mid in row_ids() if is_first(mid)})
     for mid in row_ids():
         s = row_state(mid); rec = pod_of(mid).load(); ph = s.get("phase") or {}
         if s.get("running"): v["runs"].append(s["running"])

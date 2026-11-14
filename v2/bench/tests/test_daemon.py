@@ -161,7 +161,7 @@ class World:
     def steps(self, n=1):
         for _ in range(n): D.step()
 
-    def pod_of(self, mid): return next((p for p in self.lium.pods if p["name"] == P.PREFIX + mid), None)
+    def pod_of(self, mid): return next((p for p in self.lium.pods if p["name"] == P.name_of(mid)), None)
 
 
 @pytest.fixture
@@ -224,8 +224,10 @@ def test_each_row_has_a_pod_of_its_own_named_by_the_row_and_the_rows_run_side_by
     rows = [ids(second), ids(first), ids(world.genesis)]  # the queue: newest first, the launch model last
     world.steps()  # one step of the service: each row rents, sets up, downloads and starts on a pod of its own
     assert world.polled == rows and states() == dict.fromkeys(rows, "evaluating")
-    assert sorted(p["name"] for p in lium.pods) == sorted(P.PREFIX + mid for mid in rows) and len(lium.ups) == 3
-    assert all(P.PREFIX + mid == f"affine-v2-bench-{mid}" and 37 <= len(P.PREFIX + mid) <= 40 for mid in rows)
+    assert sorted(p["name"] for p in lium.pods) == sorted(P.name_of(mid) for mid in rows) and len(lium.ups) == 3
+    # a name is the first 29 characters of affine-v2-bench-<model_id>: for a king, the 8 hex digits of the table's label
+    assert all(P.name_of(mid) == f"affine-v2-bench-{mid}"[:29] and len(P.name_of(mid)) == P.NAME_MAX == 29 for mid in rows)
+    assert P.name_of(ids(first)) == "affine-v2-bench-king-" + first.base_hash[:8] and first.base_hash[:8] in model(ids(first))["label"]
     assert len({huid for huid, name in lium.ups}) == 3  # no two rows on one offer
     assert [world.nodes[mid].launches for mid in rows] == [1, 1, 1] and len(world.setups) == 3
     assert len({D.pod_of(mid).record for mid in rows} | {D.pod_of(mid).ssh for mid in rows}) == 6  # a record and an ssh wrapper for each row
@@ -274,7 +276,7 @@ def test_a_row_that_cannot_rent_holds_up_no_other_row(world, capsys):
     assert states() == {mid: "scored", gen: "queued"} and not lium.pods and D.row_state(gen)["fails"] == 0 and not D.stopped(gen)
     lium.offers = [Lium.offer("late-offer", "H100", 0.9)]
     world.steps(3)  # "no offer" is not a failed try: the row rents when an offer is there
-    assert states() == {mid: "scored", gen: "scored"} and lium.ups[-1] == ("late-offer", P.PREFIX + gen)
+    assert states() == {mid: "scored", gen: "scored"} and lium.ups[-1] == ("late-offer", P.name_of(gen))
 
 
 def test_the_pod_is_given_back_only_when_the_table_in_the_store_has_the_rows_results(world, capsys):
@@ -306,7 +308,7 @@ def test_a_rent_takes_the_cheapest_whole_secure_node_of_an_allowed_kind_at_or_be
     out = capsys.readouterr().out
     assert "8xH100  22.0 $/h  x1" in out and "8xH200  33.6 $/h  x1" in out and "4 offers fit" in out and "h100-cheap" not in out
     world.steps()
-    assert lium.ups == [("h100-cheap", P.PREFIX + gen)] and D.pod_of(gen).load()["cost"] == 22.0
+    assert lium.ups == [("h100-cheap", P.name_of(gen))] and D.pod_of(gen).load()["cost"] == 22.0
     assert all(a[0] in ("ps", "ls") for a in lium.sent)  # a rent sends no other command than its two readings
 
     # nothing fits: no pod, no failed try, and the row says that it still looks
@@ -335,7 +337,7 @@ def test_a_lost_answer_of_lium_never_makes_a_second_pod_for_a_row(world, capsys)
 
     # a pod under the row's name that the row has no record of at all (the host lost its disk): taken, not doubled
     king = green(world.v2, 1); mid = ids(king)
-    stray = dict(lium.pod(P.PREFIX + mid))
+    stray = dict(lium.pod(P.name_of(mid)))
     world.steps()
     assert len(lium.ups) == 1 and D.pod_of(mid).load()["id"] == stray["id"] and states()[mid] == "evaluating"
     world.steps(2)
@@ -343,7 +345,7 @@ def test_a_lost_answer_of_lium_never_makes_a_second_pod_for_a_row(world, capsys)
 
     # two pods under one row's name: the service takes none, makes none and deletes none. The operator decides
     second = green(world.v2, 2); mid2 = ids(second)
-    lium.pod(P.PREFIX + mid2); lium.pod(P.PREFIX + mid2)
+    lium.pod(P.name_of(mid2)); lium.pod(P.name_of(mid2))
     removed, ups = len(lium.removed), len(lium.ups)
     world.steps(P.RENT_TRIES + 1)
     assert len(lium.ups) == ups and len(lium.removed) == removed and len(lium.pods) == 2 and D.stopped(mid2) == "rent_failed"
@@ -356,7 +358,7 @@ def test_a_rent_that_fails_is_tried_again_with_a_growing_wait_and_then_the_row_s
     king = green(v2, 1); mid, gen = ids(king), ids(world.genesis)
     monkeypatch.setattr(P, "RENT_WAIT_S", 120)
     real_up = lium.up
-    monkeypatch.setattr(P, "up", lambda offer, name, ssh: (lium.ups.append((offer["huid"], name)), (None, "Lium refused the name"))[-1] if name.endswith(mid) else real_up(offer, name, ssh))
+    monkeypatch.setattr(P, "up", lambda offer, name, ssh: (lium.ups.append((offer["huid"], name)), (None, "Lium refused the name"))[-1] if name == P.name_of(mid) else real_up(offer, name, ssh))
     world.steps()
     s = D.row_state(mid)
     assert s["rent_tries"] == 1 and 100 < s["rent_wait_until"] - D.now() <= 120 and states() == {mid: "queued", gen: "evaluating"}
@@ -392,7 +394,7 @@ def test_a_setup_that_fails_gives_the_pod_back_and_counts_as_a_failed_rent(world
 # ---------------------------------------------------------------------------------------------- the one place that deletes
 def test_a_delete_goes_to_lium_only_for_the_exact_id_of_the_rows_record_and_never_for_a_protected_pod(world, monkeypatch, capsys):
     lium = world.lium; row = "king-" + "a" * 16
-    pod = P.Pod(row); other = lium.pod("someone-elses-pod"); twin = lium.pod(P.PREFIX + row + "-old")
+    pod = P.Pod(row); other = lium.pod("someone-elses-pod"); twin = lium.pod(pod.name + "-old")
     mine = lium.pod(pod.name)
     pod.save(dict(id=mine["id"], name=pod.name, huid=mine["huid"], rented_at=D.now()))
     assert pod.release(D.log, why="test") and lium.removed == [rm(mine)] and lium.pods == [other, twin]  # one command, one id; a like name is not touched
@@ -536,10 +538,12 @@ def test_the_run_of_the_single_node_service_is_the_first_row_it_keeps_its_pod_an
     world.steps()
     # the present record is the pod of that row: no rent for it, no new commit on it, no start of a runner on it
     assert D.is_first(mid) and D.pod_of(mid).record == C.STATE + "/pod.json" and D.pod_of(mid).name == P.NAME and D.pod_of(mid).ssh == C.NODE_SSH
-    assert states() == {mid: "evaluating", gen: "evaluating"} and lium.ups == [(lium.ups[0][0], P.PREFIX + gen)]
+    assert states() == {mid: "evaluating", gen: "evaluating"} and lium.ups == [(lium.ups[0][0], P.name_of(gen))]
     assert world.setups == [D.pod_of(gen).ssh] and node.launches == 0 and not any("git" in c or "gate_fetch" in c for c in node.cmds)
     assert model(mid)["pod"] | dict(since=0) == dict(name="calm-matrix-26", gpu="8xH100", usd_h=23.2, state="running", since=0)
     assert table()["node"]["pod"] == P.NAME and table()["node"]["up"] is True  # the top-level node object is still that pod
+    # it runs with the settings of its node's checkout, and the table says so; a row that starts now says the profile of the settings
+    assert (model(mid)["profile"], D.FIRST_ROW_PROFILE, R.resolve_settings(mid, "king")["profile"]) == (PP15, PP15, PP0) and model(gen)["profile"] == PP15
     assert D.S["running"]["run_key"] == mid  # the single-node state is left as it was, for the way back
     world.steps(2)
     assert states()[gen] == "scored" and node.launches == 0 and calm in lium.pods  # the other row came and went; this one runs on
@@ -585,10 +589,10 @@ def test_a_full_run_that_is_not_whole_gives_no_arxivmath_value_and_a_plain_line(
     assert (row["status"], row["stopped"], row["benchmarks_done"], row["fails"]) == ("failed", "held", len(RUNNABLE) - 1, 0)
     assert not [x for x in table()["results"] if x["model_id"] == mid and x["benchmark_id"] == "arxivmath"]  # no value at all
     world.steps(2)  # the run is over: the pod is given back when the nine results are in the store, and no run is started by itself
-    assert rm(calm) in lium.removed and not lium.pods and node.launches == 0 and [name for _, name in lium.ups] == [P.PREFIX + ids(world.genesis)]
+    assert rm(calm) in lium.removed and not lium.pods and node.launches == 0 and [name for _, name in lium.ups] == [P.name_of(ids(world.genesis))]
     D.cli("retry", [mid])  # the operator's word: a new run of ArXivMath alone, at the settings' count, on a pod of the row's own
     world.steps()
-    assert lium.ups[-1][1] == P.PREFIX + mid and "--benchmarks arxivmath " in world.nodes[mid].cmds[-1]
+    assert lium.ups[-1][1] == P.name_of(mid) and "--benchmarks arxivmath " in world.nodes[mid].cmds[-1]
 
 
 def test_the_pick_rule_is_fixed_and_a_third_party_can_repeat_it():
@@ -612,6 +616,38 @@ def test_the_pick_rule_is_fixed_and_a_third_party_can_repeat_it():
     assert derive.from_full(summary, run[False], 2, "v", None)[0] is None and derive.from_full(dict(summary, rollouts=2), run[False], 2, "v", 103)[0] is None
 
 
+# ---------------------------------------------------------------------------------------------- the settings profile
+PP0, PP15 = "qwen3.5-family-pp0", "qwen3.5-family"
+
+
+def test_a_king_and_the_v1_king_run_with_no_presence_penalty_and_the_launch_model_with_its_model_card(world):
+    king = green(world.v2, 1); mid, gen = ids(king), ids(world.genesis)
+    ms = R.model_settings(); profiles = ms["profiles"]
+    assert (ms["king_profile"], ms["default_profile"]) == (PP0, PP15)
+    differ = {k for k in profiles[PP15] if profiles[PP15][k] != profiles[PP0][k]}  # one difference, and the text that says so
+    assert differ == {"presence_penalty", "source"} and set(profiles[PP15]) == set(profiles[PP0])
+    for model_id, kind, name, penalty in ((mid, "king", PP0, 0.0), (V1, "v1-king", PP0, 0.0), (gen, "genesis", PP15, 1.5)):
+        for st in (R.resolve_settings(model_id, kind), R.resolve_settings(model_id)):  # a node knows the id only
+            assert (st["profile"], st["presence_penalty"], st["temperature"], st["top_p"], st["top_k"], st["budget"]) == (name, penalty, 1.0, 0.95, 20, 65536)
+    world.steps(3)
+    assert (model(mid)["profile"], model(gen)["profile"], model(V1)["profile"]) == (PP0, PP15, PP0)
+    assert "qwen3.5-family-pp0 (presence_penalty 0.0" in table()["about"] and "qwen3.5-family (presence_penalty 1.5" in table()["about"]
+
+
+def test_two_rows_whose_short_names_are_equal_never_share_a_pod(world, monkeypatch, capsys):
+    monkeypatch.setattr(P, "NAME_MAX", len(P.PREFIX) + 4)  # every king has the name affine-v2-bench-king
+    first, second = green(world.v2, 1), green(world.v2, 2)
+    assert P.name_of(ids(first)) == P.name_of(ids(second))
+    world.node(ids(second)).busy = "done=\nalive=1\nlines=7\nfinished=1\nok=1\n"  # the newer row starts first, and its run goes on
+    world.steps(P.RENT_TRIES)
+    # the newer row has the pod; the other row takes no pod and makes none, and says so
+    pods = [p for p in world.lium.pods if p["name"] == P.name_of(ids(first))]
+    assert len(pods) == 1 and D.pod_of(ids(second)).load()["id"] == pods[0]["id"] and not D.pod_of(ids(first)).load()
+    assert D.stopped(ids(first)) == "rent_failed" and "is the pod of another row's record" in D.row_state(ids(first))["rent_failed"]["why"]
+    assert states()[ids(second)] == "evaluating" and model(ids(first))["stopped"] == "rent_failed" and world.node(ids(first)).cmds == []
+    assert [name for _, name in world.lium.ups].count(P.name_of(ids(first))) == 1
+
+
 def test_a_first_pod_that_lium_took_back_makes_the_row_a_row_as_any_other(world, monkeypatch):
     v2, lium = world.v2, world.lium
     king = green(v2, 1); mid = ids(king)
@@ -623,7 +659,7 @@ def test_a_first_pod_that_lium_took_back_makes_the_row_a_row_as_any_other(world,
     world.steps(2)
     assert not D.is_first(mid) and not lium.removed and D.row_state(mid)["fails"] == 0
     world.steps()
-    assert lium.ups[-1][1] == P.PREFIX + mid and states()[mid] == "evaluating"  # its own pod, the run from the start, ArXivMath at the settings' count
+    assert lium.ups[-1][1] == P.name_of(mid) and states()[mid] == "evaluating"  # its own pod, the run from the start, ArXivMath at the settings' count
 
 
 # ---------------------------------------------------------------------------------------------- the store and the wait for weights
@@ -807,11 +843,11 @@ def test_the_v1_king_has_a_row_of_its_own_kind_and_changes_no_king_row_and_not_t
     row = source.extra_rows()[0]
     assert (row["model_id"], row["kind"], row["uid"], row["v1_epoch"]) == ("v1king-b6d592c3bb1b4393", "v1-king", 920, 1211)
     assert row["hotkey"] == "5FaTFWogz3AiQbEFRnL9CZcqR1keeypEYkd7f1L5YLbWH1cP" and row["base_hash"] == "b6d592c3bb1b439365e82147a47e65d93c083a13444aceae078f8a2053cd5ce3"
-    assert 37 <= len(P.PREFIX + V1) <= 40 and "v1-king" in publish.OWN_KINDS
+    assert P.name_of(V1) == "affine-v2-bench-v1king-b6d592" and "v1-king" in publish.OWN_KINDS
     # the file map in the code is the checkpoint's: its id by the rule of v1 and v2 is the checkpoint
     assert len(source.V1_KING_FILES) == 16 and canonical.manifest_digest(source.V1_KING_FILES) == row["base_hash"]
     # the same settings and budget as a king, and the same ten benchmarks
-    assert R.resolve_settings(V1, "v1-king") == R.resolve_settings(ids(first), "king") and R.resolve_settings(V1, "v1-king")["budget"] == 65536
+    assert R.resolve_settings(V1, "v1-king") == R.resolve_settings(ids(first), "king") == R.resolve_settings(V1) and R.resolve_settings(V1, "v1-king")["budget"] == 65536
     world.steps(3)
     without = table()
     assert [m["model_id"] for m in without["models"]] == [ids(world.genesis), ids(first), ids(second), V1]
@@ -849,7 +885,7 @@ def test_the_v1_king_is_queued_once_and_only_once_and_rents_nothing_without_a_re
     assert not any(V1_SOURCE in key for key in store.signed)
     store.gone, store.refused = set(), False
     world.steps()  # readable: queued by this step, with no word of a person
-    assert states(v1=True)[V1] == "evaluating" and lium.ups[-1][1] == P.PREFIX + V1 and len(lium.ups) == ups + 1
+    assert states(v1=True)[V1] == "evaluating" and lium.ups[-1][1] == P.name_of(V1) and len(lium.ups) == ups + 1
     node = world.nodes[V1]
     blob = json.loads(next(s for s in node.stdin if s))
     assert blob["descriptor"] == desc and sorted(blob["urls"]) == sorted(desc["files"]) and all(V1_SOURCE + "/" in u for u in blob["urls"].values())
@@ -868,7 +904,7 @@ def test_a_failed_fetch_of_the_v1_king_gives_its_pod_back_by_its_exact_id(world,
     world.steps(3)
     v1_source(world, monkeypatch)
     world.node(V1).bad = lambda links: True  # the source could be read on the host, and the download on the node fails (a wrong sha256)
-    other = lium.pod(P.PREFIX + "v1king-0000000000000000")  # a pod with a like name is not this row's pod
+    other = lium.pod(P.name_of("v1king-0000000000000000"))  # a pod with a like name is not this row's pod
     world.steps(D.MAX_FAIL)
     pod = dict(world.pod_of(V1))
     assert D.stopped(V1) == "failed" and world.nodes[V1].launches == 0
@@ -883,14 +919,14 @@ def test_the_pods_check_lists_each_bench_pod_with_its_row_and_reads_only(world, 
     v2, lium = world.v2, world.lium
     king = green(v2, 1); mid, gen = ids(king), ids(world.genesis)
     world.steps()
-    lium.pod("sn120-v2-prod-dublin", id="6cb913e4-0000-4000-8000-000000000000"); lium.pod(P.PREFIX + "king-" + "f" * 16)  # not a bench pod; a bench pod of no row
-    lium.pods = [p for p in lium.pods if p["name"] != P.PREFIX + gen]  # a row whose pod is not there
+    lium.pod("sn120-v2-prod-dublin", id="6cb913e4-0000-4000-8000-000000000000"); lium.pod(P.name_of("king-" + "f" * 16))  # not a bench pod; a bench pod of no row
+    lium.pods = [p for p in lium.pods if p["name"] != P.name_of(gen)]  # a row whose pod is not there
     sent = len(lium.sent); capsys.readouterr()
     D.cli("pods", [])
     out = capsys.readouterr().out
     lines = {line.split()[1]: line for line in out.splitlines()[1:-1]}
-    assert world.pod_of(mid)["id"][:8] in lines[P.PREFIX + mid] and f" {mid} " in lines[P.PREFIX + mid] and " running " in lines[P.PREFIX + mid] and " 0.8" in lines[P.PREFIX + mid]
-    assert "NO ROW CLAIMS THIS POD" in lines[P.PREFIX + "king-" + "f" * 16] and "NOT LISTED BY LIUM" in lines[P.PREFIX + gen]
+    assert world.pod_of(mid)["id"][:8] in lines[P.name_of(mid)] and f" {mid} " in lines[P.name_of(mid)] and " running " in lines[P.name_of(mid)] and " 0.8" in lines[P.name_of(mid)]
+    assert "NO ROW CLAIMS THIS POD" in lines[P.name_of("king-" + "f" * 16)] and "NOT LISTED BY LIUM" in lines[P.name_of(gen)]
     assert "sn120-v2-prod-dublin" not in out and "203.0.113.7" not in out and "2 bench pods at Lium" in out
     assert [a[0] for a in lium.sent[sent:]] == ["ps"]  # one reading; nothing is deleted
     D.cli("status", [])
@@ -951,7 +987,7 @@ def test_the_operator_document_and_the_unit_file_are_true_to_the_code():
     evaluator = (bench.parent / "sn120_v2" / "gpu" / "evaluator.py").read_text()
     for fact in (
         f"At most {P.MAX_PODS} rows are in work", f"At most {P.MAX_RENTS_PER_DAY} pods are made in 24 hours", f"default `{P.GPU_PREF}`",
-        f"A pod lives {P.POD_MAX_HOURS:.0f} hours at most", f"{P.RENT_TRIES} tries", f"the name `{P.NAME}`", "`affine-v2-bench-<model_id>`",
+        f"A pod lives {P.POD_MAX_HOURS:.0f} hours at most", f"{P.RENT_TRIES} tries", f"the name `{P.NAME}`", f"the first {P.NAME_MAX} characters of `affine-v2-bench-<model_id>`",
         f"asks again every {P.NO_OFFER_RETRY_S:.0f} seconds", f"no progress for {D.STALL_S} seconds",
         f"After {D.MAX_FAIL} fails", f"within one poll ({D.POLL_S} seconds)", f"more than {D.WAIT_LATE_S // 60} minutes after its head was applied",
         f"about each {D.BEAT_S // 60} minutes", f"After {D.POD_CHECK_AFTER_S // 60} minutes the worker asks Lium",

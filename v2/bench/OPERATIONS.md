@@ -16,7 +16,7 @@ Words used here:
 - From them it makes one row for the launch model and one row for each king. It adds one row for the last king of v1.
 - A row with a missing result is queued. The rows run side by side: each row has a node of its own. At most 8 rows are in work at a time (`BENCH_MAX_PODS`); the newest queued row starts first when a place is free.
 - A king's head can be public before its weight files are in the store. Before a row is queued, the service asks the store for each weight file that the head names (`public/bases/<base hash>/<file>`). If one is not there, the row waits: it gets no fail, no node is rented for it, and nothing is sent to a node. The service asks again at each poll, and the row is queued by the poll that finds every file. Nobody has to run a command.
-- For a queued row the service starts a worker. The worker rents one node with the name `affine-v2-bench-<model_id>`, loads the row's weights from the store with read links that expire, runs the 10 benchmarks of `bench/config/benchmarks.toml`, and copies the scores.
+- For a queued row the service starts a worker. The worker rents one node with a name of its own (the first 29 characters of `affine-v2-bench-<model_id>`), loads the row's weights from the store with read links that expire, runs the 10 benchmarks of `bench/config/benchmarks.toml`, and copies the scores.
 - The worker gives the node back when the table in the store has the row's results. It asks the store for the table then; it does not trust the copy on the host.
 - A worker waits only for its own rent, setup and download. No row holds a lock, a node or a file of another row. A row that cannot rent, or that fails, does not hold up the other rows.
 - The service writes one object: `public/benchmarks.json`. It writes it on each change of a row or of a result. It deletes nothing in the store.
@@ -28,6 +28,8 @@ A row is run once. The service reads the published table before its first step. 
 `<model_id>` is the id of the row: `genesis-`, `king-` or `v1king-` and the first 16 hex characters of the hash of the row's weights. Two rows never have the same id, also not at different times: another model has another hash.
 
 **The first row.** Before 14 Nov 2026 the service had one node with the name `affine-v2-bench-1` and ran the rows one after the other. At the first start of this code, the row that runs on that node keeps it: the node's record (`BENCH_STATE/pod.json`), its ssh script (`BENCH_NODE_SSH`) and the run on it stay as they are. The service puts no new commit on that node and does not start its run again. When that row is done, the node is given back like any other.
+
+**Settings.** The sampling settings of a row are a profile of `bench/config/model_settings.toml`, and each row and each result of the table names it in `profile`. A king, and the last king of v1, run with `qwen3.5-family-pp0`: presence penalty 0, because the kings are not trained with a presence penalty. The launch model runs with `qwen3.5-family`: presence penalty 1.5, the value of its model card. The two profiles differ in nothing else. The first row is the exception: its node has a checkout of before this rule, so its run is with `qwen3.5-family`, and its row and its results say so. To put the kings back to 1.5, set `king_profile = "qwen3.5-family"` in that file; it is for the rows that start after the change, on nodes that get that commit.
 
 **ArXivMath.** The settings ask for 2 samples for each of the 103 problems. The run of the first row has 16 samples for each problem. When it ends whole (16 samples for each of the 103 problems, none with an error), the worker computes the row's ArXivMath value from it by the fixed rule `pick-of-full/1` (`affine_bench/derive.py`): 2 of the 16 samples of each problem, picked by a hash of a constant and the problem's number. The result row then has `derived_from`, `derived_by`, `score_full`, `se_full` and `samples_full`. When the full run is not whole, the row gets no ArXivMath value: the log has one line `no-value` with the reason, the row is `held`, and `bench retry <model_id>` runs ArXivMath alone on a new node.
 
@@ -62,7 +64,7 @@ Details of A:
 
 - **Which offer.** The service asks Lium for the offers of these kinds (`BENCH_GPU_PREF`, default `H100:8 H200:8 B200:8 B300:8`). An offer fits when it is a whole free node of 8 GPUs of one of these kinds, on the secure tier, at or below `BENCH_MAX_PRICE`. The worker takes the cheapest offer that fits. At one price it takes the kind that is earlier in the list. Reason: each of these kinds runs a row in about the same time, so the cheapest node gives the cheapest row. The kind and the price of the node are in the row (`models[].pod` in the table).
 - **No cap, no rent.** Without `BENCH_MAX_PRICE` the service does not start.
-- **One node for a row.** The node has the name `affine-v2-bench-<model_id>`. Before a rent the worker asks Lium for the pods of the account. If a pod has the row's exact name and the row has no record of it (an answer of Lium was lost, or the host lost its disk), the worker takes that pod as the row's node. It never rents a second one. If two pods have the row's name, the worker takes none and rents none: after 4 tries the row is `rent-failed` and the operator decides.
+- **One node for a row.** The node's name is the first 29 characters of `affine-v2-bench-<model_id>`: for a king, `affine-v2-bench-king-` and the first 8 hex digits of its base hash, the 8 that the table's label shows. 29 is the longest name that is known to work on Lium. If two rows have the same short name, the second one takes no pod and makes none: it is `rent-failed` and the operator decides. Before a rent the worker asks Lium for the pods of the account. If a pod has the row's exact name and the row has no record of it (an answer of Lium was lost, or the host lost its disk), the worker takes that pod as the row's node. It never rents a second one. If two pods have the row's name, the worker takes none and rents none: after 4 tries the row is `rent-failed` and the operator decides.
 - **A rent that fails.** The worker tries again after 2, 4 and 8 minutes: 4 tries in all. Then the row has the state `rent-failed` in the table (`models[].stopped` is `rent_failed`), its worker ends and nothing more is spent for it. `bench retry <model_id>` queues it again. "No offer fits" is not a failed try: the worker asks again every 300 seconds, and no pod is made meanwhile.
 - **Ceilings.** At most 8 rows are in work at a time. At most 16 pods are made in 24 hours, over all rows (`BENCH_MAX_RENTS_PER_DAY`). A pod lives 6 hours at most (`BENCH_POD_MAX_HOURS`): then the worker stops the run, copies the results that are finished, and gives the pod back; the row is `expired` until `bench retry`. The first row's node has no such limit. So the most that the service can spend in one hour is 8 times `BENCH_MAX_PRICE`.
 - **A row that fails keeps no node.** After 3 fails, or when its pod is past 6 hours, the worker gives the node back. It waits 10 minutes at most for the store to have the results that it copied.
@@ -276,7 +278,7 @@ Proven by tests on a CPU (`v2/bench/tests/`), with the store of v2's simulation,
 
 - The rows come from public files only, and a public file that is missing makes no wrong row.
 - The launch model runs once, each king runs once, and a row that is listed again is not run again.
-- Each row has a pod of its own with the name `affine-v2-bench-<model_id>`, and the rows run side by side. A row that cannot rent holds up no other row.
+- Each row has a pod of its own, named by the row, and the rows run side by side. A row that cannot rent holds up no other row.
 - A pod is given back only when the table in the store has the row's results, and by the exact id of the row's record.
 - A rent takes the cheapest whole secure node of an allowed kind at or below the cap. A lost answer of Lium makes no second pod. A rent that fails is tried 4 times with a growing wait; then the row says so and the other rows go on.
 - No delete is sent for a protected id or name, for a pod of another name, or for the first row's node before that row is done.
@@ -292,7 +294,7 @@ Proven by tests on a CPU (`v2/bench/tests/`), with the store of v2's simulation,
 Not proven:
 
 - The code of this commit has not run on Lium. The single-node code of before ran rows on Lium and R2 for v2.
-- That Lium takes a pod name of 37 to 40 characters (`affine-v2-bench-<model_id>`). The longest name that is known to work has 29. Lium's command checks no name itself; its server decides. If Lium refuses the name, no pod is made and the row is `rent-failed` with Lium's words.
+- That Lium takes each pod name of this code. The names have 29 characters, the longest that is known to work. Lium's command checks no name itself; its server decides. If Lium refuses a name, no pod is made and the row is `rent-failed` with Lium's words.
 - That four rows can load their weights from the store at the same time at full speed.
 - That vLLM 0.32.0 serves the launch model from the store's files with the settings of `bench/config/` is not shown by a run.
 - The time and the price of one row on v2.
@@ -318,6 +320,6 @@ BENCH_V1_KING_SOURCE=<a prefix in the store of the service>
 - The service reads the setting at its start. After a change of the settings file, restart the unit. The row is queued by the first step that can see the 16 files.
 - The node checks the sha256 of each file after the download. A download that fails counts as a fail; after 3 fails the row is `failed` and its node is given back.
 
-One difference to v1's own row of this king. v1's public table shows this row with the profile `qwen3.5-family-pp0` (presence penalty 0). This service gives the row the profile of the v2 kings, `qwen3.5-family` (presence penalty 1.5), so the row compares with the v2 king rows and not with v1's own row.
+The row runs with the profile of the kings, `qwen3.5-family-pp0` (presence penalty 0), as v1's own row of this king did.
 
 Not proven: that the store token of the service can read v1's part of the bucket, and that vLLM serves the checkpoint's files on a v2 bench node.
