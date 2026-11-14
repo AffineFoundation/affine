@@ -7,11 +7,14 @@ public files, the read of the chain and the check of the waiting files.
 
 ``overlap`` takes those steps out of the line. Only ``run`` uses it, and only in the mode ``chain``:
 
-* beside the fold: the winner's files go to ``public/`` (``Controller._apply``), the waiting files are
-  checked and the registrations are read from the chain (``Overlap.look_ahead``)
+* beside the fold: the winner's files go to ``public/`` (``Controller._apply``) and the registrations are
+  read from the chain (``Overlap.look_ahead``)
 * after the open, while the box trains: the deletes in ``pending/`` and the public files (``Overlap.keep``)
 * the second sha256 of the folded head runs beside the close and the open (``headfold.ReadBack``). No box
   result is stored or judged before it passed
+
+The check of the waiting files stays in the line, at the open, as with ``serial``: the squat rule and the
+choice of the seats use what each miner has in the store at the open, not at the decision.
 
 The thread of ``run`` alone writes the journal: the same records in the same order as ``serial``. Everything
 here is the memory of one process. A process that stops loses it, and the next one does each step as
@@ -27,10 +30,10 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .errors import ConfigError, V2Error
 from .store import timed
-from .types import ChainSnapshot, Verdict
+from .types import ChainSnapshot
 
 ORDER_ENV, SERIAL, OVERLAP = "SN120_AFTER_KING", "serial", "overlap"
-AHEAD_MAX_AGE_S = 600  # a check or a chain read that was made beside a fold is used by an open that comes this soon; later it is made again
+AHEAD_MAX_AGE_S = 600  # a chain read that was made beside a fold is used by an open that comes this soon; later it is made again
 PUBLISH = "publish"  # the kind of a kept step that shows the whole state: a later one replaces it
 
 
@@ -87,7 +90,6 @@ class Overlap:
         self.chain, self.max_age_s = chain, max_age_s
         self._kept: list[Step] = []
         self._worker: Beside | None = None
-        self._files: tuple[int, tuple[str, ...], Beside] | None = None
         self._chain: tuple[int, Beside] | None = None
         self._one_reader = threading.Lock()
 
@@ -133,14 +135,11 @@ class Overlap:
 
     # ---- the steps that the next open needs: made beside the fold
 
-    def look_ahead(self, now: int, hotkeys: Sequence[str], check: Callable[[Sequence[str]], Mapping[str, Verdict]]) -> None:
-        """A king is decided at ``now``: check the files of ``hotkeys`` and read the chain, each in its own thread.
+    def look_ahead(self, now: int) -> None:
+        """A king is decided at ``now``: read the chain in its own thread.
 
-        A look that is still in memory and not old is kept: a second try of the same king starts no second one.
+        A read that is still in memory and not old is kept: a second try of the same king starts no second one.
         """
-        if self._files is None or now - self._files[0] > self.max_age_s:
-            asked = tuple(hotkeys)
-            self._files = (now, asked, Beside(lambda: dict(check(asked)), "sn120-v2-file-check-ahead"))
         if self.chain is not None and (self._chain is None or now - self._chain[0] > self.max_age_s):
             self._chain = (now, Beside(lambda: self.on_chain(self.chain), "sn120-v2-chain-read-ahead"))
 
@@ -150,10 +149,9 @@ class Overlap:
             return read()
 
     def wait(self) -> None:
-        """Wait for each thread of a look ahead. ``run`` has no need of it: each use of a look waits for its own thread."""
-        for held in (self._files, self._chain):
-            if held is not None:
-                held[-1].wait()
+        """Wait for the thread of a look ahead. ``run`` has no need of it: the use of a look waits for its thread."""
+        if self._chain is not None:
+            self._chain[-1].wait()
 
     def _take(self, held: tuple[Any, ...] | None, now: int, what: str) -> Any:
         """The result of one look, or None: there is none, it is too old, or it failed (the caller then does the step itself)."""
@@ -168,12 +166,6 @@ class Overlap:
             say(f"{what} beside the fold is {now - held[0]} s old, so it is made again now")
             return None
         return found
-
-    def verdicts(self, now: int) -> tuple[Mapping[str, Verdict], tuple[str, ...], int] | None:
-        """The check beside the fold, one time: the verdicts, the hotkeys that it asked for, and when it started."""
-        held, self._files = self._files, None
-        found = self._take(held, now, "the check of the waiting files")
-        return None if found is None else (found, held[1], held[0])
 
     def snapshot(self, now: int) -> ChainSnapshot | None:
         """The chain read beside the fold, one time."""

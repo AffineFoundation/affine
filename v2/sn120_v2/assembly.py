@@ -24,8 +24,9 @@ Every setting comes from the environment. A missing one is an error.
                             Read by each command that makes the live check: ``run``, ``status``, ``publish``
                             and ``bootstrap``
   SN120_AFTER_KING (optional)  "serial" (the default): after a king, each step waits for the one before it.
-                            "overlap": only the fold is before the next open; the other steps run beside the fold
-                            or after the open (``afterking.py``). Only with SN120_HEAD_PUBLISH=chain; read by ``run`` only
+                            "overlap": the fold and the check of the waiting files are before the next open; the
+                            other steps run beside the fold or after the open (``afterking.py``). Only with
+                            SN120_HEAD_PUBLISH=chain; read by ``run`` only
 
 ``run`` prints one line at its start for each of SN120_HEAD_PUBLISH, SN120_CHECK_STREAMS and SN120_AFTER_KING,
 with the words NOT SET when the shell does not hold the variable. It prints no line for another setting.

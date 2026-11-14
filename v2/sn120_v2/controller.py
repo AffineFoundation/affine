@@ -342,20 +342,8 @@ class Controller:
         It reads every waiting file from the store. So it runs before a round's
         lease starts or between rounds, never inside a round's time.
         """
-        hotkeys = [seat.reg.hotkey for seat in waiting(self.state.queue)]
-        ahead = self.overlap.verdicts(now) if self.overlap is not None else None
-        if ahead is None:
-            verdicts, at = dict(self.admission.verdicts(hotkeys)), now
-        else:
-            # ``overlap``: these files were checked beside the fold. Only a seat that was not asked for then is checked now.
-            # The public files give the time of the oldest verdict that they show.
-            seen, asked = ahead[0], set(ahead[1])
-            missing = [hotkey for hotkey in hotkeys if hotkey not in asked]
-            fresh = self.admission.verdicts(missing) if missing else {}
-            verdicts = {hotkey: found for hotkey in hotkeys if (found := (seen if hotkey in asked else fresh).get(hotkey)) is not None}
-            at = ahead[2] if len(missing) < len(hotkeys) else now
-            print(f"open: waiting seats with a file check from beside the fold: {len(hotkeys) - len(missing)}; waiting seats checked now: {len(missing)}", file=sys.stderr, flush=True)
-        self._verdicts, self._verdicts_at = verdicts, at
+        verdicts = dict(self.admission.verdicts([seat.reg.hotkey for seat in waiting(self.state.queue)]))
+        self._verdicts, self._verdicts_at = verdicts, now
         return verdicts
 
     def open_round(
@@ -488,10 +476,8 @@ class Controller:
         pairs, winner = self._leases(record, "done"), record.decision.winner
         made = None
         if winner is not None and not record.applied:
-            if self.overlap is not None:  # what the next open needs starts here, beside the fold
-                charged = {(entry.uid, entry.registration_block) for entry in record.decision.entries if entry.charged}
-                stay = [seat.reg.hotkey for seat in self.state.queue.values() if seat.reg.key not in charged]
-                self.overlap.look_ahead(now, stay, self.admission.verdicts)
+            if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
+                self.overlap.look_ahead(now)
             try:
                 made = self._apply(record, pairs, now)
             except VerifyError as exc:
