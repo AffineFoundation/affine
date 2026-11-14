@@ -108,7 +108,8 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     site = tmp_path / "site"
     done = pull(env, site)
     assert done.returncode == 0, done.stderr
-    assert "site built" in done.stdout and done.stderr.count("\n") == 1  # one note: the file under heads/ that is not a head
+    # two notes: the simulated batch is not of the miner format, so the site has no batch size of its round; and the file under heads/ that is not a head
+    assert "site built" in done.stdout and done.stderr.count("\n") == 2 and "site: no batch size of round r000001" in done.stderr
     files = tree(site)
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
