@@ -13,6 +13,8 @@ import tomllib
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 from sn120_v2 import layout, sim
 from sn120_v2.types import King, V1Import
 
@@ -272,6 +274,38 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
     assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
     assert "'none: no batch was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
+
+
+def test_the_price_feed_is_asked_less_often_with_no_network_and_not_at_all_from_a_hidden_page(tmp_path):
+    """The price code of the header, run in node with a fake page: five requests with no answer, one answer, one turn
+    with the page hidden, one more request with no answer. The test reads the wait after each turn, in minutes."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; this test runs the price code of site.js")
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    code = script[script.index("  const PRICE_WAITS"):script.index("  const copyView")]
+    assert "setInterval" not in code
+    harness = r"""
+const waits = [], plan = ['none', 'none', 'none', 'none', 'none', 'answer', 'hidden', 'none'];
+let requests = 0, next = null;
+const el = () => ({ hidden: false, closest: () => ({}) });
+const document = { hidden: plan[0] === 'hidden', querySelector: el, getElementById: el }, utc = String;
+const setTimeout = (run, ms) => { waits.push(ms / 60000); next = run; };
+const fetch = async () => { requests++; if (plan[waits.length] === 'none') throw new Error('offline'); return { ok: true, json: async () => ({ incentive_prices: {} }) }; };
+CODE
+(async () => {
+  while (waits.length < plan.length) {
+    while (!next) await new Promise(setImmediate);
+    const run = next; next = null; document.hidden = plan[waits.length] === 'hidden';
+    if (waits.length < plan.length) await run();
+  }
+  console.log(JSON.stringify({ waits: waits.slice(0, plan.length), requests }));
+})();
+"""
+    (tmp_path / "prices.js").write_text(harness.replace("CODE", code))
+    done = subprocess.run([node, str(tmp_path / "prices.js")], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"waits": [1, 2, 4, 10, 10, 1, 1, 1], "requests": 7}
 
 
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):

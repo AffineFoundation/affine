@@ -16,6 +16,63 @@ header{height:96px;display:flex;align-items:center;justify-content:space-between
 nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
 nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
 nav a:hover,nav a[aria-current]{text-decoration-color:currentColor}
+/* header, footer and page frame of the v1 site (network.css): the theme button, the links, the prices, the skip link,
+   the full-width page and its spaces. Every rule is in this block and wins by its longer selector, so the lines above
+   and below stay as they are. The theme button sets data-theme on <html>; these two lists repeat the values of :root
+   above. A new block is right in both themes when it takes every colour from these variables, and writes a rule for
+   light only as :root[data-theme=light] and not inside @media(prefers-color-scheme:light). */
+:root[data-theme=dark]{color-scheme:dark;--bg:#000000;--hover:#1c1c1c;--ink:#ededed;--muted:#a1a1a1;--line:#242424;--axis:#3a3a3a;--accepted:#d6b580;--performance:#85c8b4;--rejected:#d18e91}
+:root[data-theme=light]{color-scheme:light;--bg:#ffffff;--hover:#eeeeee;--ink:#171717;--muted:#646464;--line:#e4e4e4;--axis:#b5b5b5;--accepted:#936821;--performance:#217a65;--rejected:#b54d57}
+:root[data-theme=dark] .star{fill:#f5c542}
+:root[data-theme=light] .star{fill:#c98a00}
+body>header,body>main,body>footer,body>.noscript{width:calc(100% - 48px);max-width:none}
+/* the header is a grid: the first row, 76 px with the rule, holds the logo and the links; the prices are a second row of the same box,
+   above the rule of the header. From 1280 px, where the links leave room, the prices lie in the first row. */
+body>header{display:grid;grid-template-columns:auto 1fr;grid-template-rows:75px;align-items:center;gap:0 24px;height:auto}
+body>header .wordmark{font-size:26px;letter-spacing:5px}
+body>header .wordmark svg{width:22px;height:25px}
+body>header nav{grid-area:1/2;justify-self:end;align-items:center;justify-content:flex-end;gap:4px 18px;font-size:11px;color:var(--muted)}
+body>header nav a{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;transition:color .14s ease-out}
+body>header nav a:hover,body>header nav a[aria-current]{color:var(--ink)}
+body>header nav a:focus-visible,.theme:focus-visible,#copy-view:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:3px}
+.arrow{width:9px;height:9px;flex:none;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}
+.theme{display:inline-flex;font:inherit;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.theme svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.theme .moon,:root[data-theme=light] .theme .sun{display:none}
+:root[data-theme=light] .theme .moon{display:block}
+.theme:active{background:var(--hover);color:var(--ink)}
+@media(hover:hover){.theme:hover{background:var(--hover);color:var(--ink)}}
+.skip-link{position:fixed;top:12px;left:12px;z-index:20;padding:12px;border-radius:3px;background:var(--ink);color:var(--bg);font:12px var(--mono);transform:translateY(-180%)}
+.skip-link:focus{transform:translateY(0)}
+/* The price row holds its height until the first answer of the feed, so a price does not move the page when it comes.
+   With no price the script hides the row and the header is 76 px. With no script (no data-theme) the row is not there. */
+header>.prices{grid-area:2/1/3/-1;display:flex;align-items:flex-start;gap:22px;height:28px;margin:0;overflow:hidden;font:11px var(--mono);white-space:nowrap}
+:root:not([data-theme]) header>.prices{display:none}
+.prices div{display:flex;align-items:baseline;gap:8px}
+.prices dt{color:var(--muted)}
+.prices dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
+.prices small{font-size:10px;color:var(--muted)}
+.prices dt small,.prices dd small:not(:empty){margin-left:5px}
+.prices .sn{padding:1px 4px;border:1px solid var(--line);border-radius:3px}
+main>section:first-child>.section-heading{padding-top:10px}
+main>section{padding:8px 0}
+main>section:first-child{padding-top:0}
+body>footer{align-items:center;padding:14px 0 22px}
+.foot-right{display:inline-flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0}
+#copy-view{flex:none;min-width:86px;text-align:right;color:var(--muted);text-decoration-color:transparent;white-space:nowrap}
+#copy-view:hover{color:var(--ink);text-decoration-color:currentColor}
+@media(min-width:1000px){html{scroll-padding-top:112px}html:has(header>.prices[hidden]){scroll-padding-top:84px}body>header{position:sticky;top:0;z-index:10;background:var(--bg)}}
+@media(min-width:1280px){html{scroll-padding-top:84px}body>header{grid-template-columns:auto auto 1fr}body>header nav{grid-area:1/3}header>.prices{grid-area:1/2;align-items:center;height:auto;margin-left:8px}main>section:first-child>.section-heading{padding-top:14px}}
+@media(max-width:700px){body>header,body>main,body>footer,body>.noscript{width:calc(100% - 40px)}
+  body>header{padding:0;gap:0 12px}
+  body>header .wordmark{font-size:20px;letter-spacing:4px}body>header .wordmark svg{width:17px;height:20px}
+  body>header nav{gap:2px 10px;font-size:10px}body>header nav .same{display:none}
+  .theme{width:28px;height:28px}
+  main>section{padding:6px 0}
+  body>footer{flex-wrap:wrap;gap:6px 12px}.foot-right{width:100%;justify-content:space-between}#copy-view{min-height:32px}}
+@media(max-width:430px){body>header nav .arrow{display:none}}
+@media(max-width:380px){header>.prices{gap:14px}#alpha-tao{display:none}}
+@media(prefers-reduced-motion:no-preference){.arrow{transition:transform .14s ease-out}body>header nav a:hover .arrow{transform:translate(1.5px,-1.5px)}body>header nav a[href='llms.txt']:hover .arrow{transform:translateX(1.5px)}}
 section{min-width:0;padding:28px 0}
 .section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
 h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
