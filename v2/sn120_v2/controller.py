@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
+from .admission import verdict_log
 from .canonical import canonical_json, to_jsonable
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
@@ -155,6 +156,7 @@ class Controller:
         self._retry_at = 0
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
         self._verdicts_at: int | None = None
+        self._file_notes: dict[str, str] = {}  # what the log last said of each seat's file, by hotkey; this process only
         self._published: object = None  # what the last snapshot showed of the queue and its files
         self._pin()
 
@@ -276,7 +278,10 @@ class Controller:
         It reads every waiting file from the store. So it runs before a round's
         lease starts or between rounds, never inside a round's time.
         """
-        verdicts = dict(self.admission.verdicts([seat.reg.hotkey for seat in waiting(self.state.queue)]))
+        seats = [(seat.reg.uid, seat.reg.hotkey) for seat in waiting(self.state.queue)]
+        verdicts = dict(self.admission.verdicts([hotkey for _, hotkey in seats]))
+        lines, self._file_notes = verdict_log(seats, verdicts, self._file_notes, now)
+        print("\n".join(lines), file=sys.stderr, flush=True)
         self._verdicts, self._verdicts_at = verdicts, now
         return verdicts
 

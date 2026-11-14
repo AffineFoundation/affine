@@ -677,6 +677,45 @@ def _verdict(hotkey: str, raw: bytes, result: Batch | Invalid, now: int) -> Verd
     return Verdict(hotkey, False, str(result), batch_sha256=file_hash, checked_at=now, rule=result.rule)
 
 
+SHA_SHOWN = 12  # characters of a sha256 in a log line
+
+
+def verdict_note(verdict: Verdict | None) -> str:
+    """One check of a file as the log shows it: the start of the sha256, then valid, or the rule code and its reason."""
+    if verdict is None:
+        return "no file"
+    start = verdict.batch_sha256[:SHA_SHOWN] or "not hashed"  # an empty or oversized file is not hashed
+    if verdict.valid:
+        return f"{start} valid"
+    return f"{start} not valid, rule {verdict.rule}: {' '.join(verdict.reason.split())}"
+
+
+def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict], before: Mapping[str, str], now: int) -> tuple[list[str], dict[str, str]]:
+    """The log lines of one check of the waiting files, and the notes that the next check compares with.
+
+    ``seats`` holds the UID and the hotkey of each waiting seat. A seat gets a line only when its note differs
+    from the one in ``before``: other bytes, another verdict, another reason, or a new count of a fault
+    ("check 2 of 3"). A seat that this process sees for the first time gets a line when it has a file. The last
+    line is the summary of the check, with the count of each rule. The verdicts are public (``Verdict``), so a
+    line never holds batch content.
+    """
+    notes = {hotkey: verdict_note(verdicts.get(hotkey)) for _, hotkey in seats}
+    lines = [
+        f"files: UID {uid} {notes[hotkey]}; before: {before.get(hotkey, 'not checked by this process')}"
+        for uid, hotkey in seats
+        if notes[hotkey] != before.get(hotkey, "no file")
+    ]
+    found = [verdicts[hotkey] for _, hotkey in seats if hotkey in verdicts]
+    rules = Counter(verdict.rule for verdict in found if not verdict.valid)
+    detail = f" ({', '.join(f'{rule} {count}' for rule, count in sorted(rules.items()))})" if rules else ""
+    at = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now))
+    lines.append(
+        f"files: check at {at}: {len(seats)} waiting seats, {len(found) - sum(rules.values())} valid, "
+        f"{sum(rules.values())} not valid{detail}, {len(seats) - len(found)} with no file, {len(lines)} changed"
+    )
+    return lines, {**before, **notes}
+
+
 class StoreAdmission:
     """The ``Admission`` seam over an object store.
 
