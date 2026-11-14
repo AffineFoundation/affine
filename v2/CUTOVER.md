@@ -1588,6 +1588,8 @@ After any failed lease, the next round opens 5 minutes later at the earliest (`a
 
 This is the short form of the part above, for a commit that changes no digest. The message for the commit says "a checkout only". `0c29cb6c` is such a commit for a box at `1d7d0628` or later (check 1 of "Before the mainnet bootstrap"). `run` loads the code only at a start, so a checkout changes nothing in a `run` process that runs: the stop and the start are needed.
 
+A commit with the command `front-seats` goes to AffineValidator first: see "Seats to the front by hand: `front-seats`".
+
 1. **Before the stop: no round is open.** The cheapest moment for the stop is right after a round closes. In a second shell with the same exports, `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`. Anybody can read the same value: `"phase"` in `https://affine.io/mining.json`, once the site shows v2's file.
    - `RUNNING` or `APPLY`: wait for `IDLE`. The promotion of a winner comes at most 100 minutes after the lease. The fold comes after it and has no time limit; during the fold `status` shows `APPLY` and the site still shows `RUNNING` ("The time limit of a round"). `run` prints the round summary at the close.
    - When valid files wait, `run` opens the next round at once, and no look shows `IDLE`. Then stop the loop right after a round summary in `run.log`: the round that is lost is the one that opened a moment ago. The table of step 2 says what a stop in a round costs: that round, and nothing for a seat.
@@ -1678,6 +1680,98 @@ Before it: the loop is stopped (on a new box: not started yet). The checkout, th
 5. Start the loop. After a winner, `run` finishes the fold, closes the round as `applied`, and opens the next round with the new digests.
 
 `end-round --discard-result` is needed only when the stored result itself is bad. It ends the round with no decision and throws the result away. The seats of that round are not charged, no failure is counted, and they are first in the next round; a batch that would have won must win again. Tell the coordinator before you use it.
+
+### Seats to the front by hand: `front-seats`
+
+Use: a hotkey had a turn outside v2 that nobody will judge, for example a v1 turn after the import snapshot. The operator decides that such a turn is not charged. The command sends the waiting seats of the named hotkeys to the front and clears `demoted`. It charges nothing, counts no failure and changes no other seat; other seats move down by the places that the new front seats take.
+
+- **The order.** Inside the front group the order is the registration block, then the UID, as in every zone of the queue. A seat that goes to the front takes its place by its registration block: it can stand before a seat that was at the front already. The dry run prints the order (`front_seats_after`).
+- **`demoted`.** A seat at the front is in the front zone, whatever `demoted` says, and nothing takes `front` away from a seat that waits. So the flag changes no turn. The command clears it so that the public queue does not show a front seat as demoted, and so that the seat does not come back as demoted when a chain sync removes it and adds it again with the same UID and registration block.
+- **The squat trim** does not look at a front seat ("The value `squat_min_wait_s`"): it moves only seats of the normal zone.
+- **All or nothing.** A hotkey with no seat, a seat in an open round, an open round, or an empty reason: `refused: V2Error: nothing was changed: ...`, exit code 2, and nothing is written. Only the real run writes: a dry run, a refused run and a run with nothing to change do not take over the journal.
+
+**The command writes a new kind of journal record, `seats_fronted`. A checkout without commit `05ed583a` does not know this kind and refuses the whole journal.** So each host that reads the journal goes to the new commit first: AffineValidator (the weights writer and the links job), then the GPU box. The pull of the site and the miner tool read no journal: only public files.
+
+The commit is the one that the coordinator names. It contains `05ed583ad05878b99bc6158a154b4d2444cf17f3`, and it is a checkout only: no install line, no digest block, no `set-params`.
+
+**a. AffineValidator first.** In the shell of "AffineValidator" (the variables of its list):
+
+```
+systemctl is-active sn120-v2-weights.service sn120-v2-links.service     # no line says "activating"
+cd "$REPO" && git fetch origin && git checkout <the commit>
+git merge-base --is-ancestor 05ed583ad05878b99bc6158a154b4d2444cf17f3 HEAD; echo "exit=$?"
+"$PY" -c "from sn120_v2.state import HANDLERS; print('seats_fronted' in HANDLERS)"
+```
+
+- The third line prints `exit=0`: the checkout contains the commit.
+- The fourth line prints `True`: this checkout knows the record kind. **These two lines are the proof before the run on the GPU box.** An older checkout prints `False`.
+- The units start a new process at each timer run, and the install of step 1 is editable: the checkout is in force at the next run, with no install and no restart.
+
+Then check that both jobs replay the journal with this checkout:
+
+```
+cd "$REPO/v2" && source .venv/bin/activate
+( set -a; . "$WENV"; set +a
+  python -m sn120_v2.weights_writer --state-dir "$WSTATE" --from-store --network finney --dry-run )
+sudo systemctl start sn120-v2-links.service
+journalctl -u sn120-v2-links.service -n 5 --no-pager
+```
+
+- The dry run is the command of step 5: it writes nothing to the chain. stderr says `kings: read from the journal copy in the store`, and the JSON line has `"status": "would set"`. Do not start the weights unit by hand for this check: a run inside the rate limit uses the attempt of the hour (step 9).
+- The links job is the command of step 11, the same run as a timer run. The log shows `links: issued N of M waiting hotkeys (...), removed R, valid 86400 s`.
+- **What this proves before the run on the GPU box:** the new checkout runs, and both jobs read the journal as it is now. It does not prove that they know the new kind: the journal holds no such record yet. The lines `exit=0` and `True` above prove that.
+
+**e. When the checkout on AffineValidator is safe.** The weights writer starts at minute 05 of each hour; the links job at minute 10 and minute 40; the pull of the site at second 30 of each minute. Do the checkout at a minute from 15 to 35, or from 45 to 00, and a few seconds after second 30. The `is-active` line must not say `activating` (a run is in progress). A pull that starts in the middle of the checkout can fail once: its next run is one minute later.
+
+**b. The GPU box, between two rounds.** The frame is "A checkout only: a running box goes to a later commit": its steps 1 to 3 (no round is open, the stop of the loop, the checkout with the `diff` line), then this command, then its step 4 (the start).
+
+1. Steps 1 and 2 of "A checkout only". After the stop, `status` must show `"phase": "IDLE"`. With an open round the command refuses.
+   - `RUNNING` with no box result in the store: `python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack` ends the round with no decision. Nobody is charged, and the seats of that round go to the front by this alone. A named seat of that round is then at the front already, and the command only clears its `demoted`.
+   - `RUNNING` with a box result in the store, or `APPLY`: start the loop, let `run` close the round, and stop the loop again after the round summary.
+2. Step 3 of "A checkout only" (the `diff` line prints only `exit=0`), then:
+
+   ```
+   git merge-base --is-ancestor 05ed583ad05878b99bc6158a154b4d2444cf17f3 HEAD; echo "exit=$?"
+   ```
+
+3. **The dry run.** One `--hotkey` for each hotkey; the reason goes into the journal.
+
+   ```
+   python -m sn120_v2 front-seats --state-dir $STATE --stack sn120_v2.assembly:stack \
+     --hotkey <hotkey 1> --hotkey <hotkey 2> \
+     --reason "<why these turns are not charged, and who decided it>" --dryrun
+   ```
+
+   It reads the journal copy in the store and writes nothing, to the journal or to the store. stdout is one JSON object:
+   - `"dry_run": true`, `"written": false`, `"charged": 0`.
+   - `seats`: one row for each hotkey, with `uid`, `registration_block`, and `position`, `front` and `demoted`, each with `before` and `after`. `position` is the place in the turn order, from 0, as `position` in `mining.json`.
+   - `seats_to_change`: the count of rows that the real run changes. `other_seats_whose_position_shifts`: the count of other seats that move down.
+   - `front_seats_after`: the UIDs of the front group after the run, in turn order.
+
+   stderr says `dry run: nothing was written ...` and one reminder: every host that reads the journal must be on this commit before the real run, and after the real run no host can go back to an older commit. Read each row: the right UIDs, `front` `false` to `true`.
+4. **The real run:** the same line without `--dryrun`. It takes over the journal, as `set-params` does; that is why the loop is stopped. It prints the same object with `"dry_run": false`, `"written": true`, `"journal_record": N` and `"replay_matches": true`; stderr says `written: journal record N (seats_fronted). ...`. Exit code 0. `"replay_matches": false` and exit code 1: do not start the loop, and tell the coordinator.
+5. **The check.** Run the dry run line again: `"seats_to_change": 0`, each row has `front` and `demoted` the same before and after, and stderr says `nothing to change: ...`. `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`, and `"queue"` and `"kings"` as before the run.
+6. Start the loop (step 4 of "A checkout only") and do its steps 5 and 6.
+
+**c. After the run.** On AffineValidator, run the two checks of part a again (the dry run of the weights writer, and one run of the links job). They print the same lines; now the journal holds the new record, so this is the proof that both jobs replay it. Then the public queue, about one minute after the first pass of the new `run`:
+
+```
+curl -fsS https://affine.io/mining.json | python3 -c "
+import json, sys
+for row in json.load(sys.stdin)['queue']['next']:
+    if row['front']: print(row['position'], row['uid'], row['hotkey'], 'front', row['front'], 'demoted', row['demoted'])"
+```
+
+It prints the front group in turn order: the UIDs of `front_seats_after`, each with `front True demoted False`.
+
+**d. The way back, and its limit.**
+
+- Before the real run: nothing is written. Each host can go back to its commit before.
+- After the real run: **no host that reads the journal can go back to a commit without `05ed583a`.** No command removes the record or takes a seat out of the front. A seat leaves the front when it has its turn. A seat that went to the front by mistake: tell the coordinator.
+- What an older checkout does after the real run, and the repair (check out the commit again):
+  - The GPU box: `run`, `status` and each other command end with `refused: JournalCorrupt: unknown journal record kind 'seats_fronted'`, exit code 2. Nothing is written.
+  - The weights writer: each run defers with `the state failed to load: unknown journal record kind 'seats_fronted'`. The last valid weights stay on the chain.
+  - The links job: each run ends with `issue failed: unknown journal record kind 'seats_fronted'`. The link files stay; a link is valid for 24 hours, so after that time a miner has no valid link.
 
 ### A new GPU box
 
