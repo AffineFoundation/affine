@@ -9,8 +9,11 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tomllib
 import urllib.error
 from pathlib import Path
+
+import pytest
 
 from sn120_v2 import layout, sim
 from sn120_v2.types import King, V1Import
@@ -95,7 +98,7 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
     table = dict(re.findall(r"'([^']+)': ([\d.]+)", sizes))
     assert len(table) == 22 and all(name == name.lower() and 1 < float(size) < 25 for name, size in table.items())
     tiles = re.findall(r'<div class="tile" id="([\w-]+)">', index)
-    assert tiles == ["c-z", "c-pass", "c-batch", "c-time"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
+    assert tiles == ["c-z", "c-pass", "c-batch", "c-time", "c-cost", "c-lr"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
     assert all(f"tile('{name}'" in script for name in tiles) and 'class="tile"' not in v1
     # a table names its columns: each name must be a column of the script, and each table must be on a page
     columns = set(re.findall(r"^    (\w+): \{ h: ", script, re.M))
@@ -216,6 +219,18 @@ def test_a_head_links_its_manifest_when_it_is_current_or_when_the_file_is_on_the
     assert asked == [f"{URL}/{name}" for name in "abcdcd"]
 
 
+def test_the_presence_penalty_of_a_profile_on_the_page_is_the_one_of_the_benchmark_settings():
+    """The benchmark file gives only the name of a settings profile. The page has one list with the presence penalty of each name;
+    a name of that list that the settings file of the benchmark service has carries the same value there."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    assert script.count("const PP = ") == 1
+    listed = {name: float(value) for name, value in re.findall(r"'([^']+)': ([\d.]+)", re.search(r"^  const PP = \{(.*)\};$", script, re.M)[1])}
+    profiles = tomllib.loads((BUILD.parents[1] / "bench" / "config" / "model_settings.toml").read_text())["profiles"]
+    assert set(listed) & set(profiles)
+    for name in set(listed) & set(profiles):
+        assert profiles[name]["presence_penalty"] == listed[name], name
+
+
 def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     """On the v2 page a cell with no value is a short word, and its tooltip says why. No dash and no dots stand for a value."""
     script = (BUILD.parent / "static" / "site.js").read_text()
@@ -259,6 +274,38 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
     assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
     assert "'none: no batch was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
+
+
+def test_the_price_feed_is_asked_less_often_with_no_network_and_not_at_all_from_a_hidden_page(tmp_path):
+    """The price code of the header, run in node with a fake page: five requests with no answer, one answer, one turn
+    with the page hidden, one more request with no answer. The test reads the wait after each turn, in minutes."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; this test runs the price code of site.js")
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    code = script[script.index("  const PRICE_WAITS"):script.index("  const copyView")]
+    assert "setInterval" not in code
+    harness = r"""
+const waits = [], plan = ['none', 'none', 'none', 'none', 'none', 'answer', 'hidden', 'none'];
+let requests = 0, next = null;
+const el = () => ({ hidden: false, closest: () => ({}) });
+const document = { hidden: plan[0] === 'hidden', querySelector: el, getElementById: el }, utc = String;
+const setTimeout = (run, ms) => { waits.push(ms / 60000); next = run; };
+const fetch = async () => { requests++; if (plan[waits.length] === 'none') throw new Error('offline'); return { ok: true, json: async () => ({ incentive_prices: {} }) }; };
+CODE
+(async () => {
+  while (waits.length < plan.length) {
+    while (!next) await new Promise(setImmediate);
+    const run = next; next = null; document.hidden = plan[waits.length] === 'hidden';
+    if (waits.length < plan.length) await run();
+  }
+  console.log(JSON.stringify({ waits: waits.slice(0, plan.length), requests }));
+})();
+"""
+    (tmp_path / "prices.js").write_text(harness.replace("CODE", code))
+    done = subprocess.run([node, str(tmp_path / "prices.js")], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"waits": [1, 2, 4, 10, 10, 1, 1, 1], "requests": 7}
 
 
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
@@ -512,6 +559,149 @@ def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_
         done, _, text = build(tmp_path, snap)
         assert done.returncode == 0 and "no benchmark file" in done.stderr
         assert json.loads(text)["bench"] == bare and json.loads(text)["kings"] == data["kings"]
+
+
+def public_round(tmp_path: Path, train: dict | None = None) -> tuple[Path, Path]:
+    """Put the round file of round r000001 of ``snapshot`` and a winning batch of 2 prompts and 5 rollouts in the store of ``build``."""
+    made = tmp_path / "world" / "store" / layout.round_file("r000001")
+    report, batch = tmp_path / "store" / layout.round_file("r000001"), tmp_path / "store" / layout.winner_batch("r000001")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(made, report)
+    groups = [dict(prompt=f"p{at}", rollouts=[dict(output="o", reward=float(reward)) for reward in range(size)]) for at, size in enumerate((2, 3))]
+    batch.write_text(json.dumps(dict(version="affine-batch-v3", hotkey="hk4", groups=groups) | ({} if train is None else {"train": train})))
+    return report, batch
+
+
+def test_a_closed_round_gets_its_phase_times_and_a_winner_the_size_and_the_settings_of_its_batch(tmp_path):
+    """``extend``: the values come from ``round.json`` and from the winner's ``batch.json``. Without a file its fields are None."""
+    settable = [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[], allowed="1e-06 to 0.0001", decided="recipe")]
+    snap = snapshot(tmp_path) | {"contract": {"public_url": "https://x.example", "miner_settable": settable}}
+    winner = next(entry for entry in snap["history"][0]["entries"] if entry["status"] == "winner")
+    done, _, text = build(tmp_path, snap)  # no round file and no batch in the store: the page is built, and nothing is said
+    assert done.returncode == 0 and "phase time" not in done.stderr and "batch size" not in done.stderr
+    bare, none = json.loads(text), dict(batch_prompts=None, batch_rollouts=None, train=None)
+    assert all(row["phases"] is None and row | none == row for row in bare["rounds"])
+    assert all(row | none == row for row in bare["history"]) and all(king | none == king for king in bare["kings"])
+    assert bare["train_settable"] == [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[])]
+    assert (bare["cap_hit_floor"], bare["cap_hit_margin"]) == (snap["params"]["cap_hit_floor"], snap["params"]["cap_hit_margin"])
+    old = {name: value for name, value in snap["params"].items() if name != "cap_hit_floor"} | {"cap_hit_margin": "0.02"}
+    done, _, text = build(tmp_path, snap | {"params": old})  # a snapshot with no such number, or with a text for it
+    assert done.returncode == 0 and (json.loads(text)["cap_hit_floor"], json.loads(text)["cap_hit_margin"]) == (None, None)
+    assert [(king["delta"], king["se"]) for king in bare["kings"]] == [(winner["delta"], winner["se"]), (None, None)]  # the gain needs no file
+
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    wall = json.loads(report.read_text())["wall_s"]
+    done, out, text = build(tmp_path, snap)
+    data, facts = json.loads(text), dict(batch_prompts=2, batch_rollouts=5, train={"lora_lr": 2e-05})
+    assert done.returncode == 0, done.stderr
+    times = data["rounds"][0]["phases"]
+    assert list(times) == ["training", "evaluation", "promote", "fold", "other", "total"] and times["total"] == wall["total"]
+    assert {name: times[name] for name in ("training", "evaluation", "promote", "fold")} == {
+        name: wall[name] for name in ("training", "evaluation", "promote", "fold")}
+    assert times["other"] == wall["total"] - wall["training"] - wall["evaluation"] - wall["promote"] - wall["fold"] >= 0
+    rows = {row["uid"]: row for row in data["history"]}
+    assert data["rounds"][0] | facts == data["rounds"][0] and rows[4] | facts == rows[4] and data["kings"][0] | facts == data["kings"][0]
+    assert all(rows[uid] | none == rows[uid] for uid in (3, 7)) and data["kings"][1] | none == data["kings"][1]  # only a winner's batch is public
+    for name in ("phases", *none):  # no field of before is removed or changed
+        for row in (*data["rounds"], *data["history"], *data["kings"]):
+            row.pop(name, None)
+    for name in ("phases", *none):
+        for row in (*bare["rounds"], *bare["history"], *bare["kings"]):
+            row.pop(name, None)
+    assert data == bare
+
+    report.unlink(), batch.unlink()  # a closed round does not change: the last data file has its values, so no file is read again
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and again == text
+    (out / "site-data.json").write_text("{not json")  # a bad last file is not used, and the build goes on
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and "the last site-data.json gives no value" in done.stderr and json.loads(again)["rounds"][0]["phases"] is None
+
+
+def test_a_value_of_the_last_data_file_is_used_only_with_the_mark_of_this_builder_and_not_in_a_full_read(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    done, out, text = build(tmp_path, snap)
+    good, mark = json.loads(text), json.loads(text)["fields_mark"]
+    assert done.returncode == 0 and mark == "sn120-v2-site-fields-1" and good["kings"][0]["batch_prompts"] == 2
+
+    def wrong(change: dict) -> None:
+        """The last data file with wrong values in it, and other files in the store."""
+        last = json.loads(json.dumps(good)) | change
+        last["rounds"][0]["phases"]["training"] = 999
+        last["kings"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        last["rounds"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        (out / "site-data.json").write_text(json.dumps(last))
+
+    wrong({})  # the mark of this builder: the values are taken as they are, and the store is not read
+    report.unlink(), batch.unlink()
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["batch_prompts"] == 999 and json.loads(text)["rounds"][0]["phases"]["training"] == 999
+    public_round(tmp_path, {"lora_lr": 2e-05})
+    for change in ({"fields_mark": "sn120-v2-site-fields-0"}, {"fields_mark": None}):  # another mark, or no mark: one full read
+        wrong(change)
+        done, _, text = build(tmp_path, snap)
+        assert done.returncode == 0 and json.loads(text) == good
+    last = json.loads(json.dumps(good))
+    del last["fields_mark"]
+    (out / "site-data.json").write_text(json.dumps(last).replace('"batch_prompts":2', '"batch_prompts":999'))  # the file of a builder of before
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text) == good
+    wrong({})  # by hand: --full-read takes no value of the last file
+    done, _, text = build(tmp_path, snap, "--full-read")
+    assert done.returncode == 0 and json.loads(text) == good
+
+
+def test_a_bad_round_file_or_batch_leaves_its_fields_empty_and_a_batch_with_no_train_block_sets_nothing(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path)
+    done, out, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["train"] == {} and json.loads(text)["train_settable"] is None
+    for bad_report, bad_batch in (("{not json", "[1]"), (json.dumps({"wall_s": {"training": 1}}), json.dumps({"groups": [{"prompt": "p"}]})),
+                                  (json.dumps({"outcome": "applied"}), json.dumps({"groups": [], "train": {"lora_lr": float("nan")}}))):
+        (out / "site-data.json").unlink()
+        report.write_text(bad_report), batch.write_text(bad_batch)
+        done, _, text = build(tmp_path, snap)
+        data = json.loads(text)
+        assert done.returncode == 0 and "no phase time of round r000001" in done.stderr and "no batch size of round r000001" in done.stderr
+        assert data["rounds"][0]["phases"] is None and data["kings"][0]["batch_prompts"] is None and data["kings"][0]["train"] is None
+    batch.write_text("[" * 100_000)  # an error of any other kind: the page of before is still written
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and "not all fields of the round files and the batches: RecursionError" in done.stderr
+    assert json.loads(text)["kings"][0]["uid"] == 4 and json.loads(text)["kings"][0].get("train") is None
+    batch.unlink()
+    report.write_text(json.dumps({"wall_s": {"training": 4, "evaluation": 3, "total": 9}}))  # a round that applied no head has two phases
+    done, _, text = build(tmp_path, snap)  # the next build reads a file again when the last build got no value
+    assert json.loads(text)["rounds"][0]["phases"] == dict(training=4, evaluation=3, promote=None, fold=None, other=2, total=9)
+
+
+def test_a_benchmark_row_has_its_budget_and_a_reference_model_its_repo_and_its_size(tmp_path):
+    snap = snapshot(tmp_path)
+    folded = next(line for line in snap["heads"] if line["folded"] and line["round_id"] == "r000001")
+    path = tmp_path / "store" / layout.BENCHMARKS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    models = [king("king-0123", folded["applied_at"], "r000001", folded["version_id"]) | {"budget": 65536},
+              dict(model_id="q", label="Qwen3-8B", kind="reference", status="scored"),
+              dict(model_id="n", label="New-1B", kind="reference", status="scored", hf="org/New-1B@abc", budget=1000),
+              dict(model_id="u", label="Unknown-2B", kind="reference", status="scored")]
+    path.write_text(json.dumps({"updated_at": 5, "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True)], "models": models,
+                                "results": [result(model["model_id"], "b1", 0.5) for model in models]}))
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    rows = {row["label"]: (row["repo"], row["repo_rev"], row["size_b"], row["budget"]) for row in json.loads(text)["bench"]["rows"]}
+    assert rows.pop(f"r000001 {folded['version_id'][:8]}") == (None, None, None, 65536) and rows.pop("Genesis") == (None, None, None, None)
+    assert rows == {"Qwen3-8B": ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
+                    "New-1B": ("org/New-1B", "abc", None, 1000), "Unknown-2B": (None, None, None, None)}
+
+
+def test_the_list_of_the_reference_models_is_equal_to_the_last_benchmark_file_of_v1_and_to_the_sizes_of_the_page():
+    """``REFERENCE`` of the builder: the repo and the budget are those of the v1 file, and the size is the one that the page shows."""
+    listed = runpy.run_path(str(BUILD))["REFERENCE"]
+    v1 = json.loads((Path(__file__).parent / "data" / "v1_reference_models.json").read_text())  # ``models[]`` of the kind reference of that file
+    assert v1["sha256"] in BUILD.read_text() and len(v1["models"]) == len(listed) == 22
+    assert {name: (hf, budget) for name, (hf, _, budget) in listed.items()} == {model["label"].lower(): (model["hf"], model["budget"]) for model in v1["models"]}
+    sizes = re.search(r"const SIZE = \{(.*?)\};", BUILD.with_name("static").joinpath("site.js").read_text(), re.S).group(1)
+    assert {name: size for name, (_, size, _) in listed.items()} == {name: float(size) for name, size in re.findall(r"'([^']+)': ([\d.]+)", sizes)}
 
 
 def v1_site(root: Path) -> Path:

@@ -16,6 +16,63 @@ header{height:96px;display:flex;align-items:center;justify-content:space-between
 nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
 nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
 nav a:hover,nav a[aria-current]{text-decoration-color:currentColor}
+/* header, footer and page frame of the v1 site (network.css): the theme button, the links, the prices, the skip link,
+   the full-width page and its spaces. Every rule is in this block and wins by its longer selector, so the lines above
+   and below stay as they are. The theme button sets data-theme on <html>; these two lists repeat the values of :root
+   above. A new block is right in both themes when it takes every colour from these variables, and writes a rule for
+   light only as :root[data-theme=light] and not inside @media(prefers-color-scheme:light). */
+:root[data-theme=dark]{color-scheme:dark;--bg:#000000;--hover:#1c1c1c;--ink:#ededed;--muted:#a1a1a1;--line:#242424;--axis:#3a3a3a;--accepted:#d6b580;--performance:#85c8b4;--rejected:#d18e91}
+:root[data-theme=light]{color-scheme:light;--bg:#ffffff;--hover:#eeeeee;--ink:#171717;--muted:#646464;--line:#e4e4e4;--axis:#b5b5b5;--accepted:#936821;--performance:#217a65;--rejected:#b54d57}
+:root[data-theme=dark] .star{fill:#f5c542}
+:root[data-theme=light] .star{fill:#c98a00}
+body>header,body>main,body>footer,body>.noscript{width:calc(100% - 48px);max-width:none}
+/* the header is a grid: the first row, 76 px with the rule, holds the logo and the links; the prices are a second row of the same box,
+   above the rule of the header. From 1280 px, where the links leave room, the prices lie in the first row. */
+body>header{display:grid;grid-template-columns:auto 1fr;grid-template-rows:75px;align-items:center;gap:0 24px;height:auto}
+body>header .wordmark{font-size:26px;letter-spacing:5px}
+body>header .wordmark svg{width:22px;height:25px}
+body>header nav{grid-area:1/2;justify-self:end;align-items:center;justify-content:flex-end;gap:4px 18px;font-size:11px;color:var(--muted)}
+body>header nav a{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;transition:color .14s ease-out}
+body>header nav a:hover,body>header nav a[aria-current]{color:var(--ink)}
+body>header nav a:focus-visible,.theme:focus-visible,#copy-view:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:3px}
+.arrow{width:9px;height:9px;flex:none;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}
+.theme{display:inline-flex;font:inherit;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.theme svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.theme .moon,:root[data-theme=light] .theme .sun{display:none}
+:root[data-theme=light] .theme .moon{display:block}
+.theme:active{background:var(--hover);color:var(--ink)}
+@media(hover:hover){.theme:hover{background:var(--hover);color:var(--ink)}}
+.skip-link{position:fixed;top:12px;left:12px;z-index:20;padding:12px;border-radius:3px;background:var(--ink);color:var(--bg);font:12px var(--mono);transform:translateY(-180%)}
+.skip-link:focus{transform:translateY(0)}
+/* The price row holds its height until the first answer of the feed, so a price does not move the page when it comes.
+   With no price the script hides the row and the header is 76 px. With no script (no data-theme) the row is not there. */
+header>.prices{grid-area:2/1/3/-1;display:flex;align-items:flex-start;gap:22px;height:28px;margin:0;overflow:hidden;font:11px var(--mono);white-space:nowrap}
+:root:not([data-theme]) header>.prices{display:none}
+.prices div{display:flex;align-items:baseline;gap:8px}
+.prices dt{color:var(--muted)}
+.prices dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
+.prices small{font-size:10px;color:var(--muted)}
+.prices dt small,.prices dd small:not(:empty){margin-left:5px}
+.prices .sn{padding:1px 4px;border:1px solid var(--line);border-radius:3px}
+main>section:first-child>.section-heading{padding-top:10px}
+main>section{padding:8px 0}
+main>section:first-child{padding-top:0}
+body>footer{align-items:center;padding:14px 0 22px}
+.foot-right{display:inline-flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0}
+#copy-view{flex:none;min-width:86px;text-align:right;color:var(--muted);text-decoration-color:transparent;white-space:nowrap}
+#copy-view:hover{color:var(--ink);text-decoration-color:currentColor}
+@media(min-width:1000px){html{scroll-padding-top:112px}html:has(header>.prices[hidden]){scroll-padding-top:84px}body>header{position:sticky;top:0;z-index:10;background:var(--bg)}}
+@media(min-width:1280px){html{scroll-padding-top:84px}body>header{grid-template-columns:auto auto 1fr}body>header nav{grid-area:1/3}header>.prices{grid-area:1/2;align-items:center;height:auto;margin-left:8px}main>section:first-child>.section-heading{padding-top:14px}}
+@media(max-width:700px){body>header,body>main,body>footer,body>.noscript{width:calc(100% - 40px)}
+  body>header{padding:0;gap:0 12px}
+  body>header .wordmark{font-size:20px;letter-spacing:4px}body>header .wordmark svg{width:17px;height:20px}
+  body>header nav{gap:2px 10px;font-size:10px}body>header nav .same{display:none}
+  .theme{width:28px;height:28px}
+  main>section{padding:6px 0}
+  body>footer{flex-wrap:wrap;gap:6px 12px}.foot-right{width:100%;justify-content:space-between}#copy-view{min-height:32px}}
+@media(max-width:430px){body>header nav .arrow{display:none}}
+@media(max-width:380px){header>.prices{gap:14px}#alpha-tao{display:none}}
+@media(prefers-reduced-motion:no-preference){.arrow{transition:transform .14s ease-out}body>header nav a:hover .arrow{transform:translate(1.5px,-1.5px)}body>header nav a[href='llms.txt']:hover .arrow{transform:translateX(1.5px)}}
 section{min-width:0;padding:28px 0}
 .section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
 h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
@@ -50,6 +107,16 @@ td a{border-bottom:1px dotted var(--muted)}
 td a:hover{border-bottom-style:solid}
 td.empty,tr.more td{color:var(--muted);white-space:normal;height:auto;padding:10px 8px;border-bottom:0}
 td.empty{text-align:center;padding:28px}
+/* as k1-tables.css of the v1 site: the header in capital letters, and the first column in view when a table scrolls sideways */
+.scroll thead th{text-transform:uppercase}
+.scroll th:first-child,.scroll td:first-child{position:sticky;left:0;background:var(--bg);z-index:1}
+.scroll thead th:first-child{z-index:3}
+.scroll tbody tr:hover td:first-child{background:var(--hover)}
+.scroll td.empty,.scroll tr.more td{position:static}
+td .bar{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px}
+td .bar i{display:inline-block;height:6px;border-radius:1px;background:currentColor;opacity:.55}
+.hp{display:block;white-space:normal;cursor:help}
+.hp span{white-space:nowrap}
 .key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono)}
 .key:hover,.key:focus-visible{color:var(--ink)}
 .key.copied::after{content:' copied';font-size:9px;color:var(--performance)}
@@ -80,6 +147,12 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 #bench tfoot tr:first-child td{border-top:2px solid var(--axis)}
 #bench tfoot tr:last-child td{border-bottom:0}
 #bench tr.genesis td{border-top:1px solid var(--muted)}
+#bench .avg,#bench tr.genesis td{font-weight:600}
+#bench .name a{border-bottom:1px dotted var(--muted)}
+#bench .name a:hover{border-bottom-style:solid}
+.meta{display:block;font-size:10px;line-height:14px;color:var(--muted);font-weight:400;white-space:normal}
+.meta span{white-space:nowrap}
+@media(max-width:640px){#bench .name{white-space:normal;vertical-align:top}#bench .who{flex-wrap:wrap;gap:2px 6px}}
 .star{width:9px;height:9px;margin-right:4px;vertical-align:-.5px;fill:#f5c542}
 @media(prefers-color-scheme:light){.star{fill:#c98a00}}
 
@@ -94,6 +167,7 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 .tile h2{font-size:17px}
 .chart{position:relative;height:200px}
 .spark .chart{height:92px}
+.spark .chart:empty{background:linear-gradient(var(--line),var(--line)) 32px 6px/calc(100% - 38px) 1px no-repeat,linear-gradient(var(--line),var(--line)) 32px 41px/calc(100% - 38px) 1px no-repeat,linear-gradient(var(--line),var(--line)) 32px 76px/calc(100% - 38px) 1px no-repeat}
 .chart svg{display:block;width:100%;height:100%;overflow:visible}
 .chart text{font:9px var(--mono);fill:var(--muted)}
 .chart .grid{stroke:var(--line)}
@@ -107,6 +181,55 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 .sw.wait{color:var(--accepted)}
 .sw.hollow{background:none}
 .sw.dash{width:14px;height:0;border-width:1px 0 0;border-style:dashed;vertical-align:3px}
+/* the chart tiles as the v1 site (k1.css, grid.css): equal squares, 4 / 3 / 2 / 1 in a row. The chart takes the height that the
+   title and the legend leave, so a tile with no data has the same place and the same size. */
+#charts .tiles{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+#charts .tile{position:relative;display:flex;flex-direction:column;aspect-ratio:1/1;padding:12px 14px;border-radius:4px;background:var(--bg)}
+#charts .tile .section-heading{margin-bottom:8px;gap:4px 12px;flex-wrap:wrap}
+#charts .tile .chart{flex:1 1 0;height:auto;min-height:0}
+#charts .tile .chart svg{position:absolute;inset:0}
+#charts .tile .legend{padding-right:22px}
+#charts h2[title],#charts .reading[title],#charts .legend span[title]{cursor:help}
+.chart .over{fill:var(--ink)}
+.chart .guide{stroke:var(--muted);stroke-dasharray:2 3}
+#charts .chart .empty{padding:0 12px;text-align:center;line-height:1.6}
+.sw.ink{color:var(--ink)}
+.sw.mid{color:var(--muted)}
+.sw.low{color:var(--axis)}
+.sw.ring{border-radius:50%;border-style:dashed}
+.sw.line{width:14px;height:0;border-width:1.5px 0 0;vertical-align:3px}
+.sw.band{width:14px;opacity:.25}
+@media(max-width:1299px){#charts .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1099px){#charts .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:699px){#charts .tiles{grid-template-columns:minmax(0,1fr);gap:12px}}
+/* the benchmark section on a phone: 12 px to each side of the window, as bench.css of v1, whatever the margin of the page is */
+@media(max-width:699px){#bench{margin-inline:calc(12px - (100vw - 100%)/2)}}
+/* the hover box of a chart as .chart-tip of v1: the first line larger with a rule under it, 5 px corners, a soft shadow */
+.tip{border-color:var(--line);border-radius:5px;box-shadow:0 4px 12px rgb(0 0 0/.25)}
+.tip strong{margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}
+/* expand, as chart-expand.css of v1: a corner button lifts its tile over the page; below 700 px the tile fills the screen */
+.cx{position:absolute;right:6px;bottom:6px;z-index:3;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:1px solid transparent;border-radius:3px;background:none;color:var(--muted);cursor:pointer;opacity:.45}
+.cx svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.tile:hover>.cx,.cx:focus-visible{opacity:1}
+.cx:hover,.cx:focus-visible{border-color:var(--line);background:var(--hover);color:var(--ink);outline:none}
+@media(hover:none){.cx{opacity:.7}}
+.cx-holder{min-width:0}
+.cx-back{position:fixed;inset:0;z-index:1000;background:color-mix(in srgb,var(--bg) 78%,transparent);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+html.cx-lock{overflow:hidden}
+#charts .tile.cx-open{position:fixed;z-index:1001;inset:0;margin:auto;width:min(90vw,1600px);height:min(80vh,1000px);aspect-ratio:auto;padding:18px 22px;box-shadow:0 18px 60px rgb(0 0 0/.35)}
+#charts .tile.cx-open .section-heading{margin-bottom:12px;padding-right:40px}
+#charts .tile.cx-open h2,#charts .tile.cx-open .reading{font-size:18px;line-height:28px}
+#charts .tile.cx-open .legend{margin-top:12px;font-size:12px;line-height:20px}
+#charts .tile.cx-open .chart text{font-size:13px}
+.cx-open>.cx{top:16px;right:16px;bottom:auto;width:32px;height:32px;opacity:1;border-color:var(--line);color:var(--ink)}
+.cx-open>.cx svg{width:13px;height:13px}
+@media(max-width:699px){
+#charts .tile.cx-open{width:100vw;height:100vh;height:100dvh;margin:0;border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
+#charts .tile.cx-open h2,#charts .tile.cx-open .reading{font-size:16px}
+.cx-open>.cx{top:10px;right:10px}
+}
+@media(prefers-reduced-motion:no-preference){.cx-open,.cx-back{animation:cx-in .16s ease-out}}
+@keyframes cx-in{from{opacity:0}}
 @media(max-width:1100px){.sparks{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:900px){.tiles{grid-template-columns:1fr}}
 @media(max-width:760px){.sparks{grid-template-columns:repeat(2,minmax(0,1fr))}}
