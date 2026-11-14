@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.error
+from html import unescape
 from pathlib import Path
 
 import pytest
@@ -229,6 +230,12 @@ def test_the_presence_penalty_of_a_profile_on_the_page_is_the_one_of_the_benchma
     assert set(listed) & set(profiles)
     for name in set(listed) & set(profiles):
         assert profiles[name]["presence_penalty"] == listed[name], name
+    # the other values of a profile, for the sentence of the note under the table: temperature, top_p, top_k
+    assert script.count("const DRAW = ") == 1
+    draws = {name: json.loads(values) for name, values in re.findall(r"'([^']+)': (\[[^\]]+\])", re.search(r"^  const DRAW = \{(.*)\};$", script, re.M)[1])}
+    assert draws and set(draws) <= set(profiles)
+    for name, values in draws.items():
+        assert values == [profiles[name][field] for field in ("temperature", "top_p", "top_k")], name
 
 
 def test_a_cell_with_no_value_says_why_in_words(tmp_path):
@@ -266,7 +273,7 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     assert "c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
     assert "'no benchmark run yet'" in table and "'No run yet: no benchmark file is published.'" in table
     assert not re.search(r"'(queued|running|failed)'", table)  # the page gives a row no state of its own
-    assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: a row has one only when it has every counted benchmark.'" in table
+    assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: this row has no score in a counted benchmark.'" in table
     bare = data["bench"]  # what the page reads to say "no benchmark has run": no time of a table, and the state of each row
     assert bare["updated_at"] is None and [(row["status"], row["cells"], row["avg"]) for row in bare["rows"]] == [("none", {}, None)] * 2
     # the live round and the tooltips of the charts
@@ -356,6 +363,179 @@ def head(version_id: str, round_id: str, applied_at: int, folded: bool) -> dict:
 
 def bench_view(*args: object) -> dict:
     return runpy.run_path(str(BUILD))["bench_view"](*args)
+
+
+# site.js run in node with a fake page. Each part of the fake page takes every read, call and write; a write is kept under the
+# path of its part, and an element that the script finds has the selector as its path. The output is each write, as JSON.
+PAGE = r"""
+const fs = require('fs'), store = {};
+const part = path => new Proxy(function () { }, {
+  get: (_, k) => k === Symbol.toPrimitive ? hint => hint === 'number' ? 0 : '' : k === Symbol.iterator ? function* () { } : k === 'then' ? undefined
+    : `${path}.${String(k)}` in store ? store[`${path}.${String(k)}`] : part(`${path}.${String(k)}`),
+  set: (_, k, v) => { store[`${path}.${String(k)}`] = v; return true; },
+  apply: (_, __, [first]) => {
+    const [, from, find] = /^(.*)\.(querySelector|getElementById)$/.exec(path) || [];
+    return part(!find ? path + '()' : from === 'document' ? String(first) : `${from} ${first}`);
+  },
+});
+const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+Object.assign(globalThis, {
+  document: part('document'), window: { SITE_DATA: { ok: true, json: async () => data } }, location: { hash: '', href: '' }, innerWidth: 1440,
+  matchMedia: () => part('media'), getComputedStyle: () => ({}), addEventListener: () => { }, setInterval: () => 0, setTimeout: () => 0,
+  localStorage: { getItem: () => null, setItem: () => { } }, fetch: async () => ({ ok: false }),
+});
+store['document.body.dataset.page'] = 'home';
+require(process.argv[2]);
+setImmediate(() => setImmediate(() => { console.log(JSON.stringify(store)); process.exit(0); }));
+"""
+
+
+def page(tmp_path: Path, bench: dict) -> dict:
+    """What site.js writes on the home page: the data file of the simulation, with ``bench`` as its benchmark table."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; this test runs site.js")
+    data = json.loads(build(tmp_path, snapshot(tmp_path))[2]) | {"bench": bench}
+    (tmp_path / "page.js").write_text(PAGE)
+    (tmp_path / "page-data.json").write_text(json.dumps(data))
+    done = subprocess.run([node, str(tmp_path / "page.js"), str(BUILD.parent / "static" / "site.js"), str(tmp_path / "page-data.json")],
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and "#bench table.tHead.innerHTML" in done.stdout, done.stderr
+    return json.loads(done.stdout)
+
+
+def bench_rows(written: dict, where: str = "tBodies.0") -> dict:
+    """The rows of the benchmark table that the page wrote, by the first word of the name: (text, tooltip) of each cell after the name."""
+    rows = [re.findall(r'<td[^>]*?(?: title="([^"]*)")?>(.*?)</td>', row, re.S) for row in re.findall(r"<tr[^>]*>(.*?)</tr>", written[f"#bench table.{where}.innerHTML"], re.S)]
+    words = [[(re.sub(r"<[^>]+>", "", text), unescape(tip)) for tip, text in row] for row in rows]
+    return {re.split(r"[ <]", re.sub(r"^(<[^>]+>)+", "", row[0][1]))[0]: cells[1:] for row, cells in zip(rows, words)}
+
+
+B1, B2, B3 = (dict(id=name, label=name.upper(), suite="math", order=order, enabled=True) for order, name in enumerate(("b1", "b2", "b3")))
+
+
+def test_a_king_that_only_waits_for_its_benchmark_run_is_not_in_the_table_and_the_line_above_counts_it(tmp_path):
+    """The rule of the v1 table (bench.js): a king with no score is not a row. On the v2 page a king with no score keeps its row
+    while its run is in work (running, or a machine in rent or in setup) or after its run was stopped, because the row then says
+    what happens. A king that only waits (queued, waiting, or not named by the benchmark file) is out, and the reading counts it."""
+    pod = dict(name="pod", gpu="8xH100", usd_h=1.0, state="renting", since=30)
+    models = [king("scored", 70), king("running", 60, status="evaluating"), king("renting", 50, status="queued") | {"pod": pod},
+              king("held", 40, status="failed") | {"stopped": "held"}, king("queued", 30, status="queued"), king("waiting", 20, status="waiting")]
+    view = bench_view({"updated_at": 5, "benchmarks": [B1], "models": models, "results": [result("scored", "b1", 0.5)]})
+    assert [(row["label"], row["status"]) for row in view["rows"]] == [
+        ("scored", "scored"), ("running", "running"), ("renting", "queued"), ("held", "failed"), ("queued", "queued"), ("waiting", "waiting")]
+    view["rows"].append(view["rows"][4] | {"label": "unnamed", "status": "none", "at": 10})
+    written = page(tmp_path / "some", view)
+    assert list(bench_rows(written)) == ["scored", "running", "renting", "held"]
+    assert written["#bench .reading.textContent"].startswith("1 of 7 kings scored · 3 wait for a run · updated ")
+    # each king waits: the body says so in words, and the reading has the count
+    idle = view | {"rows": [row for row in view["rows"] if row["label"] in ("queued", "unnamed")]}
+    written = page(tmp_path / "none", idle)
+    assert written["#bench table.tBodies.0.innerHTML"] == '<tr><td colspan="2" class="empty">No king has a score yet: 2 wait for a benchmark run.</td></tr>'
+    assert written["#bench .reading.textContent"].startswith("0 of 2 kings scored · 2 wait for a run · ")
+    one = page(tmp_path / "one", idle | {"rows": idle["rows"][:1]})
+    assert "No king has a score yet: 1 waits for a benchmark run." in one["#bench table.tBodies.0.innerHTML"] and " · 1 waits for a run · " in one["#bench .reading.textContent"]
+    # no king at all: the words of before, and no count of waiting kings
+    bare = page(tmp_path / "bare", idle | {"rows": []})
+    assert "No king yet: no round has applied a winner." in bare["#bench table.tBodies.0.innerHTML"] and "wait" not in bare["#bench .reading.textContent"]
+
+
+def test_the_average_of_a_row_is_the_mean_of_the_counted_benchmarks_that_it_has_a_score_in(tmp_path):
+    """The rule of the v1 table (bench.js): Avg is the mean of the counted benchmarks that the row has. The builder gives ``avg``
+    only to a row with each counted benchmark; the page does not read it, and the tooltip of a mean over fewer says how many."""
+    view = bench_view({
+        "updated_at": 5, "benchmarks": [B1, B2 | {"in_avg": False}, B3], "models": [king("full", 30), king("half", 20), king("shown", 10)],
+        "results": [result("full", "b1", 0.4), result("full", "b3", 0.6), result("half", "b1", 0.8), result("half", "b2", 0.9), result("shown", "b2", 0.9)],
+    })
+    assert [row["avg"] for row in view["rows"]] == [0.5, None, None]
+    rows = bench_rows(page(tmp_path, view))
+    assert rows["full"][0] == ("50.0", "Mean of the counted benchmarks.")
+    assert rows["half"][0] == ("80.0", "Highest of the column. Mean of the 1 of 2 counted benchmarks that this row has a score in.")
+    assert rows["shown"][0] == ("none", "No average: this row has no score in a counted benchmark.")
+    assert rows["half"][3] == ("no score", "This model has no score in B3.")
+
+
+def test_the_result_of_a_partial_run_is_not_shown_and_not_counted_in_the_average(tmp_path):
+    """The rule of the v1 table (bench.js): the result of a partial run (it lost samples) is not a score. Its cell says "partial"
+    and the tooltip has the counts; Avg, the shade, the star and the card of the benchmark do not use it. No dagger mark."""
+    view = bench_view({
+        "updated_at": 5, "benchmarks": [B1, B3], "models": [king("new", 20), king("old", 10), dict(model_id="ref", label="Ref", kind="reference", status="scored")],
+        "results": [result("new", "b1", 0.9, complete=False), result("new", "b3", 0.7), result("old", "b1", 0.4), result("old", "b3", 0.5),
+                    result("ref", "b1", 0.2), result("ref", "b3", 0.95, complete=False)],
+    })
+    assert view["rows"][0]["avg"] == 0.8 and view["rows"][0]["avg_partial"]  # the builder counts it; the page does not
+    written = page(tmp_path, view)
+    rows, foot = bench_rows(written), bench_rows(written, "tFoot")
+    lost = "Partial run: 90 of 100 samples. The result of a partial run is not shown and not counted in Avg."
+    assert rows["new"] == [("70.0", "Highest of the column. Mean of the 1 of 2 counted benchmarks that this row has a score in."), ("partial", lost),
+                           ("70.0", "Highest of the column. ±1.0 · cap-hit 0.0%")]
+    assert rows["old"][1] == ("40.0", "Highest of the column. ±1.0 · cap-hit 0.0%")  # the partial 90.0 is not the highest of B1
+    assert foot["Ref"] == [("20.0", "Mean of the 1 of 2 counted benchmarks that this row has a score in."), ("20.0", "±1.0 · cap-hit 0.0%"), ("partial", lost)]
+    everything = json.dumps(written)
+    assert "†" not in everything and "<sup" not in everything and "90.0" not in everything and "95.0" not in everything
+    script, sheet = ((BUILD.parent / "static" / name).read_text() for name in ("site.js", "site.css"))
+    assert "†" not in script and "dagger" not in script and "sup{" not in sheet
+    for name in ("index.html", "v1.html"):
+        note = (BUILD.parent / "static" / name).read_text()
+        assert "†" not in note and 'its cell says "partial"' in note, name
+
+
+def test_the_note_under_the_table_names_the_sampling_of_the_runs_when_the_data_has_their_profile(tmp_path):
+    """The sentence of the v1 note: the sampling of the runs. The benchmark file names the settings profile of each result and the
+    token budget of each model. The page has the values of a profile; the sentence gives a value only when each run has the same."""
+    family = "qwen3.5-family"
+
+    def note(name: str, profiles: dict, budgets: dict, values: dict | None = None) -> str:
+        models = [king("new", 20), king("old", 10), dict(model_id="genesis", label="Genesis", kind="genesis", status="scored")]
+        results = [result(model, "b1", 0.5) | ({"profile": profile} if profile else {}) for model, profile in profiles.items()]
+        view = bench_view({"updated_at": 5, "benchmarks": [B1], "models": models, "results": results})
+        for row in view["rows"]:  # the builder adds the budget of a row from `models[].budget` of the benchmark file
+            row["budget"] = budgets.get(row["label"], budgets["new"])
+        return page(tmp_path / name, view | ({"profiles": values} if values else {}))["refs.previousSibling.data"]
+
+    same = dict(new=65536, old=65536)
+    text = note("all", dict(new=family, old=family, genesis=family), same)
+    assert text == ("Sampling: presence penalty 1.5 for the kings and the genesis head. "
+                    "Each run: temperature 1.0, top_p 0.95, top_k 20, 65,536-token budget. ")
+    # runs with two budgets: the sentence gives no budget. A profile that the page has no values of: its name, and no values
+    assert "Each run: temperature 1.0, top_p 0.95, top_k 20. " in note("budgets", dict(new=family, old=family), dict(new=65536, old=32768))
+    assert note("unknown", dict(new="other", old="other"), same) == "Sampling: profile other for the kings. Each run: 65,536-token budget. "
+    # the values of the data file win over the list of the page
+    values = {family: dict(presence_penalty=0.5, temperature=0.6, top_p=0.9, top_k=40)}
+    assert "presence penalty 0.5 for the kings. Each run: temperature 0.6, top_p 0.9, top_k 40, 65,536-token budget. " in note("file", dict(new=family, old=family), same, values)
+    # two samplings: the sentence names each, and gives no values that only one of them has
+    assert note("two", dict(new=family, old="other"), same) == "Sampling: presence penalty 1.5 for 1 of the kings, profile other for 1 of the kings. Each run: 65,536-token budget. "
+    # a data file with no profile (an older builder): no sentence
+    assert "Sampling" not in note("old", dict(new=None, old=None), same)
+
+
+def test_the_hover_box_of_a_chart_is_never_behind_the_sticky_header_and_the_duration_reading_is_short(tmp_path):
+    """The top of the hover box of a chart is 4 px under the sticky header when the top of the chart is behind that header,
+    whatever the height of the box. The reading of "Round duration" is one short line; its tooltip has the words."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; this test runs the hover code of site.js")
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    code = script[script.index("  const clear = "):script.index("  function chart(box, o) {")]
+    assert "offsetHeight" not in code and "clientHeight" not in code  # no limit from the height of the chart
+    harness = r"""
+let sticky = 'sticky', open = null;
+const document = { querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 112 }) }) }, getComputedStyle = () => ({ position: sticky });
+const box = top => ({ closest: () => open, getBoundingClientRect: () => ({ top }), clientHeight: 150 });
+CODE
+const out = [clear(box(52)), clear(box(111)), clear(box(112)), clear(box(400))];
+open = {}; out.push(clear(box(52)));
+open = null; sticky = 'static'; out.push(clear(box(52)));
+console.log(JSON.stringify(out));
+"""
+    done = subprocess.run([node, "-e", harness.replace("CODE", code)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    # 60 px and 1 px behind the header; level with it; under it; in an open tile; a header that does not stick
+    assert json.loads(done.stdout) == ["64px", "5px", "", "", "", ""]
+    written = page(tmp_path, bench_view({"updated_at": 5, "benchmarks": [B1], "models": [], "results": []}))
+    reading, words = written["c-time .reading.textContent"], written["c-time .reading.title"]
+    assert re.fullmatch(r"r\d{6} [\dhmd< ]+ · med\d [\dhmd< ]+", reading) and len(reading) <= 30, reading
+    assert re.fullmatch(r"Newest closed round r\d{6}: .+ from open to close\. Median of the last \d closed rounds?: .+\.", words), words
 
 
 def test_benchmark_table_sorts_kings_by_crowned_at_and_marks_partial_runs():
