@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `c87b81ea` is the last of the eight, and the commit that the coordinator named for the mainnet start on 13 Nov 2026. One more change is in work (a round in which no training finished), so the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `d32cd947` is the last of the eight. One more change is in work (a round in which no training finished), so the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 
 ## Hosts
 
@@ -99,7 +99,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 c87b81ea8b7d759310063eb58bc7ea5613de9562; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 d32cd947474babed51052cac5b95311859e513d8; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
@@ -117,11 +117,11 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
    | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
    | `e0faff2d` (PR #157 and PR #159) | The guard of `run`: it compares the box with the pinned digests before it opens a round, before it runs an open round again and before a fold. On a difference it starts none of them and ends with exit code 2 ("The digests of the box and the pinned digests" below). | `run` does not stop on such a box. Each round closes in seconds, and every seat in it gets one counted failure. |
-   | `c87b81ea` (PR #161; it holds PR #160, `e9958463`) | The command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. | No command releases a held seat. A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). |
+   | `d32cd947` (PR #163; it holds PR #161, `c87b81ea`, and PR #160, `e9958463`) | Three things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
-   These eight are the least. `c87b81ea` is the commit that the coordinator named for the mainnet start on 13 Nov 2026. The final cutover commit can be a later one; the coordinator names it ("Not in this file yet", point 2).
+   These eight are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -293,7 +293,7 @@ Run every command from `v2/`, inside the virtual environment.
    ```
 
    Check: `echo $MASTER_DIGEST` prints the same 64 characters as in the smoke test.
-7. **Import, real run.** Before it, step 4 of "AffineValidator" is done: v1's site is saved. The import reads `https://affine.io/k1.json` and `https://affine.io/mining.json`, and the pull replaces `mining.json` later. Save `k1.json` once more, take a new chain snapshot (step 3), and run:
+7. **Import, real run.** Before it, step 4 of "AffineValidator" is done: v1's site is saved. The import reads `https://affine.io/k1.json` and `https://affine.io/mining.json`, and the pull replaces `mining.json` later. Save `k1.json` once more, take a new chain snapshot (step 3), and run the lines below. The reason for the new snapshot: with 256 seats, the first pass of `run` refuses the chain sync when 65 or more seats leave in one read, and that needs a snapshot that is more than about a day old (the history in `tests/data/cutover/k1.json` has 61 registrations at most in any 24 hours). At the bootstrap itself this refusal cannot come: the queue is empty before the sync of `--chain`. "When `run` refuses the chain sync" in "After the start" has the way out.
 
    ```
    python -m sn120_v2.cutover --out $CUT/import --chain $CUT/chain_snapshot.json \
@@ -970,6 +970,7 @@ On the GPU box, in the shell of step 2 of "GPU box".
 | `python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack` | The same, read through the store, plus `queued_files`: the count of queued files for each admission result. |
 | `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` | The summary of the last closed round, as a text to paste. `--round r000007` picks one; `--json` prints the stored record. |
 | `python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --all` | Releases every held seat and sets the count of failures of every seat back to 0. `--uid 12` does it for one UID. Stop the loop first: this command takes over the journal. See "After a fault of the box in training". |
+| `python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack` | Shows the chain sync that `run` refuses: the seats that leave. It writes nothing and is safe while the loop runs. With `--confirm-remove N` it applies the sync; stop the loop before that. See "When `run` refuses the chain sync". |
 | `python -m sn120_v2 publish --state-dir $STATE --stack sn120_v2.assembly:stack` | Writes `llms.txt` and `mining.json` again. It does not change the journal. |
 | `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change: a key that the file does not hold goes back to its default. So each file holds `"squat_min_wait_s": 31536000` ("The value `squat_min_wait_s`"). |
 
@@ -996,11 +997,12 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 
 `run` prints `waiting: <cause>` and then `idle: N seats wait, phase IDLE` at each try, every 30 seconds, and opens no round. The word `waiting:` reads as harmless. It is not: **no round opens until the cause is repaired**, and `run` does not end by itself. The restart loop does not help here: `run` does not end, so the loop does not start it again, and `run-loop.status` still says `running`.
 
-There are three kinds of cause:
+There are four kinds of cause:
 
 1. **The store did not answer** (`r2 <action> '<key>' failed: ...`). The lines stop by themselves at a later try.
 2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `chain read of the registrations did not end in 90 s: the connection is dropped`, `the chain head is N s old: the node is behind`, `partial chain read ...`). The lines stop by themselves when the chain answers again. **Do not stop the loop for a chain line: a restart does not help.** From `e9958463` (check 1 tests it with `c87b81ea`), one chain read of `run` ends in 90 s at most. A read that fails or does not end drops the connection, `run` prints `waiting:`, and the next pass opens a new connection. One pass waits for the chain 180 s at most (90 s for the registrations, 90 s for the block hash). A normal read of the registrations takes 5 to 8 s. What was tried: reads through a local relay to finney, with faults put into the relay. The chain library (bittensor 11.0.2) connected again in every case. What is not proven: a real outage on the box. If the same chain line still comes after 15 minutes, send the line to the coordinator.
-3. **Our own checker fails its known-good case**, on this machine. Then nothing ends it, and a new start does not help. These are the texts of that case:
+3. **`run` refuses the chain sync** (`sync would remove N of M seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command`). Nothing ends it by itself, and a new start does not help. The way out is the command `force-sync`: see "When `run` refuses the chain sync" below.
+4. **Our own checker fails its known-good case**, on this machine. Then nothing ends it, and a new start does not help. These are the texts of that case:
 
 | The cause in the line | What fails |
 | --- | --- |
@@ -1013,9 +1015,90 @@ In the same state:
 - `status` (with `--stack`) and `publish` end with `refused: InfraError: <cause>` and exit code 2.
 - `bootstrap` prints `not finished: file check failed: <cause>` and ends with exit code 1.
 
-What to do for kind 3: when the same `waiting:` line comes three times in a row, send the line to the coordinator. Do not delete a miner file and do not change the parameters to make a round open. A new start of `run` on the same machine gives the same line.
+What to do for kind 4: when the same `waiting:` line comes three times in a row, send the line to the coordinator. Do not delete a miner file and do not change the parameters to make a round open. A new start of `run` on the same machine gives the same line.
 
 This is not the case of one bad miner file. A file that makes the checker fail while the known-good case passes is skipped with the rule `check_fault`, and `run` goes on. The same holds for `tokenizer_fault`, `grader_fault` and `grader_time_limit`. Such a file is checked again 10 minutes later at the earliest; after 3 counted checks its verdict stays until the miner uploads a new file. Send the coordinator the `queued_files` line of `status` whenever it has a count under `check_fault`, and each line that holds `the checker fails on this file:`.
+
+### When `run` refuses the chain sync: `force-sync`
+
+Words used here. A **seat** is one registration (UID and registration block) that waits in the queue for a round. The **chain sync**: at each pass, `run` reads the registrations from the chain; seats that are no longer on the chain leave the queue, and new registrations enter it.
+
+The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. With 256 seats that is 65 or more seats in one read. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap").
+
+When the refusal can come:
+
+- At the bootstrap: never. The queue is empty before the sync of `--chain`.
+- At the first pass of `run`: only if the chain snapshot of the bootstrap is more than about a day old (step 7 of "GPU box").
+- In a normal round with a large queue: not in practice. Two reads are at most about 2 hours apart, and the history has 19 registrations at most in any 2 hours.
+- **After a stop of `run` of more than about a day.**
+- **When the queue is small:** with 8 to 11 seats, 3 seats that leave in one read are refused.
+
+What you see before: `run` does not stop. It prints the same line at every pass (every 30 seconds), and no round opens:
+
+```
+tail -n 3 $SN120_WORK_DIR/logs/run.log
+waiting: sync would remove 80 of 253 seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command
+```
+
+The loop status (`$SN120_WORK_DIR/logs/run-loop.status`) still says `running: run has pid N, ...`, because `run` did not stop. `status` shows the old queue size.
+
+The command has two guards. It reads the registrations two times, at two blocks, and the two reads must give the same changes. And it applies the sync only when exactly the number of seats that you give leaves.
+
+1. **Look at the list.** This writes nothing: the command reads the journal copy in the store and takes over nothing. It is safe while the loop runs.
+
+   ```
+   python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack
+   ```
+
+   Output (exit code 0; the numbers here are examples):
+
+   ```
+   chain blocks 9500410 and 9500411 (256 registrations) give the same changes to the queue of 253 seats:
+     remove 80 seats, add 83 seats, change the hotkey of 0 seats
+     remove uid   41 registration block   9412345 5F... (normal)
+     remove uid   42 registration block   9412399 5G... (back)
+     ... one line for each seat that leaves ...
+   nothing was changed. To apply exactly this, stop run and give the same command with --confirm-remove 80
+   ```
+
+   In each line: the UID, the registration block, the hotkey, and the part of the queue (`front`, `normal` or `back`; `, held` when the seat is held).
+
+   Check before step 2:
+
+   - The number of registrations is the size of the subnet (256 on SN120).
+   - The seats in the list are really gone from the chain. Check a few UIDs in a chain explorer: the UID now has another hotkey or a later registration block.
+   - There is no `WARNING` line. The line `WARNING: not one of the N seats is on this chain. A read of another network or subnet looks like this` comes when not one seat of the queue is on the chain. It is a warning and not a refusal. With it, check `SN120_V2_CHAIN_NETWORK` first.
+2. **Stop the loop** (step 10.4 of "GPU box"), as for `end-round`. Then `pgrep -af "sn120-v2-run-loop|sn120_v2 run"` must print nothing. **With `--confirm-remove`, the command takes over the journal before it reads the chain, also when it then refuses. So the loop is stopped before each try with `--confirm-remove`.**
+3. **Apply, with the count of step 1.**
+
+   ```
+   python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack --confirm-remove 80
+   ```
+
+   Output (exit code 0): the same list again, then `applied at chain block 9500431: the queue has 256 seats`, then the same JSON summary that `status` prints (`"phase": "IDLE"`, `"queue": 256`).
+4. **Start the loop again** (step 10.2 of "GPU box"). Check: `run.log` has no new `waiting: sync would remove` line, and a round opens.
+
+The exit codes and the lines:
+
+| Exit code | Line | Meaning | What to do |
+|---|---|---|---|
+| 0 | `nothing was changed. To apply exactly this, ...` | The list only. Nothing is written. | Check the list, then steps 2 and 3. |
+| 0 | `applied at chain block B: the queue has N seats` | The sync is in the journal. | Step 4. |
+| 2 | `refused: V2Error: the chain now removes X seats, not the confirmed N; nothing was changed. Read the list again` | The chain moved after step 1, or the count was typed wrong. | Step 1 again, then step 3 with the new count. |
+| 2 | `refused: InfraError: two chain reads give different changes of the queue (remove X, add A at block B1 and remove Y, add C at block B2); nothing was changed. Run the command again` | A registration came between the two reads, or one read was wrong. | Run the same command again. **If it comes three times in a row, do not force:** the chain node is not steady. Send the lines to the coordinator. |
+| 2 | `refused: InfraError: the chain stayed at block B for 60 s: there is no second read to compare with` | The chain node gives no new block. | Do not force. The chain endpoint must be repaired first. |
+| 2 | `refused: ConfigError: this stack reads no chain, so there is no sync to apply` | `SN120_V2_CHAIN_NETWORK=none`. | Nothing to apply. |
+| 2 | another `refused: InfraError: ...` from the chain read | The chain read failed or was not complete. | Run it again. |
+
+Two refusals stay also with `--confirm-remove`: a read of another netuid, and a read with no registration.
+
+What a forced sync costs a seat that it removes: nothing more than the normal sync. If such a seat comes back on a later read with the same UID and registration block, it enters again as a new seat at the place of its registration block. It loses the hold, the count of failures, and a front place that it earned in a round. Seats in an open round are never removed.
+
+What is not proven:
+
+- The command was not run against the real chain. The chain in its tests is a fake.
+- Both reads go through the same chain node. A node that is wrong in the same way at two blocks passes the two-read guard. Then only your look at the list stands, so do the checks of step 1.
+- The block numbers and the counts in the examples above are made up. The format of the lines is tested.
 
 ### A crash or a restart of `run`
 
@@ -1024,7 +1107,7 @@ The start, the look and the stop of the restart loop are step 10 of "GPU box". T
 The rules for mainnet:
 
 - **Only the loop starts `run`.** Never start `run` by hand.
-- **Stop the loop before `set-params`, before `end-round` by hand, before `release-seat`, and before a new commit.** `set-params`, `end-round` and `release-seat` take over the journal. Then start the loop again.
+- **Stop the loop before `set-params`, before `end-round` by hand, before `release-seat`, before `force-sync --confirm-remove`, and before a new commit.** These four commands take over the journal. Then start the loop again.
 - **One box only.** Stop the loop on an old box (and `disable` its unit) before a new box starts. The loop of a second box ends the open round of the first one.
 - **Run the `diff` line after each checkout, after each install line and on each new box, before any start of the loop.** `run` stops by itself on a box whose digests differ from the pinned ones, and no seat pays for it. But it does not see a stale `SN120_IMAGE_DIGEST`. "The digests of the box and the pinned digests" below has the line of `run`, the `diff` line, and what each one sees.
 
@@ -1068,6 +1151,8 @@ A fault in the judging of a round stops `run` with a Python error. The round sta
 One pass of `run` is: read the chain, then the whole round. A failure of the store or the chain in a pass gives `waiting: <cause>`, then the `idle:` line, 30 seconds of sleep, and the next pass. `run` does not end, so the loop does nothing, and `run-loop.status` says `running`.
 
 **The chain.** `run` reads it only at the start of a pass. Inside a round it is not read, so a chain fault in the middle of a round does nothing. Between rounds it gives `waiting:` at every pass, and no round opens. A decided round that waits for a new try of its promotion or its fold also waits for the chain. From `e9958463`, a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection: a chain outage gives `waiting: chain read of ...` every pass and ends by itself when the chain answers again, with no restart of `run`. "When no round opens" has the lines and the numbers.
+
+One chain line does not end by itself. After a stop of `run` of more than about a day, or on a queue of 8 to 11 seats, `run` can print `waiting: sync would remove N of M seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command` every 30 seconds, and it opens no round. The way out is `force-sync` ("When `run` refuses the chain sync").
 
 **The store**, by the phase of the round. The store client tries each call again by itself, so a short fault is not seen at all.
 
@@ -1131,7 +1216,7 @@ refused: ConfigError: this box differs from the pinned digests, so <what did not
 - `<what did not start>` is one of `no round was opened`, `the fold was not started`, `the open round was not run`. With the third one, the line says `Next: end-round (the round pins the old digests), the digest block, ...`.
 - `<difference>` is `image digest: pinned <value>, this box has <value> (the value of SN120_IMAGE_DIGEST)`, or `code digest: pinned <value>, this box has <value>`, or both with `; ` between them. When more than one image digest is pinned, the line shows `<value> or <value>`.
 - No other command shows the pinned digests.
-- **The words after `Next:` above are those of a later commit.** At `c87b81ea` the line ends with `Next: the digest block, then set-params with the two digests of this box, then start again`. The meaning is the same. Do not read the old words as "a file that holds only the two digests".
+- **The words after `Next:` above are those of a later commit.** At `d32cd947` the line still ends with `Next: the digest block, then set-params with the two digests of this box, then start again`. The meaning is the same. Do not read the old words as "a file that holds only the two digests".
 - **The file for `set-params` after this line is `$CUT/params.json` as the digest block of "After a fix" wrote it, never a file written by hand.** That block takes the pinned file and changes the two digests only. `set-params` replaces every value: a file without `"squat_min_wait_s": 31536000` switches squat-trim on ("The value `squat_min_wait_s`").
 - What to do after the line: "After a fix" for a fix, "A new GPU box" for a new box.
 - To see the line after the loop stopped: `grep '^refused: ' $SN120_WORK_DIR/logs/run.log | tail -n 1`. `run-loop.status` says `stopped: run refused (exit code 2 of the loop)`.
