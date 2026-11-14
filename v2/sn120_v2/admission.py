@@ -94,16 +94,26 @@ PROBE_HOTKEY = "known-good"  # the owner named in the known-good file of the che
 # The live check reads each waiting file from the store to hash it. With more than one stream it reads this many
 # files at one time; the check of the bytes still runs one file after the other, in the order of the line.
 STREAMS_ENV, SERIAL_STREAMS, MAX_STREAMS = "SN120_CHECK_STREAMS", 1, 32
+# Each value that is accepted, as it must be written. The text of the shell is compared with these and never given
+# to ``int()``: ``str.isdigit()`` is true for characters that ``int()`` cannot read (a superscript two), and for
+# digits of other scripts that it reads (a full-width eight).
+STREAM_COUNTS = {str(count): count for count in range(SERIAL_STREAMS, MAX_STREAMS + 1)}
 
 
 def check_streams(environ: Mapping[str, str] = os.environ) -> int:
-    """How many waiting files the live check reads from the store at one time. Not set: 1, one file after the other."""
+    """How many waiting files the live check reads from the store at one time. Not set: 1, one file after the other.
+
+    A value is accepted only as ``1`` to ``32`` in the digits 0 to 9 with no zero in front. Each other text is
+    refused with a ``ConfigError``, which is one ``refused:`` line and the exit code 2 for each command.
+    """
     text = environ.get(STREAMS_ENV, "").strip()
     if not text:
         return SERIAL_STREAMS
-    if not text.isdigit() or not SERIAL_STREAMS <= int(text) <= MAX_STREAMS:
-        raise ConfigError(f"{STREAMS_ENV} must be a whole number from {SERIAL_STREAMS} to {MAX_STREAMS}")
-    return int(text)
+    if text not in STREAM_COUNTS:
+        raise ConfigError(
+            f"{STREAMS_ENV} must be a whole number from {SERIAL_STREAMS} to {MAX_STREAMS}, written in the digits 0 to 9 with no zero in front (8, not 08)"
+        )
+    return STREAM_COUNTS[text]
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
 RULES: dict[str, str] = {
@@ -773,8 +783,21 @@ class StoreAdmission:
         """Each hotkey in order, with a call that gives its ``_Fetched`` or raises what its store calls raised.
 
         One stream: the store is called when the consumer asks. More: at most ``streams`` hotkeys are read
-        ahead of the consumer, each in its own thread. So no more than ``streams`` files that wait for their
-        check are in memory at one time, each one ``max_batch_bytes`` at most.
+        ahead of the consumer, each in its own thread. So the count of files that are read ahead has a bound:
+        ``streams``, each file ``max_batch_bytes`` at most.
+
+        The memory of the process is more than the bytes of those files. A download holds more than one copy
+        of its bytes for a moment, and each thread keeps freed memory for a time. Measured on a stand-in store
+        with files as large as the limit: one stream (also before the streams) reaches about 6 files; more
+        streams reach about ``streams + 4`` files of Python objects and about 3 files of process memory for
+        each stream. At 8 streams and the limit of 64 MiB that is about 1.5 GiB in the worst case.
+
+        One hotkey can stand twice in ``hotkeys`` (two waiting seats of one hotkey). Then its second place can
+        make store calls that one stream does not make, because its thread started before the verdict of the
+        first place was in the memory. These calls only read, and the verdicts are the same.
+
+        After an error, or when the consumer stops, the call waits for the store calls that are in flight, so
+        that no thread of it lives on. The timeouts of the store client are the bound of that wait.
         """
         if self.streams <= SERIAL_STREAMS or len(hotkeys) <= 1:
             for hotkey in hotkeys:

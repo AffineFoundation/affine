@@ -264,9 +264,31 @@ def test_many_streams_take_less_time_when_the_store_is_the_slow_part(build):
 def test_the_count_of_streams_is_a_setting_and_one_stream_is_the_default():
     assert check_streams({}) == check_streams({STREAMS_ENV: " "}) == SERIAL_STREAMS == 1
     assert check_streams({STREAMS_ENV: "8"}) == 8 and check_streams({STREAMS_ENV: str(MAX_STREAMS)}) == MAX_STREAMS
-    for bad in ("0", str(MAX_STREAMS + 1), "-1", "many", "2.5"):
+    assert check_streams({STREAMS_ENV: " 16\n"}) == 16, "white space around the value is not part of it"
+    for bad in ("0", str(MAX_STREAMS + 1), "-1", "many", "2.5", "8.0", "+8", "1_6", "8 8", "0x8"):
         with pytest.raises(ConfigError, match=STREAMS_ENV):
             check_streams({STREAMS_ENV: bad})
+
+
+# ``str.isdigit()`` is true for each of these. ``int()`` cannot read the first two (a ValueError, which is a
+# traceback and the exit code of a crash, so the run loop starts ``run`` again and again). It reads the next two
+# as 8, and it refuses the last one for its length.
+NOT_PLAIN_DIGITS = {
+    "a superscript two": "\u00b2",
+    "a circled one": "\u2460",
+    "a full-width eight": "\uff18",
+    "an Arabic-Indic eight": "\u0668",
+    "a zero in front": "08",
+    "more digits than int() reads": "1" * 5000,
+}
+
+
+@pytest.mark.parametrize("text", NOT_PLAIN_DIGITS.values(), ids=NOT_PLAIN_DIGITS.keys())
+def test_a_count_of_streams_that_is_not_1_to_32_in_plain_digits_is_refused_as_a_setting_and_never_as_a_crash(text):
+    assert text.isdigit(), "the test that let these values pass"
+    with pytest.raises(ConfigError, match=f"^{STREAMS_ENV} must be a whole number from 1 to 32, written in the digits 0 to 9 with no zero in front") as refused:
+        check_streams({STREAMS_ENV: text})
+    assert text not in str(refused.value).replace("not 08", ""), "the refusal does not print the value"
 
 
 def test_run_prints_each_setting_of_its_stack_at_the_start(tmp_path, monkeypatch, capsys):

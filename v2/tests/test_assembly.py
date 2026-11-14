@@ -169,6 +169,21 @@ def test_the_count_of_check_streams_is_a_setting_and_a_setting_that_the_shell_do
         stack()
 
 
+@pytest.mark.parametrize("value", ["\u00b2", "\u2460", "\uff18", "08", "0", "33", "abc"])
+def test_a_bad_count_of_check_streams_is_one_refused_line_with_exit_code_2_for_run_and_for_end_round(tmp_path, box, monkeypatch, capsys, value):
+    """Exit code 2 stops the run loop at once. A traceback (exit code 1) is a crash for it: it then runs ``end-round`` and starts ``run`` again."""
+    common = start(tmp_path, box)
+    records = len(read_journal(tmp_path / "state" / JOURNAL_FILE))
+    monkeypatch.setenv(STREAMS_ENV, value)
+    capsys.readouterr()
+    for command in (["run", *common, "--max-idle", "1", "--idle-sleep", "0"], ["end-round", *common]):
+        assert main(command) == 2
+        shown = capsys.readouterr()
+        assert shown.err.splitlines() == [f"refused: ConfigError: {STREAMS_ENV} must be a whole number from 1 to 32, written in the digits 0 to 9 with no zero in front (8, not 08)"]
+        assert shown.out == "" and "Traceback" not in shown.err
+    assert len(read_journal(tmp_path / "state" / JOURNAL_FILE)) == records, "refused before the journal is taken over: no record, no write"
+
+
 def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any_round(tmp_path, box, monkeypatch, capsys):
     common = start(tmp_path, box)
     run = ["run", *common, "--max-idle", "1", "--idle-sleep", "0"]

@@ -20,9 +20,12 @@ Every setting comes from the environment. A missing one is an error.
                             SN120_FOLD_IMPLEMENTATION, SN120_FOLD_TWICE, SN120_FOLD_DEVICES, SN120_FOLD_THREADS
                             (``headfold.FoldSettings``); read by ``run`` and ``checkpoint`` only
   SN120_CHECK_STREAMS (optional)  how many waiting files the live check reads from the store at one time, 1 to 32.
-                            Not set: 1, one file after the other. The verdicts are the same for each count
+                            Not set: 1, one file after the other. The verdicts are the same for each count.
+                            Read by each command that makes the live check: ``run``, ``status``, ``publish``
+                            and ``bootstrap``
 
-``run`` prints each optional setting at its start, with the word NOT SET when the shell does not hold it.
+``run`` prints one line at its start for SN120_HEAD_PUBLISH and one for SN120_CHECK_STREAMS, with the words
+NOT SET when the shell does not hold the variable. It prints no line for another setting.
 
 The box holds no wallet. It only reads the chain.
 """
