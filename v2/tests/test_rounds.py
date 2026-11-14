@@ -14,7 +14,7 @@ from sn120_v2.cli import main
 from sn120_v2.errors import ConfigError, ContractError, FencedError, HeadMismatchError, InfraError, LeaseError, V2Error
 from sn120_v2.gpu import plan
 from sn120_v2.journal import read_journal
-from sn120_v2.params import GenesisSpec, Recipe
+from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.payout import weights
 from sn120_v2.public import TEXT_LIMIT, public_text, snapshot
 from sn120_v2.queue import waiting
@@ -597,5 +597,22 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     other = sim_params(n_tasks=32)
     write("other.json", other.to_json())
     assert main(["run", "--state-dir", str(state_dir), "--params", str(tmp_path / "other.json"), "--stack", "sn120_v2.sim:stack", "--max-idle", "1"]) == 2
-    assert main(["set-params", "--state-dir", str(state_dir), "--params", str(tmp_path / "other.json"), "--stack", "sn120_v2.sim:stack"]) == 0
+    set_params = lambda name: ["set-params", "--state-dir", str(state_dir), "--params", str(tmp_path / name), "--stack", "sn120_v2.sim:stack"]
+    capsys.readouterr()
+    assert main(set_params("other.json")) == 0
     assert load(state_dir / JOURNAL_FILE).params == other, "new parameters are pinned by a journal record, not by a file on one machine"
+    shown = json.loads(capsys.readouterr().out)
+    assert shown == {"params_hash_before": sim_params().params_hash, "params_hash": other.params_hash, "changed": {"n_tasks": {"before": 64, "after": 32}}}
+    write("short.json", json.dumps({"recipe": {"image_digests": [SIM_IMAGE], "steps": 2}}))
+    assert main(set_params("short.json")) == 0
+    assert json.loads(capsys.readouterr().out)["changed"] == {
+        "batch_cap": {"before": 4, "after": Params().batch_cap},
+        "n_tasks": {"before": 32, "after": Params().n_tasks},
+        "looks": {"before": [0.5, 1.0], "after": list(Params().looks)},
+        "min_scored_tasks": {"before": 16, "after": Params().min_scored_tasks},
+        "recipe.steps": {"before": 1, "after": 2},
+    }, "a key that the file lacks is back at its default, and the output shows it"
+    assert main(set_params("other.json")) == 0
+    again = json.loads(capsys.readouterr().out)
+    assert again["params_hash"] == other.params_hash and len(again["changed"]) == 5 and load(state_dir / JOURNAL_FILE).params == other
+    assert main(set_params("other.json")) == 0 and json.loads(capsys.readouterr().out)["changed"] == {}

@@ -233,11 +233,24 @@ def cmd_round(args: argparse.Namespace) -> int:
     return 0
 
 
+def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
+    """Each parameter whose value differs, with both values. A value of the recipe has the name ``recipe.<name>``."""
+
+    def flat(params: Params) -> dict[str, Any]:
+        data = params.to_dict()
+        return data | {f"recipe.{name}": value for name, value in data.pop("recipe").items()}
+
+    old, new = flat(before), flat(after)
+    return {name: {"before": old[name], "after": new[name]} for name in old if old[name] != new[name]}
+
+
 def cmd_set_params(args: argparse.Namespace) -> int:
     controller, _ = open_controller(args, "set-params")
-    before = controller.params.params_hash
+    before = controller.params
     controller.set_params(load_params(args.params), now())
-    print(json.dumps({"params_hash_before": before, "params_hash": controller.params.params_hash}))
+    after = controller.params
+    # A key that the file does not hold is back at its default, so the operator must see every value that moved.
+    print(json.dumps({"params_hash_before": before.params_hash, "params_hash": after.params_hash, "changed": changed_params(before, after)}))
     return 0
 
 
