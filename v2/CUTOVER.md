@@ -13,7 +13,6 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The text check of the store's `llms.txt` ("AffineValidator", step 8.2). The commit is no longer open: `0c29cb6c` is the least commit for mainnet, and the least commit whose `llms.txt` may go up (check 1 of "Before the mainnet bootstrap").
 
 ## Hosts
 
@@ -140,7 +139,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
 
    **`0c29cb6c` is the least commit for mainnet.** It is the last of the nine and holds the other eight. The coordinator named it as the commit to take before the first mainnet round. The reasons are the last two rows: the safe error text in the public round file (`f986ccb1`) and the words of `llms.txt` on `no_decision` (`0c29cb6c`). Take a later commit only when the coordinator names it. A later commit that changes only `v2/CUTOVER.md` changes nothing on a box: read this file at the tip of `v2`.
 
-   Each change on `v2` from `1d7d0628` to `0c29cb6c` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
+   Each change on `v2` from `1d7d0628` to `0c29cb6c` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start. The steps are in "A checkout only: a running box goes to a later commit" in "After the start".
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -414,7 +413,7 @@ Run every command from `v2/`, inside the virtual environment.
        - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
        - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
        - `status` shows a `phase` other than `IDLE` after the first lease.
-       - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. A round ends at most 100 minutes after its lease ("The time limit of a round" below).
+       - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. The 100 minutes of the time limit are from the lease to the promotion, not to the close: with a winner the round closes after the fold ("The time limit of a round" and "What a closed round looks like" below).
     4. **The stop**, for each later step that says "stop the loop". `run` and its servers end, and nothing starts them again.
 
        ```
@@ -446,7 +445,7 @@ Set the session names and the helper `with_token` again in each new shell.
 
 Everything else waits. Step 5, the two dry runs of step 6 and step 7 read the journal copy in the production store, and that copy exists only after the bootstrap. From 8.3 on, each step changes something that is live.
 
-The order follows Jacob's sequence: the new `llms.txt` first (step 8), then the weights and the stop of v1 (steps 9 and 10), then the website (step 12). The first run of the pull is the site switch, so the pull does not run before step 12.
+The order follows Jacob's sequence: the new `llms.txt` first (step 8), then the weights and the stop of v1 (steps 9 and 10), then the website (step 12). Do step 11 right after step 10: until v2's links job has run, the seats that v2 serves first cannot upload a file (step 11 says why). The first run of the pull is the site switch, so the pull does not run before step 12.
 
 The pull's credentials file exists already; step 8 checks it.
 
@@ -615,7 +614,9 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
      python -m sn120_v2.weights_writer --state-dir "$WSTATE" --from-store --network finney --dry-run )
    ```
 
-   Check: stderr says `kings: read from the journal copy in the store`. The JSON line has `"status": "would set"`; `weights` holds the 10 UIDs of the import at 0.1 each, and no UID 0; `validator_hotkey` is the hotkey above; `"validator_registered": true`. The parentheses keep the token out of the shell that the later steps use.
+   Check: stderr says `kings: read from the journal copy in the store`. The JSON line has `"status": "would set"`; `weights` holds 10 UIDs at 0.1 each, and no UID 0; `validator_hotkey` is the hotkey above; `"validator_registered": true`. The parentheses keep the token out of the shell that the later steps use.
+
+   Which 10 UIDs: before v2's first winner the line has `"kings": 10`, and the UIDs are the 10 kings of the import. After a winner of v2 they are not: step 9.1 says which UIDs are right then.
 6. **Dry run with the wallet, and the chain check.** The dry run also reads the hotkey file and runs every check that comes before a submission. Still no chain write.
 
    ```
@@ -683,9 +684,25 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
 
       - The commit of the GPU box holds the nine commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` nine times. Four of them are the reason for this step: the round time hard stop (`9b830458`), the limit of 3 checks (`5ce10ce7`), the corrected text of `llms.txt` (`4e23a275`) and its words on `no_decision` (`0c29cb6c`).
       - `0c29cb6c` is the least commit whose `llms.txt` may go up. The commit of the GPU box (`git rev-parse HEAD` there) is that commit, or a later one that the coordinator names.
-      - **Not landed yet:** the text check of the store's `llms.txt`. The coordinator sends its words.
 
-      Do not go on before you have the text check.
+      The text check. It reads the store's `llms.txt` with the command of step 8.4, into a new empty directory and not into the site directory:
+
+      ```
+      CHECK=$(mktemp -d)
+      with_token "$PY" "$REPO/v2/site/reset.py" llms --site-dir "$CHECK"; echo "exit=$?"
+      grep -c "A round with no result" "$CHECK/llms.txt"
+      grep -E 'params_hash|lease_timeout_s|squat_min_wait_s|The lease ends' "$CHECK/llms.txt"
+      ```
+
+      - The second line prints `reset llms: ... is the store's public/llms.txt: N bytes, sha256 H` and `exit=0`. With `exit=1`, see the end of step 8.4.
+      - **The count is `1`.** The text of `0c29cb6c` holds the line that starts with `- A round with no result: the box failed, not a seat.` one time. No commit before it writes these words. Checked on 14 Nov 2026 with one `mining.json`: the text of `0c29cb6c` gives 1, and the text of `f986ccb1` gives 0.
+      - **The count is `0`: do not go on.** `grep -c` then ends with exit code 1; that is no fault of the command. The `run` process that published this file runs a commit before `0c29cb6c`. Do "A checkout only: a running box goes to a later commit" in "After the start" on the GPU box. Then run the four lines again.
+      - The last line shows the values of this state. They are values of the pinned parameters, not fixed text. So compare them with the GPU box, not with the numbers of this file:
+        - The two `params_hash` lines show the `"params_hash"` that `status` prints on the GPU box. With another hash, the file does not show the parameters that are pinned now: do not go on, and tell the coordinator.
+        - The row of `lease_timeout_s` shows the pinned value in seconds. The line `The lease ends N minutes after it starts` shows that value divided by 60. On 14 Nov 2026: `7200` and `120`.
+        - The row of `squat_min_wait_s` shows `31536000` (check 5 of "Before the mainnet bootstrap"). With `86400`, see the `squat_min_wait_s` line in the check of step 8.4.
+
+      The same count on the public file, after step 8.4 and at any later time: `curl -s https://affine.io/llms.txt | grep -c "A round with no result"` prints `1`.
    3. **Stop the v1 unit that puts v1's `llms.txt` back.** `affine-network-dashboard.service` writes `network-data.json` into the site directory every 15 seconds. In the same pass it compares `llms.txt` and `reward-policy.json` with its own copies and writes its copies back if they differ. While it runs, the new `llms.txt` lives for 15 seconds at most.
 
       ```
@@ -714,6 +731,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       curl -fsS -H 'Accept: text/html' https://affine.io/llms.txt | grep -o '<title>[^<]*</title>'
       curl -fsS https://affine.io/ | grep -c 'site.js?v='
       curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
+      curl -s https://affine.io/llms.txt | grep -c "A round with no result"
       grep squat_min_wait_s "$SITE/llms.txt"
       sleep 60; sha256sum "$SITE/llms.txt"
       ```
@@ -724,6 +742,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       - The title line shows a page title: the browser view works.
       - `grep -c` prints `0`: the root still shows v1's page.
       - The `Where to get the link` line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, see step 13.
+      - The count of `A round with no result` is `1`: the public file is the text of `0c29cb6c` or of a later commit (step 8.2). With `0`, the file of an older commit is up: do "A checkout only: a running box goes to a later commit" in "After the start" on the GPU box, then run the command of this point again.
       - The `squat_min_wait_s` line shows `31536000`. With `86400`, the bootstrap got a file without the key (check 5 of "Before the mainnet bootstrap"). Tell the coordinator at once: the repair is a `set-params` with the right file between two rounds, and it must come before the first entry is charged. Its `changed` must then show `"squat_min_wait_s": {"before": 86400, "after": 31536000}` and no other key.
       - After 60 seconds the hash is still `H`. If it changed, another v1 process writes `llms.txt`: v1's source speaks of "legacy website pushes". Find it (`pm2 ls`, `crontab -l`, `grep -rl llms ~/.config/systemd/user/`), stop it, and run the command again.
 
@@ -738,7 +757,18 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
 
    1. **Check before the stop.** Run the chain check and the dry run with the wallet (step 6) again.
 
-      Check: write down `last write block`; this is v1's last write. The `weights` of the dry run hold the 10 UIDs of the import, and before v2's first winner they are the UIDs of `weights on chain`; if the two sets differ, stop and ask the coordinator. The dry run gives `"preflight": "passed"` or the reason `recent write`.
+      Check: write down `last write block`; this is v1's last write. The dry run gives `"preflight": "passed"` or the reason `recent write`. Its `weights` hold 10 UIDs at 0.1 each. Compare these UIDs with the UIDs of `weights on chain`:
+
+      - **Before v2's first winner** (the dry run has `"kings": 10`): the two sets are the same 10 UIDs, the kings of the import.
+      - **After a winner of v2, the two sets differ, and that is correct.** `weights on chain` is v1's last write: v1 pays its own 10 kings and knows no winner of v2. v2 pays the last 10 kings: each winner of v2 with a new UID takes one place, and the oldest king of the import leaves.
+        - The kings of the import, oldest first (the import printed them as `kings, oldest first`; these are the UIDs of 14 Nov 2026): 955, 956, 942, 821, 851, 909, 822, 852, 918, 920.
+        - After one winner: the dry run has `"kings": 11`. Its `weights` hold the winner and 9 UIDs of the import. UID 955 is not there. After two winners: `"kings": 12`; UIDs 955 and 956 are not there. And so on down the list.
+        - A winner whose UID is already one of the 10 takes no new place: `"kings"` is one more, and the UIDs do not change.
+      - **How to check it.** On the GPU box, `python -m sn120_v2 status --state-dir $STATE` prints `"kings"`: the 10 paid UIDs, newest first. The UIDs of `weights` in the dry run are this list, as a set. Then:
+        - each UID that is in the dry run and not on chain is a winner of v2: it is at the start of `"kings"`, and the `winner:` line of a round summary names it;
+        - the UIDs that are on chain and not in the dry run are the same count, and they are the first UIDs of the list above, with no gap.
+      - The site is late here: v2 writes `mining.json` at the close of the round, after the fold, and the journal copy that the writer reads has the winner from the promotion on. So during a fold the dry run shows the winner and the site does not yet. `status` on the GPU box is the truth.
+      - **Any other difference: stop and ask the coordinator.** These are: a UID in the dry run that is no winner of v2 and no king of the import; a UID on chain that is no king of the import (v1 still takes turns, so v1 can make a king after the import); a king of the import that is missing while an older one is still there; fewer or more than 10 UIDs; a weight other than 0.1; UID 0.
    2. **Stop v1's writer.** "v1 units", group B, gives the candidate names; the host is the truth. For the timer and the service that the first two commands show:
 
       ```
@@ -798,8 +828,12 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
     find "$SITE" -newer "$KEEP/mark" -type f -not -path "$SITE/ff/links/*" -not -name links.json -not -path "$SITE/public/*"
     ```
 
-    Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
+    Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more, and `generated_at` in `https://affine.io/ff/status.json` does not change any more: v1's service writes both, and v2 writes no `ff/status.json`. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
 11. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped (step 10), and the bootstrap is done. See "Upload links job" for the reason.
+
+    Do not wait with this step. v1's service gives no link to a hotkey that had its v1 turn. The front seats of v2 are such hotkeys: the v1 turns with no verdict ("What the import carries"). So while v1's service issues the links, a front seat has no link file (HTTP 404 at `https://affine.io/ff/links/<hotkey>.json`) and cannot upload a new file. It needs a new file when its v1 file has train keys that only v1 had: v2 takes that file as invalid ("What the import carries"). The other seats are not blocked in the meantime: the link that v1 issued points to the same object that v2 reads.
+
+    The numbers of a read on 14 Nov 2026, 01:13 UTC, with v1's service as the writer: the index named 209 hotkeys; v2's job would issue 224 link files, the 209 among them; the 15 others were the 14 front seats and UID 893, which had its v1 turn at 00:38 UTC. v2 found no valid file for a front seat.
 
     ```
     sudo systemctl start sn120-v2-links.service
@@ -809,7 +843,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
     systemctl list-timers sn120-v2-links.timer --no-pager
     ```
 
-    Check: the log shows the `links: issued ...` line of step 7; `removed` is now the second count of step 7. In `ff/links.json`, `issued_at` is new and `link_file` is `https://affine.io/ff/links/<hotkey>.json`. One link opens with a test hotkey that you own: `python -m sn120_v2.links open --hotkey <address> --key <key file> --links-url https://affine.io/ff/links`. The timer is listed (minute 10 and minute 40 of each hour).
+    Check: the log shows the `links: issued ...` line of step 7; `removed` is now the second count of step 7. In `ff/links.json`, `issued_at` is new and `link_file` is `https://affine.io/ff/links/<hotkey>.json`. The key `link_file` is the public sign of the writer: only v2's job writes it, and the index of v1's service has no such key. One link opens with a test hotkey that you own: `python -m sn120_v2.links open --hotkey <address> --key <key file> --links-url https://affine.io/ff/links`. The timer is listed (minute 10 and minute 40 of each hour).
 12. **The website: the first run of the pull is the site switch.** One run copies v2's public files from the store into the site directory, writes `public/read_links.json` (signed read links for the weight files of the current head, new on every run), and builds the status site. It never writes to the store, it never copies a weight file, and it takes only keys that v2's code names, never everything under `public/`. See "Public pull and site".
 
     Once the store holds `public/mining.json` and `public/llms.txt`, a run replaces these files at the root of the site, with no check of who wrote them: `llms.txt`, `mining.json`, `index.html`, `v1.html`, `site.js`, `site.css`, `favicon.svg`, `network-haffer.ttf`, `network-mono.ttf`, `site-data.json`, `v1-data.json`. So no run of the pull, by hand or by the timer, starts before all of these:
@@ -1013,6 +1047,37 @@ On the GPU box, in the shell of step 2 of "GPU box".
 
 On AffineValidator: `journalctl -u sn120-v2-weights.service --since "3 hours ago" --no-pager` shows the last runs. The dry run of step 5 of "AffineValidator" shows `blocks_since_last_write`; one hour is 300 blocks, so it stays below about 310 while each hourly run sets. If the first log line of a run says `read from the cache of the journal copy`, the store did not answer or the store settings are wrong: the writer then pays the last kings that it read.
 
+### What a closed round looks like
+
+`run` prints the round summary when a round closes, and `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints it again. [SMOKE.md](SMOKE.md) has the whole text with its table. The first three lines say what happened; `<...>` stands for a value.
+
+**A winner.**
+
+```
+SN120 v2 round r000001: APPLIED
+winner: UID <uid> (<hotkey>), delta +0.<4 digits>, z <number>
+head: 9fa81073eeae -> <the first 12 characters of the new head>
+```
+
+- The head before the arrow is the head of the round. For the first round it is the genesis head (`9fa81073eeae` for the state of 14 Nov 2026). The head after the arrow is the folded head.
+- `status` after the first winner: `"heads": 3` (the genesis head, the head with the winner's LoRA, the folded head), `"head_folded": true`, `"rounds_closed": 1`, `"last_outcomes": ["applied"]`, and the winner's UID first in `"kings"`. `"served"` is higher by the count of the charged seats, and `"queue"` is lower by the same count.
+- The round closes after the fold, so the summary comes later than the promotion ("The time limit of a round").
+- The weights: the next run of v2's writer pays the winner and no longer pays the oldest king (step 9.1 of "AffineValidator").
+
+**No winner, with a scored batch.**
+
+```
+SN120 v2 round r000001: NULL
+no winner: <the reason>
+head: 9fa81073eeae (unchanged)
+```
+
+- Each scored batch is charged, win or lose: its seat leaves the queue (`"served"` rises and `"queue"` falls by that count). A batch with the verdict `not_trained` or `not_scored` is not charged and is first in the next round.
+- `status`: `"heads"` and `"kings"` do not change, and `"last_outcomes"` ends with `"null"`.
+- There is no wait after such a round: when valid files wait, `run` opens the next round at once.
+
+**No decision.** The first line ends with `NO_DECISION`. Nobody is charged, and the seats are first in the next round. "A round in which no training finished" and "A crash or a restart of `run`" have the `no winner:` texts.
+
 ### The time limit of a round
 
 A round has a time limit of 100 minutes from the lease to the promotion. It is a hard stop.
@@ -1023,6 +1088,13 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 | 90 | The box stops scoring. A block of tasks that still runs is stopped and is not used. |
 | 100 | The limit. The 10 minutes after the stop are for the grading of the last block, the judging and the promotion. |
 | 120 | The lease ends (`lease_timeout_s` 7200; it was 14400). A result that arrives later is not used. |
+
+**With a winner, the round does not close at minute 100.** The limit is from the lease to the promotion. `fold_every_k` is 1, so each winner is folded inside its round. The order is: judging, promotion, fold, then the close. `run` prints the round summary and writes `mining.json` only at the close. So during the fold:
+
+- `status` on the GPU box shows `"phase": "APPLY"` and `"heads": 2` after the first winner; the winner is already first in `"kings"`.
+- The site still shows `"phase": "RUNNING"` and the open round, and its `kings` are still the old ones. This is no fault.
+- The code has no time limit for the fold. A fold that fails is tried again 5 minutes later (`apply_retry_s` 300); `run` then prints `idle: N seats wait, phase APPLY, last problem: fold failed: <cause>`.
+- The stop that the code makes is the stop of the scoring at minute 90. The 10 minutes after it are a reserve; no timer ends the steps in them.
 
 - A LoRA that is still open at the stop is judged on the blocks that null M and every open LoRA finished. It is charged, win or lose. The first line of the round summary then ends with `(stopped at the time limit)`.
 - If fewer tasks than the first look are scored at the stop (500 tasks, a quarter of the 2,000 of a round), every trained LoRA has the verdict `not_scored`. It is not charged, it is first in the next round, and no failure is counted for its seat. The round summary then has the line `not scored: N of M batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
@@ -1168,7 +1240,7 @@ What a restart does to an open round:
 |---|---|---|
 | In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`. When another batch of the round trained, that is **one counted failure** for that seat (3 hold the seat). When no batch trained, the lease fails and nothing is counted ("A round in which no training finished"). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. The seats are first in the next round, which opens 5 minutes later at the earliest. |
 | After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. | The same, at once. |
-| After the lease end, no result stored | The lease is failed ("the lease expired"). No charge, no counted failure. | The same. |
+| After the lease end, no result stored | The lease is failed, and the round closes with no decision: `no winner: the lease expired`. No charge, no counted failure. | The same effect, with another text: the loop's `end-round` runs first, so the summary says `no winner: ended by the operator`. |
 | The box result is stored, not judged | `run` judges the stored result, also after the lease end. | The same: the loop skips `end-round`. |
 | Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
 
@@ -1264,7 +1336,14 @@ head: <12 characters> (unchanged)
 
 Between such rounds `run` prints `idle: N seats wait, phase IDLE`. `status` shows `"no_decision"` at the end of `"last_outcomes"`, and `"held_seats"` does not change.
 
-Every round that closes with no box result names its cause in the same place: `no winner: ended by the operator` after `end-round`, `no winner: the lease expired` after an expired lease, and `no winner: <error class>: <text>` after another fault of the box.
+Every round that closes with no box result names its cause in the same place:
+
+- `no winner: ended by the operator` after `end-round`, by hand or by the loop.
+- `no winner: LeaseError: the lease has expired; a late result is never used` when a `run` that is alive brings its result after the lease end.
+- `no winner: the lease expired` only when `run` is started by hand after the lease end, with no result in the store. Through the loop this text never comes: the loop's `end-round` runs first, and the text is the first one.
+- `no winner: <error class>: <text>` after another fault of the box.
+
+The first three have the same effect: the round closes with no decision, nobody is charged, no failure is counted, and the seats are first in the next round.
 
 **The cost of this rule.** `run` cannot tell a broken box from bad files.
 
@@ -1455,6 +1534,37 @@ If the loop starts before `set-params`, nothing is lost. The loop ends an open r
 
 After any failed lease, the next round opens 5 minutes later at the earliest (`apply_retry_s` 300).
 
+#### A checkout only: a running box goes to a later commit
+
+This is the short form of the part above, for a commit that changes no digest. The message for the commit says "a checkout only". `0c29cb6c` is such a commit for a box at `1d7d0628` or later (check 1 of "Before the mainnet bootstrap"). `run` loads the code only at a start, so a checkout changes nothing in a `run` process that runs: the stop and the start are needed.
+
+1. **Before the stop: no round is open.** In a second shell with the same exports, `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`. Anybody can read the same value: `"phase"` in `https://affine.io/mining.json`, once the site shows v2's file.
+   - `RUNNING` or `APPLY`: wait for `IDLE`. The promotion of a winner comes at most 100 minutes after the lease. The fold comes after it and has no time limit; during the fold `status` shows `APPLY` and the site still shows `RUNNING` ("The time limit of a round"). `run` prints the round summary at the close.
+   - When valid files wait, `run` opens the next round at once, and no look shows `IDLE`. Then stop the loop right after a round summary in `run.log`: the round that is lost is the one that opened a moment ago. The part above says what a stop in a round costs: that round, and nothing for a seat.
+2. **Stop the loop** (step 10.4 of "GPU box"). Then run the `status` line again.
+   - `IDLE`: go on.
+   - `RUNNING`: a round opened between the look and the stop. Go on: at its next start the loop ends that round with no decision. Nobody is charged, no failure is counted, and its seats are first in the next round.
+   - `APPLY`: go on. `run` finishes the fold after the start.
+3. **The checkout, then the `diff` line.**
+
+   ```
+   git fetch origin && git checkout <the commit>
+   git rev-parse HEAD
+   python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"
+   ```
+
+   The second line prints the commit. The `diff` line prints only `exit=0`. With any other output the commit is not a checkout only: do not start the loop, and do the digest block of the part above.
+4. **Start the loop** (step 10.2 of "GPU box": the line of form A again, or `sudo systemctl start sn120-v2-run`). Read the status line once (step 10.3 of "GPU box").
+5. **What you see.** `run` prints no line for a publish. A new `run` process writes `mining.json` and `llms.txt` into the store in its first pass:
+   - No round opens in that pass: `run.log` shows `idle: N seats wait, phase IDLE`, and `run` writes the two files right after this line. At a later pass with no round, `run` writes them only when the queue or the result of a file check changed.
+   - A round opens in that pass: `run` writes the two files at the open of the round, and `run.log` shows no `idle:` line.
+   - The sign in the file: line 3 of `llms.txt`, `Generated <time> UTC from snapshot`, shows the time of that pass. `generated_at` in `mining.json` is the same second.
+   - `idle: ..., last problem: publish failed: <cause>`: the store did not take the files in the pass before. The next pass with no round writes them again, 30 seconds later. The text `last problem:` stays in the later lines, so the sign of the write is the `Generated` line, not the log.
+   - The way to the site: after step 12 of "AffineValidator", the pull copies the two files within about a minute (its timer starts a run at second 30 of each minute). Before step 12 nothing copies them: run the command of step 8.4 of "AffineValidator" again.
+6. **The check.** `curl -s https://affine.io/llms.txt | grep -c "A round with no result"` prints `1` (step 8.2 of "AffineValidator"). If it prints `0` two minutes after the start, read line 3 of the public file (`curl -s https://affine.io/llms.txt | sed -n 3p`):
+   - The time is older than the start: the write or the copy did not happen. Read the last lines of `run.log`, and look at the last run of the pull ("Public pull and site").
+   - The time is that of the start or later: the `run` process does not run the new commit. Run `git rev-parse HEAD` on the GPU box, and read the `run-loop:` lines of `run.log`: there must be a new `loop started` line after the checkout.
+
 #### A stored result that is not judged, and a box with other digests
 
 This is the case where `end-round` exits with 3 and the box has other digests than the pinned ones: a fix with the digest block, or a new box. One order fits both. It costs nobody anything: no result is thrown away, nobody is charged, and no failure is counted. It needs the guard of `e0faff2d`.
@@ -1589,7 +1699,7 @@ A failed run prints `issue failed: <reason>`, writes nothing and removes nothing
 
 **Do not replace the token in v1's credentials file without one test upload from a machine outside the host.** v1's notes record a token with a limit on the source address: its links worked on the host and gave HTTP 403 to every miner. The token that is in the file now works for the miners. After a replacement, every link signed with the old token stops at once: start one run (`sudo systemctl start sn120-v2-links.service`), then make the test upload.
 
-**Why `affine-ff.service` must be stopped before the first run.** The v1 service and this job write the same files in the same directory. Every 30 minutes v1 writes `ff/links/<hotkey>.json` and `ff/links.json`, and removes the file of each hotkey that is not eligible in v1's view. v1's view of the queue is frozen since the teardown. There is no lock between the two. If both run:
+**Why `affine-ff.service` must be stopped before the first run.** The v1 service and this job write the same files in the same directory. Every 30 minutes v1 writes `ff/links/<hotkey>.json` and `ff/links.json`, and removes the file of each hotkey that is not eligible in v1's view. v1's view is not v2's queue: v1 gives a link to each activated hotkey that waits for a v1 turn, and none to a hotkey that had its turn. There is no lock between the two. If both run:
 
 1. v1 removes the link files of hotkeys that only v2 knows, and v2 removes those of hotkeys with no seat in v2. A miner gets HTTP 404 at random.
 2. The index `ff/links.json` changes between two lists.
