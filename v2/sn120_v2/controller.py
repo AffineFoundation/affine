@@ -189,6 +189,7 @@ class Controller:
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
         self._verdicts_at: int | None = None
         self._published: object = None  # what the last snapshot showed of the queue and its files
+        self._published_at: int | None = None  # how many records the journal had at the last snapshot that reached the store
         self.overlap: Overlap | None = None  # ``run`` sets it for the order ``overlap``; None: each step in its turn (``serial``)
         self._pin()
 
@@ -713,10 +714,10 @@ class Controller:
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
-        shown = self._shown()
+        shown, records = self._shown(), len(self.journal.records)
         try:
             self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
-            self._published = shown
+            self._published, self._published_at = shown, records
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"
 
@@ -739,6 +740,38 @@ class Controller:
         self._publish(now)
         return True
 
+    # ------------------------------------------------------------ a stop between two rounds (stopafter.py)
+
+    def close_in_public(self, now: int) -> str:
+        """No round is open and ``run`` stops here: bring to the store all that the close of a round writes.
+
+        The record of the close and the round file are there: no round is open. This call makes sure of the rest:
+        the head pointer, the delete of what the last round left in ``pending/``, and the public files (in chain
+        mode the chain file is one of them). A ``run`` that closed the round itself and got no error has done all
+        of it, so this call writes nothing. With ``overlap`` the delete and the public files wait for the next
+        open: there is none now, so they are done here. A ``run`` that started after another one died in a close
+        has written nothing of it. Returns what is not done yet, or an empty text.
+        """
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; its close is not complete")
+        before, self.last_error = self.last_error, ""
+        try:
+            self._sync_pointer()
+            if self.overlap is not None:
+                self._kept_done(self.overlap.flush(now))
+            if self.state.rounds:
+                delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
+            if self._published_at != len(self.journal.records) or self._shown() != self._published:
+                self._publish(now)  # the public files do not show the journal as it is now
+        except InfraError as exc:
+            self.last_error = f"the store did not answer: {exc}"
+        problem, self.last_error = self.last_error, self.last_error or before
+        return problem
+
+    def local_head_proven(self) -> None:
+        """``overlap``: wait for the second sha256 of the local head, and raise ``HeadLost`` when it failed. ``serial``: nothing, the fold made it in its line."""
+        self._proven(wait=True)
+
     # ------------------------------------------------------------ the loop
 
     def tick(self, now: int) -> None:
@@ -760,8 +793,11 @@ class Controller:
         else:
             self.fold_if_due(now)
 
-    def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str | Callable[[], str]) -> RoundRecord | None:
+    def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str | Callable[[], str], hold: Callable[[], bool] | None = None) -> RoundRecord | None:
         """One round on one box, start to end. Returns the closed round, or None when no round could start.
+
+        ``hold`` is asked before a round is opened, and never for a round that is open. True: no round is opened,
+        and the call returns None (``stopafter.py``). What was not finished before this call is finished first.
 
         ``overlap`` (``afterking.py``): the kept steps run in a second thread while the box trains, and this
         thread waits for them before its next record. No box result is stored before the local head is proven:
@@ -772,6 +808,8 @@ class Controller:
         started = clock()
         self.tick(started)  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
         if self.state.round is None:
+            if hold is not None and hold():
+                return None
             self._check_pins("no round was opened")
             started = clock()
             tickets = self.open_round(started, entropy, clock=clock)

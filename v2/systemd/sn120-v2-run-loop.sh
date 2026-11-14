@@ -27,6 +27,20 @@
 # stops the servers and jobs that it left, and stops with 0. "run" is safe to stop at any point: the journal is
 # written to the store first, and the next start continues from it.
 #
+# A stop after the round, asked for by the operator from a second shell (sn120_v2/stopafter.py):
+#   touch "$SN120_WORK_DIR/logs/run-loop.stop-after-round"     ask; the time of the file is the time of the request
+#   rm "$SN120_WORK_DIR/logs/run-loop.stop-after-round"        take the request back
+# The look, one line that changes nothing:
+#   F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -e "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi
+# "run" reads the file before it opens a round. With no round open there, it opens none, says so in a line that
+# starts with "stop after the round: obeyed." and ends with 0. The loop then removes the file and stops with 0. Its
+# last line in the log starts with "STOPPED after the round, as asked". A "run" that crashes while a request is
+# open is started again as always: the request stays, and that "run" obeys it.
+# A loop that stops by another way (a signal, a refusal, the limit of starts, --rounds) removes an open request
+# and says so: the stop that was asked for has come. A request that is there when the loop starts (the loop was
+# killed, or the file was made while no loop ran) is obeyed: the first lines of the loop say so with the time of
+# the file, "run" ends at once, and the loop removes the file. So the start after that one runs on.
+#
 # The loop counts the starts with no finished round between them. A round that "run" closed sets the count back
 # to zero. At SN120_LOOP_MAX_STARTS the loop stops with 3; the last lines of the log say why and what to run.
 #
@@ -41,6 +55,7 @@
 #   run-loop.status   one line: what the loop does now, or why it stopped
 #   run-loop.pid      the process id of the loop while it runs
 #   run-loop.lock     one loop for each work directory
+#   run-loop.stop-after-round   the operator's request for a stop after the round, while it is open
 #
 # Settings (environment, all optional):
 #   SN120_LOOP_PAUSE_S        seconds between the end of a "run" and the next start (30)
@@ -93,6 +108,7 @@ LOGS=$SN120_WORK_DIR/logs
 LOG=$LOGS/run.log
 STATUS_FILE=$LOGS/run-loop.status
 PID_FILE=$LOGS/run-loop.pid
+STOP_FILE=$LOGS/run-loop.stop-after-round
 mkdir -p "$LOGS" || usage "cannot make $LOGS"
 
 # "run" gets this variable, and every process that it starts inherits it. That is how the loop finds what a dead
@@ -207,6 +223,10 @@ finish() {  # finish CODE STATE LINE...: the last lines of the log say why the l
     local code=$1 state=$2 line
     shift 2
     stop_leftovers || say "could not stop these processes of the last run: pids" $LEFT
+    if [ -e "$STOP_FILE" ]; then
+        rm -f "$STOP_FILE"
+        say "A request to stop after the round was open. The loop stops now by another way, so the request is removed: the next start of the loop runs on."
+    fi
     for line in "$@"; do
         say "$line"
     done
@@ -267,7 +287,7 @@ end_open_round() {  # 0: go on. 1: the command failed, FAILURE says how (INFRA: 
 }
 
 run_once() {  # 0: start again. Stops the loop for every exit code that means "do not start again".
-    local offset rc again line
+    local offset rc again line obeyed
     offset=$(stat -c %s "$LOG" 2> /dev/null || echo 0)
     (
         trap - INT TERM HUP
@@ -291,6 +311,12 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
     line=$(tail -c "+$((offset + 1))" "$LOG" | grep -m 1 '^refused: ')
     case $rc in
         0)
+            obeyed=$(tail -c "+$((offset + 1))" "$LOG" | grep -m 1 '^stop after the round: obeyed\.')
+            if [ -n "$obeyed" ]; then
+                rm -f "$STOP_FILE"
+                finish 0 "stopped after the round, as asked" \
+                    "STOPPED after the round, as asked. The request file is removed, and nothing starts run again: to go on, start the loop again. run said: ${obeyed#stop after the round: obeyed. }"
+            fi
             finish 0 "stopped: run finished" \
                 "STOPPED: run finished with exit code 0 (--rounds or --max-idle). Nothing starts it again." \
                 "For more rounds, start the loop again."
@@ -311,6 +337,10 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
 
 echo "$$" > "$PID_FILE"
 say "loop started (pid $$): $PY -m sn120_v2 run ${RUN_ARGS[*]}"
+if [ -e "$STOP_FILE" ]; then
+    say "A REQUEST TO STOP AFTER THE ROUND IS THERE FROM BEFORE THIS START: the file $STOP_FILE, made at $(date -u -r "$STOP_FILE" +%Y-%m-%dT%H:%M:%SZ)."
+    say "It is obeyed: run opens no round, and this loop stops with 0 as soon as no round is open. The loop removes the file then, so the start after this one runs on. If the request is old and not wanted, take it back now: rm \"$STOP_FILE\""
+fi
 STARTS=0
 INFRA_SINCE=""
 INFRA_TRIES=0
