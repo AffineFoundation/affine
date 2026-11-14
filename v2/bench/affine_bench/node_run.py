@@ -81,6 +81,34 @@ def summarize(b, run_dir):
                 pass_at_k=sum(1 for p in per.values() if p["correct"] > 0) / max(1, m)), per
 
 
+def finished(b, d):
+    """A benchmark is done when its summary is of the present version: a summary of another version is another benchmark."""
+    try:
+        return json.load(open(d + "/summary.json")).get("bench_version") == R.bench_version(b)
+    except (OSError, ValueError):
+        return False
+
+
+def resumable(vf, rollouts):
+    """The saved config of a run that may go on with --resume, or None. vf-eval resumes with the saved count of samples
+    and writes a row when a sample ENDS, so a run that was made with another count cannot be cut to this one: the
+    first rows of a problem are its shortest answers. Such a run is moved aside, and the benchmark starts new."""
+    prev = glob.glob(vf + "/*/configs/resolved/eval.json")
+    if not prev:
+        return None
+    try:
+        made_with = int(json.load(open(prev[0]))["num_rollouts"])
+    except (OSError, ValueError, KeyError, TypeError):
+        made_with = None
+    if made_with == int(rollouts):
+        return prev[0]
+    aside = f"{vf}.r{made_with or 'x'}"; n = 1
+    while os.path.exists(aside):
+        n += 1; aside = f"{vf}.r{made_with or 'x'}.{n}"
+    os.replace(vf, aside); os.makedirs(vf)
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", required=True); ap.add_argument("--model-dir", required=True)
@@ -121,7 +149,7 @@ def main(argv=None):
                    benchmarks=[b["id"] for b in bs], sampling=sp, serving=S["version"]), open(out + "/node_run.json", "w"))
     t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, ho); t_serve = time.time() - t0
     total_c = S["client"]["max_concurrent_total"]
-    todo = [b for b in bs if not os.path.exists(f"{out}/{b['id']}/summary.json")]
+    todo = [b for b in bs if not finished(b, f"{out}/{b['id']}")]
     weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319}.get(b["id"], 40) for b in todo}
     W = sum(weights.values()) or 1
     procs = {}
@@ -134,9 +162,9 @@ def main(argv=None):
             os.replace(d + "/FAILED", d + f"/FAILED.{attempt - 1}")
         c = min(MAX_C, max(64, int(total_c * weights[b["id"]] / W)))
         # --resume keeps valid finished rollouts and re-runs failed ones
-        prev = glob.glob(vf + "/*/configs/resolved/eval.json")
+        prev = resumable(vf, b["rollouts"])
         if prev:
-            cmd = ["vf-eval", "@", prev[0], "--resume", "--no-rich", "--no-push"]
+            cmd = ["vf-eval", "@", prev, "--resume", "--no-rich", "--no-push"]
         else:
             cmd = ["vf-eval", b["env"], "-m", "bench", "--client.base-url", "http://127.0.0.1:8000/v1", "--client.api-key-var", "BENCH_API_KEY",
                    "-r", str(b["rollouts"]), "-c", str(c), "--no-push", "--no-rich", "--env.agent.harness.id", b.get("harness", "null"),
