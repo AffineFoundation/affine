@@ -196,6 +196,11 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
     }
 
 
+def whole(value: Any) -> int | None:
+    """``value`` when it is a whole number above 0, or None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None) -> dict[str, Any]:
     """The benchmark table of the v1 site: one row for every king, the reference models, and the genesis head.
 
@@ -212,6 +217,10 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     of the ``in_avg`` columns, and only a row that has all of them gets one: a mean over fewer benchmarks cannot be
     compared. ``partial`` marks a result that lost samples (``complete=false``). Aggregates only; the node record is
     not copied.
+
+    ``rollouts`` of a cell is its count of samples for each problem. A result of ``bench`` names it. A cell of ``kept``
+    has only its sample count, so its ``rollouts`` is that count divided by the problem count of the same benchmark in
+    ``bench``, and it is None when ``bench`` gives no single problem count or the division leaves a rest.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
     enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
@@ -223,7 +232,18 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
         cells.setdefault(result["model_id"], {})[result["benchmark_id"]] = {
             "score": result["score"], "se": result.get("se"), "partial": result.get("complete") is False,
             "samples": result.get("samples"), "expected": result.get("samples_expected"), "cap_rate": result.get("cap_rate"),
+            "rollouts": whole(result.get("rollouts")),
         }
+    problems: dict[str, set[int | None]] = {}  # per benchmark: the problem count of each result, None when it does not say
+    for result in bench["results"]:
+        each, expected = whole(result.get("rollouts")), whole(result.get("samples_expected"))
+        problems.setdefault(result["benchmark_id"], set()).add(expected // each if each and expected and expected % each == 0 else None)
+
+    def per_problem(name: str, cell: dict[str, Any]) -> int | None:
+        if whole(cell.get("rollouts")):
+            return cell["rollouts"]
+        count, expected = next(iter(problems[name])) if len(problems.get(name, ())) == 1 else None, whole(cell.get("expected"))
+        return expected // count if count and expected and expected % count == 0 else None
 
     def row(label: str, kind: Any, status: str, round_id: Any, head: Any, at: Any, scores: dict[str, Any]) -> dict[str, Any]:
         if kind == KING and round_id and head:  # one name for a king, with or without the benchmark file
@@ -261,7 +281,8 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     for old in (kept or {}).get("rows", ()):
         if old.get("kind") not in order and old["label"] not in have:
             state = RUN_STATE.get(old.get("status"), old.get("status") or NO_RUN)
-            rows.append(row(old["label"], old.get("kind"), state, None, None, None, old["cells"]) | {"v1": True})
+            scores = {name: cell | {"rollouts": per_problem(name, cell)} for name, cell in old["cells"].items()}
+            rows.append(row(old["label"], old.get("kind"), state, None, None, None, scores) | {"v1": True})
     rows.sort(key=lambda made: (order.get(made["kind"], 1), -(made["at"] or 0) if made["kind"] == KING else -(made["avg"] or 0)))
     return {"updated_at": bench["updated_at"], "rows": rows, "columns": columns}
 

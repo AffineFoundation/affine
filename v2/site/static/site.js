@@ -229,6 +229,17 @@
     const lead = rated.filter(r => counted.some(c => leads(r, c))), pinned = allRefs || !lead.length ? refs : lead;
     const shown = [...kings, ...refs, ...genesis], span = {};
     for (const c of cols.filter(c => c.in_avg)) { const v = shown.map(r => val(r, c)).filter(x => x != null); if (v.length) span[c.id] = [Math.min(...v), Math.max(...v)]; }
+    // The samples for each problem of a benchmark, from the rows on the page: a row of a king or of the genesis head names the count of
+    // the run that its score is from, and a reference model has the count of its v1 run. A benchmark where the rows on the page do not
+    // all have one count gets one sentence in the note and in the tooltip of its column head: who has which count.
+    const samples = n => `${n} sample${n === 1 ? '' : 's'}`, list = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0];
+    const differ = c => {
+      const sets = [[kings, 'the kings'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head'], [pinned, 'the reference models']]
+        .map(([rows, name]) => [rows.map(r => r.cells[c.id] && r.cells[c.id].rollouts).filter(Boolean), name]);
+      const counts = [...new Set(sets.flatMap(([n]) => n))].sort((x, y) => x - y);
+      const who = k => list(sets.map(([n, name]) => [n.filter(x => x === k).length, n.length, name]).filter(([m]) => m).map(([m, all, name]) => m < all ? `${m} of ${name}` : name));
+      return counts.length > 1 ? `${c.label}: ` + counts.map((k, i) => `${samples(k)}${i ? '' : ' for each problem'} for ${who(k)}`).join(', ') + '.' : '';
+    };
     const cell = (r, c) => {
       const x = val(r, c), one = r.cells[c.id], s = span[c.id], avg = c === AVG ? ' avg' : '';
       if (x == null) {  // no score: the state of the run in a word ("no run yet" is too wide for Avg); a scored row can lack one benchmark, and then it has no average
@@ -236,7 +247,7 @@
         return `<td class="num na${avg}" title="${esc(text)}">${esc(word)}</td>`;
       }
       const f = s && s[1] > s[0] ? (x - s[0]) / (s[1] - s[0]) : 1, top = s && Math.round(1000 * x) === Math.round(1000 * s[1]);
-      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` : 'Mean of the counted benchmarks.');
+      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') : 'Mean of the counted benchmarks.');
       return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
         + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
     };
@@ -252,7 +263,7 @@
     t.style.minWidth = 264 + 88 * b.columns.length + 'px';
     t.tHead.innerHTML = (suites.length > 1 ? `<tr class="suites"><th></th><th class="avg"></th>${suites.map(x => `<th class="suite" colspan="${b.columns.filter(c => c.suite === x).length}">${esc(x)}</th>`).join('')}</tr>` : '')
       + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks, in percent. A row has it only when it has every counted benchmark.">Avg</th>`
-      + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}">${esc(c.label)}</th>`).join('') + '</tr>';
+      + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}${esc(differ(c) && ' ' + differ(c).slice(c.label.length + 2))}">${esc(c.label)}</th>`).join('') + '</tr>';
     t.tBodies[0].innerHTML = kings.map(row).join('') || `<tr><td colspan="${cols.length}" class="empty">${V1 ? 'No king was scored.' : 'No king yet: no round has applied a winner.'}</td></tr>`;
     t.tFoot.innerHTML = pinned.map(row).join('') + genesis.map(row).join('');
     let h = t.tHead.offsetHeight + t.tFoot.offsetHeight + 2 + (box.scrollWidth > box.clientWidth ? 12 : 0);
@@ -261,6 +272,8 @@
     if (box.classList.contains('wait')) { box.classList.remove('wait'); t.classList.add('fade'); }
     const scored = every.filter(r => r.status === 'scored').length, more = document.getElementById('refs');
     more.hidden = !lead.length || lead.length === refs.length;
+    if (more.previousSibling?.own !== 1) more.before(Object.assign(document.createTextNode(''), { own: 1 }));
+    more.previousSibling.data = b.columns.map(c => differ(c) && differ(c) + ' ').join('');
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
       : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');

@@ -392,6 +392,42 @@ def test_the_reference_models_come_from_the_frozen_v1_history_whatever_the_bench
     assert bench_view(table, heads)["rows"] == [row for row in both["rows"] if not row.get("v1")]
 
 
+def test_a_cell_has_its_samples_for_each_problem_and_a_kept_cell_gets_the_count_from_its_sample_count():
+    columns = [dict(id="ax", label="AX", suite="math", order=1, enabled=True, in_avg=False), dict(id="b1", label="B1", suite="math", order=2, enabled=True)]
+
+    def sampled(model: str, bench: str, rollouts: object, expected: object) -> dict:
+        return result(model, bench, 0.5) | {"rollouts": rollouts, "samples": expected, "samples_expected": expected}
+
+    def cells(expected: dict) -> dict:  # a reference row as the v1 history holds it: a sample count and no ``rollouts``
+        return {name: {"score": 0.5, "se": None, "partial": False, "samples": count, "expected": count, "cap_rate": None} for name, count in expected.items()}
+
+    kept = {"updated_at": 1, "columns": columns, "rows": [
+        dict(label="Ref-A", kind="reference", status="scored", cells=cells({"ax": 1648, "b1": 500})),
+        dict(label="Ref-B", kind="reference", status="scored", cells=cells({"ax": 1000}))]}
+    frozen = json.dumps(kept)
+    heads = [head("g" * 64, "genesis", 10, True), head("f1" * 32, "r000001", 21, True)]
+    models = [king("king-1", 21, "r000001", "f1" * 32), dict(model_id="g", label="genesis M", kind="genesis", status="scored")]
+
+    def counts(results: list) -> dict:
+        view = bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads, kept)
+        return {row["label"]: {name: cell["rollouts"] for name, cell in row["cells"].items()} for row in view["rows"]}
+
+    # 103 problems with 2 samples each for the king and the genesis head: the reference row has 1648 / 103 = 16
+    cut = [sampled("king-1", "ax", 2, 206), sampled("g", "ax", 2, 206), sampled("king-1", "b1", 1, 500)]
+    assert counts(cut) == {"r000001 f1f1f1f1": {"ax": 2, "b1": 1}, "Ref-A": {"ax": 16, "b1": 1}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 2}}
+    # two results of one benchmark with different problem counts, or a result with no count: no number is made for a kept cell
+    assert counts(cut + [sampled("g", "b1", 1, 100)])["Ref-A"] == {"ax": 16, "b1": None}
+    for no_count in (None, 0, True, "2", 2.0):
+        assert counts([sampled("king-1", "ax", no_count, 206)])["Ref-A"] == {"ax": None, "b1": None}
+    assert counts([sampled("king-1", "ax", 4, 206)])["Ref-A"]["ax"] is None  # 206 / 4 leaves a rest
+    # a model whose run with the count of before is the shown one keeps that count; when its new run is in the file (the newest
+    # of one model and benchmark is last), the cell has the count of the new run
+    before = [sampled("g", "ax", 16, 1648), sampled("king-1", "ax", 2, 206)]
+    assert counts(before) == {"r000001 f1f1f1f1": {"ax": 2}, "Ref-A": {"ax": 16, "b1": None}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 16}}
+    assert counts(before + [sampled("g", "ax", 2, 206)])["Genesis M"] == {"ax": 2}
+    assert counts([])["Ref-A"] == {"ax": None, "b1": None} and json.dumps(kept) == frozen  # the kept table is not changed
+
+
 def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_file(tmp_path):
     """``public/mining.json`` is the snapshot plus the publisher's own keys. ``public/benchmarks.json`` may be absent or bad."""
     snap = snapshot(tmp_path) | {"snapshot_digest": "d" * 64, "contract": {"public_url": "https://x.example", "objects": {}}, "upload": {"k": 1}}
