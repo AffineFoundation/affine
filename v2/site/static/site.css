@@ -17,7 +17,6 @@ nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
 nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
 nav a:hover,nav a[aria-current]{text-decoration-color:currentColor}
 section{min-width:0;padding:28px 0}
-section+section{border-top:1px solid var(--line)}
 .section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
 h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 .reading{font:12px var(--mono);color:var(--muted);text-align:right}
