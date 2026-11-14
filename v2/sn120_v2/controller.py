@@ -558,7 +558,9 @@ class Controller:
             except Exception as exc:  # a box failure of any kind must not stop the controller
                 record = self.state.round
                 running = record is not None and record.decision is None and record.lease(ticket.lease_id).status == "open"
-                if not running:
+                # With the result in the store the box did its work: what failed is the controller's own judging.
+                # The round stays open with its result, and the next start judges it.
+                if not running or self.store.exists(layout.sealed_result(record.round_id, ticket.lease_id)):
                     raise
                 self.fail_lease(ticket.lease_id, f"{type(exc).__name__}: {exc}", clock())
         self.tick(clock())

@@ -195,13 +195,13 @@ Do this after step 4. It uses the one bootstrap of step 4 for five rounds. Each 
 
 Where the minutes come from (estimates, not measured): each `run` hashes the model files (1 minute) and starts the vLLM servers (2 to 4 minutes, 4 to 8 the first time). The first round downloads the model into the box cache (3 to 10 minutes). One training job is 1 to 1.5 minutes, plus a one-time compile on each GPU. A block of tasks lasts as long as its longest reply: about 1 minute at 2048 tokens, 11 to 18 minutes when one reply runs to 65,536. A fold is 8 to 16 minutes.
 
-The four small files also set these values. They are for the smoke test only:
+Six files are small: the four stages `1-tiny` to `4-multi` and the two limit files. They also set these values. (`limit-judged` has its own `z_bar` and `min_scored_tasks`; see its section.) All six are for the smoke test only:
 
 - `z_bar` 0 and `min_scored_tasks` 2: a LoRA wins when it is above null M on at least 2 tasks (z above 0). So a small round can have a winner.
 - `max_infra_attempts` 1000: no seat is put on hold while faults are fixed.
 - `apply_retry_s` 5: after a failed round, the next one starts 5 seconds later, not 5 minutes.
 
-`5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it one of the small files.
+`5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it a file of `smoke params`.
 
 Write the files. Run this again each time the digest block of step 1 ran:
 
@@ -216,10 +216,12 @@ Each stage is the same three commands. Run them for `1-tiny`, then `2-two`, `3-e
 
 ```
 export STAGE=1-tiny
-python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
-python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json &&
+( set -o pipefail; python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt ) &&
 python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
 ```
+
+The block stops at the first command that fails: the `&&` at the end of a line starts the next command only after a pass. So `run` starts only when `copy` printed `N of N files copied`, with the same number two times. If you run the commands one at a time, look for that line before you start `run`: with too few files `run` finds no round to start, prints `idle: N seats wait, phase IDLE` every 30 seconds and does not return. Stop it with Ctrl-C.
 
 For `5-full`, the copy command is `python -m sn120_v2.smoke copy --state-dir $STATE --whole`. Then do the `status` check of step 5 and steps 6 to 9 as written.
 
@@ -231,7 +233,7 @@ What the three commands do:
 
 Expected from `copy`: one line for each file, for example `copied 5F.. 2 of 61 groups, 16 rollouts, longest 1890 tokens, 51234 of 48211002 bytes sha256=... default recipe`. Then `1 of 1 files copied`. Lines that start with `passed over` name a file with no usable group, and why.
 
-If `copy` ends with fewer files than it needs (exit code 1): the real files have too few short groups for this cap. The `passed over` lines say `the nearest group needs <N>`. Write the files again with a cap above that N, then run the three commands again:
+If `copy` ends with fewer files than it needs (exit code 1), read the `passed over` lines. If they say `the token count fails for each of its N groups ...: <error>`, the tokenizer failed, not the cap: do not change `--short-reply`; send the lines. If they say `the nearest group needs <N>`, the real files have too few short groups for this cap. Write the files again with a cap above that N, then run the three commands again:
 
 ```
 python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE --short-reply 4096
@@ -270,8 +272,8 @@ Run `limit-judged` first. It is the main proof: it also shows that the box stops
 
 ```
 export STAGE=limit-judged
-python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
-python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json &&
+( set -o pipefail; python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt ) &&
 python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
 ```
 
@@ -518,8 +520,88 @@ Pass: `round.txt` has one row for each batch with its delta, z, cap-hit rate and
 3. The `queued_files` counts of step 5.
 4. The norm of the default recipe (step 9).
 5. The dry-run line of step 8.
-6. The `eval` lines of `$SN120_WORK_DIR/logs/phases.jsonl` (the wall time of each block of tasks).
+6. Four things for the launch sizes of a round. Send them after the largest stage that you ran, and again from `5-full`:
+   - The whole file `$SN120_WORK_DIR/logs/phases.jsonl`. It has one line for each training, each block of tasks and each fold, with the times and the token counts. In `5-full`, send it as soon as the first 500 tasks end (the first `"phase": "eval"` line of that round). Do not wait for the end of the round.
+   - `$SMOKE/copied.txt`. Step 5 writes this file again, so send the earlier one before step 5.
+   - The output of `grep "Avg generation throughput" $SN120_WORK_DIR/logs/vllm-*.log`. Send these lines only, with the file name in front, not the whole logs. Each vLLM server writes its speed there every 10 seconds.
+   - `$SMOKE/rounds.json`: the record of every round that closed. This command writes it. It only reads, it works while a round runs, and a round that does not exist adds nothing:
+
+     ```
+     for n in $(seq 1 30); do python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack --round $(printf r%06d $n) --json 2>/dev/null; done > $SMOKE/rounds.json
+     ```
+
+     The records hold the time of each phase of a round (lease, training, scoring, promotion, fold) and the hash of each trained file. `phases.jsonl` does not have them.
+
+   Keep the files in `$SN120_WORK_DIR/logs` between the stages.
 7. Any step that did not pass, with its output.
+
+## After a green test: the restart loop of `run`
+
+On mainnet nothing but this loop starts `run` again after a crash or a reboot. So on mainnet do not start `run` alone: start the loop. It is one script, `systemd/sn120-v2-run-loop.sh`; its head lists every rule and setting. The unit `systemd/sn120-v2-run.service` starts the same script.
+
+Before each start of `run` the loop does three things, in this order:
+
+1. It stops every process that the last `run` left (vLLM servers, training jobs) and waits until no GPU holds more than 1,024 MiB. If a GPU stays in use for 120 seconds, the loop stops and says which GPUs.
+2. It ends an open, undecided round with `end-round`: no decision, nobody is charged, no failure is counted, and the seats are first in the next round. If the box result of that round is already in the store, it does not end the round: `run` judges that result.
+3. It starts `run`.
+
+What a restart does to an open round:
+
+| The round when `run` died | `run` alone, started by hand | The loop |
+|---|---|---|
+| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`: **one counted failure** for that seat (3 hold the seat). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
+| After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. The scores are lost. | The same, at once. |
+| The box result is stored, not judged | `run` judges the stored result. Also after the lease end. | The same: the loop skips `end-round`. |
+| Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
+
+So a restart can never charge a seat. Only a restart of `run` by hand in the training time can count a failure. **When you restart `run` by hand with an open, undecided round, use the order of the loop: stop `run`, free the GPUs, `end-round`, start.** The loop does that order by itself.
+
+Which exit codes of `run` the loop does not start again:
+
+| Exit code of `run` | Meaning | The loop |
+|---|---|---|
+| 0 | Finished (`--rounds`, `--max-idle`) | stops, exit code 0 |
+| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again. |
+| 130, 143 | Stopped with SIGINT or SIGTERM | stops, exit code 0 |
+| every other code | A crash (1 is a Python error, 137 is SIGKILL or out of memory) | starts `run` again after 30 seconds |
+
+The loop counts the starts with no finished round between them. A round that `run` closed sets the count back to zero; a round that the loop ended with `end-round` does not. At 5 (`SN120_LOOP_MAX_STARTS`) the loop stops with exit code 3. A crash 30 minutes into every round stops it too. The last lines of `$SN120_WORK_DIR/logs/run.log` then say why, and what to run.
+
+**A box without systemd** (a rented container). In `v2/`, in the shell of step 2:
+
+```
+setsid nohup systemd/sn120-v2-run-loop.sh "$(command -v python)" --state-dir $STATE --stack sn120_v2.assembly:stack > /dev/null 2>&1 < /dev/null &
+tail -f $SN120_WORK_DIR/logs/run.log                  # the output of run, and the lines "run-loop: ..."
+cat $SN120_WORK_DIR/logs/run-loop.status              # one line: what the loop does now, or why it stopped
+kill $(cat $SN120_WORK_DIR/logs/run-loop.pid)         # the stop: run and its servers end, and nothing starts them again
+```
+
+After a reboot of such a box nothing starts the loop, unless the start command of the box holds the first line. If it does not, start the loop by hand.
+
+**A box with systemd.** In `v2/`, in the shell of step 2:
+
+```
+RENV=$SMOKE/run.env
+(umask 077; env | grep '^SN120_' > $RENV)             # the variables of run, mode 600. It holds the store token.
+sed -e "/^[^#]/s|SN120_USER|$(id -un)|" -e "/^[^#]/s|SN120_ENV_FILE|$RENV|" -e "/^[^#]/s|SN120_PYTHON|$(command -v python)|" \
+    -e "/^[^#]/s|SN120_V2_DIR|$PWD|" -e "/^[^#]/s|SN120_STATE_DIR|$STATE|" \
+    systemd/sn120-v2-run.service | sudo tee /etc/systemd/system/sn120-v2-run.service > /dev/null
+grep -v '^#' /etc/systemd/system/sn120-v2-run.service | grep SN120_      # must print nothing: every blank is filled
+systemd-analyze verify /etc/systemd/system/sn120-v2-run.service
+sudo systemctl daemon-reload && sudo systemctl enable --now sn120-v2-run
+systemctl status sn120-v2-run                         # "active (running)"; after the loop gave up: "failed"
+sudo systemctl stop sn120-v2-run                      # the stop. "sudo systemctl disable --now sn120-v2-run" also keeps it down after a reboot.
+```
+
+Stop the loop before `set-params`, before `end-round` by hand, and before a new commit. One box only: stop the loop on an old box (and `disable` its unit) before a new box starts.
+
+One trial on this box, with the smoke state (it costs one round, which ends with no decision). Start the loop, wait for the training of a round (`nvidia-smi` shows used memory), then:
+
+```
+kill -9 $(pgrep -f "sn120_v2 run")
+```
+
+Pass: `run.log` gets the lines `run-loop: stopping what the last run left: pids ...`, `run-loop: end-round: the open round is ended with no decision.` and `run-loop: start 2 of at most 5 ...`; `status` shows `no_decision` as the last entry of `last_outcomes`; the next round runs to its end.
 
 ## After a fix
 
@@ -538,7 +620,9 @@ git fetch origin && git checkout <the commit of the fix>
 uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"    # only when the fix needs the install line
 ```
 
-The fix needs **no** digest block: run the `run` command again. It takes up an open round and finishes it.
+The fix needs **no** digest block: start `run` again. In phase `RUNNING`, end the round first with the `end-round` line below (stop `run`, free the GPUs, `end-round`, start): a start of `run` in the training time of an open round can count a failure for a seat. The restart loop does this order by itself.
+
+A fault in the judging of a round stops `run` with a Python error and keeps the round open, with the box result in the store. After the fix, `run` judges that stored result; no new round is needed. `end-round` leaves such a round alone and exits with 3. Only if the stored result itself is bad, `end-round --discard-result` ends the round with no decision and throws the result away; nobody is charged.
 
 The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
 
@@ -550,7 +634,7 @@ The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu
   ```
 
   Then do the `IDLE` line.
-- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code.
+- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code. The sign that the fold is done: `run` prints `idle: N seats wait, phase IDLE`, or `status` in a second shell shows `"phase": "IDLE"`. `run` prints no round summary for it. With `--max-idle 1` added to the `run` command, `run` returns at that `idle:` line. If valid files wait, `run` does not print the line: it starts the next round at once.
 
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
 

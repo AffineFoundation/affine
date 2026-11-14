@@ -1,0 +1,46 @@
+# SN120 v2 round runner on the GPU box: the restart loop of "python -m sn120_v2 run", started at boot.
+#
+# Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
+#   SN120_USER       the Linux user that owns the state directory and the work directory
+#   SN120_ENV_FILE   a file on the box, mode 600, with every SN120_ variable that "run" needs, one NAME=value on
+#                    each line and no "export": SN120_WORK_DIR, SN120_IMAGE_DIGEST, SN120_R2_ENDPOINT,
+#                    SN120_R2_BUCKET, SN120_R2_ACCESS_KEY_ID, SN120_R2_SECRET_ACCESS_KEY, SN120_R2_PREFIX if one is
+#                    used, SN120_PUBLIC_URL, SN120_LINKS_URL, SN120_V2_CHAIN_NETWORK. Settings of the loop
+#                    (SN120_LOOP_MAX_STARTS, SN120_LOOP_PAUSE_S) can stand there too.
+#   SN120_PYTHON     the python of the virtual environment where sn120_v2 is installed, as a full path
+#   SN120_V2_DIR     the directory v2/ of the checkout on this box, as a full path
+#   SN120_STATE_DIR  the state directory of the controller, as a full path
+#
+# All the rules are in SN120_V2_DIR/systemd/sn120-v2-run-loop.sh: what happens before a start, which exit codes of
+# "run" mean "do not start again", and when the loop gives up. The log is $SN120_WORK_DIR/logs/run.log.
+# One box only: stop and disable this unit on an old box before a new box starts.
+#
+# The store token stays in its file on the box. This file holds no secret.
+
+[Unit]
+Description=SN120 v2 round runner with its restart loop
+Wants=network-online.target
+After=network-online.target
+# This limit is for the loop itself. The loop has its own limit for "run".
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=SN120_USER
+EnvironmentFile=SN120_ENV_FILE
+ExecStart=SN120_V2_DIR/systemd/sn120-v2-run-loop.sh SN120_PYTHON --state-dir SN120_STATE_DIR --stack sn120_v2.assembly:stack
+# The loop restarts "run". systemd restarts the loop only if the loop itself dies. The loop's own stops stay
+# stopped: 0 finished or stopped by the operator, 2 refused, 3 gave up, 4 a GPU stays in use, 64 wrong call.
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2 3 4 64
+# A stop sends SIGTERM to the loop only. The loop stops "run" and what it left. After TimeoutStopSec, systemd
+# kills every process of the unit, so no model server and no training job outlives a stop.
+KillMode=mixed
+TimeoutStopSec=180
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

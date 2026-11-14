@@ -184,6 +184,35 @@ def test_a_small_copy_is_refused_when_its_short_groups_fail_a_share_rule(stores)
     assert copied == [] and passed == ["passed over hkG: a copy of its short groups fails the check: answer_only"] and dst.list("") == []
 
 
+def test_a_tokenizer_that_fails_on_every_group_is_named_and_not_blamed_on_the_reply_cap(stores, monkeypatch, capsys):
+    src, dst, admission, _ = stores
+
+    def broken(text: str) -> int:
+        raise OSError("no file tokenizer.json\nin the base  directory " + "x" * 400)
+
+    data, note = smoke.cut_batch(src.get(layout.miner_object("hkA")), 2, 60, broken, lambda raw: "")
+    assert data is None and note.startswith("the token count fails for each of its 5 groups with two different rewards: OSError: no file tokenizer.json in the base directory x")
+    assert len(note) < 300 and "\n" not in note, "one line, and a long error is cut"
+    # One group that fails in the tokenizer is only left out: the file is still used, as before.
+    one_bad = lambda text: 1 / 0 if "r0 \\boxed{6}" in text else len(text.split())
+    data, note = smoke.cut_batch(src.get(layout.miner_object("hkA")), 2, 60, one_bad, lambda raw: "")
+    assert data is not None and "2 of 6 groups" in note
+    # The command: the line names the error, and the advice for a low cap is not printed.
+    state = load(OLD_STATE / JOURNAL_FILE)
+    first = min(state.queue.values(), key=lambda seat: (seat.reg.registration_block, seat.reg.uid)).reg.hotkey
+    src.put(layout.miner_object(first), miner_file(first, [group(30)]))
+    admission.tokens.output_tokens = broken
+    monkeypatch.setattr(smoke, "read_state", lambda args, command: (state, admission.params, types.SimpleNamespace(store=dst, admission=admission)))
+    monkeypatch.setattr(smoke, "R2Store", lambda **settings: src)
+    for name in ("V1_R2_ENDPOINT", "V1_R2_BUCKET", "V1_R2_ACCESS_KEY_ID", "V1_R2_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("SN120_R2_PREFIX", "smoke-1")
+    assert smoke.main(["copy", "--state-dir", "unused", "--count", "1"]) == 1
+    err = capsys.readouterr().err
+    assert f"passed over {first}: the token count fails for each of its 1 groups with two different rewards: OSError: no file tokenizer.json" in err
+    assert "0 of 1 files copied" in err and "the tokenizer failed" in err and "write the parameter files" not in err and dst.list("") == []
+
+
 def test_the_copy_command_serves_the_next_round_and_only_a_smoke_prefix(stores, monkeypatch, capsys):
     src, dst, admission, _ = stores
     state = load(OLD_STATE / JOURNAL_FILE)

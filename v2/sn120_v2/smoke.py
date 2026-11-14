@@ -51,6 +51,8 @@ SHORT_REPLY = 2048
 # For the two rounds at the time limit: 2-two with a test that can never be scored inside the limit.
 _AT_LIMIT = _SMALL | {"batch_cap": 2, "n_gpus": 2, "n_tasks": 2000, "max_output_tokens": SHORT_REPLY}
 MAX_FAILED_CHECKS = 8  # a small copy gives up on a file after this many groups that fail the admission check
+TOKEN_FAULT = "the token count fails for each"  # the start of the reason when the tokenizer itself fails, not the cap
+FAULT_CHARS = 200  # the most characters of a tokenizer error in a line (the error can quote a miner's text)
 # Overrides of the launch values, one set per round of the ramp, in order. The two digests are added to each.
 RAMP: dict[str, dict[str, Any]] = {
     "1-tiny": _SMALL | {"batch_cap": 1, "n_gpus": 1, "n_tasks": 1, "eval_chunk_tasks": 1, "max_output_tokens": SHORT_REPLY},
@@ -105,7 +107,9 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
     has at most ``cap`` tokens by ``count``, and the copy with it still
     passes ``check`` (``check`` returns "" or the code of the failed rule).
     The ``train`` object is left out, so the copy trains with the default
-    recipe. Returns the bytes and a note, or None and the reason.
+    recipe. Returns the bytes and a note, or None and the reason. When
+    ``count`` fails for every group, the reason starts with ``TOKEN_FAULT``
+    and holds the error: the cause is then the tokenizer, not the cap.
     """
     try:
         value = json.loads(raw)
@@ -115,12 +119,15 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
     if not source:
         return None, "no group has two different rewards"
 
+    faults: list[str] = []
+
     def longest(group: Any) -> int | None:
         try:
             return max(count(row["output"]) for row in group["rollouts"])
         except (KeyboardInterrupt, SystemExit):
             raise
-        except BaseException:  # a text that makes the tokenizer fail (a Rust panic is a BaseException): never use that group
+        except BaseException as exc:  # a text that makes the tokenizer fail (a Rust panic is a BaseException): never use that group
+            faults.append(" ".join(f"{type(exc).__name__}: {exc}".split())[:FAULT_CHARS])
             return None
 
     # Tokens are counted for the groups with the shortest text first; a group far above the cap is never counted.
@@ -145,6 +152,8 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
         kept, best, size = kept + [group], data, max(size, tokens)
         if len(kept) == groups:
             break
+    if best is None and not rule:  # no group came as far as the cap or the check: each one failed in the tokenizer
+        return None, f"{TOKEN_FAULT} of its {len(faults)} groups with two different rewards: {faults[0]}"
     if best is None:
         return None, f"a copy of its short groups fails the check: {rule}"
     rollouts = sum(len(group["rollouts"]) for group in kept)
@@ -226,7 +235,9 @@ def cmd_copy(args: argparse.Namespace) -> int:
     print("\n".join(copied), flush=True)
     print("\n".join(passed), file=sys.stderr)
     print(f"{len(copied)} of {count} files copied, for the first waiting seats in queue order", file=sys.stderr)
-    if len(copied) < count and not args.whole and params.max_output_tokens < Params().max_output_tokens:
+    if any(TOKEN_FAULT in line for line in passed):
+        print("the tokenizer failed, so this is not a matter of the reply cap: a higher --short-reply does not help. Send the lines above.", file=sys.stderr)
+    elif len(copied) < count and not args.whole and params.max_output_tokens < Params().max_output_tokens:
         print(f"too few files have a short group within {params.max_output_tokens} tokens: write the parameter files with a higher --short-reply", file=sys.stderr)
     return 0 if len(copied) == count else 1
 
