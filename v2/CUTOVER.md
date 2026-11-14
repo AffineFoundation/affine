@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `68b8abc5` is the last of the eight, and the commit that the coordinator named for the mainnet start on 13 Nov 2026. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `68b8abc5` is the last of the eight, and the commit that the coordinator named for the mainnet start when this text was written. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 
 ## Hosts
 
