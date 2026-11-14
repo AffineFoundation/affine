@@ -11,18 +11,24 @@ Three checks on the rendered text, and one on a published pair:
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import difflib
 import json
 import re
+import shlex
 from pathlib import Path
 
 import pytest
 
-from sn120_v2 import admission, irt, layout, public, publisher, queue, sim
+import sn120_v2
+from sn120_v2 import admission, irt, judging, layout, public, publisher, queue, sampling, sim
 from sn120_v2.errors import ConfigError
+from sn120_v2.gpu.evaluator import ServeSettings, server_argv
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.params import Params, Recipe
+
+PACKAGE = Path(sn120_v2.__file__).parent
 
 SITE, LINKS = "https://example.org", "https://example.org/links"
 NOW = 1_800_000_000
@@ -34,18 +40,13 @@ HEADING = re.compile(r"^## (\d+)\. ", re.MULTILINE)
 
 # A parameter that the sentences of llms.txt do not state: only the table of section 11 has its value.
 ONLY_IN_THE_TABLE = {
-    "max_loras_per_box": "a limit of the box, above batch_cap; the text states batch_cap",
-    "eval_time_budget_s": "the wait for one answer; section 11 has a note on it",
     "calibration_tol": "a rule for a round on more than one box; a round runs on one box",
     "apply_max_attempts": "how often the validator tries to publish a winner before the round is abandoned",
     "weights_rate_limit_blocks": "a limit of the weights writer",
     "budget_usd_per_hour": "the operator's budget",
 }
 # A recipe field that only the recipe table of section 2 states (with its note), and no sentence.
-ONLY_IN_THE_RECIPE_TABLE = {
-    "method", "steps", "max_grad_norm", "rank", "alpha", "dropout", "target_modules", "ppo_clip", "dual_clip", "kl",
-    "support_top_k", "support_top_p", "derail_window", "derail_threshold", "derail_tail", "image_digests",
-}  # fmt: skip
+ONLY_IN_THE_RECIPE_TABLE = {"method", "dropout", "kl", "image_digests"}
 
 
 def made_world(tmp_path: Path) -> sim.SimWorld:
@@ -141,6 +142,7 @@ def test_each_param_alone_moves_the_text(tmp_path):
 def fixed_phrases(params: Params, text: str) -> list[str]:
     """Each phrase of the text with a number that no parameter gives. The digits of these phrases may stay."""
     upload = publisher.contract(params, SITE, LINKS)["upload"]
+    serve = ServeSettings()
     return [
         # Built from the constant of the code that gives the number.
         irt.MODEL,
@@ -153,6 +155,16 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
+        f"the first {sampling.SEED_BITS} bits of sha256",
+        publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
+        publisher.GRADER_VERSION,  # the same, with the grader
+        f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
+        f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
+        f"not usable: at most {serve.retries + 1} tries in all",
+        f"graded again: at most {serve.grade_tries} grades in all",
+        f"--max-num-seqs {serve.clients_per_server}",
+        f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
+        f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params
         # The state of this world, not a parameter.
         "Seats that wait: 0.",
@@ -180,9 +192,22 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "its advantage is not 0 and it has at least 1 output token",
         "counts its tokens + 1 (the end-of-turn token)",
         "A rollout with advantage 0 counts 0.",
-        "the first 63 bits of sha256",
         "sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2))",
         "on that UID: 1 / (the number of such kings)",
+        "from -1/sqrt(inputs) to +1/sqrt(inputs)",
+        "clip(ratio, 1 - `ppo_clip`, 1 + `ppo_clip`)",
+        "With A below 0 the token loss is at most",
+        "also a row with advantage 0.",
+        "1.0 for a pass and 0.0 for every other result",
+        "j counts from 0.",
+        "(i counts from 0)",
+        "an HTTP status of 500 or above",
+        "an HTTP status below 500",
+        "When se is 0, z is 0.",
+        "spent(t_(k-1))",
+        "ln(1 + (e - 1) * t), and spent = 0 before the first look",
+        "the normal quantile of 1 - a_k",
+        "or when its se is 0.",
     ]  # fmt: skip
 
 
@@ -217,6 +242,27 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype"}, "all_moved must move every number of the params"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
+
+
+def assigned(path: Path, name: str) -> object:
+    """The value that a module assigns to ``name`` at its top level, read from the source: the module is not imported."""
+    (value,) = [
+        ast.literal_eval(node.value)
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+    ]
+    return value
+
+
+def test_the_typed_constants_of_the_text_are_those_of_the_code():
+    """The publisher cannot import the training job (torch) or the grader (sympy). It types two of their texts."""
+    assert publisher.OPTIMIZER == assigned(PACKAGE / "gpu" / "train_job.py", "OPTIMIZER")
+    assert publisher.GRADER_VERSION == assigned(PACKAGE / "envs" / "math_grader.py", "GRADER_VERSION")
+    # The text states the tries of the round runner and the settings of the servers as the code has them by default.
+    # The stack of the box must not set others.
+    stack = (PACKAGE / "assembly.py").read_text()
+    assert "LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
+    assert "VllmEvaluator(store, box, pool, GradePool())" in stack
 
 
 def played(tmp_path: Path) -> sim.SimWorld:
@@ -268,7 +314,7 @@ def test_the_check_of_a_published_pair_fails_when_llms_txt_and_the_params_diverg
     # One number of the text was changed by hand, in the table and in a sentence.
     edited = llms.decode().replace(f"| `kings_window` | {world.params.kings_window} |", "| `kings_window` | 99 |")
     assert publisher.check_pair(mining, edited.encode(), whole_text=False) == [f"`kings_window`: llms.txt states 99, mining.json has {world.params.kings_window}"]
-    edited = llms.decode().replace("One final answer may be in at most", "One final answer may be in at most 5 rollouts or")
+    edited = llms.decode().replace("answer may be in at most", "answer may be in at most 5 rollouts or")
     assert publisher.check_pair(mining, edited.encode(), whole_text=False) == [], "a sentence is covered only by the whole text"
     (problem,) = publisher.check_pair(mining, edited.encode())
     assert problem.startswith("llms.txt is not the text that this code renders from mining.json: 1 lines differ. The first, at line ") and "in at most 5 rollouts or" in problem

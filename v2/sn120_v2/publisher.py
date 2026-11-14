@@ -20,9 +20,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import difflib
+import inspect
 import json
 import math
 import re
+import shlex
 import sys
 import textwrap
 import time
@@ -33,24 +35,36 @@ from typing import Any, Iterable, Mapping, Sequence
 from . import layout
 from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
-from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
+from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, Task
 from .errors import ConfigError, ContractError, InfraError, V2Error
+from .gpu.batch import END_OF_TURN
+from .gpu.evaluator import ServeSettings, chat_body, server_argv
+from .gpu.trainer import LORA_FILES
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .journal import JOURNAL_FILE
-from .judging import drop_margin
+from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
 from .queue import SECONDS_PER_DAY
+from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
+from .worker import LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
 # The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
 # is not a store key, and the publisher never writes it: it holds signed download links for the weight files of
 # the current head. The pull is a command outside this package, so the path is typed here; a test compares the two.
 READ_LINKS = "public/read_links.json"
+LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
+# Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
+# and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
+OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"  # gpu/train_job.py
+GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
+# How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
+BOX_TRIES = inspect.signature(LocalRunner.__init__).parameters["attempts"].default
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
@@ -246,6 +260,11 @@ def _recipe_lines(params: Params) -> list[str]:
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
+    pinned = [
+        "- `code_digest` is the id of the file set `sn120_v2/gpu/*.py` (section 9). The box refuses to train or score",
+        "  when its own files have another id. `python -m sn120_v2.gpu.plan` prints the `code_digest` of your copy of",
+        "  the code.",
+    ] if recipe.code_digest else []
     return [
         f"## 2. The training recipe (recipe_id `{recipe_id}`)",
         "",
@@ -257,6 +276,7 @@ def _recipe_lines(params: Params) -> list[str]:
         *table(("field", "value", "meaning"), rows),
         "",
         f"- Training code: `sn120_v2/gpu/` in {REPO}/tree/v2/v2 (sha256 `{show(recipe.code_digest)}`).",
+        *pinned,
         "- Each prompt is one user message, rendered with the chat template of the head and the generation prompt.",
         "",
         "### What you may set",
@@ -293,6 +313,92 @@ def _recipe_lines(params: Params) -> list[str]:
         f"- Train caps: a rollout above `train_max_output_tokens` ({recipe.train_max_output_tokens}) or",
         f"  `train_max_context_tokens` ({recipe.train_max_context_tokens}, prompt + output) is truncated, not rejected. The",
         "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
+        "",
+        *_training_lines(params),
+    ]
+
+
+def _training_lines(params: Params) -> list[str]:
+    """The training of one LoRA, step by step.
+
+    Every word here follows ``gpu/trainer.py`` (the checks around the job), ``gpu/train_job.py`` (the job) and
+    ``gpu/batch.py`` (rows, advantages, token caps). When one of them changes, change this function.
+    """
+    recipe = params.recipe
+    return [
+        "### The training procedure",
+        "",
+        "This is everything that the trainer does with a file, in the order in which it does it. The code is in three",
+        "files: `sn120_v2/gpu/trainer.py` (the checks around the job), `sn120_v2/gpu/train_job.py` (the job on the GPUs)",
+        "and `sn120_v2/gpu/batch.py` (rows, advantages and token caps).",
+        "",
+        f"- Model: the base files of head M (`base_hash`, section 1), loaded as `{params.dtype}` in the model class that",
+        "  their `config.json` names. The model is in evaluation mode and all its weights are frozen. The box trains",
+        "  and scores only a head with no stacked LoRA: it refuses a head whose LoRAs are not folded.",
+        "- Recipe: the values of the table above, with your `train` values in their place. The trainer runs only the",
+        "  method `grpo-lora`, with no dropout and with the KL term off.",
+        f'- Seed: the first {SEED_BITS} bits of sha256("<round_seed>|train|<batch_sha256>"), as a whole number. The train',
+        "  report states it.",
+        f"- LoRA layers: each linear layer whose name is one of `target_modules` ({show(recipe.target_modules)}) gets two",
+        "  matrices: A (rank x inputs) and B (outputs x rank). The layer then gives layer(x) + (alpha / rank) * B(A(x)),",
+        f"  with rank {recipe.rank} and alpha {show(recipe.alpha)}. A starts with values drawn uniformly from -1/sqrt(inputs) to",
+        "  +1/sqrt(inputs), from a `torch.Generator` on the CPU with the seed above, layer by layer in the order of",
+        "  `named_modules()`. B starts at zero, so the model is head M before the first update. A and B are float32,",
+        "  and only A and B train.",
+        "- Rows: one row for each rollout of the groups that the file check keeps (section 5), in file order. The",
+        "  advantage of a row is its reward minus the mean reward of its group (`group_size`, above). The trainer does",
+        "  nothing else to it: no division by a standard deviation and no clip.",
+        '- Tokens of a row. Prompt: `tokenizer.apply_chat_template([{"role": "user", "content": prompt}],',
+        "  add_generation_prompt=True, tokenize=False)`, then `tokenizer.encode(text, add_special_tokens=False)`. The",
+        "  template gets no other argument. Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer",
+        "  is the one of the base files.",
+        "- Room: room = min(`train_max_output_tokens`, `train_max_context_tokens` - prompt tokens). An output shorter",
+        f"  than the room gets the end-of-turn token `{END_OF_TURN}` after its last token. An output as long as the room or",
+        "  longer is cut to the room and gets no end token: the trainer takes it as a rollout that did not end (a capped",
+        "  row). A row with no output token or with no room is dropped.",
+        f"- Rows that train: the rows whose advantage is not zero. With no such row the batch is not trained: `{SKIP}`",
+        "  (section 4).",
+        "- The score of a token. The trainer takes the logits of the model at each output token, as float32. The",
+        f"  support at a token: take the {recipe.support_top_k} tokens with the highest logits (`support_top_k`), divide their logits",
+        "  by T (`sample_temperature`) and take the softmax over them. From the most likely token down, a token is in",
+        f"  the support while the summed probability of the tokens before it is below {show(recipe.support_top_p)} (`support_top_p`). log q",
+        "  of the token of your rollout = its logit / T - log(sum of exp(logit / T) over the support).",
+        "- First pass, before any update: the trainer stores log q of every output token under head M. This is the old",
+        "  policy. The mask of a row holds its tokens that are in the support of head M. A token outside the mask",
+        "  never trains.",
+        "- Derail rule, only for a capped row with a negative advantage. Take the plain log-probability of each output",
+        "  token under head M (all logits, no temperature). The derail point is the first token at which the mean of",
+        f"  the last {recipe.derail_window} such values (`derail_window`), that token included, is below {show(recipe.derail_threshold)} (`derail_threshold`).",
+        f"  The derail point and the {recipe.derail_tail} tokens after it (`derail_tail`) stay in the mask. Each later token leaves",
+        "  the mask. A row with fewer tokens than the window has no derail point.",
+        "- Loss, at each step, for a token of a row with advantage A: ratio = exp(log q now - log q of the first",
+        "  pass). \"Now\" is the model with its LoRA at that step, with the support of that model. Token loss =",
+        f"  max(-A * ratio, -A * clip(ratio, 1 - `ppo_clip`, 1 + `ppo_clip`)), with `ppo_clip` {show(recipe.ppo_clip)}. With A below 0",
+        f"  the token loss is at most -A * `dual_clip`, with `dual_clip` {show(recipe.dual_clip)}. A token counts when it is in the mask of",
+        "  its row and in the support of the model now. Row loss = the sum of its token losses / the number of tokens",
+        "  in its mask. A row with an empty mask gives no loss. Step loss = the sum of the row losses / the number of",
+        "  rows. That number counts each row that was not dropped, also a row with advantage 0.",
+        f"- Steps: {recipe.steps} (`steps`). One step is one pass over all rows that train and then one update. The gradient of the",
+        f"  step loss, over all A and B together, is clipped to the norm {show(recipe.max_grad_norm)} (`max_grad_norm`). Then comes one update",
+        f"  with the learning rate {show(recipe.lora_lr)} (`lora_lr`). The optimizer: {OPTIMIZER}. The learning rate has no",
+        f"  schedule. A gradient that is not finite stops the training: `{SKIP}`.",
+        "- GPUs: the job has the GPUs of its slot (section 3). It puts one copy of the model on each GPU, but not more",
+        "  copies than rows that train. The rows that train go to the copies in turn, the longest row first. The",
+        "  gradients of the copies are added before the clip. The job never trains on a CPU: with no GPU it stops.",
+        "- After the last step: the cap `global_norm_cap` (above), then a check that each weight is finite. If one is",
+        f"  not: `{SKIP}`.",
+        f"- The LoRA is these files: {show([f'`{name}`' for name in LORA_FILES])}. The weight file holds A and B of each layer as",
+        "  float32, with the names `base_model.model.<layer path>.lora_A.weight` and",
+        "  `base_model.model.<layer path>.lora_B.weight`. The config file has the PEFT layout; its",
+        "  `base_model_name_or_path` is the `base_hash`. The train report holds the optimizer, the seed, the recipe",
+        "  values that were used, the loss and the gradient norm of each step, the count of the mask tokens of the rows",
+        "  that trained, the count of the rows, of the truncated rows and of the dropped rows, `step_norm` and",
+        "  `step_norm_before_cap`. `lora_hash` is the id of this file set (section 9).",
+        f"- A failure of the box in a training (not of the batch) is tried again: at most {BOX_TRIES} tries in all, inside the",
+        f"  training time. Then the entry is `{NO_DECISION}` (section 4).",
+        "- What a training of your own repeats: the seed gives the same A for the same file and round seed. The trained",
+        "  B can differ between two machines, and between two runs on one machine; no run has measured by how much.",
+        "  The tests of the code run this training on a CPU, on a very small model. The box runs it on GPUs.",
     ]
 
 
@@ -374,6 +480,13 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  you store then shows the old verdict until the round ends. The validator never publishes batch content or",
         "  `train` values. To see the rule that a file breaks, run the `check` command of section 5: it prints the",
         "  rule code and the reason.",
+        "- A new process of the validator has no verdict until its first check of the files. A publication before that",
+        "  check has `queue.files_checked_at` null and `file_valid` no for every waiting seat, also for a good file.",
+        "  This can be so when a process starts while the chain gives no answer. It can also be so when a process",
+        f"  starts, or closes a round, in the {duration(params.apply_retry_s)} after a round with no result: in that time the validator does",
+        "  not read the files. No seat and no place in the queue changes by it: the validator picks the entries of a",
+        "  round from a new check of the files, never from the published value. So do not replace a good file because",
+        "  of it: wait for the next check.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
@@ -473,8 +586,9 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- UTF-8 JSON, at most {params.max_batch_bytes} bytes. Top keys: `version`, `hotkey`, `groups`, and the optional",
         f"  `train`. `version` is one of {show(FORMATS)}. `hotkey` must be the owner of the object.",
-        "- `groups`: a non-empty list of {prompt, rollouts}, with no other key. Each prompt is non-empty text and",
-        "  differs from every other prompt. Each prompt has at least 1 rollout: {output, reward}, with no other key.",
+        "- `groups`: a non-empty list of {prompt, rollouts}, with no other key. Each prompt is text with more than white",
+        "  space in it, and differs from every other prompt. Each prompt has at least 1 rollout: {output, reward}, with",
+        "  no other key. `output` is text.",
         f"- {show(CONTROL_TOKENS)} may not appear in a prompt or an output.",
         f"- Caps: {params.max_prompts} prompts and {params.max_rollouts} rollouts. Whole groups are kept in file order while",
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
@@ -484,16 +598,19 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
         f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid: the trainer",
         "  truncates it (section 2).",
-        "- Reasoning: the reasoning of an output is the text before its first `\\boxed`. A rollout with fewer than",
+        "- Reasoning: the reasoning of an output is the text before its first `\\boxed`, or the whole output when it",
+        "  has none. A rollout with fewer than",
         f"  {params.min_reasoning_tokens} reasoning tokens is answer-only. At most {show(params.max_answer_only_frac)} of the",
         f"  rollouts may be answer-only. At least {show(params.reasoning_token_share)} of all output tokens must be reasoning.",
-        "- Repeats: the final answer is the content of the last `\\boxed{}`. One final answer may be in at most",
+        "- Repeats: the final answer is the content of the last `\\boxed{}`, with all white space removed. One final",
+        "  answer may be in at most",
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
         "- `reward`: a finite number. The rewards of one prompt must be small enough to take their mean. A reward must",
         "  equal the grade that the official grader gives to (prompt, output). The",
         f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
-        f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule).",
+        f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule). A prompt that",
+        "  is not a task of the pool has no official grade: its rewards are not compared with anything.",
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
         f"- `{NO_SIGNAL}`: your file must train something. A rollout trains when its advantage is not 0 and it has at",
@@ -503,7 +620,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
         f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
         f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
-        "  (the end-of-turn token). A longer output counts the room. A rollout with advantage 0 counts 0.",
+        "  (the end-of-turn token). An output as long as the room or longer counts the room. A rollout with advantage",
+        "  0 counts 0.",
         *cost_cap,
         f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
         f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
@@ -530,9 +648,65 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "is skipped as with any invalid file (section 4). The validator does not publish the code or the count: you",
         "see only `file_valid`. Every other code is final for those bytes: upload a new file.",
         "",
+        *_rollout_lines(params),
+        "",
         "### How to upload",
         "",
         *_upload_lines(doc["contract"]),
+    ]
+
+
+def _rollout_lines(params: Params) -> list[str]:
+    """A guide: how a miner makes rollouts that the trainer can use.
+
+    It states no rule of its own. Each line follows the file check (``admission.py``), the trainer (``gpu/``),
+    the grader call (``envs/math_grader.grade``) or the scoring request (``gpu/evaluator.chat_body``).
+    """
+    recipe = params.recipe
+    pool = [
+        "  For a task of the pool, `prompt` is the problem text, or the instruction of section 6, one blank line and the",
+        "  problem text. Both are the same task for the grader, and two different prompts for the model.",
+    ] if params.env == ENV_ID else []
+    return [
+        "### How to make rollouts",
+        "",
+        "A rollout is one sampled answer of a model to a prompt, with its reward. This is one way to make a file that",
+        "is valid and that trains. Each step says what the code of the validator does with your choice.",
+        "",
+        "- Model: sample from head M. Get its files as section 1 says. The trainer scores your tokens under head M,",
+        "  and a token outside the support of head M does not train (section 2).",
+        "- Prompt: the trainer reads `prompt` as one user message (section 2).",
+        *pool,
+        "  For your sampler, render the prompt as the trainer does: one user message, the chat template of the head,",
+        "  the generation prompt, and no other argument to the template.",
+        "- Scoring renders a task in another way than training (section 6): the instruction is the system message, the",
+        "  problem is the user message, and the template gets `enable_thinking` true. So the model does not read the",
+        "  same tokens before its answer in training and in scoring.",
+        f"- Sampling: use the temperature that you state in `train.sample_temperature` (default {show(recipe.sample_temperature)}), top_k {recipe.support_top_k}",
+        f"  and top_p {show(recipe.support_top_p)}. These are the settings of the support (section 2). The sampler must work as the",
+        "  support does: top_k first, then top_p over the tokens that are left. Then each token that you",
+        "  sample is in the support of head M on your machine. On the box the logits come from other hardware, so a",
+        "  token at the edge of the support can be outside it there; no run has measured how often. No rule checks",
+        "  where an output comes from: text of another model or of other settings is valid, and only its tokens in the",
+        "  support of head M train.",
+        "- Output: `output` is the text that the model wrote after the generation prompt: its tokens decoded with the",
+        "  special tokens kept (`skip_special_tokens` false), so that `<think>` and `</think>` are in the text, and",
+        f"  without the final `{END_OF_TURN}`. The trainer encodes this text again and adds the end-of-turn token itself",
+        "  (section 2). It trains on the tokens of that encoding, which are the tokens that you sampled only if the text",
+        "  encodes back to them.",
+        f"- Stop: let the model end by itself, or stop it at {params.max_output_tokens} tokens (`max_output_tokens`). An output of",
+        "  exactly that many tokens counts as stopped at the cap, and a longer output is invalid.",
+        "- Reward of a pool task: the official grade, 1.0 for a pass and 0.0 for every other result. Take it from the",
+        "  grader itself, `sn120_v2.envs.math_grader.grade(task, output, capped).reward`, with `capped` true for an",
+        "  output that stopped at the cap. Or let the `check` command compare your rewards (`--tokenizer` and `--grade`,",
+        "  above). The grader reads the same `output` text.",
+        "- Signal: give a prompt two rollouts or more, with different rewards. The advantage is the reward minus the",
+        "  mean reward of the group, so a group in which all rewards are equal trains nothing.",
+        "- Length: the trainer reads the room of section 2 and no more. It cuts a longer output there and takes it as a",
+        "  rollout that did not end; with a negative advantage the derail rule then applies to it. The cost rule above",
+        "  counts the same tokens.",
+        "- Before each upload, run the `check` command with `--tokenizer` and `--grade`. It runs the check of the",
+        "  validator. It does not train.",
     ]
 
 
@@ -591,6 +765,129 @@ def _pool_lines(params: Params) -> list[str]:
     ]
 
 
+def _server_command(params: Params) -> list[str]:
+    """The command of one vLLM server (``gpu.evaluator.server_argv``), one option on a line.
+
+    The address of the server is left out: it is local to the box and changes no score.
+    """
+    argv = server_argv("<directory of the base files>", 0, params, ServeSettings().clients_per_server)
+    start = argv.index("-m")
+    options: list[list[str]] = []
+    for word in argv[start + 2 :]:
+        if word.startswith("--"):
+            options.append([word])
+        else:
+            options[-1].append(shlex.quote(word))
+    lines = [f"python -m {argv[start + 1]}", *("    " + " ".join(option) for option in options if option[0] not in LOCAL_OPTIONS)]
+    return [line + " \\" for line in lines[:-1]] + lines[-1:]
+
+
+def _scoring_lines(params: Params) -> list[str]:
+    """The scoring of a round, step by step.
+
+    Every word here follows ``worker.LocalRunner._evaluate`` (chunks, looks, the clock), ``gpu/evaluator.py``
+    (servers, requests, outcome codes), the head of ``envs/math_grader.py`` (the steps of the grader) and
+    ``judging.py`` (the estimator and the rules). When one of them changes, change this function.
+    """
+    # The messages of a task as the pool makes them. The instruction stands in section 6 as it is sent; JSON would double its backslashes.
+    named = {MANDATE: "<the instruction above>"}
+    messages = [message | {"content": named.get(message["content"], message["content"])} for message in Task("", "", "<the problem text>", "").messages()]
+    body = chat_body(f"<{NULL_MODEL} or the lora_hash>", messages, 0, params) | {"seed": "<the seed of the rollout>"}
+    grader = [
+        f"- Grader: `sn120_v2.envs.math_grader.grade(task, output, capped)`, version `{GRADER_VERSION}`. `output` is the text of",
+        "  the reply, with the special tokens kept. The strict format is: one `<think>...</think>` block first, then",
+        "  exactly one balanced, non-empty `\\boxed{}` with nothing after it. math-verify compares the boxed answer with",
+        "  the reference answer of the task. When the answer is not yet right, the lenient rules try again: P1 and P2",
+        "  find a box that the strict format refused, and E1 to E7 accept other common ways to write the same answer.",
+        "  That file states each rule and the version of each package that the grader needs; with another version",
+        f"  the grader refuses to run. The grade is `{PASS}` or `{FAIL}`, or `{ERROR}` when the grader itself cannot decide: it cannot",
+        f"  parse the reference, math-verify raises an error, or a time limit of the grader passes. Such an `{ERROR}` is",
+        "  final: the text is not graded again. The grader does not know which model wrote a text.",
+    ] if params.env == ENV_ID else []
+    return [
+        "### The scoring procedure",
+        "",
+        "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
+        "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
+        "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
+        "rules).",
+        "",
+        f"- Servers: when all training is done, the box starts one vLLM server on each of its {params.n_gpus} GPUs. Each server",
+        f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
+        "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
+        "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
+        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. The command of one server,",
+        "  without its local address:",
+        "",
+        "```",
+        *_server_command(params),
+        "```",
+        "",
+        "- Request: one POST to `/v1/chat/completions` for each model, each sample and each task of a chunk. The body",
+        "  is the same for null M and for a LoRA, but for `model`:",
+        "",
+        "```json",
+        json.dumps(body, indent=1, ensure_ascii=False),
+        "```",
+        "",
+        f"- `model` is `{NULL_MODEL}` for null M and the `lora_hash` for a LoRA. The seed is the seed of the pairing rule above.",
+        f"  Task i of a chunk (i counts from 0) goes to server i mod {params.n_gpus}, for every model. So a LoRA and null M differ",
+        "  by the adapter alone.",
+        "- The box sends all requests of a chunk at once. A server runs at most `--max-num-seqs` of them at a time; the",
+        f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
+        "  or the time that is left to the stop time of the round, when that is less.",
+        f"- Reply: with `finish_reason` `stop` the model ended by itself. A final `{END_OF_TURN}` is removed from the text,",
+        f"  and the grader grades the text. With `finish_reason` `length` the model hit the token cap: the outcome is `{CAP}`",
+        "  and the text is never graded. A reply of any other form is not usable.",
+        "- A request is sent again after a failure of the connection, a time limit, an HTTP status of 500 or above, or",
+        f"  a reply that is not usable: at most {ServeSettings().retries + 1} tries in all. After an HTTP status below 500 it is not sent again. A",
+        f"  request with no usable reply has the outcome `{ERROR}`. One exception: when the stop time passed during the chunk",
+        "  and a request has no reply, the whole chunk is not used (section 3).",
+        *grader,
+        "- A grade that is lost because a worker process of the grader died is not an outcome. The reply is graded again:",
+        f"  at most {ServeSettings().grade_tries} grades in all. When a worker still dies, the chunk failed.",
+        f"- Chunks: the tasks run in the order of the draw, in chunks of {params.eval_chunk_tasks} tasks (`eval_chunk_tasks`). A chunk also",
+        "  ends where a look ends. Null M and each open LoRA answer every task of a chunk. The box reads the clock",
+        "  before each chunk (section 3).",
+        "- A failure of the box in a chunk (a server died, a LoRA did not load, the grader failed) is not an outcome.",
+        f"  The chunk runs again: at most {BOX_TRIES} runs in all. When each of them fails before the stop time, the box stops with an",
+        "  error and the round has no result (section 4). A run that fails after the stop time ends the scoring, and",
+        "  the chunk is not used.",
+        "- Outcome strings: each model has one string for each sample. A string has one character for each task, in",
+        f"  the order of the draw: `{PASS}`, `{FAIL}`, `{CAP}`, `{ERROR}`, or `{NOT_RUN}` for a task that was not run.",
+        "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
+        f"  The pass rate of a model on a task is the share of its samples with `{PASS}`. The sums of the estimator above run",
+        "  over these n tasks, with the weights w_t of the draw. When se is 0, z is 0.",
+        "- Drop rule, in full: after each look but the last, the box computes z of each open LoRA on the tasks so far.",
+        "  Look k has scored the share t_k of the draw. a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = `drop_alpha` *",
+        "  ln(1 + (e - 1) * t), and spent = 0 before the first look. c_k is the normal quantile of 1 - a_k. The LoRA is",
+        "  dropped when (z + c_k) / sqrt(t_k) <= `z_bar`. No LoRA is dropped at a look with fewer than",
+        f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
+        "  open, the scoring ends.",
+        "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
+        "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
+        "  was dropped at a look does not. n is at least `min_scored_tasks`. z > `z_bar`. (its count of",
+        f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
+        "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
+        "  decimal number that is written here: a share exactly on the limit passes.",
+        f"- Cover, in full: (rollouts - the count of `{ERROR}`) / rollouts >= `min_cover`, as exact fractions, for null M on the",
+        "  tasks that it answered and for a LoRA on its n tasks.",
+        "- Winner: the eligible LoRAs are read in queue order. A later LoRA takes the place of the best one so far",
+        f"  only when its delta is higher by more than {show(TIE_TOLERANCE)}.",
+        "- The box does not pick the winner. The controller computes every score again from the outcome strings",
+        "  (`sn120_v2.judging.decide`). The round file (section 9) holds the draw with its weights (`draw`), the outcome",
+        "  strings of null M (`null_outcomes`) and those of the winner (`winner_outcomes`). With",
+        "  `sn120_v2.judging.score_entry` you can compute the scores of the winner again. The outcome strings of the",
+        "  other entries are not published.",
+        "- What a scoring of your own repeats: the draw and its weights, the seed and the body of each request, the",
+        "  grade of a given text (but for a time limit of the grader), and each formula above. It does not repeat the",
+        "  text of a rollout: the same request with the same seed can give another text on another machine or at",
+        "  another time, and no run has measured how often. So your outcome strings and your delta can differ from",
+        "  those of the box. The tests of the code start no vLLM server: they put a stand-in in its place. The box",
+        "  runs vLLM on GPUs.",
+    ]
+
+
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
     snapshots = {"the open round": (doc.get("round") or {}).get("irt_snapshot_id"), "the last closed round": doc.get("irt_snapshot_id")}
@@ -615,7 +912,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
         f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
         "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
-        "  on a task is the first 63 bits of sha256(\"<round_seed>|<task_id>|<j>\").",
+        f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
         f"- Decode: temperature {show(params.temperature)}, top_p {show(params.top_p)}, top_k {params.top_k}, {params.dtype},",
         f"  at most {params.max_output_tokens} output tokens and {params.max_context_tokens} prompt + output tokens.",
         f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
@@ -637,6 +934,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  `{NO_DECISION}`. If that is so for null M, every scored entry of the round is `{NO_DECISION}`. Neither is counted as a",
         "  failure for the seat (section 4).",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
+        "",
+        *_scoring_lines(params),
         "",
         "## 7. Payout",
         "",
