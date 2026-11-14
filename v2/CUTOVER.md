@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `d32cd947` is the last of the eight. One more change is in work (a round in which no training finished), so the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `68b8abc5` is the last of the eight, and the commit that the coordinator named for the mainnet start on 13 Nov 2026. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 
 ## Hosts
 
@@ -99,7 +99,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 d32cd947474babed51052cac5b95311859e513d8; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 68b8abc5a4b7d72520cd3a12a239350328b820cc; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
@@ -117,7 +117,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
    | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
    | `e0faff2d` (PR #157 and PR #159) | The guard of `run`: it compares the box with the pinned digests before it opens a round, before it runs an open round again and before a fold. On a difference it starts none of them and ends with exit code 2 ("The digests of the box and the pinned digests" below). | `run` does not stop on such a box. Each round closes in seconds, and every seat in it gets one counted failure. |
-   | `d32cd947` (PR #163; it holds PR #161, `c87b81ea`, and PR #160, `e9958463`) | Three things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. |
+   | `68b8abc5` (PR #166; it holds PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Four things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
@@ -1121,7 +1121,7 @@ What a restart does to an open round:
 
 | The round when `run` died | `run` alone, started by hand | The loop |
 |---|---|---|
-| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`: **one counted failure** for that seat (3 hold the seat). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. The seats are first in the next round, which opens 5 minutes later at the earliest. |
+| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`. When another batch of the round trained, that is **one counted failure** for that seat (3 hold the seat). When no batch trained, the lease fails and nothing is counted ("A round in which no training finished"). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. The seats are first in the next round, which opens 5 minutes later at the earliest. |
 | After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. | The same, at once. |
 | After the lease end, no result stored | The lease is failed ("the lease expired"). No charge, no counted failure. | The same. |
 | The box result is stored, not judged | `run` judges the stored result, also after the lease end. | The same: the loop skips `end-round`. |
@@ -1159,9 +1159,9 @@ One chain line does not end by itself. After a stop of `run` of more than about 
 | Phase | What `run` does | Cost |
 |---|---|---|
 | A round opens | `waiting:`. The next pass opens it again. | none |
-| Training | Not `waiting:`, not a crash. The runner tries that batch 3 times at once. Then the batch is `no_decision` ("training failed 3 times"). `run` goes on with the other batches and the scoring. | **one counted failure for that seat** (3 hold the seat), no charge |
+| Training | Not `waiting:`, not a crash. The runner tries that batch 3 times at once. Then the batch is `no_decision` ("training failed 3 times"). `run` goes on with the other batches and the scoring. | When another batch of the round trained: **one counted failure for that seat** (3 hold the seat), no charge. When no batch of the round trained: the lease fails, and nothing is counted ("A round in which no training finished"). |
 | Scoring | 3 tries for a block of tasks. After the stop time the block is dropped and the round ends with what it has. Before it, the runner gives up: the lease fails and the round closes with no decision. | no charge, no counted failure; the next round opens 5 minutes later |
-| Training or scoring, and the store does not answer the controller either | `waiting:`. The lease stays open. The next pass runs the whole round again under the same lease. | in the training time: a counted failure for a batch of the first group that does not finish. After it: none |
+| Training or scoring, and the store does not answer the controller either | `waiting:`. The lease stays open. The next pass runs the whole round again under the same lease. | in the training time: a counted failure for a batch of the first group that does not finish, when another batch of the round trained. After it: none |
 | The box result is written | As the row above: the result was only in memory, so the scores are lost. | none, but the round decides nothing |
 | Judging (the result is stored) | `waiting:`. The next pass judges the stored result. | none |
 | Promotion | Store fully down: `waiting:`, and no try is counted. The journal works but the copy fails: a new try every 5 minutes; after 12 tries the round is `abandoned`. | `abandoned`: no new head, nobody charged |
@@ -1169,11 +1169,11 @@ One chain line does not end by itself. After a stop of `run` of more than about 
 | The close of the round | `waiting:`. The next pass closes it. | none |
 | Right after the close | `run` ends with `refused: InfraError`, exit code 2. This is the one place where a store fault ends a running `run`. The round is closed and safe. | none; the loop starts `run` again, and the start is not counted |
 
-So a store fault in the training time is the one case that costs a seat a counted failure. Send the coordinator the round summary of such a round. "After a fault of the box in training" below says how to undo the counts.
+So a store fault in the training time is the one case that costs a seat a counted failure, and only in a round in which another batch trained. When no batch of the round trained, the lease fails and nothing is counted. Send the coordinator the round summary of such a round. "After a fault of the box in training" below says how to undo the counts: `release-seat --all`.
 
 ### After a fault of the box in training
 
-This part is for a fault of the box that is not a digest difference: a GPU fault, or a store fault during the training (the row "Training" of the table above). The guard of `run` does not see such a fault. Each seat whose training it stops gets one counted failure. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. A count never goes back by itself. Nobody is charged.
+This part is for a fault of the box that is not a digest difference: a GPU fault, or a store fault during the training (the row "Training" of the table above). The guard of `run` does not see such a fault. When the fault lets another batch of the round train, each seat whose training it stops gets one counted failure. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. A count never goes back by itself. Nobody is charged. When the fault stops every training of the round, nothing is counted: see "A round in which no training finished" below.
 
 `release-seat` undoes both: the hold and the counts. It is there from `c87b81ea` (check 1 of "Before the mainnet bootstrap").
 
@@ -1199,6 +1199,37 @@ This part is for a fault of the box that is not a digest difference: a GPU fault
    - **Do not release a seat whose own file made the training fail.** It is held again after 3 more rounds. If you do not know which seats the fault of the box stopped, send the `status` output and the round summaries to the coordinator before `--all`.
 5. Start the loop (step 10.2 of "GPU box"). After `--all`, `status` shows `"held_seats": []` and `"seats_with_counted_failures": 0`.
 
+### A round in which no training finished
+
+The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap"): when no batch of a round trained, and at least one batch ended as `no_decision`, `run` takes the fault as a fault of the box. The round ends as a failed lease. There is no decision, nobody is charged, and no failure is counted for a seat. The seats are first again, and the next round opens `apply_retry_s` (5 minutes) later. `run` goes on, and the loop does not stop.
+
+- "Trained" means that the entry is `scored` or `not_scored`. A skipped entry or a `not_trained` entry in the same round changes nothing.
+- Both kinds of `no_decision` are in the rule: "training failed 3 times", and a batch that had the whole training time of the round and did not finish (a slow or hung box).
+- A round in which another batch trained is as before: a failed batch is one counted failure for its seat.
+
+What you see in `run.log`, and with `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack`:
+
+```
+SN120 v2 round r00000N: NO_DECISION
+no winner: InfraError: no training finished in this round: 32 of 32 batches failed. The first: training failed 3 times: <the cause of the first batch>
+head: <12 characters> (unchanged)
+```
+
+Between such rounds `run` prints `idle: N seats wait, phase IDLE`. `status` shows `"no_decision"` at the end of `"last_outcomes"`, and `"held_seats"` does not change.
+
+Every round that closes with no box result names its cause in the same place: `no winner: ended by the operator` after `end-round`, `no winner: the lease expired` after an expired lease, and `no winner: <error class>: <text>` after another fault of the box.
+
+**The cost of this rule.** `run` cannot tell a broken box from bad files.
+
+1. A seat that is alone in its round, with a file that makes the training fail, is never held. Its round repeats every 5 minutes, with 3 training tries each, until the miner changes the file or another batch trains in the same round.
+2. The seats of a failed lease are first again. So `batch_cap` (32) such seats in front fill every round, and no seat behind them gets a turn. No command holds such a seat or moves it back.
+3. Nothing stops the loop for it. **The sign is `"no_decision"` again and again in `"last_outcomes"` of `status`**, and the same `no winner:` line every 5 minutes.
+
+What to do when you see that sign:
+
+- Read the cause in the `no winner:` line. If the box is the cause (a GPU fault, a full disk, the store), stop the loop, repair the box, and start the loop. No seat was held and nothing was counted, so `release-seat` is not needed for these rounds.
+- If the box is good and the files of the seats in front are the cause, there is no command for it today. Send the `no winner:` lines and the `status` output to the coordinator. A higher `batch_cap` by `set-params` lets other seats into the round; the coordinator decides on it.
+
 ### The digests of the box and the pinned digests
 
 The pinned digests are the two digests of the parameters in force: the code digest and the image digest. The last bootstrap or `set-params` pinned them. A checkout can change the code digest of the box (a file under `sn120_v2/gpu/`). An install line can change the image digest of the box (a package). A new box can have other digests than the old one.
@@ -1216,7 +1247,7 @@ refused: ConfigError: this box differs from the pinned digests, so <what did not
 - `<what did not start>` is one of `no round was opened`, `the fold was not started`, `the open round was not run`. With the third one, the line says `Next: end-round (the round pins the old digests), the digest block, ...`.
 - `<difference>` is `image digest: pinned <value>, this box has <value> (the value of SN120_IMAGE_DIGEST)`, or `code digest: pinned <value>, this box has <value>`, or both with `; ` between them. When more than one image digest is pinned, the line shows `<value> or <value>`.
 - No other command shows the pinned digests.
-- **The words after `Next:` above are those of a later commit.** At `d32cd947` the line still ends with `Next: the digest block, then set-params with the two digests of this box, then start again`. The meaning is the same. Do not read the old words as "a file that holds only the two digests".
+- The words after `Next:` above are in the code from `68b8abc5`. An earlier commit ends the line with `Next: the digest block, then set-params with the two digests of this box, then start again`. The meaning is the same: not a file that holds only the two digests.
 - **The file for `set-params` after this line is `$CUT/params.json` as the digest block of "After a fix" wrote it, never a file written by hand.** That block takes the pinned file and changes the two digests only. `set-params` replaces every value: a file without `"squat_min_wait_s": 31536000` switches squat-trim on ("The value `squat_min_wait_s`").
 - What to do after the line: "After a fix" for a fix, "A new GPU box" for a new box.
 - To see the line after the loop stopped: `grep '^refused: ' $SN120_WORK_DIR/logs/run.log | tail -n 1`. `run-loop.status` says `stopped: run refused (exit code 2 of the loop)`.
