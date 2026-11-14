@@ -138,6 +138,13 @@
     lo = Math.floor(lo / st + 1e-9) * st; hi = Math.ceil(hi / st - 1e-9) * st;
     return [lo, hi > lo ? hi : lo + st, st];
   };
+  // the top of a tooltip in its chart: under the sticky header of the page when the top of the chart is behind that header
+  const clear = (box, tip) => {
+    const head = document.querySelector('body>header');
+    if (!head || getComputedStyle(head).position !== 'sticky' || box.closest('.cx-open')) return '';
+    const behind = head.getBoundingClientRect().bottom - box.getBoundingClientRect().top;
+    return behind > 0 ? Math.max(4, Math.min(behind + 4, box.clientHeight - tip.offsetHeight)) + 'px' : '';
+  };
   function chart(box, o) {
     box.textContent = '';
     const W = box.clientWidth || 300, H = box.clientHeight || 180, P = o.pad || { l: 40, r: 10, t: 10, b: 20 };
@@ -154,6 +161,7 @@
     const zero = y(Math.min(hi, Math.max(lo, 0))), bar = Math.max(2, Math.min(26, slot * .62));
     for (const s of o.series) {
       const has = idx.filter(i => s.v(i) != null), color = i => typeof s.c === 'function' ? s.c(i) : s.c;
+      if (s.plain) continue;
       if (s.bar) {
         for (const i of has) {
           const h = Math.max(1.5, Math.abs(y(s.v(i)) - zero));
@@ -173,6 +181,7 @@
     }
     g.append(svg('text', { x: P.l, y: H - 4, 'text-anchor': 'start' }, o.label(0)));
     if (o.n > 1) g.append(svg('text', { x: W - P.r, y: H - 4, 'text-anchor': 'end' }, o.label(o.n - 1)));
+    if (o.marks) o.marks(g, { xs, y, bar, P, W, H });
     const tip = document.createElement('output');
     tip.className = 'tip'; tip.hidden = true; box.append(tip);
     idx.forEach(i => {
@@ -180,6 +189,7 @@
       const hit = svg('rect', { x: l, y: P.t, width: Math.max(1, r - l), height: H - P.t - P.b, fill: 'transparent' });
       hit.addEventListener('mouseenter', () => { tip.innerHTML = o.tip(i); tip.hidden = false; tip.style.left = Math.min(Math.max(0, xs[i] - tip.offsetWidth / 2), Math.max(0, W - tip.offsetWidth)) + 'px'; });
       hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+      hit.addEventListener('mouseenter', () => { tip.style.top = clear(box, tip); });
       g.append(hit);
     });
   }
@@ -352,40 +362,174 @@
 
   /* The chart tiles of the v1 site (k1.js, timing.js), on the closed rounds that the snapshot lists, the oldest at the left.
      v1 had one batch per turn; v2 has many per round, so "z" is the z of the applied winner, or the best z of a round with no winner. */
+  const OPEN_PAD = { l: 58, r: 16, t: 18, b: 28 };  // the open tile has larger axis text
   const ENDED = { applied: r => `UID ${r.winner_uid} applied`, null: () => 'M stays', no_decision: () => 'no decision', abandoned: () => 'abandoned' };
   const TONE = { applied: 'var(--performance)', null: 'var(--rejected)' };
+  const OUTCOMES = [['up', 'winner applied'], ['dn', 'no winner: M stays'], ['wait hollow', 'no decision']];
+  // the phases of a round, in the order of the round: key in the data, name, legend mark, colour, help text
+  const PHASES = [
+    ['training', 'Training', 'up', 'var(--performance)', 'The time that the GPU box spent to train the batches of the round.'],
+    ['evaluation', 'Evaluation', 'wait', 'var(--accepted)', 'The time that the GPU box spent to score the head M and each LoRA of the round.'],
+    ['promote', 'Promote', 'ink', 'var(--ink)', 'From the result of the round to the new head. Only a round with an applied winner has it.'],
+    ['fold', 'Fold', 'mid', 'var(--muted)', 'The merge of the applied LoRAs into a new base, after the new head. Only a round with an applied winner has it.'],
+    ['other', 'Other', 'low', 'var(--axis)', 'The rest of the round, which the round file gives to no phase: open, wait and close.'],
+  ];
+  const sci = v => (+v.toPrecision(3)).toExponential();  // 1e-5, 2.5e-7
+  const tile = (id, reading, o) => {
+    const el = document.getElementById(id), r = el.querySelector('.reading');
+    r.textContent = reading || 'none';
+    if (o.hint) r.title = o.hint; else r.removeAttribute('title');
+    chart(el.querySelector('.chart'), { name: el.querySelector('h2').textContent, pad: el.classList.contains('cx-open') ? OPEN_PAD : null, ...o });
+    return el;
+  };
+  const legend = (id, items) => {
+    document.querySelector(`#${id} .legend`).innerHTML = items.map(([mark, text, help]) => `<span${help ? ` title="${esc(help)}"` : ''}><i class="sw ${mark}"></i>${esc(text)}</span>`).join('');
+  };
+  const titled = (id, text, help) => {
+    const el = document.getElementById(id), h = el.querySelector('h2'), b = el.querySelector('.cx');
+    if (h.textContent === text) return;
+    h.textContent = text; h.title = help;
+    if (b) b.setAttribute('aria-label', b.getAttribute('aria-label').split(' ')[0] + ' ' + text);
+  };
+  const BATCHES = ['Batches per round', 'One bar per closed round. Outline: the batches that the round took. Filled: the batches that got a z. Hover a bar for the limit of a round, the skipped seats and the tasks.'];
+  const BATCH = ['Batch per round', 'One bar per closed round with an applied winner: the rollouts in the batch of the winner. Only the batch of a winner is public, so a round with no winner has no bar. Reading: prompts × rollouts per prompt in the batch of the newest winner. Hover a bar for the batches of the round.'];
   function tiles(d) {
     if (!document.getElementById('charts')) return;
     const rs = d.rounds.slice().reverse(), ended = r => (ENDED[r.outcome] || (() => r.outcome))(r), took = r => r.at - r.opened_at;
     const tip = (r, rows) => tipOf(`${r.round_id} · ${ended(r)}`, r.reason ? [...rows, ['validator', r.reason]] : rows);
-    const tile = (id, reading, o) => {
-      const el = document.getElementById(id);
-      el.querySelector('.reading').textContent = reading || 'none';
-      chart(el.querySelector('.chart'), { n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', name: el.querySelector('h2').textContent, ...o });
-    };
+    const round = o => ({ n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', ...o });
+    const tone = r => TONE[r.outcome] || 'var(--accepted)', undecided = r => !TONE[r.outcome];
+    // as k1.js of v1 for a held turn: a dashed circle under the axis
+    const ring = (g, x, at, color) => g.append(svg('circle', { cx: x, cy: at.H - at.P.b + 4.5, r: 2.5, fill: 'none', stroke: color, 'stroke-width': 1.2, 'stroke-dasharray': '2 1' }));
     const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null), pass = last(r => r.null_pass != null), end = rs[rs.length - 1];
-    tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, {
+    tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, round({
       include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
-      series: [{ bar: 1, v: i => rs[i].best_z, c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
+      series: [{ bar: 1, v: i => rs[i].best_z, c: i => tone(rs[i]), hollow: i => undecided(rs[i]) }],
       tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? 'none: no batch was scored' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
-    });
-    tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
+    }));
+    tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, round({
       bound: [0, 1], least: .01, fmt: whole,
       series: [{ v: i => rs[i].null_pass, c: 'var(--accepted)' }, { v: i => rs[i].winner_pass, c: 'var(--performance)' }],
+      marks: (g, at) => rs.forEach((r, i) => undecided(r) && ring(g, at.xs[i], at, 'var(--accepted)')),
       tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2, 'not scored')], ['winner', share(rs[i].winner_pass, 2, rs[i].outcome === 'applied' ? 'none' : 'no winner')], ['M cap-hit', share(rs[i].null_cap, 2, 'not scored')], ['tasks', rs[i].tasks]]),
-    });
-    tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
+    }));
+    /* "Batch per turn" of v1 was the size of the batch of the miner. In v2 only the batch of an applied winner is public, so a
+       round with no winner has no bar. Data with no batch size (an older builder) keeps the count of batches of each round. */
+    const sized = last(r => r.batch_rollouts != null && r.batch_prompts > 0), per = r => +(r.batch_rollouts / r.batch_prompts).toFixed(1);
+    const seats = r => [[sized ? 'batches in the round' : 'batches', `${r.seats} of at most ${d.round.cap}`], ['with a z', r.with_z], ['skipped, no valid file', r.skipped], ['tasks', r.tasks]];
+    titled('c-batch', ...(sized ? BATCH : BATCHES));
+    legend('c-batch', sized ? [['up', 'rollouts in the batch of the winner']] : [['up hollow', 'batches in the round'], ['up', 'batches with a z']]);
+    tile('c-batch', sized ? `${sized.round_id} ${sized.batch_prompts} × ${per(sized)}` : end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, round({
       include: [0], least: 1, fmt: v => v,
-      series: [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)', hollow: () => 1 }, { bar: 1, v: i => rs[i].with_z || null, c: 'var(--performance)' }],
-      tip: i => tip(rs[i], [['batches', `${rs[i].seats} of at most ${d.round.cap}`], ['with a z', rs[i].with_z], ['skipped, no valid file', rs[i].skipped], ['tasks', rs[i].tasks]]),
+      hint: sized && `Batch of the winner of ${sized.round_id}: ${sized.batch_prompts} prompts × ${per(sized)} rollouts per prompt = ${sized.batch_rollouts} rollouts.`,
+      series: sized ? [{ bar: 1, v: i => rs[i].batch_rollouts, c: 'var(--performance)' }]
+        : [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)', hollow: () => 1 }, { bar: 1, v: i => rs[i].with_z || null, c: 'var(--performance)' }],
+      tip: i => tip(rs[i], [...(!sized ? [] : rs[i].batch_rollouts != null ? [['prompts', rs[i].batch_prompts], ['rollouts', `${rs[i].batch_rollouts} · ${per(rs[i])} per prompt`]]
+        : [['batch', rs[i].outcome === 'applied' ? 'not read yet' : 'private: the round has no winner']]), ...seats(rs[i])]),
+    }));
+    const five = rs.slice(-5).map(took).sort((a, b) => a - b), mid = five.length >> 1, median = five.length && dur(five.length % 2 ? five[mid] : (five[mid - 1] + five[mid]) / 2);
+    /* As timing.js of v1: a round much longer than the others does not set the scale. "Much longer" is more than 3 times the
+       median and more than the median plus 30 minutes. The axis ends 15% above the longest of the other rounds, at a round
+       value; the long bar is cut there, with a break mark and its real time above it. */
+    const times = rs.map(took).sort((a, b) => a - b), med = times[times.length >> 1] || 0, usual = times.filter(v => v <= Math.max(3 * med, med + 1800));
+    const unit = Math.max(0, ...usual) * 1.15 >= 7200 ? ['h', 3600] : ['m', 60];
+    const cap = usual.length < times.length ? nice(0, Math.max(...usual) * 1.15 / unit[1], 4, 1)[1] : Infinity, cut = r => took(r) / unit[1] > cap;
+    /* The bar of a round is split by phase, as v1, when the data has the phase times. A phase is drawn when it took 3 seconds
+       or more (v1: 0.05 minutes). Each phase is one bar from zero to the sum up to that phase, the longest drawn first. A round
+       with no phase times is one outline. Data with no phase times at all (an older builder) keeps one bar in the colour of
+       the result. */
+    const phased = rs.some(r => r.phases != null), spent = (r, k) => r.phases != null && r.phases[PHASES[k][0]] >= 3;
+    const upTo = k => i => spent(rs[i], k) ? Math.min(cap, PHASES.slice(0, k + 1).reduce((sum, [name]) => sum + (rs[i].phases[name] || 0), 0) / unit[1]) : null;
+    const full = i => Math.min(cap, took(rs[i]) / unit[1]);
+    legend('c-time', !phased ? OUTCOMES : [...PHASES.filter((_, k) => rs.some(r => spent(r, k))).map(([, name, mark, , help]) => [mark, name, help]),
+      ...(rs.some(r => r.phases == null) ? [['mid hollow', 'no phase times', 'The phase times of this round are not read yet. The bar is the time from round open to round close.']] : [])]);
+    tile('c-time', end && `${end.round_id} ${dur(took(end))} · median of the last ${five.length} ${median}`, round({
+      include: [0], least: 1, fmt: v => v + unit[0], bound: cap < Infinity ? [0, cap] : null,
+      hint: end && `Newest closed round ${end.round_id}: ${dur(took(end))} from open to close. Median of the last ${five.length} closed rounds: ${median}.`,
+      series: !phased ? [{ bar: 1, v: full, c: i => tone(rs[i]), hollow: i => undecided(rs[i]) }]
+        : [{ bar: 1, v: i => rs[i].phases == null ? full(i) : null, c: 'var(--muted)', hollow: () => 1 }, ...PHASES.map((p, k) => ({ bar: 1, v: upTo(k), c: p[3] })).reverse()],
+      tip: i => tip(rs[i], [[rs[i].phases != null ? 'total' : 'open to close', dur(took(rs[i]))], ...PHASES.filter((_, k) => spent(rs[i], k)).map(([name]) => [name, dur(rs[i].phases[name])]),
+        ...(cut(rs[i]) ? [['bar', `cut at ${cap}${unit[0]}: much longer than the other rounds`]] : []), ['opened', utc(rs[i].opened_at)], ['closed', utc(rs[i].at)]]),
+      marks: (g, { xs, y, bar, P, W }) => rs.forEach((r, i) => {
+        if (!cut(r)) return;
+        const x = xs[i] - bar / 2, yb = y(cap) + 6;
+        g.append(svg('path', { d: `M${x - 1} ${yb + 3} L${xs[i]} ${yb - 1} L${x + bar + 1} ${yb + 3}`, stroke: 'var(--bg)', 'stroke-width': 2.5, fill: 'none' }),
+          svg('text', { x: Math.min(Math.max(xs[i], P.l + 14), W - P.r - 14), y: P.t - 3, 'text-anchor': 'middle', class: 'over' }, dur(took(r)).replace(/ /g, '')));
+      }),
+    }));
+    /* Learning rate, as the tile of k1.js of v1: one dot per round with a public rate, on a log axis. Only the batch of an
+       applied winner is public. Its rate is the lora_lr of its batch file, or the default of the contract when the file sets
+       none. A round with no winner has a dashed circle under the axis: its rates stay private. With the contract in the data,
+       the axis is the range that a miner can set, and each round has its hover slot, with or without a dot. */
+    const set = (d.train_settable || []).find(x => x.key === 'lora_lr'), own = r => r.train != null && r.train.lora_lr != null;
+    const rate = r => r.train == null ? null : own(r) ? r.train.lora_lr : set ? set.default : null, rated = last(r => rate(r) != null), lg = Math.log10;
+    tile('c-lr', rated && `${rated.round_id} ${sci(rate(rated))}`, round({
+      include: set ? [lg(set.low), lg(set.high)] : [], least: 1, fmt: v => sci(10 ** v), empty: 'No learning rate published yet.',
+      hint: (rated ? `Newest public rate: ${sci(rate(rated))}, round ${rated.round_id}. ` : '') + (set ? `Contract of today: default ${sci(set.default)}; a miner can set ${sci(set.low)} to ${sci(set.high)}.` : ''),
+      series: [{ plain: 1, v: i => rate(rs[i]) == null ? null : lg(rate(rs[i])) }, { plain: 1, v: () => set ? lg(set.default) : null }],
+      marks: (g, at) => rs.forEach((r, i) => {
+        if (rate(r) != null) g.append(svg('circle', { cx: at.xs[i], cy: at.y(lg(rate(r))), r: 3.2, fill: tone(r), stroke: tone(r) }));
+        else if (r.outcome !== 'applied') ring(g, at.xs[i], at, tone(r));
+      }),
+      tip: i => tip(rs[i], rate(rs[i]) != null ? [['lora_lr', sci(rate(rs[i]))], ['source', own(rs[i]) ? 'set by the miner in the batch file' : 'default of the contract of today']]
+        : [['lora_lr', rs[i].outcome === 'applied' ? 'not read yet' : 'private: the round has no winner']]),
+    }));
+    cost();
+  }
+
+  /* Registration cost, as regcost.js of the v1 site: the burn in TAO to register one UID on subnet 120, for the last 7 days. The
+     page reads the feed reg-cost-recent.json of the site, as v1 did. A point is one hour: its start, the value at its end, its
+     highest and its lowest value; an hour with no change has no point. The line is a step line with a faint band from the
+     lowest to the highest value of each hour, and a dot at the value of now. The hover follows the pointer: a guide line and
+     the dot move to the hour. A feed that does not answer, or that was written more than 2 hours ago, gives the empty tile. */
+  const COST_FIELDS = ['hour_start_unix', 'close_tao', 'high_tao', 'low_tao'], COST_SPAN = 7 * 86400, COST_OLD = 7200;
+  const dated = (t, o) => new Date(t * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC', ...o });
+  let COST = null;
+  function cost() {
+    if (!document.getElementById('c-cost')) return;
+    const s = COST && Date.now() / 1000 - COST.generated_at <= COST_OLD ? COST.sn120 : null;
+    if (!s) { tile('c-cost', null, { n: 0, series: [], empty: 'No registration cost: the feed did not answer, or it is older than 2 hours.' }); return; }
+    const [T, C, HI, LO] = COST_FIELDS.map(f => s.point_fields.indexOf(f)), now = s.current.as_of || COST.generated_at, from = now - COST_SPAN;
+    const before = s.points.filter(p => p[T] < from).pop(), pts = s.points.filter(p => p[T] >= from && p[T] <= now).map(p => ({ t: p[T], v: p[C], hi: p[HI], lo: p[LO] }));
+    if (before) pts.unshift({ t: from, v: before[C], hi: before[C], lo: before[C], held: before[T] });
+    pts.push({ t: now, v: s.current.tao, hi: s.current.tao, lo: s.current.tao, now: 1 });
+    // a log axis when the highest value is more than 150 times the lowest, as v1
+    const top = Math.max(...pts.map(p => p.hi)), low = Math.min(...pts.map(p => p.lo)), log = low > 0 && top / low > 150, f = log ? Math.log10 : v => v;
+    const tao = v => +v.toFixed(3) + ' TAO', when = t => dated(t, { year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + ' UTC';
+    tile('c-cost', s.current.tao.toFixed(3) + ' τ', {
+      n: pts.length, x: i => (pts[i].t - from) / COST_SPAN, include: log ? [] : [0], least: log ? 1 : 0, fmt: log ? v => +(10 ** v).toPrecision(2) : v => +v.toFixed(2), label: i => dated(pts[i].t),
+      hint: `Now ${s.current.tao} TAO` + (s.current.block ? ` at block ${s.current.block}` : '') + (s.min_burn_tao != null ? `. Lowest possible cost: ${s.min_burn_tao} TAO` : '') + `. Feed written ${when(COST.generated_at)}.`,
+      series: [{ plain: 1, v: i => f(pts[i].v) }, { plain: 1, v: i => f(pts[i].hi) }, { plain: 1, v: i => f(pts[i].lo) }],
+      tip: i => pts[i].now ? tipOf(tao(pts[i].v), [['now', when(pts[i].t)], ...(s.current.block ? [['block', s.current.block]] : [])])
+        : pts[i].held ? tipOf(tao(pts[i].v), [['no change since', when(pts[i].held)]])
+          : tipOf(tao(pts[i].v), [['hour from', when(pts[i].t)], ['hour range', `${+pts[i].lo.toFixed(3)}–${+pts[i].hi.toFixed(3)} TAO`]]),
+      marks: (g, { xs, y, P, W, H }) => {
+        const X = t => (P.l + (W - P.l - P.r) * (t - from) / COST_SPAN).toFixed(1), Y = v => y(f(v)).toFixed(1), end = pts.length - 1;
+        const line = pts.map((p, i) => i ? `H${X(p.t)}V${Y(p.v)}` : `M${X(p.t)} ${Y(p.v)}`).join('');
+        const band = pts.filter(p => !p.now && !p.held).map(p => `M${X(p.t)} ${Y(p.hi)}H${X(Math.min(now, p.t + 3600))}V${Y(p.lo)}H${X(p.t)}Z`).join('');
+        const guide = svg('line', { y1: P.t, y2: H - P.b, class: 'guide', visibility: 'hidden' }), dot = svg('circle', { r: 3, fill: 'var(--ink)' });
+        const move = i => {
+          const on = i >= 0, at = on ? i : end;
+          dot.setAttribute('cx', xs[at]); dot.setAttribute('cy', Y(pts[at].v));
+          guide.setAttribute('x1', xs[at]); guide.setAttribute('x2', xs[at]); guide.setAttribute('visibility', on ? 'visible' : 'hidden');
+        };
+        g.append(svg('path', { d: band, fill: 'var(--ink)', 'fill-opacity': .18 }), svg('path', { d: line, fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }), guide, dot);
+        move(-1);
+        g.addEventListener('mouseover', e => move([...g.querySelectorAll('rect[fill=transparent]')].indexOf(e.target)));
+        g.addEventListener('mouseleave', () => move(-1));
+      },
     });
-    const five = rs.slice(-5).map(took).sort((a, b) => a - b), mid = five.length >> 1;
-    const unit = Math.max(0, ...rs.map(took)) >= 7200 ? ['h', 3600] : ['m', 60];
-    tile('c-time', end && `${end.round_id} ${dur(took(end))} · median of the last ${five.length} ${dur(five.length % 2 ? five[mid] : (five[mid - 1] + five[mid]) / 2)}`, {
-      include: [0], least: 1, fmt: v => v + unit[0],
-      series: [{ bar: 1, v: i => took(rs[i]) / unit[1], c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
-      tip: i => tip(rs[i], [['open to close', dur(took(rs[i]))], ['opened', utc(rs[i].opened_at)], ['closed', utc(rs[i].at)]]),
-    });
+  }
+  async function loadCost() {
+    let feed = null;
+    try {
+      const res = await fetch('reg-cost-recent.json?t=' + Date.now(), { cache: 'no-store' });
+      feed = res.ok ? await res.json() : null;
+    } catch (e) { feed = null; }
+    const s = feed && feed.sn120;
+    COST = s && typeof feed.generated_at === 'number' && Array.isArray(s.points) && s.current && typeof s.current.tao === 'number'
+      && Array.isArray(s.point_fields) && COST_FIELDS.every(f => s.point_fields.includes(f)) ? feed : null;
+    cost();
   }
 
   /* Miner supply: the counts of miner-supply.json, which supply.py writes each minute from the list of the object store. The
@@ -481,10 +625,53 @@
   });
   document.getElementById('filter')?.addEventListener('input', e => { filter = e.target.value; if (D) render(); });
   document.getElementById('refs')?.addEventListener('click', () => { allRefs = !allRefs; if (D) bench(D.bench); });
+  /* Expand, as chart-expand.js of the v1 site. A corner button lifts its tile into a large box over the page: 90% of the width
+     and 80% of the height, and the whole screen below 700 px. A holder of the same height keeps the place in the grid. The same
+     button, then an X, a click outside the box, or Esc close it, and the focus goes back to the button. The chart is drawn
+     again at each size by the code that draws it in the grid, so the refresh and the hover go on. */
+  const CORNER = [['Expand', 'M9.5 2H14v4.5M14 2 9 7M6.5 14H2V9.5M2 14l5-5'], ['Close (Esc)', 'M3 3l10 10M13 3 3 13']];
+  const corner = (tile, open) => {
+    const b = tile.querySelector('.cx'), name = tile.querySelector('h2').textContent;
+    b.title = CORNER[+open][0];
+    b.setAttribute('aria-label', (open ? 'Close ' : 'Expand ') + name);
+    b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="${CORNER[+open][1]}"/></svg>`;
+  };
+  let lifted = null;
+  function expand(tile) {
+    const was = lifted;
+    if (!was && !tile) return;
+    if (was) {
+      lifted = null;
+      was.holder.remove(); was.back.remove();
+      was.tile.classList.remove('cx-open');
+      for (const a of ['role', 'aria-modal', 'aria-label']) was.tile.removeAttribute(a);
+      corner(was.tile, false);
+    }
+    if (tile && !(was && was.tile === tile)) {
+      const holder = document.createElement('div'), back = document.createElement('div');
+      holder.className = 'cx-holder'; holder.style.height = tile.offsetHeight + 'px';
+      back.className = 'cx-back'; back.addEventListener('click', () => expand());
+      tile.before(holder); document.body.append(back);
+      tile.classList.add('cx-open');
+      tile.setAttribute('role', 'dialog'); tile.setAttribute('aria-modal', 'true'); tile.setAttribute('aria-label', tile.querySelector('h2').textContent);
+      lifted = { tile, holder, back };
+      corner(tile, true);
+    }
+    document.documentElement.classList.toggle('cx-lock', !!lifted);
+    if (D) tiles(D); else cost();
+    (lifted || was).tile.querySelector('.cx').focus();
+  }
+  document.querySelectorAll('#charts .tile').forEach(tile => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'cx'; b.addEventListener('click', () => expand(tile));
+    tile.append(b); corner(tile, false);
+  });
+  addEventListener('keydown', e => { if (e.key === 'Escape') expand(); });
   let resized = 0;  // a chart is drawn at the size of its box, so a new size draws again from the data in hand
   addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(() => SUPPLY ? S && supply() : D && render(), 200); });
   Object.keys(T).filter(table).forEach(shell);
   const again = SUPPLY ? loadSupply : load;
   again(window.SITE_DATA);
   if (!V1) setInterval(again, 60000);
+  if (document.getElementById('c-cost')) { loadCost(); setInterval(loadCost, 900000); }
 })();
