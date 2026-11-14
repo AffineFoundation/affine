@@ -24,7 +24,7 @@ import functools
 import os
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 from transformers import AutoTokenizer
 
@@ -98,6 +98,9 @@ class HeadTokens:
 
     def output_tokens(self, text: str) -> int:
         return self._load().output_tokens(text)
+
+    def output_tokens_many(self, texts: Sequence[str]) -> list[int]:
+        return self._load().output_tokens_many(texts)
 
 
 class ChainFeed(Feed):
