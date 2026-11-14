@@ -16,10 +16,10 @@ from sn120_v2.gpu import plan
 from sn120_v2.journal import read_journal
 from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.payout import weights
-from sn120_v2.public import snapshot
+from sn120_v2.public import TEXT_LIMIT, public_text, snapshot
 from sn120_v2.queue import waiting
-from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, SimAdmission, SimWorld, sim_params
-from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
+from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, STORE_DIR, SimAdmission, SimWorld, sim_params
+from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
 from sn120_v2.store import LocalStore, put_record
 from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
 
@@ -141,6 +141,53 @@ def test_a_round_in_which_no_training_finished_fails_its_lease_and_counts_nothin
     queue = world.controller.state.queue
     assert record.outcome == "null" and world.controller.state.failed_leases == 0 and sorted(seats(record)) == [1, 2, 3]
     assert list(queue) == [(3, 1003)] and (queue[(3, 1003)].infra_attempts, queue[(3, 1003)].front) == (1, True)
+
+
+def test_a_text_from_an_exception_is_made_safe_before_it_goes_into_a_public_file(world, monkeypatch, capsys):
+    """The box holds credentials. A text from an exception can hold a signed link, a secret of the environment or an address."""
+    secret, link = "v2TestSecretValue0123456789", "https://store.example/bucket/private/x.json"
+    monkeypatch.setenv("SN120_R2_SECRET_ACCESS_KEY", secret)
+    crash = f"403 for url: {link}?X-Amz-Credential=AKID%2F2026&X-Amz-Signature=0123abcd from 203.0.113.7:443 and 2001:db8::7 with {secret}"
+    safe = f"403 for url: {link}?[removed-query] from [removed-address]:443 and [removed-address] with [removed-secret]"
+    private = (secret, "X-Amz", "0123abcd", "203.0.113.7", "2001:db8::7")
+    fail: set[str] = set()
+
+    def train(request, real=world.trainer.train):
+        if request.entry.reg.hotkey in fail:
+            raise InfraError(crash)
+        return real(request)
+
+    monkeypatch.setattr(world.trainer, "train", train)
+    world.register(1, 0.0)
+    world.register(2, 0.0)
+    fail.add("hk1")
+    one = world.round()  # one batch of two fails: the text is the reason of that row
+    fail.add("hk3")
+    world.register(3, 0.0)
+    both = world.round()  # no training finished: the text is in the note of the round
+    assert (one.outcome, both.outcome) == ("null", "no_decision") and seats(both) == [1, 3]
+    first, second = (json.loads(world.store.get(layout.round_file(record.round_id))) for record in (one, both))
+    assert [entry["reason"] for entry in first["entries"] if entry["uid"] == 1] == [f"training failed 3 times: {safe}"]
+    note = f"InfraError: no training finished in this round: 2 of 2 batches failed. The first: training failed 3 times: {safe}"
+    assert second["note"] == note, "the error class and the message stay"
+    public = [path for path in (world.root / STORE_DIR / "public").rglob("*") if path.is_file()]
+    shown = [path.read_text() for path in public] + [json.dumps(world.publisher.snapshots)]
+    assert len(public) > 2 and not [word for word in private for text in shown if word in text], "nothing public holds a private part"
+    journal = read_journal(world.root / JOURNAL_FILE)
+    kept = [record.data["reason"] for record in journal if record.kind in (LEASE_FAILED, ROUND_CLOSED) and record.data["reason"]]
+    assert len(kept) == 2 and all(crash in reason for reason in kept), "the journal keeps the text as it was"
+    assert capsys.readouterr().err.count(crash) == 2, "and the log of the operator has it, once for each round file"
+    assert main(["round", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]) == 0
+    assert f"no winner: {note}" in capsys.readouterr().out
+    # The rule itself: a login in a URL, a named value, a long text; a time of day, a version and a test name stay.
+    env = {"HF_TOKEN": "hf_0123456789abcdef", "TOKENIZERS_PARALLELISM": "false", "SN120_WORK_DIR": "/work/sn120"}
+    text = "wss://user:pw@node.example:9944/x?k refused; Authorization: Bearer abc.def, token=hf_0123456789abcdef; false at 12:34:56 in /work/sn120, torch 2.15.0, t.py::test"
+    assert public_text(text, env) == (
+        "wss://[removed-login]@node.example:9944/x?[removed-query] refused; Authorization: Bearer [removed-secret], token=[removed-secret];"
+        " false at 12:34:56 in /work/sn120, torch 2.15.0, t.py::test"
+    )
+    assert public_text("hf_0123456789abcdef\n at ::1", env) == "[removed-secret] at [removed-address]"
+    assert public_text("x" * (TEXT_LIMIT + 40), env) == "x" * TEXT_LIMIT + " [cut: 40 more characters]"
 
 
 def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys):
