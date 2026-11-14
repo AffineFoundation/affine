@@ -7,7 +7,9 @@ A seat is one paid registration. Turn order has three zones:
   back    seats moved back because they had no valid file for too long
 
 Inside each zone the order is registration block, then UID. So seats that
-return to the front keep their original order.
+return to the front keep their original order. A demoted seat with a valid
+file at selection leaves the back (``restore_from_back``) before the round
+picks entries.
 """
 
 from __future__ import annotations
@@ -160,6 +162,24 @@ def squat_trim(
         if not has_file and seat.reg.registered_at > 0 and age > age_factor * expected_wait:
             moved.append(seat.reg.key)
     return moved
+
+
+def restore_from_back(queue: Queue, verdicts: Mapping[str, Verdict]) -> list[RegKey]:
+    """Seats that leave the back zone: demoted, waiting, and a valid file at selection time.
+
+    Matches v1's recheck each turn: the back flag is not sticky once a valid
+    file is present. Order is turn order so the journal list is deterministic.
+    A front seat that is also demoted is included: clearing demoted leaves it
+    at the front.
+    """
+    restored: list[RegKey] = []
+    for seat in waiting(queue):
+        if not seat.demoted:
+            continue
+        verdict = verdicts.get(seat.reg.hotkey)
+        if verdict is not None and verdict.valid:
+            restored.append(seat.reg.key)
+    return restored
 
 
 @dataclass(frozen=True)
