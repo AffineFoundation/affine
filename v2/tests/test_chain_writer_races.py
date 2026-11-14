@@ -11,6 +11,10 @@ Three things are proven here, each in the orders ``serial`` and ``overlap`` wher
   that the site makes from the chain file. So the chain file and mining.json name the same ``start``, or ``start``
   of the chain file is the last folded head: the links file then has the plain files of the head, and ``start``
   of mining.json is not used.
+* The writer compares its record with the chain file of the store, not with what it wrote last. So ``run`` writes
+  its record again when another process wrote the file, and a process that starts writes no file that the store
+  has. ``publish`` by hand only reads the journal: when ``run`` made a new head after that read, it writes no
+  public file. ``mark`` writes nothing before the first publish of its process.
 """
 
 from __future__ import annotations
@@ -29,11 +33,15 @@ from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 
 from sn120_v2 import controller, layout  # noqa: E402
 from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
-from sn120_v2.errors import V2Error  # noqa: E402
+from sn120_v2.controller import HeadPublish  # noqa: E402
+from sn120_v2.errors import HeadMismatchError, V2Error  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
-from sn120_v2.headchain import CHAIN, chain_links, checkpoints, heads_of  # noqa: E402
-from sn120_v2.headfold import LinkSource, rebuild  # noqa: E402
+from sn120_v2.headchain import CHAIN, ChainWriter, chain_links, checkpoints, heads_of, promote_fold  # noqa: E402
+from sn120_v2.headfold import HeadKeeper, LinkSource, rebuild  # noqa: E402
+from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
+from sn120_v2.state import State, replay  # noqa: E402
+from sn120_v2.store import LocalStore  # noqa: E402
 
 WAIT_S = 30  # the longest a test waits for a thread
 MARKERS = layout.head_checkpoint("x").rpartition("/")[0]  # what ``headchain.checkpoints`` lists
@@ -383,3 +391,127 @@ def test_a_mark_in_a_round_with_no_king_moves_start_in_the_two_files_at_once_or_
         assert wrote == [(AFTER_THE_OPEN if then == "the next open" else "MainThread", "chain"), (wrote[0][0], "mining")]
     uploads.end()
     assert no_way(world, moments, tmp_path) == []
+
+
+# ---- the writer reads the chain file of the store; a command by hand writes no record of an older head ----
+
+
+def a_run(path: Path, order: str, kings: int, every: int = 1) -> tuple[ChainWorld, list[str]]:
+    """``run`` after ``kings`` rounds with a king. All that their closes write is in the store, and no upload waits. Returns the heads."""
+    world = ChainWorld(path, sim_params(), order=order)
+    world.start(CHAIN, every=every)
+    world.controller.publish(world.clock())  # the chain file of the launch head
+    heads = [world.king().head.version_id for _ in range(kings)]
+    world.wait()
+    assert world.controller.close_in_public(world.clock()) == ""
+    idle_pass(world)  # the first pass after a round publishes
+    world.controller.publish(world.clock())
+    assert world.chain_file()["head_version_id"] == world.state.head.version_id
+    return world, heads
+
+
+def by_hand(world: ChainWorld, state: State) -> dict:
+    """What ``cli.cmd_publish`` does with the state that it read: a new writer that does not own the journal, the chain file, then mining.json."""
+    head = HeadPublish(promote_fold, ChainWriter(world.store, owner=False))
+    snapshot = controller.public_snapshot(head, state, world.params, world.clock())
+    world.publisher.publish(snapshot)
+    return snapshot
+
+
+def another_process_wrote(world: ChainWorld, data: bytes) -> None:
+    """The chain file of the store is ``data`` now, and the writer of ``world`` was not told."""
+    LocalStore.put(world.store, layout.HEAD_CHAIN, data)
+
+
+def states_of(world: ChainWorld) -> list[State]:
+    """The state of the journal at each count of heads, oldest first: what a command read that started then."""
+    records, states = read_journal(world.root / JOURNAL_FILE), []
+    for count in range(1, len(records) + 1):
+        state = replay(records[:count])
+        if len(state.heads) > (len(states[-1].heads) if states else 0):
+            states.append(state)
+    return states
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_run_writes_its_chain_file_again_when_the_store_holds_another_one(tmp_path, order):
+    world, _ = a_run(tmp_path / "world", order, kings=0)
+    older = world.store.get(layout.HEAD_CHAIN)
+    head = world.king().head.version_id
+    world.wait()
+    world.controller.publish(world.clock())
+    mine = world.store.get(layout.HEAD_CHAIN)
+    assert json.loads(mine)["head_version_id"] == head != json.loads(older)["head_version_id"]
+    writes = writes_of(world)
+    another_process_wrote(world, older)  # the record of an older state
+    world.controller.publish(world.clock())
+    assert world.store.get(layout.HEAD_CHAIN) == mine, "run compared with what it wrote last: the chain file of the older head stays"
+    world.controller.publish(world.clock())
+    assert [write.head for write in writes] == [head], "the store has these bytes: the second publish writes no chain file"
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_the_first_publish_after_a_restart_of_run_reads_the_chain_file_of_the_store(tmp_path, order):
+    world, (head,) = a_run(tmp_path / "world", order, kings=1)
+    before, writes, count = world.store.get(layout.HEAD_CHAIN), writes_of(world), len(world.publisher.snapshots)
+    world.start()  # ``run`` starts again: a new writer, which has written nothing
+    world.controller.publish(world.clock())
+    assert writes == [] and world.store.get(layout.HEAD_CHAIN) == before, "the store had the record of this state: there is nothing to write"
+    assert len(world.publisher.snapshots) == count + 1 and starts(world) == (head, head)
+    another_process_wrote(world, b"not a chain file")
+    world.start()
+    world.controller.publish(world.clock())
+    assert world.store.get(layout.HEAD_CHAIN) == before and [write.head for write in writes] == [head]
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_mark_before_the_first_publish_of_a_process_writes_nothing_and_that_publish_shows_the_marker(tmp_path, order):
+    world, (head,) = a_run(tmp_path / "world", order, kings=1, every=0)  # no checkpoint is due
+    before, writes = world.store.get(layout.HEAD_CHAIN), writes_of(world)
+    assert checkpoints(world.store) == set() and starts(world)[0] != head
+    world.start(every=1)  # ``run`` starts again, and now the head is due: the upload and its ``mark`` come before a publish of this process
+    world.wait()
+    assert checkpoints(world.store) == {head}
+    assert writes == [] and world.store.get(layout.HEAD_CHAIN) == before, "a writer that wrote no file has no record to mark"
+    world.controller.publish(world.clock())
+    assert starts(world) == (head, head) and [(write.thread, write.marked) for write in writes] == [("MainThread", {head})]
+
+
+def test_the_checkpoint_command_by_hand_writes_no_chain_file_and_the_next_publish_of_run_shows_its_marker(tmp_path):
+    world, (head,) = a_run(tmp_path / "world", SERIAL, kings=1, every=0)
+    before, writes = world.store.get(layout.HEAD_CHAIN), writes_of(world)
+    keeper = HeadKeeper(world.store, world.box.work_dir, ChainWriter(world.store, owner=False), 0, world.settings, world.run)  # as ``assembly.stack`` builds it for ``checkpoint``
+    assert keeper.checkpoint(world.state)["uploaded"] is True and checkpoints(world.store) == {head}
+    assert writes == [] and world.store.get(layout.HEAD_CHAIN) == before
+    assert idle_pass(world) is False and writes == [], "the pass with no round does not publish for a marker"
+    world.controller.publish(world.clock())
+    assert starts(world) == (head, head) and [write.marked for write in writes] == [{head}]
+
+
+def test_a_command_that_only_reads_the_journal_writes_no_public_file_of_an_older_state(tmp_path):
+    world, heads = a_run(tmp_path / "world", SERIAL, kings=2)
+    states = states_of(world)  # the launch head; then for each king the head with its LoRA, and the folded head
+    assert [len(state.heads) for state in states] == [1, 2, 3, 4, 5] and [states[2].head.version_id, states[4].head.version_id] == heads
+    records = []
+    for state in reversed(states):  # the owner of the journal writes its record over any other, also over a later one
+        ChainWriter(world.store)(state)
+        records.insert(0, world.store.get(layout.HEAD_CHAIN))
+        assert json.loads(records[0])["head_version_id"] == state.head.version_id
+    assert len(set(records)) == len(states)
+    for there, stored in enumerate(records):
+        for here, state in enumerate(states):
+            another_process_wrote(world, stored)
+            count = len(world.publisher.snapshots)
+            if here < there:  # ``run`` made a head after the command read the journal
+                with pytest.raises(HeadMismatchError, match="a later head"):
+                    by_hand(world, state)
+                assert world.store.get(layout.HEAD_CHAIN) == stored and len(world.publisher.snapshots) == count, f"the state with {here + 1} heads was written over the record with {there + 1}"
+            else:
+                assert by_hand(world, state)["head_chain"]["head_version_id"] == state.head.version_id
+                assert world.store.get(layout.HEAD_CHAIN) == records[here] and len(world.publisher.snapshots) == count + 1
+    other = json.loads(records[-1])
+    other["genesis"]["version_id"] = "0" * 64  # a record that is not of this journal
+    for stored in (b"not a chain file", b"{}", (json.dumps(other) + "\n").encode()):
+        another_process_wrote(world, stored)
+        by_hand(world, states[0])
+        assert world.store.get(layout.HEAD_CHAIN) == records[0], "only a later record of the same journal stops the command"

@@ -39,7 +39,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from . import layout
 from .canonical import manifest_digest
-from .errors import ConfigError, InfraError, VerifyError
+from .errors import ConfigError, HeadMismatchError, InfraError, V2Error, VerifyError
 from .seams import ObjectStore
 from .state import State
 from .store import promote_files
@@ -274,6 +274,24 @@ def chain_links(store: Any, doc: Mapping[str, Any], ttl_s: int, target: str | No
     }
 
 
+def _line(doc: Mapping[str, Any]) -> list[str]:
+    """The heads of a whole chain record in the order of the journal: the launch head, the stacked and the folded head of each fold, then a head that waits for its fold."""
+    stacked = doc["stacked"]
+    folds = [version_id for step in doc["steps"] for version_id in (step["stacked_version_id"], step["version_id"])]
+    return [doc["genesis"]["version_id"], *folds, *([stacked["version_id"]] if stacked else [])]
+
+
+def _later(stored: bytes, doc: Mapping[str, Any]) -> bool:
+    """True when ``stored`` is a chain file of a later state of the journal of ``doc``: it has each head of ``doc`` in the same order, and more. A file that this code does not read is not."""
+    try:
+        there = json.loads(stored)
+        check_chain(there)
+        theirs, ours = _line(there), _line(doc)
+    except (ValueError, V2Error, KeyError, TypeError, AttributeError):
+        return False
+    return len(theirs) > len(ours) and theirs[: len(ours)] == ours
+
+
 class ChainWriter:
     """Writes ``layout.HEAD_CHAIN``. The controller calls it with each publish; the checkpoint job calls ``mark``.
 
@@ -282,13 +300,17 @@ class ChainWriter:
     two cases only: the two name the same ``start``, or ``start`` of this file is the last folded head (the links
     file then has the plain files of the head, and ``start`` of mining.json is not used). A publish writes the
     first case. ``mark`` writes only the second one.
+
+    ``owner``: the process is the one writer of the journal (``run``). Its state is the newest one, so its
+    record is written over any other. A command that only reads the journal (``publish`` by hand) can have read
+    it before ``run`` made a new head: it is not the owner, and it writes no record of an older head.
     """
 
-    def __init__(self, store: ObjectStore) -> None:
-        self.store = store
+    def __init__(self, store: ObjectStore, owner: bool = True) -> None:
+        self.store, self.owner = store, owner
         self._lock = threading.Lock()
         self._kernels: dict[str, str] = {}
-        self._doc: dict[str, Any] | None = None
+        self._doc: dict[str, Any] | None = None  # the record that this process wrote last, or found in the store as its own
 
     def _kernel_of(self, stacked_version_id: str) -> str:
         """The kernel that the fold record names. A fold without a record was made by ``gpu/folder.py`` as it is."""
@@ -312,23 +334,39 @@ class ChainWriter:
             return self._listed(state)
 
     def _put(self, doc: dict[str, Any]) -> None:
-        if doc != self._doc:
-            self.store.put(layout.HEAD_CHAIN, (json.dumps(doc, indent=1, sort_keys=True) + "\n").encode("utf-8"))
-            self._doc = doc
+        """Write the record when the store does not hold these bytes. The caller holds the lock.
+
+        The compare is with the file of the store, read here. What this process wrote last does not tell what
+        the store holds: another process can write the file.
+        """
+        data = (json.dumps(doc, indent=1, sort_keys=True) + "\n").encode("utf-8")
+        try:
+            stored = self.store.get(layout.HEAD_CHAIN)
+        except KeyError:
+            stored = None
+        if stored != data:
+            if not self.owner and stored is not None and _later(stored, doc):
+                there, here = json.loads(stored)["head_version_id"][:12], doc["head_version_id"][:12]
+                raise HeadMismatchError(f"the chain file of the store names head {there}. That is a later head than head {here} of the state that this command read: run made a new head in that time. Nothing is written. Give the command again")
+            self.store.put(layout.HEAD_CHAIN, data)
+        self._doc = doc
 
     def __call__(self, state: State) -> dict[str, Any]:
-        """Write the chain file when it changed. Returns the part of it that mining.json shows."""
+        """Write the chain file when the store holds another one. Returns the part of it that mining.json shows."""
         with self._lock:
             doc = self._listed(state)
             self._put(doc)
         return tail(doc)
 
     def mark(self, version_id: str) -> None:
-        """A checkpoint marker of this head was written. The chain file says so now, when this head is still the last folded head of the file.
+        """A checkpoint marker of this head was written. The chain file says so now, when this head is still the last folded head of the record that this process wrote last.
 
         When the file has a newer head, nothing is written here. A write would move ``start`` to a head that
         is not the last one, in this file only, and mining.json would keep the older ``start`` (see the class).
         The next publish lists the markers and moves ``start`` in the two files.
+
+        Before the first publish of a process nothing is written either: this writer has no record yet. That is
+        ``run`` after its start, and the ``checkpoint`` command by hand. The next publish of ``run`` shows the marker.
 
         The markers are listed for the write, as for a publish. So the file gets each flag that the store has,
         also the flag of an earlier ``mark`` that wrote nothing.

@@ -108,6 +108,7 @@ class StackContext:
     state_dir: Path
     params: Params  # after ``load``: the parameters pinned in the journal, when it has them
     command: str = "run"  # a builder may leave out the runner and the folder for any other command
+    owns_journal: bool = True  # False: the command only reads the journal. ``run`` can go on beside it, and the state that it read can be an older one
 
     def load(self, store: ObjectStore | None = None) -> State:
         """The replayed state. Call it before ``params`` is read.
