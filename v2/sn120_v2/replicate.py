@@ -18,13 +18,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import functools
-import hashlib
 import json
 import os
 import shutil
 import sys
 import time
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -42,6 +40,8 @@ from .gpu.plan import BoxConfig, code_digest, install_digest
 from .gpu.procs import Child, Spawn, nvidia_smi, wait_gpus_free
 from .gpu.resident import Resident, hash_tree
 from .gpu.trainer import LoraTrainer
+from .headchain import heads_of
+from .headfold import FoldSettings, LinkSource, download, read, read_json, rebuild, say
 from .irt import draw_from_snapshot
 from .params import Params
 from .seams import Evaluator, ObjectStore, Trainer
@@ -54,38 +54,7 @@ NO_ROUND_LIMIT_S = 30 * 86400  # stands for "no time limit of the round": no run
 # The validator's file check grades with this many workers and this limit for one row (the same numbers as ``assembly.py``).
 GRADE_WORKERS = min(8, os.cpu_count() or 1)
 GRADE_TIMEOUT_S = 20.0
-BLOCK = 1 << 20
-# The public site answers 403 to the default agent of urllib for the objects under public/, so every request names this one.
-AGENT = {"User-Agent": "sn120-v2-replicate/1"}
 HARDWARE = ("install", "code", "gpus")  # the differences that ``--strict`` refuses
-
-
-def say(text: str) -> None:
-    print(text, file=sys.stderr, flush=True)
-
-
-def read(source: str) -> bytes:
-    """The bytes of a file or of an address. An error never shows the query of an address: a signed link holds a key."""
-    if "://" not in source:
-        try:
-            return Path(source).read_bytes()
-        except OSError as exc:
-            raise ConfigError(f"cannot read {source}: {exc.strerror}") from None
-    try:
-        with urllib.request.urlopen(urllib.request.Request(source, headers=AGENT), timeout=60) as reply:  # noqa: S310 - the address comes from the user or from mining.json
-            return reply.read()
-    except OSError as exc:
-        raise InfraError(f"cannot fetch {source.split('?')[0]}: {type(exc).__name__} {getattr(exc, 'code', '')}".strip()) from None
-
-
-def read_json(source: str, what: str) -> dict[str, Any]:
-    try:
-        doc = json.loads(read(source))
-    except ValueError:
-        raise ConfigError(f"{what} is not JSON") from None
-    if not isinstance(doc, dict):
-        raise ConfigError(f"{what} is not a JSON object")
-    return doc
 
 
 @dataclass(frozen=True)
@@ -259,24 +228,6 @@ def base_dir(resident: Resident, head: HeadVersion) -> Path:
 # ---- fetch ----
 
 
-def download(url: str, path: Path, sha256: str, size: int) -> None:
-    """GET one file and keep it only when its size and its sha256 are the expected ones."""
-    part, hasher, got = path.with_name(path.name + ".part"), hashlib.sha256(), 0
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=AGENT), timeout=60) as reply, part.open("wb") as out:  # noqa: S310 - a link of read_links.json
-            while block := reply.read(BLOCK):
-                out.write(block)
-                hasher.update(block)
-                got += len(block)
-    except OSError as exc:
-        part.unlink(missing_ok=True)
-        raise InfraError(f"the download of {path.name} failed after {got} bytes: {type(exc).__name__} {getattr(exc, 'code', '')}".strip()) from None
-    if got != size or hasher.hexdigest() != sha256:
-        part.unlink()
-        raise VerifyError(f"the download of {path.name} has {got} bytes and is not the file of the head manifest ({size} bytes)")
-    part.replace(path)
-
-
 def place(source: Path, path: Path) -> None:
     """Put a local file at ``path``: a hard link when the file system allows it, else a copy."""
     if not source.is_file():
@@ -316,7 +267,10 @@ def fetch(contract: Contract, work: Path, *, source_dir: Path | None = None, lin
         if manifest_digest(hash_tree(cache)) == head.base_hash:
             return {"base_hash": head.base_hash, "dir": str(cache), "files": len(wanted), "fetched": 0}
         raise ConfigError(f"{cache} exists and does not hash to base_hash; remove it and run fetch again")
-    links = None if source_dir else base_links(contract, read_json(links_source or contract.links_url(), "the links file"), now())
+    found = None if source_dir else read_json(links_source or contract.links_url(), "the links file")
+    if found is not None and found.get("base") is None and contract.doc.get("head_chain"):
+        return fetch_by_chain(contract, Path(work).resolve(), found, now)
+    links = None if source_dir else base_links(contract, found, now())
     stage = Path(work).resolve() / "fetch" / head.base_hash
     fetched = 0
     for name, sha in sorted(wanted.items()):
@@ -340,6 +294,26 @@ def fetch(contract: Contract, work: Path, *, source_dir: Path | None = None, lin
     cache.parent.mkdir(parents=True, exist_ok=True)
     stage.rename(cache)
     return {"base_hash": head.base_hash, "dir": str(cache), "files": len(wanted), "fetched": fetched}
+
+
+def fetch_by_chain(contract: Contract, work: Path, links: Mapping[str, Any], now: Callable[[], float]) -> dict[str, Any]:
+    """The base of a head whose weight files are not in the store: the newest checkpoint, and each fold after it done again here.
+
+    ``<work>/cache`` keeps the fp32 master of the head too. The next fetch then starts from this head and replays only the new folds.
+    """
+    head, chain = contract.head, contract.doc["head_chain"]
+    if links.get("head_version_id") != head.version_id or chain.get("head_version_id") != head.version_id:
+        raise ConfigError("mining.json and the links file name two different heads; fetch both again")
+    try:
+        target = heads_of(chain)[-1]
+        same = target["base_hash"] == head.base_hash
+    except (KeyError, TypeError, IndexError):
+        raise VerifyError("the head chain of mining.json is not complete") from None
+    if not same:
+        raise VerifyError("the head chain of mining.json does not end at the base of the head")
+    say("the head is not a checkpoint: this machine makes its base from the newest checkpoint and the LoRAs after it")
+    built = rebuild(chain, work, LinkSource(links, now), target["version_id"], settings=FoldSettings.from_env(box=False))
+    return {"base_hash": head.base_hash, "dir": built["base_dir"], "files": len(contract.manifest.base_files), "fetched": built["fetched_bytes"], "replayed_folds": built["steps"]}
 
 
 # ---- the round to repeat ----

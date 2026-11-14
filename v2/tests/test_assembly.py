@@ -11,17 +11,18 @@ pytest.importorskip("transformers")
 pytest.importorskip("math_verify")
 pytest.importorskip("sn120_v2.gpu.trainer")
 
-from sn120_v2 import assembly, layout, smoke  # noqa: E402
+from sn120_v2 import assembly, controller, headchain, headfold, layout, smoke  # noqa: E402
 from sn120_v2.admission import StoreAdmission  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
 from sn120_v2.cli import main  # noqa: E402
-from sn120_v2.controller import StackContext  # noqa: E402
+from sn120_v2.controller import HeadPublish, StackContext  # noqa: E402
 from sn120_v2.errors import ConfigError, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu.evaluator import VllmEvaluator  # noqa: E402
 from sn120_v2.gpu import plan  # noqa: E402
 from sn120_v2.gpu.folder import LoraFolder  # noqa: E402
 from sn120_v2.gpu.plan import code_digest  # noqa: E402
 from sn120_v2.gpu.trainer import LoraTrainer  # noqa: E402
+from sn120_v2.headfold import ChainFolder, FoldSettings, HeadKeeper  # noqa: E402
 from sn120_v2.irt import IRTSampler  # noqa: E402
 from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
 from sn120_v2.params import GenesisSpec, Params, Recipe  # noqa: E402
@@ -114,6 +115,35 @@ def test_the_run_command_gets_the_gpu_parts_and_needs_the_box_settings(tmp_path,
     monkeypatch.delenv("SN120_IMAGE_DIGEST")
     with pytest.raises(ConfigError):
         assembly.stack(StackContext(tmp_path / "state", Params(), "run"))
+
+
+def test_with_the_chain_setting_the_box_commands_get_the_parts_that_keep_the_folded_head_on_the_box(tmp_path, box, monkeypatch, capsys):
+    common = start(tmp_path, box)
+
+    def stack(command: str):
+        return assembly.stack(StackContext(tmp_path / "state", Params(), command))
+
+    full = stack("run").head
+    assert full == HeadPublish() and full.promote is controller.promote_fold and full.chain is None, "the default: each head is uploaded in full"
+    assert main(["checkpoint", *common]) == 2 and "this stack makes no checkpoints" in capsys.readouterr().err
+    monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
+    run, publish = stack("run"), stack("publish")
+    assert isinstance(run.folder, ChainFolder) and isinstance(run.runner, LocalRunner) and run.head.promote is headchain.promote_fold
+    assert isinstance(run.head.chain, headchain.ChainWriter) and None not in (run.head.prepare, run.head.after_round, run.head.checkpoint)
+    keeper = run.head.checkpoint.__self__
+    assert isinstance(keeper, HeadKeeper) and keeper.every == headchain.DEFAULT_EVERY and keeper.settings == FoldSettings.from_env({})
+    assert run.folder.settings.implementation == headfold.REFERENCE and run.folder.settings.twice, "the defaults of the box"
+    assert stack("checkpoint").head.checkpoint is not None and stack("checkpoint").folder is None
+    assert publish.folder is None and isinstance(publish.head.chain, headchain.ChainWriter) and publish.head.promote is headchain.promote_fold
+    assert (publish.head.prepare, publish.head.after_round, publish.head.checkpoint) == (None, None, None), "no command but run and checkpoint works on the local head"
+    monkeypatch.setenv(headchain.EVERY_ENV, "1")
+    monkeypatch.setenv(headfold.IMPLEMENTATION_ENV, headfold.BLAS)
+    monkeypatch.setenv(headfold.DEVICES_ENV, "cuda:0,cuda:1")
+    run = stack("run")
+    assert run.head.checkpoint.__self__.every == 1 and run.folder.settings.devices == ("cuda:0", "cuda:1") and run.folder.settings.implementation == headfold.BLAS
+    monkeypatch.setenv(headchain.MODE_ENV, "sometimes")
+    with pytest.raises(ConfigError):
+        stack("publish")
 
 
 def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any_round(tmp_path, box, monkeypatch, capsys):

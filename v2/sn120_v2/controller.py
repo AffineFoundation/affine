@@ -82,6 +82,7 @@ from .types import (
     SKIP,
     BoxResult,
     ChainSnapshot,
+    FoldArtifact,
     FrozenBatch,
     HeadManifest,
     HeadVersion,
@@ -89,6 +90,7 @@ from .types import (
     Registration,
     RoundTicket,
     V1Import,
+    Verdict,
 )
 
 Leases = list[tuple[RoundTicket, BoxResult]]
@@ -115,6 +117,20 @@ class StackContext:
 
 
 @dataclasses.dataclass
+class HeadPublish:
+    """How a folded head goes public, and what the box does for its local copy. The default is the full upload.
+
+    ``headchain.py`` and ``headfold.py`` give the other form: the weights stay on the box, and the chain is public.
+    """
+
+    promote: Callable[[ObjectStore, FoldArtifact], None] = promote_fold  # what goes from pending/ to public/ after a fold
+    chain: Callable[[State], Mapping[str, Any]] | None = None  # writes the chain file; returns the part that mining.json shows
+    prepare: Callable[[State], None] | None = None  # at the start of ``run``: prove the local head, or rebuild it
+    after_round: Callable[[State], None] | None = None  # after each pass of the loop of ``run``, with a new round or with none
+    checkpoint: Callable[[State], Mapping[str, Any]] | None = None  # the command ``checkpoint``: upload the full files of the head now
+
+
+@dataclasses.dataclass
 class Stack:
     """Every part the controller needs. ``python -m sn120_v2 run --stack module:function`` builds one."""
 
@@ -128,6 +144,15 @@ class Stack:
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
+    head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+
+
+def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
+    """The public snapshot. In chain mode the chain file is written first, and the snapshot shows its newest part."""
+    shown = snapshot(state, params, now, verdicts, checked_at)
+    if head.chain is not None and state.heads:
+        shown["head_chain"] = head.chain(state)
+    return shown
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
@@ -148,9 +173,10 @@ class Controller:
         folder: Folder | None = None,
         publisher: Publisher | None = None,
         pins: Callable[[Params], None] | None = None,
+        head: HeadPublish | None = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
-        self.folder, self.publisher, self.pins = folder, publisher, pins
+        self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
@@ -455,7 +481,7 @@ class Controller:
             with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
                 fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
             with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
-                promote_fold(self.store, fold)
+                self.head.promote(self.store, fold)
             folded = fold_head(head, fold, now)
         except (InfraError, VerifyError, HeadMismatchError) as exc:
             self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
@@ -569,7 +595,7 @@ class Controller:
             return
         shown = self._shown()
         try:
-            self.publisher.publish(snapshot(self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
             self._published = shown
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"

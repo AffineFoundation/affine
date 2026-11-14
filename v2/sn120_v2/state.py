@@ -93,6 +93,7 @@ class State:
     params: Params | None = None  # the pinned parameters; every process reads them from here, not from a file
     heads: list[HeadVersion] = field(default_factory=list)  # every head, oldest first
     manifest: HeadManifest | None = None  # file maps of the current head; the store's pointer follows it
+    manifests: dict[str, HeadManifest] = field(default_factory=dict)  # file maps of every head, by version id
     queue: dict[RegKey, QueueEntry] = field(default_factory=dict)  # seats that have not had their turn
     served_regs: set[RegKey] = field(default_factory=set)
     served_hotkeys: set[str] = field(default_factory=set)
@@ -136,6 +137,7 @@ def _edit(state: State, key: RegKey, **changes: Any) -> None:
 def _new_head(state: State, data: dict) -> HeadVersion:
     state.manifest = HeadManifest.from_dict(data["manifest"])
     state.heads.append(state.manifest.head)
+    state.manifests[state.manifest.head.version_id] = state.manifest
     return state.manifest.head
 
 
