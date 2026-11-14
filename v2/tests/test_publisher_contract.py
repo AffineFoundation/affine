@@ -138,7 +138,7 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
     assert "The box stops scoring 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
-    assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
+    assert "Training time: the first 25 minutes." in flat and "Batches train one after another, in queue order. Each training job has all 4 GPUs of the box." in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
     assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
     assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
@@ -211,15 +211,19 @@ def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_roun
     assert "A training job that failed is never counted for your seat: out of memory on the box, a crash of the job, any other error of the training." in flat
     assert "The box tries the training again (section 3). If each try fails, your entry has the status `no_decision` and no scores, and its `reason` starts with `training failed`. You are not charged and you go to the front of the queue." in flat
 
-    out_of_time(made, {"hk3"})  # the batch had the whole training time and did not finish, and the others finish: the one case that is counted
+    # The controller still counts the box text "had the whole training time" in a round in which another batch trained.
+    # The runner writes that text only for the first batch of the queue, and then no other batch trained (test_golive.py).
+    # So this part stands for a count that a seat has from a round before batches trained one after another.
+    out_of_time(made, {"hk3"})
     for count, other in ((1, 6), (2, 7)):
         made.register(other, 0.0)
         report = json.loads(made.store.get(layout.round_file(made.round().round_id)))
         mine = next(entry for entry in report["entries"] if entry["uid"] == 3)
         assert report["outcome"] == "null" and report["note"] == "" and mine["status"] == "no_decision" and "delta" not in mine
         assert (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (count, count == 2)
-    assert "A failure is counted for your seat in one case only: your batch had the whole training time of the round (it started at the lease, and the box started its work on the round at most 120 s after the start of the lease), the first try of its training did not finish in that time (section 3), and at least one other batch of the same round finished its training." in flat
-    assert "Your entry then has the status `no_decision` and no scores. When 2 failures are counted for a seat, the seat is held: it takes no turn until the operator releases it." in flat
+    assert "No failure of the training is counted for your seat now." in flat
+    assert "Now only the first batch of the queue has the whole training time, and when it does not finish, no other batch trained: the round has no result (below)." in flat
+    assert "A count that a seat has from an earlier round stays. When 2 failures are counted for a seat, the seat is held: it takes no turn until the operator releases it." in flat
     made.controller.release_seat((3, 1003), made.now)
     assert "A release also sets the count to zero." in flat and (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (0, False)
 

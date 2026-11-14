@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -17,7 +18,7 @@ from sn120_v2.params import Params
 from sn120_v2.public import round_text
 from sn120_v2.queue import waiting
 from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
-from sn120_v2.state import load_from_store, replay
+from sn120_v2.state import ROUND_CLOSED, load_from_store, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
 from sn120_v2.worker import AT_THE_LEASE_S
@@ -205,7 +206,7 @@ def slow_first_job(world: SimWorld) -> None:
 
 
 def test_a_batch_that_was_not_trained_for_lack_of_time_is_first_next_round_and_is_never_put_on_hold(tmp_path):
-    world = SimWorld(tmp_path, sim_params(n_gpus=1, batch_cap=5))  # one GPU: one batch trains at a time
+    world = SimWorld(tmp_path, sim_params(batch_cap=5))  # one batch trains at a time, whatever the number of GPUs
     slow_first_job(world)
     for uid in range(1, 6):
         world.register(uid, 0.0)
@@ -225,7 +226,8 @@ def test_a_batch_that_was_not_trained_for_lack_of_time_is_first_next_round_and_i
 
 
 def test_at_the_end_of_the_training_time_a_running_job_is_stopped_and_the_scoring_starts(tmp_path):
-    world = SimWorld(tmp_path, sim_params(n_gpus=2))  # two slots: A and B start at the lease, C starts when A is done
+    """A trains. The training time ends while B trains: B is stopped. C never starts. B and C are not_trained, and nothing is counted."""
+    world = SimWorld(tmp_path, sim_params())
     world.runner.poll_s = 0.01
     real, close, stopped, started = world.trainer.train, world.trainer.close, threading.Event(), []
 
@@ -234,8 +236,7 @@ def test_at_the_end_of_the_training_time_a_running_job_is_stopped_and_the_scorin
         started.append(hotkey)
         if hotkey == "hk1":
             return real(request)
-        if hotkey == "hk3":
-            world.now += world.params.train_time_budget_s  # the training time ends while B and C still run
+        world.now += world.params.train_time_budget_s  # the training time ends while B still runs
         assert stopped.wait(10), "the runner must stop a job that runs past the training time"
         raise InfraError("the training job was stopped")
 
@@ -245,98 +246,102 @@ def test_at_the_end_of_the_training_time_a_running_job_is_stopped_and_the_scorin
         world.register(uid, 0.3)
     record = world.round()
     by_uid = {entry.uid: entry for entry in record.decision.entries}
-    assert sorted(started) == ["hk1", "hk2", "hk3"], "a stopped job is not started again"
+    assert started == ["hk1", "hk2"], "a stopped job is not started again, and no job starts after the training time"
     assert (by_uid[1].status, by_uid[1].score.n_tasks, record.outcome) == ("winner", 64, "applied"), "the trained LoRA had its whole test"
-    assert by_uid[2].status == "no_decision" and "had the whole training time" in by_uid[2].reason
-    assert by_uid[3].status == "not_trained" and "while this batch trained" in by_uid[3].reason
+    assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B did not start at the lease: it waited for A"
+    assert by_uid[3].status == "not_trained" and "before this batch could start" in by_uid[3].reason
     queue = world.controller.state.queue
-    assert {key[0]: (seat.front, seat.infra_attempts) for key, seat in queue.items()} == {2: (True, 1), 3: (True, 0)}
+    assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
     assert world.controller.state.served_hotkeys == {"hk1"} and world.store.list("pending/") == []
+
+
+def first_job_out_of_time(tmp_path, crash_first: bool = False) -> tuple[SimWorld, list, list]:
+    """Three seats and an open round. The training time ends while the job of A, the first batch of the queue, still runs.
+
+    ``crash_first``: the first try of A fails at once (out of memory, the tuner), and its second try is the one that the
+    end of the time stops. Returns the world, the tickets of the round, and the list of the tries (hotkeys).
+    """
+    world = SimWorld(tmp_path, sim_params())
+    world.runner.poll_s = 0.01
+    close, stopped, tries = world.trainer.close, threading.Event(), []
+
+    def train(request):
+        tries.append(request.entry.reg.hotkey)
+        if crash_first and len(tries) == 1:
+            raise InfraError("simulated crash of the training job: out of memory")
+        world.now += world.params.train_time_budget_s
+        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
+        raise InfraError("the training job was stopped")
+
+    world.trainer.train = train
+    world.trainer.close = lambda: (stopped.set(), close())
+    for uid in (1, 2, 3):
+        world.register(uid, 0.3)
+    return world, world.controller.open_round(world.clock(), "entropy", clock=world.clock), tries
+
+
+def not_counted(world: SimWorld) -> bool:
+    """Every seat of the round is back at the front, with no failure counted and no hold."""
+    queue = world.controller.state.queue
+    return {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {uid: (True, 0, False) for uid in (1, 2, 3)}
+
+
+def test_only_the_first_batch_of_the_queue_has_the_whole_training_time(tmp_path):
+    """One job at a time: when the first job runs to the end of the training time, no other batch has started."""
+    world, (ticket,), tries = first_job_out_of_time(tmp_path)
+    result = world.runner.run(ticket)
+    first, second, third = result.entries
+    assert tries == ["hk1"], "the first try of A ran to the end of the time; B and C never started"
+    assert (first.status, first.counted_for_seat) == ("no_decision", True) and "had the whole training time" in first.reason
+    for later in (second, third):
+        assert (later.status, later.counted_for_seat) == ("not_trained", False) and "before this batch could start" in later.reason
+
+
+def test_a_first_job_that_runs_out_of_the_training_time_fails_the_lease_because_no_other_batch_trained(tmp_path):
+    """The controller's rule is not changed: with no trained batch in the round, the fault is taken as the box's."""
+    world, _, _ = first_job_out_of_time(tmp_path)
+    record = world.round()
+    assert record.outcome == "no_decision" and record.decision is None and [lease.status for lease in record.leases] == ["failed"]
+    closed = [record.data for record in read_journal(world.root / JOURNAL_FILE) if record.kind == ROUND_CLOSED][-1]
+    assert closed["reason"].startswith("InfraError: no training finished in this round: 1 of 3 batches failed. The first: this batch had the whole training time")
+    assert not closed["attempted"] and not closed["held"]
+    assert not_counted(world) and world.controller.state.served_hotkeys == set()
 
 
 def test_a_batch_whose_try_failed_and_whose_next_try_is_cut_by_the_training_time_is_not_counted(tmp_path):
     """The box took a part of the batch's time with its own failure (out of memory, the tuner). The seat does not pay for it."""
-    world = SimWorld(tmp_path, sim_params(n_gpus=2))  # two slots: A and B start at the lease, C starts when A is done
-    world.runner.poll_s = 0.01
-    real, close, stopped, again, tries = world.trainer.train, world.trainer.close, threading.Event(), threading.Event(), []
-
-    def train(request):
-        hotkey = request.entry.reg.hotkey
-        tries.append(hotkey)
-        if hotkey == "hk1":
-            return real(request)
-        if hotkey == "hk2" and tries.count("hk2") == 1:
-            raise InfraError("simulated crash of the training job: out of memory")
-        if hotkey == "hk2":
-            again.set()
-        else:
-            assert again.wait(10), "B must be in its second try when the training time ends"
-            world.now += world.params.train_time_budget_s
-        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
-        raise InfraError("the training job was stopped")
-
-    world.trainer.train = train
-    world.trainer.close = lambda: (stopped.set(), close())
-    for uid in (1, 2, 3):
-        world.register(uid, 0.3)
+    world, _, tries = first_job_out_of_time(tmp_path, crash_first=True)
     record = world.round()
     by_uid = {entry.uid: entry for entry in record.decision.entries}
-    assert sorted(tries) == ["hk1", "hk2", "hk2", "hk3"], "B had a first try that failed and a second try that the end of the time stopped"
-    assert (by_uid[1].status, record.outcome) == ("winner", "applied")
-    assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B started at the lease, but not with the whole time for one try"
-    assert by_uid[3].status == "not_trained"
-    queue = world.controller.state.queue
-    assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
-    assert world.controller.state.served_hotkeys == {"hk1"}
-
-
-def cut_by_the_training_time(tmp_path) -> tuple[SimWorld, list]:
-    """Three seats on two slots, and a round that is open. A trains; the training time ends while B and C still run. B is of the first group."""
-    world = SimWorld(tmp_path, sim_params(n_gpus=2))
-    world.runner.poll_s = 0.01
-    real, close, stopped = world.trainer.train, world.trainer.close, threading.Event()
-
-    def train(request):
-        if request.entry.reg.hotkey == "hk1":
-            return real(request)
-        if request.entry.reg.hotkey == "hk3":
-            world.now += world.params.train_time_budget_s
-        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
-        raise InfraError("the training job was stopped")
-
-    world.trainer.train = train
-    world.trainer.close = lambda: (stopped.set(), close())
-    for uid in (1, 2, 3):
-        world.register(uid, 0.3)
-    return world, world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+    assert tries == ["hk1", "hk1"], "A had a first try that failed and a second try that the end of the time stopped"
+    assert by_uid[1].status == "not_trained" and "while this batch trained" in by_uid[1].reason, "A started at the lease, but not with the whole time for one try"
+    assert (by_uid[2].status, by_uid[3].status, record.outcome) == ("not_trained", "not_trained", "no_decision")
+    assert not_counted(world) and world.controller.state.served_hotkeys == set()
 
 
 @pytest.mark.parametrize("late_by, status, counted", [(0, "no_decision", True), (1, "not_trained", False)])
 def test_the_whole_training_time_is_only_that_of_a_pass_that_started_at_the_lease(tmp_path, late_by, status, counted):
     """The real runner at the limit: a pass that starts AT_THE_LEASE_S after the lease is at the lease, one second later it is not."""
-    world, (ticket,) = cut_by_the_training_time(tmp_path)
+    world, (ticket,), _ = first_job_out_of_time(tmp_path)
     world.now = ticket.issued_at + AT_THE_LEASE_S + late_by - 1  # the first read of the clock is the start of the pass
     result = world.runner.run(ticket)
     assert result.started_at - ticket.issued_at == AT_THE_LEASE_S + late_by
     first, second, third = result.entries
-    assert (first.status, third.status) == ("scored", "not_trained")
-    assert (second.status, second.counted_for_seat) == (status, counted)
-    assert ("had the whole training time" in second.reason) == counted and ("while this batch trained" in second.reason) != counted
+    assert (second.status, third.status) == ("not_trained", "not_trained")
+    assert (first.status, first.counted_for_seat) == (status, counted)
+    assert ("had the whole training time" in first.reason) == counted and ("while this batch trained" in first.reason) != counted
 
 
 def test_a_pass_that_starts_late_in_the_training_time_counts_nothing_for_a_batch_that_does_not_finish(tmp_path):
     """``run`` started again in the round: all batches train again from zero, in the time that is left. The seat does not pay for it."""
-    world, (ticket,) = cut_by_the_training_time(tmp_path)
+    world, (ticket,), _ = first_job_out_of_time(tmp_path)
     world.now = ticket.issued_at + world.params.train_time_budget_s // 2
     world.reopen()  # a new process: it finds the open round and runs its ticket again
     record = world.round()
     by_uid = {entry.uid: entry for entry in record.decision.entries}
-    assert (by_uid[1].status, record.outcome) == ("winner", "applied")
-    assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B is of the first group, but this pass did not start at the lease"
-    assert by_uid[3].status == "not_trained"
-    queue = world.controller.state.queue
-    assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
-    assert world.controller.state.served_hotkeys == {"hk1"}
+    assert by_uid[1].status == "not_trained" and "while this batch trained" in by_uid[1].reason, "A is the first batch, but this pass did not start at the lease"
+    assert (by_uid[2].status, by_uid[3].status, record.outcome) == ("not_trained", "not_trained", "no_decision")
+    assert not_counted(world) and world.controller.state.served_hotkeys == set()
 
 
 def test_a_box_that_starts_a_round_after_its_training_time_charges_nobody(tmp_path):
@@ -362,19 +367,32 @@ def test_the_launch_limits_are_32_batches_100_minutes_and_temperature_1():
         Params(train_time_budget_s=5400)  # no time left for the scoring
 
 
-def test_batches_train_at_the_same_time_on_separate_gpu_slots(tmp_path):
+def test_batches_train_one_after_another_in_queue_order_and_each_job_has_all_gpus_of_the_box(tmp_path):
     world = SimWorld(tmp_path, sim_params(batch_cap=8))
-    real, slots = world.trainer.train, []
+    real, events, gpus = world.trainer.train, [], set()
 
     def train(request):
-        slots.append(request.gpu_ids)
-        return real(request)
+        hotkey = request.entry.reg.hotkey
+        events.append(("start", hotkey))
+        gpus.add(request.gpu_ids)
+        time.sleep(0.005)  # long enough that a job at the same time would start inside this one
+        try:
+            return real(request)
+        finally:
+            events.append(("end", hotkey))
 
     world.trainer.train = train
+    world.trainer.fail_hotkeys = {"hk3"}  # a job that fails is tried again before the next batch starts
     for uid in range(1, 9):
         world.register(uid, 0.0)
-    world.round()
-    assert sorted(slots) == [(gpu,) for gpu in range(8)], "8 batches on 8 GPUs: one GPU each, no GPU twice"
+    record = world.round()
+    jobs = ["hk1", "hk2", *["hk3"] * world.runner.attempts, "hk4", "hk5", "hk6", "hk7", "hk8"]
+    assert events == [(what, hotkey) for hotkey in jobs for what in ("start", "end")], "job k starts when job k-1 has ended, in queue order"
+    assert gpus == {tuple(range(world.params.n_gpus))} and world.params.n_gpus == 8, "each job has all GPUs, whatever the number of batches"
+    statuses = {entry.uid: entry.status for entry in record.decision.entries}
+    assert statuses == {uid: "lost" for uid in range(1, 9)} | {3: "no_decision"}
+    seat = world.controller.state.queue[(3, 1003)]
+    assert (seat.front, seat.infra_attempts, seat.held) == (True, 0, False)
 
 
 # ------------------------------------------------------------ pinned parameters

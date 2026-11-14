@@ -8,8 +8,8 @@ Rules it keeps:
 
 * One failing batch must not take the box down. A training failure is tried
   again, then that entry becomes ``no_decision`` and the others go on.
-* Batches train at the same time, each on its own slot of GPUs. With more
-  batches than slots, a batch waits for a free slot.
+* Batches train one after another, in queue order. Each training job has all
+  GPUs of the box.
 * The trainer is closed before evaluation starts, so its GPUs are free.
 * Null M is scored in every look, with the same tasks and seeds as the LoRAs.
 * The round's time limit is hard. It cuts every look, the first one too:
@@ -26,7 +26,6 @@ Rules it keeps:
 
 from __future__ import annotations
 
-import queue
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Callable
 
@@ -55,17 +54,11 @@ from .types import (
 )
 
 # A pass of the box started "at the lease" when it started at most this long after the start of the lease. Only then
-# did a batch of the first group have the whole training time. A pass that started later (run started again in the
+# did the first batch of the queue have the whole training time. A pass that started later (run started again in the
 # round, or the round ran again under the same lease) gave it less: a batch that does not finish is then not_trained,
 # and nothing is counted. A normal pass starts a few seconds after the lease: the controller writes the ticket, the
 # journal record and the public files in between. The weight hash and the downloads come after the start of the pass.
 AT_THE_LEASE_S = 120
-
-
-def gpu_slots(n_gpus: int, n_batches: int) -> list[tuple[int, ...]]:
-    """Split the box's GPUs into equal slots of floor(n_gpus / batches) GPUs, at least one GPU each."""
-    per_lora = max(1, n_gpus // max(1, n_batches))
-    return [tuple(range(start, start + per_lora)) for start in range(0, n_gpus - per_lora + 1, per_lora)]
 
 
 class LocalRunner:
@@ -113,28 +106,21 @@ class LocalRunner:
         )
 
     def _train_all(self, ticket: RoundTicket, train_end: int, at_the_lease: bool) -> dict[int, EntryResult | LoRAArtifact]:
-        """Train the batches in queue order until ``train_end``, as many at a time as there are GPU slots.
+        """Train the batches until ``train_end``: one at a time, in queue order, each on all GPUs of the box.
 
         Returns one report per queue position. At ``train_end`` every job that
         still runs is stopped, so the scoring always starts on time.
         ``at_the_lease``: this pass started at the lease (``AT_THE_LEASE_S``).
         """
-        slots = gpu_slots(ticket.params.n_gpus, len(ticket.entries))
-        free: queue.SimpleQueue[tuple[int, ...]] = queue.SimpleQueue()
-        for slot in slots:
-            free.put(slot)
-
-        def one(index: int, entry: Entry) -> EntryResult | LoRAArtifact:
-            slot = free.get()
-            try:
-                # In a pass that started at the lease, the first batches start at the lease: each has the whole training time.
-                return self._train(ticket, entry, slot, train_end, whole_time=at_the_lease and index < len(slots))
-            finally:
-                free.put(slot)
-
+        gpus = tuple(range(ticket.params.n_gpus))
         try:
-            with ThreadPoolExecutor(len(slots)) as threads:
-                jobs = [threads.submit(one, index, entry) for index, entry in enumerate(ticket.entries)]
+            with ThreadPoolExecutor(1) as one_at_a_time:  # the next job starts when the job before it has ended
+                # In a pass that started at the lease, the first batch of the queue starts at the lease: only it has
+                # the whole training time. Each later batch starts when the batches before it are done.
+                jobs = [
+                    one_at_a_time.submit(self._train, ticket, entry, gpus, train_end, at_the_lease and index == 0)
+                    for index, entry in enumerate(ticket.entries)
+                ]
                 running = set(jobs)
                 while running:
                     _, running = wait(running, timeout=self.poll_s)
