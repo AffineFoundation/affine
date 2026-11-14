@@ -21,6 +21,8 @@
   force-sync  for a chain sync that ``run`` refuses because more than a quarter of the seats would leave:
               show the changes that two chain reads agree on; with ``--confirm-remove N`` apply them once
               (stop ``run`` first: with ``--confirm-remove`` this command takes over the journal)
+  coldkey-share  read-only: how many waiting seats share an owner coldkey (impact of one seat per coldkey
+              per round). Reads the journal and a chain snapshot; writes nothing.
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -49,7 +51,7 @@ from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
 from .public import phase, round_text
-from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
+from .queue import BACK, FRONT, FrontMove, SyncPlan, coldkey_share_report, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
 from .stopafter import SAID, StopRequest, say, stamp
@@ -296,6 +298,19 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     if stack is None or stack.head.checkpoint is None:
         raise ConfigError("this stack makes no checkpoints: each folded head is uploaded in full")
     print(json.dumps(stack.head.checkpoint(state)))
+    return 0
+
+
+def cmd_coldkey_share(args: argparse.Namespace) -> int:
+    """Read-only dry run: count waiting seats that share an owner coldkey. Writes nothing."""
+    state, _, stack = read_state(args, "coldkey-share")
+    if getattr(args, "chain", None):
+        snapshot = ChainSnapshot.from_json(Path(args.chain).read_bytes())
+    elif stack is not None and stack.chain is not None:
+        snapshot = stack.chain()
+    else:
+        raise ConfigError("give --chain FILE (a ChainSnapshot JSON), or --stack with a chain reader")
+    print(json.dumps(coldkey_share_report(state.queue, snapshot.registrations), indent=2))
     return 0
 
 
@@ -571,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
     front.add_argument("--dryrun", "--dry-run", dest="dry_run", action="store_true", help="print what would change; write nothing")
     force = command("force-sync", cmd_force_sync, stack=True)
     force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
+    share = command("coldkey-share", cmd_coldkey_share, stack=False)  # --stack optional: use with a live chain reader
+    share.add_argument("--chain", help="ChainSnapshot JSON with Owner coldkeys; or omit and use --stack's chain reader")
     args = parser.parse_args(argv)
     try:
         return args.handler(args)

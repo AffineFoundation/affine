@@ -40,6 +40,41 @@ def waiting(queue: Queue) -> list[QueueEntry]:
     return sorted((seat for seat in queue.values() if not seat.leased), key=turn_key)
 
 
+def coldkey_share_report(
+    queue: Queue,
+    registrations: Iterable[Registration],
+) -> dict[str, object]:
+    """How many waiting seats share an owner coldkey (read-only impact of the one-seat-per-coldkey rule).
+
+    ``registrations`` is usually a chain snapshot: each seat's coldkey is taken
+    from the matching registration when present, else from the seat itself.
+    Seats with an empty coldkey are counted under ``missing_coldkey``.
+    """
+    by_key = {reg.key: reg for reg in registrations}
+    groups: dict[str, list[int]] = {}
+    missing = 0
+    for seat in waiting(queue):
+        reg = by_key.get(seat.reg.key, seat.reg)
+        coldkey = reg.coldkey
+        if not coldkey:
+            missing += 1
+            continue
+        groups.setdefault(coldkey, []).append(seat.reg.uid)
+    shared = {coldkey: uids for coldkey, uids in groups.items() if len(uids) > 1}
+    return {
+        "waiting": len(waiting(queue)),
+        "with_coldkey": sum(len(uids) for uids in groups.values()),
+        "missing_coldkey": missing,
+        "coldkeys_with_2plus_waiting_seats": len(shared),
+        "waiting_seats_that_share_a_coldkey": sum(len(uids) for uids in shared.values()),
+        "largest_share": max((len(uids) for uids in shared.values()), default=0),
+        "shares": [
+            {"coldkey": coldkey, "uids": uids, "count": len(uids)}
+            for coldkey, uids in sorted(shared.items(), key=lambda item: (-len(item[1]), item[0]))
+        ],
+    }
+
+
 @dataclass(frozen=True)
 class Selection:
     """The result of one walk of the queue."""
