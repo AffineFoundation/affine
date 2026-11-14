@@ -173,6 +173,7 @@
     }
     g.append(svg('text', { x: P.l, y: H - 4, 'text-anchor': 'start' }, o.label(0)));
     if (o.n > 1) g.append(svg('text', { x: W - P.r, y: H - 4, 'text-anchor': 'end' }, o.label(o.n - 1)));
+    if (o.marks) o.marks(g, { xs, y, bar, P, W, H });
     const tip = document.createElement('output');
     tip.className = 'tip'; tip.hidden = true; box.append(tip);
     idx.forEach(i => {
@@ -352,6 +353,7 @@
 
   /* The chart tiles of the v1 site (k1.js, timing.js), on the closed rounds that the snapshot lists, the oldest at the left.
      v1 had one batch per turn; v2 has many per round, so "z" is the z of the applied winner, or the best z of a round with no winner. */
+  const OPEN_PAD = { l: 58, r: 16, t: 18, b: 28 };  // the open tile has larger axis text
   const ENDED = { applied: r => `UID ${r.winner_uid} applied`, null: () => 'M stays', no_decision: () => 'no decision', abandoned: () => 'abandoned' };
   const TONE = { applied: 'var(--performance)', null: 'var(--rejected)' };
   function tiles(d) {
@@ -361,8 +363,9 @@
     const tile = (id, reading, o) => {
       const el = document.getElementById(id);
       el.querySelector('.reading').textContent = reading || 'none';
-      chart(el.querySelector('.chart'), { n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', name: el.querySelector('h2').textContent, ...o });
+      chart(el.querySelector('.chart'), { n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', name: el.querySelector('h2').textContent, pad: el.classList.contains('cx-open') ? OPEN_PAD : null, ...o });
     };
+    const undecided = r => !TONE[r.outcome];
     const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null), pass = last(r => r.null_pass != null), end = rs[rs.length - 1];
     tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, {
       include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
@@ -372,6 +375,8 @@
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
       bound: [0, 1], least: .01, fmt: whole,
       series: [{ v: i => rs[i].null_pass, c: 'var(--accepted)' }, { v: i => rs[i].winner_pass, c: 'var(--performance)' }],
+      // as k1.js of v1 for a held turn: a dashed circle under the axis for a round that ended with no decision
+      marks: (g, { xs, P, H }) => rs.forEach((r, i) => undecided(r) && g.append(svg('circle', { cx: xs[i], cy: H - P.b + 6, r: 3, fill: 'none', stroke: 'var(--accepted)', 'stroke-width': 1.2, 'stroke-dasharray': '2 1' }))),
       tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2, 'not scored')], ['winner', share(rs[i].winner_pass, 2, rs[i].outcome === 'applied' ? 'none' : 'no winner')], ['M cap-hit', share(rs[i].null_cap, 2, 'not scored')], ['tasks', rs[i].tasks]]),
     });
     tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
@@ -380,11 +385,22 @@
       tip: i => tip(rs[i], [['batches', `${rs[i].seats} of at most ${d.round.cap}`], ['with a z', rs[i].with_z], ['skipped, no valid file', rs[i].skipped], ['tasks', rs[i].tasks]]),
     });
     const five = rs.slice(-5).map(took).sort((a, b) => a - b), mid = five.length >> 1;
-    const unit = Math.max(0, ...rs.map(took)) >= 7200 ? ['h', 3600] : ['m', 60];
+    /* As timing.js of v1: a round much longer than the others does not set the scale. "Much longer" is more than 3 times the
+       median and more than the median plus 30 minutes. The axis ends 15% above the longest of the other rounds, at a round
+       value; the long bar is cut there, with a break mark and its real time above it. */
+    const times = rs.map(took).sort((a, b) => a - b), med = times[times.length >> 1] || 0, usual = times.filter(v => v <= Math.max(3 * med, med + 1800));
+    const unit = Math.max(0, ...usual) * 1.15 >= 7200 ? ['h', 3600] : ['m', 60];
+    const cap = usual.length < times.length ? nice(0, Math.max(...usual) * 1.15 / unit[1], 4, 1)[1] : Infinity, cut = r => took(r) / unit[1] > cap;
     tile('c-time', end && `${end.round_id} ${dur(took(end))} · median of the last ${five.length} ${dur(five.length % 2 ? five[mid] : (five[mid - 1] + five[mid]) / 2)}`, {
-      include: [0], least: 1, fmt: v => v + unit[0],
-      series: [{ bar: 1, v: i => took(rs[i]) / unit[1], c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
-      tip: i => tip(rs[i], [['open to close', dur(took(rs[i]))], ['opened', utc(rs[i].opened_at)], ['closed', utc(rs[i].at)]]),
+      include: [0], least: 1, fmt: v => v + unit[0], bound: cap < Infinity ? [0, cap] : null,
+      series: [{ bar: 1, v: i => Math.min(cap, took(rs[i]) / unit[1]), c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
+      tip: i => tip(rs[i], [['open to close', dur(took(rs[i]))], ...(cut(rs[i]) ? [['bar', `cut at ${cap}${unit[0]}: much longer than the other rounds`]] : []), ['opened', utc(rs[i].opened_at)], ['closed', utc(rs[i].at)]]),
+      marks: (g, { xs, y, bar, P, W }) => rs.forEach((r, i) => {
+        if (!cut(r)) return;
+        const x = xs[i] - bar / 2, yb = y(cap) + 6;
+        g.append(svg('path', { d: `M${x - 1} ${yb + 3} L${xs[i]} ${yb - 1} L${x + bar + 1} ${yb + 3}`, stroke: 'var(--bg)', 'stroke-width': 2.5, fill: 'none' }),
+          svg('text', { x: Math.min(Math.max(xs[i], P.l + 14), W - P.r - 14), y: P.t - 3, 'text-anchor': 'middle', class: 'over' }, dur(took(r)).replace(/ /g, '')));
+      }),
     });
   }
 
@@ -481,6 +497,48 @@
   });
   document.getElementById('filter')?.addEventListener('input', e => { filter = e.target.value; if (D) render(); });
   document.getElementById('refs')?.addEventListener('click', () => { allRefs = !allRefs; if (D) bench(D.bench); });
+  /* Expand, as chart-expand.js of the v1 site. A corner button lifts its tile into a large box over the page: 90% of the width
+     and 80% of the height, and the whole screen below 700 px. A holder of the same height keeps the place in the grid. The same
+     button, then an X, a click outside the box, or Esc close it, and the focus goes back to the button. The chart is drawn
+     again at each size by the code that draws it in the grid, so the refresh and the hover go on. */
+  const CORNER = [['Expand', 'M9.5 2H14v4.5M14 2 9 7M6.5 14H2V9.5M2 14l5-5'], ['Close (Esc)', 'M3 3l10 10M13 3 3 13']];
+  const corner = (tile, open) => {
+    const b = tile.querySelector('.cx'), name = tile.querySelector('h2').textContent;
+    b.title = CORNER[+open][0];
+    b.setAttribute('aria-label', (open ? 'Close ' : 'Expand ') + name);
+    b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="${CORNER[+open][1]}"/></svg>`;
+  };
+  let lifted = null;
+  function expand(tile) {
+    const was = lifted;
+    if (!was && !tile) return;
+    if (was) {
+      lifted = null;
+      was.holder.remove(); was.back.remove();
+      was.tile.classList.remove('cx-open');
+      for (const a of ['role', 'aria-modal', 'aria-label']) was.tile.removeAttribute(a);
+      corner(was.tile, false);
+    }
+    if (tile && !(was && was.tile === tile)) {
+      const holder = document.createElement('div'), back = document.createElement('div');
+      holder.className = 'cx-holder'; holder.style.height = tile.offsetHeight + 'px';
+      back.className = 'cx-back'; back.addEventListener('click', () => expand());
+      tile.before(holder); document.body.append(back);
+      tile.classList.add('cx-open');
+      tile.setAttribute('role', 'dialog'); tile.setAttribute('aria-modal', 'true'); tile.setAttribute('aria-label', tile.querySelector('h2').textContent);
+      lifted = { tile, holder, back };
+      corner(tile, true);
+    }
+    document.documentElement.classList.toggle('cx-lock', !!lifted);
+    if (D) tiles(D);
+    (lifted || was).tile.querySelector('.cx').focus();
+  }
+  document.querySelectorAll('#charts .tile').forEach(tile => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'cx'; b.addEventListener('click', () => expand(tile));
+    tile.append(b); corner(tile, false);
+  });
+  addEventListener('keydown', e => { if (e.key === 'Escape') expand(); });
   let resized = 0;  // a chart is drawn at the size of its box, so a new size draws again from the data in hand
   addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(() => SUPPLY ? S && supply() : D && render(), 200); });
   Object.keys(T).filter(table).forEach(shell);
