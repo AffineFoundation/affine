@@ -39,6 +39,8 @@ No row and no pod id has a name in the code.
 
 **Two profiles.** A row can have results of one benchmark and one version at two profiles: both stay in the table, each with its profile. The table then shows the results of one profile for that row, the one with the most benchmarks and of equal ones the newest run, and `results_prior` has the others. No command runs a scored benchmark of a row again at another profile.
 
+**Change a profile only when no row is half done.** A node takes the profile from the commit that it gets at its setup (`BENCH_REPO_REF`), and a row runs only the benchmarks that it has no result of. So a row that has results of some benchmarks, and that starts again on a new node after the change (`bench retry` after `expired` or `failed`, a node that is gone, `bench release`), gets its other benchmarks at the new profile. That row then has results of two profiles, each with its own `profile`, and the site prints one mean over them. No code stops this, and no row keeps the profile of its first run. Before a change of `king_profile` or `default_profile`, read `bench status` and the table: each row of that kind is `scored` or has no result, and none is in work. A row in work ends at the old profile on its node; if it stops before its end, it is half done.
+
 ## 2. Which host
 
 | Host | What this change needs there |
