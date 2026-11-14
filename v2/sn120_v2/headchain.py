@@ -291,11 +291,18 @@ class ChainWriter:
             self._kernels[stacked_version_id] = str(record.get("kernel") or MATMUL)
         return self._kernels[stacked_version_id]
 
+    def _listed(self, state: State) -> dict[str, Any]:
+        """The chain record of ``state`` with the markers that the store has now. The caller holds the lock.
+
+        The list is made under the lock of the write. A list from before the lock can be older than a ``mark``
+        that got the lock first, and its write would then take the checkpoint of that ``mark`` back.
+        """
+        return chain_doc(state, checkpoints(self.store), self._kernel_of)
+
     def doc(self, state: State) -> dict[str, Any]:
         """The whole chain record of ``state``. Nothing is written. The markers are listed each time: another process can write one."""
-        marked = checkpoints(self.store)
         with self._lock:
-            return chain_doc(state, marked, self._kernel_of)
+            return self._listed(state)
 
     def _put(self, doc: dict[str, Any]) -> None:
         if doc != self._doc:
@@ -304,8 +311,8 @@ class ChainWriter:
 
     def __call__(self, state: State) -> dict[str, Any]:
         """Write the chain file when it changed. Returns the part of it that mining.json shows."""
-        doc = self.doc(state)
         with self._lock:
+            doc = self._listed(state)
             self._put(doc)
         return tail(doc)
 
