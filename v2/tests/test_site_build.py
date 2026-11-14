@@ -96,7 +96,7 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
     table = dict(re.findall(r"'([^']+)': ([\d.]+)", sizes))
     assert len(table) == 22 and all(name == name.lower() and 1 < float(size) < 25 for name, size in table.items())
     tiles = re.findall(r'<div class="tile" id="([\w-]+)">', index)
-    assert tiles == ["c-z", "c-pass", "c-batch", "c-time"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
+    assert tiles == ["c-z", "c-pass", "c-batch", "c-time", "c-cost", "c-lr"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
     assert all(f"tile('{name}'" in script for name in tiles) and 'class="tile"' not in v1
     # a table names its columns: each name must be a column of the script, and each table must be on a page
     columns = set(re.findall(r"^    (\w+): \{ h: ", script, re.M))
