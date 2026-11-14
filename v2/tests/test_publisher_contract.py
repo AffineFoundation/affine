@@ -11,6 +11,7 @@ import pytest
 from sn120_v2 import layout, links, public, publisher, r2, sim
 from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
+from sn120_v2.envs.math_pool import MANDATE
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
 from sn120_v2.types import HeadVersion
@@ -118,7 +119,7 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "A rollout with no output token left is dropped and counted." in flat
     assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
     assert "copies the latest file when a round takes the entry" in flat and "The admission checks run again on each new file." in flat
-    assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps its place and is not charged" in flat
+    assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The seat is skipped and not charged, as with any invalid file (section 4)" in flat
     assert "A round takes at most 3 batches" in flat
     assert "The only rule that moves a waiting seat back is squat-trim (section 4)" in flat
     assert "A round with no winner changes nothing in the payout: the window of the last 7 kings keeps being paid." in flat
@@ -199,6 +200,9 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat
+    assert f'"{MANDATE}"' in flat and json.dumps(MANDATE) not in flat  # the instruction as it is sent: one backslash, not the JSON form
+    assert "the hotkey never enters again, also with a new registration" in flat and "To enter again, register a new hotkey." in flat
+    assert "The validator does not publish the code or the count" in flat and "the seat is skipped as with any invalid file (section 4)" in flat
     assert f'LINKS = "{publisher.READ_LINKS}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text()  # the writer's path
     assert all(f'"{key}"' in (Path(__file__).parents[1] / "site" / "pull.py").read_text() for key in ("expires_at", "head_version_id", "base", "loras", "master", "sha256", "size"))
 
