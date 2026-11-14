@@ -218,8 +218,13 @@ def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_roun
     assert "A round that has a result also gets the outcome `no_decision` when none of its entries was charged." in flat
     assert "`no_decision` as the status of an entry means: not charged, and the seat goes to the front of the queue (section 4)." in flat
     assert "The `note` is empty unless the round had no result or has the outcome `abandoned` (section 4)." in flat
-    assert "Do not rely on their exact words: the validator is free to cut a text short, and to put a marker in square brackets in the place of a part of it" in flat
-    assert "To decide what applies to your seat, read `outcome` and `status`." in flat
+    markers = (public.CUT_SECRET, public.CUT_LOGIN, public.CUT_QUERY, public.CUT_ADDRESS)  # public.public_text
+    assert "a marker replaces each part that it takes for private (`{}`, `{}`, `{}` for the query string of a link, `{}` for an IP address)".format(*markers) in flat
+    assert f"a text of more than {public.TEXT_LIMIT} characters is cut there and ends with a note of how many characters were cut" in flat
+    long = public.public_text("InfraError: 403 for url: https://user:pw@store.example/x.json?X-Amz-Signature=0123abcd from 203.0.113.7:443 " + "x" * public.TEXT_LIMIT)
+    assert all(marker in long for marker in markers[1:]) and long.endswith(" more characters]") and long.startswith("InfraError: 403 for url: https://")
+    assert "The same rule applies to the `reason` of a round in mining.json and in section 3." in flat
+    assert "To decide what applies to your seat, read `outcome` and `status`, not the words of a text." in flat
 
 
 def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):

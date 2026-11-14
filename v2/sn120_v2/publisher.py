@@ -30,6 +30,7 @@ from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .judging import drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
 from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
 from .state import ABANDONED
@@ -646,9 +647,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  shows the decision, the batch sha256 and the scores only.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
-        "  cause in words, for a person to read. Do not rely on their exact words: the validator is free to cut a text",
-        "  short, and to put a marker in square brackets in the place of a part of it (a part of a link, an address,",
-        "  a credential). To decide what applies to your seat, read `outcome` and `status`.",
+        "  cause in words, for a person to read: the class of an error and its message. Before the validator",
+        f"  publishes such a text, a marker replaces each part that it takes for private (`{CUT_SECRET}`,",
+        f"  `{CUT_LOGIN}`, `{CUT_QUERY}` for the query string of a link, `{CUT_ADDRESS}` for an IP address), and a",
+        f"  text of more than {TEXT_LIMIT} characters is cut there and ends with a note of how many characters were cut. The",
+        "  same rule applies to the `reason` of a round in mining.json and in section 3. To decide what applies to your",
+        "  seat, read `outcome` and `status`, not the words of a text.",
         "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
         "  (section 6) it is part of the new base, and there is no link for the LoRA alone.",
         "",
