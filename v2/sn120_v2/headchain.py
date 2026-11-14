@@ -38,6 +38,7 @@ import threading
 from typing import Any, Callable, Iterable, Mapping
 
 from . import layout
+from .afterking import say
 from .canonical import manifest_digest
 from .errors import ConfigError, HeadMismatchError, InfraError, V2Error, VerifyError
 from .seams import ObjectStore
@@ -281,15 +282,15 @@ def _line(doc: Mapping[str, Any]) -> list[str]:
     return [doc["genesis"]["version_id"], *folds, *([stacked["version_id"]] if stacked else [])]
 
 
-def _later(stored: bytes, doc: Mapping[str, Any]) -> bool:
-    """True when ``stored`` is a chain file of a later state of the journal of ``doc``: it has each head of ``doc`` in the same order, and more. A file that this code does not read is not."""
+def _ahead(stored: bytes, doc: Mapping[str, Any]) -> int:
+    """How many heads more than ``doc`` the chain file ``stored`` has, when it is of a later state of the journal of ``doc``: it has each head of ``doc`` in the same order, and more. Else 0, also for a file that this code does not read."""
     try:
         there = json.loads(stored)
         check_chain(there)
         theirs, ours = _line(there), _line(doc)
     except (ValueError, V2Error, KeyError, TypeError, AttributeError):
-        return False
-    return len(theirs) > len(ours) and theirs[: len(ours)] == ours
+        return 0
+    return len(theirs) - len(ours) if theirs[: len(ours)] == ours else 0
 
 
 class ChainWriter:
@@ -338,6 +339,9 @@ class ChainWriter:
 
         The compare is with the file of the store, read here. What this process wrote last does not tell what
         the store holds: another process can write the file.
+
+        When the store has the record of a later state of this journal: a process that only read the journal
+        is refused, and the process that owns the journal writes its record and says so in one line.
         """
         data = (json.dumps(doc, indent=1, sort_keys=True) + "\n").encode("utf-8")
         try:
@@ -345,9 +349,12 @@ class ChainWriter:
         except KeyError:
             stored = None
         if stored != data:
-            if not self.owner and stored is not None and _later(stored, doc):
+            more = _ahead(stored, doc) if stored is not None else 0
+            if more:
                 there, here = json.loads(stored)["head_version_id"][:12], doc["head_version_id"][:12]
-                raise HeadMismatchError(f"the chain file of the store names head {there}. That is a later head than head {here} of the state that this command read: run made a new head in that time. Nothing is written. Give the command again")
+                if not self.owner:
+                    raise HeadMismatchError(f"the chain file of the store names head {there}. That is a later head than head {here} of the state that this command read: run made a new head in that time. Nothing is written. Give the command again")
+                say(f"chain file: the store had the record of a later state of this journal (head {there}, {more} head(s) more than this journal has). This process owns the journal, so it writes its record (head {here}) over that one.")
             self.store.put(layout.HEAD_CHAIN, data)
         self._doc = doc
 

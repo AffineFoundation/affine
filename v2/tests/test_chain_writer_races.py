@@ -15,6 +15,8 @@ Three things are proven here, each in the orders ``serial`` and ``overlap`` wher
   its record again when another process wrote the file, and a process that starts writes no file that the store
   has. ``publish`` by hand only reads the journal: when ``run`` made a new head after that read, it writes no
   public file. ``mark`` writes nothing before the first publish of its process.
+  ``run`` owns the journal: it writes its record over a later one too, and says so in one line. A read of the
+  chain file that the store fails is handled as a write that fails: this is proven with ``R2Store`` on an S3 fake.
 """
 
 from __future__ import annotations
@@ -22,10 +24,14 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, NamedTuple
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
+from moto.server import ThreadedMotoServer
 
 torch = pytest.importorskip("torch")
 
@@ -36,9 +42,10 @@ from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
 from sn120_v2.controller import HeadPublish  # noqa: E402
 from sn120_v2.errors import HeadMismatchError, V2Error  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
-from sn120_v2.headchain import CHAIN, ChainWriter, chain_links, checkpoints, heads_of, promote_fold  # noqa: E402
+from sn120_v2.headchain import CHAIN, ChainWriter, chain_links, checkpoints, heads_of, promote_fold, tail  # noqa: E402
 from sn120_v2.headfold import HeadKeeper, LinkSource, rebuild  # noqa: E402
 from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
+from sn120_v2.r2 import R2Store  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.state import State, replay  # noqa: E402
 from sn120_v2.store import LocalStore  # noqa: E402
@@ -46,6 +53,7 @@ from sn120_v2.store import LocalStore  # noqa: E402
 WAIT_S = 30  # the longest a test waits for a thread
 MARKERS = layout.head_checkpoint("x").rpartition("/")[0]  # what ``headchain.checkpoints`` lists
 AFTER_THE_OPEN = "sn120-v2-after-the-open"
+COUNTED = ("stopped: ", "PUBLISH FAILED", "run ended with exit code", "do not hash to the record of the chain")  # the words that the operator counts in the log of ``run``
 PLAIN, BY_CHAIN = "the plain files of the head", "the newest checkpoint and the folds after it"  # the two ways of ``replicate.fetch``
 
 
@@ -306,7 +314,7 @@ def test_a_marker_that_comes_between_the_list_and_the_write_of_a_publish_is_not_
 
 @pytest.mark.parametrize("order", [SERIAL, OVERLAP])
 def test_the_checkpoint_of_a_head_that_is_not_the_last_one_shows_with_the_next_publish_in_the_two_files(tmp_path, monkeypatch, order):
-    world, uploads, genesis, first, second = two_kings(tmp_path / "world", order)
+    world, uploads, _, first, second = two_kings(tmp_path / "world", order)
     before, moments, count = world.store.get(layout.HEAD_CHAIN), moments_of(world, monkeypatch), len(world.publisher.snapshots)
     uploads.let(first)  # the marker of head 1 comes when head 2 is the head
     assert checkpoints(world.store) == {first}
@@ -376,7 +384,7 @@ THEN = {
 
 @pytest.mark.parametrize("order, then", [(SERIAL, ""), *((OVERLAP, then) for then in THEN)])
 def test_a_mark_in_a_round_with_no_king_moves_start_in_the_two_files_at_once_or_in_none(tmp_path, monkeypatch, order, then):
-    world, uploads, genesis, first, second = two_kings(tmp_path / "world", order)
+    world, uploads, genesis, first, _ = two_kings(tmp_path / "world", order)
     before, moments = world.store.get(layout.HEAD_CHAIN), moments_of(world, monkeypatch)
     a_round_with_no_king(world, in_the_box=lambda: uploads.let(first))
     assert first in uploads.marked and no_way(world, moments, tmp_path) == []
@@ -410,9 +418,9 @@ def a_run(path: Path, order: str, kings: int, every: int = 1) -> tuple[ChainWorl
     return world, heads
 
 
-def by_hand(world: ChainWorld, state: State) -> dict:
-    """What ``cli.cmd_publish`` does with the state that it read: a new writer that does not own the journal, the chain file, then mining.json."""
-    head = HeadPublish(promote_fold, ChainWriter(world.store, owner=False))
+def by_hand(world: ChainWorld, state: State, owner: bool = False) -> dict:
+    """What ``cli.cmd_publish`` does with the state that it read: a new writer that does not own the journal, the chain file, then mining.json. With ``owner``: the first publish of a process that took the journal."""
+    head = HeadPublish(promote_fold, ChainWriter(world.store, owner=owner))
     snapshot = controller.public_snapshot(head, state, world.params, world.clock())
     world.publisher.publish(snapshot)
     return snapshot
@@ -498,6 +506,12 @@ def test_a_command_that_only_reads_the_journal_writes_no_public_file_of_an_older
         records.insert(0, world.store.get(layout.HEAD_CHAIN))
         assert json.loads(records[0])["head_version_id"] == state.head.version_id
     assert len(set(records)) == len(states)
+    last, launch = json.loads(records[-1]), states[0].head.version_id
+    assert (last["start"]["version_id"], last["start"]["steps_to_head"]) == (heads[1], 0) and heads[1] not in {head.version_id for state in states[:4] for head in state.heads}
+    assert tail(last)["steps"] == [], "the part that mining.json shows has no head of the older states"
+    # ``start`` of the last record is past each head of the older states. The whole file still lists each fold from the launch head,
+    # so the code knows it as a later record of this journal, and the loop below proves that each older state is refused.
+    assert last["genesis"]["version_id"] == launch and [step["version_id"] for step in last["steps"]] == heads
     for there, stored in enumerate(records):
         for here, state in enumerate(states):
             another_process_wrote(world, stored)
@@ -515,3 +529,154 @@ def test_a_command_that_only_reads_the_journal_writes_no_public_file_of_an_older
         another_process_wrote(world, stored)
         by_hand(world, states[0])
         assert world.store.get(layout.HEAD_CHAIN) == records[0], "only a later record of the same journal stops the command"
+
+
+def test_run_says_one_line_when_it_writes_its_record_over_the_record_of_a_later_state_of_its_journal(tmp_path, capsys):
+    world, heads = a_run(tmp_path / "world", SERIAL, kings=2)
+    states, later = states_of(world), world.store.get(layout.HEAD_CHAIN)
+    assert "chain file:" not in capsys.readouterr().err, "run with one journal and one writer has no such line"
+    by_hand(world, states[2], owner=True)  # ``run`` starts with a journal that was put back by hand to the state after the first king
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("chain file:")]
+    assert len(lines) == 1 and f"head {heads[1][:12]}, 2 head(s) more" in lines[0] and f"(head {heads[0][:12]})" in lines[0]
+    assert not [words for words in COUNTED if words in lines[0]]
+    assert world.chain_file()["head_version_id"] == heads[0]
+    by_hand(world, states[2], owner=True)  # the store has the record of this state now
+    other = json.loads(later)
+    other["genesis"]["version_id"] = "0" * 64
+    for stored in (b"not a chain file", (json.dumps(other) + "\n").encode(), ChainWriter(world.store).doc(states[1])):  # no later record of this journal
+        another_process_wrote(world, stored if isinstance(stored, bytes) else (json.dumps(stored) + "\n").encode())
+        by_hand(world, states[2], owner=True)
+        assert world.chain_file()["head_version_id"] == heads[0]
+    assert "chain file:" not in capsys.readouterr().err
+
+
+# ---- the read before the write, with ``R2Store`` on an S3 fake ----
+
+
+@pytest.fixture(scope="module")
+def endpoint():
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    host, port = server.get_host_and_port()
+    yield f"http://{host}:{port}"
+    server.stop()
+
+
+@pytest.fixture
+def bucket(endpoint) -> R2Store:
+    """A new bucket with no object."""
+    env = {"SN120_R2_ENDPOINT": endpoint, "SN120_R2_BUCKET": f"b-{uuid.uuid4().hex}", "SN120_R2_ACCESS_KEY_ID": "fake-id", "SN120_R2_SECRET_ACCESS_KEY": "fake-secret"}
+    raw = boto3.client("s3", endpoint_url=endpoint, region_name="auto", aws_access_key_id="fake-id", aws_secret_access_key="fake-secret")
+    raw.create_bucket(Bucket=env["SN120_R2_BUCKET"], CreateBucketConfiguration={"LocationConstraint": "auto"})
+    return R2Store.from_env(env, attempts=1)
+
+
+def on(bucket: R2Store, world: ChainWorld) -> None:
+    """From now on the chain writer of ``run`` reads and writes the bucket: the publish, the close, and ``mark`` from the checkpoint thread.
+
+    The bucket gets each object that the store of the world has now. The other parts of ``run`` keep the store
+    of the world, so a marker that the checkpoint thread writes later is not in the bucket.
+    """
+    for key in world.store.list(""):
+        bucket.put(key, world.store.get(key))
+    world.writer.store = bucket
+
+
+def the_store_fails(patch: pytest.MonkeyPatch, bucket: R2Store, call: str) -> list[str]:
+    """Each ``call`` of the S3 client for the chain file gets the answer ``InternalError`` from now on. Returns the list of these calls."""
+    calls, real = [], getattr(bucket._s3, call)
+
+    def failed(**request):
+        if request["Key"] != layout.HEAD_CHAIN:
+            return real(**request)
+        calls.append(call)
+        raise ClientError({"Error": {"Code": "InternalError"}}, call)
+
+    patch.setattr(bucket._s3, call, failed)
+    return calls
+
+
+def in_the(bucket: R2Store) -> dict:
+    return json.loads(bucket.get(layout.HEAD_CHAIN))
+
+
+FAILS = {"get_object": "r2 get 'public/head_chain.json' failed: InternalError", "put_object": "r2 put 'public/head_chain.json' failed: InternalError"}  # the read, and the write as the base to compare with
+
+
+def test_the_first_chain_publish_of_run_writes_the_chain_file_into_a_bucket_that_has_none(tmp_path, bucket):
+    world = ChainWorld(tmp_path / "world", sim_params(), order=SERIAL)
+    world.start(CHAIN, every=1)
+    world.writer.store, puts, put = bucket, [], bucket.put
+    bucket.put = lambda key, data: (puts.append(key), put(key, data))[1]
+    assert world.writer._doc is None and bucket.list("") == []
+    with pytest.raises(KeyError):
+        bucket.get(layout.HEAD_CHAIN)
+    world.controller.publish(world.clock())
+    assert world.controller.last_error == "" and puts == [layout.HEAD_CHAIN]
+    assert in_the(bucket)["head_version_id"] == world.state.head.version_id == world.publisher.snapshots[-1]["head_chain"]["head_version_id"]
+    world.controller.publish(world.clock())
+    assert puts == [layout.HEAD_CHAIN], "the bucket has these bytes: no second write"
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+@pytest.mark.parametrize("call", FAILS)
+def test_a_publish_of_run_handles_a_read_of_the_chain_file_that_fails_as_it_handles_a_write_that_fails(tmp_path, monkeypatch, capsys, bucket, order, call):
+    world, _ = a_run(tmp_path / "world", order, kings=0)
+    on(bucket, world)
+    older = bucket.get(layout.HEAD_CHAIN)
+    head = world.king().head.version_id
+    world.wait()
+    assert world.controller.close_in_public(world.clock()) == ""
+    world.controller.publish(world.clock())
+    mine, count = bucket.get(layout.HEAD_CHAIN), len(world.publisher.snapshots)
+    assert json.loads(mine)["head_version_id"] == head and world.controller.last_error == ""
+    bucket.put(layout.HEAD_CHAIN, older)  # another process wrote: the publish has a file to read and a file to write
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        calls = the_store_fails(patch, bucket, call)
+        world.controller.publish(world.clock())  # it does not raise
+        said = capsys.readouterr().err
+        assert calls == [call] * controller.PUBLISH_TRIES and world.controller.last_error == controller.PUBLISH_PROBLEM + FAILS[call]
+        assert f"PUBLISH FAILED: {controller.PUBLISH_TRIES} tries, and the store took none: {FAILS[call]}." in said
+    assert bucket.get(layout.HEAD_CHAIN) == older and len(world.publisher.snapshots) == count, "no mining.json without its chain file"
+    world.controller.publish(world.clock())
+    assert bucket.get(layout.HEAD_CHAIN) == mine and len(world.publisher.snapshots) == count + 1 and world.controller.last_error == ""
+
+
+@pytest.mark.parametrize("call", FAILS)
+def test_the_close_of_a_king_round_with_overlap_handles_a_read_of_the_chain_file_that_fails_as_it_handles_a_write_that_fails(tmp_path, monkeypatch, bucket, call):
+    world, _ = a_run(tmp_path / "world", OVERLAP, kings=0)
+    on(bucket, world)
+    older = bucket.get(layout.HEAD_CHAIN)
+    with monkeypatch.context() as patch:
+        calls = the_store_fails(patch, bucket, call)
+        head = world.king().head.version_id  # the round is applied: the chain write of its close does not stop it
+        assert calls and world.controller.last_error == controller.PUBLISH_PROBLEM + FAILS[call]
+    assert bucket.get(layout.HEAD_CHAIN) == older
+    world.wait()
+    assert world.controller.close_in_public(world.clock()) == ""
+    world.controller.publish(world.clock())
+    assert in_the(bucket)["head_version_id"] == head and world.controller.last_error == ""
+
+
+@pytest.mark.parametrize("call", FAILS)
+def test_the_checkpoint_thread_handles_a_read_of_the_chain_file_that_fails_in_mark_as_it_handles_a_write_that_fails(tmp_path, monkeypatch, capsys, bucket, call):
+    world, uploads, _, first, second = two_kings(tmp_path / "world", SERIAL)
+    on(bucket, world)
+    before = bucket.get(layout.HEAD_CHAIN)
+    assert [step["checkpoint"] for step in json.loads(before)["steps"]] == [False, False]
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        calls = the_store_fails(patch, bucket, call)
+        uploads.end()  # the two uploads run. ``mark`` of the first head writes nothing; ``mark`` of the last head reads the chain file, then writes it
+        said = capsys.readouterr().err
+        assert calls == [call] and uploads.marked == [first], "mark of the last head did not return"
+        assert f"checkpoint of {second[:12]}: stopped by InfraError: {FAILS[call]}; it starts again at the next pass of run" in said
+    assert checkpoints(world.store) == {first, second} and bucket.get(layout.HEAD_CHAIN) == before, "the marker is in the store; the chain file waits"
+    assert world.round() is None  # the next pass of ``run``: the thread starts again, and ``mark`` of the last head writes
+    world.wait()
+    assert uploads.marked == [first, second] and [step["checkpoint"] for step in in_the(bucket)["steps"]] == [False, True] and in_the(bucket)["start"]["version_id"] == second
+    for key in world.store.list(MARKERS):
+        bucket.put(key, world.store.get(key))  # the markers, which the thread wrote into the store of the world
+    world.controller.publish(world.clock())
+    assert [step["checkpoint"] for step in in_the(bucket)["steps"]] == [True, True] and world.controller.last_error == ""

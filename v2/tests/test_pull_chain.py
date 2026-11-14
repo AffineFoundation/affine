@@ -171,7 +171,8 @@ def test_a_marker_of_the_head_from_the_thread_of_run_and_the_mining_json_of_befo
     count, genesis = len(world.publisher.snapshots), world.chain_file()["genesis"]["version_id"]
     assert world.chain_file()["start"]["version_id"] == genesis
     world.store.gate.set()
-    store, site = sync(world, env), tmp_path / "site"  # ``sync`` waits for the upload, the marker and ``mark``
+    sync(world, env)  # it waits for the upload, the marker and ``mark``
+    site = tmp_path / "site"
     assert len(world.publisher.snapshots) == count, "no publish came after the marker"
     done = pull(env, site)
     assert done.returncode == 0, done.stderr
