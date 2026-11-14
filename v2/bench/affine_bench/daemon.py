@@ -20,11 +20,11 @@ rows. A row whose weight files are not in the store yet waits outside the queue:
 At most P.MAX_PODS rows are in work at a time; the next row starts when one of them is done.
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
-The single-node service (the code of before 2026-11-14) had one pod and one run at a time. At the first start of this
-code its run in work is cut (take_over_single): the record of the run goes to `cut_run`, the run's row is a row as any
-other and runs again on a pod of its own. The pod of that service (BENCH_STATE/pod.json) gets no run from this code:
-the service gives it back by its exact id when no run is recorded on it (release_single). No row and no pod has a name
-in this code. The code paths of a "first row" (a row with the marker `first`) are not reached any more.
+The single-node service (the code of before 2026-11-14) had one pod and one run at a time. This code never writes the
+`running` key of that service's record: a run there is a run of that service, and it is cut at each start that finds
+one (take_over_single). The record of the run goes to `cut_run`, the run's row is a row as any other and runs again on
+a pod of its own. The pod of that service (BENCH_STATE/pod.json) gets no run from this code: the service gives it back
+by its exact id (release_single). No row and no pod has a name in this code, and no run of that service is adopted.
 
 A stored result with more samples a problem than the settings ask for now (a run of before the count was cut) is
 brought to the settings' count on this host by the fixed rule of derive.py (derive_stored). Its row is not run again
@@ -51,9 +51,7 @@ CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the s
 RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again this often
 ALARM_TRIES = 3  # a release that was refused this many times is an alarm in the table
 LIUM_CHECK_S = 600  # the service reads Lium's listing this often for the alarms of the table (reads only)
-KEEP_TRIES = 3  # the output of a first row's run that is not whole is asked from the node this many times before its pod goes back
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
-FIRST_ROW_PROFILE = "qwen3.5-family"  # the node of the single-node service has a checkout of before `king_profile` changed: its run is with this profile
 
 
 def now(): return time.time()
@@ -80,8 +78,7 @@ def model_rows():
 
 def result_path(mid, bid): return f"{RES}/{mid}/{bid}.json"
 def row_state(mid): return rj(f"{ROWS}/{mid}/daemon.json", {}) or {}
-def is_first(mid): return os.path.exists(f"{ROWS}/{mid}/first")
-def pod_of(mid): return P.Pod(mid, is_first(mid))
+def pod_of(mid): return P.Pod(mid)
 def row_ids(): return sorted(d for d in os.listdir(ROWS) if os.path.isdir(f"{ROWS}/{d}"))
 
 
@@ -177,7 +174,7 @@ class Row:
         self.attach()
 
     def attach(self):
-        self.first = is_first(self.mid); self.pod = P.Pod(self.mid, self.first); self.rec = self.pod.load(); self.node = node_of(self)
+        self.pod = P.Pod(self.mid); self.rec = self.pod.load(); self.node = node_of(self)
 
     def save(self): wj(self.sf, self.S)
     def log(self, **k): log(row=self.mid, **k)
@@ -297,25 +294,16 @@ class Row:
         if st == "gone":
             self.log(event="node-gone", pod=self.rec.get("huid"), lium_id=self.rec.get("id"), down_since_cr=cr(d["since"]))
             self.pod.save(dict(gone=now(), last=dict(self.rec))); self.S["running"] = None; self.S.pop("node_down", None)
-            self.not_first()
+            self.attach()
         else:
             self.log(event="node-unreachable", lium=st, down_min=round((now() - d["since"]) / 60))
         self.save()
 
-    def not_first(self):
-        """The pod of the single-node service is gone or given back: from now on this is a row as any other."""
-        if self.first:
-            os.remove(self.dir + "/first")
-        self.attach()
-
     # ---- pod
     def pod_ready(self):
         """True when the row's pod is set up. A rent blocks this worker for some minutes, and this worker only."""
-        if self.rec and (self.rec.get("bootstrapped") or self.first):
+        if self.rec and self.rec.get("bootstrapped"):
             return True
-        if self.first:  # the record of the single-node service's pod cannot be read: no rent beside that pod, the operator decides
-            self.S["held"] = dict(at=now(), why="the record of the pod of the single-node service cannot be read: no rent, and no run")
-            self.log(event="first-row-held", why=self.S["held"]["why"]); self.tell("held"); self.save(); return False
         self.tell("renting")
         rec = self.pod.rent(self.S, self.log, self.tell); self.save()
         if rec:
@@ -356,11 +344,9 @@ class Row:
                 S["release_waits"] = now(); self.log(event="release-waits", why="the table in the store does not have these results yet", benchmarks=left)
             self.save(); return False
         why = "row done" if whole and not stopped(self.mid, S) else stopped(self.mid, S)
-        if self.first and S.get("held") and not self.tried("keep-output", self.keep_output, missing(m, bs)) and S.get("kept", {}).get("tries", 0) < KEEP_TRIES:
-            S["release_tried"] = now(); self.save(); return False
         said = []
         if self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=why):
-            self.rec = {}; self.not_first()
+            self.attach()
             for k in ("idle_since", "release_waits", "release_tried", "release_refused", "node_down"): S.pop(k, None)
             self.tell("released"); self.save(); return True
         # the pod is still the row's, and it costs money: the table says so (state release-refused, and an alarm after ALARM_TRIES)
@@ -369,20 +355,6 @@ class Row:
         if r["tries"] >= ALARM_TRIES:
             self.log(event="alarm", what="release-refused", tries=r["tries"], since_cr=cr(r["since"]), why=r["why"])
         S["release_tried"] = now(); self.tell("release-refused"); self.save(); return False
-
-    def keep_output(self, bids):
-        """Before the pod of the single-node service goes back with a run that is not whole: what the node has of the
-        benchmarks without a result (the samples that the run made) comes to a private file on this host. True: it is
-        there, or it was asked KEEP_TRIES times (a node that does not answer keeps no pod for ever)."""
-        k = self.S.setdefault("kept", dict(tries=0))
-        if k.get("done") or k["tries"] >= KEEP_TRIES or not bids:
-            return True
-        k["tries"] += 1; os.makedirs(f"{PRIV}/{self.mid}", exist_ok=True); path = f"{PRIV}/{self.mid}/node-output.tar.gz"
-        dirs = " ".join(shlex.quote(b) for b in bids)
-        k["done"] = bool(self.tried("keep-output", self.node.save, f"cd {C.NODE_ROOT}/runs/{self.mid} && D=$(ls -d {dirs} 2>/dev/null); "
-                                    f"tar -czf - ${{D:--T /dev/null}}", path, 900))
-        self.log(event="output-kept" if k["done"] else "output-not-kept", benchmarks=bids, tries=k["tries"], of=KEEP_TRIES, file=path if k["done"] else None)
-        self.save(); return k["done"] or k["tries"] >= KEEP_TRIES
 
     # ---- one poll
     def step(self, m, bs):
@@ -394,7 +366,7 @@ class Row:
             self.log(event="pod-changed", old_pod=run["pod_id"], new_pod=self.rec.get("id")); S["running"] = run = None
             S.pop("node_down", None); self.save()
         age = now() - (self.rec.get("rented_at") or now())
-        if self.rec and not self.first and not S.get("expired") and age > P.POD_MAX_HOURS * 3600:
+        if self.rec and not S.get("expired") and age > P.POD_MAX_HOURS * 3600:
             # written first: whatever the node does now (an ssh that hangs, a result file that is cut), the pod goes back
             S["expired"] = dict(at=now(), hours=round(age / 3600, 2)); self.save()
             self.log(event="pod-expired", pod=self.rec.get("huid"), hours=round(age / 3600, 2), cap_hours=P.POD_MAX_HOURS)
@@ -414,15 +386,6 @@ class Row:
             dead, stalled_ = st.get("alive") != "1", now() - run["last_progress"] > STALL_S
             if st.get("done") == "1":
                 self.collect(run); S["running"] = None; S.pop("stalled", None); self.save()
-            elif self.first and dead:  # what is finished comes to the host, then the row is held
-                self.log(event="run-died", first_row=True); self.tried("collect", self.collect, run, False)
-                S["running"] = None; S.pop("stalled", None); self.save()
-            elif self.first:  # the runner lives: never a kill on that pod, and the pod stays. A stall is an alarm in the table, no more
-                if stalled_ and not S.get("stalled"):
-                    S["stalled"] = dict(since=run["last_progress"]); self.save()
-                    self.log(event="alarm", what="first-row-stalled", since_cr=cr(run["last_progress"]), why=f"no new line for {STALL_S} seconds, and the runner is alive")
-                elif not stalled_ and S.pop("stalled", None):
-                    self.log(event="first-row-moves-again"); self.save()
             elif dead:
                 S["fails"] += 1; self.log(event="run-died", fails=S["fails"]); S["running"] = None; self.save()
             elif stalled_:
@@ -430,10 +393,6 @@ class Row:
         if S.get("running"):
             return False
         bids = missing(m, bs)
-        if bids and self.first and not stopped(self.mid, S):  # never a second run on the pod of the single-node service
-            S["held"] = dict(at=now(), why="the run on the pod of the single-node service is over and gave no result for " + ", ".join(bids)
-                                           + ": no run is started on that pod")
-            self.log(event="first-row-held", benchmarks=bids, why=S["held"]["why"]); self.tell("held"); self.save()
         if not bids or stopped(self.mid, S):
             return self.give_back(m, bs)
         if not self.pod_ready():
@@ -474,7 +433,7 @@ def row_main(mid):
                 return row.log(event="row-end", state=(row.S.get("phase") or {}).get("state"), stopped=stopped(mid, row.S))
         except Exception:
             row.log(event="error", tb=traceback.format_exc()[-1500:])
-            if row.S.get("expired") and row.rec and not row.first:  # a pod past its hours goes back, whatever fails in the step
+            if row.S.get("expired") and row.rec:  # a pod past its hours goes back, whatever fails in the step
                 row.tried("release", row.pod.release, row.log, "expired")
         time.sleep(POLL_S)
 
@@ -497,15 +456,17 @@ def start_worker(mid):
 
 
 def take_over_single():
-    """Once, at the first start of this code: the run in work of the single-node service is cut. Its record goes from
-    `running` to `cut_run` (kept, for the operator), and the run's row is a row as any other: it runs again on a pod of
-    its own. No run is adopted. The fails of that service stay with their rows."""
-    if S.get("rows_mode"):
+    """A run in work of the single-node service is cut, at every start that finds one: this code never writes `running`
+    in that service's record, so a run there is of that service (the first start; also a start after a way back to that
+    service, which keeps the key `rows_mode` that it does not know). The record goes from `running` to `cut_run` (kept,
+    for the operator), and the run's row is a row as any other: it runs again on a pod of its own. No run is adopted.
+    The fails of that service stay with their rows."""
+    run = S.get("running")
+    if not run and S.get("rows_mode"):
         return
     for mid, n in S["fail"].items():
         if n and not os.path.exists(f"{ROWS}/{mid}/daemon.json"):
             os.makedirs(f"{ROWS}/{mid}", exist_ok=True); wj(f"{ROWS}/{mid}/daemon.json", dict(fails=n, history=[]))
-    run = S.get("running")
     if run:
         S["cut_run"] = dict(run, cut_at=now()); S["running"] = None; S.pop("node_down", None)
         log(event="single-run-cut", row=(run.get("model") or {}).get("model_id"), started_cr=cr(run.get("started")), pod_id=str(run.get("pod_id") or "")[:8])
@@ -521,13 +482,22 @@ def release_single(force=False):
     """The pod of the single-node service is given back when no run is recorded on it: by its exact id, through
     pod.Pod.release (the only delete), tried again each RELEASE_RETRY_S. True: that pod is not rented any more.
     It stays while the per-problem lines of a scored row are not on this host (derive_stored): they may be on that pod
-    only. `force` is the operator's word (`release-single`): no wait, and not that guard. The guards of the delete hold."""
-    if not single_pod().load():
+    only. `force` is the operator's word (`release-single`): no wait, and not that guard. The guards of the delete hold.
+    Each return that leaves the pod rented, but the wait between two tries, counts a try: the alarm always comes."""
+    rec = single_pod().load()
+    if not rec:
         return True
-    if S.get("running") or any(is_first(mid) for mid in row_ids()) or (not force and now() - S.get("single_release_tried", 0) < RELEASE_RETRY_S):
+    if not force and now() - S.get("single_release_tried", 0) < RELEASE_RETRY_S:
         return False
     said = []; lost = [f for f in S.get("lines_missing") or [] if not os.path.exists(f)]
-    if lost and not force:  # the lines may be on that pod only: it stays until they are on this host, or until the operator's word (`release-single`)
+    rows = [mid for mid in row_ids() if P.name_of(mid) == P.NAME or pod_of(mid).load().get("id") == rec["id"]]
+    if S.get("running"):  # take_over_single cuts it at the start of each step: only a command beside a stopped service comes here
+        said.append(dict(why="a run of the single-node service is recorded on this pod"))
+        log(event="release-refused", **said[-1])
+    elif rows:  # BENCH_POD_NAME is the name of a row's pod, or the record names a row's pod: that pod is the row's, with its run
+        said.append(dict(why=f"the record of the single-node service names the pod of row {rows[0]}: that pod is the row's"))
+        log(event="release-refused", **said[-1])
+    elif lost and not force:  # the lines may be on that pod only: it stays until they are on this host, or until the operator's word (`release-single`)
         said.append(dict(why=f"the per-problem lines of a scored row are not on this host and may be on this pod: {', '.join(os.path.relpath(f, PRIV) for f in lost)}"))
         log(event="release-refused", **said[-1])
     elif single_pod().release(lambda **k: (said.append(k), log(**k)), why="no row runs on the pod of the single-node service"):
@@ -548,29 +518,39 @@ def derive_stored():
     """A result on this host of a run with more samples a problem than the settings ask for now, of a row that is not in
     work: its value at the settings' count, by the fixed rule of derive.py, from the per-problem lines that the host
     has. Nothing is rented for it. The full run's result is kept beside the lines (`<benchmark>.full.json`), and that
-    file says that the result was looked at: once only. No value: the row is `held`; it is never run again by itself."""
+    file says that the result was looked at: once only. No value: the row is `held`; it is never run again by itself.
+    The same holds for a row whose full run is in the published table and whose result file is not on this host, or
+    cannot be read there: no value, and the row is `held` (`no_value` in the state says that it was looked at)."""
+    table = [c for c in (rj(publish.OUT) or {}).get("results") or [] if isinstance(c, dict)]; done = published()
     for b in R.benchmarks(enabled_only=True, runnable_only=True):
         bid, want = b["id"], R.bench_version(b)
-        for f in sorted(glob.glob(f"{RES}/*/{bid}.json")):
-            mid = os.path.basename(os.path.dirname(f)); r = rj(f); full = f"{PRIV}/{mid}/{bid}.full.json"
+
+        def more(r):
             try:
-                more = isinstance(r, dict) and r.get("bench_version") != want and int(r.get("rollouts") or 0) > int(b["rollouts"])
+                return isinstance(r, dict) and (r.get("bench_version") or r.get("env_version")) != want and int(r.get("rollouts") or 0) > int(b["rollouts"])
             except (TypeError, ValueError):
-                more = False
-            if not more or os.path.exists(full) or row_state(mid).get("running") or pod_of(mid).load():
-                continue  # a row in work: its worker brings the result to the settings' count (Row.collect)
-            lines = f"{PRIV}/{mid}/{bid}.per_task.jsonl"
+                return False
+        told = {c.get("model_id") for c in table if c.get("benchmark_id") == bid and more(c)}  # rows whose full run the table has
+        for mid in sorted(x for x in {os.path.basename(os.path.dirname(f)) for f in glob.glob(f"{RES}/*/{bid}.json")} | told if x):
+            f = result_path(mid, bid); r = rj(f); full = f"{PRIV}/{mid}/{bid}.full.json"; lines = f"{PRIV}/{mid}/{bid}.per_task.jsonl"; key = f"{mid}/{bid}"
+            if (mid, bid, want) in done or (isinstance(r, dict) and r.get("bench_version") == want) or not (more(r) or mid in told):
+                continue  # the row has its result at the settings' count, or it has no run with more samples
+            if os.path.exists(full) or key in (S.get("no_value") or {}) or row_state(mid).get("running") or pod_of(mid).load():
+                continue  # looked at before; or a row in work: its worker brings the result to the settings' count (Row.collect)
+            new, why = None, "the result file of the full run is not on this host" if r is None else "the result file of the full run on this host cannot be used"
             try:
-                os.makedirs(f"{PRIV}/{mid}", exist_ok=True); wj(full, r, 0o600)
-                new, why = derive.from_full(r, open(lines).read(), int(b["rollouts"]), want, b.get("problems")) if os.path.exists(lines) else \
-                    (None, "the per-problem lines of the full run are not on this host")
-                if new is not None:
-                    publish.row_of(new, b)  # raises when the table could not show this result
+                if more(r):
+                    os.makedirs(f"{PRIV}/{mid}", exist_ok=True); wj(full, r, 0o600)
+                    new, why = derive.from_full(r, open(lines).read(), int(b["rollouts"]), want, b.get("problems")) if os.path.exists(lines) else \
+                        (None, "the per-problem lines of the full run are not on this host")
+                    if new is not None:
+                        publish.row_of(new, b)  # raises when the table could not show this result
             except Exception as e:
                 new, why = None, f"the result on this host cannot be read ({type(e).__name__}: {str(e)[:80]})"
             if new is None:
                 if not os.path.exists(lines):  # release_single keeps the pod of the single-node service while these lines are not here
-                    S["lines_missing"] = sorted(set(S.get("lines_missing") or []) | {lines}); save()
+                    S["lines_missing"] = sorted(set(S.get("lines_missing") or []) | {lines})
+                S.setdefault("no_value", {})[key] = now(); save()
                 hold_row(mid, f"{bid}: {why}"); log(event="no-value", row=mid, bench=bid, why=why); continue
             wj(f, new)
             log(event="derived", row=mid, bench=bid, rule=derive.RULE, score=round(new["score"], 4), score_full=new["score_full"], samples_full=new["samples_full"])
@@ -590,17 +570,14 @@ def plan(rows, wait):
 def view(rows, wait):
     """What the table says of the rows in work: read from the state files of the workers."""
     v = dict(waiting=wait, queue=S.get("queue") or [], runs=[], fail={}, stopped={}, pods={}, history=list(S["history"]), max_pods=P.MAX_PODS,
-             profiles={mid: FIRST_ROW_PROFILE for mid in row_ids() if is_first(mid)}, alarms=list(S.get("alarms") or []))
+             alarms=list(S.get("alarms") or []))
     for mid in row_ids():
         s = row_state(mid); rec = pod_of(mid).load(); ph = s.get("phase") or {}
         if s.get("running"): v["runs"].append(s["running"])
-        if is_first(mid): v["node_down"] = s.get("node_down")
         v["fail"][mid] = s.get("fails", 0); v["history"] += s.get("history") or []
         if stopped(mid): v["stopped"][mid] = stopped(mid)
         if rec and (s.get("release_refused") or {}).get("tries", 0) >= ALARM_TRIES:
             v["alarms"].append(dict(what="release-refused", row=mid, since=s["release_refused"]["since"], tries=s["release_refused"]["tries"]))
-        if s.get("stalled") and s.get("running") and is_first(mid):
-            v["alarms"].append(dict(what="first-row-stalled", row=mid, since=s["stalled"]["since"]))
         if (s.get("rent_failed") or {}).get("no_answer"):
             v["alarms"].append(dict(what="rent-no-answer", row=mid, since=s["rent_failed"]["at"]))
         if rec or ph:
@@ -763,4 +740,4 @@ def cli(cmd, argv):
     for mid in argv:  # release ROW...: give the pod of a row back now; the next start runs what the row still misses on a new pod
         row = Row(mid)
         if row.pod.release(log, why="operator"):
-            row.S["running"] = None; row.S.pop("node_down", None); row.not_first(); row.tell("released"); row.save()
+            row.S["running"] = None; row.S.pop("node_down", None); row.attach(); row.tell("released"); row.save()

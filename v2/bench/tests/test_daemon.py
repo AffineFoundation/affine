@@ -551,12 +551,13 @@ def test_the_run_of_the_single_node_service_is_cut_at_the_first_start_and_its_po
     m = next(r for r in D.model_rows() if r["model_id"] == mid)
     monkeypatch.setattr(P, "MAX_PRICE", 35.0)
     calm = single_node_state(world, mid, m)
-    assert not D.release_single(force=True) and not lium.removed and calm in lium.pods  # a run is recorded on that pod: it stays
+    # a command beside the stopped service: a run is recorded on that pod, so it stays, and that is a counted try
+    assert not D.release_single(force=True) and not lium.removed and calm in lium.pods and D.S["single_release"]["tries"] == 1
     capsys.readouterr()
     world.steps()
     said = events(capsys)
     # the run is cut, not adopted: its record is kept under another name, and no row is a first row
-    assert D.S["running"] is None and (D.S["cut_run"]["run_key"], D.S["cut_run"]["pid"]) == (mid, "4321") and not D.is_first(mid)
+    assert D.S["running"] is None and (D.S["cut_run"]["run_key"], D.S["cut_run"]["pid"]) == (mid, "4321")
     (cut,) = [e for e in said if e["event"] == "single-run-cut"]
     assert (cut["row"], cut["pod_id"]) == (mid, "296c5237")
     # the pod of the single-node service is given back by its exact id, with the one delete of the code
@@ -568,9 +569,64 @@ def test_the_run_of_the_single_node_service_is_cut_at_the_first_start_and_its_po
     assert states() == {mid: "scored", gen: "scored"} and not lium.pods and world.node(mid).launches == 1
     cell = next(x for x in table()["results"] if x["model_id"] == mid and x["benchmark_id"] == "arxivmath")
     assert (cell["env_version"], cell.get("derived_from")) == ("arxivmath/v2/bench-v2", None)
-    # a later start cuts nothing and deletes nothing more
-    D.S["running"] = dict(D.S["cut_run"]); D.save(); world.steps()
-    assert D.S["running"]["run_key"] == mid and len(lium.removed) == 3
+    # a later start with no run of that service cuts nothing and deletes nothing more
+    capsys.readouterr(); world.steps()
+    assert len(lium.removed) == 3 and not [e for e in events(capsys) if e["event"] == "single-run-cut"]
+
+
+def test_a_run_of_the_single_node_service_is_cut_at_every_start_also_after_a_way_back_to_that_service(world, monkeypatch, capsys):
+    """The way back: the single-node service keeps the key `rows_mode` that it does not know, rents its pod and starts a run.
+    Then this code starts again: both keys are in the record."""
+    lium = world.lium; king = green(world.v2, 1); mid, gen = ids(king), ids(world.genesis)
+    m = next(r for r in D.model_rows() if r["model_id"] == mid)
+    monkeypatch.setattr(P, "MAX_PRICE", 35.0); monkeypatch.setattr(D, "RELEASE_RETRY_S", 0)
+    calm = single_node_state(world, mid, m); D.S["rows_mode"] = D.now() - 7200; D.save()
+    capsys.readouterr(); world.steps()
+    (cut,) = [e for e in events(capsys) if e["event"] == "single-run-cut"]
+    assert cut["row"] == mid and D.S["running"] is None and D.S["cut_run"]["pid"] == "4321"
+    # one pod for the row, and it is the row's own: the pod of that service is given back, the run on it is not adopted
+    assert rm(calm) in lium.removed and calm not in lium.pods and not D.single_pod().load()
+    assert sorted(name for _, name in lium.ups) == sorted([P.name_of(mid), P.name_of(gen)]) and world.node(mid).launches == 1
+    assert not [a for a in table()["alarms"] if a["what"] == "single-pod-not-released"]
+
+
+@pytest.mark.parametrize("marker", ["in the directory of a row that is not listed", "on a listed row with a run record of its own"])
+def test_a_marker_file_of_a_first_row_has_no_meaning_the_pod_of_the_single_node_service_is_given_back(world, monkeypatch, capsys, marker):
+    """Only the code of commit b1a89899 or a hand can have made the file `rows/<row>/first`."""
+    lium = world.lium; king = green(world.v2, 1); mid, gen = ids(king), ids(world.genesis)
+    m = next(r for r in D.model_rows() if r["model_id"] == mid)
+    monkeypatch.setattr(P, "MAX_PRICE", 35.0); monkeypatch.setattr(D, "RELEASE_RETRY_S", 0)
+    calm = single_node_state(world, mid, m); run = D.S.pop("running"); D.S["rows_mode"] = D.now() - 7200; D.save()
+    row = mid if marker.startswith("on a listed row") else "king-0000000000000000"
+    os.makedirs(f"{D.ROWS}/{row}"); pathlib.Path(f"{D.ROWS}/{row}/first").write_text("")
+    if row == mid:  # as b1a89899 left it: the run on the pod of the single-node service is the row's, and its runner lives
+        D.wj(f"{D.ROWS}/{mid}/daemon.json", dict(fails=0, history=[], running=run))
+    capsys.readouterr(); world.steps()
+    said = events(capsys)
+    assert rm(calm) in lium.removed and calm not in lium.pods and not D.single_pod().load()
+    # the row has one pod, its own, and one run, started by this code: the run on the other pod is not adopted
+    assert sorted(name for _, name in lium.ups) == sorted([P.name_of(mid), P.name_of(gen)]) and D.pod_of(mid).record == f"{D.ROWS}/{mid}/pod.json"
+    assert world.node(mid).launches == 1 and D.row_state(mid)["running"]["pod_id"] == world.pod_of(mid)["id"] != calm["id"]
+    assert ([e["old_pod"] for e in said if e["event"] == "pod-changed"] == [calm["id"]]) == (row == mid)
+    assert not table()["alarms"]
+
+
+def test_the_single_node_record_that_names_the_pod_of_a_row_never_brings_a_delete_of_that_pod(world, monkeypatch, capsys):
+    """BENCH_POD_NAME is the name of a row's pod, and pod.json of the single-node service names that pod."""
+    lium = world.lium; king = green(world.v2, 1); mid = ids(king)
+    monkeypatch.setattr(P, "MAX_PRICE", 35.0); monkeypatch.setattr(D, "RELEASE_RETRY_S", 0)
+    world.node(mid).busy = "done=\nalive=1\nlines=7\nfinished=1\nok=1\n"
+    world.steps()
+    pod = world.pod_of(mid); assert pod and D.row_state(mid)["running"]
+    for name in (P.name_of(mid), "affine-v2-bench-1"):  # by the name, and by the id alone
+        monkeypatch.setattr(P, "NAME", name)
+        P.Pod("", first=True).save(dict(name=name, id=pod["id"], huid="x", gpu="8xH100", cost=23.2, rented_at=D.now() - 3600, bootstrapped=True))
+        capsys.readouterr(); world.steps(D.ALARM_TRIES)
+        assert not D.release_single(force=True)  # also not on the operator's word
+        assert pod in lium.pods and rm(pod) not in lium.removed and D.row_state(mid)["running"] and D.pod_of(mid).load()["id"] == pod["id"]
+        assert "single-pod-not-released" in [a["what"] for a in table()["alarms"]]
+        assert all("that pod is the row's" in e["why"] for e in events(capsys) if e["event"] == "release-refused")
+        D.S.pop("single_release", None); D.save()
 
 
 def test_the_pod_of_the_single_node_service_that_cannot_be_given_back_is_an_alarm_and_no_pod_without_row(world, monkeypatch, capsys):
@@ -668,6 +724,41 @@ def test_a_scored_row_whose_full_run_gives_no_value_is_held_and_rents_nothing_un
         assert D.release_single(force=True) and rm(calm) in lium.removed  # the operator's word
     else:
         assert rm(calm) in lium.removed and calm not in lium.pods
+    D.cli("retry", [mid])  # the operator's word: a run of ArXivMath alone, at the settings' count, on a pod of the row's own
+    world.steps()
+    assert lium.ups[-1][1] == P.name_of(mid) and "--benchmarks arxivmath " in world.nodes[mid].cmds[-1]
+
+
+@pytest.mark.parametrize("fault", ["the result file is cut", "the result file is not there and the lines are", "no result file of the row is on the host",
+                                   "the result file has no count of samples"])
+def test_a_row_with_a_published_full_run_whose_file_cannot_be_used_is_held_and_rents_nothing(world, monkeypatch, capsys, fault):
+    v2, lium = world.v2, world.lium
+    king = green(v2, 1); mid, gen = ids(king), ids(world.genesis)
+    scored_by_the_single_node_service(mid)
+    D.sync_table(); D.publish_table(D.model_rows())  # the table in the store, as the single-node service wrote it: the full run at 16
+    assert [x["env_version"] for x in table()["results"] if x["model_id"] == mid and x["benchmark_id"] == "arxivmath"] == ["arxivmath/v1/bench-v2"]
+    f = D.result_path(mid, "arxivmath"); lines = f"{D.PRIV}/{mid}/arxivmath.per_task.jsonl"
+    if fault == "the result file is cut": pathlib.Path(f).write_text(pathlib.Path(f).read_text()[:40])
+    if fault == "the result file is not there and the lines are": os.remove(f)
+    if fault == "no result file of the row is on the host": shutil.rmtree(f"{D.RES}/{mid}"); shutil.rmtree(f"{D.PRIV}/{mid}")
+    if fault == "the result file has no count of samples": D.wj(f, {k: v for k, v in D.rj(f).items() if k != "rollouts"})
+    monkeypatch.setattr(D, "RELEASE_RETRY_S", 0)
+    calm = lium.pod(P.NAME, id="296c5237-0000-4000-8000-000000000000", huid="calm-matrix-26", price=23.2)
+    P.Pod("", first=True).save(dict(name=P.NAME, id=calm["id"], huid="calm-matrix-26", gpu="8xH100", cost=23.2, rented_at=D.now() - 3600, bootstrapped=True))
+    capsys.readouterr()
+    world.steps(4)
+    (line,) = [e for e in events(capsys) if e["event"] == "no-value"]  # one line, not one at each step
+    assert (line["row"], line["bench"]) == (mid, "arxivmath") and ("is not on this host" in line["why"] or "cannot be used" in line["why"])
+    # nothing is rented for the row, and no run is started for it: it waits for the operator's word
+    assert [name for _, name in lium.ups] == [P.name_of(gen)] and mid not in world.nodes and mid not in [x["model_id"] for x in D.queue()]
+    assert (model(mid)["stopped"], D.stopped(mid)) == ("held", "held") and "pod" not in model(mid)
+    # the published result of the full run stays in the table
+    assert [(x["env_version"], x["samples"]) for x in table()["results"] if x["model_id"] == mid and x["benchmark_id"] == "arxivmath"] == [("arxivmath/v1/bench-v2", 1648)]
+    # the pod of the single-node service stays, with the alarm, while the row's lines are not on this host
+    if os.path.exists(lines):
+        assert rm(calm) in lium.removed and calm not in lium.pods
+    else:
+        assert calm in lium.pods and rm(calm) not in lium.removed and "single-pod-not-released" in [a["what"] for a in table()["alarms"]]
     D.cli("retry", [mid])  # the operator's word: a run of ArXivMath alone, at the settings' count, on a pod of the row's own
     world.steps()
     assert lium.ups[-1][1] == P.name_of(mid) and "--benchmarks arxivmath " in world.nodes[mid].cmds[-1]
