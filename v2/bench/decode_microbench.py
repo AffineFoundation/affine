@@ -53,6 +53,7 @@ except ImportError as exc:  # pragma: no cover - only on a broken checkout or in
 
 VLLM_VERSION = "0.32.0"
 N_ADAPTERS = 6  # batch_cap: the most LoRAs of one ticket
+ADAPTER_STRENGTH = 1e-2  # the factor of the matrix B of a made-up adapter
 FLAG = "--specialize-active-lora"
 STREAMS = 20
 CONTEXT_TOKENS = 34000  # the prompt of each stream; the task asks for a context above 32,000
@@ -162,14 +163,14 @@ def target_shapes(head: Path, targets: tuple[str, ...]) -> dict[str, tuple[int, 
     return shapes
 
 
-def write_adapter(out_dir: Path, shapes: dict[str, tuple[int, int]], rank: int, alpha: float, targets: tuple[str, ...], seed: int) -> int:
+def write_adapter(out_dir: Path, shapes: dict[str, tuple[int, int]], rank: int, alpha: float, targets: tuple[str, ...], seed: int, strength: float = ADAPTER_STRENGTH) -> int:
     """A made-up LoRA in the layout of the trainer (PEFT config, float32 safetensors). Returns the bytes written."""
     rng = numpy.random.default_rng(seed)
     header, blobs, offset = {}, [], 0
     for path in sorted(shapes):
         out_features, in_features = shapes[path]
         a = (rng.random((rank, in_features), dtype=numpy.float32) * 2 - 1) / numpy.float32(in_features**0.5)
-        b = rng.standard_normal((out_features, rank), dtype=numpy.float32) * numpy.float32(1e-2)  # strong enough to change the tokens of M soon
+        b = rng.standard_normal((out_features, rank), dtype=numpy.float32) * numpy.float32(strength)  # strong enough to change the tokens of M soon
         for name, value in (("lora_A", a), ("lora_B", b)):
             blob = value.astype("<f4").tobytes()
             header[f"base_model.model.{path}.{name}.weight"] = {"dtype": "F32", "shape": list(value.shape), "data_offsets": [offset, offset + len(blob)]}
@@ -350,6 +351,7 @@ def measure_target(port: int, models: list[str], words: int, params: Params, str
 
 CORRECT_TOKENS = 256  # the reply of each request of a case: all have this length, so all are in the decode batch together
 CORRECT_M_ROWS = 4  # requests of M in flight in the run "with M"
+CORRECT_LEAVE_BY = 30  # a LoRA shows the fault only if its text without M leaves M's text soon: below this token
 CORRECT_PROMPT_WORDS = 48  # far below the 512 tokens of the largest recorded graph: each decode step uses a recorded graph
 
 
@@ -437,11 +439,13 @@ def judge_correctness(results: dict[str, dict[str, Any]], table: int) -> tuple[l
         faults = []
         for k, case in sorted(test["cases"].items(), key=lambda item: int(item[0])):
             changed: dict[str, list[str]] = {"without_M_again": [], "M_inside": [], "M_first": []}
-            notes, sound = [], True
+            notes, sound, leaves = [], True, {}
             for adapter, without_m in case["without_M"].items():
                 m_text = test["M"][adapter]
-                if same(m_text, without_m)["equal"]:
-                    notes.append(f"{adapter}: NOT VALID, its text without M is M's text")
+                leaves[adapter] = same(m_text, without_m)["first_difference"] if not same(m_text, without_m)["equal"] else None
+                if leaves[adapter] is None or leaves[adapter] >= CORRECT_LEAVE_BY:
+                    where = "is M's text" if leaves[adapter] is None else f"leaves M's text only at token {leaves[adapter]}"
+                    notes.append(f"{adapter}: NOT VALID, its text without M {where}: too weak to show the fault")
                 for run in changed:
                     reply = case[run][adapter]
                     sound = sound and reply["ok"] and without_m["ok"]
@@ -455,21 +459,23 @@ def judge_correctness(results: dict[str, dict[str, Any]], table: int) -> tuple[l
                             notes.append(f"{adapter}, M first: its text changes at token {a_b['first_difference']}; against M's text of the prompt: {'THE SAME' if b_c['equal'] else 'the same up to token ' + str(b_c['first_difference'])} (without M: up to token {a_c['first_difference']})")
             expected = has_flag and int(k) in fault_counts(table)
             verdict = "FAIL" if changed["M_inside"] or (int(k) == 1 and changed["M_first"]) else "PASS, but a change in 'M first'" if changed["M_first"] else "PASS"
-            verdicts[f"{name}/k{k}"] = {"verdict": verdict, "changed": changed, "flag": has_flag, "fault_reading_expects_fail": expected, "sound": sound}
+            verdicts[f"{name}/k{k}"] = {"verdict": verdict, "changed": changed, "flag": has_flag, "fault_reading_expects_fail": expected, "sound": sound,
+                                         "valid": all(at is not None and at < CORRECT_LEAVE_BY for at in leaves.values()), "leaves_m_text_at_token": leaves}
             if verdict == "FAIL" and has_flag:
                 faults.append(int(k))
             count = lambda run: f"{len(changed[run])} of {len(case['without_M'])}" + (f" ({', '.join(changed[run])})" if changed[run] else "")  # noqa: E731
             lines.append(f"  k = {k}: {verdict}. LoRAs with a changed text: M inside {count('M_inside')}; M first {count('M_first')}; no M, again {count('without_M_again')}"
-                         + ("; the fault reading says FAIL here" if expected else "") + ("" if sound else "  NOT SOUND: a request was short or the requests did not overlap as planned")
+                         + ("; the fault reading says FAIL here" if expected else "") + f"; without M the texts leave M's text at token {'/'.join(cell(at) for at in leaves.values())}" + ("" if sound else "  NOT SOUND: a request was short or the requests did not overlap as planned")
                          + "".join("\n      " + note for note in notes))
         if has_flag:
             lines.append(f"  {name}: FAIL at k = {faults}; the fault reading says {fault_counts(table)}. (A change in 'M first' only, at another k, is the same fault in a step that held fewer LoRAs.)" if faults else f"  {name}: no k fails")
-    off = [key for key, verdict in verdicts.items() if not verdict["flag"] and verdict["verdict"] == "FAIL"]
-    on = [key for key, verdict in verdicts.items() if verdict["flag"] and verdict["verdict"] == "FAIL"]
-    if any(verdict["flag"] for verdict in verdicts.values()):
-        lines.append(f"RESULT: the flag is {'FAULTY' if on and not off else 'CLEAN in this test' if not on else 'NOT DECIDED (the control changes its text too: ' + ', '.join(off) + ')'}"
-                     + (f": a LoRA's text changed with M in flight in {', '.join(on)}, and in no case without the flag" if on and not off else ""))
     return lines, verdicts
+
+
+def blind_cases(verdicts: dict[str, Any]) -> list[str]:
+    """The cases with the flag, at a k where the fault reading says FAIL, that passed but could not have shown the fault."""
+    return [f"{key} ({'not sound' if not verdict['sound'] else 'not valid: an adapter is too weak'})" for key, verdict in verdicts.items()
+            if verdict["flag"] and verdict["fault_reading_expects_fail"] and verdict["verdict"] != "FAIL" and not (verdict["sound"] and verdict["valid"])]
 
 
 def result_lines(results: dict[str, dict[str, Any]], verdicts: dict[str, Any], names: list[str]) -> list[str]:
@@ -486,9 +492,13 @@ def result_lines(results: dict[str, dict[str, Any]], verdicts: dict[str, Any], n
             f"{key.replace('/k', ', k = ')}: {', '.join(slot(adapter) for adapter in (verdict['changed']['M_inside'] or verdict['changed']['M_first']))}" for key, verdict in failed.items())
     elif failed or control:
         test = f"NOT DECIDED. The control without the flag changed its text too ({', '.join(control)}); with the flag: {', '.join(failed) or 'no change'}"
+    elif blind := blind_cases(verdicts):
+        test = f"NOT DECIDED. No text changed, but these cases could not have shown the fault: {', '.join(blind)}. Run again with a larger --adapter-strength"
     else:
         test = f"PASS. No LoRA changed its text with M in flight, in {len(on)} cases with the flag" + ("" if any(not verdict["flag"] for verdict in verdicts.values()) else " (no control without the flag in this run)")
     lines = [f"RESULT: test of {FLAG}: {test}" + (f"  NOT SOUND in {', '.join(unsound)}" if unsound else "")]
+    graphs = lambda result: f"{cell((result.get('start') or {}).get('graph_mode'))}, {cell((result.get('start') or {}).get('graph_capture_passes'))}, {cell((result.get('start') or {}).get('graph_capture_s'))} s, {cell((result.get('start') or {}).get('graph_capture_gib'))} GiB"  # noqa: E731
+    lines.append("RESULT: recorded graphs (the flag acts only if a server with the flag records more than one without): " + "; ".join(f"{name}: {graphs(result)}" for name, result in results.items()))
     first: dict[str, float] = {}
     for name in names:
         for cases in (results.get(name, {}).get("phases") or {}).values():
@@ -685,6 +695,7 @@ def main() -> int:
     parser.add_argument("--streams", type=int, default=STREAMS)
     parser.add_argument("--no-correctness", action="store_true", help="skip the correctness test of the flag")
     parser.add_argument("--no-speed", action="store_true", help="only the correctness test")
+    parser.add_argument("--adapter-strength", type=float, default=ADAPTER_STRENGTH, help="the factor of the matrix B of the made-up adapters; a larger one makes a LoRA's text leave M's text sooner")
     parser.add_argument("--table", type=int, default=N_ADAPTERS, help="--max-loras of the servers: the entries of a round's ticket")
     parser.add_argument("--cases", default=f"M_and_{N_ADAPTERS},M_and_1,M_and_2", help="the models in flight, in order of importance")
     parser.add_argument("--context-tokens", type=int, default=CONTEXT_TOKENS)
@@ -742,8 +753,8 @@ def main() -> int:
     results: dict[str, dict[str, Any]] = {}
     started = time.monotonic()
     try:
-        size = sum(write_adapter(temp / "adapters" / f"lora{index}", shapes, params.recipe.rank, params.recipe.alpha, params.recipe.target_modules, SEED + index) for index in range(1, N_ADAPTERS + 1))
-        print(f"{N_ADAPTERS} made-up adapters written (rank {params.recipe.rank}, {size / 2**20:.0f} MiB in all); temp directory {temp}", flush=True)
+        size = sum(write_adapter(temp / "adapters" / f"lora{index}", shapes, params.recipe.rank, params.recipe.alpha, params.recipe.target_modules, SEED + index, args.adapter_strength) for index in range(1, N_ADAPTERS + 1))
+        print(f"{N_ADAPTERS} made-up adapters written (rank {params.recipe.rank}, strength {args.adapter_strength:g}, {size / 2**20:.0f} MiB in all); temp directory {temp}", flush=True)
         for number, wave in enumerate(waves, 1):
             print(f"wave {number}: starting {', '.join(wave)} (one GPU each); the servers need some minutes to start", flush=True)
             children = []
@@ -797,7 +808,7 @@ def main() -> int:
     report = {
         "script": "decode_microbench", "vllm": version, "gpus": kinds, "gpus_free": len(free), "wall_s": round(time.monotonic() - started),
         "sampling": {key: body[key] for key in ("temperature", "top_p", "top_k", "seed") if key in body} | {"seed": f"{SEED} + stream number", "ignore_eos": True},
-        "decode_tokens": args.decode_tokens, "context_tokens_wanted": args.context_tokens, "adapters": {"count": N_ADAPTERS, "rank": params.recipe.rank, "layers": len(shapes), "made_up": True}, "table": args.table, "own_command_has_flag": own_flag,
+        "decode_tokens": args.decode_tokens, "context_tokens_wanted": args.context_tokens, "adapters": {"count": N_ADAPTERS, "rank": params.recipe.rank, "layers": len(shapes), "made_up": True, "strength": args.adapter_strength}, "table": args.table, "own_command_has_flag": own_flag,
         "proves": {name: CONFIGS[name][1] for name in names}, "same_as_base": compare, "configs": results,
     }
     (temp / "result.json").write_text(json.dumps(report, indent=1))
