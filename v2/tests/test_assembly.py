@@ -202,7 +202,7 @@ def test_the_order_after_a_king_is_a_setting_of_run_in_chain_mode_and_serial_is_
     monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
     run = stack()
     assert run.overlap and run.head.proven.__self__ is run.folder and run.entropy_now is None, "this box reads no chain (the smoke test), so no block hash"
-    assert run.settings[2] == f"after a king, only the fold is before the next open (the order 'overlap') ({ORDER_ENV}=overlap)"
+    assert run.settings[2] == f"after a king, the fold and the check of the waiting files are before the next open (the order 'overlap') ({ORDER_ENV}=overlap)"
     assert not stack("publish").overlap and not stack("end-round").overlap and not stack("checkpoint").overlap, "only run takes steps out of the line"
     assert code_digest() == plan.code_digest(), "a setting of the shell: no file under gpu/ reads it"
     monkeypatch.setenv(ORDER_ENV, "fast")

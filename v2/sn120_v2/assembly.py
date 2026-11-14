@@ -171,7 +171,7 @@ def stack(context: StackContext) -> Stack:
     shown = (
         setting(MODE_ENV, f"the head goes public in the mode {mode()!r}"),
         setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
-        setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
+        setting(ORDER_ENV, "after a king, " + ("the fold and the check of the waiting files are before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
     )
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
