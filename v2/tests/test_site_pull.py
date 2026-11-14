@@ -27,6 +27,9 @@ from sn120_v2.r2 import R2Store
 from sn120_v2.r2_names import PLAIN_NAMES, store_env
 from sn120_v2.types import HeadManifest
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "site"))
+import terms  # noqa: E402  # the site package sits next to sn120_v2; pull/reset import it the same way
+
 PULL = Path(__file__).parents[1] / "site" / "pull.py"
 URL = "https://site.example"
 SECRET = "fake-secret-value-never-shown"
@@ -116,9 +119,11 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
     copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, *small, *tables}
     assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json"} | BUILT
-    for key in copied:  # each file is at the path of its key, byte for byte
-        assert files[key] == store.get(key)
+    for key in copied:  # each file is at the path of its key; llms.txt gets the site's approved wording
+        want = terms.rewrite_served(store.get(key)) if key == layout.LLMS_TXT else store.get(key)
+        assert files[key] == want
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
+    assert b"already evaluated" not in files["llms.txt"].lower()
     assert set(json.loads(files[INDEX])["files"]) == copied | {LINKS}
     assert not list(site.rglob(".tmp-*")) and "site-data.json" in files["index.html"].decode()
 
@@ -184,7 +189,7 @@ def test_a_file_that_the_pull_did_not_write_is_never_replaced_or_removed(env, st
     assert done.returncode == 1 and "FAILED rounds: Refused: public/rounds/r000001/round.json" in done.stderr
     files = tree(site)
     assert {name: files[name] for name in theirs} == theirs
-    assert files["mining.json"] == store.get(layout.MINING_JSON) and files["llms.txt"] == store.get(layout.LLMS_TXT)
+    assert files["mining.json"] == store.get(layout.MINING_JSON) and files["llms.txt"] == terms.rewrite_served(store.get(layout.LLMS_TXT))
     assert b"site-data.json" in files["index.html"] and layout.CURRENT in files and LINKS in files  # the other steps ran
 
     (site / "public/rounds/r000001/round.json").unlink()
@@ -408,7 +413,7 @@ def test_the_whole_run_passes_with_a_token_that_cannot_write_and_a_file_with_the
         assert hashlib.sha256(response.read()).hexdigest() == item["sha256"] and item["url"].startswith(proxy)
     (site / "llms.txt").unlink()  # the reset tool's copy of llms.txt takes the same names and makes no write call either
     reset = command(token, "reset.py", "llms", "--site-dir", str(site))
-    assert reset.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT) and read_only.denied == [], reset.stderr
+    assert reset.returncode == 0 and (site / "llms.txt").read_bytes() == terms.rewrite_served(store.get(layout.LLMS_TXT)) and read_only.denied == [], reset.stderr
 
     writer = R2Store.from_env({**env, "SN120_R2_ENDPOINT": proxy}, attempts=1)  # the same store does refuse a write
     for call in (lambda: writer.put("public/x", b"x"), lambda: writer.delete(layout.MINING_JSON), lambda: writer.copy(layout.MINING_JSON, "public/y")):
@@ -427,8 +432,9 @@ def test_reset_llms_reads_the_store_with_only_the_plain_names(env, store, tmp_pa
     (site / "llms.txt").write_text("the old contract")
     token = {PLAIN_NAMES[name]: value for name, value in env.items()}  # the operator's file: no SN120_R2_* name
     done = command(token, "reset.py", "llms", "--site-dir", str(site))
-    assert done.returncode == 0 and (site / "llms.txt").read_bytes() == store.get(layout.LLMS_TXT), done.stderr
+    assert done.returncode == 0 and (site / "llms.txt").read_bytes() == terms.rewrite_served(store.get(layout.LLMS_TXT)), done.stderr
     assert sorted(path.name for path in site.iterdir()) == ["llms.txt"]
+    assert b"already evaluated" not in (site / "llms.txt").read_bytes().lower()
 
     (site / "llms.txt").write_text("the old contract")
     done = command({**token, "SN120_R2_BUCKET": "not-the-bucket"}, "reset.py", "llms", "--site-dir", str(site))  # a set v2 name wins

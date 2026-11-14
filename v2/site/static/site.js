@@ -4,7 +4,8 @@
    round) read site-data.json, which build.py writes from the publisher's public snapshot. supply.html reads miner-supply.json,
    which supply.py writes. v1.html reads v1-data.json, the frozen v1 history that v1_archive.py wrote once at cutover.
    A part of the page is filled only where the page has it, so each page uses this one file.
-   Privacy: build.py puts a batch link and a LoRA hash on an applied winner only; every other batch shows "private". */
+   Privacy: build.py puts a submission link and a LoRA hash on an applied winner only; every other submission shows "private".
+   Terms: submission = one LoRA upload; round = one evaluation cycle; batch = the submissions seated in a round; king = round winner. */
 (() => {
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const clip = (s, a = 6, b = 4) => { s = String(s || ''); return s.length > a + b + 1 ? s.slice(0, a) + '…' + (b ? s.slice(-b) : '') : s || '—'; };
@@ -30,7 +31,7 @@
     lost: ['LOST', 'dn', 'Had a fair tournament and did not win. This hotkey already had their one turn.'],
     no_decision: ['NO DECISION', 'wait', 'Our infrastructure failed. Not charged; the seat goes back to the front of the queue.'],
     skip: ['SKIP', 'private', 'The file was missing or invalid when the round froze it. Not charged; the seat keeps its place.'],
-    not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this batch was trained. Not charged; the seat is first in the next round.'],
+    not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this submission was trained. Not charged; the seat is first in the next round.'],
     not_scored: ['NOT SCORED', 'wait', 'The time limit of the round came before the first look of the scoring. Not charged; the seat is first in the next round.'],
   };
   // A round with no result gives no entry a status: the box failed, or the operator ended the round.
@@ -72,23 +73,23 @@
   // The page knows it only when the data file has the two settings and the cap-hit of M of that round. If not, no cell is marked.
   const capLimit = r => D.cap_hit_floor == null || D.cap_hit_margin == null || (ROUND[r.round_id] || {}).null_cap == null ? null : Math.max(D.cap_hit_floor, ROUND[r.round_id].null_cap + D.cap_hit_margin);
   const overCap = r => r.cap_rate != null && capLimit(r) != null && r.cap_rate > capLimit(r);
-  // The word for a row that has no score: a king carried over from v1, or a batch that was not scored. The v1 page keeps its dash.
+  // The word for a row that has no score: a king carried over from v1, or a submission that was not scored. The v1 page keeps its dash.
   const unscored = r => V1 ? mute('—')
     : r.imported ? no('Carried over from v1: this king has no v2 score and no v2 head. Its v1 score is on the v1 history page.')
-    : no('Not scored. ' + (r.status == null ? NO_RESULT : RESULT[r.status] || ['', '', 'The round gave this batch no score.'])[2]);
+    : no('Not scored. ' + (r.status == null ? NO_RESULT : RESULT[r.status] || ['', '', 'The round gave this submission no score.'])[2]);
   const noM = r => no('The round ended before the head M was scored, so the round file has no value.' + why(r));
 
   const files = r => r.batch
-    ? link(r.batch, 'batch.json', 'The winning batch, byte for byte') + (r.lora ? ' ' + key(r.lora, 6, 0) : '')
+    ? link(r.batch, 'batch.json', 'The winning submission file, byte for byte') + (r.lora ? ' ' + key(r.lora, 6, 0) : '')
     : r.imported ? link('v1.html', 'v1 king', 'Carried over from v1 at cutover. The v1 history is on its own page.')
-    : pill('private', 'private', 'Only a winner is published. This batch stays private.');
+    : pill('private', 'private', 'Only a winner is published. This submission stays private.');
   const dagger = (c, t) => c ? `<sup title="${esc(t)}">†</sup>` : '';
 
-  // Batch size and train settings. Only the batch of a winner is public, so each other row says why it has no value.
+  // Submission size and train settings. Only the winner's submission is public, so each other row says why it has no value.
   const closed = (r, what) => r.imported ? unscored(r)
-    : r.batch ? no(`The batch of this winner is public, but the data file of this page does not have ${what} yet. It is in batch.json.`, 'not read')
-    : r.line != null ? pill('private', 'private', 'A file in the queue stays private. Only the batch of a winner is published.')
-    : pill('private', 'private', 'Only a winner is published. This batch stays private.');
+    : r.batch ? no(`The winner's submission is public, but the data file of this page does not have ${what} yet. It is in batch.json.`, 'not read')
+    : r.line != null ? pill('private', 'private', 'A file in the queue stays private. Only a winner submission is published.')
+    : pill('private', 'private', 'Only a winner is published. This submission stays private.');
   const batchSize = r => r.batch_prompts == null ? closed(r, 'its size')
     : `<span title="${esc(r.batch_prompts)} prompts${r.batch_rollouts == null ? '' : ` · ${esc(r.batch_rollouts)} rollouts`}">${esc(r.batch_prompts)}${r.batch_rollouts == null || !r.batch_prompts ? '' : ' × ' + (r.batch_rollouts / r.batch_prompts).toFixed(1)}</span>`;
   // A setting shows in the cell only when the miner set it to a value that is not the default. The tooltip has each setting.
@@ -116,7 +117,7 @@
     hot: { h: 'Hotkey', w: 104, s: text('hotkey'), r: r => key(r.hotkey) },
     z: { h: 'z', w: 60, n: 1, s: num('z'), r: r => score(r.z, 2, 'z = gain / standard error', unscored(r)), t: 'Gain over the head M, in standard errors.' },
     head: { h: 'Head', w: 132, s: text('head'), r: r => (r.head ? key(r.head, 8, 0) : unscored(r)) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
-    files: { h: 'Files', w: 136, r: files, t: 'Published for a winner only: the batch, and the hash of the LoRA.' },
+    files: { h: 'Files', w: 136, r: files, t: 'Published for a winner only: the submission file, and the hash of the LoRA.' },
     reg: { h: 'Reg block', w: 88, n: 1, s: num('registration_block'), r: r => esc(r.registration_block ?? '—') },
     check: { h: 'File', w: 96, s: r => r.file_valid ? 1 : 0, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
     flags: { h: 'Status', w: 170, s: r => (r.flags || []).join(' '), r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
@@ -126,26 +127,26 @@
     gain: { h: 'Gain', w: 76, n: 1, s: num('delta'), r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, r.rank && !r.imported ? no('The round of this king is no longer in the history of mining.json, so this page has no gain for it.', 'not listed') : unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
     bar: { h: 'vs bar', w: 96, n: 1, s: r => r.z == null ? null : r.z - D.z_bar, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
     capHit: { h: 'Cap-hit', w: 68, n: 1, s: num('cap_rate'), r: r => overCap(r) ? `<span class="dn" title="Above the cap-hit limit of this round, ${pct(capLimit(r))}: the larger of ${pct(D.cap_hit_floor)} and the cap-hit of M plus ${pct(D.cap_hit_margin)}. A LoRA above the limit cannot win.">${pct(r.cap_rate)}</span>` : pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed. Red: above the cap-hit limit of the round.' },
-    look: { h: 'Dropped', w: 68, n: 1, s: num('look'), r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
-    size: { h: 'Batch', w: 76, n: 1, s: num('batch_prompts'), r: batchSize, t: 'Prompts × mean rollouts for each prompt. The totals are in the tooltip. Public for a winner only.' },
+    look: { h: 'Dropped', w: 68, n: 1, s: num('look'), r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'Looks are the stages rollouts are scored in. The early look at which this LoRA was dropped, if any.' },
+    size: { h: 'Size', w: 76, n: 1, s: num('batch_prompts'), r: batchSize, t: 'Training prompts × mean rollouts for each prompt. Public for a winner only.' },
     hp: { h: 'Hparams', w: 146, r: hparams, t: HP_HELP },
     hpWide: { h: 'Hparams', w: 210, r: hparams, t: HP_HELP },
-    sha: { h: 'Batch sha256', w: 100, s: text('sha'), r: r => key(r.sha, 8, 0) },
+    sha: { h: 'Submission sha256', w: 120, s: text('sha'), r: r => key(r.sha, 8, 0) },
     at: { h: 'When', w: 92, n: 1, s: num('at'), r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, s: num('at'), r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
     env: { h: 'Env', w: 60, s: text('env'), r: r => esc(r.env) },
-    seats: { h: 'Batches', w: 68, n: 1, s: num('seats'), r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is in this number.' },
+    seats: { h: 'Submissions', w: 88, n: 1, s: num('seats'), r: r => esc(r.seats), t: 'Submissions seated in the round: valid file at round open. A submission whose training failed is still counted. Together they are the batch of the round.' },
     skipped: { h: 'Skipped', w: 68, n: 1, s: num('skipped'), r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
-    tasks: { h: 'Tasks', w: 64, n: 1, s: num('tasks'), r: r => esc(r.tasks) },
+    tasks: { h: 'Tasks', w: 64, n: 1, s: num('tasks'), r: r => esc(r.tasks), t: 'Eval problems for each submission in this round.' },
     mPass: { h: 'M pass', w: 68, n: 1, s: num('null_pass'), r: r => pct(r.null_pass, noM(r)) },
     mCap: { h: 'M cap-hit', w: 76, n: 1, s: num('null_cap'), r: r => pct(r.null_cap, noM(r)) },
     outcome: { h: 'Outcome', w: 132, s: text('outcome'), r: r => (OUTCOME[r.outcome] || (() => esc(r.outcome)))(r) },
     kind: { h: 'Kind', w: 84, s: r => r.folded ? 1 : 0, r: r => r.folded ? mute('folded', 'The LoRAs are merged into the base.') : mute('stacked', 'The winning LoRA is stacked on the base.') },
     manifest: { h: 'Manifest', w: 84, r: r => r.manifest ? link(r.manifest, 'head.json', 'File hashes of this head') : no('No manifest file of this head is on this site. The validator writes the manifest of a head only while that head is the current one.', 'no file') },
-    epoch: { h: 'Epoch', w: 64, n: 1, s: num('epoch'), r: r => 'E' + esc(r.epoch) },
+    epoch: { h: 'v1 turn', w: 64, n: 1, s: num('epoch'), r: r => 'E' + esc(r.epoch), t: 'v1 turn index (historical). v2 uses rounds, not epochs.' },
     verdict: { h: 'Result', w: 92, s: text('verdict'), r: r => pill(...({ green: ['GREEN', 'up', 'Applied to the head.'], red: ['RED', 'dn', 'Not applied.'] }[r.verdict] || [r.verdict, 'wait', 'Not decided when v1 stopped.'])) },
     share: { h: 'Weight', w: 68, n: 1, s: num('share'), r: r => pct(r.share), t: 'Share of the miner weight when v1 stopped.' },
-    batch: { h: 'Batch', w: 92, n: 1, s: num('tasks'), r: r => r.tasks == null ? mute('—') : esc(r.tasks) + (r.rollouts == null ? '' : ' · ' + esc(r.rollouts)), t: 'Tasks in the batch, then rollouts.' },
+    batch: { h: 'Tasks', w: 92, n: 1, s: num('tasks'), r: r => r.tasks == null ? mute('—') : esc(r.tasks) + (r.rollouts == null ? '' : ' · ' + esc(r.rollouts)), t: 'Tasks, then rollouts.' },
     cPass: { h: 'Cand. pass', w: 84, n: 1, s: num('c_pass'), r: r => pct(r.c_pass), t: 'Pass rate of the trained candidate on the scoring sample.' },
     hPass: { h: 'Head pass', w: 84, n: 1, s: num('h_pass'), r: r => pct(r.h_pass), t: 'Pass rate of the head on the same sample.' },
     cand: { h: 'Candidate', w: 100, s: text('candidate'), r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
@@ -257,7 +258,7 @@
     el.innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
   }
 
-  /* One chart for every tile and every score card, as k1.js and bench.js of the v1 site: grid lines with their values, bars or a
+  /* One chart for every tile and every score card, as k1.js and bench.js of the v1 site: axis values (no grid lines), bars or a
      line with hollow points per series (a line breaks where a value is missing), one dashed reference line, the first and the last
      x label, and a tooltip for the position under the pointer. o.n positions; o.x(i) in 0..1 places them by time, else they are
      even slots. The box has a fixed size in the CSS, so a chart never moves the page. */
@@ -286,7 +287,7 @@
     if (o.bound) { lo = Math.max(lo, o.bound[0]); hi = Math.min(hi, o.bound[1]); if (hi <= lo) lo = hi - st; }
     const y = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo)), wide = W - P.l - P.r, slot = wide / Math.max(o.n, o.slots || 1);
     const xs = idx.map(o.x ? i => P.l + wide * o.x(i) : i => P.l + slot * (i + .5));
-    for (let v = lo; v <= hi + st / 2; v += st) g.append(svg('line', { x1: P.l, x2: W - P.r, y1: y(v), y2: y(v), class: 'grid' }), svg('text', { x: P.l - 6, y: y(v) + 3, 'text-anchor': 'end' }, o.fmt(v)));
+    for (let v = lo; v <= hi + st / 2; v += st) g.append(svg('text', { x: P.l - 6, y: y(v) + 3, 'text-anchor': 'end' }, o.fmt(v)));
     if (o.ref != null) g.append(svg('line', { x1: P.l, x2: W - P.r, y1: y(o.ref), y2: y(o.ref), class: 'ref' }));
     const zero = y(Math.min(hi, Math.max(lo, 0))), bar = Math.max(2, Math.min(26, slot * .62));
     for (const s of o.series) {
@@ -515,15 +516,15 @@
   }
 
   /* The chart tiles of the v1 site (k1.js, timing.js), on the closed rounds that the snapshot lists, the oldest at the left.
-     v1 had one batch per turn; v2 has many per round, so "z" is the z of the applied winner, or the best z of a round with no winner. */
+     v2 seats several submissions per round (the batch of the round); "z" is the z of the applied king, or the best z of a round with no winner. */
   const OPEN_PAD = { l: 58, r: 16, t: 18, b: 28 };  // the open tile has larger axis text
   const ENDED = { applied: r => `UID ${r.winner_uid} applied`, null: () => 'M stays', no_decision: () => 'no decision', abandoned: () => 'abandoned' };
   const TONE = { applied: 'var(--performance)', null: 'var(--rejected)' };
   const OUTCOMES = [['up', 'winner applied'], ['dn', 'no winner: M stays'], ['wait hollow', 'no decision']];
   // the phases of a round, in the order of the round: key in the data, name, legend mark, colour, help text
   const PHASES = [
-    ['training', 'Training', 'up', 'var(--performance)', 'The time that the GPU box spent to train the batches of the round.'],
-    ['evaluation', 'Evaluation', 'wait', 'var(--accepted)', 'The time that the GPU box spent to score the head M and each LoRA of the round.'],
+    ['training', 'Training', 'up', 'var(--performance)', 'The time that the GPU box spent to train the submissions of the round.'],
+    ['evaluation', 'Evaluation', 'wait', 'var(--accepted)', 'The time that the GPU box spent to score the head M and each LoRA of the round, by looks.'],
     ['promote', 'Promote', 'ink', 'var(--ink)', 'From the result of the round to the new head. Only a round with an applied winner has it.'],
     ['fold', 'Fold', 'mid', 'var(--muted)', 'The merge of the applied LoRAs into a new base, after the new head. Only a round with an applied winner has it.'],
     ['other', 'Other', 'low', 'var(--axis)', 'The rest of the round, which the round file gives to no phase: open, wait and close.'],
@@ -541,12 +542,11 @@
   };
   const titled = (id, text, help) => {
     const el = document.getElementById(id), h = el.querySelector('h2'), b = el.querySelector('.cx');
-    if (h.textContent === text) return;
+    if (h.textContent === text && h.title === help) return;
     h.textContent = text; h.title = help;
     if (b) b.setAttribute('aria-label', b.getAttribute('aria-label').split(' ')[0] + ' ' + text);
   };
-  const BATCHES = ['Batches per round', 'One bar per closed round. Outline: the batches that the round took. Filled: the batches that got a z. Hover a bar for the limit of a round, the skipped seats and the tasks.'];
-  const BATCH = ['Batch per round', 'One bar per closed round with an applied winner: the rollouts in the batch of the winner. Only the batch of a winner is public, so a round with no winner has no bar. Reading: prompts × rollouts per prompt in the batch of the newest winner. Hover a bar for the batches of the round.'];
+  const SUBMISSIONS = ['Submissions per round', 'One bar per closed round. Outline: submissions seated in the round (the batch of that round, usually about 6 to 8). Filled: submissions that got a z. Hover a bar for the cap of the round, skipped seats and tasks.'];
   function tiles(d) {
     if (!document.getElementById('charts')) return;
     const rs = d.rounds.slice().reverse(), ended = r => (ENDED[r.outcome] || (() => r.outcome))(r), took = r => r.at - r.opened_at;
@@ -559,7 +559,7 @@
     tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, round({
       include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
       series: [{ bar: 1, v: i => rs[i].best_z, c: i => tone(rs[i]), hollow: i => undecided(rs[i]) }],
-      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? 'none: no batch was scored' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
+      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? 'none: no submission was scored' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['submissions', rs[i].seats]]),
     }));
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, round({
       bound: [0, 1], least: .01, fmt: whole,
@@ -567,19 +567,15 @@
       marks: (g, at) => rs.forEach((r, i) => undecided(r) && ring(g, at.xs[i], at, 'var(--accepted)')),
       tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2, 'not scored')], ['winner', share(rs[i].winner_pass, 2, rs[i].outcome === 'applied' ? 'none' : 'no winner')], ['M cap-hit', share(rs[i].null_cap, 2, 'not scored')], ['tasks', rs[i].tasks]]),
     }));
-    /* "Batch per turn" of v1 was the size of the batch of the miner. In v2 only the batch of an applied winner is public, so a
-       round with no winner has no bar. Data with no batch size (an older builder) keeps the count of batches of each round. */
-    const sized = last(r => r.batch_rollouts != null && r.batch_prompts > 0), per = r => +(r.batch_rollouts / r.batch_prompts).toFixed(1);
-    const seats = r => [[sized ? 'batches in the round' : 'batches', `${r.seats} of at most ${d.round.cap}`], ['with a z', r.with_z], ['skipped, no valid file', r.skipped], ['tasks', r.tasks]];
-    titled('c-batch', ...(sized ? BATCH : BATCHES));
-    legend('c-batch', sized ? [['up', 'rollouts in the batch of the winner']] : [['up hollow', 'batches in the round'], ['up', 'batches with a z']]);
-    tile('c-batch', sized ? `${sized.round_id} ${sized.batch_prompts} × ${per(sized)}` : end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, round({
+    /* Submissions seated in each round (the batch of that round). Outline = seats; filled = submissions that got a z. */
+    const seatTip = r => [['submissions', `${r.seats} of at most ${d.round.cap}`], ['with a z', r.with_z], ['skipped, no valid file', r.skipped], ['tasks', r.tasks]];
+    titled('c-batch', ...SUBMISSIONS);
+    legend('c-batch', [['up hollow', 'submissions seated'], ['up', 'submissions with a z']]);
+    tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, round({
       include: [0], least: 1, fmt: v => v,
-      hint: sized && `Batch of the winner of ${sized.round_id}: ${sized.batch_prompts} prompts × ${per(sized)} rollouts per prompt = ${sized.batch_rollouts} rollouts.`,
-      series: sized ? [{ bar: 1, v: i => rs[i].batch_rollouts, c: 'var(--performance)' }]
-        : [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)', hollow: () => 1 }, { bar: 1, v: i => rs[i].with_z || null, c: 'var(--performance)' }],
-      tip: i => tip(rs[i], [...(!sized ? [] : rs[i].batch_rollouts != null ? [['prompts', rs[i].batch_prompts], ['rollouts', `${rs[i].batch_rollouts} · ${per(rs[i])} per prompt`]]
-        : [['batch', rs[i].outcome === 'applied' ? 'not read yet' : 'private: the round has no winner']]), ...seats(rs[i])]),
+      hint: end && `Newest closed round ${end.round_id}: ${end.seats} submissions seated (cap ${d.round.cap}); ${end.with_z} with a z.`,
+      series: [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)', hollow: () => 1 }, { bar: 1, v: i => rs[i].with_z || null, c: 'var(--performance)' }],
+      tip: i => tip(rs[i], seatTip(rs[i])),
     }));
     const five = rs.slice(-5).map(took).sort((a, b) => a - b), mid = five.length >> 1, median = five.length && dur(five.length % 2 ? five[mid] : (five[mid - 1] + five[mid]) / 2);
     /* As timing.js of v1: a round much longer than the others does not set the scale. "Much longer" is more than 3 times the
@@ -611,10 +607,9 @@
           svg('text', { x: Math.min(Math.max(xs[i], P.l + 14), W - P.r - 14), y: P.t - 3, 'text-anchor': 'middle', class: 'over' }, dur(took(r)).replace(/ /g, '')));
       }),
     }));
-    /* Learning rate, as the tile of k1.js of v1: one dot per round with a public rate, on a log axis. Only the batch of an
-       applied winner is public. Its rate is the lora_lr of its batch file, or the default of the contract when the file sets
-       none. A round with no winner has a dashed circle under the axis: its rates stay private. With the contract in the data,
-       the axis is the range that a miner can set, and each round has its hover slot, with or without a dot. */
+    /* Learning rate, as the tile of k1.js of v1: one dot per round with a public rate, on a log axis. Only the winning
+       submission is public. Its rate is the lora_lr of its submission file (batch.json), or the default of the contract when
+       the file sets none. A round with no winner has a dashed circle under the axis: its rates stay private. */
     const set = (d.train_settable || []).find(x => x.key === 'lora_lr'), own = r => r.train != null && r.train.lora_lr != null;
     const rate = r => r.train == null ? null : own(r) ? r.train.lora_lr : set ? set.default : null, rated = last(r => rate(r) != null), lg = Math.log10;
     tile('c-lr', rated && `${rated.round_id} ${sci(rate(rated))}`, round({
@@ -625,7 +620,7 @@
         if (rate(r) != null) g.append(svg('circle', { cx: at.xs[i], cy: at.y(lg(rate(r))), r: 3.2, fill: tone(r), stroke: tone(r) }));
         else if (r.outcome !== 'applied') ring(g, at.xs[i], at, tone(r));
       }),
-      tip: i => tip(rs[i], rate(rs[i]) != null ? [['lora_lr', sci(rate(rs[i]))], ['source', own(rs[i]) ? 'set by the miner in the batch file' : 'default of the contract of today']]
+      tip: i => tip(rs[i], rate(rs[i]) != null ? [['lora_lr', sci(rate(rs[i]))], ['source', own(rs[i]) ? 'set by the miner in the submission file' : 'default of the contract of today']]
         : [['lora_lr', rs[i].outcome === 'applied' ? 'not read yet' : 'private: the round has no winner']]),
     }));
     cost();

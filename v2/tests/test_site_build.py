@@ -278,7 +278,11 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     live = script[script.index("  function render() {"):script.index("  function status(")]
     tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
     assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
-    assert "'none: no batch was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
+    assert "'none: no submission was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
+    home = (BUILD.parent / "static" / "index.html").read_text()
+    assert "Submissions per round" in home and "['submissions'," in tiles
+    assert "already evaluated" not in script + home
+    assert "class: 'grid'" not in script  # charts keep axis labels; no grid lines
 
 
 def test_the_price_feed_is_asked_less_often_with_no_network_and_not_at_all_from_a_hidden_page(tmp_path):

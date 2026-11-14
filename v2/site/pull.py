@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import build
+import terms
 from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
@@ -198,7 +199,8 @@ class Pull:
                 time.sleep(PAIR_WAIT_S)  # the publisher writes one file after the other
         else:
             raise Refused(f"{layout.LLMS_TXT} and {layout.MINING_JSON} are not of the same snapshot; the last good pair stays")
-        for name, data in (("mining.json", mining), ("llms.txt", llms)):
+        served = {"mining.json": mining, "llms.txt": terms.rewrite_served(llms)}
+        for name, data in served.items():
             self.put(ROOT_COPIES[name], data)
             build.write(self.site / name, data)
 

@@ -39,6 +39,7 @@ import tempfile
 from pathlib import Path
 
 from build import ASSETS, DATA, V1_DATA, write
+from terms import rewrite_served
 from sn120_v2 import layout
 from sn120_v2.errors import V2Error
 from sn120_v2.r2 import R2Store
@@ -86,8 +87,10 @@ def llms(site: Path) -> int:
         print(f"reset: llms.txt not copied: {layout.LLMS_TXT} and {layout.MINING_JSON} are not of the same snapshot; "
               "the file in the site directory stays. Run again in a moment", file=sys.stderr)
         return 1
-    write(site / "llms.txt", text)
-    print(f"reset llms: {site / 'llms.txt'} is the store's {layout.LLMS_TXT}: {len(text)} bytes, sha256 {hashlib.sha256(text).hexdigest()}")
+    served = rewrite_served(text)
+    write(site / "llms.txt", served)
+    print(f"reset llms: {site / 'llms.txt'} is the store's {layout.LLMS_TXT} with site terms: "
+          f"{len(served)} bytes, sha256 {hashlib.sha256(served).hexdigest()}")
     return 0
 
 
