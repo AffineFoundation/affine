@@ -35,6 +35,32 @@ def _protocol_rank(env_version, budget=None):
     return int(budget or 0) // 1000
 
 
+def result_key(r):
+    """Identity for merge: one result is a model, a benchmark, a protocol version and a settings profile. A second result
+    of the same version at another profile is another result: both stay in the file. row_key, without the profile, stays
+    the key of what a row has run: a row with a result of that key at any profile does not run the benchmark again
+    (daemon.missing)."""
+    return row_key(r) + (r.get("profile") or "",)
+
+
+def shown_profiles(recs):
+    """model -> the profile whose results the table shows, for a model with results at more than one profile at its newest
+    protocol: the profile with results of the most benchmarks, and among equal ones the newest run. So a second run at
+    another profile is not shown before it has a result of every benchmark that the first has: until then, and after a
+    second run that stops halfway, the rows of the first stay the shown ones."""
+    top, count, newest = {}, {}, {}
+    for r in recs:
+        top[r.get("model_id")] = max(top.get(r.get("model_id"), 0), _protocol_rank(r.get("env_version"), r.get("budget")))
+    for r in recs:
+        if _protocol_rank(r.get("env_version"), r.get("budget")) == top[r.get("model_id")] and "+" not in str(r.get("env_version") or ""):
+            k = (r.get("model_id"), r.get("profile") or "")
+            count.setdefault(k, set()).add(r.get("benchmark_id")); newest[k] = max(newest.get(k, 0), r.get("run_at") or 0)
+    shown = {}
+    for (mid, profile) in sorted(count, key=lambda k: (len(count[k]), newest[k], k[1])):
+        shown[mid] = profile  # the last of the order wins
+    return shown
+
+
 def pooled(mid, b, results, full):
     """Pooled benchmark (e.g. AIME 22-26): mean over all problems of all parts, task-clustered SE; only when every part is in.
     Per-problem mean = correct / rollouts, so errored rollouts count as wrong; errors/complete say whether any were lost."""
@@ -125,33 +151,8 @@ def unreadable():
 
 
 def row_key(r):
-    """What a row has run: a model, a benchmark and a protocol version. A row with a result of this key at any profile does
-    not run that benchmark again (daemon.missing)."""
+    """Identity for merge: same model + benchmark + protocol version is one row."""
     return (r.get("model_id"), r.get("benchmark_id"), r.get("env_version") or "")
-
-
-def result_key(r):
-    """Identity for merge: one result is a model, a benchmark, a protocol version and a settings profile. A second result
-    of the same version at another profile is another result: both stay in the file."""
-    return row_key(r) + (r.get("profile") or "",)
-
-
-def shown_profiles(recs):
-    """model -> the profile whose results the table shows, for a model with results at more than one profile at its newest
-    protocol: the profile with results of the most benchmarks, and among equal ones the newest run. So a second run at
-    another profile is not shown before it has a result of every benchmark that the first has: until then, and after a
-    second run that stops halfway, the rows of the first stay the shown ones."""
-    top, count, newest = {}, {}, {}
-    for r in recs:
-        top[r.get("model_id")] = max(top.get(r.get("model_id"), 0), _protocol_rank(r.get("env_version"), r.get("budget")))
-    for r in recs:
-        if _protocol_rank(r.get("env_version"), r.get("budget")) == top[r.get("model_id")] and "+" not in str(r.get("env_version") or ""):
-            k = (r.get("model_id"), r.get("profile") or "")
-            count.setdefault(k, set()).add(r.get("benchmark_id")); newest[k] = max(newest.get(k, 0), r.get("run_at") or 0)
-    shown = {}
-    for (mid, profile) in sorted(count, key=lambda k: (len(count[k]), newest[k], k[1])):
-        shown[mid] = profile  # the last of the order wins
-    return shown
 
 
 def publish(rows, S, max_fail=3):
