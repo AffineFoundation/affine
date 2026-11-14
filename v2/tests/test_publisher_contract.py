@@ -117,7 +117,7 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "states the norm before the cap and the norm after it (`step_norm` is the norm after the cap)" in flat
     assert "`train_max_output_tokens` (777) or `train_max_context_tokens` (888, prompt + output) is truncated, not rejected" in flat
     assert "A rollout with no output token left is dropped and counted." in flat
-    assert "keeps its queue position, and may replace its file as often as it likes until the entry is evaluated. There is no fixed window." in flat
+    assert "keeps its queue position, and may replace its file as often as it likes until the entry has its turn. There is no fixed window." in flat
     assert "copies the latest file when a round takes the entry" in flat and "The admission checks run again on each new file." in flat
     assert "that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The seat is skipped and not charged, as with any invalid file (section 4)" in flat
     assert "A round takes at most 3 batches" in flat
@@ -154,6 +154,8 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "The lease ends 150 minutes after it starts." in flat
     assert "When 5 failures are counted for a seat, the seat is held" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
+    assert "A second seat of the same hotkey or of the same owner coldkey waits for a later round." in flat
+    assert "SubtensorModule.Owner" in flat
     assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
     assert "keeps its place for at least 21600 s after its registration, and for as long as no entry was charged in the last 24 hours" in flat
     assert "(`squat_min_wait_s`, `squat_age_factor`) are parameters (section 11)" in flat and "is announced" not in flat
