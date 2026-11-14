@@ -314,7 +314,7 @@ def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int, chain: 
 
     With ``chain`` (the head chain of this head): the links of the newest
     checkpoint and of the LoRAs of each step after it. ``base`` and ``master``
-    are then null unless that checkpoint is the base of the head itself.
+    are then null unless the full files of the head itself are in the store.
     """
 
     def file_set(set_id: str, files: dict[str, str], key_of: Callable[[str, str], str]) -> dict[str, Any]:
@@ -333,11 +333,17 @@ def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int, chain: 
     else:
         rebuild = chain_links(store, chain, ttl_s, target=heads_of(chain)[-1]["version_id"])
         point = rebuild["checkpoints"][0]
-        here = point["base"]["id"] == head.base_hash
-        base, master = (point["base"], point["master"] | master_note) if here else (None, None)
+        if point["base"]["id"] == head.base_hash:
+            base, master = point["base"], point["master"] | master_note
+        else:
+            try:  # a head with no marker: its full files are linked when all of them are in the store (the first head after a switch from full uploads)
+                base = file_set(head.base_hash, manifest.base_files, layout.public_base_file)
+                master = file_set(head.base_fp32_master_digest, manifest.master_files, layout.public_master_file) | master_note
+            except KeyError:
+                base, master = None, None
         rebuild["rebuild"] = (
             "The box keeps the folded weight files. checkpoints has the newest head whose full files are in the store. "
-            "chain_loras has the LoRAs of each fold after it, in order. base and master are null when the head is not that checkpoint. "
+            "chain_loras has the LoRAs of each fold after it, in order. base and master are null when the full files of the head are not in the store. "
             "Then make the head: python -m sn120_v2.headfold rebuild --chain <mining.json> --links <this file> --work <directory>"
         )
     return {
