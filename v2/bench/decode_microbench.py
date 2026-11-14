@@ -4,10 +4,12 @@
     python v2/bench/decode_microbench.py
 
 It starts one vLLM server per config, each on a GPU of its own, with the server command and the request
-body of the box's own code (``sn120_v2/gpu/evaluator.py``). Each config changes one thing of the base.
-It measures the tokens per second of one stream, alone and among 20 streams, at a context above 32,000
-tokens, counted after the prompt pass. It also tests whether a seeded request gives the same tokens
-again, among other streams, and in each config.
+body of the box's own code (``sn120_v2/gpu/evaluator.py``) and the LoRA table of a round (``--table``,
+6). Each config changes one thing of the base. It measures the tokens per second of one stream, alone
+and among N streams (``--streams``), at a given context (``--context-tokens``), counted after the prompt
+pass. The cases are a first look (M and all 6 LoRAs in flight) and later looks (M and 2, M and 1). It
+also tests whether a seeded request gives the same tokens again, among other streams, and in each
+config, and it prints the start time and the memory of each server.
 
 It writes only below one temp directory. It reads no state, journal, store or chain. It opens no
 connection except to its own servers on this machine. It stops its servers at the end and on Ctrl-C.
@@ -50,7 +52,8 @@ except ImportError as exc:  # pragma: no cover - only on a broken checkout or in
     IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 VLLM_VERSION = "0.32.0"
-N_ADAPTERS = 5  # r000002 had 5 LoRAs
+N_ADAPTERS = 6  # batch_cap: the most LoRAs of one ticket
+FLAG = "--specialize-active-lora"
 STREAMS = 20
 CONTEXT_TOKENS = 34000  # the prompt of each stream; the task asks for a context above 32,000
 DECODE_TOKENS = 512
@@ -68,17 +71,21 @@ WORDS = (
 
 # name -> (what it changes, what it proves). The base is the box's own command; each other config changes one thing.
 CONFIGS: dict[str, tuple[str, str]] = {
-    "base": ("the box's own command", "b, c: today's speed with 1 and with 5 adapters loaded"),
+    "base": ("the box's own command, table of the round", "today's speed at the table of the round"),
+    "flag": (FLAG, "LoRA kernels sized for the adapters in the step, not for the table + 1"),
+    "rank": ("--max-lora-rank = recipe rank, no " + FLAG, "whether the rank room (64 against the rank of the LoRAs) costs time"),
+    "both": (FLAG + " and --max-lora-rank = recipe rank", "the two together"),
+    "noflag": ("no " + FLAG, "for a checkout whose own command has the flag: the command without it"),
     "a": ("no --enable-lora", "a: the cost of the LoRA support itself, even for M alone"),
-    "d": ("--max-loras 8", "d: whether the size of the LoRA table (32 against 8) costs time"),
-    "i": ("--specialize-active-lora", "i: LoRA kernels sized for the adapters in use, not for --max-loras + 1; the table of 32 stays"),
+    "d": ("--max-loras 32", "d: the table of 32, as before 5bc36ed8"),
+    "i": ("--max-loras 32 and " + FLAG, "i: the flag with the table of 32"),
     "e": ("--compilation-config cudagraph_mode FULL", "e: whether full CUDA graphs run with LoRA and what they give"),
     "f": ("--speculative-config ngram, 2 tokens", "f: speculative decoding without a draft model"),
     "g": ("--max-lora-rank = recipe rank", "g: whether the rank room (64 against the recipe's rank) costs time"),
     "h": ("--enforce-eager", "h: the speed with no CUDA graph at all, as a reference for the graph gain of today"),
     "f2": ("--speculative-config ngram_gpu, 2 tokens", "f2: the GPU form of the n-gram method"),
 }
-DEFAULT_CONFIGS = [name for name in CONFIGS if name != "f2"]  # 8 configs: one wave on a box with 8 GPUs
+DEFAULT_CONFIGS = ["base", "flag", "rank", "both"]
 
 
 def fail(line: str) -> None:
@@ -92,21 +99,36 @@ def set_flag(argv: list[str], flag: str, value: str | None) -> list[str]:
     return argv[:at] + ([] if value is None else [flag, value]) + argv[at + 2 :]
 
 
-def config_argv(name: str, head: str, port: int, params: Params) -> list[str]:
+def with_flag(argv: list[str], on: bool) -> list[str]:
+    """``argv`` with the bare flag FLAG present or absent."""
+    argv = [item for item in argv if item != FLAG]
+    return argv + [FLAG] if on else argv
+
+
+def config_argv(name: str, head: str, port: int, params: Params, table: int = N_ADAPTERS) -> list[str]:
     base = server_argv(head, port, params)
     for flag in ("--enable-lora", "--max-loras", "--max-lora-rank", "--max-num-seqs", "--enable-prefix-caching", "--dtype", "--max-model-len"):
         if flag not in base:
             fail(f"the box's server command has no {flag}: the configs of this script no longer fit it")
+    base = set_flag(base, "--max-loras", str(table))  # the table of a round: the entries of the ticket
     if name == "base":
         return base
+    if name == "flag":
+        return with_flag(base, True)
+    if name == "noflag":
+        return with_flag(base, False)
+    if name == "rank":
+        return with_flag(set_flag(base, "--max-lora-rank", str(params.recipe.rank)), False)
+    if name == "both":
+        return with_flag(set_flag(base, "--max-lora-rank", str(params.recipe.rank)), True)
     if name == "a":
         argv = set_flag(set_flag(base, "--max-loras", None), "--max-lora-rank", None)
         argv.remove("--enable-lora")
         return argv
     if name == "d":
-        return set_flag(base, "--max-loras", "8")
+        return set_flag(base, "--max-loras", "32")
     if name == "i":
-        return base + ["--specialize-active-lora"]
+        return with_flag(set_flag(base, "--max-loras", "32"), True)
     if name == "e":
         return base + ["--compilation-config", json.dumps({"cudagraph_mode": "FULL"})]
     if name == "f":
@@ -147,7 +169,7 @@ def write_adapter(out_dir: Path, shapes: dict[str, tuple[int, int]], rank: int, 
     for path in sorted(shapes):
         out_features, in_features = shapes[path]
         a = (rng.random((rank, in_features), dtype=numpy.float32) * 2 - 1) / numpy.float32(in_features**0.5)
-        b = rng.standard_normal((out_features, rank), dtype=numpy.float32) * numpy.float32(1e-3)
+        b = rng.standard_normal((out_features, rank), dtype=numpy.float32) * numpy.float32(1e-2)  # strong enough to change the tokens of M soon
         for name, value in (("lora_A", a), ("lora_B", b)):
             blob = value.astype("<f4").tobytes()
             header[f"base_model.model.{path}.{name}.weight"] = {"dtype": "F32", "shape": list(value.shape), "data_offsets": [offset, offset + len(blob)]}
@@ -198,7 +220,7 @@ def request_body(model: str, stream: int, words: int, params: Params, max_tokens
     return body
 
 
-def stream_chat(port: int, body: dict, timeout_s: float = 900.0) -> dict[str, Any]:
+def stream_chat(port: int, body: dict, timeout_s: float = 900.0, started: threading.Event | None = None) -> dict[str, Any]:
     """One streamed chat request. Returns the arrival time and the token count of each chunk, the token ids and the text."""
     body = dict(body, stream=True, stream_options={"include_usage": True})
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_s)
@@ -225,6 +247,8 @@ def stream_chat(port: int, body: dict, timeout_s: float = 900.0) -> dict[str, An
                 piece = "".join(str(delta.get(key) or "") for key in ("reasoning_content", "reasoning", "content"))
                 got = choice.get("token_ids") or delta.get("token_ids") or []
                 if piece or got:
+                    if started is not None and len(events) >= 8:
+                        started.set()  # this stream is in the decode batch now
                     events.append((now, len(got) or 1))
                     ids.extend(got)
                     text.append(piece)
@@ -287,6 +311,7 @@ def measure_target(port: int, models: list[str], words: int, params: Params, str
     prompt_tokens = [int((reply.get("usage") or {}).get("prompt_tokens") or 0) for reply in warm]
     body = request_body(model_of[0], 0, words, params, decode_tokens)
     alone = [stream_chat(port, body, timeout_s), stream_chat(port, body, timeout_s)]
+    alone_lora = stream_chat(port, request_body(model_of[1], 1, words, params, decode_tokens), timeout_s) if len(models) > 1 and streams > 1 else None
     for many_tokens in (decode_tokens, 8 * decode_tokens):
         steps_before, wall = steps_counter(port), time.monotonic()
         with ThreadPoolExecutor(streams) as pool:
@@ -302,6 +327,7 @@ def measure_target(port: int, models: list[str], words: int, params: Params, str
         "prompt_tokens_min": min(prompt_tokens),
         "context_above_32000": min(prompt_tokens) > 32000,
         "alone_tok_s": [round(rate, 1) if rate else None for rate in map(decode_rate, alone)],
+        "alone_lora_tok_s": round(decode_rate(alone_lora) or 0.0, 1) if alone_lora else None,
         "alone_prompt_pass_s": [round(result["events"][0][0] - result["sent"], 2) if result["events"] else None for result in alone],
         "many_streams": streams,
         "many_tok_s_per_stream_median": round(median(rates), 1) if rates else None,
@@ -309,13 +335,141 @@ def measure_target(port: int, models: list[str], words: int, params: Params, str
         "many_tok_s_sum": round(sum(rates), 1) if rates else None,
         "many_window_s": round(window, 2),  # the time in which all streams decode; below 2 s the whole decode time of each stream is used
         "many_steps": steps_after - steps_before if steps_before is not None and steps_after is not None else None,
+        "many_ms_per_step": round(1000 * wall / (steps_after - steps_before), 2) if steps_before is not None and steps_after and steps_after > steps_before else None,
         "many_wall_s": round(wall, 2),
         "many_decode_tokens": many_tokens,
         "completion_tokens": alone[0]["completion_tokens"],
         "same_alone_twice": same(alone[0], alone[1]),
         "same_alone_and_among_many": same(alone[0], many[0], prefix=True),
         "_reply": {"ids": alone[0]["ids"], "text": alone[0]["text"]},
+        "_reply_lora": {"ids": alone_lora["ids"], "text": alone_lora["text"]} if alone_lora else None,
     }
+
+
+# ---------------------------------------------------------------- the correctness test of the flag
+
+CORRECT_TOKENS = 256  # the reply of each request of a case: all have this length, so all are in the decode batch together
+CORRECT_M_ROWS = 4  # requests of M in flight in the run "with M"
+CORRECT_PROMPT_WORDS = 48  # far below the 512 tokens of the largest recorded graph: each decode step uses a recorded graph
+
+
+def fault_counts(table: int) -> list[int]:
+    """The k for which vLLM 0.32.0 records a graph of its own below the table + 1: powers of two up to the table."""
+    return [k for k in range(1, table + 1) if k & (k - 1) == 0]
+
+
+def correct_body(model: str, stream: int, params: Params, tokens: int) -> dict:
+    body = request_body(model, stream, CORRECT_PROMPT_WORDS, params, tokens)
+    body.update(temperature=0.0)  # greedy and a fixed seed: a change of the text is a change of the model's output
+    return body
+
+
+def run_case(port: int, probes: list[tuple[str, int]], m_rows: int, params: Params, m_first: bool = True, tokens: int = CORRECT_TOKENS) -> dict[str, dict[str, Any]]:
+    """One case on one server: the ``probes`` (LoRA, stream) all in flight at once, with ``m_rows`` requests of M.
+
+    Every request has a fixed length (``ignore_eos``). No other request runs on the server during the case.
+    ``m_first``: the M requests start first and end last, so M is in flight for the whole reply of each probe. But the
+    probes can come into the batch one step apart, so the first and last steps can hold fewer than k LoRAs.
+    Not ``m_first``: the probes start first; M comes in when all probes write and ends before a probe ends. So each step
+    with M holds exactly the k LoRAs. Returns ``{model: reply}`` of the probes.
+    """
+    m_tokens = tokens + 96 if m_first else tokens // 2
+    m_events, probe_events = [threading.Event() for _ in range(m_rows)], [threading.Event() for _ in probes]
+    with ThreadPoolExecutor(m_rows + len(probes)) as pool:
+        send_m = lambda: [pool.submit(stream_chat, port, correct_body(NULL_MODEL, 200 + at, params, m_tokens), 900.0, m_events[at]) for at in range(m_rows)]  # noqa: E731
+        send_probes = lambda: [pool.submit(stream_chat, port, correct_body(model, stream, params, tokens), 900.0, probe_events[at]) for at, (model, stream) in enumerate(probes)]  # noqa: E731
+        if m_first:
+            held = send_m()
+            if not all(event.wait(300.0) for event in m_events):
+                raise RuntimeError("a request of M did not start in 300 s")
+            futures = send_probes()
+        else:
+            futures = send_probes()
+            if not all(event.wait(300.0) for event in probe_events):
+                raise RuntimeError("a request of a LoRA did not start in 300 s")
+            held = send_m()
+        replies, m_replies = [future.result() for future in futures], [future.result() for future in held]
+    starts, ends = [reply["events"][0][0] for reply in replies], [reply["events"][-1][0] for reply in replies]
+    full = all(reply["completion_tokens"] == tokens for reply in replies) and all(reply["completion_tokens"] == m_tokens for reply in m_replies)
+    if m_first:  # M wrote from before the first probe to after the last
+        inside = all(reply["events"][0][0] < min(starts) and reply["events"][-1][0] > max(ends) for reply in m_replies)
+    else:  # M wrote only while all probes wrote
+        inside = all(reply["events"][0][0] > max(starts) and reply["events"][-1][0] < min(ends) for reply in m_replies)
+    m_from = min((reply["events"][0][0] for reply in m_replies), default=None)
+    out = {}
+    for (model, _), reply in zip(probes, replies):
+        out[model] = {"ids": reply["ids"], "text": reply["text"], "ok": bool(full and inside and max(starts) < min(ends)),
+                      "m_from_token": sum(1 for at, _ in reply["events"] if at < m_from) if m_from is not None and not m_first else 0}
+    return out
+
+
+def correctness(port: int, adapters: list[str], params: Params) -> dict[str, Any]:
+    """For each k from 1 to the table: the first k LoRAs in flight at once, (a) with no request of M, (b) with requests of M.
+
+    The reading under test (vLLM 0.32.0, ``--specialize-active-lora``): the recorded graph is selected by the count k of
+    LoRAs in the step, and a request of M is not counted. But the kernel's id list has one more entry when the step has
+    rows of M. So for a k with a graph of its own (1, 2, 4, ...) the LoRA of the highest slot gets no LoRA change in a
+    step with M: its text follows M. Each of the k LoRAs is a probe, so the slot order cannot hide the fault. The other
+    k (3, 5, 6 at a table of 6) and every case without M must give the same text in (a) and (b): they show that the
+    test is sound. A server without the flag runs the same cases as the control. (b) runs in two orders, see ``run_case``.
+    """
+    for adapter in adapters:  # a slot is given at the first request of an adapter: this fixes the order (lora1 = slot 0, ...)
+        post_json(port, "/v1/chat/completions", correct_body(adapter, 0, params, 1), 600.0)
+    streams = {adapter: 100 + at for at, adapter in enumerate(adapters)}  # the prompt and seed of an adapter: the same in each case and on each server
+    out: dict[str, Any] = {"tokens": CORRECT_TOKENS, "m_rows": CORRECT_M_ROWS, "cases": {}}
+    out["M"] = {adapter: run_case(port, [(NULL_MODEL, streams[adapter])], 0, params)[NULL_MODEL] for adapter in adapters}  # (c): M's text of the same prompt
+    for k in range(1, len(adapters) + 1):
+        probes = [(adapter, streams[adapter]) for adapter in adapters[:k]]
+        out["cases"][str(k)] = {"without_M": run_case(port, probes, 0, params), "without_M_again": run_case(port, probes, 0, params),
+                                "M_inside": run_case(port, probes, CORRECT_M_ROWS, params, m_first=False), "M_first": run_case(port, probes, CORRECT_M_ROWS, params, m_first=True)}
+    return out
+
+
+def judge_correctness(results: dict[str, dict[str, Any]], table: int) -> tuple[list[str], dict[str, Any]]:
+    """One line for each config and k: which LoRAs changed their text when M came into flight, and whether the text follows M."""
+    lines, verdicts = [], {}
+    for name, result in results.items():
+        test = result.get("correctness") or {}
+        if not test.get("cases"):
+            continue
+        has_flag = FLAG in (result.get("flags") or [])
+        lines.append(f"{name} ({'flag ON' if has_flag else 'flag off: the control'})")
+        faults = []
+        for k, case in sorted(test["cases"].items(), key=lambda item: int(item[0])):
+            changed: dict[str, list[str]] = {"without_M_again": [], "M_inside": [], "M_first": []}
+            notes, sound = [], True
+            for adapter, without_m in case["without_M"].items():
+                m_text = test["M"][adapter]
+                if same(m_text, without_m)["equal"]:
+                    notes.append(f"{adapter}: NOT VALID, its text without M is M's text")
+                for run in changed:
+                    reply = case[run][adapter]
+                    sound = sound and reply["ok"] and without_m["ok"]
+                    a_b = same(without_m, reply)
+                    if not a_b["equal"]:
+                        changed[run].append(adapter)
+                        if run == "M_inside":
+                            notes.append(f"{adapter}, M inside: its text changes at token {a_b['first_difference']}; M came into flight at its token {reply['m_from_token']}")
+                        if run == "M_first":
+                            b_c, a_c = same(m_text, reply), same(m_text, without_m)
+                            notes.append(f"{adapter}, M first: its text changes at token {a_b['first_difference']}; against M's text of the prompt: {'THE SAME' if b_c['equal'] else 'the same up to token ' + str(b_c['first_difference'])} (without M: up to token {a_c['first_difference']})")
+            expected = has_flag and int(k) in fault_counts(table)
+            verdict = "FAIL" if changed["M_inside"] or (int(k) == 1 and changed["M_first"]) else "PASS, but a change in 'M first'" if changed["M_first"] else "PASS"
+            verdicts[f"{name}/k{k}"] = {"verdict": verdict, "changed": changed, "flag": has_flag, "fault_reading_expects_fail": expected, "sound": sound}
+            if verdict == "FAIL" and has_flag:
+                faults.append(int(k))
+            count = lambda run: f"{len(changed[run])} of {len(case['without_M'])}" + (f" ({', '.join(changed[run])})" if changed[run] else "")  # noqa: E731
+            lines.append(f"  k = {k}: {verdict}. LoRAs with a changed text: M inside {count('M_inside')}; M first {count('M_first')}; no M, again {count('without_M_again')}"
+                         + ("; the fault reading says FAIL here" if expected else "") + ("" if sound else "  NOT SOUND: a request was short or the requests did not overlap as planned")
+                         + "".join("\n      " + note for note in notes))
+        if has_flag:
+            lines.append(f"  {name}: FAIL at k = {faults}; the fault reading says {fault_counts(table)}. (A change in 'M first' only, at another k, is the same fault in a step that held fewer LoRAs.)" if faults else f"  {name}: no k fails")
+    off = [key for key, verdict in verdicts.items() if not verdict["flag"] and verdict["verdict"] == "FAIL"]
+    on = [key for key, verdict in verdicts.items() if verdict["flag"] and verdict["verdict"] == "FAIL"]
+    if any(verdict["flag"] for verdict in verdicts.values()):
+        lines.append(f"RESULT: the flag is {'FAULTY' if on and not off else 'CLEAN in this test' if not on else 'NOT DECIDED (the control changes its text too: ' + ', '.join(off) + ')'}"
+                     + (f": a LoRA's text changed with M in flight in {', '.join(on)}, and in no case without the flag" if on and not off else ""))
+    return lines, verdicts
 
 
 # ---------------------------------------------------------------- one server
@@ -332,7 +486,12 @@ def start_facts(log: str) -> dict[str, Any]:
     modes = re.findall(r"cudagraph_mode['\"]?\s*[=:]\s*<?CUDAGraphMode\.(\w+)", log)
     finished = re.search(r"Graph capturing finished in (\d+) secs, took ([-\d.]+) GiB", log)
     speculative = re.search(r"speculative_config=(None|\w+\([^)]{0,120})", log)
+    kv_tokens = re.findall(r"GPU KV cache size: ([\d,]+) tokens", log)
+    kv_gib = re.findall(r"Available KV cache memory: ([-\d.]+) GiB", log)
     return {
+        "graph_capture_gib": float(finished.group(2)) if finished else None,
+        "kv_cache_tokens": int(kv_tokens[-1].replace(",", "")) if kv_tokens else None,
+        "kv_cache_gib": float(kv_gib[-1]) if kv_gib else None,
         "graph_mode": modes[-1] if modes else None,
         "graph_sizes_captured": captured or None,
         "graph_capture_passes": passes[:8] or None,
@@ -343,6 +502,14 @@ def start_facts(log: str) -> dict[str, Any]:
         "runner_v1_fallback": bool(re.search(r"[Ff]alling back to (the )?V1|V1 model runner", log)),
         "warnings_cudagraph": sorted({line.strip()[-160:] for line in re.findall(r"WARNING[^\r\n]*[Cc]udagraph[^\r\n]*", log)})[:3],
     }
+
+
+def gpu_used_mib(gpu: int) -> int | None:
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=60, check=True).stdout
+        return next(int(line.split(",")[1]) for line in out.splitlines() if line.strip() and int(line.split(",")[0]) == gpu)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError, StopIteration):
+        return None
 
 
 def error_line(log: str, head: str) -> str:
@@ -361,7 +528,7 @@ def worker(args: argparse.Namespace) -> int:
     server = None
     read_log = lambda: log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""  # noqa: E731
     try:
-        argv = [sys.executable, *config_argv(name, args.head, args.port, params)[1:]]
+        argv = [sys.executable, *config_argv(name, args.head, args.port, params, args.table)[1:]]
         out["flags"] = [flag for flag in argv[argv.index("--port") + 2 :]]
         started = time.monotonic()
         # vLLM 0.32.0 makes the route /v1/load_lora_adapter only with this variable. An older checkout of the box code does not set it.
@@ -378,7 +545,7 @@ def worker(args: argparse.Namespace) -> int:
                     raise RuntimeError(f"the server was not ready after {args.start_timeout_s} s") from None
                 time.sleep(3.0)
         out["start_s"] = round(time.monotonic() - started, 1)
-        out["start"] = start_facts(read_log())
+        out["start"] = start_facts(read_log()) | {"gpu": args.gpu, "gpu_used_mib": gpu_used_mib(args.gpu)}
         try:  # the tokens of one word, so the prompt has the wanted size
             sample = prompt_words(0, 2000)
             per_word = int(post_json(args.port, "/tokenize", {"model": NULL_MODEL, "prompt": sample}, 60.0)["count"]) / 2000
@@ -390,23 +557,29 @@ def worker(args: argparse.Namespace) -> int:
         adapters = [f"lora{index}" for index in range(1, N_ADAPTERS + 1)]
         phases: list[tuple[str, int, dict[str, list[str]]]] = [("no_lora", 0, {"M": [NULL_MODEL]})]
         if lora:
-            mix = {"M": [NULL_MODEL], "one_adapter": [adapters[0]], "mix_M_and_5": [NULL_MODEL, *adapters]}
-            phases = [(f"{N_ADAPTERS}_adapters", N_ADAPTERS, mix)]
-            if name == "base":
-                phases.insert(0, ("1_adapter", 1, {"M": [NULL_MODEL], "one_adapter": [adapters[0]]}))
+            # All adapters of the table are loaded in each case, as in a round: a later look has fewer LoRAs in flight, not a smaller table.
+            mix = {f"M_and_{N_ADAPTERS}": [NULL_MODEL, *adapters], "M_and_2": [NULL_MODEL, *adapters[:2]], "M_and_1": [NULL_MODEL, adapters[0]]}
+            phases = [(f"{N_ADAPTERS}_adapters", N_ADAPTERS, {case: mix[case] for case in args.cases.split(",") if case in mix})]
         loaded = 0
         for phase, wanted, targets in phases:
             for adapter in adapters[loaded:wanted]:
                 post_json(args.port, "/v1/load_lora_adapter", {"lora_name": adapter, "lora_path": str(temp / "adapters" / adapter)}, 600.0)
             loaded = max(loaded, wanted)
+            if lora and "correctness" not in out and not args.no_correctness:  # before any speed number
+                try:
+                    out["correctness"] = correctness(args.port, adapters, params)
+                except Exception as exc:  # noqa: BLE001 - the speed part still runs
+                    out["correctness"] = {"error": error_line(f"{type(exc).__name__}: {exc}", args.head)}
+                (temp / f"{name}.correctness.json").write_text(json.dumps(out["correctness"]))
             out["phases"][phase] = {}
-            for target, models in targets.items():
+            for target, models in ({} if args.no_speed else targets).items():
                 try:
                     out["phases"][phase][target] = measure_target(args.port, models, words, params, args.streams, args.decode_tokens, args.request_timeout_s)
                 except Exception as exc:  # noqa: BLE001 - one failed target must not stop the others
                     out["phases"][phase][target] = {"error": error_line(f"{type(exc).__name__}: {exc}", args.head)}
                 if not server.alive():
                     raise RuntimeError("the server stopped during the measurement: " + error_line(read_log(), args.head))
+        out["start"]["gpu_used_mib_end"] = gpu_used_mib(args.gpu)
         out["ok"] = True
     except KeyboardInterrupt:
         out["error"] = "interrupted"
@@ -447,7 +620,7 @@ def cell(value: Any) -> str:
 
 
 def table(results: dict[str, dict[str, Any]], compare: dict[str, Any]) -> str:
-    rows = [("config", "phase", "streams on", "1 alone", "1 of N", "sum of N", "window s", "ctx", "twice", "in N", "vs base")]
+    rows = [("config", "case", "M alone", "LoRA alone", "1 of N", "sum of N", "ms/step", "window s", "ctx", "twice", "in N", "M vs base", "LoRA vs base")]
     failed = [f"{name}: FAILED: {result.get('error')}" for name, result in results.items() if not result.get("ok")]
     for name, result in results.items():
         for phase, targets in result["phases"].items():
@@ -456,10 +629,21 @@ def table(results: dict[str, dict[str, Any]], compare: dict[str, Any]) -> str:
                     failed.append(f"{name} {phase} {target}: FAILED: {got['error']}")
                     continue
                 equal = lambda item: "-" if item is None else "same" if item["equal"] else f"differ@{item['first_difference']}"  # noqa: E731
-                rows.append((name, phase, target, cell(got["alone_tok_s"][0]), cell(got["many_tok_s_per_stream_median"]), cell(got["many_tok_s_sum"]), cell(got["many_window_s"]), cell(got["prompt_tokens_min"]),
-                             equal(got["same_alone_twice"]), equal(got["same_alone_and_among_many"]), equal(compare.get(f"{name}/{phase}/{target}"))))
+                rows.append((name, target, cell(got["alone_tok_s"][0]), cell(got.get("alone_lora_tok_s")), cell(got["many_tok_s_per_stream_median"]), cell(got["many_tok_s_sum"]), cell(got.get("many_ms_per_step")),
+                             cell(got["many_window_s"]), cell(got["prompt_tokens_min"]), equal(got["same_alone_twice"]), equal(got["same_alone_and_among_many"]),
+                             equal(compare.get(f"{name}/{phase}/{target}/M")), equal(compare.get(f"{name}/{phase}/{target}/lora"))))
     widths = [max(len(row[at]) for row in rows) for at in range(len(rows[0]))]
     return "\n".join(["  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() for row in rows] + failed)
+
+
+def start_table(results: dict[str, dict[str, Any]]) -> str:
+    rows = [("config", "gpu", "start s", "graph s", "graph GiB", "graphs", "KV tokens", "KV GiB", "GPU MiB", "flags changed")]
+    for name, result in results.items():
+        start = result.get("start") or {}
+        rows.append((name, cell(start.get("gpu")), cell(result.get("start_s")), cell(start.get("graph_capture_s")), cell(start.get("graph_capture_gib")), cell(start.get("graph_sizes_captured")),
+                     cell(start.get("kv_cache_tokens")), cell(start.get("kv_cache_gib")), cell(start.get("gpu_used_mib")), cell(result.get("change"))))
+    widths = [max(len(row[at]) for row in rows) for at in range(len(rows[0]))]
+    return "\n".join("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() for row in rows)
 
 
 def main() -> int:
@@ -468,6 +652,10 @@ def main() -> int:
     parser.add_argument("--configs", default=",".join(DEFAULT_CONFIGS), help=f"configs to run, in order of importance (default: all but f2; known: {', '.join(CONFIGS)})")
     parser.add_argument("--gpus", help="GPU numbers to use, for example 0,1,2 (default: every GPU that is free)")
     parser.add_argument("--streams", type=int, default=STREAMS)
+    parser.add_argument("--no-correctness", action="store_true", help="skip the correctness test of the flag")
+    parser.add_argument("--no-speed", action="store_true", help="only the correctness test")
+    parser.add_argument("--table", type=int, default=N_ADAPTERS, help="--max-loras of the servers: the entries of a round's ticket")
+    parser.add_argument("--cases", default=f"M_and_{N_ADAPTERS},M_and_1,M_and_2", help="the models in flight, in order of importance")
     parser.add_argument("--context-tokens", type=int, default=CONTEXT_TOKENS)
     parser.add_argument("--decode-tokens", type=int, default=DECODE_TOKENS)
     parser.add_argument("--start-timeout-s", type=int, default=900)
@@ -501,14 +689,16 @@ def main() -> int:
         fail("no free GPU (each GPU has a process on it); stop the other work or give --gpus")
     head = find_head(args.head)
     for name in names:
-        config_argv(name, str(head), 0, params)  # stops when the box command lost a flag
+        config_argv(name, str(head), 0, params, args.table)  # stops when the box command lost a flag
+    own_flag = FLAG in server_argv(str(head), 0, params)
     shapes = target_shapes(head, params.recipe.target_modules)
     if not shapes:
         fail("the head has no weight with the name of a target module of the recipe")
     body = chat_body(NULL_MODEL, [], 0, params)
     waves = [names[at : at + len(free)] for at in range(0, len(names), len(free))]
     print(f"decode microbench: vLLM {version}{'' if version == VLLM_VERSION else f' (WARNING: the box has {VLLM_VERSION})'}; {len(kinds)} GPUs ({kinds[0]}), {len(free)} free; "
-          f"head with {len(shapes)} target layers; {len(names)} configs in {len(waves)} wave(s); expected time {6 + 7 * len(waves)} to {10 + 12 * len(waves)} minutes", flush=True)
+          f"head with {len(shapes)} target layers; {len(names)} configs in {len(waves)} wave(s); table {args.table}; {args.streams} streams of {args.context_tokens} tokens; "
+          f"the checkout's own server command has {FLAG}: {'yes' if own_flag else 'no'}", flush=True)
 
     temp = Path(tempfile.mkdtemp(prefix="decode-microbench-"))
     (temp / "logs").mkdir()
@@ -528,7 +718,7 @@ def main() -> int:
             children = []
             for at, name in enumerate(wave):
                 command = [sys.executable, str(Path(__file__).resolve()), "--worker", name, "--temp", str(temp), "--head", str(head), "--gpu", str(free[at]), "--port", str(args.first_port + at)]
-                command += ["--streams", str(args.streams), "--context-tokens", str(args.context_tokens), "--decode-tokens", str(args.decode_tokens), "--start-timeout-s", str(args.start_timeout_s), "--request-timeout-s", str(args.request_timeout_s)]
+                command += ["--no-correctness"] * args.no_correctness + ["--no-speed"] * args.no_speed + ["--table", str(args.table), "--cases", args.cases, "--streams", str(args.streams), "--context-tokens", str(args.context_tokens), "--decode-tokens", str(args.decode_tokens), "--start-timeout-s", str(args.start_timeout_s), "--request-timeout-s", str(args.request_timeout_s)]
                 children.append(subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=open(temp / "logs" / f"{name}.worker.log", "ab")))
             pending = dict(zip(wave, children))
             while pending:
@@ -561,25 +751,41 @@ def main() -> int:
             results[name] = json.loads((temp / f"{name}.json").read_text())
 
     # Each config against the base: the same seeded request, alone, on M and on one adapter.
-    replies = {f"{name}/{phase}/{target}": got.pop("_reply") for name, result in results.items() for phase, targets in result["phases"].items() for target, got in targets.items() if "_reply" in got}
-    last = f"{N_ADAPTERS}_adapters"
-    compare = {}
-    for key, reply in replies.items():
-        name, phase, target = key.split("/")
-        reference = replies.get(f"base/{last}/{target}" if target != "mix_M_and_5" else f"base/{last}/M")
-        if reference is not None and (name, phase) != ("base", last):
-            compare[key] = same(reference, reply)
-    for key, reply in replies.items():
-        name, phase, target = key.split("/")
-        results[name]["phases"][phase][target]["reply_sha256"] = hashlib.sha256(json.dumps(reply["ids"] or reply["text"]).encode()).hexdigest()[:16]
+    replies = {}
+    for name, result in results.items():
+        for phase, targets in result["phases"].items():
+            for target, got in targets.items():
+                for kind, field in (("M", "_reply"), ("lora", "_reply_lora")):
+                    if got.get(field):
+                        replies[f"{name}/{phase}/{target}/{kind}"] = got[field]
+                        got[f"reply_{kind}_sha256"] = hashlib.sha256(json.dumps(got[field]["ids"] or got[field]["text"]).encode()).hexdigest()[:16]
+                    got.pop(field, None)
+    # The reference is the first config of the list (the base), in its first case. The request is the same in each case and config.
+    first = next((key.rsplit("/", 1)[0] for key in replies if key.startswith(f"{names[0]}/")), None)
+    compare = {key: same(replies[f"{first}/{key.rsplit('/', 1)[1]}"], reply) for key, reply in replies.items() if first and f"{first}/{key.rsplit('/', 1)[1]}" in replies and key.rsplit("/", 1)[0] != first}
     report = {
         "script": "decode_microbench", "vllm": version, "gpus": kinds, "gpus_free": len(free), "wall_s": round(time.monotonic() - started),
         "sampling": {key: body[key] for key in ("temperature", "top_p", "top_k", "seed") if key in body} | {"seed": f"{SEED} + stream number", "ignore_eos": True},
-        "decode_tokens": args.decode_tokens, "context_tokens_wanted": args.context_tokens, "adapters": {"count": N_ADAPTERS, "rank": params.recipe.rank, "layers": len(shapes), "made_up": True},
+        "decode_tokens": args.decode_tokens, "context_tokens_wanted": args.context_tokens, "adapters": {"count": N_ADAPTERS, "rank": params.recipe.rank, "layers": len(shapes), "made_up": True}, "table": args.table, "own_command_has_flag": own_flag,
         "proves": {name: CONFIGS[name][1] for name in names}, "same_as_base": compare, "configs": results,
     }
     (temp / "result.json").write_text(json.dumps(report, indent=1))
-    print(f"\ntokens per second after the prompt pass; N = {args.streams} streams; 'window s' = seconds in which all N streams decode (below 2: the N-stream speeds are not clean);\n'twice' = the same request alone two times; 'in N' = alone against among N; 'vs base' = against the base with 5 adapters")
+    lines, verdicts = judge_correctness(results, args.table)
+    for result in results.values():  # the token lists stay out of the JSON file
+        test = result.get("correctness") or {}
+        for reply in [*(test.get("M") or {}).values(), *(reply for case in (test.get("cases") or {}).values() for run in case.values() for reply in run.values())]:
+            reply["sha256"] = hashlib.sha256(json.dumps(reply.pop("ids") or reply["text"]).encode()).hexdigest()[:16]
+            reply.pop("text")
+    report["correctness_verdicts"] = verdicts
+    (temp / "result.json").write_text(json.dumps(report, indent=1))
+    print(f"\ncorrectness of {FLAG} (temperature 0, a fixed seed, {CORRECT_TOKENS} tokens a request, one server): the first k LoRAs in flight at once; a LoRA's text without M against its text with {CORRECT_M_ROWS} requests of M in flight.\n"
+          f"'M inside' = M comes in when all k LoRAs write and ends before them: each step with M holds exactly k LoRAs; this run decides. 'M first' = M in flight for the whole reply; the LoRAs can come in one step apart, so for k above 1 a step can hold fewer LoRAs.")
+    print("\n".join(lines + [f"{name}: the test FAILED to run: {result['correctness']['error']}" for name, result in results.items() if (result.get("correctness") or {}).get("error")]) or "not run")
+    print("\nstart of each server ('KV tokens' = the room for stored context; 'GPU MiB' = memory in use on the GPU after the start)")
+    print(start_table(results))
+    print(f"\ntokens per second after the prompt pass; N = {args.streams} streams, stream i on model i mod (models of the case); 'ms/step' = wall time of the N-stream run over its decode steps;\n"
+          f"'window s' = seconds in which all N streams decode (below 2: the N-stream speeds are not clean); 'twice' = the same request on M alone two times; 'in N' = alone against among N;\n"
+          f"'M vs base', 'LoRA vs base' = the same seeded request alone, against the first case of {names[0]}")
     print(table(results, compare))
     print(f"\nJSON: {temp / 'result.json'}   server logs: {temp / 'logs'}   (paste the table and the JSON file)", flush=True)
     return 0 if results and all(result["ok"] for result in results.values()) else 1
