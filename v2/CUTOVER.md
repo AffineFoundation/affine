@@ -13,8 +13,9 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. A unit file or another supervisor for `run` on the GPU box. The three jobs on AffineValidator have unit files in `v2/systemd/`.
-3. The round time hard stop: the smallest commit whose `llms.txt` may go up, and the text check of the store's `llms.txt` ("AffineValidator", step 8).
+2. The commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Four changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"), but work after them is still open, so no commit is pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+3. The line for an early run of the preflight from the shell of the smoke test ("GPU box", step 5).
+4. What the restart loop does when the store or the chain does not answer at a start of `run`. A change of the loop is in work ("A crash or a restart of `run`").
 
 ## Hosts
 
@@ -100,12 +101,29 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   git merge-base --is-ancestor 505f5ddab15c325ecedcf5c763bddf61225ff6ff HEAD; echo "exit=$?"
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a; do
+     git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
+   done
    cd v2 && source .venv/bin/activate
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-   **The mainnet bootstrap runs only at a commit that contains `505f5dda` (PR #131).** The third line must print `exit=0`. With `exit=1`, the checkout is an earlier commit: it writes the head pointer to `public/current.json`, which is v1's object, and it has no preflight command. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the same fact from the code.
+   **The mainnet bootstrap and `run` use only a commit that contains these four.** Each line of the loop must end with `exit=0`.
+
+   | Commit | What it holds | With an earlier commit |
+   | --- | --- | --- |
+   | `505f5dda` (PR #131) | The head pointer at `public/head.json`, and the preflight command. | The build writes the head pointer to `public/current.json`, which is v1's object. |
+   | `9b830458` (PR #145) | The time limit of a round as a hard stop, and the verdict `not_scored` ("The time limit of a round" below). | A round can run past its time limit. `llms.txt` must not go up from such a build. |
+   | `5ce10ce7` (PR #146) | The limit of 3 checks for a file that makes the checker fail, with 10 minutes between two checks of the same file. | A hostile file is checked again at every pass. `llms.txt` must not go up from such a build. |
+   | `97a67ea4` (PR #149 and PR #151) | The restart loop of `run` ("GPU box", step 10). | Nothing starts `run` again after a crash or a reboot. |
+
+   With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
+
+   These four are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
+
+   **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
+
+   If the box still holds the state of the smoke test at an older commit, and the smoke test goes on: a move to a commit with `9b830458` or `5ce10ce7` is a checkout only. No install line, no digest block, no `set-params`, no new bootstrap. Stop `run` between two rounds, when `status` shows `"phase": "IDLE"`; check out; start `run` again.
 
 2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable of the smoke test (`env | grep ^SN120_` prints nothing).
 
@@ -136,7 +154,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    - The second must print a count of 1 or more. With 0, this build does not read `SN120_LINKS_URL`, and `llms.txt` does not name the link files.
    - The third must print a count of 1 or more. With 0, this build has no preflight command.
 
-5. A new parameter file, `$CUT/params.json`. Do not use the smoke test's file: it holds the old digests and `batch_cap` 8. The coordinator names `global_norm_cap` (about 4 times the update norm that the smoke test measured, SMOKE.md step 9) and any other value that the smoke test changed.
+5. A new parameter file, `$CUT/params.json`. Never give the mainnet bootstrap a file of the smoke test. The six small files of `smoke params` (`params-1-tiny.json` to `params-4-multi.json`, `params-limit-judged.json`, `params-limit-not-scored.json`) set values that are for the smoke test only: a win rule of `z_bar` 0, a few tasks, short time limits. `params-5-full.json` and the file of step 4 of SMOKE.md hold the digests of the smoke commit. The coordinator names `global_norm_cap` (about 4 times the update norm that the smoke test measured, SMOKE.md step 9) and any other value that the smoke test changed.
 
    ```
    {"recipe": {"image_digests": ["<image_digest of plan.json>"], "code_digest": "<code_digest of plan.json>", "global_norm_cap": <number>}}
@@ -232,6 +250,8 @@ Run every command from `v2/`, inside the virtual environment.
    - A line `EXISTS  <key or prefix>  N objects`, then up to 10 of the keys, and the last line `FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix`, with `exit=1`. Stop, and send the output to the coordinator. Do not delete anything to make it pass.
    - A line `FAIL    <key or prefix>  <error>`: that list call failed, so the place is not known to be empty. A line `FAIL  open the bucket  <error>`: the store settings of step 2 are wrong. Correct the cause and run it again.
 
+   What the command does: it sends only list calls (`ListObjectsV2`), so it changes nothing, and it reads only the `SN120_R2_*` names of step 2. It has run against a local stand-in for the store only: this run is the first one on the real bucket. An early run of it from the shell of the smoke test is possible. **Not landed yet:** the exact line for that early run; the coordinator sends it.
+
    After step 6, a second run finds v2's own genesis files. Then name them as expected, one `--allow` for each: `python -m sn120_v2.r2 --preflight --allow public/bases/ --allow public/masters/`. Their lines then say `N objects, all under --allow`.
 6. **Genesis files** (57 GB of disk, 30 GB of RAM, no GPU). With the genesis directory of the smoke test, nothing is downloaded or built again; the files are uploaded to `public/bases/<base hash>/` and `public/masters/<master digest>/` of the production store, and each stored file is read back and compared.
 
@@ -259,20 +279,84 @@ Run every command from `v2/`, inside the virtual environment.
    python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack
    ```
 
-   Check: `kings` holds the 10 UIDs of step 4; `queue` is the count of waiting seats of step 7; `published` is `true`; `queued_files` of `status` shows how many waiting seats have a valid file.
-9. **Tell AffineValidator to go on with step 5 of its list.** The journal copy is now in the store. No step of that list waits for step 10 here.
-10. **Start the round loop.** One process. It runs until it is stopped. Start it under tmux or under your own unit.
+   Check: `bootstrap` ends with exit code 0 and prints no line `not finished:`. `kings` holds the 10 UIDs of step 4; `queue` is the count of waiting seats of step 7; `published` is `true`; `queued_files` of `status` shows how many waiting seats have a valid file.
 
-    ```
-    python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack 2>&1 | tee -a $CUT/run.log
-    ```
+   - `bootstrap` also writes the head pointer, `public/head.json`. The first run of the pull on AffineValidator needs it (step 12 there).
+   - A line `not finished: head pointer not published yet: <cause>` (exit code 1): the store did not take the pointer. The genesis is written; do not run `bootstrap` again. The first pass of `run` (step 10) writes the pointer.
+   - A line `not finished: file check failed: <cause>` (exit code 1): our own checker fails. The genesis is written; do not run `bootstrap` again. Do not go on: see "When no round opens" below.
+   - If `queued_files` has a count under `check_fault`, send that line to the coordinator, and each line that holds `the checker fails on this file:`. Such a file is skipped and `run` goes on, but each one is a bug of ours or a hostile file.
+9. **Tell AffineValidator to go on with step 5 of its list.** The journal copy is now in the store. Steps 5 to 11 of that list do not wait for step 10 here. Step 12 of that list (the first run of the pull) comes after step 10 here: the site then shows a round loop that runs, and the head pointer is in the store in every case.
+10. **Start the round loop, through the restart loop.** On mainnet only the restart loop starts `run`. Never start `run` alone: nothing would start it again after a crash or a reboot, and a restart by hand can count a failure for a seat. The loop is one script, `systemd/sn120-v2-run-loop.sh`. The unit `systemd/sn120-v2-run.service` starts the same script. The lines below are those of [SMOKE.md](SMOKE.md), "After a green test: the restart loop of `run`". One thing differs: the file of the variables is `$CUT/run.env`. "A crash or a restart of `run`" under "After the start" gives the rules.
 
-    Check, from a second shell with the same exports: `status` shows a `phase` other than `IDLE` after the first lease, and `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed.
+    1. **Nothing of the smoke test runs on this box.**
+
+       ```
+       pgrep -af "sn120-v2-run-loop|sn120_v2 run"          # must print nothing
+       systemctl is-enabled sn120-v2-run 2> /dev/null      # a box with systemd: must not print "enabled"
+       ```
+
+       - If a line shows a `run` that was started by hand (under tmux), stop it with Ctrl-C, then look at `nvidia-smi`: no GPU holds memory. The loop cannot stop the servers of such a `run`. If they still hold a GPU, the loop does not start `run` and ends with exit code 4.
+       - If a line shows a loop, stop it with its stop line (step 10.4).
+       - If the unit is enabled, it is the unit of the smoke trial, with the state directory of the smoke test: `sudo systemctl disable --now sn120-v2-run`. Form B below writes the unit again.
+    2. **Start the loop.** Use one form, never both. Run it in `v2/`, in the shell of step 2.
+
+       **Form A: a box without systemd** (a rented container).
+
+       ```
+       setsid nohup systemd/sn120-v2-run-loop.sh "$(command -v python)" --state-dir $STATE --stack sn120_v2.assembly:stack > /dev/null 2>&1 < /dev/null &
+       ```
+
+       After a reboot of such a box nothing starts the loop, unless the start command of the box holds this line. If it does not, start the loop by hand after each reboot.
+
+       **Form B: a box with systemd.** The unit starts the loop at each boot.
+
+       ```
+       RENV=$CUT/run.env
+       (umask 077; env | grep '^SN120_' > $RENV)             # the variables of run, mode 600. It holds the store token.
+       sed -n 's/=.*//p' $RENV                               # the names only, no value
+       sed -e "/^[^#]/s|SN120_USER|$(id -un)|" -e "/^[^#]/s|SN120_ENV_FILE|$RENV|" -e "/^[^#]/s|SN120_PYTHON|$(command -v python)|" \
+           -e "/^[^#]/s|SN120_V2_DIR|$PWD|" -e "/^[^#]/s|SN120_STATE_DIR|$STATE|" \
+           systemd/sn120-v2-run.service | sudo tee /etc/systemd/system/sn120-v2-run.service > /dev/null
+       grep -v '^#' /etc/systemd/system/sn120-v2-run.service | grep SN120_      # must print nothing: every blank is filled
+       systemd-analyze verify /etc/systemd/system/sn120-v2-run.service
+       sudo systemctl daemon-reload && sudo systemctl enable --now sn120-v2-run
+       systemctl status sn120-v2-run                         # "active (running)"; after the loop gave up: "failed"
+       ```
+
+       Check of the third line, before you go on: the names are `SN120_WORK_DIR`, `SN120_IMAGE_DIGEST`, `SN120_R2_ENDPOINT`, `SN120_R2_BUCKET`, `SN120_R2_ACCESS_KEY_ID`, `SN120_R2_SECRET_ACCESS_KEY`, `SN120_PUBLIC_URL`, `SN120_LINKS_URL` and `SN120_V2_CHAIN_NETWORK`. `SN120_R2_PREFIX` is not there. If a name is missing, export it (step 2, or check 3 of "Before the mainnet bootstrap" for `SN120_IMAGE_DIGEST`) and run the second line again.
+
+       The unit reads `$RENV` at each start. So each later change of an `SN120_` variable needs the second line again, then a stop and a start of the loop. Do not `cat` the file.
+    3. **Look at the loop.**
+
+       ```
+       cat $SN120_WORK_DIR/logs/run-loop.status              # one line: what the loop does now, or why it stopped
+       tail -f $SN120_WORK_DIR/logs/run.log                  # the output of run, and the lines "run-loop: ..."
+       ```
+
+       The log of `run` is `$SN120_WORK_DIR/logs/run.log`. It is not `$CUT/run.log`.
+
+       Check, from a second shell with the same exports:
+
+       - The status line says `running: run has pid N, start 1 of at most 5 with no finished round`.
+       - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
+       - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
+       - `status` shows a `phase` other than `IDLE` after the first lease.
+       - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. A round ends at most 100 minutes after its lease ("The time limit of a round" below).
+    4. **The stop**, for each later step that says "stop the loop". `run` and its servers end, and nothing starts them again.
+
+       ```
+       kill $(cat $SN120_WORK_DIR/logs/run-loop.pid)         # form A
+       sudo systemctl stop sn120-v2-run                      # form B. "sudo systemctl disable --now sn120-v2-run" also keeps it down after a reboot.
+       ```
+
+       To go on after a stop: the line of form A again, or `sudo systemctl start sn120-v2-run`.
+
+       A reboot after a stop: with form B the enabled unit starts the loop at boot, also after `systemctl stop`. Only `disable --now` keeps it down. With form A nothing starts the loop.
 11. **Records.** Put `$CUT/import`, `$CUT/params.json`, `$CUT/plan.json` and each saved `k1.json` with the v2 run records.
 
 ## AffineValidator: the order at the cutover
 
-One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap).
+One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap). Step 12 also needs step 10 of "GPU box" (the round loop runs).
 
 **What can be done now, before the smoke test is green: steps 1, 2, 3 and 4, the chain check of step 6, and the file check 8.1.** None of them changes anything that is live: they start no unit, enable no timer, stop nothing of v1, and write nothing to the chain, to the store or into the site directory. Each one is marked **Can be done now** in the list.
 
@@ -285,7 +369,7 @@ One list, in this order. Each step has its check. Do not start a step before the
 | 6, the chain check only | The script file. It only reads the chain. | Nothing. Step 9 runs it again. |
 | 8.1 | Nothing. It reads the mode and the names of the pull's credentials file. | Step 8 runs it again. |
 
-Set the session names and the helper `with_store` again in each new shell.
+Set the session names and the helper `with_token` again in each new shell.
 
 Everything else waits. Step 5, the two dry runs of step 6 and step 7 read the journal copy in the production store, and that copy exists only after the bootstrap. From 8.3 on, each step changes something that is live.
 
@@ -299,7 +383,7 @@ Run every step as the Linux user that runs v1's `affine-ff.service`: that user c
 
 ```
 RUNUSER=$(whoami)
-REPO=$HOME/affine                          # the v2 checkout: a directory of its own, never a directory of v1
+REPO=$HOME/affine                          # the v2 checkout: a directory of its own, never a directory of v1. You set this path.
 WSTATE=$HOME/sn120-v2-weights              # the weights writer's own directory
 WENV=$HOME/sn120-v2-weights.env            # the weights writer's own credentials file
 WALLETS=$HOME/.bittensor/wallets           # the directory that holds the wallet NAME
@@ -313,19 +397,25 @@ BUCKET=affine-verification-mock-20260930
 PENV=/home/const/sn120-v2/secrets/r2-public-pull.env     # the pull's own credentials file; it exists already
 KEEP=$HOME/sn120-v1-archive                # where files of v1 are kept, outside the site directory
 BACKUP=$KEEP/website-v1                    # the copy of v1's whole site directory
-V1FILE=$KEEP/v1-history.json               # the frozen v1 history
+V1FILE=$KEEP/v1-history.json               # the frozen v1 history. You set this path.
 MOVED=$KEEP/moved                          # where v1's stale files go after the site switch
 PY=$REPO/v2/.venv/bin/python               # the Python of the checkout
 mkdir -p "$KEEP"
 ```
 
-The pull's credentials file has the store settings under the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Two commands read these names: the pull (`site/pull.py`) and `site/reset.py llms`. No other v2 command does. Use the file as it is: no copy and no second file. Run this block once; it defines a helper named `with_store` that loads the file for one command. The round brackets keep the token out of your shell: the helper runs each command in a shell of its own.
+The pull's credentials file has the store settings under the names `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Two commands read these names: the pull (`site/pull.py`) and `site/reset.py llms`. No other v2 command does. Use the file as it is: no copy and no second file. Run this block once; it defines a helper named `with_token` for a run by hand.
 
 ```
-with_store() ( set -a; . "$PENV"; set +a; "$@" )
+with_token() { env -i PATH="$PATH" HOME="$HOME" bash -c 'set -a; . "$0"; set +a; exec "$@"' "$PENV" "$@"; }
 ```
 
-A variable with `SN120_R2_` at its start wins over the plain name. So the shell of these steps must hold none: `env | grep ^SN120_R2_` prints nothing.
+`with_token <command>` starts the command in a new process that has only `PATH`, `HOME` and the variables of the file.
+
+- The token never enters your shell, and nothing prints it.
+- No `SN120_*` variable of your shell reaches the command. This matters: a variable with `SN120_R2_` at its start wins over the plain name of the file, so a stray `SN120_R2_PREFIX` or `SN120_R2_BUCKET` of the smoke test would send the command to another place.
+- Do not use `set -a; . "$PENV"` in your own shell, and do not `cat` the file.
+
+The other commands of this list do not need the helper. Steps 5, 6 and 9 load the weights writer's file `$WENV`, which sets all five `SN120_R2_` names. The units of steps 9, 11 and 12 read only their own files. Only the rehearsal of step 7 reads your shell: it has its own check.
 
 1. **Install.** **Can be done now**, with the newest commit of `v2`. At the cutover: the same commit as the GPU box.
 
@@ -494,21 +584,33 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
    rm -r "$REH"
    ```
 
+   Before the block, `env | grep -c '^SN120_R2_'` must print `0` (the command prints a count, never a value). The block sets the endpoint and the bucket itself, and the keys come from `$CRED`; any other `SN120_R2_` variable of your shell would win over them.
+
    Check: one line `links: issued N of M waiting hotkeys (not activated ..., not Ed25519 ...), removed 0, valid 86400 s`, exit code 0. `M` is the queue of the bootstrap. If the second count is most of v1's files, stop and ask: then the v2 queue is not what the import promised.
 8. **The new `llms.txt` alone.** Only this one file goes up here: the `llms.txt` that the bootstrap published into the store. v1's `mining.json`, `index.html` and every other file of the site stay as they are. Do not run the pull for this: one run of the pull also replaces `mining.json` and `index.html`.
 
    1. **Check the pull's credentials file.** **Can be done now.** It exists already: `$PENV`. Do not make a new one, do not edit it, and do not show its content.
 
       ```
-      stat -c '%a %U' "$PENV"          # 600 and the run user
-      cut -d= -f1 "$PENV"              # the names only, no value
+      stat -c '%a %U' "$PENV"
+      sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$PENV"
       ```
 
-      Check: the mode is `600`. The names are `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_ENDPOINT`. The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
-   2. **Check that the store's `llms.txt` comes from a build with the round time hard stop.** `llms.txt` must not go up from a store that an older commit published. **Not landed yet:** the coordinator gives the smallest commit and the text to look for in the store's `llms.txt`. Do not go on before you have both.
+      Check:
 
-      - The commit of the GPU box (`git rev-parse HEAD` there, check 1 of "Before the mainnet bootstrap") is that commit or a later one.
-      - The text check of the store's `llms.txt`: the command comes with the commit.
+      - The first line is `600 const` (the mode and the run user).
+      - The second command prints only the names, never a value: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_ENDPOINT`, in any order.
+      - If a name is missing from that print, its line does not start with the name (for example it starts with `export`). systemd does not read such a line, so the unit of step 12 would fail. Tell Jacob; do not edit the file yourself.
+      - The print does not show `SN120_R2_PREFIX`: production has no prefix.
+
+      The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
+   2. **Check that the store's `llms.txt` comes from the cutover build.** `llms.txt` must not go up from a store that an older commit published.
+
+      - The commit of the GPU box holds the four commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` four times. Two of them are the reason for this step: the round time hard stop (`9b830458`) and the limit of 3 checks (`5ce10ce7`).
+      - **Not landed yet:** the commit for the cutover. Work after those four is still open, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
+      - **Not landed yet:** the text check of the store's `llms.txt`. The command comes with the commit.
+
+      Do not go on before you have both.
    3. **Stop the v1 unit that puts v1's `llms.txt` back.** `affine-network-dashboard.service` writes `network-data.json` into the site directory every 15 seconds. In the same pass it compares `llms.txt` and `reward-policy.json` with its own copies and writes its copies back if they differ. While it runs, the new `llms.txt` lives for 15 seconds at most.
 
       ```
@@ -521,7 +623,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
    4. **Copy the file.**
 
       ```
-      with_store "$PY" "$REPO/v2/site/reset.py" llms --site-dir "$SITE"; echo "exit=$?"
+      with_token "$PY" "$REPO/v2/site/reset.py" llms --site-dir "$SITE"; echo "exit=$?"
       ```
 
       - The command reads two objects from the store: v2's `llms.txt` and v2's `mining.json`. It writes one file: `$SITE/llms.txt`, in one move.
@@ -637,20 +739,25 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
 
     - step 4: the copy and the frozen history exist;
     - step 7 of "GPU box": the import has read v1's `mining.json` from `https://affine.io/mining.json`;
-    - step 10: nothing of v1 writes into the site directory.
+    - step 10: nothing of v1 writes into the site directory;
+    - step 10 of "GPU box": the round loop runs, and the bootstrap printed no line `not finished:`.
 
     The order inside this step: the pull first, then v1's files move out. Before the pull, v1's page still needs those files, and the reset tool refuses to move them until the v2 page is up.
 
     1. **One run of the pull by hand.**
 
        ```
-       with_store "$PY" "$REPO/v2/site/pull.py" --site-dir "$SITE" --public-url https://affine.io --v1-history "$V1FILE"; echo "exit=$?"
+       with_token "$PY" "$REPO/v2/site/pull.py" --site-dir "$SITE" --public-url https://affine.io --v1-history "$V1FILE"; echo "exit=$?"
        ```
 
        - The run writes the data files first (`mining.json`, `llms.txt`, the files under `public/`), then the fonts, the script and the style, and `index.html` and `v1.html` last. So no page is up before the files that it loads.
        - Do not run `build.py` by hand for the switch. Without the pull's data it writes a page that says "No data yet."
 
        Check on the host: the run prints `pull: wrote N, unchanged N, removed N, failed steps 0; site built` and `exit=0`. With `exit=1`, each failed step is one line `pull: FAILED ...` on stderr; before the GPU box has published, no root file was replaced, v1's page is still up, and you can run it again.
+
+       One failed step is known: `pull: FAILED head and read links: missing in the store: 'public/head.json'`, with `exit=1`. The store has no head pointer yet. The other steps ran: the v2 page is up, but `public/read_links.json` is missing, and `llms.txt` names that file. The bootstrap writes the pointer, and the first pass of `run` writes it if the bootstrap could not (step 8 of "GPU box"). So make sure that step 10 of "GPU box" runs, wait for its first line `idle: ...` or its first lease, and run the pull again: it then prints `failed steps 0`. Do not install the timer before that.
+
+       If the run stops with `the store setting ... is not set`, the message names the variable. If it stops with `R2_ENDPOINT is not a store endpoint`, the value in the file has a form that the command refuses: tell the coordinator the form, not the value.
 
        Check from outside the host:
 
@@ -682,11 +789,27 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
              -e "s|SN120_V1_HISTORY|$V1FILE|g" "$REPO/v2/systemd/$unit" | sudo tee "/etc/systemd/system/$unit" > /dev/null
        done
        systemd-analyze verify /etc/systemd/system/sn120-v2-site-pull.service /etc/systemd/system/sn120-v2-site-pull.timer
+       grep -E '^(User|EnvironmentFile|ExecStart)=' /etc/systemd/system/sn120-v2-site-pull.service
        sudo systemctl daemon-reload
+       sudo systemctl start sn120-v2-site-pull.service; echo "exit=$?"
+       journalctl -u sn120-v2-site-pull.service -n 20 --no-pager
        sudo systemctl enable --now sn120-v2-site-pull.timer
        ```
 
-       Check: `systemctl list-timers sn120-v2-site-pull.timer --no-pager` lists the timer. After two minutes, `journalctl -u sn120-v2-site-pull.service -n 5 --no-pager` shows `failed steps 0`.
+       The three lines that `grep` prints, with the session names as this file sets them:
+
+       ```
+       User=const
+       EnvironmentFile=/home/const/sn120-v2/secrets/r2-public-pull.env
+       ExecStart=/home/const/affine/v2/.venv/bin/python /home/const/affine/v2/site/pull.py --site-dir /home/const/subnet120/affine/website --public-url https://affine.io --v1-history /home/const/sn120-v1-archive/v1-history.json
+       ```
+
+       Two paths in the last line are values that you set, not facts of the host: the checkout (`/home/const/affine`, from `$REPO`) and the history file (`/home/const/sn120-v1-archive/v1-history.json`, from `$V1FILE`). If you set `REPO` or `V1FILE` to another path, the line shows your path. The user, the token file and the site directory are Jacob's facts.
+
+       Check:
+
+       - `systemctl start` on the service makes one run through the unit and waits for it. It prints `exit=0`, and the journal shows the same line `pull: wrote ... failed steps 0; site built`. This proves that systemd reads the token file. With another exit code, do not enable the timer: read the journal lines.
+       - Enable the timer, not the service. `systemctl list-timers sn120-v2-site-pull.timer --no-pager` lists the timer. After two minutes, `journalctl -u sn120-v2-site-pull.service -n 5 --no-pager` shows `failed steps 0`.
 
        The unit loads `$PENV` as it is. If the log shows `the store setting SN120_R2_ENDPOINT is not set`, the checkout is older than the cutover commit: disable the timer (`sudo systemctl disable --now sn120-v2-site-pull.timer`), tell the coordinator, and do not edit the credentials file. The site stays as the run by hand left it.
     3. **Move v1's stale files out of the site directory.** After the switch, v1's data files still answer at their old addresses and look live. This moves them to `$MOVED`. Nothing is deleted.
@@ -724,7 +847,7 @@ A variable with `SN120_R2_` at its start wins over the plain name. So the shell 
     curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
     ```
 
-    Check: the line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, the GPU box runs without `SN120_LINKS_URL`: set it there, start `run` again, and do not announce before this check passes.
+    Check: the line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, the GPU box runs without `SN120_LINKS_URL`: stop the loop there, set the variable (with form B of step 10 of "GPU box", also write `$CUT/run.env` again), start the loop, and do not announce before this check passes.
 
 ## The chain check
 
@@ -792,6 +915,8 @@ The code and the steps were tested on other machines, with a stand-in for the we
 | 13 | The files of v1's real directory that no v1 page links. | Step 12.3: the dry run of `reset.py out` names nothing that must stay. | Do not do the real run. Send the dry run to the coordinator. The site works with v1's files still in place. |
 | 14 | No object of the real bucket is at a key that v2 writes. | "GPU box", step 5: the preflight prints `PASS`. | Stop the cutover and send the output to the coordinator. Do not delete anything. |
 | 15 | What the edge keeps for v1's `.js?v=` addresses. | Only after the `--assets` move and a later way back: "Go back", step 6, shows v1's page with its charts. | The edge can keep a "not found" answer for up to one day. So do the `--assets` move only when the way back is no longer needed. If it happened, tell the coordinator. |
+| 17 | The restart loop starts `run` on the real box, with the production variables. The unit has run under no systemd yet, and the loop has stopped no real vLLM server and read no real `nvidia-smi` yet. | "GPU box", step 10.3: the status line says `running: run has pid N, start 1 of at most 5 ...`. | `run-loop.status` and the last lines of `run.log` say why, and what to run. Exit code 64 of the loop is a wrong call: a missing state directory or no `SN120_WORK_DIR`. Nothing public changes while `run` does not run: the head and the weights stay. |
+| 16 | systemd reads the pull's token file, with the real user and paths. | Step 12.2: `sudo systemctl start sn120-v2-site-pull.service` prints `exit=0`, and the journal shows `failed steps 0`. | Do not enable the timer. If the journal shows `the store setting ... is not set`, a line of the file does not start with its name (step 8.1): tell Jacob. The site stays as the run by hand left it. |
 
 ## After the start
 
@@ -803,19 +928,100 @@ On the GPU box, in the shell of step 2 of "GPU box".
 | `python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack` | The same, read through the store, plus `queued_files`: the count of queued files for each admission result. |
 | `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` | The summary of the last closed round, as a text to paste. `--round r000007` picks one; `--json` prints the stored record. |
 | `python -m sn120_v2 publish --state-dir $STATE --stack sn120_v2.assembly:stack` | Writes `llms.txt` and `mining.json` again. It does not change the journal. |
-| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop `run` first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start `run` again. The file holds the whole set of overrides, not only the change. |
+| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change. |
 
 `--params` on `run`, `status` and `publish` is only a check: a file that differs from the pinned parameters is refused.
 
 On AffineValidator: `journalctl -u sn120-v2-weights.service --since "3 hours ago" --no-pager` shows the last runs. The dry run of step 5 of "AffineValidator" shows `blocks_since_last_write`; one hour is 300 blocks, so it stays below about 310 while each hourly run sets. If the first log line of a run says `read from the cache of the journal copy`, the store did not answer or the store settings are wrong: the writer then pays the last kings that it read.
 
+### The time limit of a round
+
+A round has a time limit of 100 minutes from the lease to the promotion. It is a hard stop.
+
+| Minute after the lease | What happens |
+| --- | --- |
+| 40 at the latest | The training time ends. A batch that is not trained then has the verdict `not_trained`. |
+| 90 | The box stops scoring. A block of tasks that still runs is stopped and is not used. |
+| 100 | The limit. The 10 minutes after the stop are for the grading of the last block, the judging and the promotion. |
+| 120 | The lease ends (`lease_timeout_s` 7200; it was 14400). A result that arrives later is not used. |
+
+- A LoRA that is still open at the stop is judged on the blocks that null M and every open LoRA finished. It is charged, win or lose. The first line of the round summary then ends with `(stopped at the time limit)`.
+- If fewer tasks than the first look are scored at the stop (500 tasks, a quarter of the 2,000 of a round), every trained LoRA has the verdict `not_scored`. It is not charged, it is first in the next round, and no failure is counted for its seat. The round summary then has the line `not scored: N of M batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
+- A round with `not_scored` rows ends the same way the next time: the same seats come first. Send the coordinator the `wall time` line of the summary and the `eval` lines of `phases.jsonl`.
+
+### When no round opens: the lines `waiting:`
+
+`run` prints `waiting: <cause>` and then `idle: N seats wait, phase IDLE` at each try, every 30 seconds, and opens no round. The word `waiting:` reads as harmless. It is not: **no round opens until the cause is repaired**, and `run` does not end by itself. The restart loop does not help here: `run` does not end, so the loop does not start it again, and `run-loop.status` still says `running`.
+
+The cause can be the chain or the store that did not answer. Then the lines stop by themselves at a later try. The cause can also be our own checker that fails its known-good case, on this machine. Then nothing ends it. These are the texts of that case:
+
+| The cause in the line | What fails |
+| --- | --- |
+| `the tokenizer fails on its known-good case: <error class>` | The tokenizer of the box. |
+| `the official grader failed on a known-good case: <error class>`, `the official grader gives no known-good case its reward`, `the official grader failed: <error class>` | The grader of the math environment. |
+| `the checker fails on a file (<place>) and does not pass its known-good file (<problem>)` | The file check as a whole. |
+
+In the same state:
+
+- `status` (with `--stack`) and `publish` end with `refused: InfraError: <cause>` and exit code 2.
+- `bootstrap` prints `not finished: file check failed: <cause>` and ends with exit code 1.
+
+What to do: when the same `waiting:` line comes three times in a row, stop and send the line to the coordinator. Do not delete a miner file and do not change the parameters to make a round open. A new start of `run` on the same machine gives the same line.
+
+This is not the case of one bad miner file. A file that makes the checker fail while the known-good case passes is skipped with the rule `check_fault`, and `run` goes on. The same holds for `tokenizer_fault`, `grader_fault` and `grader_time_limit`. Such a file is checked again 10 minutes later at the earliest; after 3 counted checks its verdict stays until the miner uploads a new file. Send the coordinator the `queued_files` line of `status` whenever it has a count under `check_fault`, and each line that holds `the checker fails on this file:`.
+
+### A crash or a restart of `run`
+
+The start, the look and the stop of the restart loop are step 10 of "GPU box". The head of `systemd/sn120-v2-run-loop.sh` lists every rule and setting. [SMOKE.md](SMOKE.md), "After a green test: the restart loop of `run`", has the same facts.
+
+The rules for mainnet:
+
+- **Only the loop starts `run`.** Never start `run` by hand.
+- **Stop the loop before `set-params`, before `end-round` by hand, and before a new commit.** `set-params` and `end-round` take over the journal. Then start the loop again.
+- **One box only.** Stop the loop on an old box (and `disable` its unit) before a new box starts. The loop of a second box ends the open round of the first one.
+
+Before each start of `run` the loop does three things, in this order:
+
+1. It stops every process that the last `run` left (vLLM servers, training jobs) and waits until no GPU holds more than 1,024 MiB. If a GPU stays in use for 120 seconds, the loop stops and says which GPUs.
+2. It ends an open, undecided round with `end-round`: no decision, nobody is charged, no failure is counted, and the seats are first in the next round. If the box result of that round is already in the store, it does not end the round: `run` judges that result.
+3. It starts `run`.
+
+What a restart does to an open round:
+
+| The round when `run` died | `run` alone, started by hand | The loop |
+|---|---|---|
+| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`: **one counted failure** for that seat (3 hold the seat). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. The seats are first in the next round, which opens 5 minutes later at the earliest. |
+| After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. | The same, at once. |
+| After the lease end, no result stored | The lease is failed ("the lease expired"). No charge, no counted failure. | The same. |
+| The box result is stored, not judged | `run` judges the stored result, also after the lease end. | The same: the loop skips `end-round`. |
+| Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
+
+So no restart can charge a seat. With the loop, no restart can count a failure. A restart by hand in the training time can. If you ever must restart `run` by hand with an open, undecided round (the loop itself does not work), use the order of the loop: stop `run`, free the GPUs, `end-round`, start.
+
+Which exit codes of `run` the loop does not start again:
+
+| Exit code of `run` | Meaning | The loop |
+|---|---|---|
+| 0 | Finished (`--rounds`, `--max-idle`) | stops, exit code 0 |
+| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again. |
+| 130, 143 | Stopped with SIGINT or SIGTERM | stops, exit code 0 |
+| every other code | A crash (1 is a Python error, 137 is SIGKILL or out of memory) | starts `run` again after 30 seconds |
+
+The loop counts the starts with no finished round between them. A round that `run` closed sets the count back to zero; a round that the loop ended with `end-round` does not. At 5 (`SN120_LOOP_MAX_STARTS`) the loop stops with exit code 3. A crash 30 minutes into every round stops it too. The count is in memory: a new start of the loop, or a reboot, sets it to zero. So the count does not stop a box that reboots in every round.
+
+**Not landed yet:** the line on a store or a chain that does not answer at a start of `run`. A change of the loop for that case is in work; the coordinator sends the line.
+
+The loop stops by itself after 5 starts with no finished round between them, when `run` is refused, and when a GPU stays in use. Then nothing starts `run` again. The last lines of `$SN120_WORK_DIR/logs/run.log` say why and what to run. `cat $SN120_WORK_DIR/logs/run-loop.status` shows the same in one line, with the exit code of the loop: 0 stopped or finished, 2 refused, 3 gave up, 4 a GPU stays in use, 64 a wrong call. With form B, `systemctl status sn120-v2-run` then says `failed` (after exit code 0: `inactive`). Send those lines to the coordinator. While `run` does not run, no round opens; the head stays, and the weights writer keeps its last valid assessment.
+
+A fault in the judging of a round stops `run` with a Python error. The round stays open, and the box result stays in the store. After the fix, `run` judges that result; no new round is needed. `end-round` leaves such a round alone and exits with 3. Only if the stored result itself is bad: `end-round --discard-result` ends the round with no decision and throws the result away. Nobody is charged.
+
 ### After a fix: a new commit on the GPU box
 
-This is "After a fix" of [SMOKE.md](SMOKE.md), with the same words. Two things differ on mainnet: there is no `smoke params` command, so the parameter file is `$CUT/params.json` with the two new digests; and the digest block is check 3 of "Before the mainnet bootstrap".
+This is "After a fix" of [SMOKE.md](SMOKE.md), with the same words. Three things differ on mainnet: there is no `smoke params` command, so the parameter file is `$CUT/params.json` with the two new digests; the digest block is check 3 of "Before the mainnet bootstrap"; and the loop is stopped first and started last, where SMOKE.md says `run`.
 
-A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. Never run `bootstrap` again. The message for the fix says if it needs the install line and if it needs the digest block.
+A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. Never run `bootstrap` again. The message for the fix says if it needs the install line and if it needs the digest block. The commit of a fix always holds `9b830458`: there is no way back below it (check 1 of "Before the mainnet bootstrap").
 
-Stop `run`. Then look at the state:
+Stop the loop (step 10.4 of "GPU box"), not `run` alone: a `kill -9` of `run` makes the loop start it again. A stop in the middle of a round costs that round: the loop ends it with no decision at its next start. Nobody is charged, no failure is counted, and the seats are first in the next round. Then look at the state:
 
 ```
 python -m sn120_v2 status --state-dir $STATE          # "phase": "IDLE", "RUNNING" or "APPLY"
@@ -829,38 +1035,41 @@ uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"    # only when the fix needs 
 python -m pytest
 ```
 
-The fix needs **no** digest block: run the `run` command again. It takes up an open round and finishes it. A move in the middle of a round costs only that the round runs again from its start.
+The fix needs **no** digest block: start the loop again. In phase `RUNNING` the round must end first (stop `run`, free the GPUs, `end-round`, start): a start of `run` in the training time of an open round can count a failure for a seat. The loop does this order by itself, so there is nothing more to do.
+
+A fix for a fault in the judging: the round is open and its box result is in the store ("A crash or a restart of `run`"). Start the loop: `run` judges the stored result.
 
 The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
 
-- `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then `run`. The file holds the whole set of overrides, not only the change.
+- `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then start the loop. The file holds the whole set of overrides, not only the change. With form B, write `$CUT/run.env` again before the start (the first two lines of the block): the digest block can change `SN120_IMAGE_DIGEST`, and the unit reads it from that file.
 - `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. Nobody is charged, no failure is counted for a seat, and its seats are first in the next round:
 
   ```
   python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack
   ```
 
-  Then do the `IDLE` line. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
-- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only. `run` then finishes the fold with the new code.
+  Then do the `IDLE` line. Run `end-round` by hand here, with the loop stopped: `set-params` comes before the start of the loop. If `end-round` exits with 3, a box result of the round is in the store and the round stays open: tell the coordinator before you go on. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
+- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only. `run` then finishes the fold with the new code. The sign that the fold is done: `run` prints `idle: N seats wait, phase IDLE`, or `status` in a second shell shows `"phase": "IDLE"`. `run` prints no round summary for it. If valid files wait, `run` does not print the line: it starts the next round at once.
 
-`end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused (exit code 2, `no round is open and undecided`) when no round is open, and when the round is already decided.
+`end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop the loop first. It is refused (exit code 2, `no round is open and undecided`) when no round is open, and when the round is already decided.
 
 After any failed lease, the next round opens 5 minutes later at the earliest (`apply_retry_s` 300).
 
 ### A new GPU box
 
-1. Stop `run` on the old box, if the box still answers.
-2. On the new box: the checkout, the install, step 2 of "GPU box" with the same store settings and a new empty state directory, and `SN120_IMAGE_DIGEST` from `python -m sn120_v2.gpu.plan`.
-3. If the new box gives other digests than the pinned parameters hold, pin them first with `set-params`.
-4. Start `run`. It pulls the journal copy and continues. Do not run `bootstrap` again.
+1. Stop the loop on the old box, if the box still answers (step 10.4 of "GPU box"). With form B use `sudo systemctl disable --now sn120-v2-run`, so that a reboot of the old box does not start it.
+2. On the new box: the checkout, the install, step 2 of "GPU box" with the same store settings, and `SN120_IMAGE_DIGEST` from `python -m sn120_v2.gpu.plan`.
+3. The state directory of the new box is new and empty: `mkdir -p $STATE`. Copy nothing into it. Without the directory the loop does not start: it prints `the state directory ... does not exist` and ends with exit code 64.
+4. If the new box gives other digests than the pinned parameters hold, pin them first with `set-params`. If the old box died in a round, end that round first: the `RUNNING` line of "After a fix".
+5. Start the loop (step 10 of "GPU box"). Its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
 
-Two `run` processes never both write: the newer one takes over the journal, and the older one stops with `FencedError` at its next write. Do not let a supervisor start the old one again.
+Two `run` processes never both write: the newer one takes over the journal, and the older one stops with `refused: FencedError` at its next write. The loop of the old box does not start a refused `run` again: it stops with exit code 2. Never start it again by hand on the old box.
 
 ### Go back
 
 Before the first v2 round ends. The weights part is "To go back" of the handover: stop v2's timer first, then start v1's writer.
 
-1. **Stop v2's writers.** Stop `run` on the GPU box. On AffineValidator:
+1. **Stop v2's writers.** Stop the loop on the GPU box (step 10.4 of "GPU box"; with form B, `sudo systemctl disable --now sn120-v2-run`). On AffineValidator:
 
    ```
    sudo systemctl disable --now sn120-v2-weights.timer sn120-v2-site-pull.timer
