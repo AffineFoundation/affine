@@ -295,7 +295,7 @@ Run every command from `v2/`, inside the virtual environment.
    ```
 
    Check: `echo $MASTER_DIGEST` prints the same 64 characters as in the smoke test.
-7. **Import, real run.** Before it, step 4 of "AffineValidator" is done: v1's site is saved. The import reads `https://affine.io/k1.json` and `https://affine.io/mining.json`, and the pull replaces `mining.json` later. Save `k1.json` once more, take a new chain snapshot (step 3), and run the lines below. The reason for the new snapshot: with 256 seats, the first pass of `run` refuses the chain sync when 65 or more seats leave in one read, and that needs a snapshot that is more than about a day old (the history in `tests/data/cutover/k1.json` has 61 registrations at most in any 24 hours). At the bootstrap itself this refusal cannot come: the queue is empty before the sync of `--chain`. "When `run` refuses the chain sync" in "After the start" has the way out.
+7. **Import, real run.** Before it, step 4 of "AffineValidator" is done: v1's site is saved. The import reads `https://affine.io/k1.json` and `https://affine.io/mining.json`, and the pull replaces `mining.json` later. Save `k1.json` once more, take a new chain snapshot (step 3), and run the lines below. The reason for the new snapshot: the import gives a queue of about 256 waiting seats (the dry run of 13 Nov 2026 at 23:04 UTC; SN120 itself has 1000 registrations). With that queue, the first pass of `run` refuses the chain sync when 65 or more seats leave in one read, and that needs a snapshot that is more than about a day old (the history in `tests/data/cutover/k1.json` has 61 registrations at most in any 24 hours). At the bootstrap itself this refusal cannot come: the queue is empty before the sync of `--chain`. "When `run` refuses the chain sync" in "After the start" has the way out.
 
    ```
    python -m sn120_v2.cutover --out $CUT/import --chain $CUT/chain_snapshot.json \
@@ -1025,7 +1025,9 @@ This is not the case of one bad miner file. A file that makes the checker fail w
 
 Words used here. A **seat** is one registration (UID and registration block) that waits in the queue for a round. The **chain sync**: at each pass, `run` reads the registrations from the chain; seats that are no longer on the chain leave the queue, and new registrations enter it.
 
-The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. With 256 seats that is 65 or more seats in one read. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`).
+The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. The queue is the seats that wait: `"queue"` of `status`. So the limit follows the queue of that moment: more than a quarter of the seats that wait then. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`).
+
+**Two numbers that are not the same.** SN120 has 1000 registrations on the chain (the chain values `SubnetworkN` and `MaxAllowedUids` were both 1000 at block 9501162). UID 0 has no seat. The import dry run of 13 Nov 2026 at 23:04 UTC gave 256 waiting seats (14 front, 47 normal, 195 back): this is the queue after the import, not the size of the subnet. With a queue of 256 seats, the refusal comes when 65 or more seats leave in one read. With a shorter queue the limit is lower.
 
 When the refusal can come:
 
@@ -1039,7 +1041,7 @@ What you see before: `run` does not stop. It prints the same line at every pass 
 
 ```
 tail -n 3 $SN120_WORK_DIR/logs/run.log
-waiting: sync would remove 80 of 253 seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command
+waiting: sync would remove 80 of 256 seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command
 ```
 
 The loop status (`$SN120_WORK_DIR/logs/run-loop.status`) still says `running: run has pid N, ...`, because `run` did not stop. `status` shows the old queue size.
@@ -1049,13 +1051,17 @@ The command has two guards. It reads the registrations two times, at two blocks,
 1. **Look at the list.** This writes nothing: the command reads the journal copy in the store and takes over nothing. It is safe while the loop runs.
 
    ```
-   python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack
+   python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack > $CUT/force-sync-list.txt; echo "exit=$?"
+   head -n 2 $CUT/force-sync-list.txt; tail -n 1 $CUT/force-sync-list.txt
+   grep -c "remove uid" $CUT/force-sync-list.txt; grep -c WARNING $CUT/force-sync-list.txt
    ```
 
-   Output (exit code 0; the numbers here are examples):
+   The command takes about 21 s: one read of the 1000 registrations takes 5.6 to 7.0 s, and the second read is at the next block. The list is long, so the first line keeps it in a file: it has one line for each seat that leaves (333 seats gave 336 lines), and only the count of the seats that enter.
+
+   The file (exit code 0; the block numbers and the counts here are examples):
 
    ```
-   chain blocks 9500410 and 9500411 (256 registrations) give the same changes to the queue of 253 seats:
+   chain blocks 9500410 and 9500411 (1000 registrations) give the same changes to the queue of 256 seats:
      remove 80 seats, add 83 seats, change the hotkey of 0 seats
      remove uid   41 registration block   9412345 5F... (normal)
      remove uid   42 registration block   9412399 5G... (back)
@@ -1067,9 +1073,11 @@ The command has two guards. It reads the registrations two times, at two blocks,
 
    Check before step 2:
 
-   - The number of registrations is the size of the subnet (256 on SN120).
+   - The first line says `(1000 registrations)`: the number of registrations is the size of the subnet, and SN120 has 1000. This is the right number. A much smaller number is the sign of a read that is not complete or of another subnet: do not go on.
+   - The number after `the queue of` is `"queue"` of `status`: the seats that wait. It is not the size of the subnet.
+   - The first `grep` line prints the number of `remove N seats`. The second prints `0`.
    - The seats in the list are really gone from the chain. Check a few UIDs in a chain explorer: the UID now has another hotkey or a later registration block.
-   - There is no `WARNING` line. The line `WARNING: not one of the N seats is on this chain. A read of another network or subnet looks like this` comes when not one seat of the queue is on the chain. It is a warning and not a refusal. With it, check `SN120_V2_CHAIN_NETWORK` first.
+   - There is no `WARNING` line (the second `grep` line prints `0`). The line `WARNING: not one of the N seats is on this chain. A read of another network or subnet looks like this` comes when not one seat of the queue is on the chain. It is a warning and not a refusal. With it, check `SN120_V2_CHAIN_NETWORK` first.
 2. **Stop the loop** (step 10.4 of "GPU box"), as for `end-round`. Then `pgrep -af "sn120-v2-run-loop|sn120_v2 run"` must print nothing. **With `--confirm-remove`, the command takes over the journal before it reads the chain, also when it then refuses. So the loop is stopped before each try with `--confirm-remove`.**
 3. **Apply, with the count of step 1.**
 
@@ -1077,7 +1085,7 @@ The command has two guards. It reads the registrations two times, at two blocks,
    python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack --confirm-remove 80
    ```
 
-   Output (exit code 0): the same list again, then `applied at chain block 9500431: the queue has 256 seats`, then the same JSON summary that `status` prints (`"phase": "IDLE"`, `"queue": 256`).
+   Output (exit code 0): the same list again, then `applied at chain block 9500431: the queue has 259 seats` (256 seats, less the 80 that leave, plus the 83 that enter), then the same JSON summary that `status` prints (`"phase": "IDLE"`, `"queue": 259`). The list is long here too: add `> $CUT/force-sync-applied.txt; echo "exit=$?"` to the command, then read the file with `grep -n "applied at" $CUT/force-sync-applied.txt` and `tail -n 30 $CUT/force-sync-applied.txt`. A refusal line is not in the file: it comes on the screen.
 4. **Start the loop again** (step 10.2 of "GPU box"). Check: `run.log` has no new `waiting: sync would remove` line, and a round opens.
 
 The exit codes and the lines:
@@ -1098,9 +1106,11 @@ What a forced sync costs a seat that it removes: nothing more than the normal sy
 
 What is not proven:
 
-- The command was not run against the real chain. The chain in its tests is a fake.
+- The command was run against the real chain on 14 Nov 2026 (reads only, netuid 120 on `finney`), with a local store and the CPU stack: the refusal of `run`, the list, a wrong count, and the right count for 333 of 999 seats. The real first line was `chain blocks 9501152 and 9501153 (1000 registrations) give the same changes to the queue of 999 seats:`. In all 4 runs the second read was at the next block.
+- Not run on the real chain: the refusals `two chain reads give different changes` and `the chain stayed at block B`, the `WARNING` line, the real stack as a whole (only its chain read was real), and a queue with front seats, back seats, held seats or seats in an open round.
+- The two reads are one block apart (about 12 s), at the newest block of the node. So the two-read guard finds a read that is wrong for one moment. It does not find a node that is wrong for longer.
 - Both reads go through the same chain node. A node that is wrong in the same way at two blocks passes the two-read guard. Then only your look at the list stands, so do the checks of step 1.
-- The block numbers and the counts in the examples above are made up. The format of the lines is tested.
+- The block numbers and the counts in the examples above are made up, but they can be real: 1000 registrations, and a queue as long as the waiting seats of the import. The format of the lines is tested.
 
 ### A crash or a restart of `run`
 
@@ -1230,7 +1240,7 @@ Every round that closes with no box result names its cause in the same place: `n
 What to do when you see that sign:
 
 - Read the cause in the `no winner:` line. If the box is the cause (a GPU fault, a full disk, the store), stop the loop, repair the box, and start the loop. No seat was held and nothing was counted, so `release-seat` is not needed for these rounds.
-- If the box is good and the files of the seats in front are the cause, there is no command for it today. Send the `no winner:` lines and the `status` output to the coordinator. A higher `batch_cap` by `set-params` lets other seats into the round; the coordinator decides on it.
+- If the box is good and the files of the seats in front are the cause, there is no command for it today. At the launch values, no `set-params` lets other seats into the round. `batch_cap` cannot go above `max_loras_per_box`, and both are 32: a file with a higher `batch_cap` is refused with `refused: ConfigError: batch_cap must be between 1 and max_loras_per_box` (exit code 2, the parameters do not change). Do not raise `max_loras_per_box` to get around it: it is the number of LoRAs in one scoring server, and no test has run more than 32. Send the `no winner:` lines and the `status` output to the coordinator: the fix is a code change.
 
 ### The digests of the box and the pinned digests
 
@@ -1260,7 +1270,7 @@ The guard has three limits:
 
 1. The image digest of the box is the value of `SN120_IMAGE_DIGEST`. `run` does not compute the digest of the installed packages again. So it does not see a stale value: after an install line with no digest block, the value is still that of the old packages, nothing is refused, and the rounds run with packages that the pinned image digest does not name. The `diff` line below sees it.
 2. The code digest is computed from the files at each check. A checkout under a running `run` is refused at the next round or fold, not in the middle of a round. So stop the loop before a checkout, as before.
-3. The guard does not see a fault of the box that is not a digest difference (a GPU fault, a store fault during the training). Such a fault still gives counted failures: see "After a fault of the box in training".
+3. The guard does not see a fault of the box that is not a digest difference (a GPU fault, a store fault during the training). Such a fault still gives counted failures when another batch of the same round trained: see "After a fault of the box in training". When no batch of the round trained, nothing is counted ("A round in which no training finished").
 
 **Run the `diff` line after each checkout, after each install line and on each new box, before any start of the loop:**
 
