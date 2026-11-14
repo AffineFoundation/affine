@@ -256,6 +256,9 @@ class Pod:
             self._failed(S, log, f"{len(mine)} pods are named {self.name}: the operator decides"); return None
         if mine and rec and rec.get("id") != mine[0].get("id"):
             self._failed(S, log, f"the pod named {self.name} is not the pod of this row's record: the operator decides"); return None
+        if mine and not rec and ((_rj(self.record) or {}).get("last") or {}).get("id") == mine[0].get("id"):
+            # the pod that this row gave back, or that Lium called deleted, is still in the listing: it is not taken again
+            self._failed(S, log, f"Lium still lists pod {str(mine[0].get('id'))[:8]}, which this row gave back: no rent beside it"); return None
         if mine and not rec and claimed(mine[0].get("id")):  # two rows whose short names are equal: never two rows on one pod
             self._failed(S, log, f"the pod named {self.name} is the pod of another row's record: the operator decides"); return None
         if mine:  # the row's pod is there (a lost answer, or a setup that did not end): take it, never rent a second
