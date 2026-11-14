@@ -1,12 +1,16 @@
 """Host side: the single queue-driven daemon of the per-green benchmark, plus its CLI commands.
 
-Loop (every 30 s): read the applied kings from v2's journal (source.py; no call into the controller), build the
-queue, keep exactly one king running on the node, collect finished benchmarks into BENCH_STATE/results/, write
-BENCH_SITE/benchmarks.json. Idempotent and resumable: a result file per (king, benchmark, version) is the only "done"
-marker, so a king is benchmarked once however often it is listed; a crashed run is resumed in place
-(vf-eval --resume keeps finished rollouts); nothing is published per task.
+Loop (every 30 s): read the rows from v2's public files (source.py: the launch model and every folded king; no journal
+and no call into the controller), build the queue, keep exactly one row running on the node, collect finished
+benchmarks into BENCH_STATE/results/, write BENCH_SITE/benchmarks.json and, when a row or a result changed, the same
+table to the store. Nothing is published per task.
 
-Queue: every applied king that has a missing result, newest first. Nothing else is ever queued.
+Done marker: a (row, benchmark, version) is done when the published table has its result, or a result file is on this
+host. The process reads the published table before its first step and rents nothing until it has. So a row is
+benchmarked once however often it is listed, and a host with an empty disk does not run a king again. A crashed run is
+resumed in place (vf-eval --resume keeps finished rollouts).
+
+Queue: every row that has a missing result, newest first; the launch model (genesis) is the oldest row. Nothing else.
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
 Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
@@ -45,35 +49,41 @@ def save(): wj(SF, S)
 
 # ------------------------------------------------------------------------------------------------ models
 def model_rows():
-    """One row per applied king (source.py is the only reader of v2 state). model_id is stable and file-safe."""
-    return source.kings()
+    """The genesis row and one row per folded king (source.py is the only reader of v2 state). model_id is stable and file-safe."""
+    return source.models()
 
 
 def result_path(mid, bid): return f"{RES}/{mid}/{bid}.json"
 
 
-def missing(m, bs):
+def published():
+    """(model, benchmark, version) of every result in the table: the local copy of what the store holds, plus this host's results."""
+    return {publish.row_key(r) for r in (rj(publish.OUT) or {}).get("results") or []}
+
+
+def missing(m, bs, done=None):
+    done = published() if done is None else done
     out = []
     for b in bs:
-        r = rj(result_path(m["model_id"], b["id"]))
-        if not r or r.get("bench_version") != R.bench_version(b):
+        v = R.bench_version(b); r = rj(result_path(m["model_id"], b["id"]))
+        if (m["model_id"], b["id"], v) not in done and not (r and r.get("bench_version") == v):
             out.append(b["id"])
     return out
 
 
 def queue(rows=None):
-    rows = model_rows() if rows is None else rows; bs = R.benchmarks(enabled_only=True, runnable_only=True)
-    ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs)
+    rows = model_rows() if rows is None else rows; bs = R.benchmarks(enabled_only=True, runnable_only=True); done = published()
+    ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs, done)
     seen, out = set(), []
     for m in sorted(rows, key=lambda m: -(m.get("crowned_at") or 0)):
         if m["model_id"] not in seen and ok(m):
-            seen.add(m["model_id"]); out.append(dict(m, why="new-king"))
+            seen.add(m["model_id"]); out.append(dict(m, why="new-" + m["kind"]))
     return out
 
 
 # ------------------------------------------------------------------------------------------------ node ops
 def model_dir(m):
-    return f"{C.NODE_KINGS}/{m['king']}"
+    return f"{C.NODE_KINGS}/{m['base_hash']}"
 
 
 def have_weights(m):
@@ -83,7 +93,7 @@ def have_weights(m):
 def ensure_weights(m):
     if have_weights(m):
         return True
-    r = fetch_king(m["king"], NODE); log(event="fetch", model=m["model_id"], status=r.get("status"), out=r.get("out", "")[-160:])
+    r = fetch_king(m["base_hash"], NODE); log(event="fetch", model=m["model_id"], status=r.get("status"), out=r.get("out", "")[-160:])
     return have_weights(m)
 
 
@@ -202,15 +212,28 @@ def maybe_release():
     save()
 
 
+SYNCED = {}  # set once this process has read the published table
+
+
+def sync_table():
+    """Before the first step of a process: start from the published table. A store that cannot be read raises, so nothing is rented."""
+    if not SYNCED:
+        log(event="table-read", published=source.sync_table(publish.OUT)); SYNCED["at"] = now()
+
+
 def publish_table(rows):
-    """Rebuild the local table. After a collected king, write it to the bucket too; a failed upload is tried again next step."""
-    source.restore_table(publish.OUT); publish.publish(rows, S)
-    if S.get("upload_due"):
-        source.upload_table(publish.OUT); S.pop("upload_due"); save()
+    """Rebuild the local table. When a row or a result changed, write it to the store too: the published table is the base
+    of that merge, so a published result is never dropped. A failed upload is tried again next step."""
+    publish.publish(rows, S)
+    if publish.signature() != S.get("uploaded"):
+        if source.sync_table(publish.OUT): publish.publish(rows, S)
+        source.upload_table(publish.OUT); S["uploaded"] = publish.signature(); save()
+        log(event="table-written", rows={m["model_id"]: m["status"] for m in rj(publish.OUT)["models"]})
 
 
 # ------------------------------------------------------------------------------------------------ main loop
 def step():
+    sync_table()
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     run = S.get("running")
     if not run and not pod_ready(queue(rows)):
@@ -230,7 +253,7 @@ def step():
         if lines > run.get("progress", 0):
             run["progress"] = lines; run["last_progress"] = now(); save()
         if st.get("done") == "1":
-            collect(run); S["running"] = None; S["upload_due"] = True; save()
+            collect(run); S["running"] = None; save()
         elif st.get("alive") != "1":
             k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
             log(event="run-died", model=run["run_key"], fails=S["fail"][k]); S["running"] = None; save()
@@ -262,7 +285,7 @@ def only_instance():
 
 
 def main(once=False):
-    """daemon: loop for ever. once: return when every waiting king is benchmarked and the pod is released."""
+    """daemon: loop for ever. once: return when every waiting row is benchmarked and the pod is released."""
     log(event="start", pid=os.getpid())
     while True:
         try:
@@ -276,14 +299,21 @@ def main(once=False):
 
 
 def cli(cmd, argv):
-    if cmd == "publish":
-        publish_table(model_rows()); print("published"); return
     if cmd == "status":
         q = queue(); r = S.get("running")
         print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_cr=cr(r["started"]), progress=r.get("progress")),
                               queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], fails=S["fail"], unavailable=S["unavailable"],
-                              last=S["history"][-5:]), indent=1)); return
+                              pod=dict(C_POD) or None, last=S["history"][-5:]), indent=1)); return
+    if cmd not in ("daemon", "once", "publish", "retry", "release"):
+        raise SystemExit("unknown command " + cmd)
+    lock = only_instance()  # held until the process exits: each of these commands writes the daemon's state
     if cmd in ("daemon", "once"):
-        lock = only_instance()  # held until the process exits
         return main(once=cmd == "once")
-    raise SystemExit("unknown command " + cmd)
+    if cmd == "publish":
+        sync_table(); publish_table(model_rows()); print("published"); return
+    if cmd == "retry":  # a row that failed MAX_FAIL times, or whose weights could not be fetched, is queued again
+        for mid in argv:
+            S["fail"].pop(mid, None); S["unavailable"] = [m for m in S["unavailable"] if m != mid]
+        save(); print(json.dumps(dict(retry=argv, fails=S["fail"], unavailable=S["unavailable"]))); return
+    if P.release(log, why="operator"):  # release: give the rented node back now; the next start queues a run that was in work again
+        C_POD.clear(); S["running"] = None; S.pop("idle_since", None); S.pop("node_down", None); save()
