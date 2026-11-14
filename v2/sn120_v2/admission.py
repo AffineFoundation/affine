@@ -197,8 +197,10 @@ class EnvGrader:
         the limit, or the worker died) has a new worker again, so the call is made again, ``WARM_TRIES`` times at
         most. After that the failure is ours, as for a failed known-good case in ``probe``: ``InfraError``, no verdict.
         """
+        if not self._new:
+            return
         tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
-        if not self._new or not tasks:
+        if not tasks:
             return
         jobs = [(task, _BOXED + "{" + task.answer + "}", False) for task in (tasks[k % len(tasks)] for k in range(self.chunk))]
         for _ in range(WARM_TRIES):
@@ -235,6 +237,7 @@ class EnvGrader:
             works = [grade.machine_cause is None and grade.reward == 1.0 for grade in grades]
         except Exception as exc:
             raise InfraError(f"the official grader failed on a known-good case: {type(exc).__name__}") from exc
+        self._new = self._warms and any(grade.machine_cause is not None for grade in grades)
         if not any(works):
             raise InfraError("the official grader gives no known-good case its reward")
         return len(works) == len(tasks) and all(works)

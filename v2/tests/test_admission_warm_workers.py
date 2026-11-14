@@ -121,6 +121,27 @@ def test_worker_that_replaces_a_killed_one_is_ready_before_the_next_row(build):
     assert pool.calls[5:] == [8, 8, 4], "every worker was ready: no known-good case is sent again"
 
 
+def test_worker_lost_at_a_known_good_case_is_ready_before_the_next_row(build):
+    """The pool loses worker 2 at the known-good cases that follow a failed row. The next file has a slow right row for that worker."""
+
+    class LossyPool(ColdPool):
+        lost = False
+
+        def grade_many(self, jobs):
+            grades = super().grade_many(jobs)
+            if len(jobs) == admission.PROBE_TASKS and not self.lost:  # once: the first call of this size is the known-good cases
+                self.lost, self.new[2], grades[2] = True, True, SimpleNamespace(reward=0.0, machine_cause="worker-died")
+            return grades
+
+    pool = LossyPool()
+    official = pool_grader(Pool(), pool, chunk=WORKERS)
+    with pytest.raises(Invalid) as failed:
+        check_batch(file("hang", at=6), HOTKEY, build.params(), tokens=WordTokens(), grader=official)
+    assert failed.value.rule == TIME_LIMIT and not failed.value.proven, "a known-good case was lost: the row is not counted"
+    assert rule(file("slow", at=1), build.params(), official) == ""
+    assert pool.calls[5:] == [WORKERS, 8, 8, 4], "the known-good cases go to the new worker before the file"
+
+
 def test_rows_after_a_killed_worker_in_the_same_call_wait_for_the_new_worker(build):
     """One call of the grader for many rows: the chunk after a row with no grade starts with the known-good cases."""
     pool = ColdPool()
