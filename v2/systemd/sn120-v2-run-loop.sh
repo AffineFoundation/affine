@@ -31,7 +31,7 @@
 #   touch "$SN120_WORK_DIR/logs/run-loop.stop-after-round"     ask; the time of the file is the time of the request
 #   rm "$SN120_WORK_DIR/logs/run-loop.stop-after-round"        take the request back
 # The look, one line that changes nothing:
-#   F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -e "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi
+#   F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -f "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi
 # "run" reads the file before it opens a round. With no round open there, it opens none, says so in a line that
 # starts with "stop after the round: obeyed." and ends with 0. The loop then removes the file and stops with 0. Its
 # last line in the log starts with "STOPPED after the round, as asked". A "run" that crashes while a request is
@@ -40,6 +40,9 @@
 # and says so: the stop that was asked for has come. A request that is there when the loop starts (the loop was
 # killed, or the file was made while no loop ran) is obeyed: the first lines of the loop say so with the time of
 # the file, "run" ends at once, and the loop removes the file. So the start after that one runs on.
+# Only a file is a request. A directory with that name is none: "rm -f" cannot remove it, so it would stop each
+# later start at once. "run" and the loop go on, and each says at its start that the thing is there. A request
+# file that the loop cannot remove is named in its last lines, in place of the word "removed".
 #
 # The loop counts the starts with no finished round between them. A round that "run" closed sets the count back
 # to zero. At SN120_LOOP_MAX_STARTS the loop stops with 3; the last lines of the log say why and what to run.
@@ -109,6 +112,7 @@ LOG=$LOGS/run.log
 STATUS_FILE=$LOGS/run-loop.status
 PID_FILE=$LOGS/run-loop.pid
 STOP_FILE=$LOGS/run-loop.stop-after-round
+NOT_REMOVED="THE LOOP COULD NOT REMOVE THE REQUEST FILE. Each later start of the loop stops at once while it is there. Remove it by hand: rm \"$STOP_FILE\""
 mkdir -p "$LOGS" || usage "cannot make $LOGS"
 
 # "run" gets this variable, and every process that it starts inherits it. That is how the loop finds what a dead
@@ -123,6 +127,7 @@ flock -n 9 || usage "another loop runs with this work directory (see $PID_FILE)"
 RUN_PID=""
 WATCHDOG=""
 STOPPING=""
+REQUEST_ENDED=""  # set when the last line of the loop says what became of the request file
 NO_SMI_SAID=""
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -219,13 +224,21 @@ rounds_closed() {  # reads the local journal only; takes nothing over
     "$PY" -m sn120_v2 status --state-dir "$STATE_DIR" 2> /dev/null | sed -n 's/^ *"rounds_closed": *\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
 
+drop_request() {  # removes the request file. False when the file is still there: the loop then says so
+    rm -f "$STOP_FILE" 2> /dev/null
+    [ ! -e "$STOP_FILE" ]
+}
+
 finish() {  # finish CODE STATE LINE...: the last lines of the log say why the loop stops and what to run next
     local code=$1 state=$2 line
     shift 2
     stop_leftovers || say "could not stop these processes of the last run: pids" $LEFT
-    if [ -e "$STOP_FILE" ]; then
-        rm -f "$STOP_FILE"
-        say "A request to stop after the round was open. The loop stops now by another way, so the request is removed: the next start of the loop runs on."
+    if [ -f "$STOP_FILE" ] && [ -z "$REQUEST_ENDED" ]; then
+        if drop_request; then
+            say "A request to stop after the round was open. The loop stops now by another way, so the request is removed: the next start of the loop runs on."
+        else
+            say "A request to stop after the round was open. The loop stops now by another way. $NOT_REMOVED"
+        fi
     fi
     for line in "$@"; do
         say "$line"
@@ -287,7 +300,7 @@ end_open_round() {  # 0: go on. 1: the command failed, FAILURE says how (INFRA: 
 }
 
 run_once() {  # 0: start again. Stops the loop for every exit code that means "do not start again".
-    local offset rc again line obeyed
+    local offset rc again line obeyed removed
     offset=$(stat -c %s "$LOG" 2> /dev/null || echo 0)
     (
         trap - INT TERM HUP
@@ -313,9 +326,14 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
         0)
             obeyed=$(tail -c "+$((offset + 1))" "$LOG" | grep -m 1 '^stop after the round: obeyed\.')
             if [ -n "$obeyed" ]; then
-                rm -f "$STOP_FILE"
+                REQUEST_ENDED=1
+                if drop_request; then
+                    removed="The request file is removed, and nothing starts run again: to go on, start the loop again."
+                else
+                    removed="Nothing starts run again. $NOT_REMOVED"
+                fi
                 finish 0 "stopped after the round, as asked" \
-                    "STOPPED after the round, as asked. The request file is removed, and nothing starts run again: to go on, start the loop again. run said: ${obeyed#stop after the round: obeyed. }"
+                    "STOPPED after the round, as asked. $removed run said: ${obeyed#stop after the round: obeyed. }"
             fi
             finish 0 "stopped: run finished" \
                 "STOPPED: run finished with exit code 0 (--rounds or --max-idle). Nothing starts it again." \
@@ -337,7 +355,10 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
 
 echo "$$" > "$PID_FILE"
 say "loop started (pid $$): $PY -m sn120_v2 run ${RUN_ARGS[*]}"
-if [ -e "$STOP_FILE" ]; then
+if [ ! -f "$STOP_FILE" ] && { [ -e "$STOP_FILE" ] || [ -L "$STOP_FILE" ]; }; then
+    say "$STOP_FILE is there, but it is not a file. Only a file is a request to stop after the round: run does not stop for this, and the loop leaves it there. Remove it by hand."
+fi
+if [ -f "$STOP_FILE" ]; then
     say "A REQUEST TO STOP AFTER THE ROUND IS THERE FROM BEFORE THIS START: the file $STOP_FILE, made at $(date -u -r "$STOP_FILE" +%Y-%m-%dT%H:%M:%SZ)."
     say "It is obeyed: run opens no round, and this loop stops with 0 as soon as no round is open. The loop removes the file then, so the start after this one runs on. If the request is old and not wanted, take it back now: rm \"$STOP_FILE\""
 fi

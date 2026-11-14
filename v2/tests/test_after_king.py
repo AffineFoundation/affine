@@ -25,10 +25,10 @@ torch = pytest.importorskip("torch")
 
 from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 
-from sn120_v2 import cli, headfold, layout  # noqa: E402
+from sn120_v2 import cli, controller, headfold, layout  # noqa: E402
 from sn120_v2.afterking import AHEAD_MAX_AGE_S, OVERLAP, PUBLISH, SERIAL, Beside, Overlap  # noqa: E402
 from sn120_v2.chain import FakeChain, Feed, Reader  # noqa: E402
-from sn120_v2.controller import Stack  # noqa: E402
+from sn120_v2.controller import PUBLISH_TRIES, Stack  # noqa: E402
 from sn120_v2.errors import HeadLost, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, check_chain, checkpoints, heads_of  # noqa: E402
@@ -656,6 +656,62 @@ def test_a_publish_that_fails_after_the_open_is_a_problem_in_the_log_and_the_rou
     assert world.round().outcome == "applied"
     assert "after the open: open: the public files of round r000002: RuntimeError: the site store is down" in capsys.readouterr().err
     assert world.state.head.folded and len(world.state.kings) == 2
+
+
+def a_store_that_fails(world: ChainWorld, times: int, slept: list[float], monkeypatch) -> list[bool]:
+    """The publisher of ``world`` fails ``times`` times, then it works. Returns the list of the failures so far."""
+    real, failed = world.publisher.publish, []
+
+    def publish(snapshot):
+        if len(failed) < times:
+            failed.append(True)
+            raise InfraError("the site store is down")
+        real(snapshot)
+
+    world.publisher.publish = publish
+    monkeypatch.setattr(controller, "PUBLISH_PAUSE_S", 7.0)
+    monkeypatch.setattr(controller.time, "sleep", slept.append)
+    return failed
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_publish_that_fails_two_times_is_written_by_the_third_try_with_no_word_of_a_problem(tmp_path, monkeypatch, capsys, order):
+    world, slept = a_world(tmp_path / "world", order), []
+    world.king()
+    shown = len(world.publisher.snapshots)
+    failed = a_store_that_fails(world, PUBLISH_TRIES - 1, slept, monkeypatch)
+    world.register(90, 0.0)
+    record = world.round()
+    world.controller.close_in_public(world.clock())
+    assert failed == [True] * (PUBLISH_TRIES - 1) and slept == [7.0] * (PUBLISH_TRIES - 1)
+    assert world.publisher.snapshots[shown]["round"]["round_id"] == record.round_id, "the publish at the open of the round is there"
+    assert world.controller.last_error == "" and "PUBLISH FAILED" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_publish_with_no_good_try_is_one_line_in_the_log_and_the_next_good_publish_ends_the_last_problem(tmp_path, monkeypatch, capsys, order):
+    world, slept = a_world(tmp_path / "world", order), []
+    world.king()
+    world.controller.close_in_public(world.clock())
+    shown = len(world.publisher.snapshots)
+    failed = a_store_that_fails(world, PUBLISH_TRIES, slept, monkeypatch)
+    capsys.readouterr()
+    assert world.controller.publish(world.clock())
+    line = [text for text in capsys.readouterr().err.splitlines() if text.startswith("PUBLISH FAILED: ")]
+    assert line == ["PUBLISH FAILED: 3 tries, and the store took none: the site store is down. The public files (mining.json, llms.txt) still show the last good publish. run goes on, and the next publish writes them again."]
+    assert failed == [True] * 3 and slept == [7.0] * 2, "3 tries, and no pause after the last try"
+    assert world.controller.last_error == "publish failed: the site store is down" and len(world.publisher.snapshots) == shown
+    assert world.controller.publish(world.clock(), only_changes=True), "the queue did not change, but the publish before failed: the next pass writes again"
+    assert world.controller.last_error == "" and len(world.publisher.snapshots) == shown + 1
+    assert not world.controller.publish(world.clock(), only_changes=True), "nothing changed and nothing failed: no write"
+    assert "PUBLISH FAILED" not in capsys.readouterr().err
+
+
+def test_a_good_publish_keeps_a_last_problem_that_is_not_of_a_publish(world):
+    world.controller.last_error = "fold failed: the fold process died"
+    world.register(90, 0.0)
+    assert world.controller.publish(world.clock())
+    assert world.controller.last_error == "fold failed: the fold process died"
 
 
 def test_beside_gives_the_result_or_the_error_of_its_call_to_the_thread_that_asks():
