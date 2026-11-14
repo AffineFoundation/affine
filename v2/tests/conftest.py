@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import sys
 
 import pytest
 
@@ -27,6 +29,17 @@ from sn120_v2.types import (
 )
 
 IMAGE = "sim-image"
+
+# AMX off in the two math libraries of torch (oneDNN and MKL), for every test of this directory.
+# AMX: CPU instructions that both libraries use for bf16 products on a CPU, never for float32.
+# On some machines an AMX register is zero after the system gave the core to another program
+# and back. Then a bf16 product is wrong now and then, and two bf16 runs do not give the same
+# bytes. The variables must be set before torch is imported. pytest loads this file before
+# every test module, and no import of this file imports torch. The box is not concerned: it
+# trains on GPUs.
+AMX_OFF = {"ONEDNN_MAX_CPU_ISA": "AVX512_CORE_BF16", "MKL_ENABLE_INSTRUCTIONS": "AVX512"}
+SET_BEFORE_TORCH = "torch" not in sys.modules
+os.environ.update(AMX_OFF)
 
 
 def h(text: str) -> str:
@@ -170,6 +183,12 @@ class Build:
 @pytest.fixture
 def build() -> type[Build]:
     return Build
+
+
+@pytest.fixture
+def amx_off() -> None:
+    """For a test that compares the bytes of two bf16 runs on the CPU: it fails when the AMX variables came after torch."""
+    assert SET_BEFORE_TORCH, "torch was imported before tests/conftest.py, so AMX is not off and bf16 bytes can differ"
 
 
 @pytest.fixture

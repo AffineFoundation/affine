@@ -377,8 +377,12 @@ Run every command from `v2/`, inside the virtual environment.
        **Form A: a box without systemd** (a rented container).
 
        ```
+       ulimit -n 65536
+       ulimit -n                                             # must print 65536
        setsid nohup systemd/sn120-v2-run-loop.sh "$(command -v python)" --state-dir $STATE --stack sn120_v2.assembly:stack > /dev/null 2>&1 < /dev/null &
        ```
+
+       The loop and `run` get the open file limit of the shell that starts them, and a look holds 2,048 sockets. Run the two `ulimit` lines in that shell before each start of the loop. If the first one prints `cannot modify limit`, see "The open file limit of `run`" in "After the start".
 
        After a reboot of such a box nothing starts the loop, unless the start command of the box holds this line. If it does not, start the loop by hand after each reboot.
 
@@ -412,6 +416,7 @@ Run every command from `v2/`, inside the virtual environment.
        Check, from a second shell with the same exports:
 
        - The status line says `running: run has pid N, start 1 of at most 5 with no finished round`. **Read this line once after each start of the loop.** If it says `waiting for the store or the chain since ...`, read the `<cause>` at its end: "A crash or a restart of `run`" says which causes do not go away.
+       - `grep 'Max open files' /proc/N/limits`, with the N of that status line, prints the soft limit and the hard limit of `run`. Right: a soft limit of 4096 or more; from `5bc36ed8`, a hard limit of 2560 or more is enough ("The open file limit of `run`" in "After the start").
        - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
        - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
        - `status` shows a `phase` other than `IDLE` after the first lease.
@@ -1406,13 +1411,13 @@ The first three have the same effect: the round closes with no decision, nobody 
 **The cost of this rule.** `run` cannot tell a broken box from bad files.
 
 1. A seat that is alone in its round, with a file that makes the training fail, is never held. Its round repeats every 5 minutes, with 3 training tries each, until the miner changes the file or another batch trains in the same round.
-2. The seats of a failed lease are first again. So `batch_cap` (32) such seats in front fill every round, and no seat behind them gets a turn. No command holds such a seat or moves it back.
+2. The seats of a failed lease are first again. So `batch_cap` such seats in front fill every round, and no seat behind them gets a turn. `batch_cap` is 32 at the launch values, and 6 in the live state since the operator's `set-params` of 14 Nov 2026; `"batch_cap"` under `"params"` in `mining.json` shows the pinned value. No command holds such a seat or moves it back.
 3. Nothing stops the loop for it. **The sign is `"no_decision"` again and again in `"last_outcomes"` of `status`**, and the same `no winner:` line every 5 minutes.
 
 What to do when you see that sign:
 
 - Read the cause in the `no winner:` line. It is the safe form; the full text is in `run.log` ("Error text in the public round file" below). If the box is the cause (a GPU fault, a full disk, the store), stop the loop, repair the box, and start the loop. No seat was held and nothing was counted, so `release-seat` is not needed for these rounds.
-- If the box is good and the files of the seats in front are the cause, there is no command for it today. At the launch values, no `set-params` lets other seats into the round. `batch_cap` cannot go above `max_loras_per_box`, and both are 32: a file with a higher `batch_cap` is refused with `refused: ConfigError: batch_cap must be between 1 and max_loras_per_box` (exit code 2, the parameters do not change). Do not raise `max_loras_per_box` to get around it: it is the number of LoRAs in one scoring server, and no test has run more than 32. Send the `no winner:` lines and the `status` output to the coordinator: the fix is a code change.
+- If the box is good and the files of the seats in front are the cause, there is no command for it today. No `set-params` is the answer to it. A higher `batch_cap` lets more seats into a round, but the value is Jacob's decision: do not change it without the coordinator. It cannot go above `max_loras_per_box` (32): a file with a higher `batch_cap` is refused with `refused: ConfigError: batch_cap must be between 1 and max_loras_per_box` (exit code 2, the parameters do not change). Do not raise `max_loras_per_box` to get around it: it is the number of LoRAs in one scoring server, and no test has run more than 32. Send the `no winner:` lines and the `status` output to the coordinator: the fix is a code change.
 
 ### Error text in the public round file
 
@@ -1442,6 +1447,53 @@ no winner: InfraError: evaluation failed 3 times: http://[removed-address]:8000/
 **If a `[removed-secret]` marker stands for a real credential** (the line in `run.log` shows the value): the public file is safe. But `run.log`, the journal and the sealed result hold the value. Keep them private: do not paste such a line into a public place, and tell the coordinator which credential it is, not its value. Change that credential after the round.
 
 **The limits.** A secret that `run` read from a file, and not from an environment variable, is found only by the query rule or the name rule. Host names and paths on the box stay in the text. A round file that was written before `f986ccb1` is not written again.
+
+### The open file limit of `run`
+
+A look sends up to 256 rollouts per GPU at once, and each one holds a socket: 2,048 sockets with 8 GPUs. A shell or a container often starts a process with a soft limit of 1,024 open files. The loop and `run` get the limits of the shell (form A) or of the unit (form B) that starts them. The model servers are not the problem: this is the limit of the `run` process.
+
+| The commit of the box | What `run` does |
+|---|---|
+| Before `5bc36ed8` (PR #190) | Nothing. Past the limit a socket cannot be opened. The rollouts of the first models in the order get the sockets; each later rollout fails before a server sees it and is scored as `E`. |
+| `5bc36ed8` or later | At the first look, `run` raises its own soft limit to the sockets plus 512 other files (2,560 with 8 GPUs), as far as the hard limit allows. A limit that is high enough already is not changed. If there is still no room, the look fails before a rollout is sent. |
+
+**The check, after each start of the loop:**
+
+```
+cat $SN120_WORK_DIR/logs/run-loop.status                 # running: run has pid N, ...
+grep 'Max open files' /proc/N/limits                     # the soft limit, then the hard limit
+```
+
+- Right, on any commit: a soft limit of 4096 or more. The lines of form A give 65536.
+- Right, from `5bc36ed8`: a hard limit of 2560 or more, with any soft limit.
+- Form A, and `ulimit -n 65536` prints `cannot modify limit`: `ulimit -Hn` prints the hard limit of the shell. With 2560 or more, start the loop on a commit from `5bc36ed8`; on an earlier commit, run `ulimit -Sn <that value>` first (4096 or more). With less than 2560, do not start the loop: tell the coordinator.
+- Form B: the unit file has no `LimitNOFILE=` line, so `run` has the default limits of systemd on that box. Read them with the `grep` line.
+
+**From `5bc36ed8`, a limit with no room fails the first look, after the training of the round.** `run.log` has `the open file limit of this process has room for N sockets; a look holds 2048. Raise the limit (ulimit -n) and start run again`. The lease fails and the round closes with no decision. Nobody is charged and no failure is counted. Nothing stops the loop for it, so the next round does the same: stop the loop, set the limit, start the loop.
+
+**The proof at the first look, from `5bc36ed8`:**
+
+```
+grep '"phase": "eval"' $SN120_WORK_DIR/logs/phases.jsonl | tail -1
+```
+
+The line has `"open_files_limit"` (the soft limit of `run` at that look) and `"max_loras"`. `"max_loras"` is the number of entries of the round, trained or not, with nothing added: the model servers of a round start with `--max-loras` of that number, not of `max_loras_per_box`. A line without the two keys is from an earlier commit.
+
+**A round that runs now, on a commit before `5bc36ed8`, with a soft limit of 1024.** `prlimit` sets the limit of a process that runs. There is no stop, no restart and no change of a digest. **It writes to the live process, so it is the operator's decision.**
+
+```
+L=$(cat $SN120_WORK_DIR/logs/run-loop.pid)               # the pid of the loop
+R=N                                                      # the pid of run: the N of run-loop.status
+for p in $L $R; do grep 'Max open files' /proc/$p/limits; done
+prlimit --pid $R --nofile=65536:<the hard limit of run>
+prlimit --pid $L --nofile=65536:<the hard limit of the loop>
+for p in $L $R; do grep 'Max open files' /proc/$p/limits; done       # 65536 as the first number, two times
+```
+
+- The hard limit is the second number of the `grep` line of that process. With a hard limit below 65536, use that value in place of 65536.
+- The loop is included so that a later start of `run` by the loop gets the limit too.
+- Do it before the first look of the round. A look that ran with the low limit keeps its `E` codes.
+- This was tested on a loop made for the test, not on the box: the limit went from 1,024 to 65,536, and a process that the loop started after it had 65,536.
 
 ### The digests of the box and the pinned digests
 
@@ -1591,6 +1643,39 @@ If the loop starts before `set-params`, nothing is lost. The loop ends an open r
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop the loop first. It is refused (exit code 2, `no round is open and undecided`) when no round is open, and when the round is already decided.
 
 After any failed lease, the next round opens 5 minutes later at the earliest (`apply_retry_s` 300).
+
+**The code digest by commit**, computed off the box on 14 Nov 2026. The `diff` line must show the value of the commit that the box has checked out. `pyproject.toml` is the same in all five, so none of them needs the install line and the image digest of the box does not change.
+
+| Commit | `code_digest` |
+|---|---|
+| `d10b7693` (and `4fdb3f5c`) | `4366d82d3a2d68856b2da0876bdfbe0ce31c00ff661cddd0a08e8033d93a410f` |
+| `fd785b1a` (PR #185) | `c1c8b3d64a94fa2346f80434e753fca91c703a652f09bca8beeef006a1e42d8e` |
+| `ff1777f2` (PR #152) | `fa2037a34b837a036695938a84b6c729d2fd1b3a1538733fceae352390d4e795` |
+| `5bc36ed8` (PR #190: the sockets of a look, `--max-loras`) | `843a15349669fdc4a586c8351d6c16205fd1ccb74e779c457eca96161d5a413e` |
+| `efeaa435` (PR #192: the memory of the training job) | `e4ae285f4b60121b0737d04d193fec92291df3189d739e07138df6b4ceaf697d` |
+
+A box can go over several of these commits in one stop: `changed` then holds `recipe.code_digest` with the pinned value as `before` and the value of the new commit as `after`.
+
+**A parameter and a fix in one stop.** Only in phase `IDLE`, or in phase `RUNNING` after `end-round`. After the fifth line of the digest block, change the value in the same file, and look at it in the last line of the block. For `batch_cap`:
+
+```
+python -c "import json,os; f=os.environ['CUT']+'/params.json'; p=json.load(open(f)); p['batch_cap']=6; json.dump(p, open(f,'w'))"
+python -c "import os; from sn120_v2.params import load_params; p = load_params(os.environ['CUT'] + '/params.json'); print(p.squat_min_wait_s, p.batch_cap, p.params_hash)"
+```
+
+`changed` of `set-params` then holds that key and `recipe.code_digest`, and no other key. In phase `APPLY` such a file is refused with the `V2Error` line above: pin the digests alone, and change the parameter after the round has closed. Which value a parameter gets is not the operator's choice: the coordinator names it.
+
+**The same commit on AffineValidator.** This is from the unit files in `v2/systemd/`, not from the host. The three v2 units of that host are timers, and each run is a new process: `sn120-v2-site-pull` (second 30 of each minute), `sn120-v2-links` (minutes 10 and 40) and `sn120-v2-weights` (minute 05). So a checkout is enough, and the next run of each has the new code; nothing is stopped or started. A run that is in progress keeps the code it loaded.
+
+```
+cd "$REPO" && git fetch origin && git checkout <the commit of the fix>
+git rev-parse HEAD
+```
+
+- A checkout does not change the unit files in `/etc/systemd/system` (they are copies from the install) and does not change the packages of the virtual environment. The message for the fix says if it needs the install line of step 1 of "AffineValidator" or a new copy of a unit file.
+- No v2 unit of that host runs without end. `sn120-v2-run.service` is the one such unit, and it is for the GPU box.
+- v1's units run from other directories; this checkout does not touch them.
+- The site after a round with no result: [site/OPERATIONS.md](site/OPERATIONS.md) has the log line (`pull: FAILED site data: missing in the store: 'status'`), the check and the commit.
 
 #### A checkout only: a running box goes to a later commit
 
