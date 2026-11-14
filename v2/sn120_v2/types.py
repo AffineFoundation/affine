@@ -293,6 +293,7 @@ class EvalRequest(Record):
     look: int
     params: Params  # pinned snapshot: decode settings and caps
     deadline: int = 0  # Unix seconds; past it the evaluator gives up with InfraError and the chunk is not used. 0 = none
+    batches: int = 0  # entries of the box's ticket, trained or not: the size of the servers' LoRA table. 0 = not given: max_loras_per_box
 
 
 @dataclass(frozen=True)

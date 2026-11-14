@@ -27,6 +27,8 @@
     not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this batch was trained. Not charged; the seat is first in the next round.'],
     not_scored: ['NOT SCORED', 'wait', 'The time limit of the round came before the first look of the scoring. Not charged; the seat is first in the next round.'],
   };
+  // A round with no result gives no entry a status: the box failed, or the operator ended the round.
+  const NO_RESULT = ['NO RESULT', 'wait', 'The round had no result: the box failed, not this seat. Not charged; no failure is counted for the seat, and it goes to the front of the queue.'];
   const why = r => r.reason ? ` The validator's text: "${r.reason}"` : '';
   const OUTCOME = {
     applied: r => pill('UID ' + r.winner_uid + ' applied', 'up', 'The winning LoRA is on the head now.'),
@@ -62,7 +64,7 @@
     reg: { h: 'Reg block', w: 88, n: 1, r: r => esc(r.registration_block ?? '—') },
     check: { h: 'File', w: 96, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
     flags: { h: 'Status', w: 170, r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
-    result: { h: 'Result', w: 112, r: r => pill(...(RESULT[r.status] || [r.status, 'private', ''])) },
+    result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
     gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
     bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`), t: 'z minus the winner bar. Above zero clears the bar.' },
     capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => pct(r.cap_rate), t: 'Share of answers that hit the token cap. Such an answer is not passed.' },

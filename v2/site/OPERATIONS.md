@@ -120,13 +120,14 @@ The next run of the pull builds the pages and `site-data.json` of that commit. T
 
 ## What the log can say
 
-Each line is on stderr of the pull (the journal of `sn120-v2-site-pull.service`). None of them fails the run.
+Each line is on stderr of the pull (the journal of `sn120-v2-site-pull.service`). A line that starts with `site:` does not fail the run. A line that starts with `pull: FAILED` names one failed step: the other steps still run, and the run exits 1.
 
 | Line | Meaning | What to do |
 |---|---|---|
 | `site: no reference model from the v1 history: ...` | `$SITE/v1-data.json` is not a v1 archive, or its benchmark part cannot be read. The table has no reference model; the rest is built. | Do step 2. The pull copies `$V1FILE` again on each run. |
 | `site: no benchmark file, so no benchmark score: ...` | `public/benchmarks.json` is there and cannot be used (not JSON, or a field is missing). The table shows the heads with `no run yet`, and the reference models. A missing file prints nothing in the pull. | Tell the coordinator; the benchmark service wrote the file. |
 | `pull: FAILED v1 history: ...` | `$V1FILE` cannot be read or is not a v1 archive. The copy in the site stays. | Do step 2. |
+| `pull: FAILED site data: missing in the store: 'status'` | The checkout has a builder from before the fix for a round with no result. `mining.json` lists such a round: no training finished, or the box stopped, or the operator ended the round. It is a closed round with the outcome `no_decision` whose entries have no `status`. Nothing is missing in the store. `site-data.json` keeps its last good content, on each run, while `mining.json` lists that round (the newest 20 closed rounds). | Check out a commit of `v2` that has the fix: `grep -c 'entry.get("status")' "$REPO/v2/site/build.py"` prints `1`. Nothing else: the next run of the pull writes `site-data.json`. In History each entry of such a round then has the result `NO RESULT`. |
 
 ## Limits
 

@@ -44,6 +44,7 @@ ONLY_IN_THE_TABLE = {
     "apply_max_attempts": "how often the validator tries to publish a winner before the round is abandoned",
     "weights_rate_limit_blocks": "a limit of the weights writer",
     "budget_usd_per_hour": "the operator's budget",
+    "max_loras_per_box": "the upper limit of batch_cap; the servers' LoRA table is the batches of the round, not this value",
 }
 # A recipe field that only the recipe table of section 2 states (with its note), and no sentence.
 ONLY_IN_THE_RECIPE_TABLE = {"method", "dropout", "kl", "image_digests"}

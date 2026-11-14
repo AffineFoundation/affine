@@ -130,6 +130,39 @@ def test_only_an_applied_winner_gets_files_and_unknown_fields_never_reach_the_pa
     assert data["rounds"][0]["best_z"] is None and data["rounds"][0]["with_z"] == 0  # a round with no score has no bar
 
 
+def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_path):
+    """No training finished, or the operator ended the round: mining.json gives no entry of such a round a ``status``."""
+    world = sim.SimWorld(tmp_path / "world", sim.sim_params())
+    world.register(1, 0.0)
+    world.register(2, 0.0)
+    world.trainer.fail_hotkeys = {"hk1", "hk2"}
+    assert world.round().outcome == "no_decision"
+    world.now += world.params.apply_retry_s
+    (ticket,) = world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+    world.controller.fail_lease(ticket.lease_id, "ended by the operator", world.clock())  # what end-round does
+    world.now += world.params.apply_retry_s
+    world.trainer.fail_hotkeys = {"hk1"}
+    assert world.round().outcome == "null"  # one training failed and one batch was scored: each entry has a status
+    snap = json.loads(json.dumps(world.publisher.snapshots[-1]))
+    assert [["status" in entry for entry in record["entries"]] for record in snap["history"]] == [[False, False], [False, False], [True, True]]
+    done, out, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    data = json.loads(text)
+    rows = {(row["round_id"], row["uid"]): row for row in data["history"]}
+    assert len(rows) == 6 and all(row["sha"] and row["batch"] is None for row in rows.values())
+    for round_id in ("r000001", "r000002"):
+        assert [(rows[round_id, uid]["status"], rows[round_id, uid]["z"]) for uid in (1, 2)] == [(None, None)] * 2
+    assert (rows["r000003", 1]["status"], rows["r000003", 2]["status"]) == ("no_decision", "lost") and rows["r000003", 1]["z"] is None
+    charts = {row["round_id"]: row for row in data["rounds"]}
+    for round_id in ("r000001", "r000002"):
+        row = charts[round_id]
+        assert (row["outcome"], row["winner_uid"], row["seats"], row["with_z"]) == ("no_decision", None, 2, 0)
+        assert (row["best_z"], row["winner_pass"], row["null_pass"], row["reason"]) == (None, None, None, None)
+    assert (charts["r000003"]["outcome"], charts["r000003"]["with_z"]) == ("null", 1) and charts["r000003"]["null_pass"] is not None
+    script = (out / "site.js").read_text()  # the page names such an entry; it does not print the missing status
+    assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
+
+
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
     snap = snapshot(tmp_path)
     queue = json.loads(build(tmp_path, snap)[2])["queue"]

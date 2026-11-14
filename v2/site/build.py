@@ -111,11 +111,12 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         round_id, winner_pass = record["round_id"], None
         best_z = max((entry["z"] for entry in record["entries"] if entry.get("z") is not None), default=None)
         for entry in record["entries"]:
-            won = record["outcome"] == APPLIED and entry["status"] == WINNER
+            status = entry.get("status")  # a round with no result (the box failed, or the operator ended it) gives no entry a status
+            won = record["outcome"] == APPLIED and status == WINNER
             if won:
                 lora_of[round_id], winner_pass, best_z = entry.get("lora_hash"), entry.get("pass_rate"), entry.get("z")
             history.append({
-                "round_id": round_id, "uid": entry["uid"], "hotkey": entry["hotkey"], "status": entry["status"],
+                "round_id": round_id, "uid": entry["uid"], "hotkey": entry["hotkey"], "status": status,
                 "delta": entry.get("delta"), "se": entry.get("se"), "z": entry.get("z"), "cap_rate": entry.get("cap_rate"),
                 "look": entry.get("eliminated_at_look"), "sha": entry["batch_sha256"],
                 "batch": link(layout.winner_batch(round_id)) if won else None, "lora": lora_of[round_id] if won else None,
