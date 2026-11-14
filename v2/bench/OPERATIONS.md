@@ -166,6 +166,7 @@ The log has one JSON line for each event. For the launch model, in this order:
 | --- | --- |
 | `start` | The process runs. |
 | `table-read` | It has read the published table. `published` is `true` when the store has one. |
+| `table-written` | The rows that wait are in the store as `queued`, before a node is rented. |
 | `rented` | A node is rented. The line has `pod`, `lium_id`, `gpu` and `usd_h`. `usd_h` is not above your cap. |
 | `bootstrapped` | The software is on the node. `minutes` is the time since the rent. |
 | `fetch` | The weights are on the node and each file's sha256 is checked. `status` is `rc0`. |
@@ -231,6 +232,7 @@ A command of the last four stops with `another affine-bench daemon holds ...` wh
 | `run-died`, `stalled` | The run ended with no result, or made no progress for 2400 seconds. The row's fail count goes up. After 3 fails the row is `failed` and is not tried again. | `bench retry <model_id>` after the cause is known. |
 | `node-unreachable`, then `node-gone` | The node does not answer. After 10 minutes the service asks Lium. If the pod is gone, the row is queued again with no fail. | Nothing. |
 | `release-deferred`, `release-failed`, `release-refused` | The node was not given back. It still costs money. | Check `"$LIUM" ps`. The service tries again at each step while it runs. |
+| `error` with `r2 put 'public/benchmarks.json' failed` in `tb` | The store refused the write of the table. With `AccessDenied` the token can only read. No node is rented while this write fails. The step is done again after 30 seconds. | Put a token that can write into `$BENV` (section 4, step 3), then restart the unit. |
 | `error` with `InfraError` in `tb` | The store did not answer. The step is done again after 30 seconds. Before the first read of the table nothing is rented. | Check the token and the network if it stays. |
 
 ## 10. v1's benchmark service
