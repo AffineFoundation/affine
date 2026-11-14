@@ -847,7 +847,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
     find "$SITE" -newer "$KEEP/mark" -type f -not -path "$SITE/ff/links/*" -not -name links.json -not -path "$SITE/public/*"
     ```
 
-    Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more, and `generated_at` in `https://affine.io/ff/status.json` does not change any more: v1's service writes both, and v2 writes no `ff/status.json`. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
+    Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more, and `generated_at` in `https://affine.io/ff/status.json` does not change any more: v1's service writes both, and v2 writes no `ff/status.json`. The check on `ff/status.json` works only before step 12.3, because `reset.py out` moves that file out of the site directory: this is one reason why this step comes before step 12.3. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
 
     **`find` when v2's pull already runs** (step 12 was done before this step). The pull writes `mining.json`, `llms.txt` and `site-data.json` at the root of the site when `run` published a new snapshot, and only then. So `find` can print these three names, and the writer can be v2's own pull. The test: run the last two lines again; the three names must not come again. A second test for `mining.json`: `python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epoch"))' "$SITE/mining.json"` prints `None` for v2's file. If it prints an epoch name of v1, `affine-mining-discovery.service` runs again. Any other name in the output of `find` is not from the pull.
 
@@ -856,7 +856,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
     - `systemctl --user stop` holds. No unit file in the repository has `OnFailure=`, `PartOf=`, `BindsTo=` or `Requires=`, and `Wants=` names only `network-online.target`. The repository does not hold the unit files of the lifecycle, of `affine-k1`, of `affine-mining-discovery`, of `affine-training-params`, of `affine-k1-transparency` and of the gate. For these the host is the truth: `systemctl --user cat <unit> | grep -E '^(Restart|OnFailure|PartOf|BindsTo|Requires|Wants)='`.
     - A kill is not a stop. `affine-ff.service`, `affine-perf-eval`, `affine-perf-eval-2`, `affine-bench` and `affine-fp32-master-publish` have `Restart=always`: systemd starts them again after a kill or a crash (`affine-ff.service` after 20 seconds), not after a stop. Never use `kill` on a unit.
     - `systemctl --user restart` starts a stopped unit. These scripts of v1 run it on `affine-ff`, `affine-mining-discovery`, `affine-training-params` and `affine-k1-transparency`: `activate_tp.sh`, `activate_sm.sh`, `activate_12k.sh` (the switch and the revert of each) and `tools/caps/caps_apply.py`. Run none of them after this step.
-    - The public sign that `affine-ff.service` is back: `generated_at` in `https://affine.io/ff/status.json` moves again.
+    - The public sign that `affine-ff.service` is back: `generated_at` in `https://affine.io/ff/status.json` moves again. After step 12.3 the sign is that `$SITE/ff/status.json` is there again: step 12.3 moved the old file away.
 
     After the stop of `affine-k1.service`, `k1.json` stands still and proves nothing about v1's lifecycle: "The state of v1", point 2, has the check of the unit.
 11. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped, and the bootstrap is done. See "Upload links job" for the reason.
@@ -1287,6 +1287,14 @@ What a restart does to an open round:
 | Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
 
 So no restart can charge a seat. With the loop, no restart can count a failure. A restart by hand in the training time can. If you ever must restart `run` by hand with an open, undecided round (the loop itself does not work), use the order of the loop: stop `run`, free the GPUs, `end-round`, start.
+
+**After a restart the page can show `no valid file` for every waiting seat. This is normal, and no seat pays for it.** A new process has not read the waiting files yet. What it publishes before its first read has `"files_checked_at": null` under `queue` in `mining.json`, and `"file_valid": false` for each waiting seat. The page shows `no valid file` for each of them, and `llms.txt` says `no check yet` for the last check of the files. The three cases:
+
+- `end-round` closed a round (each start of the loop with an open, undecided round): for 5 to 7 minutes on the site. After a failed lease, `run` reads no file for 5 minutes (`apply_retry_s`, 300 seconds). Then come one pass of `run` (30 seconds) and the pull (each minute).
+- A start of `run` in the 5 minutes after a round that ended with a failed lease: for the rest of that time.
+- A start of `run` while the chain gives no answer: until the first pass that gets an answer.
+
+A start in phase `IDLE` after a round that closed with a result does not show it: the first pass reads the files. No seat and no place in the queue is touched: the choice of the entries reads the files anew at each try to open a round, and never uses the published value.
 
 Which exit codes of `run` the loop does not start again:
 
@@ -1878,7 +1886,8 @@ No top-level prefix belongs to v2 alone, except `pending/`. v1 has objects under
 
 **What v2 deletes.** Only objects that v2 wrote itself:
 
-- everything under a round's `pending/` prefix, when the round closes;
+- everything under a round's `pending/` prefix (`pending/rounds/<round>`), when the round closes;
+- everything under the staging prefix of a fold (`pending/folds/<head>`), after the fold. It is under `pending/` too, and only v2's fold writes there. The delete refuses every prefix that is not one round or one fold under `pending/`;
 - a round's frozen copy of a miner file, `private/rounds/<round>/batches/<hotkey>.json`: when the same round is tried again and the miner's file is now missing or invalid, or when the copy does not hash to the checked bytes;
 - the winner's public batch, `public/rounds/<round>/batch.json`, when the copy does not hash to the frozen bytes;
 - a genesis file under `public/bases/` or `public/masters/` whose stored bytes differ from the local file (the check after the upload);
