@@ -37,6 +37,10 @@ class HeadMismatchError(V2Error):
     """
 
 
+class HeadLost(V2Error):
+    """The local files of the head do not read back as the fold wrote them. The lease of the round that used them fails, ``run`` stops, and its next start rebuilds the head from the chain."""
+
+
 class LeaseError(V2Error):
     """A result names a lease that is unknown, expired or already settled."""
 

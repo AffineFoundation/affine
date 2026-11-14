@@ -13,6 +13,7 @@ pytest.importorskip("sn120_v2.gpu.trainer")
 
 from sn120_v2 import assembly, controller, headchain, headfold, layout, smoke  # noqa: E402
 from sn120_v2.admission import STREAMS_ENV, StoreAdmission  # noqa: E402
+from sn120_v2.afterking import ORDER_ENV  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
 from sn120_v2.cli import main  # noqa: E402
 from sn120_v2.controller import HeadPublish, StackContext  # noqa: E402
@@ -154,8 +155,8 @@ def test_the_count_of_check_streams_is_a_setting_and_a_setting_that_the_shell_do
 
     default = stack()
     assert default.admission.streams == 1, "one file after the other, as before"
-    assert [(name in line, "NOT SET" in line) for name, line in zip((headchain.MODE_ENV, STREAMS_ENV), default.settings, strict=True)] == [(True, True)] * 2
-    assert "'full'" in default.settings[0] and "one file after the other" in default.settings[1]
+    assert [(name in line, "NOT SET" in line) for name, line in zip((headchain.MODE_ENV, STREAMS_ENV, ORDER_ENV), default.settings, strict=True)] == [(True, True)] * 3
+    assert "'full'" in default.settings[0] and "one file after the other" in default.settings[1] and "'serial'" in default.settings[2]
     monkeypatch.setenv(STREAMS_ENV, "8")
     monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
     chosen = stack()
@@ -163,6 +164,7 @@ def test_the_count_of_check_streams_is_a_setting_and_a_setting_that_the_shell_do
     assert chosen.settings == (
         f"the head goes public in the mode 'chain' ({headchain.MODE_ENV}=chain)",
         f"the check of the waiting files reads 8 files at one time ({STREAMS_ENV}=8)",
+        f"after a king, each step waits for the one before it (the order 'serial') ({ORDER_ENV} is NOT SET: this is the default)",
     )
     monkeypatch.setenv(STREAMS_ENV, "0")
     with pytest.raises(ConfigError, match=STREAMS_ENV):
@@ -182,6 +184,30 @@ def test_a_bad_count_of_check_streams_is_one_refused_line_with_exit_code_2_for_r
         assert shown.err.splitlines() == [f"refused: ConfigError: {STREAMS_ENV} must be a whole number from 1 to 32, written in the digits 0 to 9 with no zero in front (8, not 08)"]
         assert shown.out == "" and "Traceback" not in shown.err
     assert len(read_journal(tmp_path / "state" / JOURNAL_FILE)) == records, "refused before the journal is taken over: no record, no write"
+
+
+def test_the_order_after_a_king_is_a_setting_of_run_in_chain_mode_and_serial_is_the_default(tmp_path, box, monkeypatch):
+    start(tmp_path, box)
+
+    def stack(command="run"):
+        return assembly.stack(StackContext(tmp_path / "state", Params(), command))
+
+    default = stack()
+    assert not default.overlap and default.head.proven is None, "not set: the order of always, in full mode"
+    monkeypatch.setenv(ORDER_ENV, "serial")
+    assert not stack().overlap and stack().settings[2] == f"after a king, each step waits for the one before it (the order 'serial') ({ORDER_ENV}=serial)"
+    monkeypatch.setenv(ORDER_ENV, "overlap")
+    with pytest.raises(ConfigError, match=f"{ORDER_ENV}=overlap needs {headchain.MODE_ENV}=chain"):
+        stack()  # in full mode the upload of the head is the wait: the order would move nothing
+    monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
+    run = stack()
+    assert run.overlap and run.head.proven.__self__ is run.folder and run.entropy_now is None, "this box reads no chain (the smoke test), so no block hash"
+    assert run.settings[2] == f"after a king, only the fold is before the next open (the order 'overlap') ({ORDER_ENV}=overlap)"
+    assert not stack("publish").overlap and not stack("end-round").overlap and not stack("checkpoint").overlap, "only run takes steps out of the line"
+    assert code_digest() == plan.code_digest(), "a setting of the shell: no file under gpu/ reads it"
+    monkeypatch.setenv(ORDER_ENV, "fast")
+    with pytest.raises(ConfigError, match=ORDER_ENV):
+        stack("publish")
 
 
 def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any_round(tmp_path, box, monkeypatch, capsys):

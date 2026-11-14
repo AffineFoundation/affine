@@ -84,6 +84,11 @@ def pending_fold_prefix(version_id: str) -> str:
     return f"{PENDING}/folds/{_part(version_id)}"
 
 
+def pending_fold_ahead_prefix(round_id: str) -> str:
+    """The staged files of a fold that starts before its head is in the journal (``afterking.py``). The delete of the round's prefix removes them."""
+    return f"{pending_round_prefix(round_id)}/fold-ahead"
+
+
 def public_lora_prefix(lora_hash: str) -> str:
     return f"public/loras/{_part(lora_hash)}"
 

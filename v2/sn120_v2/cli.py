@@ -42,8 +42,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import layout
+from .afterking import Overlap
 from .controller import Controller, Stack, StackContext, public_snapshot
-from .errors import ConfigError, FencedError, InfraError, V2Error
+from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
@@ -53,6 +54,9 @@ from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
 from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
+
+
+HEAD_LOST_EXIT = 75  # ``run`` stopped because the local head did not read back as folded. The run loop takes every code but 0, 2, 130 and 143 as a crash, and starts ``run`` again
 
 
 def now() -> int:
@@ -178,16 +182,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     if stack.head.prepare is not None:
         with timed("the proof of the local head"):
             stack.head.prepare(controller.state)
+    overlap = Overlap(stack.chain) if stack.overlap else None
+    if overlap is not None:
+        controller.use_overlap(overlap)
     done = idle = 0
     while args.rounds is None or done < args.rounds:
         record = None
         try:
             if stack.chain is not None:
                 with timed("the read of the chain and the sync of the registrations"):
-                    controller.sync_registrations(stack.chain(), now())
-            record = controller.run_round(stack.runner, now, stack.entropy() if stack.entropy else os.urandom(16).hex())
+                    ahead = overlap.snapshot(now()) if overlap is not None else None  # ``overlap``: read beside the fold of the last king
+                    controller.sync_registrations(ahead or (overlap.on_chain(stack.chain) if overlap is not None else stack.chain()), now())
+            # ``overlap``: the block of the seed is read at the open, not here. So the seed is not older than it is with ``serial``.
+            if overlap is not None and stack.entropy_now:
+                entropy = lambda: overlap.on_chain(stack.entropy_now)  # noqa: E731
+            else:
+                entropy = stack.entropy() if stack.entropy else os.urandom(16).hex()
+            record = controller.run_round(stack.runner, now, entropy)
         except FencedError:
             raise
+        except HeadLost as exc:
+            # The local files of the head are not what the fold wrote. The round that ran on them ended with a failed lease:
+            # no result of it is stored, and nobody is charged. This ``run`` must not go on with these files. The run loop
+            # takes this exit code as a crash and starts ``run`` again, and that start rebuilds the head from the chain.
+            print(f"stopped: {exc}", file=sys.stderr, flush=True)
+            return HEAD_LOST_EXIT
         except InfraError as exc:  # the chain or the store did not answer: nothing was decided, so the next pass continues
             print(f"waiting: {exc}", file=sys.stderr, flush=True)
         if stack.head.after_round is not None:  # also on a pass with no new round: a fold that was put off closes its round there
@@ -204,6 +223,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             continue
         done, idle = done + 1, 0
         print_round(stack, record.round_id)
+    if overlap is not None:  # the steps that waited for a next open: there is none in this ``run``
+        overlap.flush(now())
     print(json.dumps(summary(controller.state, controller.params), indent=2))
     return 0
 

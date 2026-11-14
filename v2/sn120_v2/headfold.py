@@ -50,8 +50,9 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 import torch
 
 from . import fold_kernel, layout
+from .afterking import Beside
 from .canonical import file_sha256, manifest_digest
-from .errors import ConfigError, ContractError, InfraError, V2Error, VerifyError
+from .errors import ConfigError, ContractError, HeadLost, InfraError, V2Error, VerifyError
 from .gpu.folder import fold_files, read_lora
 from .gpu.plan import BoxConfig, check_pins, log_phase
 from .gpu.resident import Resident, hash_tree
@@ -68,6 +69,7 @@ IMPLEMENTATION_ENV, TWICE_ENV, DEVICES_ENV, THREADS_ENV = "SN120_FOLD_IMPLEMENTA
 CPU = "cpu"
 BASE, MASTER, LORA = "base", "master", "lora"
 UPLOADS = 2  # files of a checkpoint that go to the store at one time
+READ_BACK, READ_BACK_THREADS = "sn120-v2-read-back", 4  # the name of the threads of ``ReadBack``, and how many files of a new head they hash at one time
 BLOCK = 1 << 20
 # The public site answers 403 to the default agent of urllib for the objects under public/, so every request names this one.
 AGENT = {"User-Agent": "sn120-v2-replicate/1"}
@@ -229,6 +231,48 @@ def tree_bytes(path: Path) -> int:
     return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
 
 
+class ReadBack:
+    """The second sha256 of a head that a fold just wrote, in threads beside the next steps of ``run``.
+
+    ``Resident.adopt`` makes this read before it takes the files. Here the files are in the cache already and
+    the next round uses them while the read runs. So the caller must ask ``check`` before it trusts anything
+    that was made with these files. A set that fails leaves the list of what is verified.
+    """
+
+    def __init__(self, resident: Resident, sets: Sequence[tuple[Path, str]], label: str, threads: int = READ_BACK_THREADS) -> None:
+        self.resident, self.sets, self.label, self.threads = resident, tuple(sets), label, threads
+        self._work = Beside(self._read, READ_BACK)
+
+    def _read(self) -> None:
+        started = time.monotonic()
+        with ThreadPoolExecutor(self.threads, thread_name_prefix=READ_BACK) as pool:
+            for path, identity in self.sets:
+                try:
+                    files = sorted(file for file in path.rglob("*") if file.is_file())
+                    found = dict(zip((file.relative_to(path).as_posix() for file in files), pool.map(file_sha256, files)))
+                    same = manifest_digest(found) == identity
+                except OSError:
+                    same = False
+                if not same:
+                    with self.resident._lock:  # noqa: SLF001 - ``gpu/resident.py`` has no call for this, and a change there changes the code digest
+                        self.resident._verified.discard(identity)  # noqa: SLF001
+                    say(f"{self.label}: the local files of {identity[:16]} do not read back as the fold wrote them")
+                    raise VerifyError(f"the local files of {identity[:16]} do not read back as the fold wrote them")
+        log_time(f"{self.label}: the second sha256 of the new head, beside the next steps", started)
+
+    def wait(self) -> None:
+        self._work.wait()
+
+    def check(self, wait: bool) -> None:
+        """Raises ``HeadLost`` when the read failed. ``wait``: first wait for its end; without it, a read that still runs passes."""
+        if not wait and not self._work.done():
+            return
+        try:
+            self._work.result()
+        except VerifyError as exc:
+            raise HeadLost(f"{exc}. Nothing that was made on these files is kept. Start run again: the start rebuilds the head from the chain") from None
+
+
 class ChainFolder:
     """The ``Folder`` seam in ``chain`` mode: the folded weight files stay on this box.
 
@@ -240,12 +284,53 @@ class ChainFolder:
     def __init__(self, store: ObjectStore, config: BoxConfig, settings: FoldSettings | None = None, run: Runner = in_children) -> None:
         self.store, self.config, self.settings, self.run = store, config, settings or FoldSettings(), run
         self.resident = Resident(store, config.work_dir)
+        self._read_back: ReadBack | None = None
 
     def fold(self, head: HeadVersion, params: Params, out_prefix: str) -> FoldArtifact:
+        return self._fold(head, params, out_prefix, {}, ahead=False)
+
+    def fold_ahead(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str]) -> FoldArtifact:
+        """The fold for the order ``overlap`` (``afterking.py``). Two differences from ``fold``.
+
+        ``head`` is not in the journal yet, so a LoRA of ``lora_prefixes`` (``{lora_hash: prefix}``) is read
+        from that prefix and not from ``public/``. Its hash proves the bytes in both places.
+
+        The new files go to the cache at once, and their second sha256 runs in threads (``ReadBack``).
+        ``proven`` gives the result.
+        """
+        return self._fold(head, params, out_prefix, lora_prefixes, ahead=True)
+
+    def proven(self, wait: bool) -> None:
+        """``HeadPublish.proven``: raises ``HeadLost`` when the files of the last ``fold_ahead`` did not read back as written."""
+        if self._read_back is not None:
+            self._read_back.check(wait)
+
+    def drop(self, head: HeadVersion) -> None:
+        """The head did not move to the result of the last ``fold_ahead``: keep only the files of ``head`` in the cache."""
+        if self._read_back is not None:
+            self._read_back.wait()  # its files go now, so its result is of no use
+            self._read_back = None
+        self.resident.prune({head.base_hash, head.base_fp32_master_digest, *(ref.lora_hash for ref in head.loras)})
+
+    def _rest(self) -> None:
+        """Before the cache changes: wait for a second sha256 that still runs. One that failed raises ``HeadLost`` here, and at each later ask."""
+        if self._read_back is not None:
+            self._read_back.check(wait=True)
+            self._read_back = None
+
+    def _place(self, path: Path, identity: str) -> None:
+        """Put a directory that the fold wrote in the cache, as ``Resident.adopt`` does, but before its second sha256 (``ReadBack``)."""
+        with self.resident._lock:  # noqa: SLF001 - ``gpu/resident.py`` has no call for this, and a change there changes the code digest
+            shutil.rmtree(self.resident.root / identity, ignore_errors=True)
+            path.rename(self.resident.root / identity)
+            self.resident._verified.add(identity)  # noqa: SLF001
+
+    def _fold(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str], ahead: bool) -> FoldArtifact:
         check_pins(self.config.image_digest, params)
         started = time.monotonic()
         if not head.loras:
             raise ContractError("the head has no LoRA to fold")
+        self._rest()
         self.resident.root.mkdir(parents=True, exist_ok=True)  # a box whose disk was replaced has no cache directory
         self.resident.prune({head.base_hash, head.base_fp32_master_digest, *(ref.lora_hash for ref in head.loras)})
         try:
@@ -253,7 +338,7 @@ class ChainFolder:
             base_dir = self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
         except (KeyError, VerifyError) as exc:
             raise VerifyError(f"the local files of the head are lost or changed ({exc}). Stop run and start it again: the start rebuilds the head from the chain") from None
-        loras = tuple((self.resident.tree(layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras)
+        loras = tuple((self.resident.tree(lora_prefixes.get(ref.lora_hash) or layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras)
         # A new directory for each try, and nothing of an older try: a fold process that outlived its ``run`` can then write into no file of this one.
         shutil.rmtree(Path(self.config.work_dir) / "fold", ignore_errors=True)
         out = Path(self.config.work_dir) / "fold" / f"{head.version_id}.{os.getpid()}.{time.monotonic_ns()}"
@@ -284,8 +369,13 @@ class ChainFolder:
                 prefix=out_prefix,
                 image_digest=self.config.image_digest,
             )
-            self.resident.adopt(out / BASE, base_hash)  # the hash of the written files is checked here; the next round downloads nothing
-            self.resident.adopt(out / MASTER, master_digest)
+            if ahead:
+                self._place(out / BASE, base_hash)
+                self._place(out / MASTER, master_digest)
+                self._read_back = ReadBack(self.resident, [(self.resident.root / base_hash, base_hash), (self.resident.root / master_digest, master_digest)], label)
+            else:
+                self.resident.adopt(out / BASE, base_hash)  # the hash of the written files is checked here; the next round downloads nothing
+                self.resident.adopt(out / MASTER, master_digest)
             times = {"fetch_s": fetched - started, "sum_s": summed - fetched, "upload_s": time.monotonic() - summed, "wall_s": time.monotonic() - started}
             log_phase(self.config.work_dir, "fold", version_id=head.version_id, loras=len(loras), mode="chain", **times)
             return artifact
@@ -568,8 +658,10 @@ class HeadKeeper:
         every: int,
         settings: FoldSettings | None = None,
         run: Runner = in_children,
+        proven: Callable[[bool], None] | None = None,
     ) -> None:
         self.store, self.work, self.writer, self.every, self.settings, self.run = store, Path(work_dir), writer, every, settings or FoldSettings(), run
+        self.proven = proven  # ``ChainFolder.proven``: the upload thread waits for the second sha256 of a head before it sends a file of it
         self.resident = Resident(store, work_dir)
         self.links = self.work / "checkpoint"
         self._lock = threading.Lock()
@@ -703,6 +795,8 @@ class HeadKeeper:
                     return
                 version_id, manifest = next(iter(self._jobs.items()))
             try:
+                if self.proven is not None:
+                    self.proven(True)
                 self.upload(manifest)
             except Exception as exc:  # noqa: BLE001 - a thread that dies must say why; the next round starts it again
                 say(f"checkpoint of {version_id[:12]}: stopped by {type(exc).__name__}: {exc}; it starts again at the next pass of run")

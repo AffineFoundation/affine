@@ -92,6 +92,14 @@ class Reader:
     def block_hash(self, block: int) -> str:
         return _read(f"the hash of block {block}", lambda: self.client.block_hash(block))
 
+    def head_hash(self) -> str:
+        """The hash of the newest block, in one chain call. A node that is behind is refused, as in ``snapshot``."""
+        _, block_hash, taken_at = _read("the head", self.client.head)
+        lag = int(self.clock()) - taken_at
+        if lag > self.max_lag_s:
+            raise InfraError(f"the chain head is {lag} s old: the node is behind")
+        return block_hash
+
 
 def _close(reader: Any) -> None:
     """Close the connection of a dropped reader, in the background: a dead connection must not delay the caller."""
@@ -128,6 +136,10 @@ class Feed:
         if not block:
             raise InfraError("no chain snapshot yet, so there is no block hash for the round seed")
         return self._bounded(f"the hash of block {block}", lambda reader: reader.block_hash(block))
+
+    def entropy_now(self) -> str:
+        """The hash of the newest block at this call: one chain read, and no snapshot is needed before it."""
+        return self._bounded("the hash of the newest block", lambda reader: reader.head_hash())
 
     def _bounded(self, what: str, read: Callable[[Any], Any]) -> Any:
         """Open the connection when there is none, then read, all in ``timeout_s``. A read that hangs is abandoned."""
