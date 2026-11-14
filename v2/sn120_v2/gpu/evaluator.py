@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
@@ -54,7 +55,14 @@ class HttpError(Exception):
 
 
 def http_json(url: str, body: dict | None, timeout_s: float) -> dict:
-    """GET (no body) or POST JSON. Returns the JSON reply, or ``{}`` for a reply that is not JSON."""
+    """GET (no body) or POST JSON. Returns the JSON reply, or ``{}`` for a reply that is not JSON.
+
+    A reply that breaks off is raised as a ``ConnectionError``: the server
+    stopped inside the body, or its first line is not HTTP. The standard
+    library raises these as ``http.client.HTTPException``, which is not an
+    ``OSError``. Here they are the same failure as a connection that was
+    refused or reset, so every caller handles them as one.
+    """
     data = None if body is None else json.dumps(body).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
@@ -62,6 +70,8 @@ def http_json(url: str, body: dict | None, timeout_s: float) -> dict:
             raw = reply.read()
     except urllib.error.HTTPError as exc:
         raise HttpError(exc.code) from exc
+    except HTTPException as exc:
+        raise ConnectionError(f"the reply broke off: {exc!r}") from exc
     try:
         parsed = json.loads(raw)
     except ValueError:
