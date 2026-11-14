@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Affine subnet 120: the public history of v1, frozen at the cutover to v2.">
+<title>Affine · Subnet 120 · v1 history</title>
+<script>/* start the data fetch while the page is still parsing; site.js takes this first copy */window.SITE_DATA=fetch('v1-data.json?t='+Date.now(),{cache:'no-store'}).catch(()=>null);</script>
+<link rel="icon" href="{{asset:favicon.svg}}" type="image/svg+xml">
+<link rel="preload" href="{{asset:network-haffer.ttf}}" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="{{asset:network-mono.ttf}}" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="{{asset:site.css}}">
+<script defer src="{{asset:site.js}}"></script>
+</head>
+<body data-page="v1">
+<header>
+<a class="wordmark" href="./" aria-label="Affine home"><svg viewBox="0 0 500 500" aria-hidden="true" focusable="false"><path d="M250.004 1.66602C387.157 1.66625 498.341 112.851 498.341 250.004C498.341 387.156 387.156 498.341 250.004 498.341C112.851 498.341 1.66629 387.156 1.66602 250.004C1.66602 112.851 112.851 1.66619 250.004 1.66602ZM74.9541 374.866C113.948 429.435 177.821 465.007 250.004 465.007C322.186 465.007 386.06 429.435 425.054 374.866H74.9541ZM338.333 341.533H421.404L338.332 201.217L338.333 341.533ZM78.6113 341.533H160V204.057L78.6113 341.533ZM249.167 211.667C217.411 211.667 191.667 237.411 191.667 269.167C191.667 300.923 217.411 326.667 249.167 326.667C280.923 326.667 306.667 300.923 306.667 269.167C306.667 237.411 280.923 211.667 249.167 211.667ZM220.13 37.0586C115.527 51.5994 35 141.398 35 250.004C35.0001 276.856 39.9238 302.559 48.916 326.259L220.13 37.0586ZM451.094 326.251C460.084 302.553 465.007 276.854 465.007 250.004C465.007 141.4 384.485 51.6033 279.885 37.0596L451.094 326.251ZM174.242 180H325.772L250.007 52.0244L174.242 180Z"/></svg><span>FFINE</span></a>
+<nav aria-label="Sections"><a href="./">Live v2 status</a><a href="#v1kings">Kings</a><a href="#v1turns">Turns</a><a href="#bench">Benchmarks</a><a href="https://github.com/AffineFoundation/affine">GitHub</a></nav>
+</header>
+<main id="main">
+<section id="about"><div class="section-heading"><h2>v1 history</h2><span class="reading">archive</span></div><p class="note lead">Subnet 120 ran v1 until the cutover to v2. v1 is shut down. This page shows the public history of v1 as it was at <span id="archived">the cutover</span>. It is a frozen copy: it does not change, and it needs no v1 service. The live subnet is on the <a href="./">v2 status page</a>.</p></section>
+<section id="v1kings" aria-labelledby="v1kings-t"><div class="section-heading"><h2 id="v1kings-t">Kings when v1 stopped</h2><span class="reading">—</span></div><div class="scroll wait"><table><tbody></tbody></table></div><p class="note">The last distinct winner UIDs of v1, newest first, with their share of the miner weight. v2 starts with these kings.</p></section>
+<section id="v1turns" aria-labelledby="v1turns-t"><div class="section-heading"><h2 id="v1turns-t">Turns</h2><span class="reading">—</span><input id="filter" type="search" placeholder="Filter by hotkey or UID" aria-label="Filter turns by hotkey or UID"></div><div class="scroll wait"><table><tbody></tbody></table></div><p class="note">One row per v1 turn, newest first. In a turn, v1 trained the batch of one miner and scored the candidate against the head. GREEN: the candidate was applied. An older turn has only its result, its UID, its task count and its candidate hash. The round files and the batch files of v1 are not part of this archive.</p></section>
+<section id="bench" aria-labelledby="bench-t">
+<div class="section-heading"><h2 id="bench-t">Benchmarks</h2><span class="reading">—</span></div>
+<div class="sparks" aria-label="Score of each v1 king, per benchmark, over time"></div>
+<div class="scroll wait"><table><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+<p class="note">Public math benchmarks of the v1 kings that had a benchmark run, newest first, scores in percent. Under the kings: the reference models, the largest first, and the v1 genesis model. A reference model is in view when it leads for its size: in the average or in one benchmark, no reference model of the same size or smaller has a higher score. The link at the end shows all. The cards show each score over the v1 kings. A star marks the highest score of a column. † marks a partial run: some samples were lost. For information only. <button type="button" id="refs" class="link" hidden></button></p>
+</section>
+</main>
+<footer><span>Affine · Subnet 120 · v1 archive</span><span id="status" role="status">Loading</span></footer>
+<noscript><p class="noscript">Enable JavaScript to see the tables.</p></noscript>
+</body>
+</html>

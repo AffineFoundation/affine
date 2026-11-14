@@ -1,0 +1,116 @@
+/* SN120 v2 status site. Palette, type, header, footer and table frame are carried over from the v1 site
+   (network.css, k1-tables.css, load.css), and the benchmark table, score cards and chart tiles from bench.css and k1.js.
+   Table shells and chart boxes are in the HTML at their final size; rows fade in once. */
+@font-face{font-family:Haffer;src:url('{{asset:network-haffer.ttf}}') format('truetype');font-weight:400;font-display:swap}
+@font-face{font-family:'DM Mono';src:url('{{asset:network-mono.ttf}}') format('truetype');font-weight:400;font-display:swap}
+:root{color-scheme:dark;--bg:#000000;--hover:#1c1c1c;--ink:#ededed;--muted:#a1a1a1;--line:#242424;--axis:#3a3a3a;--accepted:#d6b580;--performance:#85c8b4;--rejected:#d18e91;--mono:'DM Mono',monospace}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#ffffff;--hover:#eeeeee;--ink:#171717;--muted:#646464;--line:#e4e4e4;--axis:#b5b5b5;--accepted:#936821;--performance:#217a65;--rejected:#b54d57}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Haffer,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+header,main,footer,.noscript{width:calc(100% - 96px);max-width:1280px;margin:0 auto}
+a{color:inherit;text-decoration:none}
+header{height:96px;display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid var(--line)}
+.wordmark{display:inline-flex;align-items:center;gap:.2em;font-size:30px;letter-spacing:6px}
+.wordmark svg{width:25px;height:29px;fill:currentColor}
+nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
+nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
+nav a:hover{text-decoration-color:currentColor}
+section{min-width:0;padding:28px 0}
+section+section{border-top:1px solid var(--line)}
+.section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
+h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
+.reading{font:12px var(--mono);color:var(--muted);text-align:right}
+.note{margin:10px 0 0;font:11px/1.6 var(--mono);color:var(--muted)}
+.note.lead{max-width:780px;font-size:12px;color:var(--ink)}
+.note a{text-decoration:underline;text-underline-offset:3px}
+
+/* live round strip: fixed-height cells, so values arriving later do not move the page */
+#round dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;margin:0;background:var(--line);border:1px solid var(--line);border-radius:3px}
+#round dl div{background:var(--bg);padding:12px 14px;height:68px;overflow:hidden}
+#round dt{font:10px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+#round dd{margin:8px 0 0;font:400 20px/1 Haffer,Arial,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* tables: about ten rows tall, sticky header, scroll inside the frame */
+.scroll{position:relative;height:310px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:3px;scrollbar-width:thin}
+.scroll.short{height:175px}
+table{table-layout:fixed;width:100%;border-collapse:separate;border-spacing:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;font-size:11px;line-height:16px;height:27px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border-bottom:1px solid var(--line)}
+th{position:sticky;top:0;z-index:2;background:var(--bg);color:var(--muted);font-weight:400}
+th.num,td.num{text-align:right}
+tbody tr:hover td{background:var(--hover)}
+td a{border-bottom:1px dotted var(--muted)}
+td a:hover{border-bottom-style:solid}
+td.empty,tr.more td{color:var(--muted);white-space:normal;height:auto;padding:10px 8px;border-bottom:0}
+td.empty{text-align:center;padding:28px}
+.key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono)}
+.key:hover,.key:focus-visible{color:var(--ink)}
+.key.copied::after{content:' copied';font-size:9px;color:var(--performance)}
+sup{color:var(--accepted);cursor:help;line-height:0}
+.mute{color:var(--muted)}
+.up{color:var(--performance)}
+.dn{color:var(--rejected)}
+.pill{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:999px;font-size:10px;line-height:1.5;letter-spacing:.04em}
+.pill.private{border-style:dashed;color:var(--muted);cursor:help}
+.pill.wait{color:var(--accepted)}
+.link{all:unset;cursor:pointer;color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.link:focus-visible{outline:1px solid var(--muted);outline-offset:2px}
+
+/* benchmark table: the kings scroll under a sticky header; the reference models and the genesis head are a sticky footer */
+#bench thead th{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+#bench thead .suites+tr th{top:27px}
+#bench th.suite{text-align:center}
+#bench th:first-child,#bench .name{position:sticky;left:0;background:var(--bg)}
+#bench th:first-child{z-index:3}
+#bench .name{z-index:1}
+#bench .avg{border-right:1px solid var(--axis)}
+#bench td.na{color:var(--muted)}
+#bench .pill{flex:none;line-height:1.3}
+.who{display:flex;align-items:center;gap:6px}
+.who>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#bench tfoot{position:sticky;bottom:0;z-index:2}
+#bench tfoot td{background-color:var(--bg)}
+#bench tfoot tr:first-child td{border-top:2px solid var(--axis)}
+#bench tfoot tr:last-child td{border-bottom:0}
+#bench tr.genesis td{border-top:1px solid var(--muted)}
+.star{width:9px;height:9px;margin-right:4px;vertical-align:-.5px;fill:#f5c542}
+@media(prefers-color-scheme:light){.star{fill:#c98a00}}
+
+/* score cards and chart tiles: a fixed box per chart, so a chart that arrives later does not move the page */
+.sparks{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 10px}
+.spark,.tile{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:3px}
+.spark .section-heading{gap:8px;margin:0 0 6px;white-space:nowrap}
+.spark h3,.spark .reading{margin:0;font:400 14px/20px Haffer,Arial,sans-serif;letter-spacing:-.015em;color:var(--ink)}
+.spark h3{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tile h2{font-size:17px}
+.chart{position:relative;height:200px}
+.spark .chart{height:92px}
+.chart svg{display:block;width:100%;height:100%;overflow:visible}
+.chart text{font:9px var(--mono);fill:var(--muted)}
+.chart .grid{stroke:var(--line)}
+.chart .ref{stroke:var(--muted);stroke-dasharray:4 3}
+.chart .empty{position:absolute;inset:0;display:grid;place-items:center;margin:0;font:11px var(--mono);color:var(--muted)}
+.tip{position:absolute;top:4px;z-index:5;min-width:170px;padding:8px 10px;background:var(--bg);border:1px solid var(--axis);border-radius:3px;font:10px/1.6 var(--mono);white-space:pre-line;pointer-events:none}
+.tip strong{display:block;font-weight:400}
+.tip span{color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0;font:10px var(--mono);color:var(--muted)}
+.sw{display:inline-block;width:9px;height:9px;margin-right:5px;border:1px solid currentColor;background:currentColor;vertical-align:-1px}
+.sw.wait{color:var(--accepted)}
+.sw.hollow{background:none}
+.sw.dash{width:14px;height:0;border-width:1px 0 0;border-style:dashed;vertical-align:3px}
+@media(max-width:1100px){.sparks{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:900px){.tiles{grid-template-columns:1fr}}
+@media(max-width:760px){.sparks{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#filter{width:190px;padding:4px 8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:3px;font:11px var(--mono)}
+
+/* shapes first, data second: faint row lines until the first data arrives, then one 200 ms fade */
+.wait::before{content:'';position:absolute;inset:27px 0 0;pointer-events:none;background:linear-gradient(to bottom,transparent 26px,var(--line) 26px) 0 0/100% 27px repeat-y}
+.fade{animation:fade .2s ease-out backwards}
+@keyframes fade{from{opacity:0}}
+@media(prefers-reduced-motion:reduce){.fade{animation:none}}
+
+footer{display:flex;justify-content:space-between;gap:24px;padding:20px 0 28px;border-top:1px solid var(--line);font:10px/1.6 var(--mono);color:var(--muted)}
+#status[data-state='unavailable']{color:var(--accepted)}
+.noscript{padding:20px 0;font:12px/1.8 var(--mono)}
+@media(max-width:700px){header,main,footer,.noscript{width:calc(100% - 40px)}header{height:auto;padding:18px 0;flex-direction:column;align-items:flex-start}section{padding:22px 0}h2{font-size:19px}}
