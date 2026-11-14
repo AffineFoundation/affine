@@ -604,14 +604,15 @@ class FileLimit:
 
     A request past the limit fails as ``urllib`` fails when the process has
     no file left. A request that got its socket keeps it until ``limit`` of
-    them are in flight and ``failures`` tries have failed, as a rollout that
-    generates keeps its socket while the others fail.
+    them are in flight and one rollout has failed ``failures`` tries, as a
+    rollout that generates keeps its socket while the others fail.
     """
 
     def __init__(self, farm: Farm, limit: int, failures: int):
         self.farm, self.limit, self.failures = farm, limit, failures
         self.lock, self.go = threading.Lock(), threading.Event()
         self.flying = self.most = self.failed = 0
+        self.tries: dict[tuple[str, str], int] = {}  # failed tries of each rollout
 
     def http(self, url, body, timeout_s):
         if not url.endswith("/v1/chat/completions"):
@@ -621,7 +622,10 @@ class FileLimit:
             self.failed += refused
             self.flying += not refused
             self.most = max(self.most, self.flying)
-            if self.flying == self.limit and self.failed >= self.failures:
+            if refused:
+                job = (body["model"], body["messages"][-1]["content"])
+                self.tries[job] = self.tries.get(job, 0) + 1
+            if self.flying == self.limit and max(self.tries.values(), default=0) >= self.failures:
                 self.go.set()
         if refused:
             raise urllib.error.URLError(OSError(errno.EMFILE, "Too many open files"))
@@ -644,18 +648,42 @@ def limited(box, limit: int, failures: int, room) -> tuple[VllmEvaluator, FileLi
 def test_a_look_that_cannot_hold_its_sockets_fails_before_any_rollout_is_sent(box):
     """Mainnet r000001 and r000002: a soft limit of 1,024 open files, and 1,000 and 2,500 rollouts sent at once."""
     request = eval_request(box, tasks=tuple(f"t{index}" for index in range(8)))  # null M and 2 LoRAs: 24 rollouts, 2 servers x 12 clients
-    # What happened: 12 rollouts hold the 12 sockets, each of the 12 others fails its 3 tries at once, and those were E.
-    seam, files = limited(box, 12, 36, room=lambda sockets, spare: sockets)
-    outcomes = seam.evaluate(request).outcomes
-    assert sum(text.count("E") for (text,) in outcomes.values()) == 12 and files.failed == 36
-    # Now the look asks first. With too little room it is a failure of the box: no server starts and no rollout is sent.
     asked = []
     seam, files = limited(box, 12, 0, room=lambda sockets, spare: asked.append((sockets, spare)) or 12)
-    with pytest.raises(InfraError, match="room for 12 sockets; a look holds 24"):
+    with pytest.raises(InfraError, match="room for 12 sockets; a look holds 24"):  # a failure of the box: no server starts, no rollout is sent
         seam.evaluate(request)
     assert asked == [(24, ServeSettings().spare_files)] and not files.farm.servers and not files.farm.bodies
     seam, files = limited(box, 24, 0, room=lambda sockets, spare: 24)
     assert set(seam.evaluate(request).outcomes.values()) == {("PPPPPPPP",)} and (files.most, files.failed) == (24, 0)
+
+
+def test_a_rollout_that_found_no_file_for_its_socket_is_not_an_error_of_its_model(box):
+    """What r000001 and r000002 did: 12 rollouts hold the 12 sockets and the others fail every try. Those were E; now the look is not scored."""
+    request = eval_request(box, tasks=tuple(f"t{index}" for index in range(8)))
+    seam, files = limited(box, 12, 3, room=lambda sockets, spare: sockets)  # the room was promised and is not there
+    pauses = []
+    seam.sleep = pauses.append
+    with pytest.raises(InfraError, match="no file left for the socket of [0-9]+ rollouts"):
+        seam.evaluate(request)
+    assert files.most == 12 and max(files.tries.values()) == 3 and set(pauses) == {ServeSettings().retry_pause_s}  # every extra try waits first
+    assert all(server.up for server in files.farm.servers)  # the servers stay: the worker may try the look again
+    # A try that failed for lack of a file and then got through is a reply like any other.
+    farm = Farm(lambda model, task: ("P", "stop"))
+    seam, failures = evaluator(box, farm), iter([urllib.error.URLError(OSError(errno.EMFILE, "Too many open files")), OSError(errno.ENFILE, "File table overflow")])
+    lock, http = threading.Lock(), farm.http
+
+    def once_starved(url, body, timeout_s):
+        with lock:
+            failure = next(failures, None) if url.endswith("/v1/chat/completions") else None
+        if failure:
+            raise failure
+        return http(url, body, timeout_s)
+
+    seam.http = once_starved
+    assert set(seam.evaluate(request).outcomes.values()) == {("PPPPPPPP",)}
+    # Another transport failure on every try stays what it was: an E of that rollout.
+    seam = evaluator(box, Farm(lambda model, task: ConnectionResetError() if task == "t1" else ("P", "stop")))
+    assert set(seam.evaluate(request).outcomes.values()) == {("PEPPPPPP",)}
 
 
 @pytest.mark.parametrize(
