@@ -269,6 +269,27 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     assert "VllmEvaluator(store, box, pool, GradePool())" in stack
 
 
+def test_the_benchmark_note_holds_no_number_and_names_what_the_benchmark_service_writes(tmp_path):
+    """The publisher does not read the settings of the benchmark service. A count, a round or a UID typed there goes stale."""
+    text = text_of(made_world(tmp_path), launch_params())
+    start = text.index("- The benchmark table of the site")
+    note = " ".join(text[start : text.index("\n## ", start)].split())
+    assert f"`{layout.BENCHMARKS}`" in note and not re.search(r"\d", note), "the note of the benchmark table holds a number"
+
+    # A field that the note names is a field of a result row of the benchmark service (v2/bench, not a package of the box).
+    source = ast.parse((PACKAGE.parent / "bench" / "affine_bench" / "publish.py").read_text())
+    row = next(node for node in ast.walk(source) if isinstance(node, ast.FunctionDef) and node.name == "_row_from_disk")
+    written = {key.arg for call in ast.walk(row) if isinstance(call, ast.Call) and getattr(call.func, "id", "") == "dict" for key in call.keywords}
+    later = {"derived_from", "score_full", "samples_full"}  # these come with a later commit of the benchmark service
+    named = set(re.findall(r"`(\w+)`", note))
+    assert named - later == {"rollouts", "samples"} and named - later <= written
+    assert later <= named, "the note says what a result with these fields is; a file without them stays true to the note"
+
+    # "No king and no weight depends on it": no module of the box reads the file. Only the name of its key is here.
+    names = sorted(path.name for path in PACKAGE.rglob("*.py") if re.search(r"BENCHMARKS|benchmarks\.json", path.read_text()))
+    assert names == ["layout.py", "publisher.py"]
+
+
 def played(tmp_path: Path) -> sim.SimWorld:
     world = made_world(tmp_path)
     world.register(11, 0.4)  # wins
