@@ -5,7 +5,9 @@ The rules this file holds:
 * ``sha256`` reads the stored bytes back and hashes them. It never trusts an
   ETag, object metadata or a value the uploader sent. An object above
   ``part_size`` is read as ranges, several at a time, and hashed in file
-  order: one stream for each file is too slow for a 56 GB head.
+  order: one stream for each file is too slow for a 56 GB head. Each range
+  is of one version of the object, and the store must say that it sent the
+  range that was asked for.
 * ``copy`` uses multipart UploadPartCopy above ``part_size``. One CopyObject
   call on a ~4 GB shard timed out in v1.
 * No write returns before the store confirms it. Upload bodies are signed.
@@ -54,6 +56,7 @@ PUT_HEADERS = {"Content-Type": "application/octet-stream"}  # signed: an upload 
 _MISSING_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 READ_RANGE = 32 * MIB  # the largest range of one read when ``sha256`` hashes a large object
 READ_STREAMS = 16  # ranges that are read at one time, for all ``sha256`` calls of one store together
+READ_AGAIN_PAUSE_S = 1.0  # before a range whose stream broke is read again; times the count of the failed reads
 
 
 class R2Store:
@@ -185,12 +188,12 @@ class R2Store:
         return int(self._head(key)["ContentLength"])
 
     def sha256(self, key: str) -> str:
+        head = self._head(key)  # the size and the ETag with no body: a GET of a large object would be closed unread
         digest, seen = hashlib.sha256(), 0
         with self._guard("sha256", key):
+            if int(head["ContentLength"]) > self._part_size:
+                return self._sha256_ranges(key, int(head["ContentLength"]), head["ETag"])
             reply = self._s3.get_object(Bucket=self._bucket, Key=self._k(key))
-            if int(reply["ContentLength"]) > self._part_size:
-                reply["Body"].close()
-                return self._sha256_ranges(key, int(reply["ContentLength"]), reply["ETag"])
             for chunk in reply["Body"].iter_chunks(4 * MIB):
                 digest.update(chunk)
                 seen += len(chunk)
@@ -203,23 +206,41 @@ class R2Store:
 
         ``IfMatch`` binds every range to one version of the object: a range of
         another version fails the read. The ETag proves nothing else; the hash
-        is of the bytes that were read, and each range must have its full length.
+        is of the bytes that were read. The store must say that it sent the
+        range that was asked for (status 206 and ``ContentRange``), and each
+        range must have its full length.
+
+        botocore tries a request again by itself, with its pauses, so a request
+        that fails is not sent again here. Only a body whose stream broke after
+        the store answered is read again, after a pause. "Missing" for a range
+        of an object that a HEAD still finds is a fault of the store
+        (``InfraError``), not a missing object (``KeyError``).
         """
         step = min(self._part_size, READ_RANGE)
 
         def read(first: int) -> bytes:
             want = min(step, size - first)
+            span = f"{first}-{first + want - 1}"
             for attempt in range(self._attempts):
+                if attempt:
+                    time.sleep(READ_AGAIN_PAUSE_S * attempt)
                 try:
-                    reply = self._s3.get_object(Bucket=self._bucket, Key=self._k(key), Range=f"bytes={first}-{first + want - 1}", IfMatch=etag)
+                    reply = self._s3.get_object(Bucket=self._bucket, Key=self._k(key), Range=f"bytes={span}", IfMatch=etag)
+                except ClientError as exc:
+                    if str(exc.response.get("Error", {}).get("Code")) in _MISSING_CODES and self._stat(key):
+                        raise InfraError(f"r2 sha256 {key!r}: the store answered that the object is missing for the bytes {span}, and a HEAD finds the object") from None
+                    raise
+                status, sent = reply.get("ResponseMetadata", {}).get("HTTPStatusCode"), reply.get("ContentRange")
+                if status != 206 or sent != f"bytes {span}/{size}":  # before the body is read: a store that sends the whole object must not fill the memory
+                    reply["Body"].close()
+                    raise InfraError(f"r2 sha256 {key!r}: asked for the bytes {span} of {size}, and the store answered with status {status} and the range {sent!r}")
+                try:
                     data = reply["Body"].read()
                 except BotoCoreError:  # the stream broke after the store answered: botocore does not read a body again
-                    if attempt + 1 == self._attempts:
-                        raise
                     continue
                 if len(data) == want:
                     return data
-            raise InfraError(f"r2 sha256 {key!r}: a read of {want} bytes at {first} came back short")
+            raise InfraError(f"r2 sha256 {key!r}: {self._attempts} reads of the bytes {span} came back broken or short")
 
         digest, starts = hashlib.sha256(), iter(range(0, size, step))
         ahead: collections.deque[Future[bytes]] = collections.deque()

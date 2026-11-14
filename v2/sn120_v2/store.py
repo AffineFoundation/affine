@@ -123,8 +123,15 @@ def get_record(store: ObjectStore, key: str, cls: type[R]) -> R:
 
 
 def log_time(step: str, started: float, end: str = "") -> None:
-    """One line in the log: the UTC time now, the step, and the seconds since ``started`` (a ``time.monotonic()`` value)."""
-    print(f"timing {time.strftime('%H:%M:%S', time.gmtime())} UTC: {step}: {end}{time.monotonic() - started:.1f} s", file=sys.stderr, flush=True)
+    """One line in the log: the UTC time now, the step, and the seconds since ``started`` (a ``time.monotonic()`` value).
+
+    A log that cannot be written (a full disk, a closed stream) loses the line.
+    It never fails the step, and it never replaces the error of a step.
+    """
+    try:
+        print(f"timing {time.strftime('%H:%M:%S', time.gmtime())} UTC: {step}: {end}{time.monotonic() - started:.1f} s", file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 @contextmanager
