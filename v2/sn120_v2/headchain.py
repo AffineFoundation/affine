@@ -275,7 +275,14 @@ def chain_links(store: Any, doc: Mapping[str, Any], ttl_s: int, target: str | No
 
 
 class ChainWriter:
-    """Writes ``layout.HEAD_CHAIN``. The controller calls it with each publish; the checkpoint job calls ``mark``."""
+    """Writes ``layout.HEAD_CHAIN``. The controller calls it with each publish; the checkpoint job calls ``mark``.
+
+    A reader with no cache uses three files: mining.json, this file, and the links file that the site makes from
+    this file. This file and mining.json both name the newest checkpoint (``start``). The reader gets the head in
+    two cases only: the two name the same ``start``, or ``start`` of this file is the last folded head (the links
+    file then has the plain files of the head, and ``start`` of mining.json is not used). A publish writes the
+    first case. ``mark`` writes only the second one.
+    """
 
     def __init__(self, store: ObjectStore) -> None:
         self.store = store
@@ -317,10 +324,20 @@ class ChainWriter:
         return tail(doc)
 
     def mark(self, version_id: str) -> None:
-        """A checkpoint marker of this head was written. The chain file says so now, not at the next publish."""
+        """A checkpoint marker of this head was written. The chain file says so now, when this head is still the last folded head of the file.
+
+        When the file has a newer head, nothing is written here. A write would move ``start`` to a head that
+        is not the last one, in this file only, and mining.json would keep the older ``start`` (see the class).
+        The next publish lists the markers and moves ``start`` in the two files.
+
+        The markers are listed for the write, as for a publish. So the file gets each flag that the store has,
+        also the flag of an earlier ``mark`` that wrote nothing.
+        """
         with self._lock:
-            if self._doc is not None and any(step["version_id"] == version_id and not step["checkpoint"] for step in self._doc["steps"]):
-                doc = json.loads(json.dumps(self._doc))
-                for step in doc["steps"]:
-                    step["checkpoint"] = step["checkpoint"] or step["version_id"] == version_id
-                self._put(with_start(doc))
+            if self._doc is None or not self._doc["steps"] or self._doc["steps"][-1]["version_id"] != version_id:
+                return
+            marked = checkpoints(self.store) | {version_id}
+            doc = json.loads(json.dumps(self._doc))
+            for step in doc["steps"]:
+                step["checkpoint"] = step["checkpoint"] or step["version_id"] in marked
+            self._put(with_start(doc))
