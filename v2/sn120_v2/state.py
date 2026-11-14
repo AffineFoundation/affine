@@ -32,6 +32,7 @@ PARAMS_SET = "params_set"
 V1_IMPORTED = "v1_imported"
 REGISTRATIONS_SYNCED = "registrations_synced"
 SEATS_DEMOTED = "seats_demoted"
+SEATS_RESTORED = "seats_restored"  # left the back: valid file at selection (from the round that first wrote this onward)
 SEAT_RELEASED = "seat_released"
 SEATS_FRONTED = "seats_fronted"
 ROUND_OPENED = "round_opened"
@@ -178,6 +179,13 @@ def _seats_demoted(state: State, data: dict, at: int) -> None:
         _edit(state, key, demoted=True)
 
 
+def _seats_restored(state: State, data: dict, at: int) -> None:
+    """A demoted seat had a valid file at selection: it leaves the back zone. Nothing is charged."""
+    for key in _keys(data["keys"]):
+        _edit(state, key, demoted=False)
+        state.demote_on_arrival.discard(key)
+
+
 def _seat_released(state: State, data: dict, at: int) -> None:
     (key,) = _keys([data["key"]])
     _edit(state, key, held=False, infra_attempts=0)
@@ -286,6 +294,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     V1_IMPORTED: _v1_imported,
     REGISTRATIONS_SYNCED: _registrations_synced,
     SEATS_DEMOTED: _seats_demoted,
+    SEATS_RESTORED: _seats_restored,
     SEAT_RELEASED: _seat_released,
     SEATS_FRONTED: _seats_fronted,
     ROUND_OPENED: _round_opened,

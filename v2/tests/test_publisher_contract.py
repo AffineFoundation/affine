@@ -167,7 +167,9 @@ def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_
         assert f"| `squat_min_wait_s` | {wait} |" in flat  # the table of section 11 keeps the value of the params
     assert publisher.duration(2.5 * 7201) == "18002.5 s" and publisher.duration(0) == "0 s"
     assert "a round takes it when it has room after the front seats and the normal seats that have a valid file" in flat
+    assert "When a valid file is present at the moment the validator picks the entries of a round, the seat leaves the back" in flat
     assert "A seat that v1 had moved to the back of its queue starts at the back here." in flat
+    assert "a valid file at selection clears the imported back flag" in flat
     assert "`demoted` = yes: the seat is at the back, unless `front` is also yes." in flat  # queue.zone
     assert "`position` counts every seat ahead of you, also a seat with no valid file" in flat and "`held` = yes: the seat takes no turn" in flat
     assert "A seat exists only while its registration is on chain." in flat  # queue.plan_sync
