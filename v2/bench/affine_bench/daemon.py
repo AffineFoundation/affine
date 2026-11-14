@@ -36,8 +36,8 @@ import fcntl, glob, json, os, shlex, subprocess, sys, time, traceback
 from sn120_v2.errors import InfraError
 from . import config as C, derive, registry as R
 from .node import Node
-from .fetch import fetch as fetch_weights
-from . import pod as P, publish, source
+from .fetch import fetch as fetch_weights, rebuild as rebuild_weights
+from . import chain, pod as P, publish, source
 
 ST = C.STATE; RES = ST + "/results"; PRIV = ST + "/private"; ROWS = C.ROWS
 for d in (ST, RES, PRIV, ROWS):
@@ -127,7 +127,7 @@ def waiting(rows, tell=lambda **k: None):
         if row_state(m["model_id"]).get("running") or pod_of(m["model_id"]).load():
             continue
         try:
-            name = source.absent(m)
+            name = chain.blocked(m)
         except InfraError as e:
             tell(event="store-check-failed", model=m["model_id"], error=str(e)[-200:])
             if m.get("source") is None:
@@ -198,7 +198,15 @@ class Row:
     def ensure_weights(self, m):
         if self.have_weights(m):
             return True
-        r = fetch_weights(m, self.node); self.log(event="fetch", status=r.get("status"), out=r.get("out", "")[-160:])
+        order = chain.order(m)  # None: the store holds the full files, and the node downloads them as before
+        if not order:
+            r = fetch_weights(m, self.node); self.log(event="fetch", status=r.get("status"), out=r.get("out", "")[-160:])
+            return self.have_weights(m)
+        if order["stalled"] and not self.S.get("upload_stalled"):  # the table says so while the row has its pod (view)
+            self.S["upload_stalled"] = dict(since=m.get("crowned_at"), at=now()); self.save()
+            self.log(event="alarm", what="checkpoint-upload-stalled", why=f"the checkpoint of this head is not whole {chain.UPLOAD_WAIT_S:.0f} seconds after the head was applied: the node rebuilds it")
+        self.log(event="rebuild-start", steps=order["steps"], start=order["start"][:12], limit_s=order["limit_s"], chain_ref=order["ref"], device=order["device"])
+        r = rebuild_weights(m, self.node, order); self.log(event="rebuild", status=r.get("status"), steps=order["steps"], out=r.get("out", "")[-300:])
         return self.have_weights(m)
 
     def launch(self, m, bids):
@@ -580,6 +588,8 @@ def view(rows, wait):
             v["alarms"].append(dict(what="release-refused", row=mid, since=s["release_refused"]["since"], tries=s["release_refused"]["tries"]))
         if (s.get("rent_failed") or {}).get("no_answer"):
             v["alarms"].append(dict(what="rent-no-answer", row=mid, since=s["rent_failed"]["at"]))
+        if rec and s.get("upload_stalled"):
+            v["alarms"].append(dict(what="checkpoint-upload-stalled", row=mid, since=s["upload_stalled"]["at"]))
         if rec or ph:
             last = (rj(pod_of(mid).record) or {}).get("last") or {}
             v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),

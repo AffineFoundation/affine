@@ -337,3 +337,37 @@ BENCH_V1_KING_SOURCE=<a prefix in the store of the service>
 The row runs with the profile of the kings, `qwen3.5-family-pp0` (presence penalty 0), as v1's own row of this king did.
 
 Not proven: that the store token of the service can read v1's part of the bucket, and that vLLM serves the checkpoint's files on a v2 bench node.
+
+## 13. A king without its full files (the head chain)
+
+The box can upload the full files of a head only for some kings. Such a head is a checkpoint. For each other king the store has only the LoRA of its fold (the small file set that a miner trained), the small files of its base, the sha256 of each folded file (in the head manifest), and the chain record `public/head_chain.json` (one step for each fold). The service cannot download such a king. The row's node makes the king's base itself: it downloads the newest checkpoint before the king and repeats each fold after it, with the rebuild tool of the chain code (`python -m sn120_v2.headfold rebuild`).
+
+This is off until `BENCH_CHAIN_REF` is set. Without it a king whose full files are not in the store waits, as before.
+
+Settings, each one optional, in the settings file (restart the unit after a change):
+
+```
+BENCH_CHAIN_REF=<the full git commit id, 40 hex digits, of the chain code that the node runs>
+BENCH_REBUILD_DEVICE=cpu
+BENCH_CHECKPOINT_GRACE_S=300
+BENCH_CHECKPOINT_WAIT_S=3600
+BENCH_REBUILD_MAX_STEPS=12
+```
+
+- `BENCH_CHAIN_REF`: the node makes a second checkout of the repository at `/data/bench/chain-repo` and runs the tool only when that checkout is at exactly this commit, with no changed file. A value that is not 40 hex digits starts no rebuild: the row waits, and `bench status` says why. The commit of the node's own code (`BENCH_REPO_REF`) does not change.
+- `BENCH_REBUILD_DEVICE`: where the node computes a fold. `cpu`, or `cuda:N` for GPU number N. The GPU path is not measured.
+- `BENCH_CHECKPOINT_GRACE_S`: a king younger than this (seconds after its head was applied) is not rebuilt. Reason: the box may still start a checkpoint upload for it. Not used when the step of the chain record has the field `checkpoint_planned`.
+- `BENCH_CHECKPOINT_WAIT_S`: a king with a checkpoint upload on its way waits this long (seconds after its head was applied). After it the row's node rebuilds the king, and the table has the alarm `checkpoint-upload-stalled` (with `row`, `since`) while the row has its node. The alarm means: look at the box, its upload did not end.
+- `BENCH_REBUILD_MAX_STEPS`: a king more folds than this after its checkpoint waits for a newer checkpoint.
+
+What the service does for a row:
+
+- **Fetch.** The store holds each base file of the king: the node downloads them, as before. This is true for every checkpoint king.
+- **Rebuild.** The chain record leads from a checkpoint to the king, and each file of that way is in the store. The log of the row has `rebuild-start` (with the count of steps) and `rebuild` (with the status).
+- **Wait.** Neither is true. The row has the status `waiting`; nothing is rented for it. `bench status` names the missing file and the reason after `no rebuild:`. Reasons: the chain record is not there, or does not name the head yet; the checkpoint of the head is in upload; the head is new; a LoRA or a checkpoint file is not in the store; a step has the kernel `torch-matmul-v1` (a fold of the box's `full` mode, which only a machine like the box can repeat; the row waits for a checkpoint after it).
+
+The node checks the files two times. The tool checks each folded file of each step against the chain record. Then the node's script checks each file of the king's base against the sha256 of the king's head manifest. Only then it writes the mark `.verified`. A row never runs on a base without that mark. A rebuild that fails, is refused, or is cut counts as a fail, as a failed download does; the next try goes on from the last whole step. The service runs the node's script only when it is, byte for byte, the script of the code on this host.
+
+Time limit of one rebuild on the node: 3600 seconds, and 900 seconds for each step. The time counts toward the life of the row's pod.
+
+Not proven: a rebuild on a rented node. The tests use a fake store and a fake node, and the node's script ran on real files with a stand-in tool. No step time, download time or GPU time is measured on a node. Until one measured run on a rented node is done, the box stays at a checkpoint for every king.
