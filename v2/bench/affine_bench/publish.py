@@ -1,8 +1,11 @@
 """Build benchmarks.json (aggregates only; long format) from BENCH_STATE/results/.
 
 Merge-only: a row that was published once is never dropped. Each row carries env_version / budget / profile so the
-protocol is clear. For the same (model, benchmark), the higher-protocol row is ordered last so a last-wins indexer
-shows it as latest; superseded rows remain in the file under results (and results_prior).
+protocol is clear. One result is a model, a benchmark, a version and a profile (result_key): a model can have results of
+one benchmark at two profiles, and both stay. For the same (model, benchmark), the row that the table shows is ordered last
+so a last-wins indexer shows it; the other rows remain in the file under results (and results_prior). The shown rows of one
+model are of one profile (shown_profiles), so a reader that takes the last row of each benchmark has no row of two profiles
+while one profile has a result of every benchmark that the model has.
 
 Never publishes per-task results. Informational only: nothing that decides a king or a weight reads this file."""
 import glob, hashlib, json, math, os, time
@@ -32,6 +35,32 @@ def _protocol_rank(env_version, budget=None):
     return int(budget or 0) // 1000
 
 
+def result_key(r):
+    """Identity for merge: one result is a model, a benchmark, a protocol version and a settings profile. A second result
+    of the same version at another profile is another result: both stay in the file. row_key, without the profile, stays
+    the key of what a row has run: a row with a result of that key at any profile does not run the benchmark again
+    (daemon.missing)."""
+    return row_key(r) + (r.get("profile") or "",)
+
+
+def shown_profiles(recs):
+    """model -> the profile whose results the table shows, for a model with results at more than one profile at its newest
+    protocol: the profile with results of the most benchmarks, and among equal ones the newest run. So a second run at
+    another profile is not shown before it has a result of every benchmark that the first has: until then, and after a
+    second run that stops halfway, the rows of the first stay the shown ones."""
+    top, count, newest = {}, {}, {}
+    for r in recs:
+        top[r.get("model_id")] = max(top.get(r.get("model_id"), 0), _protocol_rank(r.get("env_version"), r.get("budget")))
+    for r in recs:
+        if _protocol_rank(r.get("env_version"), r.get("budget")) == top[r.get("model_id")] and "+" not in str(r.get("env_version") or ""):
+            k = (r.get("model_id"), r.get("profile") or "")
+            count.setdefault(k, set()).add(r.get("benchmark_id")); newest[k] = max(newest.get(k, 0), r.get("run_at") or 0)
+    shown = {}
+    for (mid, profile) in sorted(count, key=lambda k: (len(count[k]), newest[k], k[1])):
+        shown[mid] = profile  # the last of the order wins
+    return shown
+
+
 def pooled(mid, b, results, full):
     """Pooled benchmark (e.g. AIME 22-26): mean over all problems of all parts, task-clustered SE; only when every part is in.
     Per-problem mean = correct / rollouts, so errored rollouts count as wrong; errors/complete say whether any were lost."""
@@ -51,14 +80,21 @@ def pooled(mid, b, results, full):
     m = len(means); s = sum(means) / m
     se = math.sqrt(sum((x - s) ** 2 for x in means) / (m - 1) / m)
     rs = [results[(mid, p)] for p in parts]
+    if len({_profile(r) for r in rs}) > 1:
+        return None  # a second run at another profile is at work: no value over parts of two profiles
     exp = sum(expected(r, p, full) for r, p in zip(rs, parts)); ns = sum(r["samples"] for r in rs)
     return dict(score=s, se=se, n=m, samples=ns, samples_expected=exp, errors=exp - ns, complete=exp == ns,
                 run_at=max(r.get("finished_at") or 0 for r in rs),
                 cap_rate=sum(r["cap_rate"] * r["samples"] for r in rs) / max(1, sum(r["samples"] for r in rs)),
                 env_version="+".join(r.get("bench_version", "") for r in rs),
                 budget=rs[0].get("budget") or (rs[0].get("sampling") or {}).get("max_tokens"),
-                profile=rs[0].get("profile") or (rs[0].get("sampling") or {}).get("profile"),
+                profile=_profile(rs[0]),
                 gpu="+".join(sorted({_gpu(r) or "?" for r in rs})))
+
+
+def _profile(r):
+    """The settings profile that a result file of the host ran with."""
+    return r.get("profile") or (r.get("sampling") or {}).get("profile")
 
 
 def _gpu(r):
@@ -84,7 +120,7 @@ def _row_from_disk(r, bid, b, full):
         score=r["score"], se=r["se"], n=r["tasks"], samples=r["samples"], samples_expected=exp,
         errors=exp - r["samples"], complete=exp == r["samples"], rollouts=r["rollouts"],
         cap_rate=r["cap_rate"], budget=budget,
-        profile=r.get("profile") or (r.get("sampling") or {}).get("profile"),
+        profile=_profile(r),
         mean_out_tokens=round(r["mean_out_tokens"]) if r.get("mean_out_tokens") is not None else None,
         run_at=r.get("finished_at"), wall_s=round(r.get("wall_seconds") or 0), gpu=_gpu(r),
     ) | {k: r[k] for k in DERIVED if r.get(k) is not None}
@@ -167,7 +203,7 @@ def publish(rows, S, max_fail=3):
         if not b:
             # keep unknown-benchmark prior rows only if still meaningful — skip
             continue
-        merged[row_key(r)] = r
+        merged[result_key(r)] = r
 
     recs = list(merged.values())
 
@@ -184,34 +220,28 @@ def publish(rows, S, max_fail=3):
             if p:
                 recs.append(dict(model_id=m["model_id"], model_kind=kinds.get(m["model_id"]), benchmark_id=b["id"], suite=b["suite"], rollouts=16, **p))
 
-    # Also keep prior pooled rows for models not recomputed (no disk parts)
+    # Also keep every prior pooled row that was not recomputed now (no disk parts, or parts of another version or profile)
     pooled_ids = {b["id"] for b in bs if b.get("pooled_from")}
-    have_pooled = {(r["model_id"], r["benchmark_id"]) for r in recs if r["benchmark_id"] in pooled_ids}
+    have_pooled = {result_key(r) for r in recs if r["benchmark_id"] in pooled_ids}
     for r in prior_results:
-        if r.get("benchmark_id") in pooled_ids and (r.get("model_id"), r.get("benchmark_id")) not in have_pooled:
+        if r.get("model_id") and r.get("benchmark_id") in pooled_ids and result_key(r) not in have_pooled:
             recs.append(r)
-            have_pooled.add((r["model_id"], r["benchmark_id"]))
+            have_pooled.add(result_key(r))
 
-    # Prefer higher protocol last so bench.js last-wins indexer shows latest
-    now_version = {b["id"]: R.bench_version(b) for b in bs if not b.get("pooled_from")}  # at one rank, the version of the settings of now is shown
+    # The shown row of a (model, benchmark) is ordered last, so a last-wins indexer shows it: the higher protocol; at one rank
+    # the profile that the table shows for the model, then the version of the settings of now.
+    now_version = {b["id"]: R.bench_version(b) for b in bs if not b.get("pooled_from")}
+    now_version |= {b["id"]: "+".join(now_version.get(p, "") for p in b["pooled_from"]) for b in bs if b.get("pooled_from")}
+    shown = shown_profiles(recs)
 
     def sort_key(r):
         return (r.get("model_id") or "", r.get("benchmark_id") or "", _protocol_rank(r.get("env_version"), r.get("budget")),
-                r.get("env_version") == now_version.get(r.get("benchmark_id")))
+                (r.get("profile") or "") == shown.get(r.get("model_id")), r.get("env_version") == now_version.get(r.get("benchmark_id")))
     recs = sorted(recs, key=sort_key)
 
-    # results_prior: for each (mid, bid) with multiple protocols, the non-preferred ones
-    best = {}
-    for r in recs:
-        if r.get("benchmark_id") in pooled_ids and "+" in str(r.get("env_version") or ""):
-            # pooled — skip prior split
-            continue
-        k = (r.get("model_id"), r.get("benchmark_id"))
-        cur = best.get(k)
-        if cur is None or _protocol_rank(r.get("env_version"), r.get("budget")) >= _protocol_rank(cur.get("env_version"), cur.get("budget")):
-            best[k] = r
-    results_prior = [r for r in recs if r.get("benchmark_id") not in pooled_ids and best.get((r.get("model_id"), r.get("benchmark_id"))) is not r
-                     and row_key(r) != row_key(best.get((r.get("model_id"), r.get("benchmark_id"))) or {})]
+    # results_prior: every row that is not the shown one of its (model, benchmark): another protocol, or another profile
+    last = {(r.get("model_id"), r.get("benchmark_id")): r for r in recs}
+    results_prior = [r for r in recs if last[(r.get("model_id"), r.get("benchmark_id"))] is not r]
 
     have = {r["model_id"] for r in recs}
     S = S or {}
@@ -232,7 +262,7 @@ def publish(rows, S, max_fail=3):
         # Model-level budget/profile = latest scored row's, else registry resolve
         scored = [r for r in recs if r["model_id"] == mid and r.get("budget") is not None]
         if scored:
-            latest = max(scored, key=lambda r: _protocol_rank(r.get("env_version"), r.get("budget")))
+            latest = max(scored, key=lambda r: (_protocol_rank(r.get("env_version"), r.get("budget")), (r.get("profile") or "") == shown.get(mid)))
             budget, profile = latest.get("budget"), latest.get("profile")
         else:
             st = R.resolve_settings(mid, m.get("kind"))
@@ -302,7 +332,14 @@ def publish(rows, S, max_fail=3):
               "with qwen3.5-family-pp0 (presence_penalty 0.0: the kings are not trained with a presence penalty); the launch model "
               "runs with qwen3.5-family (presence_penalty 1.5, its model card); the two differ in nothing else. A king row that says "
               "qwen3.5-family ran before this rule. "
-              "Where two protocols exist, the table shows the latest; results_prior holds superseded rows. "
+              "One result is a model, a benchmark, an env_version and a profile: a second result of the same benchmark and "
+              "version at another profile is another result, and both stay in results. "
+              "Where a model has more than one result of a benchmark (two protocols, or two profiles), the last of them in results "
+              "is the one that the table shows, and results_prior holds the others. Of two protocols it is the latest. Of two "
+              "profiles it is the profile that has results of the most benchmarks of that model, and of equal ones the newest run: "
+              "so a second run at another profile is shown when it has every benchmark of the first, not before, and "
+              "models[].profile names the shown profile. The pooled AIME value is over parts of one profile only. A benchmark that a "
+              "model has at the other profile only is shown at that profile; each result names its own profile. "
               "Score = mean over problems of the per-problem mean over rollouts (an errored rollout counts as wrong); "
               "se = task-clustered standard error; complete=false marks a row that lost samples. "
               "Aggregates only. Informational; never used for promotions or weights.",
