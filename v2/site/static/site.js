@@ -200,7 +200,14 @@
     none: ['no run yet', 'private', 'No run yet: the benchmark file does not name this model.', 'no run yet'],
   };
   RUN.evaluating = RUN.running;  // the word of the benchmark file, for a data file whose builder left it as it is
+  // The state of the machine of a row, where it says more than the state of the run: the run waits for the machine, or got none.
+  const POD = {
+    renting: ['renting', 'wait', 'The benchmark service rents a machine for the run of this model.', 'renting'],
+    setup: ['setup', 'wait', 'The machine for the run of this model is in setup: the run did not start.', 'setup'],
+    'rent-failed': ['failed', 'dn', 'The rent of a machine for the run of this model failed: the run did not start.', 'rent failed'],
+  };
   const NO_FILE = 'No run yet: no benchmark file is published.';
+  const V1_KING = 'A king of v1, scored by the benchmark service of v2. It won no round of v2, so it has no round and no head here.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
   const SIZE = {
@@ -217,45 +224,63 @@
   function bench(b) {
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
-    // the state of a row that is not scored. With no benchmark file at all, the tooltip of "no run yet" says that
-    const run = r => r.status === 'none' && !b.updated_at && !V1 ? [...RUN.none.slice(0, 2), NO_FILE, RUN.none[3]] : RUN[r.status];
+    // The state of a row that is not scored. With no benchmark file at all, the tooltip of "no run yet" says that. A state word
+    // that this page does not know is shown as it is.
+    const since = r => r.pod.since ? ` Since ${utc(r.pod.since)}.` : '';
+    const run = r => r.status === 'scored' || !r.status ? undefined
+      : r.pod && POD[r.pod.state] ? POD[r.pod.state].map((x, i) => i === 2 ? x + since(r) : x)
+      : r.status === 'none' && !b.updated_at && !V1 ? [...RUN.none.slice(0, 2), NO_FILE, RUN.none[3]]
+      : RUN[r.status] || [r.status, 'wait', `The benchmark file gives this model the state "${r.status}".`, 'no score'];
     const every = b.rows.filter(r => r.kind === 'king'), kings = V1 ? every.filter(r => Object.keys(r.cells).length) : every;
-    const genesis = b.rows.filter(r => r.kind === 'genesis');
-    const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (y.avg ?? -1) - (x.avg ?? -1));
+    const genesis = b.rows.filter(r => r.kind === 'genesis'), old = b.rows.filter(r => r.kind === 'v1-king');  // old: a king of v1 that the benchmark service of v2 scores
+    const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (y.avg ?? -1) - (x.avg ?? -1));
     // The rule of the v1 page: a reference model is in view when, in the average or in one counted benchmark, no reference
     // model of its size or smaller has a higher score. A model with no size in the table, or with no score, is not in view.
     const counted = cols.filter(c => c.in_avg), rated = refs.filter(r => size(r) != null && counted.some(c => val(r, c) != null));
     const leads = (r, c) => val(r, c) != null && !rated.some(o => o !== r && size(o) <= size(r) && val(o, c) > val(r, c));
     const lead = rated.filter(r => counted.some(c => leads(r, c))), pinned = allRefs || !lead.length ? refs : lead;
-    const shown = [...kings, ...refs, ...genesis], span = {};
+    const shown = [...kings, ...refs, ...genesis, ...old], span = {};
     for (const c of cols.filter(c => c.in_avg)) { const v = shown.map(r => val(r, c)).filter(x => x != null); if (v.length) span[c.id] = [Math.min(...v), Math.max(...v)]; }
     // The samples for each problem of a benchmark, from the rows on the page: a row of a king or of the genesis head names the count of
     // the run that its score is from, and a reference model has the count of its v1 run. A benchmark where the rows on the page do not
-    // all have one count gets one sentence in the note and in the tooltip of its column head: who has which count.
+    // all have one count gets one sentence in the note and in the tooltip of its column head: who has which count. A value that was
+    // computed from a longer run of the same model gets one more sentence: from how many of the samples, and where the full score is.
     const samples = n => `${n} sample${n === 1 ? '' : 's'}`, list = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0];
+    const longer = c => b.columns.find(o => o.full_of === c.id), first = r => r.kind === 'v1-king' ? 'the v1 king' : String(r.label).split(' ')[0];
+    const from = (one, all) => `${one.rollouts || 'a part'} of the ${all && all.rollouts ? all.rollouts + ' ' : ''}samples of each problem`;
     const differ = c => {
-      const sets = [[kings, 'the kings'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head'], [pinned, 'the reference models']]
+      if (c.full_of) return '';
+      const sets = [[kings, 'the kings'], [old, old.length > 1 ? 'the v1 kings' : 'the v1 king'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head'], [pinned, 'the reference models']]
         .map(([rows, name]) => [rows.map(r => r.cells[c.id] && r.cells[c.id].rollouts).filter(Boolean), name]);
-      const counts = [...new Set(sets.flatMap(([n]) => n))].sort((x, y) => x - y);
+      const counts = [...new Set(sets.flatMap(([n]) => n))].sort((x, y) => x - y), each = c.problems ? `each of the ${c.problems} problems` : 'each problem';
       const who = k => list(sets.map(([n, name]) => [n.filter(x => x === k).length, n.length, name]).filter(([m]) => m).map(([m, all, name]) => m < all ? `${m} of ${name}` : name));
-      return counts.length > 1 ? `${c.label}: ` + counts.map((k, i) => `${samples(k)}${i ? '' : ' for each problem'} for ${who(k)}`).join(', ') + '.' : '';
+      const wide = longer(c), made = [...kings, ...pinned, ...genesis, ...old].filter(r => r.cells[c.id] && r.cells[c.id].derived), many = made.length > 1;
+      const how = r => from(r.cells[c.id], wide && r.cells[wide.id]), one = made.every(r => how(r) === how(made[0]));
+      const all = wide && made.every(r => r.cells[wide.id]) && made[0].cells[wide.id].rollouts;
+      const parts = [
+        counts.length > 1 ? counts.map((k, i) => `${samples(k)}${i ? '' : ' for ' + each} for ${who(k)}`).join(', ') + '.' : '',
+        made.length ? `The value${many ? 's' : ''} of ${list(made.map(first))} ${many ? 'were' : 'was'} computed from ${one ? how(made[0]) : 'a part of the samples of each problem'} of ${many ? 'their full runs' : 'its full run'}`
+          + (wide && made.every(r => r.cells[wide.id]) ? `; the column "${wide.head}" beside it has the score of ${one && all ? 'all ' + all : many ? 'the full runs' : 'the full run'}.` : '.') : '',
+      ].filter(Boolean);
+      return parts.length ? `${c.label}: ${parts.join(' ')}` : '';
     };
     const cell = (r, c) => {
       const x = val(r, c), one = r.cells[c.id], s = span[c.id], avg = c === AVG ? ' avg' : '';
-      if (x == null) {  // no score: the state of the run in a word ("no run yet" is too wide for Avg); a scored row can lack one benchmark, and then it has no average
-        const [word, text] = run(r) ? [c === AVG && r.status === 'none' ? 'not run' : run(r)[3], run(r)[2]] : c === AVG ? ['none', 'No average: a row has one only when it has every counted benchmark.'] : ['no score', `This model has no score in ${c.label}.`];
+      if (x == null && c.full_of) return '<td class="num na" title="No full run of this model."></td>';
+      if (x == null) {  // no score: the state of the run in a word (a word of more than 7 letters is too wide for Avg); a scored row can lack one benchmark, and then it has no average
+        const [word, text] = run(r) ? [c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3], run(r)[2]] : c === AVG ? ['none', 'No average: a row has one only when it has every counted benchmark.'] : ['no score', `This model has no score in ${c.label}.`];
         return `<td class="num na${avg}" title="${esc(text)}">${esc(word)}</td>`;
       }
       const f = s && s[1] > s[0] ? (x - s[0]) / (s[1] - s[0]) : 1, top = s && Math.round(1000 * x) === Math.round(1000 * s[1]);
-      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') : 'Mean of the counted benchmarks.');
+      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') + (one.derived ? ` · computed from ${from(one, longer(c) && r.cells[longer(c).id])} of the full run` : '') : 'Mean of the counted benchmarks.');
       return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
         + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
     };
     const name = r => {
-      const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : [r.label];
-      return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (r.status === 'scored' || !r.status ? '' : pill(...(run(r) || [r.status, 'wait', '']).slice(0, 3))) + '</span>';
+      const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : r.kind === 'v1-king' && r.uid != null ? [r.label, 'UID ' + r.uid] : [r.label];
+      return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>';
     };
-    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.head && 'Head ' + r.head, run(r) && run(r)[2], r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
+    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
@@ -263,9 +288,9 @@
     t.style.minWidth = 264 + 88 * b.columns.length + 'px';
     t.tHead.innerHTML = (suites.length > 1 ? `<tr class="suites"><th></th><th class="avg"></th>${suites.map(x => `<th class="suite" colspan="${b.columns.filter(c => c.suite === x).length}">${esc(x)}</th>`).join('')}</tr>` : '')
       + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks, in percent. A row has it only when it has every counted benchmark.">Avg</th>`
-      + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}${esc(differ(c) && ' ' + differ(c).slice(c.label.length + 2))}">${esc(c.label)}</th>`).join('') + '</tr>';
+      + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}${c.full_of ? ' The score of the full run, for a model that has one.' : ''}${esc(differ(c) && ' ' + differ(c).slice(c.label.length + 2))}">${esc(c.head || c.label)}</th>`).join('') + '</tr>';
     t.tBodies[0].innerHTML = kings.map(row).join('') || `<tr><td colspan="${cols.length}" class="empty">${V1 ? 'No king was scored.' : 'No king yet: no round has applied a winner.'}</td></tr>`;
-    t.tFoot.innerHTML = pinned.map(row).join('') + genesis.map(row).join('');
+    t.tFoot.innerHTML = pinned.map(row).join('') + genesis.map(row).join('') + old.map(row).join('');
     let h = t.tHead.offsetHeight + t.tFoot.offsetHeight + 2 + (box.scrollWidth > box.clientWidth ? 12 : 0);
     for (const r of [...t.tBodies[0].rows].slice(0, 5)) h += r.offsetHeight;
     box.style.height = h + 'px';
@@ -273,15 +298,16 @@
     const scored = every.filter(r => r.status === 'scored').length, more = document.getElementById('refs');
     more.hidden = !lead.length || lead.length === refs.length;
     if (more.previousSibling?.own !== 1) more.before(Object.assign(document.createTextNode(''), { own: 1 }));
-    more.previousSibling.data = b.columns.map(c => differ(c) && differ(c) + ' ').join('');
+    more.previousSibling.data = (old.length ? `v1 king: ${V1_KING[0].toLowerCase() + V1_KING.slice(1)} ` : '') + b.columns.map(c => differ(c) && differ(c) + ' ').join('');
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
       : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');
 
     const past = [...(V1 ? [] : genesis), ...every].filter(r => r.at != null).sort((x, y) => x.at - y.at), cards = document.querySelector('#bench .sparks');
+    const charted = cols.filter(c => !c.full_of);  // the full run of a benchmark has its column in the table and no card
     cards.hidden = !b.columns.length;
-    cards.innerHTML = cols.map(c => `<div class="spark"><div class="section-heading"><h3 title="${esc(c.label)}: the score of ${V1 ? '' : 'the genesis head and of '}each scored king, by the time it was applied">${esc(c.label)}</h3><span class="reading">${b.updated_at || V1 ? 'none' : 'no run yet'}</span></div><div class="chart"></div></div>`).join('');
-    cols.forEach((c, n) => {
+    cards.innerHTML = charted.map(c => `<div class="spark"><div class="section-heading"><h3 title="${esc(c.label)}: the score of ${V1 ? '' : 'the genesis head and of '}each scored king, by the time it was applied">${esc(c.label)}</h3><span class="reading">${b.updated_at || V1 ? 'none' : 'no run yet'}</span></div><div class="chart"></div></div>`).join('');
+    charted.forEach((c, n) => {
       const pts = past.filter(r => val(r, c) != null), card = cards.children[n], t0 = pts.length && pts[0].at, t1 = pts.length && pts[pts.length - 1].at;
       if (pts.length) card.querySelector('.reading').textContent = share(val(pts[pts.length - 1], c));
       chart(card.querySelector('.chart'), {

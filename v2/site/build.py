@@ -58,8 +58,10 @@ ON_SITE: dict[str, bool] = {}  # per http(s) location: is the file there. A head
 FLAGS = ("front", "demoted", "held")
 # The state of the benchmark run of one row. The benchmark file of v1 says "evaluating" for a run in progress.
 SCORED, QUEUED, RUNNING, FAILED, NO_RUN = "scored", "queued", "running", "failed", "none"
+FULL = ":full"  # the end of the column id of a benchmark's full run: the score of a longer run of the same model
 RUN_STATE = {"scored": SCORED, "done": SCORED, "queued": QUEUED, "running": RUNNING, "evaluating": RUNNING, "failed": FAILED}
 KING, GENESIS = "king", "genesis"
+V1_KING = "v1-king"  # a row of the benchmark file: a king of v1 that the benchmark service of v2 scores. It won no round of v2
 
 
 def fetch(location: str) -> bytes:
@@ -201,6 +203,11 @@ def whole(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
+def number(value: Any) -> bool:
+    """True when ``value`` is a number. True and False are not numbers here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None) -> dict[str, Any]:
     """The benchmark table of the v1 site: one row for every king, the reference models, and the genesis head.
 
@@ -220,7 +227,17 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
 
     ``rollouts`` of a cell is its count of samples for each problem. A result of ``bench`` names it. A cell of ``kept``
     has only its sample count, so its ``rollouts`` is that count divided by the problem count of the same benchmark in
-    ``bench``, and it is None when ``bench`` gives no single problem count or the division leaves a rest.
+    ``bench``, and it is None when ``bench`` gives no single problem count or the division leaves a rest. A column
+    names that single problem count as ``problems``.
+
+    A result with ``derived_from`` was computed from a longer run of the same model, and its cell is ``derived``. With
+    ``score_full`` it also gives the score of that longer run: one more cell, under the id of the benchmark with
+    ``FULL`` at its end. The column of these cells stands directly after its benchmark, is never in the average, and
+    is there only when a row has such a cell; ``head`` is its short name for the head of the table. ``pod`` of a row
+    is the state of its machine and the time of that state.
+
+    A row of the kind ``V1_KING`` has the label "v1 king" and its ``uid``, and no round, no head and no time: these
+    are of v2, and it won no round of v2. It is not a king here and not a reference model.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
     enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
@@ -228,16 +245,24 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
                for b in enabled or (kept or {}).get("columns", ())]
     counted = [b["id"] for b in columns if b["in_avg"]]
     cells: dict[str, dict[str, Any]] = {}
+    problems: dict[str, set[int | None]] = {}  # per benchmark: the problem count of each result, None when it does not say
     for result in bench["results"]:  # the file orders the newest protocol of one (model, benchmark) last
-        cells.setdefault(result["model_id"], {})[result["benchmark_id"]] = {
+        bench_id, each, expected = result["benchmark_id"], whole(result.get("rollouts")), whole(result.get("samples_expected"))
+        count = expected // each if each and expected and expected % each == 0 else whole(result.get("n"))
+        problems.setdefault(bench_id, set()).add(count)
+        scores = cells.setdefault(result["model_id"], {})
+        scores[bench_id] = {
             "score": result["score"], "se": result.get("se"), "partial": result.get("complete") is False,
             "samples": result.get("samples"), "expected": result.get("samples_expected"), "cap_rate": result.get("cap_rate"),
-            "rollouts": whole(result.get("rollouts")),
+            "rollouts": each, "derived": bool(result.get("derived_from")),
         }
-    problems: dict[str, set[int | None]] = {}  # per benchmark: the problem count of each result, None when it does not say
-    for result in bench["results"]:
-        each, expected = whole(result.get("rollouts")), whole(result.get("samples_expected"))
-        problems.setdefault(result["benchmark_id"], set()).add(expected // each if each and expected and expected % each == 0 else None)
+        scores.pop(bench_id + FULL, None)
+        if number(result.get("score_full")):
+            total = whole(result.get("samples_full"))
+            scores[bench_id + FULL] = {
+                "score": result["score_full"], "se": None, "partial": False, "samples": total, "expected": total, "cap_rate": None,
+                "rollouts": total // count if total and count and total % count == 0 else None,
+            }
 
     def per_problem(name: str, cell: dict[str, Any]) -> int | None:
         if whole(cell.get("rollouts")):
@@ -250,6 +275,8 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             label = f"{round_id} {head[:8]}"
         if kind == GENESIS and label.lower().startswith(GENESIS):  # the service writes "genesis <model name>"
             label = "Genesis" + label[len(GENESIS):]
+        if kind == V1_KING:
+            label, round_id, head, at = "v1 king", None, None, None
         full = bool(counted) and all(name in scores for name in counted)
         return {
             "label": label, "kind": kind, "status": status, "round_id": round_id, "head": head, "at": at,
@@ -257,10 +284,17 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             "avg_partial": any(scores[name]["partial"] for name in counted if name in scores), "cells": scores,
         }
 
+    def more(model: dict[str, Any]) -> dict[str, Any]:  # the machine of a row, and the UID of a king of v1
+        pod, uid = model.get("pod"), model.get("uid")
+        found = {"uid": uid} if model.get("kind") == V1_KING and number(uid) else {}
+        if isinstance(pod, dict) and isinstance(pod.get("state"), str):
+            found["pod"] = {"state": pod["state"], "since": pod["since"] if number(pod.get("since")) else None}
+        return found
+
     rows = [row(
         model.get("label") or model["model_id"], model.get("kind"), RUN_STATE.get(model.get("status"), model.get("status") or NO_RUN),
         model.get("round_id"), model.get("head_version_id"), model.get("crowned_at"), cells.get(model["model_id"], {}),
-    ) for model in bench["models"]]
+    ) | more(model) for model in bench["models"]]
 
     by_round: dict[str, dict[str, Any]] = {}  # the head that is served for a benchmark: the folded head of the round
     for head in heads:
@@ -284,6 +318,12 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             scores = {name: cell | {"rollouts": per_problem(name, cell)} for name, cell in old["cells"].items()}
             rows.append(row(old["label"], old.get("kind"), state, None, None, None, scores) | {"v1": True})
     rows.sort(key=lambda made: (order.get(made["kind"], 1), -(made["at"] or 0) if made["kind"] == KING else -(made["avg"] or 0)))
+    longer = {name for made in rows for name in made["cells"] if name.endswith(FULL)}
+    columns = [column | {"problems": next(iter(problems[column["id"]])) if len(problems.get(column["id"], ())) == 1 else None}
+               for column in columns]
+    columns = [column for base in columns for column in (base, {
+        "id": base["id"] + FULL, "label": f"{base['label']}, full run", "head": "full run", "in_avg": False, "suite": base["suite"], "full_of": base["id"],
+    }) if column is base or column["id"] in longer]
     return {"updated_at": bench["updated_at"], "rows": rows, "columns": columns}
 
 

@@ -226,7 +226,7 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     assert "'No run yet: no benchmark file is published.'" in script and "!b.updated_at && !V1" in table
     assert 'the benchmark file says "evaluating"' in script and "The benchmark file lists this model as queued" in script
     assert "'No run yet: the benchmark file does not name this model.'" in script
-    assert "c === AVG && r.status === 'none' ? 'not run' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
+    assert "c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
     assert "'no benchmark run yet'" in table and "'No run yet: no benchmark file is published.'" in table
     assert not re.search(r"'(queued|running|failed)'", table)  # the page gives a row no state of its own
     assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: a row has one only when it has every counted benchmark.'" in table
@@ -426,6 +426,40 @@ def test_a_cell_has_its_samples_for_each_problem_and_a_kept_cell_gets_the_count_
     assert counts(before) == {"r000001 f1f1f1f1": {"ax": 2}, "Ref-A": {"ax": 16, "b1": None}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 16}}
     assert counts(before + [sampled("g", "ax", 2, 206)])["Genesis M"] == {"ax": 2}
     assert counts([])["Ref-A"] == {"ax": None, "b1": None} and json.dumps(kept) == frozen  # the kept table is not changed
+
+
+def test_a_full_run_has_its_own_column_and_a_row_has_its_machine_and_the_v1_king_has_no_round():
+    heads = [dict(version_id="g" * 64, round_id="genesis", folded=True, applied_at=10.0), dict(version_id="f1" * 32, round_id="r000001", folded=True, applied_at=20.0)]
+    columns = [dict(id="ax", label="ArXivMath", suite="math", enabled=True, in_avg=False, order=1), dict(id="b1", label="B1", suite="math", enabled=True, order=2)]
+    pod = dict(name="affine-v2-bench-king-1", gpu="8xH100", usd_h=23.2, state="renting", since=30)
+    models = [
+        dict(model_id="king-1", label="one", kind="king", round_id="r000001", head_version_id="f1" * 32, crowned_at=20.0, status="evaluating", pod=pod),
+        dict(model_id="old", label="v1 king e1211", kind="v1-king", round_id="e1211", head_version_id="c" * 64, crowned_at=5.0, uid=920, status="queued", pod="none"),
+        dict(model_id="g", label="genesis M", kind="genesis", status="scored", pod=pod | {"state": "released", "since": "then"}),
+    ]
+    short = result("king-1", "ax", 0.5) | {"rollouts": 2, "samples": 206, "samples_expected": 206, "n": 103}
+
+    def made(results: list) -> dict:
+        return bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads)
+
+    plain = made([short, result("old", "b1", 0.4)])
+    assert [(column["id"], column["problems"]) for column in plain["columns"]] == [("ax", 103), ("b1", None)]
+    king, old, genesis = plain["rows"]
+    assert king["pod"] == {"state": "renting", "since": 30} and genesis["pod"] == {"state": "released", "since": None} and "uid" not in king
+    assert (old["label"], old["kind"], old["uid"], old["round_id"], old["head"], old["at"]) == ("v1 king", "v1-king", 920, None, None, None) and "pod" not in old
+    assert king["cells"]["ax"]["derived"] is False and list(king["cells"]) == ["ax"]
+
+    # the value of the king was computed from its run of 16 samples for each problem, and that run has its own score
+    full = made([short | {"derived_from": "ax/v1", "score_full": 0.25, "samples_full": 1648}])
+    assert [(column["id"], column["label"], column.get("head"), column["in_avg"], column.get("full_of")) for column in full["columns"]] == [
+        ("ax", "ArXivMath", None, False, None), ("ax:full", "ArXivMath, full run", "full run", False, "ax"), ("b1", "B1", None, True, None)]
+    cells = full["rows"][0]["cells"]
+    assert cells["ax"]["derived"] is True and (cells["ax"]["score"], cells["ax"]["rollouts"]) == (0.5, 2)
+    assert (cells["ax:full"]["score"], cells["ax:full"]["samples"], cells["ax:full"]["rollouts"]) == (0.25, 1648, 16)
+    # a derived value with no score of the full run, and a later result of the same model with none: no column
+    for results in ([short | {"derived_from": "ax/v1"}], [short | {"score_full": 0.25, "samples_full": 1648}, short]):
+        assert [column["id"] for column in made(results)["columns"]] == ["ax", "b1"]
+
 
 
 def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_file(tmp_path):
