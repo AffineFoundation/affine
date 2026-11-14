@@ -1073,7 +1073,7 @@ The command has two guards. It reads the registrations two times, at two blocks,
 
    Check before step 2:
 
-   - The first line says `(1000 registrations)`: the number of registrations is the size of the subnet, and SN120 has 1000. This is the right number. A much smaller number is the sign of a read that is not complete or of another subnet: do not go on.
+   - The first line says `(1000 registrations)`: the number of registrations is the size of the subnet, and SN120 has 1000. This is the right number. Another number means another subnet or another network: do not go on, and check `SN120_V2_CHAIN_NETWORK`. A read that is not complete cannot give it: such a read is refused before the list, with `partial chain read at block B: ...`.
    - The number after `the queue of` is `"queue"` of `status`: the seats that wait. It is not the size of the subnet.
    - The first `grep` line prints the number of `remove N seats`. The second prints `0`.
    - The seats in the list are really gone from the chain. Check a few UIDs in a chain explorer: the UID now has another hotkey or a later registration block.
