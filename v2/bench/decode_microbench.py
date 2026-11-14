@@ -54,6 +54,7 @@ N_ADAPTERS = 5  # r000002 had 5 LoRAs
 STREAMS = 20
 CONTEXT_TOKENS = 34000  # the prompt of each stream; the task asks for a context above 32,000
 DECODE_TOKENS = 512
+REQUEST_TIMEOUT_S = 3600  # one request; the prompt passes of many streams with a long context run one after another
 SEED = 120
 WORDS = (
     "time year people way day man thing woman life child world school state family student group country problem hand part place "
@@ -278,18 +279,18 @@ def steps_counter(port: int) -> float | None:
         conn.close()
 
 
-def measure_target(port: int, models: list[str], words: int, params: Params, streams: int = STREAMS, decode_tokens: int = DECODE_TOKENS) -> dict[str, Any]:
+def measure_target(port: int, models: list[str], words: int, params: Params, streams: int = STREAMS, decode_tokens: int = DECODE_TOKENS, timeout_s: float = REQUEST_TIMEOUT_S) -> dict[str, Any]:
     """One stream alone (two times), then ``streams`` streams side by side. Stream ``i`` uses ``models[i % len(models)]``."""
     model_of = [models[index % len(models)] for index in range(streams)]
     with ThreadPoolExecutor(streams) as pool:  # the prompt pass, kept by the prefix cache, so all streams decode at the same time later
-        warm = list(pool.map(lambda index: post_json(port, "/v1/chat/completions", request_body(model_of[index], index, words, params, 1), 900.0), range(streams)))
+        warm = list(pool.map(lambda index: post_json(port, "/v1/chat/completions", request_body(model_of[index], index, words, params, 1), timeout_s), range(streams)))
     prompt_tokens = [int((reply.get("usage") or {}).get("prompt_tokens") or 0) for reply in warm]
     body = request_body(model_of[0], 0, words, params, decode_tokens)
-    alone = [stream_chat(port, body), stream_chat(port, body)]
+    alone = [stream_chat(port, body, timeout_s), stream_chat(port, body, timeout_s)]
     for many_tokens in (decode_tokens, 8 * decode_tokens):
         steps_before, wall = steps_counter(port), time.monotonic()
         with ThreadPoolExecutor(streams) as pool:
-            many = list(pool.map(lambda index: stream_chat(port, request_body(model_of[index], index, words, params, many_tokens)), range(streams)))
+            many = list(pool.map(lambda index: stream_chat(port, request_body(model_of[index], index, words, params, many_tokens), timeout_s), range(streams)))
         wall, steps_after = time.monotonic() - wall, steps_counter(port)
         start = max((result["events"][0][0] for result in many if result["events"]), default=0.0)
         end = min((result["events"][-1][0] for result in many if result["events"]), default=0.0)
@@ -363,7 +364,8 @@ def worker(args: argparse.Namespace) -> int:
         argv = [sys.executable, *config_argv(name, args.head, args.port, params)[1:]]
         out["flags"] = [flag for flag in argv[argv.index("--port") + 2 :]]
         started = time.monotonic()
-        server = Child(argv, server_env(args.gpu, work), log_path)
+        # vLLM 0.32.0 makes the route /v1/load_lora_adapter only with this variable. An older checkout of the box code does not set it.
+        server = Child(argv, server_env(args.gpu, work) | {"VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"}, log_path)
         (temp / f"{name}.pid").write_text(str(server.proc.pid))
         while True:
             try:
@@ -400,7 +402,7 @@ def worker(args: argparse.Namespace) -> int:
             out["phases"][phase] = {}
             for target, models in targets.items():
                 try:
-                    out["phases"][phase][target] = measure_target(args.port, models, words, params, args.streams, args.decode_tokens)
+                    out["phases"][phase][target] = measure_target(args.port, models, words, params, args.streams, args.decode_tokens, args.request_timeout_s)
                 except Exception as exc:  # noqa: BLE001 - one failed target must not stop the others
                     out["phases"][phase][target] = {"error": error_line(f"{type(exc).__name__}: {exc}", args.head)}
                 if not server.alive():
@@ -445,7 +447,7 @@ def cell(value: Any) -> str:
 
 
 def table(results: dict[str, dict[str, Any]], compare: dict[str, Any]) -> str:
-    rows = [("config", "phase", "streams on", "1 alone", "1 of 20", "sum of 20", "window s", "ctx", "twice", "in 20", "vs base")]
+    rows = [("config", "phase", "streams on", "1 alone", "1 of N", "sum of N", "window s", "ctx", "twice", "in N", "vs base")]
     failed = [f"{name}: FAILED: {result.get('error')}" for name, result in results.items() if not result.get("ok")]
     for name, result in results.items():
         for phase, targets in result["phases"].items():
@@ -469,6 +471,7 @@ def main() -> int:
     parser.add_argument("--context-tokens", type=int, default=CONTEXT_TOKENS)
     parser.add_argument("--decode-tokens", type=int, default=DECODE_TOKENS)
     parser.add_argument("--start-timeout-s", type=int, default=900)
+    parser.add_argument("--request-timeout-s", type=int, default=REQUEST_TIMEOUT_S, help="time limit of one request, in seconds")
     parser.add_argument("--first-port", type=int, default=8300)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     parser.add_argument("--temp", help=argparse.SUPPRESS)
@@ -525,7 +528,7 @@ def main() -> int:
             children = []
             for at, name in enumerate(wave):
                 command = [sys.executable, str(Path(__file__).resolve()), "--worker", name, "--temp", str(temp), "--head", str(head), "--gpu", str(free[at]), "--port", str(args.first_port + at)]
-                command += ["--streams", str(args.streams), "--context-tokens", str(args.context_tokens), "--decode-tokens", str(args.decode_tokens), "--start-timeout-s", str(args.start_timeout_s)]
+                command += ["--streams", str(args.streams), "--context-tokens", str(args.context_tokens), "--decode-tokens", str(args.decode_tokens), "--start-timeout-s", str(args.start_timeout_s), "--request-timeout-s", str(args.request_timeout_s)]
                 children.append(subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=open(temp / "logs" / f"{name}.worker.log", "ab")))
             pending = dict(zip(wave, children))
             while pending:
@@ -576,7 +579,7 @@ def main() -> int:
         "proves": {name: CONFIGS[name][1] for name in names}, "same_as_base": compare, "configs": results,
     }
     (temp / "result.json").write_text(json.dumps(report, indent=1))
-    print("\ntokens per second after the prompt pass; 'window s' = seconds in which all 20 streams decode (below 2: the 20-stream speeds are not clean);\n'twice' = the same request alone two times; 'in 20' = alone against among 20; 'vs base' = against the base with 5 adapters")
+    print(f"\ntokens per second after the prompt pass; N = {args.streams} streams; 'window s' = seconds in which all N streams decode (below 2: the N-stream speeds are not clean);\n'twice' = the same request alone two times; 'in N' = alone against among N; 'vs base' = against the base with 5 adapters")
     print(table(results, compare))
     print(f"\nJSON: {temp / 'result.json'}   server logs: {temp / 'logs'}   (paste the table and the JSON file)", flush=True)
     return 0 if results and all(result["ok"] for result in results.values()) else 1
