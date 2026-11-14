@@ -639,6 +639,10 @@ def last_folded(state: State) -> HeadVersion:
     return next(head for head in reversed(state.heads) if head.folded)
 
 
+class BadLinks(VerifyError):
+    """A file in the links directory of a checkpoint does not hash to the record of the chain. Nothing of it is sent."""
+
+
 class HeadKeeper:
     """The box's own copy of the head in ``chain`` mode.
 
@@ -648,6 +652,12 @@ class HeadKeeper:
     ``<work_dir>/checkpoint/<version_id>/`` (so the next round's cleanup
     cannot remove them), then the upload in a thread. The marker is written
     last, after each file in the store was read back and hashed.
+
+    A linked file is hashed before it goes to its public key. The links can
+    be older than the proof of the head: the order ``overlap`` makes them
+    before the second sha256 of a fold ended, and they stay on the disk when
+    ``run`` stops. Links with a bad file are removed. The next pass makes
+    them again from the cache, one time for each head in one process.
     """
 
     def __init__(
@@ -669,6 +679,8 @@ class HeadKeeper:
         self._working = False
         self._thread: threading.Thread | None = None
         self._settled, self._problem = "", ("", "")
+        self._bad: set[str] = set()  # heads whose links held a bad file in this process
+        self._again: set[str] = set()  # of those, the heads that the next pass links again
 
     def _proof(self, head: HeadVersion) -> None:
         self.resident.root.mkdir(parents=True, exist_ok=True)
@@ -737,13 +749,19 @@ class HeadKeeper:
             except KeyError:
                 there = False
             if not there:
+                if file_sha256(path) != sha:
+                    raise BadLinks(f"{kind}/{name}")
                 self.store.put_file(key, path)
                 if self.store.sha256(key) != sha:
                     raise InfraError(f"the stored copy of {key} differs from the file of the fold")
             return kind, name, self.store.size(key)
 
-        with ThreadPoolExecutor(UPLOADS) as pool:
-            sizes = list(pool.map(one, items))
+        try:
+            with ThreadPoolExecutor(UPLOADS) as pool:
+                sizes = list(pool.map(one, items))
+        except BadLinks as exc:
+            shutil.rmtree(root, ignore_errors=True)
+            raise BadLinks(f"the linked files of head {head.version_id[:12]} do not hash to the record of the chain ({exc}): the file is not sent and the links are removed") from None
         base_sizes, master_sizes = ({name: size for kind, name, size in sizes if kind == wanted} for wanted in (BASE, MASTER))
         key = layout.head_checkpoint(head.version_id)
         data = (json.dumps(marker(manifest, base_sizes, master_sizes), indent=1, sort_keys=True) + "\n").encode("utf-8")
@@ -760,10 +778,14 @@ class HeadKeeper:
         ``run`` calls it after each pass of its loop, so an upload that stopped starts again there.
         """
         head = last_folded(state).version_id
+        with self._lock:
+            again = head in self._again
         try:
-            if head != self._settled and self.due(state):
+            if (again or head != self._settled) and self.due(state):
                 self.link(state.manifests[head])
             self._settled = head  # the answer for this head stays: the next pass does not read the store for it
+            with self._lock:
+                self._again.discard(head)
         except V2Error as exc:
             if self._problem != (head, type(exc).__name__):  # one line for a problem that stays, not one for each pass
                 say(f"checkpoint: not started: {type(exc).__name__}: {exc}")
@@ -794,10 +816,22 @@ class HeadKeeper:
                     self._working = False
                     return
                 version_id, manifest = next(iter(self._jobs.items()))
+                if not (self.links / version_id).is_dir():  # ``after_round`` listed the links just before this thread removed them
+                    del self._jobs[version_id]
+                    continue
             try:
                 if self.proven is not None:
                     self.proven(True)
                 self.upload(manifest)
+            except BadLinks as exc:  # the links are gone: the heads after this one go on
+                with self._lock:
+                    first = version_id not in self._bad
+                    self._bad.add(version_id)
+                    if first:
+                        self._again.add(version_id)
+                    self._jobs.pop(version_id, None)
+                say(f"checkpoint of {version_id[:12]}: {exc}; " + ("the next pass of run links the files of the cache again" if first else "no checkpoint of this head is made in this run"))
+                continue
             except Exception as exc:  # noqa: BLE001 - a thread that dies must say why; the next round starts it again
                 say(f"checkpoint of {version_id[:12]}: stopped by {type(exc).__name__}: {exc}; it starts again at the next pass of run")
                 with self._lock:
