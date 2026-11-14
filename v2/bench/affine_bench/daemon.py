@@ -31,6 +31,7 @@ brought to the settings' count on this host by the fixed rule of derive.py (deri
 for it. When the rule gives no value, the row is `held` until the operator says `retry`.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
+A node that answers no one for NODE_LOST_S is given back, also while Lium lists its pod (node-lost), and the row rents again.
 Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted)."""
 import fcntl, glob, json, os, shlex, subprocess, sys, time, traceback
 from sn120_v2.errors import InfraError
@@ -52,6 +53,8 @@ RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again t
 ALARM_TRIES = 3  # a release that was refused this many times is an alarm in the table
 LIUM_CHECK_S = 600  # the service reads Lium's listing this often for the alarms of the table (reads only)
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
+NODE_LOST_S = 900  # a row's node that answers no one this long is lost, also while Lium lists its pod: the pod goes back
+NODE_LOST_MAX = 2  # a row rents again for a lost node this often in 24 h; at one more loss the row is `held`
 
 
 def now(): return time.time()
@@ -286,8 +289,11 @@ class Row:
     def node_down(self, run):
         """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
         whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
-        the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own."""
+        the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own.
+        After NODE_LOST_S the node is lost, whatever Lium says of its pod (node_lost)."""
         d = self.S["node_down"] = self.S.get("node_down") or dict(since=now(), checked=0, state=None)
+        if now() - d["since"] >= NODE_LOST_S:
+            return self.node_lost(d)
         if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
             self.log(event="node-unreachable"); self.save(); return
         d["checked"] = now(); st = P.state(self.rec.get("id")); d["state"] = st
@@ -298,6 +304,43 @@ class Row:
         else:
             self.log(event="node-unreachable", lium=st, down_min=round((now() - d["since"]) / 60))
         self.save()
+
+    def node_lost(self, d):
+        """The node answered no one for NODE_LOST_S (2026-11-14: Lium listed a pod as RUNNING for hours while its node took
+        no ssh; the row and its rent would have waited for the pod's last hour). The pod goes back through Pod.release: the
+        exact id of the row's record, with every guard of the delete. Only then the run is dropped, with no fail, and the
+        row rents a new pod for the benchmarks that this host still misses. A release that Lium or a guard refuses leaves the
+        record and the run as they are, and is tried again each RELEASE_RETRY_S: never a second pod beside the first. A node
+        that answers again before the delete has its run back (step). A row rents again in this way NODE_LOST_MAX times in
+        24 h at most: at one more loss its pod goes back as well, and the row is `held` until the operator says `retry`."""
+        S = self.S
+        if now() - S.get("release_tried", 0) < RELEASE_RETRY_S:
+            self.log(event="node-unreachable"); self.save(); return
+        mins = round((now() - d["since"]) / 60); said = []
+        self.log(event="node-lost", pod=self.rec.get("huid"), lium_id=self.rec.get("id"), down_since_cr=cr(d["since"]), down_min=mins)
+        if not self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=f"the node answered no one for {mins} minutes"):
+            return self.not_released(said)
+        lost = S["node_lost"] = [t for t in S.get("node_lost") or [] if now() - t < 86400] + [now()]
+        S["running"] = None
+        for k in ("node_down", "release_tried", "release_refused"): S.pop(k, None)
+        self.attach()
+        if len(lost) > NODE_LOST_MAX:
+            S["held"] = dict(at=now(), why=f"{len(lost)} nodes of this row were lost in 24 hours (each answered no one for {NODE_LOST_S // 60} minutes)")
+            self.log(event="alarm", what="nodes-lost", lost=len(lost), do="find out why the nodes of this row stop to answer. Then `bench retry` for this row")
+            self.tell("held")
+        else:
+            S["rent_wait_until"] = now() + P.RENT_WAIT_S  # Lium's listing may have the deleted pod for a moment more
+            self.tell("released")
+        self.save()
+
+    def not_released(self, said):
+        """The pod is still the row's, and it costs money: the table says so (state release-refused, and an alarm after ALARM_TRIES)."""
+        S = self.S
+        r = S.setdefault("release_refused", dict(since=now(), tries=0)); r["tries"] += 1
+        r["why"] = str((said[-1].get("why") or said[-1].get("err") or said[-1].get("event")) if said else "")[:200]
+        if r["tries"] >= ALARM_TRIES:
+            self.log(event="alarm", what="release-refused", tries=r["tries"], since_cr=cr(r["since"]), why=r["why"])
+        S["release_tried"] = now(); self.tell("release-refused"); self.save(); return False
 
     # ---- pod
     def pod_ready(self):
@@ -349,12 +392,7 @@ class Row:
             self.attach()
             for k in ("idle_since", "release_waits", "release_tried", "release_refused", "node_down"): S.pop(k, None)
             self.tell("released"); self.save(); return True
-        # the pod is still the row's, and it costs money: the table says so (state release-refused, and an alarm after ALARM_TRIES)
-        r = S.setdefault("release_refused", dict(since=now(), tries=0)); r["tries"] += 1
-        r["why"] = str((said[-1].get("why") or said[-1].get("err") or said[-1].get("event")) if said else "")[:200]
-        if r["tries"] >= ALARM_TRIES:
-            self.log(event="alarm", what="release-refused", tries=r["tries"], since_cr=cr(r["since"]), why=r["why"])
-        S["release_tried"] = now(); self.tell("release-refused"); self.save(); return False
+        return self.not_released(said)
 
     # ---- one poll
     def step(self, m, bs):
@@ -377,7 +415,10 @@ class Row:
             if st is None:
                 self.node_down(run); return False
             if S.pop("node_down", None):
-                self.log(event="node-back"); self.save()
+                self.log(event="node-back")
+                if S.pop("release_refused", None):  # the node was lost and its pod could not be given back: the run is the row's again
+                    S.pop("release_tried", None); self.tell("running")
+                self.save()
             lines = int(st.get("lines") or 0)
             if lines > run.get("progress", 0):
                 run["progress"] = lines; run["last_progress"] = now(); self.save()
@@ -725,7 +766,7 @@ def cli(cmd, argv):
             if lock is None:
                 raise SystemExit(f"the worker of row {mid} is alive: stop the service, or wait until the worker has ended")
             s = row_state(mid)
-            for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at"): s.pop(k, None)
+            for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at", "node_lost"): s.pop(k, None)
             s["fails"] = 0; wj(f"{ROWS}/{mid}/daemon.json", s); lock.close()
         print(json.dumps(dict(retry=argv))); return
     if cmd not in ("daemon", "once", "publish", "release", "release-single"):

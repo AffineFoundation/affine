@@ -1146,6 +1146,7 @@ def test_the_operator_document_and_the_unit_file_are_true_to_the_code():
         f"asks again every {P.NO_OFFER_RETRY_S:.0f} seconds", f"no progress for {D.STALL_S} seconds",
         f"After {D.MAX_FAIL} fails", f"within one poll ({D.POLL_S} seconds)", f"more than {D.WAIT_LATE_S // 60} minutes after its head was applied",
         f"about each {D.BEAT_S // 60} minutes", f"After {D.POD_CHECK_AFTER_S // 60} minutes the worker asks Lium",
+        f"answers no one for {D.NODE_LOST_S // 60} minutes", f"rents again in this way {D.NODE_LOST_MAX} times in 24 hours at most",
         f"waits {D.CONFIRM_WAIT_S // 60} minutes at most", f"`{derive.RULE}`", "BENCH_V1_KING_SOURCE",
         *(f"`{x}`" for x in P.PROTECTED_IDS + P.PROTECTED_NAMES),
         f"runs the {len(RUNNABLE)} benchmarks", f"`bids` names {len(RUNNABLE)} benchmarks", f"`n_gpus = {defaults['n_gpus']}`",
@@ -1226,6 +1227,125 @@ def test_a_listing_without_the_pod_is_no_proof_that_the_pod_is_gone(world, monke
     world.steps()
     assert lium.removed == [rm(pod)] and not lium.pods and model(gen)["pod"]["state"] == "released" and table()["alarms"] == []
     assert "release_refused" not in D.row_state(gen)
+
+
+def silent(world, gen, seconds):
+    """The node of the row's run answers no one, since `seconds` ago. Returns a copy of the row's pod."""
+    world.nodes[gen].out = lambda cmd, timeout=0: ""
+    world.steps()  # the first look that gets no answer
+    st = D.row_state(gen); assert st["running"] and st["node_down"]
+    st["node_down"]["since"] = D.now() - seconds; D.wj(f"{D.ROWS}/{gen}/daemon.json", st)
+    return dict(world.pod_of(gen))
+
+
+def test_a_node_that_answers_no_one_for_fifteen_minutes_is_given_back_by_its_exact_id_and_the_row_runs_what_is_missing_on_a_new_node(world, capsys):
+    lium, gen = world.lium, ids(world.genesis)
+    assert (D.NODE_LOST_S, D.NODE_LOST_MAX) == (900, 2)
+    world.steps(); node = world.nodes[gen]
+    for b in RUNNABLE[1:]: node.results[b["id"]] = {True: "", False: ""}
+    world.steps()  # the first run ends with one result: a failed try, and the row runs the others again on its pod
+    node.results.clear(); node.busy = "done=\nalive=1\nlines=9\nfinished=2\nok=1\n"
+    assert D.row_state(gen)["fails"] == 1 and D.row_state(gen)["running"]["bids"] == [b["id"] for b in RUNNABLE[1:]]
+    pod = silent(world, gen, 14 * 60)
+    world.steps()  # 14 minutes: Lium is asked, it lists the pod, and nothing is decided
+    assert not lium.removed and len(lium.ups) == 1 and D.row_state(gen)["running"] and D.pod_of(gen).load()["id"] == pod["id"]
+    silent(world, gen, 15 * 60)
+    world.steps()  # 15 minutes: the node is lost, whatever Lium lists
+    st = D.row_state(gen)
+    assert lium.removed == [rm(pod)] and not lium.pods and not D.pod_of(gen).load()  # the delete of that exact id, and no other call that changes Lium
+    assert not st["running"] and st["fails"] == 1 and "node_down" not in st and len(st["node_lost"]) == 1  # the run is dropped, and no fail is counted
+    assert len(lium.ups) == 1 and model(gen)["pod"]["state"] == "released"  # no rent in the step of the delete
+    ev = events(capsys); lost = next(e for e in ev if e["event"] == "node-lost"); gone = next(e for e in ev if e["event"] == "released")
+    assert lost["lium_id"] == pod["id"] and lost["down_min"] == 15 and gone["lium_id"] == pod["id"] and "answered no one for 15 minutes" in gone["why"]
+    del world.nodes[gen]  # the new pod is another machine
+    world.steps()
+    (new,) = lium.pods
+    assert len(lium.ups) == 2 and new["id"] != pod["id"] and new["name"] == P.name_of(gen) and len(P.rents()) == 2  # one new pod, and the day's count has it
+    launch = next(c for c in world.nodes[gen].cmds if "node-run" in c)
+    assert "--benchmarks " + ",".join(b["id"] for b in RUNNABLE[1:]) + " " in launch  # only what this host still misses
+    world.steps(2)
+    assert states() == {gen: "scored"} and D.row_state(gen)["fails"] == 1 and lium.removed == [rm(pod), rm(new)]
+
+
+@pytest.mark.parametrize("fault", ["Lium refuses the delete", "the listing lacks the pod", "Lium cannot be asked"])
+def test_a_lost_node_whose_pod_cannot_be_given_back_keeps_its_record_and_its_run_and_the_row_rents_no_second_pod(world, monkeypatch, capsys, fault):
+    lium = world.lium; gen, node, pod = one_row_in_work(world)
+    plain = lium.cli; answer = node.out
+    def cli(*a, **k):
+        if fault == "Lium refuses the delete" and a[0] == "rm": return types.SimpleNamespace(returncode=1, stdout="", stderr="no")
+        if fault == "Lium cannot be asked" and a[0] == "ps": return types.SimpleNamespace(returncode=1, stdout="", stderr="no")
+        return plain(*a, **k)
+    monkeypatch.setattr(P, "lium", cli)
+    if fault == "the listing lacks the pod": lium.unlisted.add(pod["id"])
+    silent(world, gen, 15 * 60)
+    world.steps(4)
+    st = D.row_state(gen); row = model(gen)
+    assert len(lium.ups) == 1 and len(lium.pods) == 1 and D.pod_of(gen).load()["id"] == pod["id"]  # no second pod, and the record stays
+    assert st["running"]["pod_id"] == pod["id"] and st["fails"] == 0 and "node_lost" not in st  # the run stays: nothing is decided before the pod is back
+    assert (row["status"], row["pod"]["state"]) == ("evaluating", "release-refused") and st["release_refused"]["tries"] >= D.ALARM_TRIES
+    assert table()["alarms"] == [dict(what="release-refused", row=gen, since=st["release_refused"]["since"], tries=st["release_refused"]["tries"])]
+    assert {"Lium refuses the delete": "release-failed"}.get(fault, "release-deferred") in [e["event"] for e in events(capsys)]
+    node.out = answer  # the node answers again before the pod is given back: the run is the row's again
+    world.steps()
+    st = D.row_state(gen)
+    assert st["running"] and "node_down" not in st and "release_refused" not in st and model(gen)["pod"]["state"] == "running" and table()["alarms"] == []
+    assert "node-back" in [e["event"] for e in events(capsys)] and not lium.removed
+    lium.unlisted.clear(); monkeypatch.setattr(P, "lium", plain)
+    silent(world, gen, 15 * 60)
+    world.steps()  # lost again, and now Lium takes the delete
+    assert lium.removed == [rm(pod)] and not D.row_state(gen)["running"] and D.row_state(gen)["fails"] == 0
+    del world.nodes[gen]; world.steps(3)
+    assert states() == {gen: "scored"} and len(lium.ups) == 2
+
+
+def test_a_row_rents_again_for_a_lost_node_two_times_in_a_day_and_is_held_at_the_third_loss(world, capsys):
+    lium = world.lium; gen, node, pod = one_row_in_work(world)
+    for n in (1, 2):
+        pod = silent(world, gen, 15 * 60); world.steps()
+        assert lium.removed[-1] == rm(pod) and len(lium.removed) == n and not D.stopped(gen)
+        del world.nodes[gen]; world.steps()  # a new pod and a new run
+        assert len(lium.ups) == n + 1 and D.row_state(gen)["running"]
+        world.nodes[gen].busy = node.busy
+    pod = silent(world, gen, 15 * 60); world.steps()  # the third loss in 24 hours
+    st = D.row_state(gen); row = model(gen)
+    assert lium.removed[-1] == rm(pod) and len(lium.removed) == 3 and not lium.pods  # this pod goes back as well
+    assert D.stopped(gen) == "held" and "3 nodes of this row were lost in 24 hours" in st["held"]["why"] and st["fails"] == 0
+    assert (row["status"], row["stopped"], row["pod"]["state"]) == ("failed", "held", "held")
+    assert [e for e in events(capsys) if e["event"] == "alarm"][-1]["what"] == "nodes-lost"
+    world.steps(3)
+    assert len(lium.ups) == 3 and len(P.rents()) == 3  # no new pod by itself: three pods in the day for this row
+    D.cli("retry", [gen])  # the operator's word: the count starts again
+    assert "node_lost" not in D.row_state(gen)
+    del world.nodes[gen]; world.steps(3)
+    assert len(lium.ups) == 4 and states() == {gen: "scored"}
+
+
+def test_a_loss_of_more_than_a_day_ago_does_not_count(world):
+    lium = world.lium; gen, node, pod = one_row_in_work(world)
+    st = D.row_state(gen); st["node_lost"] = [D.now() - 86401, D.now() - 86401]; D.wj(f"{D.ROWS}/{gen}/daemon.json", st)
+    silent(world, gen, 15 * 60); world.steps()
+    assert len(lium.removed) == 1 and not D.stopped(gen) and len(D.row_state(gen)["node_lost"]) == 1
+    del world.nodes[gen]; world.steps()
+    assert len(lium.ups) == 2
+
+
+def test_a_pod_that_the_row_gave_back_and_that_lium_still_lists_is_not_taken_again(world, monkeypatch, capsys):
+    lium = world.lium; gen, node, pod = one_row_in_work(world)
+    plain = lium.cli; sent = []
+    def cli(*a, **k):  # Lium takes the delete, and its listing has the pod for some time more
+        if a[0] == "rm": sent.append(a); return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        return plain(*a, **k)
+    monkeypatch.setattr(P, "lium", cli)
+    silent(world, gen, 15 * 60); world.steps()
+    assert sent == [rm(pod)] and not D.pod_of(gen).load() and not D.row_state(gen)["running"]
+    del world.nodes[gen]; world.steps(P.RENT_TRIES + 1)
+    ev = [e["event"] for e in events(capsys)]
+    assert "pod-taken-by-name" not in ev and len(lium.ups) == 1 and len(P.rents()) == 1 and sent == [rm(pod)]  # not taken, no second pod, no second delete
+    assert D.stopped(gen) == "rent_failed" and "which this row gave back" in D.row_state(gen)["rent_failed"]["why"]
+    assert not world.nodes[gen].cmds and len(world.setups) == 1  # no setup of that pod, and no command to it
+    lium.pods.clear(); D.cli("retry", [gen])  # the listing does not have it any more
+    world.steps(3)
+    assert len(lium.ups) == 2 and states() == {gen: "scored"}
 
 
 def test_a_pod_that_lium_says_it_deleted_is_released_with_no_delete_and_only_then(world):
