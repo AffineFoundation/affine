@@ -124,6 +124,50 @@ def test_the_warm_up_row_changes_no_byte_of_what_training_makes(head_dir, tmp_pa
     assert {n: tree(f"cold{n}", n) for n in (1, 2)} == warm
 
 
+def test_gradient_checkpointing_changes_no_byte_of_what_training_makes(head_dir, tmp_path, monkeypatch):
+    # float32, as the test above: this test compares bytes.
+    cases = {"one": {}, "two": {"n": 2}, "mlp": {"n": 2, "steps": 3, "target_modules": ("gate_proj", "up_proj", "down_proj")}}
+    cases["capped"] = {"steps": 4, "rank": 64, "alpha": 128.0, "global_norm_cap": 1e-4, "train_max_output_tokens": 3}
+
+    def trees(name: str) -> dict:
+        for case, recipe in cases.items():
+            run(head_dir, tmp_path / name / case, devices=("cpu",) * recipe.get("n", 1), dtype="float32", **{k: v for k, v in recipe.items() if k != "n"})
+        return {case: hash_tree(tmp_path / name / case) for case in cases}  # the LoRA, its config and the train report
+
+    replayed = trees("replayed")
+    monkeypatch.setattr(train_job, "keep_one_graph", lambda model, layers: 1)  # the job with the graph of every layer kept
+    assert trees("kept") == replayed and len({json.dumps(tree, sort_keys=True) for tree in replayed.values()}) == len(cases)
+
+
+def test_a_row_keeps_the_graph_of_no_decoder_layer_and_each_layer_runs_a_second_time_in_the_backward(head_dir, monkeypatch):
+    def graph(tensor: torch.Tensor) -> list[str]:
+        seen, todo = set(), [tensor.grad_fn]
+        while todo:
+            node = todo.pop()
+            if node is not None and node not in seen:
+                seen.add(node)
+                todo.extend(parent for parent, _ in node.next_functions)
+        return [type(node).__name__ for node in seen if type(node).__name__ != "AccumulateGrad"]
+
+    ids = [1, 5, 6, 7, 8, 9, 10, 11]
+    replica = train_job.Replica(str(head_dir), "cpu", "float32", Recipe(), 7)
+    blocks, runs = replica.model.base_model.language_model.layers, []
+    for index, block in enumerate(blocks):
+        block.mlp.register_forward_pre_hook(lambda module, args, index=index: runs.append((index, torch.is_grad_enabled())))
+    hidden = replica.hidden(ids)
+    assert runs == [(index, False) for index in range(4)]  # the first run of each layer: no graph
+    nodes = graph(hidden)
+    assert nodes.count("ReplayBackward") == 4 and len(nodes) < 12  # one node per layer, and the last norm of the head
+    hidden.float().square().sum().backward()
+    assert runs[4:] == [(index, True) for index in (3, 2, 1, 0)]  # the second run: one layer at a time, the last layer first
+    assert all(weight.grad is not None and bool(torch.isfinite(weight.grad).all()) for weight in replica.weights)
+    assert any(bool(layer.lora_B.grad.any()) for path, layer in replica.layers.items() if ".layers.0." in path)  # the gradient reaches the first layer
+    with pytest.raises(InfraError, match="without a cache"):  # a cache would be written two times
+        replica.model.base_model(input_ids=torch.tensor([ids]), use_cache=True)
+    monkeypatch.setattr(train_job, "keep_one_graph", lambda model, layers: 1)
+    assert len(graph(train_job.Replica(str(head_dir), "cpu", "float32", Recipe(), 7).hidden(ids))) > 40 * len(nodes)
+
+
 def test_the_warm_up_row_runs_once_per_replica_before_any_row_and_leaves_nothing_behind(head_dir, tmp_path, monkeypatch):
     warm_up, train_rows, events = train_job.Replica.warm_up, train_job.Replica.train_rows, []
 
