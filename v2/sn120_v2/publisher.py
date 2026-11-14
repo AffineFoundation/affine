@@ -89,6 +89,14 @@ def show(value: Any) -> str:
     return str(value)
 
 
+def duration(seconds: float) -> str:
+    """A time for a miner: in days when it is a whole number of days, in seconds when it is not."""
+    days, rest = divmod(seconds, SECONDS_PER_DAY)
+    if days >= 1 and rest == 0:
+        return f"{int(days)} day" if days == 1 else f"{int(days)} days"
+    return f"{int(seconds) if seconds == int(seconds) else seconds} s"
+
+
 def utc(seconds: Any) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(seconds)) if isinstance(seconds, int) and seconds > 0 else "unknown"
 
@@ -340,6 +348,12 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
         "  registration. A turn in v1 that the cutover imported counts too. To enter again, register a new hotkey.",
         f"- Order: registration block, then UID. UID {params.burn_uid} has no seat.",
+        "- A seat exists only while its registration is on chain. The validator reads the chain before each round.",
+        "  When the registration leaves the chain (the UID is deregistered, or the UID goes to a newer registration),",
+        "  the seat is removed and its turn is lost. A seat that is in an open round stays until that round closes.",
+        "- When the hotkey of the UID changes and the registration stays, the seat keeps its place. The validator then",
+        "  reads the file of the new hotkey: a file that was stored for the old hotkey does not count. When the new",
+        "  hotkey already had its turn, the seat is removed.",
         "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         f"  queue. When the box has reported `{NO_DECISION}` for your entry {params.max_infra_attempts} times, the seat is held: it takes no",
@@ -363,13 +377,19 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  keep your place, with one exception: squat-trim.",
         "- Squat-trim moves a seat to the back of the queue. It applies only to a seat that has no valid file stored",
         f"  when the validator picks the entries of a round, and only when the registration of that seat is older than {show(params.squat_age_factor)} x its expected",
-        f"  wait. Expected wait = max({params.squat_min_wait_s} s, seats ahead x seconds per turn). Seconds per turn = {SECONDS_PER_DAY} / the number",
+        f"  wait. Expected wait = max({duration(params.squat_min_wait_s)}, seats ahead x seconds per turn). Seconds per turn = {SECONDS_PER_DAY} / the number",
         "  of entries that were charged in the last 24 hours.",
-        f"- So no seat moves back in the first {show(params.squat_age_factor * params.squat_min_wait_s)} s after its registration, and no seat moves back when no entry",
-        "  was charged in the last 24 hours.",
-        "- A seat at the back still gets its turn, after every other seat. It stays at the back when a valid file",
-        "  arrives later. To keep your place: store a valid file early, and replace it only with a file that passes",
-        "  `check` (section 5).",
+        f"- So a seat with no file or with an invalid file keeps its place for at least {duration(params.squat_age_factor * params.squat_min_wait_s)} after its",
+        "  registration, and for as long as no entry was charged in the last 24 hours. The two values",
+        "  (`squat_min_wait_s`, `squat_age_factor`) are parameters (section 11). The validator can change them. This",
+        "  text always shows the values that it uses.",
+        "- A seat at the back still gets its turn: a round takes it when it has room after the front seats and the",
+        "  normal seats that have a valid file. The seat stays at the back when a valid file arrives later.",
+        "- A seat that v1 had moved to the back of its queue starts at the back here.",
+        "- In the table: `front` = yes: the seat goes before the normal seats (it had a turn that was not charged).",
+        "  `demoted` = yes: the seat is at the back, unless `front` is also yes. `held` = yes: the seat takes no turn",
+        "  until the operator releases it. `position` counts every seat ahead of you, also a seat with no valid file,",
+        "  which a round skips.",
     ]
 
 
