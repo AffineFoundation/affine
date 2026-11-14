@@ -2,7 +2,9 @@
 
 The file is ``<SN120_WORK_DIR>/logs/run-loop.stop-after-round``, beside the other files of the run loop. The
 operator makes it from a second shell (``touch``) and takes the request back with ``rm``. The time of the file is
-the time of the request. With no file, ``run`` does what it does with no such code.
+the time of the request. With no file, ``run`` does what it does with no such code. Only a file is a request. A
+directory with that name is none (``rm -f`` cannot remove it, so it would stop each later start): ``run`` goes
+on and says at its start that the thing is there.
 
 ``run`` looks for the file at one point only: before it opens a round. Two places of the code are that point:
 the start of each pass of its loop, and ``Controller.run_round`` after it finished a round that it found open.
@@ -22,6 +24,7 @@ The request is not in the journal and not in the store: it is the matter of one 
 from __future__ import annotations
 
 import os
+import stat
 import sys
 import time
 from pathlib import Path
@@ -53,18 +56,21 @@ class StopRequest:
         return cls(Path(work) / "logs" / STOP_FILE if work else None, LOOP_ENV in environ)
 
     def asked(self) -> float | None:
-        """The time of the request, or None when there is none. A file that cannot be read is no request: ``run`` goes on, as with no file."""
+        """The time of the request, or None when there is none. A file that cannot be read, or a directory, is no request: ``run`` goes on, as with no file."""
         if self.path is None:
             return None
         try:
-            return self.path.stat().st_mtime
+            found = self.path.stat()
         except OSError:
             return None
+        return found.st_mtime if stat.S_ISREG(found.st_mode) else None
 
     def at_start(self) -> str:
         """One line for the start of ``run``. It shows that this code knows the request, and where the file is."""
         asked = self.asked()
         now = "no request is there" if asked is None else f"a request of {stamp(asked)} is there"
+        if asked is None and os.path.lexists(self.path):
+            now = "something with that name is there, but it is not a file, so it is NO request and run does not stop for it. Remove it by hand"
         return f"{SAID}run looks for the file {self.path} each time before it opens a round (make it: touch, take it back: rm). Now {now}."
 
     def obeyed(self, asked: float, text: str) -> None:

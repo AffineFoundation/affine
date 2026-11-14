@@ -472,4 +472,7 @@ def test_the_request_is_the_file_in_the_logs_of_the_work_directory_and_its_time_
     os.utime(request.path, (ASKED_AT, ASKED_AT))
     assert request.asked() == ASKED_AT and stamp(request.asked()) == "2023-11-14T22:13:20Z"
     request.path.unlink()
-    assert request.asked() is None
+    assert request.asked() is None and "Now no request is there." in request.at_start()
+    request.path.mkdir()
+    assert request.asked() is None, "a directory is no request: rm -f cannot remove it, so it would stop each later start"
+    assert "it is not a file, so it is NO request and run does not stop for it. Remove it by hand." in request.at_start()
