@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -73,7 +74,7 @@ from .state import (
     load,
     replay,
 )
-from .store import delete_pending, get_record, promote_fold, promote_lora, publish_head, put_record
+from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
 from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
     NOT_SCORED,
@@ -82,6 +83,7 @@ from .types import (
     SKIP,
     BoxResult,
     ChainSnapshot,
+    FoldArtifact,
     FrozenBatch,
     HeadManifest,
     HeadVersion,
@@ -89,6 +91,7 @@ from .types import (
     Registration,
     RoundTicket,
     V1Import,
+    Verdict,
 )
 
 Leases = list[tuple[RoundTicket, BoxResult]]
@@ -115,6 +118,20 @@ class StackContext:
 
 
 @dataclasses.dataclass
+class HeadPublish:
+    """How a folded head goes public, and what the box does for its local copy. The default is the full upload.
+
+    ``headchain.py`` and ``headfold.py`` give the other form: the weights stay on the box, and the chain is public.
+    """
+
+    promote: Callable[[ObjectStore, FoldArtifact], None] = promote_fold  # what goes from pending/ to public/ after a fold
+    chain: Callable[[State], Mapping[str, Any]] | None = None  # writes the chain file; returns the part that mining.json shows
+    prepare: Callable[[State], None] | None = None  # at the start of ``run``: prove the local head, or rebuild it
+    after_round: Callable[[State], None] | None = None  # after each pass of the loop of ``run``, with a new round or with none
+    checkpoint: Callable[[State], Mapping[str, Any]] | None = None  # the command ``checkpoint``: upload the full files of the head now
+
+
+@dataclasses.dataclass
 class Stack:
     """Every part the controller needs. ``python -m sn120_v2 run --stack module:function`` builds one."""
 
@@ -128,6 +145,15 @@ class Stack:
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
+    head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+
+
+def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
+    """The public snapshot. In chain mode the chain file is written first, and the snapshot shows its newest part."""
+    shown = snapshot(state, params, now, verdicts, checked_at)
+    if head.chain is not None and state.heads:
+        shown["head_chain"] = head.chain(state)
+    return shown
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
@@ -148,9 +174,10 @@ class Controller:
         folder: Folder | None = None,
         publisher: Publisher | None = None,
         pins: Callable[[Params], None] | None = None,
+        head: HeadPublish | None = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
-        self.folder, self.publisher, self.pins = folder, publisher, pins
+        self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
@@ -302,7 +329,9 @@ class Controller:
             return []
         if state.failed_leases and now < state.last_failure_at + params.apply_retry_s:
             return []
-        verdicts = self.check_files(now)
+        started = time.monotonic()
+        with timed("open: the check of the waiting files"):
+            verdicts = self.check_files(now)
         moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
@@ -326,7 +355,9 @@ class Controller:
             len(draw.task_ids), now, tuple(leases), picked.skipped,
         )
         self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
-        self._publish(now)
+        log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
+        with timed(f"open: the public files of round {round_id}"):
+            self._publish(now)
         return tickets
 
     def _ticket(self, record: RoundRecord, lease: Lease) -> RoundTicket:
@@ -425,7 +456,9 @@ class Controller:
         ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
         seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
         artifact = next(e for e in result.entries if e.queue_pos == winner.queue_pos).lora
-        promote_lora(self.store, artifact)
+        with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
+            promote_lora(self.store, artifact)
+        started = time.monotonic()
         public_batch = layout.winner_batch(record.round_id)
         try:
             self.store.copy(seat.batch.uri, public_batch)
@@ -434,6 +467,7 @@ class Controller:
         if self.store.sha256(public_batch) != seat.batch.batch_sha256:
             self.store.delete(public_batch)
             raise VerifyError("the winner's frozen batch does not match its sha256")
+        log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
         parent = self.state.manifest
         head = apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
         manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
@@ -449,15 +483,18 @@ class Controller:
             raise ConfigError("a fold is due, but no folder is configured")
         self._check_pins("the fold was not started")
         try:
-            fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
-            promote_fold(self.store, fold)
+            with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
+                fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
+            with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
+                self.head.promote(self.store, fold)
             folded = fold_head(head, fold, now)
         except (InfraError, VerifyError, HeadMismatchError) as exc:
             self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
             return False
         manifest = HeadManifest(folded, fold.base_files, fold.master_files, {})
         self._log(HEAD_FOLDED, {"manifest": manifest.to_dict()}, now)
-        delete_pending(self.store, fold.prefix)
+        with timed(f"fold of {head.version_id[:12]}: the delete of its files in pending/"):
+            delete_pending(self.store, fold.prefix)
         return True
 
     def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
@@ -477,6 +514,7 @@ class Controller:
                     attempted.append(key)
                     if queue[tuple(key)].infra_attempts + 1 >= params.max_infra_attempts:
                         held.append(key)
+        started = time.monotonic()
         snapshot_id = self.state.snapshot_id
         if outcome in (APPLIED, NULL) and pairs:
             snapshot_id = self._update_sampler(pairs, outcome)
@@ -491,9 +529,13 @@ class Controller:
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
-        self._sync_pointer()
-        delete_pending(self.store, layout.pending_round_prefix(record.round_id))
-        self._publish(now)
+        log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
+        with timed(f"close of {record.round_id}: the head pointer"):
+            self._sync_pointer()
+        with timed(f"close of {record.round_id}: the delete of its files in pending/"):
+            delete_pending(self.store, layout.pending_round_prefix(record.round_id))
+        with timed(f"close of {record.round_id}: the public files"):
+            self._publish(now)
 
     def _wall(self, pairs: Leases, now: int) -> dict[str, int]:
         """Wall seconds of each phase of the open round. Box phases come from the box; the others from the journal."""
@@ -558,7 +600,7 @@ class Controller:
             return
         shown = self._shown()
         try:
-            self.publisher.publish(snapshot(self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
             self._published = shown
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"

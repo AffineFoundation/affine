@@ -6,6 +6,8 @@
   run         the round loop
   status      read-only summary; with ``--stack`` also the count of queued files per verdict rule
   publish     read-only for the journal: write llms.txt and mining.json again
+  checkpoint  read-only for the journal: with a stack that keeps the folded weight files on the box, upload the
+              full files of the last folded head now and mark it as a checkpoint (``run`` can go on)
   round       print the summary of a closed round as a short text to paste
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
@@ -40,16 +42,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import layout
-from .controller import Controller, Stack, StackContext
+from .controller import Controller, Stack, StackContext, public_snapshot
 from .errors import ConfigError, FencedError, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
-from .public import phase, round_text, snapshot
+from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
-from .store import verify_files
+from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
 
 
@@ -98,7 +100,7 @@ def open_controller(args: argparse.Namespace, command: str) -> tuple[Controller,
     context, stack = open_stack(args, command)
     owner = f"{os.uname().nodename}:{os.getpid()}"
     journal = Journal(context.state_dir / JOURNAL_FILE, owner, now(), Mirror(stack.store) if stack.mirror else None)
-    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher, pins=stack.pins)
+    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher, pins=stack.pins, head=stack.head)
     return controller, stack
 
 
@@ -171,17 +173,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     controller, stack = open_controller(args, "run")
     if stack.runner is None:
         raise ConfigError("this stack has no round runner")
+    if stack.head.prepare is not None:
+        with timed("the proof of the local head"):
+            stack.head.prepare(controller.state)
     done = idle = 0
     while args.rounds is None or done < args.rounds:
         record = None
         try:
             if stack.chain is not None:
-                controller.sync_registrations(stack.chain(), now())
+                with timed("the read of the chain and the sync of the registrations"):
+                    controller.sync_registrations(stack.chain(), now())
             record = controller.run_round(stack.runner, now, stack.entropy() if stack.entropy else os.urandom(16).hex())
         except FencedError:
             raise
         except InfraError as exc:  # the chain or the store did not answer: nothing was decided, so the next pass continues
             print(f"waiting: {exc}", file=sys.stderr, flush=True)
+        if stack.head.after_round is not None:  # also on a pass with no new round: a fold that was put off closes its round there
+            stack.head.after_round(controller.state)
         if record is None:
             idle += 1
             state = controller.state
@@ -212,13 +220,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Upload the full files of the last folded head and mark it as a checkpoint. ``run`` can go on: the journal is only read."""
+    state, _, stack = read_state(args, "checkpoint")
+    if stack is None or stack.head.checkpoint is None:
+        raise ConfigError("this stack makes no checkpoints: each folded head is uploaded in full")
+    print(json.dumps(stack.head.checkpoint(state)))
+    return 0
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     state, params, stack = read_state(args, "publish")
     if stack.publisher is None:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
-    stack.publisher.publish(snapshot(state, params, now(), verdicts, checked))
+    stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
     return 0
@@ -459,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--idle-sleep", type=float, default=30.0, help="seconds between polls when nothing is ready")
     command("status", cmd_status, stack=False)
     command("publish", cmd_publish, stack=True)
+    command("checkpoint", cmd_checkpoint, stack=True)
     one = command("round", cmd_round, stack=True)
     one.add_argument("--round", help="round id, such as r000001 (default: the last closed round)")
     one.add_argument("--json", action="store_true", help="print the stored JSON record instead of the text")

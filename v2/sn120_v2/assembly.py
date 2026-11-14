@@ -14,12 +14,18 @@ Every setting comes from the environment. A missing one is an error.
   SN120_V2_CHAIN_NETWORK    "finney" or a node address: the queue follows the chain and the round
                             seed uses a block hash. "none": no chain read (the smoke test)
   SN120_WORK_DIR, SN120_IMAGE_DIGEST                        the box; read by ``run`` only
+  SN120_HEAD_PUBLISH (optional)  "full" (the default): each folded head is uploaded. "chain": the folded
+                            weight files stay on the box, and the store gets the LoRAs and the head chain
+                            (``headchain.py``). Then also: SN120_CHECKPOINT_EVERY, and the fold settings
+                            SN120_FOLD_IMPLEMENTATION, SN120_FOLD_TWICE, SN120_FOLD_DEVICES, SN120_FOLD_THREADS
+                            (``headfold.FoldSettings``); read by ``run`` and ``checkpoint`` only
 
 The box holds no wallet. It only reads the chain.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import os
 import time
@@ -32,7 +38,7 @@ from . import layout
 from .admission import HFTokens, LazyPool, StoreAdmission, check_batch, pool_grader
 from .canonical import file_sha256
 from .chain import Feed, SubtensorClient
-from .controller import Stack, StackContext, stored_irt_snapshot
+from .controller import HeadPublish, Stack, StackContext, stored_irt_snapshot
 from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
@@ -40,6 +46,8 @@ from .gpu.evaluator import VllmEvaluator
 from .gpu.folder import LoraFolder
 from .gpu.plan import BoxConfig, check_pins, code_digest
 from .gpu.trainer import LoraTrainer
+from .headchain import CHAIN, ChainWriter, checkpoint_every, mode, promote_fold
+from .headfold import ChainFolder, FoldSettings, HeadKeeper
 from .irt import IRTSampler
 from .params import Params, require_env
 from .publisher import StorePublisher
@@ -56,6 +64,7 @@ NONE = "none"
 ADMISSION_GRADE_WORKERS = min(8, os.cpu_count() or 1)
 ADMISSION_GRADE_TIMEOUT_S = 20.0
 WEIGHT_SUFFIX = ".safetensors"
+BOX_COMMANDS = ("run", "checkpoint")  # the commands that work on the local head of the box
 
 
 class HeadTokens:
@@ -153,4 +162,14 @@ def stack(context: StackContext) -> Stack:
         runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         folder = LoraFolder(store, box)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True)
+    head = HeadPublish()
+    if mode() == CHAIN:
+        writer = ChainWriter(store)
+        head = HeadPublish(promote=promote_fold, chain=writer)
+        if context.command in BOX_COMMANDS:
+            box, settings = BoxConfig.from_env(), FoldSettings.from_env()
+            keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings)
+            head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
+            if folder is not None:
+                folder = ChainFolder(store, box, settings)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head)

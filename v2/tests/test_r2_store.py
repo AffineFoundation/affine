@@ -3,23 +3,29 @@
 from __future__ import annotations
 
 import hashlib
+import random
 import re
+import threading
+import time
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError, ReadTimeoutError
+from botocore.exceptions import ClientError, ReadTimeoutError, ResponseStreamingError
 from moto.server import ThreadedMotoServer
 
-from sn120_v2 import layout, links
+from sn120_v2 import layout, links, r2
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store, main, preflight, self_test, written_roots
 from sn120_v2.seams import ObjectStore, Presigner
 
 SECRET = "fake-secret-value-never-shown"
-BIG = bytes(range(256)) * (12 * MIB // 256) + b"tail"  # three 5 MiB parts
+PART = 5 * MIB  # the part size of the store in these tests
+RANDOM = random.Random(120).randbytes(3 * PART + 7)  # no two ranges hold the same bytes: a swap of two ranges changes the hash
+BIG = RANDOM[: 12 * MIB + 4]  # three parts of 5 MiB
 TIMEOUT = ReadTimeoutError(endpoint_url="http://r2")
 
 
@@ -114,6 +120,199 @@ def test_large_file_upload_download_and_multipart_copy(store, tmp_path):
     target = tmp_path / "deep" / "dir" / "out.bin"
     store.get_file("public/bases/h/shard", target)
     assert target.read_bytes() == BIG and [p.name for p in target.parent.iterdir()] == ["out.bin"]
+
+
+def ranged_reads(store, before=lambda span: None):
+    """Record every range read that ``sha256`` sends, as (range, IfMatch). ``before`` runs ahead of each one."""
+    seen, real = [], store._s3.get_object
+
+    def get_object(**kw):
+        if "Range" in kw:
+            seen.append((kw["Range"], kw.get("IfMatch")))
+            before(kw["Range"])
+        return real(**kw)
+
+    store._s3.get_object = get_object
+    return seen
+
+
+def test_a_large_object_is_hashed_from_ranges_of_one_version_and_a_small_one_from_one_read(store):
+    """The fold's promotion read a 56 GB head two times on one stream. Ranges run side by side; the hash is still of every stored byte."""
+    spans = [f"bytes=0-{5 * MIB - 1}", f"bytes={5 * MIB}-{10 * MIB - 1}", f"bytes={10 * MIB}-{len(BIG) - 1}"]
+    store.put("pending/big", BIG)
+    store.put("pending/part", BIG[: 5 * MIB])  # exactly one part: one read, as before
+    etag = store._head("pending/big")["ETag"]
+    whole, real = [], store._s3.get_object
+    store._s3.get_object = lambda **kw: (whole.append(kw["Key"]) if "Range" not in kw else None) or real(**kw)
+    seen = ranged_reads(store, lambda span: time.sleep(0.3) if span == spans[0] else None)  # the first range comes back last
+    assert store.sha256("pending/big") == sha(BIG)
+    assert sorted(seen) == sorted((span, etag) for span in spans)
+    assert whole == [], "the size and the ETag come from a HEAD: no read of the whole object is opened and closed"
+    assert store.sha256("pending/part") == sha(BIG[: 5 * MIB]) and len(seen) == 3 and whole == ["pending/part"], "no range read for an object of one part"
+    damaged = BIG[:-5] + b"X" + BIG[-4:]  # one byte in the last range, same size
+    store.put("pending/big", damaged)
+    assert store.sha256("pending/big") == sha(damaged) != sha(BIG)
+
+
+def test_the_range_hash_never_mixes_two_versions_of_an_object(store):
+    """A box could write the object again while the controller reads it. Parts of two versions must not hash as one file."""
+    store.put("pending/big", BIG)
+    other = bytes(reversed(BIG))
+    seen = ranged_reads(store, lambda span: raw_put(store, "pending/big", other) if len(seen) == 2 else None)
+    with pytest.raises(InfraError, match="PreconditionFailed"):
+        store.sha256("pending/big")
+    assert store.sha256("pending/big") == sha(other)
+    seen = ranged_reads(store, lambda span: store.delete("pending/big") if len(seen) == 2 else None)
+    with pytest.raises(KeyError):
+        store.sha256("pending/big")
+
+
+def test_the_range_hash_reads_ahead_only_as_far_as_its_streams(store, monkeypatch):
+    """Memory stays bounded: at most READ_STREAMS ranges are read or held before the hasher took the first one."""
+    monkeypatch.setattr(r2, "READ_STREAMS", 2)
+    data = BIG + BIG  # five ranges
+    store.put("pending/big", data)
+    gate, started = threading.Event(), threading.Event()
+    seen = ranged_reads(store, lambda span: (started.set(), gate.wait(10)) if span.startswith("bytes=0-") else None)
+    with ThreadPoolExecutor(1) as pool:
+        result = pool.submit(store.sha256, "pending/big")
+        assert started.wait(10)
+        time.sleep(0.5)
+        held = len(seen)
+        gate.set()
+        assert result.result(30) == sha(data)
+    assert held == 2 and len(seen) == 5
+
+
+class Broken:
+    """A reply body whose stream breaks, or ends early, after the store answered."""
+
+    def __init__(self, data=None):
+        self.data = data
+
+    def read(self):
+        if self.data is None:
+            raise ResponseStreamingError(error="the connection was reset")
+        return self.data
+
+
+@pytest.mark.parametrize("body", [Broken(), Broken(b"short")])
+def test_a_range_whose_stream_breaks_is_read_again_after_a_pause_and_never_hashed_short(env, body, monkeypatch):
+    monkeypatch.setattr(r2, "READ_AGAIN_PAUSE_S", 0.05)
+    store = R2Store.from_env(env, part_size=5 * MIB, attempts=3)
+    store.put("pending/big", BIG)
+    real, tries = store._s3.get_object, []
+
+    def get_object(**kw):
+        reply = real(**kw)
+        if kw.get("Range", "").startswith(f"bytes={5 * MIB}-"):
+            tries.append(kw["Range"])
+            if len(tries) <= fails:
+                reply["Body"].close()
+                return reply | {"Body": body}  # the answer of the store is right, and then its stream breaks
+        return reply
+
+    store._s3.get_object = get_object
+    fails, started = 2, time.monotonic()
+    assert store.sha256("pending/big") == sha(BIG) and len(tries) == 3
+    assert time.monotonic() - started >= 0.15, "a pause before the second read, and two times the pause before the third"
+    fails, tries[:] = 3, []
+    with pytest.raises(InfraError, match="3 reads of the bytes .* came back broken or short"):
+        store.sha256("pending/big")
+    assert len(tries) == 3
+
+
+def test_a_request_that_failed_is_not_sent_again_by_the_range_hash(env):
+    """botocore sends a failed request again by itself, with pauses. A second loop around it made 5 times 5 tries with no pause."""
+    store = R2Store.from_env(env, part_size=5 * MIB, attempts=3)
+    store.put("pending/big", BIG)
+    real, tries = store._s3.get_object, []
+
+    def get_object(**kw):
+        if kw.get("Range", "").startswith(f"bytes={5 * MIB}-"):
+            tries.append(kw["Range"])
+            raise TIMEOUT  # what botocore raises after its own tries
+        return real(**kw)
+
+    store._s3.get_object = get_object
+    with pytest.raises(InfraError, match="ReadTimeoutError"):
+        store.sha256("pending/big")
+    assert len(tries) == 1
+
+
+@pytest.mark.parametrize("read_range", [1 * MIB, 2 * MIB, PART, 32 * MIB])
+def test_the_ranges_cover_every_byte_one_time_at_each_size_around_a_part_and_a_range(store, monkeypatch, read_range):
+    """Random bytes, and ranges that end out of order. From the review of the range hash."""
+    monkeypatch.setattr(r2, "READ_RANGE", read_range)
+    step, waits = min(PART, read_range), random.Random(read_range)
+    seen = ranged_reads(store, lambda span: time.sleep(waits.random() * 0.02))
+    sizes = {0, 1, PART - 1, PART, PART + 1, PART + step - 1, PART + step, PART + step + 1, 2 * PART - 1, 2 * PART, 2 * PART + 1, 3 * PART, len(RANDOM)}
+    for size in sorted(sizes):
+        seen.clear()
+        store.put("pending/x", RANDOM[:size])
+        assert store.sha256("pending/x") == sha(RANDOM[:size]), size
+        spans = sorted(tuple(int(number) for number in span.removeprefix("bytes=").split("-")) for span, _ in seen)
+        want = [(first, min(first + step, size) - 1) for first in range(0, size, step)] if size > PART else []
+        assert spans == want, f"size {size}: no gap, no overlap, no empty range; no range read up to one part"
+
+
+def test_four_hashes_at_one_time_share_the_streams_of_one_store(store, monkeypatch):
+    monkeypatch.setattr(r2, "READ_RANGE", 1 * MIB)
+    waits = random.Random(4)
+    ranged_reads(store, lambda span: time.sleep(waits.random() * 0.02))
+    blobs = {f"pending/f{n}": RANDOM[n : n + PART + n * MIB + n] for n in range(1, 5)}
+    for key, data in blobs.items():
+        store.put(key, data)
+    with ThreadPoolExecutor(4) as pool:
+        assert dict(zip(blobs, pool.map(store.sha256, blobs))) == {key: sha(data) for key, data in blobs.items()}
+
+
+def test_a_store_that_sends_other_bytes_than_the_range_fails_the_hash_before_a_body_is_read(store):
+    """The length of a range proves nothing: another range of the same length, or the whole object, must not be hashed or held in memory."""
+    store.put("pending/x", RANDOM)
+    real, bodies = store._s3.get_object, []
+
+    def other_range(**kw):
+        if kw.get("Range") == f"bytes={PART}-{2 * PART - 1}":
+            kw["Range"] = f"bytes=0-{PART - 1}"  # the right length, the wrong place
+        return real(**kw)
+
+    def whole_object(**kw):
+        ranged = kw.pop("Range", None)
+        reply = real(**kw)
+        if ranged:
+            reply["Body"] = Mock(wraps=reply["Body"])
+            bodies.append(reply["Body"])
+        return reply
+
+    store._s3.get_object = other_range
+    with pytest.raises(InfraError, match=f"asked for the bytes {PART}-{2 * PART - 1} of {len(RANDOM)}, and the store answered with status 206 and the range 'bytes 0-{PART - 1}/{len(RANDOM)}'"):
+        store.sha256("pending/x")
+    store._s3.get_object = whole_object
+    with pytest.raises(InfraError, match="answered with status 200 and the range None"):
+        store.sha256("pending/x")
+    assert bodies and all(body.close.called and not body.read.called for body in bodies), "no whole object is read into the memory"
+    store._s3.get_object = real
+    assert store.sha256("pending/x") == sha(RANDOM)
+
+
+def test_missing_for_a_range_of_an_object_that_is_there_is_a_fault_of_the_store_and_not_a_missing_file(store):
+    """A missing file abandons a king at once, with no second try. One false answer among many range reads must not count as that."""
+    store.put("pending/big", BIG)
+    real = store._s3.get_object
+
+    def get_object(**kw):
+        if kw.get("Range", "").startswith(f"bytes={5 * MIB}-"):
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return real(**kw)
+
+    store._s3.get_object = get_object
+    with pytest.raises(InfraError, match="a HEAD finds the object"):
+        store.sha256("pending/big")
+    store._s3.get_object = real
+    store.delete("pending/big")
+    with pytest.raises(KeyError):
+        store.sha256("pending/big")
 
 
 @pytest.mark.parametrize("error", [ClientError({"Error": {"Code": "InternalError"}}, "UploadPartCopy"), TIMEOUT])

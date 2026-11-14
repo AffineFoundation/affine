@@ -113,6 +113,20 @@ def head_manifest(version_id: str) -> str:
     return f"public/heads/{_part(version_id)}.json"
 
 
+# The head chain (``headchain.py``): genesis, then one step for each fold, and which heads are checkpoints.
+HEAD_CHAIN = "public/head_chain.json"
+
+
+def head_checkpoint(version_id: str) -> str:
+    """The marker of a checkpoint head. It is written last, after the full base and master are verified in the store."""
+    return f"public/head_checkpoints/{_part(version_id)}.json"
+
+
+def head_fold(version_id: str) -> str:
+    """How the box folded the head ``version_id`` (the head with the stacked LoRAs) when it kept the weights local."""
+    return f"public/head_folds/{_part(version_id)}.json"
+
+
 def round_file(round_id: str) -> str:
     return f"public/rounds/{_part(round_id)}/round.json"
 
