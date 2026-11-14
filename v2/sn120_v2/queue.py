@@ -12,10 +12,10 @@ return to the front keep their original order.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Mapping
 
-from .errors import InfraError
+from .errors import InfraError, V2Error
 from .types import ChainSnapshot, Entry, FrozenBatch, QueueEntry, Registration, Verdict
 
 RegKey = tuple[int, int]
@@ -125,6 +125,47 @@ def squat_trim(
         if not has_file and seat.reg.registered_at > 0 and age > age_factor * expected_wait:
             moved.append(seat.reg.key)
     return moved
+
+
+@dataclass(frozen=True)
+class FrontMove:
+    """One seat that the operator sends to the front: the seat as it is, and its place in the turn order before and after."""
+
+    seat: QueueEntry
+    position_before: int
+    position_after: int
+
+    @property
+    def changed(self) -> bool:
+        return not self.seat.front or self.seat.demoted
+
+
+def plan_front(queue: Queue, served_hotkeys: Iterable[str], hotkeys: Iterable[str]) -> tuple[list[FrontMove], list[QueueEntry]]:
+    """The seats of ``hotkeys`` at the front and not demoted: one move for each hotkey, and the turn order after.
+
+    All or nothing: one hotkey with no waiting seat refuses the whole call.
+    Inside the front zone the order stays registration block, then UID. No
+    other flag of a seat changes, and no other seat changes its flags.
+    """
+    names = list(dict.fromkeys(hotkeys))
+    served, problems, picked = set(served_hotkeys), [], []
+    for hotkey in names:
+        seats = [seat for seat in queue.values() if seat.reg.hotkey == hotkey]
+        if len(seats) == 1 and not seats[0].leased:
+            picked.append(seats[0])
+        elif len(seats) == 1:
+            problems.append(f"{hotkey}: its seat (UID {seats[0].reg.uid}) is in an open round")
+        elif seats:
+            problems.append(f"{hotkey}: {len(seats)} seats have this hotkey (UIDs {', '.join(str(seat.reg.uid) for seat in seats)})")
+        else:
+            problems.append(f"{hotkey}: " + ("it had its turn and was charged, so it has no seat" if hotkey in served else "no seat in the queue has this hotkey"))
+    if problems:
+        raise V2Error("nothing was changed: " + "; ".join(problems))
+    before = {seat.reg.key: place for place, seat in enumerate(waiting(queue))}
+    moved = {seat.reg.key: replace(seat, front=True, demoted=False) for seat in picked}
+    order = waiting({**queue, **moved})
+    after = {seat.reg.key: place for place, seat in enumerate(order)}
+    return [FrontMove(seat, before[seat.reg.key], after[seat.reg.key]) for seat in picked], order
 
 
 @dataclass(frozen=True)
