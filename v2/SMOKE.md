@@ -550,7 +550,7 @@ What a restart does to an open round:
 
 | The round when `run` died | `run` alone, started by hand | The loop |
 |---|---|---|
-| In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`: **one counted failure** for that seat (3 hold the seat). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
+| In the training time (to minute 40) | All batches train again from zero, in the time that is left. From `763f1766` on: a batch that does not finish is `not_trained`, and nothing is counted, when this start comes later than 120 s after the start of the lease. In the first 120 s, and with an earlier commit: a batch of the first group that does not finish gets `no_decision` and **one counted failure** (3 hold the seat), when another batch of the round trained. Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
 | After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. The scores are lost. | The same, at once. |
 | The box result is stored, not judged | `run` judges the stored result. Also after the lease end. | The same: the loop skips `end-round`. |
 | Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |

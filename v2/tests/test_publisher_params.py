@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 import sn120_v2
-from sn120_v2 import admission, irt, judging, layout, public, publisher, queue, sampling, sim
+from sn120_v2 import admission, irt, judging, layout, public, publisher, queue, sampling, sim, worker
 from sn120_v2.errors import ConfigError
 from sn120_v2.gpu.evaluator import ServeSettings, server_argv
 from sn120_v2.journal import JOURNAL_FILE
@@ -159,6 +159,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
+        f"later than {worker.AT_THE_LEASE_S} s after the start of the lease",
+        f"at most {worker.AT_THE_LEASE_S} s after the start of the lease",
         f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
         f"not usable: at most {serve.retries + 1} tries in all",
         f"graded again: at most {serve.grade_tries} grades in all",

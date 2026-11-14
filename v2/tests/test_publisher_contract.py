@@ -218,7 +218,7 @@ def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_roun
         mine = next(entry for entry in report["entries"] if entry["uid"] == 3)
         assert report["outcome"] == "null" and report["note"] == "" and mine["status"] == "no_decision" and "delta" not in mine
         assert (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (count, count == 2)
-    assert "A failure is counted for your seat in one case only: your batch had the whole training time of the round, the first try of its training did not finish in that time (section 3), and at least one other batch of the same round finished its training." in flat
+    assert "A failure is counted for your seat in one case only: your batch had the whole training time of the round (it started at the lease, and the box started its work on the round at most 120 s after the start of the lease), the first try of its training did not finish in that time (section 3), and at least one other batch of the same round finished its training." in flat
     assert "Your entry then has the status `no_decision` and no scores. When 2 failures are counted for a seat, the seat is held: it takes no turn until the operator releases it." in flat
     made.controller.release_seat((3, 1003), made.now)
     assert "A release also sets the count to zero." in flat and (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (0, False)

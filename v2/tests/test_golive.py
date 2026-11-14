@@ -20,6 +20,7 @@ from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
 from sn120_v2.state import load_from_store, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
+from sn120_v2.worker import AT_THE_LEASE_S
 
 
 def frozen(record) -> dict[int, str]:
@@ -283,6 +284,55 @@ def test_a_batch_whose_try_failed_and_whose_next_try_is_cut_by_the_training_time
     assert sorted(tries) == ["hk1", "hk2", "hk2", "hk3"], "B had a first try that failed and a second try that the end of the time stopped"
     assert (by_uid[1].status, record.outcome) == ("winner", "applied")
     assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B started at the lease, but not with the whole time for one try"
+    assert by_uid[3].status == "not_trained"
+    queue = world.controller.state.queue
+    assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
+    assert world.controller.state.served_hotkeys == {"hk1"}
+
+
+def cut_by_the_training_time(tmp_path) -> tuple[SimWorld, list]:
+    """Three seats on two slots, and a round that is open. A trains; the training time ends while B and C still run. B is of the first group."""
+    world = SimWorld(tmp_path, sim_params(n_gpus=2))
+    world.runner.poll_s = 0.01
+    real, close, stopped = world.trainer.train, world.trainer.close, threading.Event()
+
+    def train(request):
+        if request.entry.reg.hotkey == "hk1":
+            return real(request)
+        if request.entry.reg.hotkey == "hk3":
+            world.now += world.params.train_time_budget_s
+        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
+        raise InfraError("the training job was stopped")
+
+    world.trainer.train = train
+    world.trainer.close = lambda: (stopped.set(), close())
+    for uid in (1, 2, 3):
+        world.register(uid, 0.3)
+    return world, world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+
+
+@pytest.mark.parametrize("late_by, status, counted", [(0, "no_decision", True), (1, "not_trained", False)])
+def test_the_whole_training_time_is_only_that_of_a_pass_that_started_at_the_lease(tmp_path, late_by, status, counted):
+    """The real runner at the limit: a pass that starts AT_THE_LEASE_S after the lease is at the lease, one second later it is not."""
+    world, (ticket,) = cut_by_the_training_time(tmp_path)
+    world.now = ticket.issued_at + AT_THE_LEASE_S + late_by - 1  # the first read of the clock is the start of the pass
+    result = world.runner.run(ticket)
+    assert result.started_at - ticket.issued_at == AT_THE_LEASE_S + late_by
+    first, second, third = result.entries
+    assert (first.status, third.status) == ("scored", "not_trained")
+    assert (second.status, second.counted_for_seat) == (status, counted)
+    assert ("had the whole training time" in second.reason) == counted and ("while this batch trained" in second.reason) != counted
+
+
+def test_a_pass_that_starts_late_in_the_training_time_counts_nothing_for_a_batch_that_does_not_finish(tmp_path):
+    """``run`` started again in the round: all batches train again from zero, in the time that is left. The seat does not pay for it."""
+    world, (ticket,) = cut_by_the_training_time(tmp_path)
+    world.now = ticket.issued_at + world.params.train_time_budget_s // 2
+    world.reopen()  # a new process: it finds the open round and runs its ticket again
+    record = world.round()
+    by_uid = {entry.uid: entry for entry in record.decision.entries}
+    assert (by_uid[1].status, record.outcome) == ("winner", "applied")
+    assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B is of the first group, but this pass did not start at the lease"
     assert by_uid[3].status == "not_trained"
     queue = world.controller.state.queue
     assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
