@@ -264,24 +264,30 @@ def test_no_rebuild_without_a_full_commit_id_or_through_a_step_that_only_the_box
 
 # ------------------------------------------------------------------------------------------------ the node's script, for real
 TOOL = '''
-import argparse, hashlib, json, os, pathlib, shutil, sys, urllib.request
+import argparse, hashlib, json, os, pathlib, shutil, sys, time, urllib.request
 p = argparse.ArgumentParser(); b = p.add_subparsers(dest="c").add_parser("rebuild")
 for n in ("--chain", "--work", "--links", "--head", "--device"): b.add_argument(n)
 a = p.parse_args(); doc, links, work = json.load(open(a.chain)), json.load(open(a.links)), pathlib.Path(a.work); cache = work / "cache"
 (work / "seen.json").write_text(json.dumps(dict(mode=oct(os.stat(a.links).st_mode & 0o777), device=a.device, boto3="boto3" in sys.modules or bool(__import__("boto3")))))
 point = links["checkpoints"][0]
 url = {(s["id"], f["name"]): f["url"] for s in [point["base"], point["master"], *links["chain_loras"]] for f in s["files"]}
-get = lambda i, n: urllib.request.urlopen(url[(i, n)]).read()
+size = {(s["id"], f["name"]): f["size"] for s in [point["base"], point["master"], *links["chain_loras"]] for f in s["files"]}
+say = lambda text: print(text, file=sys.stderr, flush=True)  # the lines of the tool, in its words
+def get(i, n): say(f"fetch {n} ({size[(i, n)]} bytes)"); return urllib.request.urlopen(url[(i, n)]).read()
 heads = [doc["start"], *doc["steps"]]
 at = max((i for i, h in enumerate(heads) if (cache / h["base_hash"] / "model.bin").exists()), default=None)
 if at is None:
-    at = 0; d = cache / heads[0]["base_hash"]; d.mkdir(parents=True); (d / "model.bin").write_bytes(get(heads[0]["base_hash"], "model.bin"))
+    say(f"start: checkpoint {heads[0]['version_id'][:12]}, then {len(heads) - 1} step(s)")
+    at = 0; d = cache / heads[0]["base_hash"]; d.mkdir(parents=True); get(point["master"]["id"], "master.bin"); (d / "model.bin").write_bytes(get(heads[0]["base_hash"], "model.bin"))
 started = heads[at]["version_id"]
 for i in range(at + 1, len(heads)):
     if os.environ.get("TOOL_DIES_AT") == str(i): sys.exit(1)
     if os.environ.get("TOOL_REFUSES_AT") == str(i): print("refused: VerifyError: the step gave files with other hashes than the chain record", file=sys.stderr); sys.exit(2)
     before = (cache / heads[i - 1]["base_hash"] / "model.bin").read_bytes()
     lora = b"".join(get(l["lora_hash"], n) for l in heads[i]["loras"] for n in sorted(l["files"]))
+    t = time.monotonic(); time.sleep(0.15)
+    for n in (1, 2) if os.environ.get("TOOL_FOLDS_TWICE") else (1,):
+        say(f"timing {time.strftime('%H:%M:%S', time.gmtime())} UTC: step to head {heads[i]['version_id'][:12]}: fold {n} of 2, fixed-order-v1 on {a.device}: {time.monotonic() - t:.1f} s")
     d = cache / heads[i]["base_hash"]; d.mkdir(parents=True); (d / "model.bin").write_bytes(hashlib.sha256(before + lora).hexdigest().encode())
     shutil.rmtree(cache / heads[i - 1]["base_hash"])
 print("a line that is not the result")
@@ -344,6 +350,26 @@ def test_the_script_of_the_node_marks_the_base_only_when_the_checkout_is_the_pin
     assert not (pod.work / "links.private.json").exists() and not [n for n in pod.left() if n in ("cache", "fetch", "fold")]  # ... and it is gone, with the tool's files
     assert sh("git", "rev-parse", "HEAD", cwd=tmp_path / "chain-repo") == pod.ref != sh("git", "rev-parse", "HEAD", cwd=tmp_path / "main")  # a second checkout, at the pin
     assert pod.run()[1] == dict(ckpt=pod.king["base_hash"], status="present")  # a second call does nothing
+
+
+@pytest.mark.parametrize("twice", [False, True])
+def test_the_script_says_the_seconds_of_each_part_and_a_tool_with_other_lines_changes_no_result(tmp_path, twice):
+    pod = Pod(tmp_path)
+    rc, out = pod.run(env=dict(TOOL_FOLDS_TWICE="1") if twice else {})
+    t = out["times"]
+    assert rc == 0 and list(out)[0] == "times" and out["status"] == "rebuilt"  # the end of the line, which the row's journal keeps, has the status
+    assert t["master_bytes"] == len(b"the master") and t["cores"] == os.cpu_count() and t["disk_free_bytes"] > 0 and t["disk_used_bytes"] >= 0
+    assert len(t["steps"]) == 3 and all(sorted(s) == ["after_s", "fold_s", "lora_s"] and 0.1 <= s["fold_s"] < 5 for s in t["steps"])  # one fold time for a step, also with two folds side by side
+    parts = t["master_s"] + t["cast_s"] + sum(sum(s.values()) for s in t["steps"])
+    assert all(t[k] >= 0 for k in ("checkout_s", "install_s", "tool_s", "check_s", "master_s", "cast_s")) and parts <= t["tool_s"] + 0.5
+    assert "timing " in (pod.work / "rebuild.log").read_text() and "fetch master.bin" in (pod.work / "rebuild.log").read_text()  # the tool's lines are still in the log
+    quiet = Pod(tmp_path / "quiet"); tool = quiet.origin / "v2" / "sn120_v2" / "headfold.py"
+    tool.write_text(TOOL.replace("say = lambda text: print(text, file=sys.stderr, flush=True)", "say = lambda text: print('another form: ' + text, file=sys.stderr, flush=True)"))
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-am", "other lines", cwd=quiet.origin)
+    rc, out = quiet.run(ref=sh("git", "rev-parse", "HEAD", cwd=quiet.origin))
+    assert (rc, out["status"], out["times"]["steps"], out["times"]["master_bytes"]) == (0, "rebuilt", [], 0) and (quiet.model / ".verified").exists()
+    rc, out = Pod(tmp_path / "cut").run(env=dict(TOOL_REFUSES_AT="2"))  # a rebuild that is refused says its times too
+    assert (rc, out["status"]) == (2, "refused") and len(out["times"]["steps"]) == 1 and out["times"]["tool_s"] >= 0.1
 
 
 @pytest.mark.parametrize("fault", ["no such commit", "changed file", "other commit"])

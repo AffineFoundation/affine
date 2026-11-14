@@ -107,8 +107,9 @@ def plan(m):
     """The way to rebuild the king of row `m`: dict(start=<the checkpoint head>, steps=[<step>, ...], stalled=<bool>).
 
     Call it only for a king with a base file that the store does not hold. Wait: the row cannot start yet.
-    `stalled`: a checkpoint upload of this king was seen or announced, and it is not whole UPLOAD_WAIT_S after the head
-    was applied. The way was made from the store as it is now; nothing of it is kept."""
+    The start is the newest checkpoint before the king (way_from). `stalled`: a checkpoint upload of this king was seen
+    or announced, and it is not whole UPLOAD_WAIT_S after the head was applied. The way was made from the store as it is
+    now; nothing of it is kept."""
     if not on():
         raise Wait("BENCH_CHAIN_REF is not a full commit id, or BENCH_REBUILD_DEVICE is not cpu or cuda:N: no rebuild")
     target, manifest = m["head_version_id"], manifest_of(m)
@@ -136,7 +137,15 @@ def plan(m):
     elif planned is None and age < GRACE_S:
         raise Wait("the head is new: a checkpoint upload may still start")
     first = next(i for i in range(at - 1, -1, -1) if heads[i]["checkpoint"] is True)
+    return way_from(heads, first, at) | dict(stalled=stalled)
+
+
+def way_from(heads, first, at):
+    """The way from the checkpoint heads[first] to heads[at]: dict(start, steps, point=<the manifest of the start>).
+    Wait: a step that the node does not replay, too many steps, or a file of the way that the store does not hold."""
     start, steps = heads[first], heads[first + 1 : at + 1]
+    if start["checkpoint"] is not True or not steps:
+        raise Wait(f"head {start['version_id'][:12]} is not a checkpoint before the head to make")
     if len(steps) > MAX_STEPS:
         raise Wait(f"the head is {len(steps)} steps after its checkpoint; the bound is {MAX_STEPS}")
     for step in steps:
@@ -154,7 +163,7 @@ def plan(m):
     for key in keys:
         if not there(key):
             raise Wait(f"{key} is not in the store")
-    return dict(start=start, steps=steps, stalled=stalled, point=point)
+    return dict(start=start, steps=steps, point=point)
 
 
 def blocked(m):
@@ -174,11 +183,8 @@ def blocked(m):
 
 
 def order(m):
-    """What the node of a row needs to rebuild the row's king, or None when the node downloads the full files as before.
-
-    dict(blob=<the input of deploy/chain_rebuild.py>, steps, start, limit_s, stalled, ref, device). The blob has the
-    file hashes of the king's base (from its head manifest), the part of the chain record from the checkpoint to the
-    king, and one expiring GET link for each file of the checkpoint and of each LoRA. A link is a secret until it expires."""
+    """What the node of a row needs to rebuild the row's king, or None when the node downloads the full files as before:
+    pack() of the way from the newest checkpoint, and `stalled` (plan)."""
     if m.get("source") is not None or not REF:
         return None
     try:
@@ -187,6 +193,15 @@ def order(m):
         way = plan(m)
     except (Wait, VerifyError):
         return None  # the download of the full files decides, and its failure is a failed try
+    return pack(m, way) | dict(stalled=way["stalled"])
+
+
+def pack(m, way, device=None):
+    """The order of one rebuild on a node: dict(blob=<the input of deploy/chain_rebuild.py>, steps, start, limit_s, ref, device).
+
+    The blob has the file hashes of the king's base (from its head manifest), the part of the chain record from the
+    checkpoint to the king, and one expiring GET link for each file of the checkpoint and of each LoRA. A link is a
+    secret until it expires."""
     start, steps, point = way["start"], way["steps"], way["point"]
     limit = BASE_S + STEP_S * len(steps); ttl = limit + LINK_SLACK_S; store = source.store()
 
@@ -202,4 +217,4 @@ def order(m):
     tail = dict(schema=SCHEMA, head_version_id=m["head_version_id"], stacked=None, steps=steps,
                 start={key: start[key] for key in _IDS} | dict(checkpoint=True, steps_to_head=len(steps)))
     blob = dict(descriptor=dict(id=m["base_hash"], files=dict(manifest_of(m).base_files)), head=m["head_version_id"], chain=tail, links=links)
-    return dict(blob=blob, steps=len(steps), start=start["version_id"], limit_s=limit, stalled=way["stalled"], ref=REF, device=DEVICE)
+    return dict(blob=blob, steps=len(steps), start=start["version_id"], limit_s=limit, ref=REF, device=device or DEVICE)

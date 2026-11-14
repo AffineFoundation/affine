@@ -248,6 +248,7 @@ Run one service only. A second one on the same Lium account finds the pods of th
 | `bench once` | Runs every queued row, gives every node back, ends. A row that waits for weight files is left for a later run. | No |
 | `bench publish` | Builds the table again and writes it to the store when it changed. Rents nothing. | No |
 | `bench release <model_id>...` | Gives the node of each named row back now. | No |
+| `bench rebuild-dry-run` | Prints the plan of one measured rebuild (section 13). Reads only. With `--rent` it rents one pod, measures, and gives the pod back. | Yes |
 
 A command of the last three stops with `another affine-bench daemon holds ...` while the unit runs: stop the unit first.
 
@@ -370,4 +371,29 @@ The node checks the files two times. The tool checks each folded file of each st
 
 Time limit of one rebuild on the node: 3600 seconds, and 900 seconds for each step. The time counts toward the life of the row's pod.
 
-Not proven: a rebuild on a rented node. The tests use a fake store and a fake node, and the node's script ran on real files with a stand-in tool. No step time, download time or GPU time is measured on a node. Until one measured run on a rented node is done, the box stays at a checkpoint for every king.
+### The measured rebuild (`bench rebuild-dry-run`)
+
+This command measures one rebuild on a rented pod. It is no part of the service: it runs only when you start it. Start it with `--rent` only when you got the order to do so.
+
+What it does. It takes a king that is a checkpoint, so each file of that king is in the store. On a pod it makes the base of that king from an older checkpoint and the LoRAs between, with the same script as a row. The script compares the sha256 of each file of the result with the king's head manifest: the hashes of the king's own published files. It does this once for each device (default: `cpu`, then `cuda:0`), each time in a new directory under `/data/bench/dry`. It prints the minutes of each part (rent, setup, download of the master, each fold, the second hash check) and the dollars at the pod's price.
+
+- Without `--rent` it reads only. It prints one line `dry_run_plan`: the king, the checkpoint to start from, the count of steps, the devices, the pod's name, and the upper bound of minutes and dollars.
+- `--head` names the king (a version id or its first digits, or a model id). The default is the newest king that fits.
+- `--steps N` starts N steps before the king (default 1). `--from` names the checkpoint to start from.
+- `--devices` is a list such as `cpu,cuda:0`.
+
+Money. The pod is the pod of one more row with the name `dry-rebuild`: its name is `affine-v2-bench-dry-rebuild`. Each guard of a row holds for it: the price cap, the kinds, the secure tier, the count of rents of the day, one pod for the name, the delete by the exact id only. The command rents only while fewer than `BENCH_MAX_PODS` rows have or wait for a pod, itself counted. A row that comes while Lium makes the pod goes first: the pod goes back at once. The command tries one rent and one rebuild for each device. It gives the pod back at its end, after a failure, and after the signals INT, TERM and HUP. A rebuild starts only when its time limit ends before the pod is 6 hours old.
+
+Nothing public. `dry-rebuild` is no row of the table. The command writes nothing to the store. The report goes to the output and to `BENCH_STATE/private/dry-rebuild/report-<time>.json` on this host. Only a true money alarm can name the pod in the table, as for any pod: `release-refused`, `rent-no-answer`, `pod-without-row`.
+
+Exit codes: 0, each device gave the king's files and the pod is back. 1, a rebuild did not give them (the pod is back). 2, nothing was measured (not started, no pod, or no place); the pod, if there was one, is back. 3, the pod is NOT given back: look at `bench pods`.
+
+When it is not right:
+
+- **The command was killed** (`kill -9`, the host went down). No code of it runs then. The unit gives the pod back: at its next poll it starts the worker of `dry-rebuild`, and that worker only gives the pod back. It runs no benchmark. Without the unit: stop nothing, run `bench release dry-rebuild`.
+- **Exit code 3**, or the line `dry-run-pod-not-given-back`. The unit goes on with the tries. Without the unit: `bench release dry-rebuild`. Then `bench pods` must not show the pod.
+- **`rent-no-answer`.** `lium up` gave no answer, so Lium may still make the pod. The next start is refused. Look at `bench pods`, then run `bench retry dry-rebuild`. The next run with `--rent` takes a pod that Lium lists under the name, and gives it back at its end.
+- **`dry-run-rent-cut`.** A signal came while Lium made the pod, and Lium does not list the pod yet. Look at `bench pods` after some minutes. If a pod with the name is there and no row claims it, start the command again with `--rent`: it takes that pod and gives it back.
+- **`pod-without-row` in the table for some minutes.** The unit looked at Lium's list in the time between Lium's making of the pod and the write of its record. The alarm goes at the unit's next look (10 minutes).
+
+Not proven: a rebuild on a rented node. The tests use a fake store and a fake node, and the node's script ran on real files with a stand-in tool. No step time, download time or GPU time is measured on a node. The measured rebuild above is built and tested with a fake Lium and a fake node; it has not run on a real pod. Until one measured run on a rented node is done, the box stays at a checkpoint for every king.

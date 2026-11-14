@@ -10,7 +10,9 @@ These read only:
   retry      (host) queue a stopped row again (no stop of the service)   affine-bench retry MODEL_ID...
 The next two need the service stopped (one service per state directory):
   publish    (host) rebuild benchmarks.json now and write it to the store when it changed
-  release    (host) give the pod of a row back now             affine-bench release MODEL_ID..."""
+  release    (host) give the pod of a row back now             affine-bench release MODEL_ID...
+This one rents a pod, only with --rent, and only when the operator starts it (it is no part of the service):
+  rebuild-dry-run  (host) make a checkpoint king on a pod from an older checkpoint, compare the files, print minutes and dollars"""
 import sys
 
 
@@ -21,6 +23,8 @@ def main():
     if cmd == "node-run":
         from .node_run import main as m; return m(rest)
     from . import daemon  # imported here, not at the top: the host modules need the host environment, the node has none
+    if cmd == "rebuild-dry-run":
+        from . import dryrun; raise SystemExit(dryrun.main(rest))  # here for the same reason
     return daemon.cli(cmd, rest)
 
 
