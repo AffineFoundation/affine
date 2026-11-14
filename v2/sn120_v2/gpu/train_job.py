@@ -116,6 +116,68 @@ def add_lora(model: torch.nn.Module, recipe: Recipe, seed: int) -> dict[str, Lor
     return layers
 
 
+class Replay(torch.autograd.Function):
+    """One decoder layer that keeps no graph: gradient checkpointing.
+
+    The forward keeps the input of the layer and nothing else. The backward
+    runs the layer again on that input, this time with a graph, and returns
+    the gradient of the input and of the layer's LoRA matrices. These are
+    the operations of the kept graph, on the same values, in the same order.
+    So the GPU holds the graph of one layer at a time, not of all layers, and
+    each layer's forward runs twice.
+    """
+
+    @staticmethod
+    def forward(ctx, layer, hidden, *weights):
+        ctx.layer, ctx.weights = layer, weights
+        ctx.save_for_backward(hidden)
+        out = layer(hidden)
+        if not isinstance(out, torch.Tensor):
+            raise InfraError("a decoder layer of the head does not return one tensor")
+        return out
+
+    @staticmethod
+    def backward(ctx, grad):
+        (hidden,) = ctx.saved_tensors
+        hidden = hidden.detach().requires_grad_(ctx.needs_input_grad[1])
+        with torch.enable_grad():
+            out = ctx.layer(hidden)
+        needed = ctx.needs_input_grad[1:]
+        grads = iter(torch.autograd.grad(out, [tensor for tensor, need in zip((hidden, *ctx.weights), needed) if need], grad))
+        return (None, *(next(grads) if need else None for need in needed))
+
+
+def keep_one_graph(model: torch.nn.Module, layers: dict[str, LoraLinear]) -> int:
+    """Send every decoder layer through ``Replay``. Returns the count of layers.
+
+    The decoder layers are the members of each module list that holds a LoRA
+    layer. All of them change, with or without a LoRA of their own: from the
+    first LoRA layer on, every later layer would keep its graph.
+    """
+    lora, count = {id(layer) for layer in layers.values()}, 0
+    for stack in model.modules():
+        if not isinstance(stack, torch.nn.ModuleList) or not any(id(module) in lora for module in stack.modules()):
+            continue
+        for block in stack:
+            block.forward, count = _replayed(block), count + 1
+    return count
+
+
+def _replayed(block: torch.nn.Module):
+    forward = block.forward
+    weights = [weight for module in block.modules() if isinstance(module, LoraLinear) for weight in (module.lora_A, module.lora_B)]
+
+    @functools.wraps(forward)
+    def replayed(hidden_states, *args, **kwargs):
+        if kwargs.get("past_key_values") is not None:  # the second run of a layer would write its cache a second time
+            raise InfraError("the training job runs the head without a cache")
+        if not torch.is_grad_enabled() or not (weights or hidden_states.requires_grad):
+            return forward(hidden_states, *args, **kwargs)  # no gradient flows through this layer: it keeps no graph anyway
+        return Replay.apply(lambda hidden: forward(hidden, *args, **kwargs), hidden_states, *weights)
+
+    return replayed
+
+
 def load_head(base_dir: str, dtype: str) -> torch.nn.Module:
     """The head in the class its own config names, so every module path equals a tensor name of the weight files."""
     config = json.loads((Path(base_dir) / "config.json").read_text(encoding="utf-8"))
@@ -165,6 +227,12 @@ class Replica:
         self.model, self.device, self.recipe = load_head(base_dir, dtype).to(device).eval().requires_grad_(False), device, recipe
         self.layers = add_lora(self.model, recipe, seed)
         self.weights = [w for layer in self.layers.values() for w in (layer.lora_A, layer.lora_B)]
+        if not keep_one_graph(self.model, self.layers):
+            raise InfraError("the head has no list of decoder layers")
+
+    def hidden(self, ids: Sequence[int]) -> torch.Tensor:
+        """The last hidden state of one row. No cache: the job never reads one, and ``Replay`` runs each layer twice."""
+        return self.model.base_model(input_ids=torch.tensor([list(ids)], device=self.device), use_cache=False).last_hidden_state
 
     def warm_up(self, ids: Sequence[int]) -> None:
         """One short row forward and backward through the layers. It leaves no gradient, changes no weight and draws no random number.
@@ -174,8 +242,7 @@ class Replica:
         this pass that happens in the first backward of the longest row: the
         memory peak of the whole job. Here the GPU holds only the head.
         """
-        hidden = self.model.base_model(input_ids=torch.tensor([list(ids)], device=self.device)).last_hidden_state
-        hidden.float().square().sum().backward()
+        self.hidden(ids).float().square().sum().backward()
         for weight in self.weights:
             weight.grad = None
 
@@ -184,8 +251,7 @@ class Replica:
         head, loss, trained = self.model.get_output_embeddings(), 0.0, 0
         for row in rows:
             targets = torch.tensor(row["tokens"], device=self.device)
-            ids = torch.tensor([row["prompt_ids"] + row["tokens"]], device=self.device)
-            hidden = self.model.base_model(input_ids=ids).last_hidden_state[0, len(row["prompt_ids"]) - 1 : -1]
+            hidden = self.hidden(row["prompt_ids"] + row["tokens"])[0, len(row["prompt_ids"]) - 1 : -1]
             leaf = hidden.detach().requires_grad_(True)  # the output layer runs in chunks on this copy
             chunks = range(0, len(targets), LOGIT_CHUNK)
             if "old" not in row:  # first pass: the head itself is the old policy
