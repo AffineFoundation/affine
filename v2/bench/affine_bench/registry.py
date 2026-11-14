@@ -34,13 +34,15 @@ def model_settings():
     return _load("model_settings.toml")
 
 
+SENT = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repetition_penalty", "max_tokens")  # a run sends these with each request
+
+
 def resolve_settings(model_id, kind=None):
     """Sampling + max_model_len for one model. A king, and the last king of v1, take `king_profile`. The launch model
     (genesis) keeps `default_profile`, the values of its model card. A node knows the model's id only, so the id decides
     in the same way as the kind.
     max_tokens is capped at global_max_tokens_ceiling; max_model_len = min(budget + headroom, native_context)."""
     ms = model_settings()
-    profiles = ms["profiles"]
     mmap = ms.get("models", {})
     if kind in ("king", "v1-king") or (model_id or "").startswith(("king-", "v1king-")):
         pname = ms.get("king_profile") or ms.get("default_profile")
@@ -48,9 +50,15 @@ def resolve_settings(model_id, kind=None):
         pname = ms.get("default_profile")
     else:
         pname = mmap.get(model_id) or ms.get("default_profile")
-    if pname not in profiles:
+    if pname not in ms["profiles"]:
         raise KeyError(f"unknown settings profile {pname!r} for model {model_id!r}")
-    p = dict(profiles[pname])
+    return profile_settings(pname)
+
+
+def profile_settings(pname):
+    """The values that a run with the profile `pname` takes: the same for every model that the profile is chosen for."""
+    ms = model_settings()
+    p = dict(ms["profiles"][pname])
     ceiling = int(ms.get("global_max_tokens_ceiling", 65536))
     headroom = int(ms.get("prompt_headroom", 4096))
     budget = min(int(p["max_tokens"]), ceiling)

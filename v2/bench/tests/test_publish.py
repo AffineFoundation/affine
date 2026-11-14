@@ -21,3 +21,11 @@ def test_pooled_counts_errored_rollouts_as_wrong(tmp_path, monkeypatch):
 def test_expected_uses_the_full_task_count():
     assert publish.expected(dict(tasks=393, tasks_total=393, rollouts=1), "math500", {"math500": 500}) == 500
     assert publish.expected(dict(tasks=30, tasks_total=30, rollouts=16), "aime22", {"aime22": 30}) == 480
+
+
+
+def test_profiles_has_the_named_profiles_of_the_settings_file_only():
+    """A row that was put in, or a row of an older file, can name a profile that the settings file does not have: it is left out."""
+    named = publish.profiles([dict(profile="qwen3.5-family-pp0"), dict(profile="of-another-file"), dict(profile=None), dict()], [dict(profile="qwen3.5-family")])
+    assert sorted(named) == ["qwen3.5-family", "qwen3.5-family-pp0"] and publish.profiles([dict(profile="of-another-file")], []) == {}
+    assert named["qwen3.5-family"]["presence_penalty"] == 1.5 and named["qwen3.5-family-pp0"]["presence_penalty"] == 0.0

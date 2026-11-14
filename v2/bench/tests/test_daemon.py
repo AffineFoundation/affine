@@ -803,6 +803,50 @@ def test_a_king_and_the_v1_king_run_with_no_presence_penalty_and_the_launch_mode
     assert "qwen3.5-family-pp0 (presence_penalty 0.0" in table()["about"] and "qwen3.5-family (presence_penalty 1.5" in table()["about"]
 
 
+SENT = dict(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, repetition_penalty=1.0, max_tokens=65536)  # of both profiles
+
+
+def test_the_table_gives_the_values_of_each_profile_that_a_row_names_and_no_sampling_that_no_run_uses(world):
+    """A published row names its profile, so the values of a name stay: a change of a value takes a new name."""
+    green(world.v2, 1); world.steps(3)
+    t = table()
+    assert t["profiles"] == {PP0: SENT | dict(presence_penalty=0.0, max_model_len=69632), PP15: SENT | dict(presence_penalty=1.5, max_model_len=69632)}
+    assert {m["profile"] for m in t["models"]} == set(t["profiles"]) and all(set(v) == set(R.SENT) | {"max_model_len"} for v in t["profiles"].values())
+    for name, values in t["profiles"].items():  # the same values as a node takes for a row of that profile
+        st = next(st for st in (R.resolve_settings(m["model_id"], m["kind"]) for m in t["models"]) if st["profile"] == name)
+        assert values == {k: st[k] for k in values}
+    assert t["serving"] == R.serving() and set(t["serving"]) == {"version", "server", "client"}  # no block of sampling values that no code reads
+    for text in ("serving has no sampling value", "profiles has each profile that a row or a result of this file names", ", ".join(R.SENT)):
+        assert text in t["about"]
+    assert BENCH_VIEW(t) == BENCH_VIEW({k: v for k, v in t.items() if k not in ("profiles", "serving")})  # the site's table does not read them
+
+
+def test_a_run_sends_the_values_that_the_table_says_and_the_server_starts_as_the_table_says():
+    bench = pathlib.Path(__file__).resolve().parents[1]
+    flags = re.findall(r'"--sampling\.([a-z-]+)", str\(sp\["([a-z_]+)"\]\)', (bench / "affine_bench" / "node_run.py").read_text())
+    assert sorted(v for _, v in flags) == sorted(R.SENT) and all(f.replace("-", "_") == v for f, v in flags)
+    assert (bench / "affine_bench" / "node_run.py").read_text().count("--sampling.") == len(R.SENT)  # and no other sampling value
+    sv, sh = R.serving()["server"], (bench / "deploy" / "serve.sh").read_text()
+    for start in (f"--dtype {sv['dtype']} ", f"--max-num-seqs {sv['max_num_seqs']} ", f"--gpu-memory-utilization {sv['gpu_memory_utilization']:.2f} ",
+                  f"--generation-config {sv['generation_config']} ", "NG=$(nvidia-smi -L | wc -l)", "--data-parallel-size $NG ", f"ML=${{3:-{sv['max_model_len']}}}"):
+        assert start in sh, start
+    assert sv["engine"] in (bench / "deploy" / "requirements-vllm.txt").read_text().split()
+
+
+def test_no_request_names_the_thinking_and_the_table_says_what_decides_it(world):
+    """enable_thinking of a profile goes into the record of a run and into no request: the chat template of the model's files decides."""
+    bench = pathlib.Path(__file__).resolve().parents[1]; run = (bench / "affine_bench" / "node_run.py").read_text()
+    assert [ln.split("enable_thinking", 1)[1] for ln in run.splitlines() if "enable_thinking" in ln] == ['=st["enable_thinking"],']  # the record of the run only
+    assert "chat_template_kwargs" not in run and "enable_thinking" not in R.SENT
+    assert 'CTA=(); [ -n "$CT" ] && CTA=(--chat-template "$CT")' in (bench / "deploy" / "serve.sh").read_text()  # a template of its own only when one is given
+    green(world.v2, 1); world.steps(3)
+    launches = [c for node in world.nodes.values() for c in node.cmds if "affine-bench node-run" in c]
+    assert len(launches) == 2 and all("--reasoning-parser qwen3 " in c and "--chat-template" not in c for c in launches)  # and none is given
+    assert publish.LAUNCH_TEMPLATE == source.V1_KING_FILES["chat_template.jinja"]
+    for text in ("No request names enable_thinking", f"sha256 {publish.LAUNCH_TEMPLATE}", "writes an empty thinking block only when enable_thinking is false"):
+        assert text in table()["about"]
+
+
 def test_two_rows_whose_short_names_are_equal_never_share_a_pod(world, monkeypatch, capsys):
     monkeypatch.setattr(P, "NAME_MAX", len(P.PREFIX) + 4)  # every king has the name affine-v2-bench-king
     first, second = green(world.v2, 1), green(world.v2, 2)
