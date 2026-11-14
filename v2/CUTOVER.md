@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `f986ccb1` is the last of the eight. The text of `llms.txt` changes once more before the final commit. So the final commit is not pinned here: the coordinator names it, and it then takes the place of `4e23a275` as the least commit for `llms.txt`. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The text check of the store's `llms.txt` ("AffineValidator", step 8.2). The commit is no longer open: `0c29cb6c` is the least commit for mainnet, and the least commit whose `llms.txt` may go up (check 1 of "Before the mainnet bootstrap").
 
 ## Hosts
 
@@ -58,24 +58,31 @@ Nothing serves the bucket to the public. The public pull on AffineValidator copi
 
 `public/` in the bucket is not v2's own: v1 has objects there too. v2's keys are the ones that the table in "Store" names, and no step of this file acts on the whole of `public/`.
 
-## The state of v1 (13 Nov 2026)
+## The state of v1 (14 Nov 2026)
 
-v1's evaluation was torn down at 4:55 PM Costa Rica time (22:55 UTC). So v1 starts no new turn, and the part "stop v1's rounds" is done. What still runs: v1's hourly weight writer, `affine-ff.service` (upload links) and the publishers of the v1 site. Jacob stops each of them at its step of the list "AffineValidator".
+**v1 still takes turns, and it goes on until its units are stopped.** v1's evaluation was reported as torn down on 13 Nov 2026 at 4:55 PM Costa Rica time (22:55 UTC). The public `k1.json` shows a turn after that: epoch 1321, UID 893, on 14 Nov 2026 at 00:38 UTC, with the verdict `pending`. v1 starts a new turn when a seat has a valid file. With no valid file it writes a skip, and its epochs go on, one about every 15 minutes: the last epoch was 1314 on 13 Nov 2026 at 23:04 UTC and 1322 on 14 Nov 2026 at 01:07 UTC. So the part "stop v1's rounds" is not done. What also runs: v1's hourly weight writer, `affine-ff.service` (upload links) and the publishers of the v1 site. Jacob stops each of them at its step of the list "AffineValidator".
 
-What the operator still checks, on the host where v1's round path ran (`systemctl --user`):
+What the operator does and checks, on the host where v1's round path runs (`systemctl --user`). The order is the same as before: first the units, then the check, then the import.
 
-1. No unit of group A in "v1 units" is active or enabled. The watchdogs come first: a watchdog that still runs starts v1's round path again.
-2. v1's last epoch does not move. Run the import dry run ("GPU box", step 4) two times, 10 minutes apart. `v1_last_epoch` in the `source:` line, the kings and the front seats must be the same. On 13 Nov 2026 at 23:04 UTC the dry run passed with `v1_last_epoch=1314`, 10 kings, 14 front seats and 256 waiting seats.
+1. No unit of group A in "v1 units" is active or enabled. Stop and disable each one that is. The watchdogs come first: a watchdog that still runs starts v1's round path again.
+2. v1 takes no new turn. Run the import dry run ("GPU box", step 4) two times, 20 minutes apart, so that at least one v1 epoch lies between them. `v1_last_epoch` in the `source:` line, the kings and the front seats must be the same. If `v1_last_epoch` moved, a unit of v1's round path still runs: go back to point 1. Not proven: that the last epoch stands still when all units of group A are stopped. If it still moves then, send the two `source:` lines to the coordinator.
 
-**Save `k1.json` now**, and again right before the import's real run. `k1.json` shows only v1's last 200 epochs, and it is the only record of a turn that v1 took and did not judge. Keep all copies.
+**The numbers in this file are those of the moment.** They move while v1 runs and while miners register. On 13 Nov 2026 at 23:04 UTC the dry run gave `v1_last_epoch=1314`, 10 kings, 14 front seats and 256 waiting seats. On 14 Nov 2026 at 01:00 UTC, v1's files of epoch 1310 and the chain of that minute gave 257 waiting seats (14 front, 49 normal, 194 back), and 8 minutes later 258. Check a number against the output of your own run, not against this file.
+
+**Save `k1.json` and `mining.json` now**, and again right before the import's real run. `k1.json` shows only v1's last 200 epochs, and it is the only record of a turn that v1 took and did not judge. The import needs the two files from the same time ("GPU box", step 7), so save them together. Keep all copies.
 
 ```
-curl -fsS https://affine.io/k1.json -o k1-$(date -u +%Y%m%dT%H%M%SZ).json
+T=$(date -u +%Y%m%dT%H%M%SZ)
+curl -fsS https://affine.io/k1.json -o k1-$T.json
+curl -fsS https://affine.io/mining.json -o mining-$T.json
+python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epoch"))' mining-$T.json
 ```
 
-The first copy is in this repo: `tests/data/cutover/k1.json` (13 Nov 2026, 22:38 UTC).
+Check: the last line prints v1's epoch name, which ends with `-e` and a number (for example `-e001311`). If it prints `None`, the site serves v2's `mining.json` and this copy is not a v1 file: keep the last copy that is.
 
-**The import can run now.** It reads only public files and the chain. Do the dry run now. Do the real run on the cutover build, right before the bootstrap.
+The first copies are in this repo: `tests/data/cutover/k1.json` and `tests/data/cutover/mining.json`. This `k1.json` was made on 13 Nov 2026 at 22:13 UTC, and its last epoch is 1310.
+
+**The import dry run can run at any time, as long as the site serves v1's `mining.json`.** It reads only public files and the chain. Do the real run on the cutover build, right before the bootstrap. Once the site serves v2's `mining.json`, the import with the two public URLs is refused: "GPU box", step 7 has the way.
 
 ## What the import carries
 
@@ -94,19 +101,19 @@ A queued miner file is not in the import. v2 reads it in place, at the same key 
 
 The cutover build is not the commit of the smoke test. A result of the smoke test does not carry over by itself. On the GPU box:
 
-1. Check out the commit that the coordinator names, and install again. The packages can differ.
+1. Check out `0c29cb6c`, or a later commit that the coordinator names, and install again. The packages can differ.
 
    ```
-   git fetch origin && git checkout <commit that the coordinator names>
+   git fetch origin && git checkout 0c29cb6cb59f5b66c44b482cfe77b5127b673d1f
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 f986ccb11c9627cf2109d71c5480f827fde78acd; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 f986ccb11c9627cf2109d71c5480f827fde78acd 0c29cb6cb59f5b66c44b482cfe77b5127b673d1f; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-   **The mainnet bootstrap and `run` use only a commit that contains these eight.** Each line of the loop must end with `exit=0`.
+   **The mainnet bootstrap and `run` use only a commit that contains these nine.** Each line of the loop must end with `exit=0`.
 
    | Commit | What it holds | With an earlier commit |
    | --- | --- | --- |
@@ -118,12 +125,13 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
    | `e0faff2d` (PR #157 and PR #159) | The guard of `run`: it compares the box with the pinned digests before it opens a round, before it runs an open round again and before a fold. On a difference it starts none of them and ends with exit code 2 ("The digests of the box and the pinned digests" below). | `run` does not stop on such a box. Each round closes in seconds, and every seat in it gets one counted failure. |
    | `f986ccb1` (PR #168; it holds PR #164, `6baf0d74`, PR #166, `68b8abc5`, PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Six things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). From `6baf0d74`: `set-params` prints `changed`, each parameter whose value differs, with the value before and after ("The value `squat_min_wait_s`" below). From `f986ccb1`: a text from an error is made safe before it goes into the public round file ("Error text in the public round file" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. `set-params` prints only the two hashes, so nothing shows a key that went back to its default. A text from an error goes into the public round file as it is: it can hold an address of the box or the signature of a signed link. |
+   | `0c29cb6c` (PR #171) | The words of `llms.txt` on `no_decision`: a failure is counted for a seat in one case only (the box could not train its batch, and another batch of the same round finished its training); a round with no result costs a seat nothing; the markers in a public `reason` or `note`. | `llms.txt` tells a miner that each `no_decision` of the box is counted and that 3 of them hold the seat. The code counts fewer cases. `llms.txt` must not go up from such a build. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
-   These eight are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
+   **`0c29cb6c` is the least commit for mainnet.** It is the last of the nine and holds the other eight. The coordinator named it as the commit to take before the first mainnet round. The reasons are the last two rows: the safe error text in the public round file (`f986ccb1`) and the words of `llms.txt` on `no_decision` (`0c29cb6c`). Take a later commit only when the coordinator names it. A later commit that changes only `v2/CUTOVER.md` changes nothing on a box: read this file at the tip of `v2`.
 
-   Each change on `v2` from `1d7d0628` to `f986ccb1` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
+   Each change on `v2` from `1d7d0628` to `0c29cb6c` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -223,10 +231,11 @@ Run every command from `v2/`, inside the virtual environment.
    ```
 
    Read the output:
-   - The 10 kings are the miners that v1 pays now.
+   - The 10 kings are the miners that v1 pays now. The report shows them two times: under `kings, oldest first`, and in `first weights` in the order of the UID. Compare the two as a set.
    - The front seats are the turns that v1 did not judge. Each line shows the v1 epoch of the turn, and how many turns that hotkey had in v1. The seat of epoch 1157 (UID 923) must be among them.
    - `first weights` must show 10 UIDs.
-   - The last line of the report must say `UID 0 is <address>: it has no seat and gets no weight; it is the given owner hotkey`.
+   - The line `UID 0 is <address>: it has no seat and gets no weight; it is the given owner hotkey` must be there. It is the last line of the report. After it comes only `DRY RUN: nothing was written.` (in the real run of step 7: the five `WROTE` lines).
+   - A refusal with `mining.json and k1.json are not from the same epoch`: the site serves v2's `mining.json`. Step 7 has the way.
 5. **Preflight (hard gate).** A read-only command lists every key and prefix that v2 writes, and fails when one of them already exists in the bucket. Run it before the first production write, which is step 6. If it fails, stop the cutover: v2 would write over an object that is not its own. Do not go on without it.
 
    Nobody has run it against the real bucket: this run is the first. It only lists; it writes nothing.
@@ -304,6 +313,19 @@ Run every command from `v2/`, inside the virtual environment.
    ```
 
    Check: no `CUTOVER IMPORT REFUSED`; the kings and the front seats are those of step 4; one `WROTE` line for each file. The command never replaces a directory: for a second run, use a new one. If v1's publisher of `k1.json` has stopped, the command refuses a file older than one hour: add `--max-age-s` with the smallest value that accepts it.
+
+   **Once the site serves v2's `mining.json`, the import with the two public URLs is refused**, in the dry run too:
+
+   ```
+   CUTOVER IMPORT REFUSED (CutoverError): mining.json and k1.json are not from the same epoch
+   ```
+
+   In the order of this file that comes only after the pull's first run ("AffineValidator", step 12). Then give the command saved copies of v1's two files: add `--k1 <file>`, `--mining <file>` and `--max-age-s <seconds>` ("Options of the import command"). The copies are the two files of v1's site in `$BACKUP` ("AffineValidator", step 4), or the pair that you saved last ("The state of v1"). They are public files: copy them to this box.
+
+   - The two files must be from the same time. The epoch of `mining.json` must be the last epoch of `k1.json`, or at most 2 epochs after it. So a new `k1.json` from the site with a saved `mining.json` gets the same refusal.
+   - Without `--max-age-s` the refusal is `k1.json is N s old (limit 3600 s): refusing a stale read`. Give the smallest value above that N.
+   - Give as `--earlier-k1` only copies that are older than the `--k1` file.
+   - The import then carries v1's state at the time of the copies. A turn that v1 took after them is not in it. So v1's round path is stopped before the copies are made ("The state of v1", points 1 and 2). If v1 took a turn after them, do not go on: tell the coordinator.
 8. **First start.** `--stack sn120_v2.assembly:stack` names the builder of the real parts. The command pins the parameters, writes the genesis head, the kings and the first queue, and publishes `llms.txt` and `mining.json` into the store. It refuses a second run on a journal that has a genesis.
 
    ```
@@ -313,7 +335,7 @@ Run every command from `v2/`, inside the virtual environment.
    python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack
    ```
 
-   Check: `bootstrap` ends with exit code 0 and prints no line `not finished:`. `kings` holds the 10 UIDs of step 4; `queue` is the count of waiting seats of step 7; `published` is `true`; `params_hash` is the hash that the check line of check 5 printed for `$CUT/params.json` (so `squat_min_wait_s` is pinned as 31536000); `queued_files` of `status` shows how many waiting seats have a valid file.
+   Check: `bootstrap` ends with exit code 0 and prints no line `not finished:`. Its first line goes to stderr and is no fault: `checking every genesis file in the store against its sha256 (the weights are large: this takes minutes)`. `kings` holds the 10 UIDs of step 4, as a set: `bootstrap` and `status` print them newest first, the import oldest first and, in `first weights`, in the order of the UID. `queue` is the count of waiting seats of step 7; `served` is the count of registrations in the `served:` line of the import; `published` is `true`; `params_hash` is the hash that the check line of check 5 printed for `$CUT/params.json` (so `squat_min_wait_s` is pinned as 31536000); `queued_files` of `status` shows how many waiting seats have a valid file.
 
    - `bootstrap` also writes the head pointer, `public/head.json`. The first run of the pull on AffineValidator needs it (step 12 there).
    - A line `not finished: head pointer not published yet: <cause>` (exit code 1): the store did not take the pointer. The genesis is written; do not run `bootstrap` again. The first pass of `run` (step 10) writes the pointer.
@@ -470,6 +492,8 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
    uv pip install -e ".[chain,r2,links]"
    install -d -m 700 "$WSTATE" "$LSTATE"
    ```
+
+   The commit is the one of the GPU box: `0c29cb6c`, or a later one that the coordinator names (check 1 of "Before the mainnet bootstrap").
 
    Check: the second line prints `exit=0`: the commit contains PR #139, so the pull and `reset.py llms` read the names of the pull's credentials file. `python -c "import bittensor, boto3, nacl, sn120_v2.weights_writer, sn120_v2.links; print('ok')"` prints `ok`.
 2. **The weights writer: credentials file and unit files.** **Can be done now.** Write `$WENV` with these five lines, with no quotes and no `export`, then `chmod 600 "$WENV"`. The token is the read-only one.
@@ -648,11 +672,11 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
    2. **Check that the store's `llms.txt` comes from the cutover build.** `llms.txt` must not go up from a store that an older commit published.
 
-      - The commit of the GPU box holds the eight commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` eight times. Three of them are the reason for this step: the round time hard stop (`9b830458`), the limit of 3 checks (`5ce10ce7`) and the corrected text of `llms.txt` (`4e23a275`).
-      - **Not landed yet:** the final commit for the cutover. The text of `llms.txt` changes once more after those eight, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
-      - **Not landed yet:** the text check of the store's `llms.txt`. The command comes with the commit.
+      - The commit of the GPU box holds the nine commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` nine times. Four of them are the reason for this step: the round time hard stop (`9b830458`), the limit of 3 checks (`5ce10ce7`), the corrected text of `llms.txt` (`4e23a275`) and its words on `no_decision` (`0c29cb6c`).
+      - `0c29cb6c` is the least commit whose `llms.txt` may go up. The commit of the GPU box (`git rev-parse HEAD` there) is that commit, or a later one that the coordinator names.
+      - **Not landed yet:** the text check of the store's `llms.txt`. The coordinator sends its words.
 
-      Do not go on before you have both.
+      Do not go on before you have the text check.
    3. **Stop the v1 unit that puts v1's `llms.txt` back.** `affine-network-dashboard.service` writes `network-data.json` into the site directory every 15 seconds. In the same pass it compares `llms.txt` and `reward-policy.json` with its own copies and writes its copies back if they differ. While it runs, the new `llms.txt` lives for 15 seconds at most.
 
       ```
@@ -1593,7 +1617,7 @@ Stop: `sudo systemctl disable --now sn120-v2-site-pull.timer`. The files stay as
 
 The names come from documents in this repository. The repository does not show which of them run now. The host is the truth: `systemctl --user list-units 'affine-*' 'sn120-*' '*watchdog*'` and `systemctl --user list-timers --all`.
 
-**Group A: the round path. Torn down on 13 Nov 2026; check that each is inactive and disabled.**
+**Group A: the round path. Reported as torn down on 13 Nov 2026, but v1 took a turn on 14 Nov 2026 at 00:38 UTC ("The state of v1"). Stop and disable each one that is active or enabled, in this order.**
 
 1. The watchdogs: `tp-watchdog`, `ff-watchdog`, and any other unit that `systemctl --user list-units '*watchdog*'` shows. A watchdog reverts v1 or starts it again when the lifecycle is down for 90 seconds (`ops/free_file/README.md`, `ops/ff_train_params/README.md`).
 2. `affine-mimo-lifecycle.service`: selects the next turn and starts the training.
@@ -1664,7 +1688,7 @@ The list of v1's keys comes from v1's source and the public files. Nobody listed
 | `--chain <file>` | A `ChainSnapshot` as JSON ("GPU box", step 3). Adds checks, and prints the start queue, the first weights and the hotkey of UID 0. `--out` copies it as `chain.json`. |
 | `--owner-hotkey` | The subnet owner hotkey. The command refuses when UID 0 of `--chain` has another hotkey. Needs `--chain`. |
 | `--max-age-s` | Oldest `k1.json` accepted, in seconds. Default 3600. Earlier copies have no age limit. Use a larger value only if v1's publisher stopped, and then the smallest value that accepts the file. |
-| `--k1`, `--mining` | Another URL or a local file. The defaults are the two public URLs. |
+| `--k1`, `--mining` | Another URL or a local file. The defaults are the two public URLs. Needed once the site serves v2's `mining.json` ("GPU box", step 7). |
 
 ## When the import command refuses
 
