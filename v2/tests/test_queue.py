@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sn120_v2.errors import InfraError
-from sn120_v2.queue import plan_sync, select_round, split_among_boxes, squat_trim, waiting
+from sn120_v2.queue import coldkey_share_report, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from sn120_v2.state import State, _registrations_synced
 from sn120_v2.types import ChainSnapshot, Verdict
 
@@ -60,6 +60,24 @@ def test_one_entry_per_miner_per_round_and_held_or_leased_seats_are_passed_over(
     assert [e.reg.uid for e in pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).entries] == [1, 3, 4]
     parked = build.queue(build.seat(1, held=True), build.seat(2, leased=True), build.seat(3), build.seat(9, front=True))
     assert [e.reg.uid for e in pick(build, parked, ("hk1", "hk2", "hk3", "hk9"), cap=5).entries] == [9, 3]
+
+
+def test_coldkey_share_report_counts_waiting_seats_that_share_an_owner(build):
+    queue = build.queue(
+        build.seat(1, coldkey=""),
+        build.seat(2, coldkey="owner"),
+        build.seat(3, coldkey="owner"),
+        build.seat(4, coldkey="solo"),
+        build.seat(5, coldkey="owner", leased=True),
+    )
+    # Snapshot fills the empty coldkey of UID 1 from the chain read.
+    regs = [build.reg(1, coldkey="owner"), build.reg(2, coldkey="owner"), build.reg(3, coldkey="owner"), build.reg(4, coldkey="solo")]
+    report = coldkey_share_report(queue, regs)
+    assert report["waiting"] == 4 and report["missing_coldkey"] == 0
+    assert report["coldkeys_with_2plus_waiting_seats"] == 1
+    assert report["waiting_seats_that_share_a_coldkey"] == 3
+    assert report["largest_share"] == 3
+    assert report["shares"] == [{"coldkey": "owner", "uids": [1, 2, 3], "count": 3}]
 
 
 @pytest.mark.parametrize("n,boxes,sizes", [(5, 1, [5]), (5, 2, [3, 2]), (6, 3, [2, 2, 2]), (2, 4, [1, 1])])
