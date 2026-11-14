@@ -136,6 +136,8 @@ def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeS
         *("--dtype", params.dtype, "--max-model-len", str(params.max_context_tokens)),
         *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
         *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
+        # vLLM 0.32.0: without it each LoRA kernel starts one bucket for each place of the table, also for the empty places.
+        "--specialize-active-lora",
         # Text only. v1 lesson: without this limit vLLM does not load this checkpoint.
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
     ]
