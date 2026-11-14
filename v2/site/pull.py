@@ -31,8 +31,9 @@ One run does this, in this order:
 3. Copies ``public/heads/``, ``public/rounds/``, the task tables of
    ``public/irt/`` that mining.json names, and ``public/benchmarks.json``.
 4. Removes its own old round files and task tables above ``--keep-rounds``.
-5. Builds the site with ``build.py`` from the copied files: the data file,
-   then the v1 history, then the pages.
+5. Builds the site with ``build.py`` from the copied files: the v1 history,
+   then the data file (it takes the reference models of its benchmark table
+   from the v1 history), then the pages.
 
 Every file is written to a temporary name and renamed. A file at a key that
 never changes is copied once. ``INDEX`` lists every file under ``public/``
@@ -348,9 +349,9 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("rounds", pull.rounds)
     pull.step("task tables", pull.tables)
     pull.step("benchmarks", pull.benchmarks)
-    pull.step("site data", site_data)
     if v1_history:
         pull.step("v1 history", v1_page_data)
+    pull.step("site data", site_data)
     pull.step("site pages", site_pages)
     for note in pull.notes:
         print(f"pull: note: {note}", file=sys.stderr)
