@@ -60,12 +60,21 @@ Nothing serves the bucket to the public. The public pull on AffineValidator copi
 
 ## The state of v1 (14 Nov 2026)
 
-**v1 still takes turns, and it goes on until its units are stopped.** v1's evaluation was reported as torn down on 13 Nov 2026 at 4:55 PM Costa Rica time (22:55 UTC). The public `k1.json` shows a turn after that: epoch 1321, UID 893, on 14 Nov 2026 at 00:38 UTC, with the verdict `pending`. v1 starts a new turn when a seat has a valid file. With no valid file it writes a skip, and its epochs go on, one about every 15 minutes: the last epoch was 1314 on 13 Nov 2026 at 23:04 UTC and 1322 on 14 Nov 2026 at 01:07 UTC. So the part "stop v1's rounds" is not done. What also runs: v1's hourly weight writer, `affine-ff.service` (upload links) and the publishers of the v1 site. Jacob stops each of them at its step of the list "AffineValidator".
+**v1 still takes turns, and it goes on until its units are stopped.** v1's evaluation was reported as torn down on 13 Nov 2026 at 4:55 PM Costa Rica time (22:55 UTC). The public `k1.json` does not show that: v1's lifecycle still makes an epoch about every 15 minutes. It starts a new turn when a seat has a valid file, and with no valid file it writes a skip. On 14 Nov 2026: epoch 1320 a skip at 00:34:41 UTC, epoch 1321 a turn for UID 893 at 00:38:49 (verdict `pending`), epoch 1322 a skip at 00:54:11, epoch 1323 a skip at 01:09:29. So the part "stop v1's rounds" is not done. What also runs: v1's hourly weight writer, `affine-ff.service` (upload links) and the publishers of the v1 site. Jacob stops each of them at its step of the list "AffineValidator".
 
-What the operator does and checks, on the host where v1's round path runs (`systemctl --user`). The order is the same as before: first the units, then the check, then the import.
+**The sign that anybody can read:** a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that v1's lifecycle runs. This line prints the last four rows (epoch, `turn` or `skip`, UID, time in UTC):
 
-1. No unit of group A in "v1 units" is active or enabled. Stop and disable each one that is. The watchdogs come first: a watchdog that still runs starts v1's round path again.
-2. v1 takes no new turn. Run the import dry run ("GPU box", step 4) two times, 20 minutes apart, so that at least one v1 epoch lies between them. `v1_last_epoch` in the `source:` line, the kings and the front seats must be the same. If `v1_last_epoch` moved, a unit of v1's round path still runs: go back to point 1. Not proven: that the last epoch stands still when all units of group A are stopped. If it still moves then, send the two `source:` lines to the coordinator.
+```
+curl -fsS https://affine.io/k1.json | python3 -c 'import json,sys,time
+for r in json.load(sys.stdin)["turns"][-4:]: print(r["epoch_index"], r["status"], r.get("uid"), time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["turn_at"])))'
+```
+
+On 14 Nov 2026 at 01:11 UTC its last line was `1323 skip None 2026-11-14 01:09:29`.
+
+What the operator checks, on the host where v1's round path runs (`systemctl --user`). The order is the same as before: first the units, then the last epoch, then the import.
+
+1. No unit of group A in "v1 units" is active or enabled. While one is, v1 goes on. The watchdogs come first: a watchdog that still runs starts v1's round path again.
+2. v1's last epoch does not move. Run the line above two times, 20 minutes apart, so that the time of one v1 epoch lies between them: the last line must be the same. Then run the import dry run ("GPU box", step 4) two times in the same way: `v1_last_epoch` in the `source:` line, the kings and the front seats must be the same. If the last epoch moved, the lifecycle still runs: go back to point 1. Not proven: that the last epoch stands still when no unit of group A runs. If it still moves then, send the output to the coordinator.
 
 **The numbers in this file are those of the moment.** They move while v1 runs and while miners register. On 13 Nov 2026 at 23:04 UTC the dry run gave `v1_last_epoch=1314`, 10 kings, 14 front seats and 256 waiting seats. On 14 Nov 2026 at 01:00 UTC, v1's files of epoch 1310 and the chain of that minute gave 257 waiting seats (14 front, 49 normal, 194 back), and 8 minutes later 258. Check a number against the output of your own run, not against this file.
 
@@ -1617,7 +1626,7 @@ Stop: `sudo systemctl disable --now sn120-v2-site-pull.timer`. The files stay as
 
 The names come from documents in this repository. The repository does not show which of them run now. The host is the truth: `systemctl --user list-units 'affine-*' 'sn120-*' '*watchdog*'` and `systemctl --user list-timers --all`.
 
-**Group A: the round path. Reported as torn down on 13 Nov 2026, but v1 took a turn on 14 Nov 2026 at 00:38 UTC ("The state of v1"). Stop and disable each one that is active or enabled, in this order.**
+**Group A: the round path. Check that each is inactive and disabled.** The sign that anybody can read: a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that the lifecycle runs. On 14 Nov 2026 it did ("The state of v1" has the line that prints the rows).
 
 1. The watchdogs: `tp-watchdog`, `ff-watchdog`, and any other unit that `systemctl --user list-units '*watchdog*'` shows. A watchdog reverts v1 or starts it again when the lifecycle is down for 90 seconds (`ops/free_file/README.md`, `ops/ff_train_params/README.md`).
 2. `affine-mimo-lifecycle.service`: selects the next turn and starts the training.
