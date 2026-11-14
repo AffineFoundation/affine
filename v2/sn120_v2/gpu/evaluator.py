@@ -14,6 +14,7 @@ count. A dead server is not an ``E``: the whole look is an ``InfraError``.
 from __future__ import annotations
 
 import json
+import resource
 import sys
 import time
 import urllib.error
@@ -71,6 +72,32 @@ def http_json(url: str, body: dict | None, timeout_s: float) -> dict:
 Http = Callable[[str, dict | None, float], dict]
 
 
+def socket_room(sockets: int, spare: int) -> int:
+    """How many sockets this process may hold next to ``spare`` other files. It first raises its soft limit of open files.
+
+    Every rollout in flight holds one socket, and a look sends up to 256
+    rollouts per GPU at once. A shell or a container starts a process with a
+    soft limit of 1,024 open files. Past the limit a socket cannot be
+    opened: the rollouts of the first models in the order get the sockets,
+    and every later rollout fails with "Too many open files" before any
+    server sees it. So the soft limit is raised here to ``sockets + spare``,
+    as far as the hard limit allows. The caller compares the answer with
+    what the look needs. A limit that is already high enough is not changed.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY:
+        return sockets
+    wanted = sockets + spare
+    reachable = wanted if hard == resource.RLIM_INFINITY else min(wanted, hard)
+    if reachable > soft:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (reachable, hard))
+            soft = reachable
+        except (OSError, ValueError):  # the limit stays as it was: the answer says so
+            pass
+    return max(0, soft - spare)
+
+
 @dataclass(frozen=True)
 class ServeSettings:
     """Local serving knobs. None of them changes a score."""
@@ -79,6 +106,7 @@ class ServeSettings:
     start_timeout_s: float = 1800.0  # model load time of one server
     clients_per_server: int = 256  # requests in flight per server, and the server's --max-num-seqs
     retries: int = 2  # extra tries after a transport failure or a 5xx reply
+    spare_files: int = 512  # open files of this process next to the sockets of a look: logs, pipes, the grader's workers
     free_limit_mib: int = 1024  # a GPU above this is still in use
     free_timeout_s: float = 120.0
     grade_tries: int = 3  # times a reply is graded when the grader's worker process dies on it
@@ -168,9 +196,10 @@ class VllmEvaluator:
         gpus_free: Callable[[int, float], None] = wait_gpus_free,
         settings: ServeSettings = ServeSettings(),
         sleep: Callable[[float], None] = time.sleep,
+        room: Callable[[int, int], int] = socket_room,
     ):
         self.store, self.config, self.pool, self.grader = store, config, pool, grader
-        self.spawn, self.http, self.gpus_free, self.settings, self.sleep = spawn, http, gpus_free, settings, sleep
+        self.spawn, self.http, self.gpus_free, self.settings, self.sleep, self.room = spawn, http, gpus_free, settings, sleep, room
         self.resident = Resident(store, config.work_dir)
         self._servers: list[Process] = []
         self._urls: list[str] = []
@@ -186,6 +215,11 @@ class VllmEvaluator:
         models = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
         if len(set(models)) != len(models) or len(request.loras) > params.max_loras_per_box:
             raise ContractError("the LoRAs of a look must be distinct and inside max_loras_per_box")
+        # Before anything is sent: a look that cannot hold its sockets would turn the rollouts of the later models into E.
+        clients = params.n_gpus * self.settings.clients_per_server
+        room = self.room(clients, self.settings.spare_files)
+        if room < clients:
+            raise InfraError(f"the open file limit of this process has room for {room} sockets; a look holds {clients}. Raise the limit (ulimit -n) and start run again")
         self._serve(request.head, params)
         fresh = [(lora.lora_hash, str(self.resident.tree(lora.prefix, lora.lora_hash))) for lora in request.loras if lora.lora_hash not in self._loaded]
 
@@ -228,7 +262,7 @@ class VllmEvaluator:
                     pass
             return None
 
-        with ThreadPoolExecutor(len(self._urls) * self.settings.clients_per_server) as threads:
+        with ThreadPoolExecutor(clients) as threads:
             replies = list(threads.map(rollout, jobs))
         if not all(server.alive() for server in self._servers):
             self.close()
