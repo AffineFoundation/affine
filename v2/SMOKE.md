@@ -650,6 +650,15 @@ The restart loop does not start a refused `run` again: it stops with exit code 2
 
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
 
+A fault of the box during training (not a digest difference) counts a failure for each seat that it stops. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. `status` shows both, in `held_seats` (the UIDs) and `seats_with_counted_failures` (seats with 1 or 2 counts). After the box is repaired, `release-seat` undoes them. Stop `run` first: this command takes over the journal.
+
+```
+python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --all       # every seat that is held or has a count
+python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --uid 12    # one UID; give --uid again for more
+```
+
+It prints the released seats (`uid`, `registration_block`, `hotkey`, `was_held`, `counted_failures`). A released seat is not held and its count is 0; its place in the queue does not change. The command is refused (exit code 2) when it finds no such seat, and then it releases nothing. Do not release a seat whose own file made the training fail: it is held again after 3 more rounds.
+
 The cheapest restart, when the state itself is lost or wrong: the block in the next section. It keeps the genesis files (no upload of the 56 GB), the miner files and the box cache. It removes the journal and everything the rounds wrote. Then do step 4 from the `bootstrap` command on.
 
 ## Start the test again from the beginning

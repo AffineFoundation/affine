@@ -11,6 +11,8 @@
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
               seats are first in the next round (this command takes over the journal). With a box result
               of that round in the store it ends nothing and exits with 3: ``run`` judges that result
+  release-seat  undo what a fault of the box did to seats: a held seat takes a turn again, and the count of
+              failures of a seat is 0 again (stop ``run`` first: this command takes over the journal)
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -193,6 +195,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     state, params, stack = read_state(args, "status")
     report = summary(state, params)
+    # A seat is held after params.max_infra_attempts counted failures (no_decision); release-seat undoes both.
+    report["held_seats"] = sorted(seat.reg.uid for seat in state.queue.values() if seat.held)
+    report["seats_with_counted_failures"] = sum(1 for seat in state.queue.values() if seat.infra_attempts and not seat.held)
     if stack is not None:
         seats = waiting(state.queue)
         verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in seats])
@@ -253,6 +258,26 @@ def cmd_end_round(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_seat(args: argparse.Namespace) -> int:
+    controller, _ = open_controller(args, "release-seat")
+    marked = sorted((seat for seat in controller.state.queue.values() if seat.held or seat.infra_attempts), key=lambda seat: seat.reg.key)
+    if not args.all:
+        clean = sorted(set(args.uid) - {seat.reg.uid for seat in marked})
+        if clean:
+            raise V2Error(f"no seat of UID {', '.join(map(str, clean))} is held or has a counted failure; nothing was released")
+        marked = [seat for seat in marked if seat.reg.uid in args.uid]
+    if not marked:
+        raise V2Error("no seat is held or has a counted failure; nothing was released")
+    for seat in marked:
+        controller.release_seat(seat.reg.key, now())
+    released = [
+        {"uid": seat.reg.uid, "registration_block": seat.reg.registration_block, "hotkey": seat.reg.hotkey, "was_held": seat.held, "counted_failures": seat.infra_attempts}
+        for seat in marked
+    ]
+    print(json.dumps({"released": released}, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sn120_v2", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -291,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     setp.add_argument("--params", required=True, help="JSON file of parameter overrides on the defaults; the result replaces the pinned set")
     end = command("end-round", cmd_end_round, stack=True)
     end.add_argument("--discard-result", action="store_true", help="end the round also when a box result of it is in the store; that result is never judged")
+    which = command("release-seat", cmd_release_seat, stack=True).add_mutually_exclusive_group(required=True)
+    which.add_argument("--uid", type=int, action="append", help="release the seat of this UID; give the flag again for more UIDs")
+    which.add_argument("--all", action="store_true", help="release every seat that is held or has a counted failure")
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
