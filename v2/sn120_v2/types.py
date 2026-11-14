@@ -34,6 +34,8 @@ NO_DECISION = "no_decision"  # infrastructure failed: not charged, back to the f
 SKIP = "skip"  # the frozen batch failed a check: not charged, keeps its place
 NOT_TRAINED = "not_trained"  # the round's training time ended first: not charged, front of the queue, no failure counted
 NOT_SCORED = "not_scored"  # the round's time limit came before the first look: not charged, front of the queue, no failure counted
+# Start of the reason of the one box failure that is counted for a seat. The controller reads it in the box result.
+OUT_OF_TIME = "this batch had the whole training time of the round"
 # Status of one entry in a round decision (NO_DECISION, SKIP, NOT_TRAINED and NOT_SCORED also apply).
 WINNER = "winner"
 LOST = "lost"
@@ -379,6 +381,15 @@ class EntryResult(Record):
         _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown entry status {self.status!r}")
         _need((self.status == SCORED) == (self.lora is not None), "exactly the scored entries carry a LoRA")
         _need(self.status == SCORED or bool(self.reason), "a no_decision or skip entry must give a reason")
+
+    @property
+    def counted_for_seat(self) -> bool:
+        """True for the one box failure that is counted for a seat: the batch had the whole training time and did not finish.
+
+        A training job that failed is never counted: out of memory, a crash of the job, any other error.
+        The box cannot tell whether the box or the file caused it, so the seat does not pay for it.
+        """
+        return self.status == NO_DECISION and self.reason.startswith(OUT_OF_TIME)
 
 
 @dataclass(frozen=True)

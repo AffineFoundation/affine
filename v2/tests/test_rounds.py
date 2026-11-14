@@ -97,10 +97,32 @@ def test_a_seat_without_a_valid_file_is_skipped_not_charged_and_keeps_its_place(
     assert seats(world.round()) == [1]
 
 
-def test_a_training_failure_is_no_decision_for_that_seat_only_and_repeats_hold_it(world):
+def test_a_training_job_that_fails_is_no_decision_for_that_seat_only_and_is_never_counted(world):
+    """Out of memory, a crash of the job: the box cannot tell its own fault from the file's, so the seat is never held for it."""
     world.register(1, 0.3)
     world.register(2, 0.0)
     world.trainer.fail_hotkeys = {"hk2"}
+    assert world.round().outcome == "applied"
+    seat = world.controller.state.queue[(2, 1002)]
+    assert (seat.front, seat.leased, seat.infra_attempts, seat.held) == (True, False, 0, False)
+    assert "hk2" not in world.controller.state.served_hotkeys, "not charged"
+    for uid in range(3, 3 + world.params.max_infra_attempts + 1):  # more rounds than the limit of counted failures
+        world.register(uid, 0.0)
+        record = world.round()
+        mine = next(entry for entry in record.decision.entries if entry.uid == 2)
+        assert (mine.status, mine.reason) == ("no_decision", "training failed 3 times: simulated trainer crash")
+        seat = world.controller.state.queue[(2, 1002)]
+        assert (seat.front, seat.infra_attempts, seat.held) == (True, 0, False), "it comes back at the front each time"
+    closed = [record.data for record in read_journal(world.root / JOURNAL_FILE) if record.kind == ROUND_CLOSED]
+    assert all(not data["attempted"] and not data["held"] and [2, 1002] in data["front"] for data in closed)
+    world.trainer.fail_hotkeys = set()
+    assert seats(world.round()) == [2]
+
+
+def test_a_batch_that_had_the_whole_training_time_and_did_not_finish_is_counted_and_repeats_hold_the_seat(world, out_of_time):
+    world.register(1, 0.3)
+    world.register(2, 0.0)
+    out_of_time(world, {"hk2"})
     assert world.round().outcome == "applied"
     seat = world.controller.state.queue[(2, 1002)]
     assert (seat.front, seat.leased, seat.infra_attempts, seat.held) == (True, False, 1, False)
@@ -135,12 +157,12 @@ def test_a_round_in_which_no_training_finished_fails_its_lease_and_counts_nothin
     assert main(["round", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]) == 0
     assert f"no winner: {cause}" in capsys.readouterr().out, "the round summary names the cause"
     world.reopen()
-    world.trainer.fail_hotkeys = {"hk3"}  # the box works again; one batch still fails: that failure is counted, as before
+    world.trainer.fail_hotkeys = {"hk3"}  # the box works again; one training job still fails: not counted either
     world.trainer.reject_hotkeys = set()
     record = world.round()
     queue = world.controller.state.queue
     assert record.outcome == "null" and world.controller.state.failed_leases == 0 and sorted(seats(record)) == [1, 2, 3]
-    assert list(queue) == [(3, 1003)] and (queue[(3, 1003)].infra_attempts, queue[(3, 1003)].front) == (1, True)
+    assert list(queue) == [(3, 1003)] and (queue[(3, 1003)].infra_attempts, queue[(3, 1003)].front) == (0, True)
 
 
 def test_a_text_from_an_exception_is_made_safe_before_it_goes_into_a_public_file(world, monkeypatch, capsys):
@@ -190,7 +212,7 @@ def test_a_text_from_an_exception_is_made_safe_before_it_goes_into_a_public_file
     assert public_text("x" * (TEXT_LIMIT + 40), env) == "x" * TEXT_LIMIT + " [cut: 40 more characters]"
 
 
-def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys):
+def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys, out_of_time):
     """The command line for ``Controller.release_seat``: after a fault of the box, no seat stays held or one fault from a hold."""
     world.register(1, 0.0)
     world.register(2, 0.0)
@@ -198,7 +220,7 @@ def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(worl
     common = ["--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]
     assert main(["release-seat", *common, "--all"]) == 2 and "refused: V2Error: no seat is held or has a counted failure" in capsys.readouterr().err
     world.reopen()  # the command took the journal over, as set-params does
-    world.trainer.fail_hotkeys = {"hk1", "hk2", "hk3"}  # a fault of the box that lets one batch train in each round
+    out_of_time(world, {"hk1", "hk2", "hk3"})  # a fault of the box that lets one batch train in each round
     for uid in (10, 11):
         world.register(uid, 0.0)
         world.round()
