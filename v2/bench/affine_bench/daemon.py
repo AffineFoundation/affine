@@ -305,15 +305,14 @@ class Row:
         if self.rec and self.rec.get("bootstrapped"):
             return True
         self.tell("renting")
-        rec = self.pod.rent(self.S, self.log, self.tell); self.save()
-        if rec:
-            self.rec = rec
-        elif self.S.get("rent_failed"):
+        try:
+            rec = self.pod.rent(self.S, self.log, self.tell)
+        finally:  # whatever the rent did, also when it raised: the worker knows the pod of the record, for the cap of its hours and to give it back
+            self.rec = self.pod.load(); self.save()
+        if not rec and self.S.get("rent_failed"):
             self.tell("rent-failed")
-        elif self.S.get("held"):
+        elif not rec and self.S.get("held"):
             self.tell("held")
-        else:
-            self.rec = self.pod.load()
         return bool(rec)
 
     def results_left(self):
@@ -406,6 +405,21 @@ class Row:
             S["fails"] += 1; self.log(event="weights-failed", fails=S["fails"]); self.save(); return False
         self.launch(m, bids); return False
 
+    def poll(self, bs):
+        """One poll of the worker, with what the worker does when the step raises. True: the worker ends."""
+        try:
+            m = self.S.get("model") or next((x for x in model_rows() if x["model_id"] == self.mid), None)  # read once: a store that is down later holds no pod
+            if m is None:
+                self.log(event="row-end", why="the row is not listed"); return True
+            self.S["model"] = m
+            if self.step(m, bs):
+                self.log(event="row-end", state=(self.S.get("phase") or {}).get("state"), stopped=stopped(self.mid, self.S)); return True
+        except Exception:
+            self.log(event="error", tb=traceback.format_exc()[-1500:])
+            if self.S.get("expired") and self.rec:  # a pod past its hours goes back, whatever fails in the step
+                self.tried("release", self.pod.release, self.log, "expired")
+        return False
+
 
 def row_lock(mid):
     """One worker per row. The lock dies with the process. None: a worker of the row is alive."""
@@ -423,18 +437,7 @@ def row_main(mid):
     if lock is None:
         raise SystemExit(f"another worker of row {mid} is alive")
     row = Row(mid); bs = R.benchmarks(enabled_only=True, runnable_only=True); row.log(event="row-start", pid=os.getpid())
-    while True:
-        try:
-            m = row.S.get("model") or next((x for x in model_rows() if x["model_id"] == mid), None)  # read once: a store that is down later holds no pod
-            if m is None:
-                return row.log(event="row-end", why="the row is not listed")
-            row.S["model"] = m
-            if row.step(m, bs):
-                return row.log(event="row-end", state=(row.S.get("phase") or {}).get("state"), stopped=stopped(mid, row.S))
-        except Exception:
-            row.log(event="error", tb=traceback.format_exc()[-1500:])
-            if row.S.get("expired") and row.rec:  # a pod past its hours goes back, whatever fails in the step
-                row.tried("release", row.pod.release, row.log, "expired")
+    while not row.poll(bs):
         time.sleep(POLL_S)
 
 
@@ -582,8 +585,11 @@ def view(rows, wait):
             v["alarms"].append(dict(what="rent-no-answer", row=mid, since=s["rent_failed"]["at"]))
         if rec or ph:
             last = (rj(pod_of(mid).record) or {}).get("last") or {}
-            v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),
-                                  state=ph.get("state"), since=ph.get("since"))
+            fail = s.get("rent_last_fail") or {}  # the last try of a rent or a setup that failed, and how many failed in a row
+            v["pods"][mid] = (dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),
+                                   state=ph.get("state"), since=ph.get("since"))
+                              | (dict(failed_tries=s["rent_tries"]) if s.get("rent_tries") else {})
+                              | (dict(last_failure={k: fail[k] for k in ("what", "at", "pod", "minutes") if k in fail}) if fail else {}))
     if (S.get("single_release") or {}).get("tries", 0) >= ALARM_TRIES and single_pod().load():
         v["alarms"].append(dict(what="single-pod-not-released", pod=P.NAME, since=S["single_release"]["since"], tries=S["single_release"]["tries"]))
     v["history"].sort(key=lambda h: h.get("finished") or 0)
@@ -725,7 +731,7 @@ def cli(cmd, argv):
             if lock is None:
                 raise SystemExit(f"the worker of row {mid} is alive: stop the service, or wait until the worker has ended")
             s = row_state(mid)
-            for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at"): s.pop(k, None)
+            for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at", "rent_last_fail"): s.pop(k, None)
             s["fails"] = 0; wj(f"{ROWS}/{mid}/daemon.json", s); lock.close()
         print(json.dumps(dict(retry=argv))); return
     if cmd not in ("daemon", "once", "publish", "release", "release-single"):
