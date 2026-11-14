@@ -63,6 +63,7 @@ from .state import (
     ROUND_SETTLED,
     SEAT_RELEASED,
     SEATS_DEMOTED,
+    SEATS_FRONTED,
     V1_IMPORTED,
     Lease,
     RoundRecord,
@@ -247,6 +248,15 @@ class Controller:
     def release_seat(self, key: tuple[int, int], now: int) -> None:
         """Operator action: let a held seat take a turn again."""
         self._log(SEAT_RELEASED, {"key": list(key)}, now)
+
+    def front_seats(self, keys: Sequence[tuple[int, int]], reason: str, now: int) -> None:
+        """Operator action, between rounds only: waiting seats go to the front and are no longer demoted. Nothing is charged or counted."""
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; seats go to the front only between rounds")
+        missing = [key for key in keys if key not in self.state.queue]
+        if missing or not keys or not reason.strip():
+            raise V2Error(f"no seat went to the front: it needs a reason and seats of the queue (not in the queue: {missing})")
+        self._log(SEATS_FRONTED, {"keys": [list(key) for key in keys], "reason": reason}, now)
 
     # ------------------------------------------------------------ open
 

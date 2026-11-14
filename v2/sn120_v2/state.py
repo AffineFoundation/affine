@@ -33,6 +33,7 @@ V1_IMPORTED = "v1_imported"
 REGISTRATIONS_SYNCED = "registrations_synced"
 SEATS_DEMOTED = "seats_demoted"
 SEAT_RELEASED = "seat_released"
+SEATS_FRONTED = "seats_fronted"
 ROUND_OPENED = "round_opened"
 LEASE_FAILED = "lease_failed"
 ROUND_SETTLED = "round_settled"
@@ -182,6 +183,16 @@ def _seat_released(state: State, data: dict, at: int) -> None:
     _edit(state, key, held=False, infra_attempts=0)
 
 
+def _seats_fronted(state: State, data: dict, at: int) -> None:
+    """An operator sent waiting seats to the front: a turn of theirs outside v2 was not charged. Nothing is charged or counted."""
+    _need(state.round is None, "seats went to the front while a round was open")
+    for key in _keys(data["keys"]):
+        _need(key in state.queue, f"a seat that went to the front is not in the queue: {key}")
+        _edit(state, key, front=True, demoted=False)
+        state.front_on_arrival.add(key)  # as for the front seats of the import: a seat that leaves and comes back keeps the flag
+        state.demote_on_arrival.discard(key)
+
+
 def _round_opened(state: State, data: dict, at: int) -> None:
     record = RoundRecord.from_dict(data["round"])
     _need(state.round is None, "a round opened while another round is open")
@@ -276,6 +287,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     REGISTRATIONS_SYNCED: _registrations_synced,
     SEATS_DEMOTED: _seats_demoted,
     SEAT_RELEASED: _seat_released,
+    SEATS_FRONTED: _seats_fronted,
     ROUND_OPENED: _round_opened,
     LEASE_FAILED: _lease_failed,
     ROUND_SETTLED: _round_settled,

@@ -13,6 +13,9 @@
               of that round in the store it ends nothing and exits with 3: ``run`` judges that result
   release-seat  undo what a fault of the box did to seats: a held seat takes a turn again, and the count of
               failures of a seat is 0 again (stop ``run`` first: this command takes over the journal)
+  front-seats  between rounds: send the waiting seats of the named hotkeys to the front and clear ``demoted``;
+              nothing is charged or counted. ``--dryrun`` shows the change and writes nothing (stop ``run`` first:
+              without ``--dryrun`` this command takes over the journal). Every reader of the journal needs this code
   force-sync  for a chain sync that ``run`` refuses because more than a quarter of the seats would leave:
               show the changes that two chain reads agree on; with ``--confirm-remove N`` apply them once
               (stop ``run`` first: with ``--confirm-remove`` this command takes over the journal)
@@ -43,9 +46,9 @@ from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
 from .public import phase, round_text, snapshot
-from .queue import BACK, FRONT, SyncPlan, plan_sync, waiting, zone
+from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
-from .state import State, load
+from .state import SEATS_FRONTED, State, load
 from .store import verify_files
 from .types import ChainSnapshot, V1Import, Verdict
 
@@ -294,6 +297,70 @@ def cmd_release_seat(args: argparse.Namespace) -> int:
     return 0
 
 
+def front_report(state: State, hotkeys: list[str]) -> tuple[list[FrontMove], dict[str, Any]]:
+    """What ``front-seats`` changes in this state. Refused when a round is open or a hotkey has no waiting seat."""
+    if state.round is not None:
+        raise V2Error(f"nothing was changed: round {state.round.round_id} is open (phase {phase(state)}). The command runs only between rounds, in phase IDLE")
+    moves, order = plan_front(state.queue, state.served_hotkeys, hotkeys)
+    named = {move.seat.reg.key for move in moves}
+    before = {seat.reg.key: place for place, seat in enumerate(waiting(state.queue))}
+    seats = [
+        {
+            "uid": move.seat.reg.uid,
+            "hotkey": move.seat.reg.hotkey,
+            "registration_block": move.seat.reg.registration_block,
+            "changed": move.changed,
+            "position": {"before": move.position_before, "after": move.position_after},
+            "front": {"before": move.seat.front, "after": True},
+            "demoted": {"before": move.seat.demoted, "after": False},
+            "held": move.seat.held,
+            "counted_failures": move.seat.infra_attempts,
+        }
+        for move in moves
+    ]
+    report = {
+        "seats": seats,
+        "seats_to_change": sum(move.changed for move in moves),
+        "other_seats_whose_position_shifts": sum(1 for place, seat in enumerate(order) if seat.reg.key not in named and before[seat.reg.key] != place),
+        "front_seats_after": [seat.reg.uid for seat in order if seat.front],
+        "charged": 0,
+    }
+    return moves, report
+
+
+def cmd_front_seats(args: argparse.Namespace) -> int:
+    """Send waiting seats to the front, for turns outside v2 that were never judged. All or nothing, and only between rounds."""
+    reason = args.reason.strip()
+    if not reason:
+        raise V2Error("nothing was changed: --reason is empty")
+    state, _, _ = read_state(args, "front-seats")  # the journal copy in the store; this takes over nothing
+    moves, report = front_report(state, args.hotkey)
+    report = {"dry_run": args.dry_run, "written": False, "reason": reason} | report
+    if not report["seats_to_change"]:
+        print(json.dumps(report, indent=2))
+        print("nothing to change: each of these seats is at the front already and is not demoted. Nothing was written.", file=sys.stderr)
+        return 0
+    if args.dry_run:
+        print(json.dumps(report, indent=2))
+        print("dry run: nothing was written, to the journal or to the store. The same command without --dryrun writes exactly this.", file=sys.stderr)
+        print(
+            f"BEFORE the real run: every host that reads the journal must be on this commit. On AffineValidator the weights writer and the links job read it. "
+            f"A checkout that does not know the record kind {SEATS_FRONTED!r} refuses the whole journal. AFTER the real run no host can go back to an older commit.",
+            file=sys.stderr,
+        )
+        return 0
+    controller, _ = open_controller(args, "front-seats")
+    again, check = front_report(controller.state, args.hotkey)
+    if check != {key: report[key] for key in check}:
+        raise V2Error("nothing was changed: the journal moved between the read and the takeover. Run the command again")
+    controller.front_seats([move.seat.reg.key for move in again if move.changed], reason, now())
+    replayed = load(Path(args.state_dir) / JOURNAL_FILE)
+    report |= {"written": True, "journal_record": controller.state.last_seq, "replay_matches": replayed.queue == controller.state.queue}
+    print(json.dumps(report, indent=2))
+    print(f"written: journal record {controller.state.last_seq} ({SEATS_FRONTED}). No host can go back to a commit that does not know this record kind.", file=sys.stderr)
+    return 0 if report["replay_matches"] else 1
+
+
 CHAIN_READ_WAIT_S = 6.0  # between two tries for a chain read at a later block; a block takes 12 seconds
 CHAIN_READ_TRIES = 10
 
@@ -402,6 +469,10 @@ def main(argv: list[str] | None = None) -> int:
     which = command("release-seat", cmd_release_seat, stack=True).add_mutually_exclusive_group(required=True)
     which.add_argument("--uid", type=int, action="append", help="release the seat of this UID; give the flag again for more UIDs")
     which.add_argument("--all", action="store_true", help="release every seat that is held or has a counted failure")
+    front = command("front-seats", cmd_front_seats, stack=True)
+    front.add_argument("--hotkey", action="append", required=True, help="the hotkey (SS58 address) of a waiting seat; give the flag again for more hotkeys")
+    front.add_argument("--reason", required=True, help="why these seats go to the front; the journal record keeps this text")
+    front.add_argument("--dryrun", "--dry-run", dest="dry_run", action="store_true", help="print what would change; write nothing")
     force = command("force-sync", cmd_force_sync, stack=True)
     force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
     args = parser.parse_args(argv)
