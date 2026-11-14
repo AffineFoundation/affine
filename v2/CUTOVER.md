@@ -1259,7 +1259,7 @@ The mainnet `params.json` holds `"squat_min_wait_s": 31536000` (check 5 of "Befo
 How to see what is pinned, in two ways:
 
 - The check line of check 5 prints the hash of a file's parameters. `"params_hash"` of `status` is the hash of the pinned ones. The same hash means that this file is pinned.
-- `llms.txt` lists every parameter: `grep squat_min_wait_s` on that file prints one line with the name and the number.
+- `llms.txt` lists every parameter: `grep squat_min_wait_s` on that file prints the row of the parameter table, with the name and the number (`31536000` for the mainnet file). From `6233de06` it also prints one line of text that names the parameter.
 
 **To switch squat-trim on later** is Jacob's decision. It is a `set-params` between two rounds (phase `IDLE`, the loop stopped) with a file that holds the wanted number, or no such key for the default. Know this before you do it: **at that moment every old seat with no valid file moves to the back at once.** More exactly: at the next try to open a round, if an entry was charged in the last 24 hours, each waiting seat of the normal part of the queue that has no valid file and a registration older than 2 times the new number moves to the back (older still, when many seats wait ahead of it and few entries are charged in a day). Front seats do not move. A moved seat stays at the back, also when a valid file comes later. No command moves it forward again.
 
