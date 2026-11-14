@@ -13,10 +13,11 @@ so they do not depend on the benchmark file or on a file of v1.
 ``extend`` adds what those two files do not hold: the phase times of a closed
 round (its ``round.json``), and the size and the train settings of a winning
 batch (its ``batch.json``). A closed round does not change, so a value that the
-last ``site-data.json`` holds is not read again. Without one of these files the
-fields are null and the page is still built.
+last ``site-data.json`` holds is not read again, when that file has this
+builder's own ``fields_mark``. Without one of these files the fields are null
+and the page is still built.
 
-    python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--v1-history <file or URL>] [--every 60]
+    python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--v1-history <file or URL>] [--every 60] [--full-read]
 
   --source      root of the object store: a local directory or an http(s) URL.
   --public-url  URL under which a browser reaches that same root (for file links).
@@ -24,6 +25,9 @@ fields are null and the page is still built.
   --v1-history  the frozen v1 history that ``v1_archive.py`` wrote at cutover. It
                 is copied to ``v1-data.json`` for the page ``v1.html``.
   --every       rebuild the data every N seconds; without it, build once and exit.
+  --full-read   in the first build, read each round file and each winning batch
+                again. Use it by hand when a value of ``extend`` in the data
+                file is wrong.
 
 The first three are required: there is no default host path. Files are written
 to a temporary name and then renamed, so a reader never sees half a file. A
@@ -72,9 +76,13 @@ PHASES = ("training", "evaluation", "promote", "fold")  # the phases of a round 
 BATCH_FACTS = ("batch_prompts", "batch_rollouts", "train")
 SETTABLE = ("key", "default", "low", "high", "integer", "choices")
 MODEL_FACTS = ("repo", "repo_rev", "size_b", "budget")
+FIELDS = "sn120-v2-site-fields-1"  # ``fields_mark`` of the data file: who made the fields of ``extend``. Change it when a field of ``extend`` gets a new meaning
 # The reference models of the frozen v1 history, by label in small letters: the Hugging Face repo with its revision, the
-# parameters in billions, and the token budget of the v1 run. No file of v2 holds these; they are from ``models[].hf`` and
-# ``models[].budget`` of the last benchmark file of v1. A model of the benchmark file that gives ``hf`` or ``budget`` wins.
+# parameters in billions, and the token budget of the v1 run. No file of v2 holds these. The repo and the budget are
+# ``models[].hf`` and ``models[].budget`` of the last benchmark file of v1: https://affine.io/benchmarks.json, last
+# modified 2026-11-14 09:25:26 UTC, 629,900 bytes, sha256 69b3114695fc90e02219cc983ece3e622487c4b10559d3af3cb9272afa8189af.
+# That file has no size: the sizes are the list ``SIZE`` of ``static/site.js``. A test holds this list equal to both.
+# A model of the benchmark file of v2 that gives ``hf`` or ``budget`` wins.
 REFERENCE: dict[str, tuple[str, float, int]] = {
     "qwen3.5-9b": ("Qwen/Qwen3.5-9B@c202236235762e1c871ad0ccb60c8ee5ba337b9a", 9.65, 65536),
     "qwen3-8b": ("Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
@@ -428,8 +436,14 @@ def plain(value: Any) -> Any:
 
 
 def known(last: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Per round, the fields of ``extend`` that a data file of this builder already holds."""
+    """Per round, the fields of ``extend`` that a data file of this builder already holds.
+
+    Only a file with this builder's own ``fields_mark`` counts. A file with another mark or with no mark gives nothing,
+    so each round file and each batch is read again: a value of another builder does not stay.
+    """
     found: dict[str, dict[str, Any]] = {}
+    if last.get("fields_mark") != FIELDS:
+        return found
     for row in [*last["rounds"], *last["kings"]]:
         found.setdefault(row["round_id"], {}).update({name: row[name] for name in ("phases", *BATCH_FACTS) if row.get(name) is not None})
     return found
@@ -446,8 +460,10 @@ def extend(data: dict[str, Any], snap: dict[str, Any], bench: dict[str, Any] | N
 
     ``load`` reads one object of the store. ``have`` is ``known`` of the last data file: a closed round does not change,
     so a value that is there is not read again. A file that is not there or is bad leaves its fields None, and the next
-    build reads it again.
+    build reads it again. ``fields_mark`` says that this builder made the values, for ``known`` of the next build.
     """
+    data["fields_mark"] = FIELDS
+
     def facts(round_id: str, names: Sequence[str], what: str, key: str, make: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
         old = have.get(round_id, {})
         if all(name in old for name in names):
@@ -488,9 +504,11 @@ def extend(data: dict[str, Any], snap: dict[str, Any], bench: dict[str, Any] | N
         row |= more
 
 
-def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
+def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False, full_read: bool = False) -> None:
     """Write the data file. The benchmark file and the v1 history are informational: without one of them, or with a bad
-    one, the page is still built, and the genesis head and each king still have their rows."""
+    one, the page is still built, and the genesis head and each king still have their rows.
+
+    ``full_read``: take no value of ``extend`` from the last data file; read each round file and each batch again."""
     snap = json.loads(read(source, layout.MINING_JSON))
     heads = snap["heads"] if snap.get("schema") == SCHEMA else []  # ``view`` refuses any other snapshot
 
@@ -512,7 +530,7 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
     table = bench_view(bench, heads, kept)
     data = view(snap, table, link, lambda key: exists(source, key))
-    have = tried("last", f"the last {DATA} gives no value", lambda: known(json.loads((out / DATA).read_bytes())), absent) or {}
+    have = not full_read and tried("last", f"the last {DATA} gives no value", lambda: known(json.loads((out / DATA).read_bytes())), absent) or {}
     try:
         extend(data, snap, bench, lambda key: read(source, key), have)
     except Exception as error:  # noqa: BLE001 - these fields are informational: the page of ``view`` is written without the rest of them
@@ -535,6 +553,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True, type=Path, help="directory to write the site into")
     parser.add_argument("--v1-history", help="the frozen v1 history from v1_archive.py: a file or an http(s) URL")
     parser.add_argument("--every", type=float, default=0, help="rebuild the data every N seconds (0 = build once)")
+    parser.add_argument("--full-read", action="store_true", help="read each round file and each winning batch again in the first build, "
+                        "not the values of the last data file")
     args = parser.parse_args(argv)
 
     def link(key: str) -> str:
@@ -550,8 +570,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     while True:
         try:
-            build_data(args.source, args.out, link)
-            failed = False
+            build_data(args.source, args.out, link, full_read=args.full_read)
+            args.full_read = failed = False
         except Exception as error:  # noqa: BLE001 - any bad read or bad snapshot keeps the last good data
             print(f"site: kept the last good {DATA}: {type(error).__name__}: {error}", file=sys.stderr)
             failed = True

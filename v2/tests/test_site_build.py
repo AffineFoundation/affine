@@ -567,6 +567,40 @@ def test_a_closed_round_gets_its_phase_times_and_a_winner_the_size_and_the_setti
     assert done.returncode == 0 and "the last site-data.json gives no value" in done.stderr and json.loads(again)["rounds"][0]["phases"] is None
 
 
+def test_a_value_of_the_last_data_file_is_used_only_with_the_mark_of_this_builder_and_not_in_a_full_read(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    done, out, text = build(tmp_path, snap)
+    good, mark = json.loads(text), json.loads(text)["fields_mark"]
+    assert done.returncode == 0 and mark == "sn120-v2-site-fields-1" and good["kings"][0]["batch_prompts"] == 2
+
+    def wrong(change: dict) -> None:
+        """The last data file with wrong values in it, and other files in the store."""
+        last = json.loads(json.dumps(good)) | change
+        last["rounds"][0]["phases"]["training"] = 999
+        last["kings"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        last["rounds"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        (out / "site-data.json").write_text(json.dumps(last))
+
+    wrong({})  # the mark of this builder: the values are taken as they are, and the store is not read
+    report.unlink(), batch.unlink()
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["batch_prompts"] == 999 and json.loads(text)["rounds"][0]["phases"]["training"] == 999
+    public_round(tmp_path, {"lora_lr": 2e-05})
+    for change in ({"fields_mark": "sn120-v2-site-fields-0"}, {"fields_mark": None}):  # another mark, or no mark: one full read
+        wrong(change)
+        done, _, text = build(tmp_path, snap)
+        assert done.returncode == 0 and json.loads(text) == good
+    last = json.loads(json.dumps(good))
+    del last["fields_mark"]
+    (out / "site-data.json").write_text(json.dumps(last).replace('"batch_prompts":2', '"batch_prompts":999'))  # the file of a builder of before
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text) == good
+    wrong({})  # by hand: --full-read takes no value of the last file
+    done, _, text = build(tmp_path, snap, "--full-read")
+    assert done.returncode == 0 and json.loads(text) == good
+
+
 def test_a_bad_round_file_or_batch_leaves_its_fields_empty_and_a_batch_with_no_train_block_sets_nothing(tmp_path):
     snap = snapshot(tmp_path)
     report, batch = public_round(tmp_path)
@@ -607,6 +641,16 @@ def test_a_benchmark_row_has_its_budget_and_a_reference_model_its_repo_and_its_s
     assert rows.pop(f"r000001 {folded['version_id'][:8]}") == (None, None, None, 65536) and rows.pop("Genesis") == (None, None, None, None)
     assert rows == {"Qwen3-8B": ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
                     "New-1B": ("org/New-1B", "abc", None, 1000), "Unknown-2B": (None, None, None, None)}
+
+
+def test_the_list_of_the_reference_models_is_equal_to_the_last_benchmark_file_of_v1_and_to_the_sizes_of_the_page():
+    """``REFERENCE`` of the builder: the repo and the budget are those of the v1 file, and the size is the one that the page shows."""
+    listed = runpy.run_path(str(BUILD))["REFERENCE"]
+    v1 = json.loads((Path(__file__).parent / "data" / "v1_reference_models.json").read_text())  # ``models[]`` of the kind reference of that file
+    assert v1["sha256"] in BUILD.read_text() and len(v1["models"]) == len(listed) == 22
+    assert {name: (hf, budget) for name, (hf, _, budget) in listed.items()} == {model["label"].lower(): (model["hf"], model["budget"]) for model in v1["models"]}
+    sizes = re.search(r"const SIZE = \{(.*?)\};", BUILD.with_name("static").joinpath("site.js").read_text(), re.S).group(1)
+    assert {name: size for name, (_, size, _) in listed.items()} == {name: float(size) for name, size in re.findall(r"'([^']+)': ([\d.]+)", sizes)}
 
 
 def v1_site(root: Path) -> Path:
