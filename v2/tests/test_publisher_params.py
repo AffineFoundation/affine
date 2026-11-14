@@ -160,7 +160,6 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
         f"later than {worker.AT_THE_LEASE_S} s after the start of the lease",
-        f"at most {worker.AT_THE_LEASE_S} s after the start of the lease",
         f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
         f"not usable: at most {serve.retries + 1} tries in all",
         f"graded again: at most {serve.grade_tries} grades in all",
@@ -185,7 +184,6 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "`group_size`: 0 means one group per prompt",
         "A value G above 0 cuts",
         "||(alpha / rank) * B @ A||_F^2)",
-        f"floor({params.n_gpus} / batches) GPUs, and at least 1.",
         '"reward": 1.0',
         '"reward": 0.0',
         "Each prompt has at least 1 rollout",

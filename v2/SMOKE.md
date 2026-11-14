@@ -78,7 +78,7 @@ EOF
 
 Pass: `plan.json` is one line, `{"code_digest": "<64 hex>", "image_digest": "<64 hex>"}`, and `params.json` holds the same two values.
 
-`"batch_cap": 8` makes the first round small: at most 8 batches, one per GPU, all trained at the same time. Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
+`"batch_cap": 8` makes the first round small: at most 8 batches. From `00e19908` on the box trains them one after another, each on all 8 GPUs (with an earlier commit: one GPU each, all at the same time). Everything else is the launch value: 2000 tasks, 40 minutes of training time, at most 100 minutes for the round. For a round of launch size, leave `"batch_cap": 8` out (the launch value is 32). The file sets no `global_norm_cap`: the smoke test runs with no cap and measures the norm.
 
 For a first round that takes minutes, not hours, see "Tiny first" after step 4.
 
@@ -188,9 +188,9 @@ Do this after step 4. It uses the one bootstrap of step 4 for five rounds. Each 
 | Stage | Batches | GPUs in use (`n_gpus`) | Tasks | Reply cap (`max_output_tokens`) | What it adds | Expected time |
 |---|---|---|---|---|---|---|
 | `1-tiny` | 1 | 1 | 1 | 2048 | one training job on one GPU, one vLLM server, scoring, decision, publish | 10 to 20 minutes the first time, 5 to 8 after that |
-| `2-two` | 2 | 2 | 8 | 2048 | two training jobs at the same time, three looks | 6 to 10 minutes |
+| `2-two` | 2 | 2 | 8 | 2048 | two training jobs, one after the other, each on both GPUs (before `00e19908`: at the same time, one GPU each); three looks | 6 to 10 minutes |
 | `3-eight` | 8 | 8 | 32 | 65,536 (the launch value) | 8 jobs, 8 servers, a winner, promotion, fold | 25 to 45 minutes |
-| `4-multi` | 2 | 8 | 8 | 2048 | 4 GPUs for each training job, on a folded head | 8 to 15 minutes |
+| `4-multi` | 2 | 8 | 8 | 2048 | 8 GPUs for each training job (4 before `00e19908`), on a folded head | 8 to 15 minutes |
 | `5-full` | 32 | 8 | 2000 | 65,536 | the launch values | up to 100 minutes, then the fold |
 
 Where the minutes come from (estimates, not measured): each `run` hashes the model files (1 minute) and starts the vLLM servers (2 to 4 minutes, 4 to 8 the first time). The first round downloads the model into the box cache (3 to 10 minutes). One training job is 1 to 1.5 minutes, plus a one-time compile on each GPU. A block of tasks lasts as long as its longest reply: about 1 minute at 2048 tokens, 11 to 18 minutes when one reply runs to 65,536. A fold is 8 to 16 minutes.
@@ -248,7 +248,7 @@ Pass, for each stage:
 - `2-two`: `NULL` or `APPLIED`. Two rows, each `lost` or `winner`. With the cap of 2048 most replies are cut, so expect `NULL`.
 - `3-eight`: `APPLIED`, 8 rows, a `winner` line, `"heads"` is 2 more than before, `"head_folded": true`, and `kings` holds the winner's UID. The chance of a winner is about 80 to 93 percent, when null M passes between 5 and 90 percent of the 32 tasks: with `z_bar` 0, one of 8 LoRAs is above null M by chance alone. If the result is `NULL`, that is not a fault: run the three commands of this stage again. They take the next 8 seats.
   One case to know: every row shows `delta +0.0000`. Then the small copies trained an update too small to change one reply. Run the stage again with whole files: use `python -m sn120_v2.smoke copy --state-dir $STATE --whole` as the copy command. Whole files train a real update. Some of them can be invalid under the v2 rules, so the round can then have fewer than 8 rows.
-- `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are the first trainings with 4 GPUs each.
+- `4-multi`: two rows, each `lost` or `winner`. The two `"phase": "train"` lines of this round in `$SN120_WORK_DIR/logs/phases.jsonl` are trainings on a folded head with 8 GPUs each (`n_gpus` 8). With a commit before `00e19908` they have 4 GPUs each.
 - `5-full`: the pass lines of steps 6 to 9.
 
 In every stage: no row has the verdict `no_decision`, `not_trained` or `not_scored`, and the first line is not `NO_DECISION`.
@@ -299,7 +299,7 @@ Not a pass, and what to do:
 
 - `limit-judged` shows rows with `not_scored`: the first block did not finish before minute 23. That is not a fault of the rule. Send the `eval` lines of `phases.jsonl` and the `wall time` line; the time limit of this file must be higher. Nobody is charged.
 - `limit-not-scored` shows rows with `lost` or `winner`: the box scored 2000 tasks in 6 minutes, or it did not stop. Send `run-limit-not-scored.log`.
-- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training of a small copy took longer than the training time of the file. Send the `train` lines of `phases.jsonl`.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: the training of a small copy took longer than the training time of the file. Send the `train` lines of `phases.jsonl`. From `00e19908` on this text is not in a row: it is in the first line of the round summary, after `no training finished in this round`, because only the first job of the round can have the whole time.
 - In `limit-judged`, `total` or `lease to promotion` is above the time limit: the steps after the stop (the stop of the vLLM servers, the result, the promotion) took more than `promote_reserve_s`. Send the `wall time` line.
 
 After these two rounds, go on with `5-full`: its `set-params` puts the launch values back.
@@ -364,7 +364,7 @@ python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --roun
 What happens:
 
 1. The controller reads the registrations from the chain, and gives the first 32 seats with a valid file a lease (the right to be trained and scored in this round). A seat with no valid file is skipped: it keeps its place and is not charged.
-2. Training: 8 batches at a time, one GPU each, in queue order. One LoRA per batch. Training has its own time: 40 minutes from the lease (`train_time_budget_s`). At its end no new training starts, and a job that still runs is stopped.
+2. Training: one batch at a time, in queue order, and each job has all 8 GPUs (from `00e19908` on; with an earlier commit: 8 batches at a time, one GPU each). One LoRA per batch. Training has its own time: 40 minutes from the lease (`train_time_budget_s`). At its end no new training starts, and a job that still runs is stopped.
 3. Evaluation: one vLLM server per GPU. Null M and every LoRA answer the same tasks with the same seeds, at temperature 1. There are 3 looks (after 500, 1000 and 2000 tasks). At each look a LoRA that is clearly not better is dropped. The tasks are scored in blocks of 500 (`eval_chunk_tasks`).
 4. Decision: the best LoRA wins if z > 1. Else there is no winner, and the head and the kings stay as they are.
 5. Promotion and fold: the winner's LoRA is published, then added to the master.
@@ -393,7 +393,7 @@ Expected at the end: the round summary as text (see step 9), then the JSON summa
 Pass, all of these:
 
 1. The first line of the round summary is `SN120 v2 round r000001: APPLIED` or `... NULL`. Both are a pass. `NULL` means no LoRA beat null M by more than one standard error.
-2. Every batch has a verdict: `winner` or `lost`. With 8 batches on 8 GPUs, expect no `not_trained` and no `not_scored`. `lease to promotion` in the `wall time` line is at most `100m00s`; if it is more, send the `wall time` line: the steps after the stop took more than 10 minutes.
+2. Every batch has a verdict: `winner` or `lost`. Expect no `not_scored`. From `00e19908` on the 8 trainings run one after another: a `not_trained` row then means that they did not all fit in the 40 minutes of training time. That is not a fault of a seat; send the `train` lines of `phases.jsonl`. `lease to promotion` in the `wall time` line is at most `100m00s`; if it is more, send the `wall time` line: the steps after the stop took more than 10 minutes.
 3. The JSON summary shows `"phase": "IDLE"` and `"head_folded": true`.
 4. With `APPLIED`: `"heads": 3` (genesis, the head with the winner's LoRA, the folded head), and `kings` starts with the winner's UID.
 5. `nvidia-smi` shows the GPUs free after the command ends.
@@ -407,7 +407,7 @@ Not a pass, and what to do:
 
 - `NO_DECISION`: a failure of the box or the store, or no batch was trained inside the training time. Nobody is charged; the seats are back at the front. Read the `note` column and `run.log`, fix the cause, run step 6 again.
 - Rows with `not_scored`: the first block of 500 tasks did not finish before minute 90. Nobody is charged, and the same seats are first in the next round, so the next round would end the same way. Send the `wall time` line and the `eval` lines of `phases.jsonl`; `train_time_budget_s`, `batch_cap` or the number of tasks must change.
-- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: one batch on one GPU needs more than 40 minutes. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change.
+- A row with `no_decision` and the note `this batch had the whole training time of the round ... and did not finish`: one batch on one GPU needs more than 40 minutes. Send the `train` lines of `phases.jsonl`; `train_time_budget_s` or the cost cap of a batch must change. From `00e19908` on the summary shows it thus: `no winner: InfraError: no training finished in this round: 1 of N batches failed. The first: this batch had the whole training time of the round ...`. Then the first job of the round, on all 8 GPUs, ran for the whole 40 minutes: a job that hangs, or a file that is too large. No other batch started. Nobody is charged and nothing is counted, and the same seat is first in the next round.
 - `ABANDONED`: the winner's files did not match their hash. The head did not change. Stop and report it.
 - `refused:` on the last line: a check failed closed. The line names the check.
 - Lines `waiting: ...` that repeat: the chain or the store does not answer. If the chain read is the cause, set `SN120_V2_CHAIN_NETWORK=none` (the queue then stays as bootstrap made it) and run again.
@@ -550,7 +550,7 @@ What a restart does to an open round:
 
 | The round when `run` died | `run` alone, started by hand | The loop |
 |---|---|---|
-| In the training time (to minute 40) | All batches train again from zero, in the time that is left. From `763f1766` on: a batch that does not finish is `not_trained`, and nothing is counted, when this start comes later than 120 s after the start of the lease. In the first 120 s, and with an earlier commit: a batch of the first group that does not finish gets `no_decision` and **one counted failure** (3 hold the seat), when another batch of the round trained. Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
+| In the training time (to minute 40) | All batches train again from zero, in the time that is left. From `763f1766` on: a batch that does not finish is `not_trained`, and nothing is counted, when this start comes later than 120 s after the start of the lease. In the first 120 s, and with an earlier commit: a batch of the first group that does not finish gets `no_decision` and **one counted failure** (3 hold the seat), when another batch of the round trained. From `00e19908` on (one training job at a time) nothing is counted in the first 120 s either: only the first batch of the queue has the whole time, and when it does not finish, no batch trained and the lease fails. Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. |
 | After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. The scores are lost. | The same, at once. |
 | The box result is stored, not judged | `run` judges the stored result. Also after the lease end. | The same: the loop skips `end-round`. |
 | Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
@@ -662,7 +662,7 @@ no winner: InfraError: no training finished in this round: 32 of 32 batches fail
 
 The cost of this rule: `run` cannot tell a broken box from bad files, so a seat that is alone in its round with a file that makes the training fail is never held and its round repeats every 5 minutes, and `batch_cap` such seats in front fill every round so that no seat behind them gets a turn; nothing stops the loop for it, so look for `no_decision` again and again in `last_outcomes` of `status`.
 
-A training job that failed (out of memory, a crash of the job, any other error of the training) is never counted for a seat, from commit `2b7046a3` on: the entry is `no_decision`, the seat is first in the next round, and nobody is charged. One failure is counted, and only when another batch of the round trained: a batch that started at the lease, whose first try ran to the end of the training time and did not finish. From commit `e35a09c4` on, a batch with a try that failed and a later try that the end of the training time stopped is `not_trained`, and nothing is counted. A commit before `2b7046a3` counted each failed training, and such a count stays in the state until `release-seat`. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. `status` shows both, in `held_seats` (the UIDs) and `seats_with_counted_failures` (seats with 1 or 2 counts). After the box is repaired, `release-seat` undoes them. Stop `run` first: this command takes over the journal.
+A training job that failed (out of memory, a crash of the job, any other error of the training) is never counted for a seat, from commit `2b7046a3` on: the entry is `no_decision`, the seat is first in the next round, and nobody is charged. One failure is counted, and only when another batch of the round trained: a batch that started at the lease, whose first try ran to the end of the training time and did not finish. From commit `00e19908` on the box trains one batch at a time, each on all GPUs: only the first batch of the queue starts at the lease, and when it does not finish no other batch trained, so the lease fails and nothing is counted. No new count comes from the training then. From commit `e35a09c4` on, a batch with a try that failed and a later try that the end of the training time stopped is `not_trained`, and nothing is counted. A commit before `2b7046a3` counted each failed training, and such a count stays in the state until `release-seat`. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. `status` shows both, in `held_seats` (the UIDs) and `seats_with_counted_failures` (seats with 1 or 2 counts). After the box is repaired, `release-seat` undoes them. Stop `run` first: this command takes over the journal.
 
 ```
 python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --all       # every seat that is held or has a count
@@ -708,7 +708,7 @@ The code passes its tests on CPU with a tiny model and fake vLLM servers. This r
 3. The same task and seed give the same sampling for null M and for every LoRA.
 4. Memory and speed with long rows (up to 32,768 output tokens in training, up to 65,536 in generation).
 5. The GPUs are free between training and evaluation.
-6. The times: how long one batch trains on one GPU (against the 40 minutes of training time), how long a block of 500 tasks takes, and so how many batches and tasks fit in 100 minutes. If the tasks do not fit, the time limit ends the round and the summary says `(stopped at the time limit)`; if not even the first look fits, the trained LoRAs are `not_scored`.
+6. The times: how long one batch trains (against the 40 minutes of training time; from `00e19908` on each job has all 8 GPUs and the jobs run one after another, so the sum of the jobs must fit), how long a block of 500 tasks takes, and so how many batches and tasks fit in 100 minutes. If the tasks do not fit, the time limit ends the round and the summary says `(stopped at the time limit)`; if not even the first look fits, the trained LoRAs are `not_scored`.
 7. Fold time and RAM with the real 37.6 GB master, and R2 speed for 56 GB.
 8. How many real v1 files are valid under the v2 rules.
 9. The update norm of the default recipe.

@@ -6,7 +6,7 @@ own parameter file, and ``set-params`` pins it before the round:
   1-tiny   1 batch, 1 GPU, 1 task: the whole path in minutes; it can have no winner
   2-two    2 batches, 2 GPUs, 8 tasks
   3-eight  8 batches, 8 GPUs, 32 tasks with the real reply cap: the round that should promote and fold
-  4-multi  2 batches on 8 GPUs: each training job has 4 GPUs
+  4-multi  2 batches on 8 GPUs, on a folded head: each training job has all 8 GPUs, like every job on the box
   5-full   the launch values
 
 Two more rounds, between 4-multi and 5-full, hit the round's time limit on

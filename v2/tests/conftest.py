@@ -175,7 +175,10 @@ def build() -> type[Build]:
 @pytest.fixture
 def out_of_time():
     """``out_of_time(world, hotkeys)``: the training of these hotkeys fails, and the box reports what the real runner
-    reports for a batch that had the whole training time and did not finish. This is the one failure that is counted."""
+    reports for a batch that had the whole training time and did not finish. The controller counts this text when
+    another batch of the round trained. With one training job at a time the real runner writes it only for the first
+    batch of the queue, and then no other batch trained: so this fixture plays a box result of the time before, which
+    the controller still counts in the same way (old journal records, and counts that seats still have)."""
 
     def arm(world, hotkeys) -> None:
         world.trainer.fail_hotkeys = set(hotkeys)
