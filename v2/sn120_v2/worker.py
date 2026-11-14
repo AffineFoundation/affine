@@ -159,8 +159,10 @@ class LocalRunner:
                 return EntryResult(entry.queue_pos, SKIP, reason=f"batch rejected at train time: {exc}", attempts=attempt)
             except InfraError as exc:
                 reason = str(exc)
-            if self.clock() >= train_end and whole_time:
-                # Admission's cost cap says that a valid batch fits. This one did not: a fault of ours, counted for the seat.
+            if self.clock() >= train_end and whole_time and attempt == 1:
+                # Admission's cost cap says that a valid batch fits. This one had the whole time in one try and did not
+                # finish: a fault of ours, counted for the seat. After a try that failed, the box took part of the time
+                # from the batch: then it is not_trained, and nothing is counted.
                 reason = f"{OUT_OF_TIME} ({ticket.params.train_time_budget_s} s) and did not finish"
                 return EntryResult(entry.queue_pos, NO_DECISION, reason=reason, attempts=attempt)
             if self.clock() >= train_end:
