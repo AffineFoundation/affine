@@ -71,7 +71,7 @@
     at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
     env: { h: 'Env', w: 60, r: r => esc(r.env) },
-    seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is counted.' },
+    seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is in this number.' },
     skipped: { h: 'Skipped', w: 68, n: 1, r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
     tasks: { h: 'Tasks', w: 64, n: 1, r: r => esc(r.tasks) },
     mPass: { h: 'M pass', w: 68, n: 1, r: r => pct(r.null_pass) },
