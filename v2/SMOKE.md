@@ -195,13 +195,13 @@ Do this after step 4. It uses the one bootstrap of step 4 for five rounds. Each 
 
 Where the minutes come from (estimates, not measured): each `run` hashes the model files (1 minute) and starts the vLLM servers (2 to 4 minutes, 4 to 8 the first time). The first round downloads the model into the box cache (3 to 10 minutes). One training job is 1 to 1.5 minutes, plus a one-time compile on each GPU. A block of tasks lasts as long as its longest reply: about 1 minute at 2048 tokens, 11 to 18 minutes when one reply runs to 65,536. A fold is 8 to 16 minutes.
 
-The four small files also set these values. They are for the smoke test only:
+Six files are small: the four stages `1-tiny` to `4-multi` and the two limit files. They also set these values. (`limit-judged` has its own `z_bar` and `min_scored_tasks`; see its section.) All six are for the smoke test only:
 
 - `z_bar` 0 and `min_scored_tasks` 2: a LoRA wins when it is above null M on at least 2 tasks (z above 0). So a small round can have a winner.
 - `max_infra_attempts` 1000: no seat is put on hold while faults are fixed.
 - `apply_retry_s` 5: after a failed round, the next one starts 5 seconds later, not 5 minutes.
 
-`5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it one of the small files.
+`5-full` holds only the two digests: every other value is the launch value. The mainnet bootstrap has its own file ([CUTOVER.md](CUTOVER.md)); never give it a file of `smoke params`.
 
 Write the files. Run this again each time the digest block of step 1 ran:
 
@@ -216,10 +216,12 @@ Each stage is the same three commands. Run them for `1-tiny`, then `2-two`, `3-e
 
 ```
 export STAGE=1-tiny
-python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
-python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json &&
+( set -o pipefail; python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt ) &&
 python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
 ```
+
+The block stops at the first command that fails: the `&&` at the end of a line starts the next command only after a pass. So `run` starts only when `copy` printed `N of N files copied`, with the same number two times. If you run the commands one at a time, look for that line before you start `run`: with too few files `run` finds no round to start, prints `idle: N seats wait, phase IDLE` every 30 seconds and does not return. Stop it with Ctrl-C.
 
 For `5-full`, the copy command is `python -m sn120_v2.smoke copy --state-dir $STATE --whole`. Then do the `status` check of step 5 and steps 6 to 9 as written.
 
@@ -231,7 +233,7 @@ What the three commands do:
 
 Expected from `copy`: one line for each file, for example `copied 5F.. 2 of 61 groups, 16 rollouts, longest 1890 tokens, 51234 of 48211002 bytes sha256=... default recipe`. Then `1 of 1 files copied`. Lines that start with `passed over` name a file with no usable group, and why.
 
-If `copy` ends with fewer files than it needs (exit code 1): the real files have too few short groups for this cap. The `passed over` lines say `the nearest group needs <N>`. Write the files again with a cap above that N, then run the three commands again:
+If `copy` ends with fewer files than it needs (exit code 1), read the `passed over` lines. If they say `the token count fails for each of its N groups ...: <error>`, the tokenizer failed, not the cap: do not change `--short-reply`; send the lines. If they say `the nearest group needs <N>`, the real files have too few short groups for this cap. Write the files again with a cap above that N, then run the three commands again:
 
 ```
 python -m sn120_v2.smoke params --plan $SMOKE/plan.json --out $SMOKE --short-reply 4096
@@ -270,8 +272,8 @@ Run `limit-judged` first. It is the main proof: it also shows that the box stops
 
 ```
 export STAGE=limit-judged
-python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json
-python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt
+python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params-$STAGE.json &&
+( set -o pipefail; python -m sn120_v2.smoke copy --state-dir $STATE | tee -a $SMOKE/copied.txt ) &&
 python -m sn120_v2 run --state-dir $STATE --stack sn120_v2.assembly:stack --rounds 1 2>&1 | tee $SMOKE/run-$STAGE.log
 ```
 
@@ -632,7 +634,7 @@ The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu
   ```
 
   Then do the `IDLE` line.
-- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code.
+- `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code. The sign that the fold is done: `run` prints `idle: N seats wait, phase IDLE`, or `status` in a second shell shows `"phase": "IDLE"`. `run` prints no round summary for it. With `--max-idle 1` added to the `run` command, `run` returns at that `idle:` line. If valid files wait, `run` does not print the line: it starts the next round at once.
 
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
 
