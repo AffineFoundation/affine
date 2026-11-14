@@ -155,7 +155,26 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "reported `no_decision` for your entry 5 times" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
     assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
-    assert "no seat moves back in the first 21600 s after its registration" in flat
+    assert "keeps its place for at least 21600 s after its registration, and for as long as no entry was charged in the last 24 hours" in flat
+    assert "(`squat_min_wait_s`, `squat_age_factor`) are parameters (section 11)" in flat and "is announced" not in flat
+
+
+def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_path):
+    for wait, first, total in ((31536000, "365 days", "730 days"), (86400, "1 day", "2 days"), (129600, "129600 s", "3 days"), (7201, "7201 s", "14402 s")):
+        flat = " ".join(published(world(tmp_path / str(wait), squat_min_wait_s=wait).publisher.snapshots[-1])[1].split())
+        assert f"older than 2 x its expected wait. Expected wait = max({first}, seats ahead x seconds per turn)." in flat
+        assert f"keeps its place for at least {total} after its registration" in flat and "e+" not in flat.split("## 4.")[1].split("## 5.")[0]
+        assert f"| `squat_min_wait_s` | {wait} |" in flat  # the table of section 11 keeps the value of the params
+    assert publisher.duration(2.5 * 7201) == "18002.5 s" and publisher.duration(0) == "0 s"
+    assert "a round takes it when it has room after the front seats and the normal seats that have a valid file" in flat
+    assert "A seat that v1 had moved to the back of its queue starts at the back here." in flat
+    assert "`demoted` = yes: the seat is at the back, unless `front` is also yes." in flat  # queue.zone
+    assert "`position` counts every seat ahead of you, also a seat with no valid file" in flat and "`held` = yes: the seat takes no turn" in flat
+    assert "A seat exists only while its registration is on chain." in flat  # queue.plan_sync
+    assert "(the UID is deregistered, or the UID goes to a newer registration), the seat is removed and its turn is lost" in flat
+    assert "A seat that is in an open round stays until that round closes." in flat
+    assert "the seat keeps its place. The validator then reads the file of the new hotkey" in flat
+    assert "When the new hotkey already had its turn, the seat is removed." in flat
 
 
 def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):

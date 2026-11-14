@@ -176,7 +176,8 @@ def plan_sync(
     removed = [key for key, seat in queue.items() if key not in on_chain and not seat.leased]
     if not force and len(queue) >= 8 and len(removed) > max_remove_frac * len(queue):
         raise InfraError(
-            f"sync would remove {len(removed)} of {len(queue)} seats; refusing without force (possible bad chain read)"
+            f"sync would remove {len(removed)} of {len(queue)} seats; refusing without force (possible bad chain read). "
+            "If the chain is right, an operator applies it with the force-sync command"
         )
     by_turn = lambda reg: (reg.registration_block, reg.uid)
     return SyncPlan(tuple(sorted(added, key=by_turn)), tuple(sorted(removed)), tuple(sorted(rehotkeyed, key=by_turn)))

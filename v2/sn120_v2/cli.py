@@ -13,6 +13,9 @@
               of that round in the store it ends nothing and exits with 3: ``run`` judges that result
   release-seat  undo what a fault of the box did to seats: a held seat takes a turn again, and the count of
               failures of a seat is 0 again (stop ``run`` first: this command takes over the journal)
+  force-sync  for a chain sync that ``run`` refuses because more than a quarter of the seats would leave:
+              show the changes that two chain reads agree on; with ``--confirm-remove N`` apply them once
+              (stop ``run`` first: with ``--confirm-remove`` this command takes over the journal)
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -40,7 +43,7 @@ from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
 from .public import phase, round_text, snapshot
-from .queue import waiting
+from .queue import BACK, FRONT, SyncPlan, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import State, load
 from .store import verify_files
@@ -278,6 +281,73 @@ def cmd_release_seat(args: argparse.Namespace) -> int:
     return 0
 
 
+CHAIN_READ_WAIT_S = 6.0  # between two tries for a chain read at a later block; a block takes 12 seconds
+CHAIN_READ_TRIES = 10
+
+
+def two_chain_reads(read: Callable[[], ChainSnapshot]) -> tuple[ChainSnapshot, ChainSnapshot]:
+    """Two complete reads of the registrations, the second at a later block than the first."""
+    first = second = read()
+    for _ in range(CHAIN_READ_TRIES):
+        if second.block > first.block:
+            return first, second
+        time.sleep(CHAIN_READ_WAIT_S)
+        second = read()
+    if second.block > first.block:
+        return first, second
+    raise InfraError(f"the chain stayed at block {first.block} for {CHAIN_READ_TRIES * CHAIN_READ_WAIT_S:g} s: there is no second read to compare with")
+
+
+def _changes(plan: SyncPlan) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int, str]]]:
+    """What a sync plan changes, without the clock times of a read: seats that leave, seats that enter, new hotkeys."""
+    return list(plan.removed), [reg.key for reg in plan.added], [(*reg.key, reg.hotkey) for reg in plan.rehotkeyed]
+
+
+def cmd_force_sync(args: argparse.Namespace) -> int:
+    """Apply once a chain sync that ``run`` refuses. ``run`` itself never forces a sync.
+
+    Two guards stand in for the refusal. The changes must be the same in two
+    chain reads at different blocks, so a read that is wrong for one moment
+    does not pass. And the operator must give the number of seats that leave,
+    as the list without ``--confirm-remove`` showed it.
+    """
+    controller = None
+    if args.confirm_remove is None:
+        state, params, stack = read_state(args, "force-sync")
+    else:
+        controller, stack = open_controller(args, "force-sync")
+        state, params = controller.state, controller.params
+    if stack.chain is None:
+        raise ConfigError("this stack reads no chain, so there is no sync to apply")
+    first, second = two_chain_reads(stack.chain)
+    plans = [plan_sync(state.queue, state.served_regs, state.served_hotkeys, chain, params.netuid, params.burn_uid, force=True) for chain in (first, second)]
+    plan = plans[1]
+    if _changes(plans[0]) != _changes(plan):
+        counts = " and ".join(f"remove {len(each.removed)}, add {len(each.added)} at block {chain.block}" for each, chain in zip(plans, (first, second)))
+        raise InfraError(f"two chain reads give different changes of the queue ({counts}); nothing was changed. Run the command again")
+    seats, leave = len(state.queue), len(plan.removed)
+    print(f"chain blocks {first.block} and {second.block} ({len(second.registrations)} registrations) give the same changes to the queue of {seats} seats:")
+    print(f"  remove {leave} seats, add {len(plan.added)} seats, change the hotkey of {len(plan.rehotkeyed)} seats")
+    names = {FRONT: "front", BACK: "back"}
+    for key in plan.removed:
+        seat = state.queue[key]
+        flags = names.get(zone(seat), "normal") + (", held" if seat.held else "")
+        print(f"  remove uid {key[0]:>4} registration block {key[1]:>9} {seat.reg.hotkey} ({flags})")
+    if seats and leave == seats:
+        print(f"WARNING: not one of the {seats} seats is on this chain. A read of another network or subnet looks like this")
+    if controller is None:
+        print(f"nothing was changed. To apply exactly this, stop run and give the same command with --confirm-remove {leave}")
+        return 0
+    if args.confirm_remove != leave:
+        raise V2Error(f"the chain now removes {leave} seats, not the confirmed {args.confirm_remove}; nothing was changed. Read the list again")
+    applied = controller.sync_registrations(second, now(), force=True)
+    if _changes(applied) != _changes(plan):
+        raise V2Error("the applied changes differ from the listed ones")  # one state and one read: this cannot happen
+    print(f"applied at chain block {second.block}: the queue has {len(controller.state.queue)} seats", flush=True)
+    print(json.dumps(summary(controller.state, controller.params), indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sn120_v2", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -319,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
     which = command("release-seat", cmd_release_seat, stack=True).add_mutually_exclusive_group(required=True)
     which.add_argument("--uid", type=int, action="append", help="release the seat of this UID; give the flag again for more UIDs")
     which.add_argument("--all", action="store_true", help="release every seat that is held or has a counted failure")
+    force = command("force-sync", cmd_force_sync, stack=True)
+    force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
