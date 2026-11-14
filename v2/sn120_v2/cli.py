@@ -378,9 +378,10 @@ def two_chain_reads(read: Callable[[], ChainSnapshot]) -> tuple[ChainSnapshot, C
     raise InfraError(f"the chain stayed at block {first.block} for {CHAIN_READ_TRIES * CHAIN_READ_WAIT_S:g} s: there is no second read to compare with")
 
 
-def _changes(plan: SyncPlan) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int, str]]]:
-    """What a sync plan changes, without the clock times of a read: seats that leave, seats that enter, new hotkeys."""
-    return list(plan.removed), [reg.key for reg in plan.added], [(*reg.key, reg.hotkey) for reg in plan.rehotkeyed]
+def _changes(plan: SyncPlan) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int, str]], list[tuple[int, int, str]]]:
+    """What a sync plan changes, without the clock times of a read: seats that leave, seats that enter, new hotkeys, new coldkeys."""
+    renamed = ([(*reg.key, reg.hotkey) for reg in plan.rehotkeyed], [(*reg.key, reg.coldkey) for reg in plan.coldkeyed])
+    return list(plan.removed), [reg.key for reg in plan.added], *renamed
 
 
 def cmd_force_sync(args: argparse.Namespace) -> int:
@@ -407,7 +408,7 @@ def cmd_force_sync(args: argparse.Namespace) -> int:
         raise InfraError(f"two chain reads give different changes of the queue ({counts}); nothing was changed. Run the command again")
     seats, leave = len(state.queue), len(plan.removed)
     print(f"chain blocks {first.block} and {second.block} ({len(second.registrations)} registrations) give the same changes to the queue of {seats} seats:")
-    print(f"  remove {leave} seats, add {len(plan.added)} seats, change the hotkey of {len(plan.rehotkeyed)} seats")
+    print(f"  remove {leave} seats, add {len(plan.added)} seats, change the hotkey of {len(plan.rehotkeyed)} seats, set the coldkey of {len(plan.coldkeyed)} seats")
     names = {FRONT: "front", BACK: "back"}
     for key in plan.removed:
         seat = state.queue[key]

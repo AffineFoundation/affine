@@ -8,7 +8,9 @@ wallet, and the wallet's private key never leaves the SDK.
 
 A weight write is signed by the hotkey. So the wallet needs its hotkey file
 and nothing else: this module and the SDK's weight path never read the
-coldkey, and the machine that sets weights does not need to hold it.
+wallet's coldkey file, and the machine that sets weights does not need to
+hold it. The coldkey of a registration is a public address: the reader gets
+it from the chain.
 
 ``python -m sn120_v2.chain --netuid 120 --network finney --out FILE`` writes
 one snapshot to a file. It only reads the chain and it uses no wallet.
@@ -47,6 +49,7 @@ class ChainClient(Protocol):
     def uid_count(self, block: int) -> int: ...
     def hotkeys(self, block: int) -> Mapping[int, str]: ...  # UID -> hotkey
     def registration_blocks(self, block: int) -> Mapping[int, int]: ...  # UID -> block of its registration
+    def coldkeys(self, block: int, hotkeys: Sequence[str]) -> Sequence[str]: ...  # the coldkey that owns each hotkey, in the order given: one request for all
     def last_update(self, block: int) -> Sequence[int]: ...  # by UID: block of its last weight write
     def rate_limit(self, block: int) -> int: ...  # blocks a validator must wait between two weight writes
     def signer(self) -> str: ...  # the address the wallet signs as; read from the wallet, with no chain call
@@ -81,12 +84,16 @@ class Reader:
             raise InfraError(
                 f"partial chain read at block {block}: {len(hotkeys)} hotkeys and {len(born)} registration blocks for {count} UIDs"
             )
+        owners = list(_read("the coldkeys", lambda: self.client.coldkeys(block, [hotkeys[uid] for uid in uids])))
+        if len(owners) != count:
+            raise InfraError(f"partial chain read at block {block}: {len(owners)} coldkeys for {count} UIDs")
         registrations = []
         for uid in uids:
-            if not (isinstance(hotkeys[uid], str) and hotkeys[uid]) or not 0 <= born[uid] <= block:
+            named = all(isinstance(key, str) and key for key in (hotkeys[uid], owners[uid]))  # never a seat with no coldkey
+            if not named or not 0 <= born[uid] <= block:
                 raise InfraError(f"partial chain read at block {block}: bad registration for UID {uid}")
             registered_at = max(1, taken_at - BLOCK_SECONDS * (block - born[uid]))
-            registrations.append(Registration(uid, hotkeys[uid], born[uid], registered_at))
+            registrations.append(Registration(uid, hotkeys[uid], born[uid], registered_at, owners[uid]))
         return ChainSnapshot(self.netuid, block, taken_at, tuple(registrations))
 
     def block_hash(self, block: int) -> str:
@@ -216,6 +223,7 @@ class FakeChain:
         self.keys = dict(hotkeys)
         self.born = {uid: block - 1000 + uid for uid in self.keys}
         self.updated = {uid: 0 for uid in self.keys}
+        self.owners: dict[str, str] = {}  # hotkey -> coldkey; a hotkey that is not here has a coldkey of its own
         self.validator_hotkey, self.block, self.limit, self.now = validator_hotkey, block, limit, now
         self.weights: dict[int, float] = {}  # the table on chain; empty until the first accepted write
         self.submissions = 0
@@ -249,6 +257,10 @@ class FakeChain:
     def registration_blocks(self, block: int) -> dict[int, int]:
         self._up()
         return dict(self.born)
+
+    def coldkeys(self, block: int, hotkeys: Sequence[str]) -> list[str]:
+        self._up()
+        return [self.owners.get(hotkey, f"coldkey-of-{hotkey}") for hotkey in hotkeys]
 
     def last_update(self, block: int) -> list[int]:
         self._up()
@@ -356,6 +368,11 @@ class SubtensorClient:
 
     def registration_blocks(self, block: int) -> dict[int, int]:
         return {uid: int(born) for uid, born in self._map("BlockAtRegistration", block).items()}
+
+    def coldkeys(self, block: int, hotkeys: Sequence[str]) -> list[str]:
+        """Storage ``Owner`` (hotkey -> coldkey) for every hotkey in one request. A missing owner is "", which the reader refuses."""
+        owners = self.chain.query_batch(self.items.Owner, [[hotkey] for hotkey in hotkeys], block=block)
+        return ["" if owner is None else str(owner) for owner in owners]
 
     def last_update(self, block: int) -> list[int]:
         return [int(value) for value in self._query("LastUpdate", block)]
