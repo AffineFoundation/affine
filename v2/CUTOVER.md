@@ -13,9 +13,8 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Four changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"), but work after them is still open, so no commit is pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
-3. The line for an early run of the preflight from the shell of the smoke test ("GPU box", step 5).
-4. What the restart loop does when the store or the chain does not answer at a start of `run`. A change of the loop is in work ("A crash or a restart of `run`").
+2. The commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Five changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"), but work after them is still open (the guard of point 3, and a change of `llms.txt`), so no commit is pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+3. The guard for a box whose digests differ from the pinned ones: `run` will judge a stored result and then refuse to go on with such a box. It is in work. Until it is in, the rule in bold of "The digests of the box and the pinned digests" holds, and a fix that changes the digests while a stored result waits has three orders and not one ("After a fix").
 
 ## Hosts
 
@@ -101,14 +100,14 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-   **The mainnet bootstrap and `run` use only a commit that contains these four.** Each line of the loop must end with `exit=0`.
+   **The mainnet bootstrap and `run` use only a commit that contains these five.** Each line of the loop must end with `exit=0`.
 
    | Commit | What it holds | With an earlier commit |
    | --- | --- | --- |
@@ -116,14 +115,15 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `9b830458` (PR #145) | The time limit of a round as a hard stop, and the verdict `not_scored` ("The time limit of a round" below). | A round can run past its time limit. `llms.txt` must not go up from such a build. |
    | `5ce10ce7` (PR #146) | The limit of 3 checks for a file that makes the checker fail, with 10 minutes between two checks of the same file. | A hostile file is checked again at every pass. `llms.txt` must not go up from such a build. |
    | `97a67ea4` (PR #149 and PR #151) | The restart loop of `run` ("GPU box", step 10). | Nothing starts `run` again after a crash or a reboot. |
+   | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
-   These four are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
+   These five are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
-   If the box still holds the state of the smoke test at an older commit, and the smoke test goes on: a move to a commit with `9b830458` or `5ce10ce7` is a checkout only. No install line, no digest block, no `set-params`, no new bootstrap. Stop `run` between two rounds, when `status` shows `"phase": "IDLE"`; check out; start `run` again.
+   If the box still holds the state of the smoke test at an older commit, and the smoke test goes on: a move to a commit with `9b830458` or `5ce10ce7` is a checkout only. No install line, no digest block, no `set-params`, no new bootstrap. Stop `run` between two rounds, when `status` shows `"phase": "IDLE"`; check out; start `run` again. For a later commit this is not sure. After the checkout and before the start, run `python -m sn120_v2.gpu.plan | diff - $SMOKE/plan.json`. An output means that the digests of the box changed: then the digest block, `smoke params` and `set-params` of SMOKE.md come before the start ("The digests of the box and the pinned digests" says why).
 
 2. The test suite and the CPU check. Pass: `pytest` shows no failure; `sim` prints `"replay_matches": true`. Run them in a new shell that has no `SN120_` variable of the smoke test (`env | grep ^SN120_` prints nothing).
 
@@ -250,7 +250,20 @@ Run every command from `v2/`, inside the virtual environment.
    - A line `EXISTS  <key or prefix>  N objects`, then up to 10 of the keys, and the last line `FAIL  objects exist at keys that v2 writes: do not start v2 on this bucket and prefix`, with `exit=1`. Stop, and send the output to the coordinator. Do not delete anything to make it pass.
    - A line `FAIL    <key or prefix>  <error>`: that list call failed, so the place is not known to be empty. A line `FAIL  open the bucket  <error>`: the store settings of step 2 are wrong. Correct the cause and run it again.
 
-   What the command does: it sends only list calls (`ListObjectsV2`), so it changes nothing, and it reads only the `SN120_R2_*` names of step 2. It has run against a local stand-in for the store only: this run is the first one on the real bucket. An early run of it from the shell of the smoke test is possible. **Not landed yet:** the exact line for that early run; the coordinator sends it.
+   What the command does: it sends only list calls (`ListObjectsV2`), so it changes nothing, and it reads only the `SN120_R2_*` names of step 2. It has run against a local stand-in for the store only.
+
+   **An early run, from the shell of the smoke test, before the cutover day.** The smoke test uses the same bucket under its own key prefix. This line looks at the root of the bucket for one command; the shell keeps the prefix of the smoke test:
+
+   ```
+   SN120_R2_PREFIX= python -m sn120_v2.r2 --preflight; echo "exit $?"
+   ```
+
+   It needs a commit with `505f5dda`. A pass is the output above: the first line names the production bucket and the key prefix `''`; 16 `ok` lines, of which 15 end in `nothing` and the one for `private/ff/v1/miners` shows the count of miner files; the last line `PASS  no object at a key that v2 writes`; `exit 0`. Not a pass:
+
+   - A first line with `key prefix 'smoke.../'`: the `SN120_R2_PREFIX=` at the start of the line was not typed. Nothing was written; run the line again.
+   - `EXISTS`, `FAIL <key or prefix>` or `FAIL open the bucket`: as above. After a `FAIL <key or prefix>` line the last line still says `FAIL objects exist at keys that v2 writes`. That wording is wrong for this case: the list call failed, and no object was found.
+
+   Send the output to the coordinator. The early run does not replace the run of this step on the cutover day.
 
    After step 6, a second run finds v2's own genesis files. Then name them as expected, one `--allow` for each: `python -m sn120_v2.r2 --preflight --allow public/bases/ --allow public/masters/`. Their lines then say `N objects, all under --allow`.
 6. **Genesis files** (57 GB of disk, 30 GB of RAM, no GPU). With the genesis directory of the smoke test, nothing is downloaded or built again; the files are uploaded to `public/bases/<base hash>/` and `public/masters/<master digest>/` of the production store, and each stored file is read back and compared.
@@ -298,6 +311,14 @@ Run every command from `v2/`, inside the virtual environment.
        - If a line shows a `run` that was started by hand (under tmux), stop it with Ctrl-C, then look at `nvidia-smi`: no GPU holds memory. The loop cannot stop the servers of such a `run`. If they still hold a GPU, the loop does not start `run` and ends with exit code 4.
        - If a line shows a loop, stop it with its stop line (step 10.4).
        - If the unit is enabled, it is the unit of the smoke trial, with the state directory of the smoke test: `sudo systemctl disable --now sn120-v2-run`. Form B below writes the unit again.
+
+       **The digests of the box are the pinned ones.** The bootstrap pinned the digests of `$CUT/plan.json`. A checkout or an install line after the digest block can change those of the box:
+
+       ```
+       python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"     # must print only exit=0
+       ```
+
+       With any other output, do not start the loop: see "The digests of the box and the pinned digests" in "After the start".
     2. **Start the loop.** Use one form, never both. Run it in `v2/`, in the shell of step 2.
 
        **Form A: a box without systemd** (a rented container).
@@ -337,7 +358,7 @@ Run every command from `v2/`, inside the virtual environment.
 
        Check, from a second shell with the same exports:
 
-       - The status line says `running: run has pid N, start 1 of at most 5 with no finished round`.
+       - The status line says `running: run has pid N, start 1 of at most 5 with no finished round`. **Read this line once after each start of the loop.** If it says `waiting for the store or the chain since ...`, read the `<cause>` at its end: "A crash or a restart of `run`" says which causes do not go away.
        - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
        - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
        - `status` shows a `phase` other than `IDLE` after the first lease.
@@ -362,7 +383,7 @@ One list, in this order. Each step has its check. Do not start a step before the
 
 | Step | What it leaves on the host | What to do again at the cutover |
 | --- | --- | --- |
-| 1 | A v2 checkout and its virtual environment. | Check out the cutover commit and run the install line again. Then run `git diff --stat <the commit of today> <the cutover commit> -- v2/systemd`: if it names a file, run the `sed` blocks of steps 2 and 3 again. |
+| 1 | A v2 checkout and its virtual environment. | Check out the cutover commit and run the install line again. Then run `git diff --stat <the commit of today> <the cutover commit> -- v2/systemd/sn120-v2-weights.service v2/systemd/sn120-v2-weights.timer v2/systemd/sn120-v2-links.service v2/systemd/sn120-v2-links.timer`: if it names a file, run the `sed` blocks of steps 2 and 3 again. Only these four unit files matter here. The loop script of the GPU box changes often and is not installed on this host. |
 | 2 | The weights writer's credentials file, and two unit files that are not enabled. | Nothing, but see step 1. |
 | 3 | Two unit files that are not enabled. It only reads v1's credentials file and the site directory. | Nothing, but see step 1. |
 | 4 | A copy of v1's site and the frozen v1 history, both outside the site directory. | Make both again right before step 7 of "GPU box": `mv "$BACKUP" "$BACKUP-early"`, then the copy block of step 4. The way back uses the copy, so the copy must be fresh. |
@@ -606,8 +627,8 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
    2. **Check that the store's `llms.txt` comes from the cutover build.** `llms.txt` must not go up from a store that an older commit published.
 
-      - The commit of the GPU box holds the four commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` four times. Two of them are the reason for this step: the round time hard stop (`9b830458`) and the limit of 3 checks (`5ce10ce7`).
-      - **Not landed yet:** the commit for the cutover. Work after those four is still open, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
+      - The commit of the GPU box holds the five commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` five times. Two of them are the reason for this step: the round time hard stop (`9b830458`) and the limit of 3 checks (`5ce10ce7`).
+      - **Not landed yet:** the commit for the cutover. Work after those five is still open, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
       - **Not landed yet:** the text check of the store's `llms.txt`. The command comes with the commit.
 
       Do not go on before you have both.
@@ -953,7 +974,11 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 
 `run` prints `waiting: <cause>` and then `idle: N seats wait, phase IDLE` at each try, every 30 seconds, and opens no round. The word `waiting:` reads as harmless. It is not: **no round opens until the cause is repaired**, and `run` does not end by itself. The restart loop does not help here: `run` does not end, so the loop does not start it again, and `run-loop.status` still says `running`.
 
-The cause can be the chain or the store that did not answer. Then the lines stop by themselves at a later try. The cause can also be our own checker that fails its known-good case, on this machine. Then nothing ends it. These are the texts of that case:
+There are three kinds of cause:
+
+1. **The store did not answer** (`r2 <action> '<key>' failed: ...`). The lines stop by themselves at a later try.
+2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `the chain head is N s old: the node is behind`, `partial chain read ...`). `run` opens one connection to the chain and keeps it. Nothing in v2 opens a new one after a failure. So if the same chain line still comes after 5 minutes, **stop the loop and start it again** (step 10.4 of "GPU box"). `run` is at `phase IDLE` then, so the stop costs nothing. If the line comes again after the start, the chain node is the cause: send the line to the coordinator. A fix that opens a new connection is not in yet.
+3. **Our own checker fails its known-good case**, on this machine. Then nothing ends it, and a new start does not help. These are the texts of that case:
 
 | The cause in the line | What fails |
 | --- | --- |
@@ -966,7 +991,7 @@ In the same state:
 - `status` (with `--stack`) and `publish` end with `refused: InfraError: <cause>` and exit code 2.
 - `bootstrap` prints `not finished: file check failed: <cause>` and ends with exit code 1.
 
-What to do: when the same `waiting:` line comes three times in a row, stop and send the line to the coordinator. Do not delete a miner file and do not change the parameters to make a round open. A new start of `run` on the same machine gives the same line.
+What to do for kind 3: when the same `waiting:` line comes three times in a row, send the line to the coordinator. Do not delete a miner file and do not change the parameters to make a round open. A new start of `run` on the same machine gives the same line.
 
 This is not the case of one bad miner file. A file that makes the checker fail while the known-good case passes is skipped with the rule `check_fault`, and `run` goes on. The same holds for `tokenizer_fault`, `grader_fault` and `grader_time_limit`. Such a file is checked again 10 minutes later at the earliest; after 3 counted checks its verdict stays until the miner uploads a new file. Send the coordinator the `queued_files` line of `status` whenever it has a count under `check_fault`, and each line that holds `the checker fails on this file:`.
 
@@ -979,6 +1004,7 @@ The rules for mainnet:
 - **Only the loop starts `run`.** Never start `run` by hand.
 - **Stop the loop before `set-params`, before `end-round` by hand, and before a new commit.** `set-params` and `end-round` take over the journal. Then start the loop again.
 - **One box only.** Stop the loop on an old box (and `disable` its unit) before a new box starts. The loop of a second box ends the open round of the first one.
+- **Never start `run` or the loop on a box whose digests differ from the pinned ones before `set-params`.** "The digests of the box and the pinned digests" below says why, and how to see it.
 
 Before each start of `run` the loop does three things, in this order:
 
@@ -1003,17 +1029,60 @@ Which exit codes of `run` the loop does not start again:
 | Exit code of `run` | Meaning | The loop |
 |---|---|---|
 | 0 | Finished (`--rounds`, `--max-idle`) | stops, exit code 0 |
-| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again. |
+| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again, without end, and is not counted. |
 | 130, 143 | Stopped with SIGINT or SIGTERM | stops, exit code 0 |
 | every other code | A crash (1 is a Python error, 137 is SIGKILL or out of memory) | starts `run` again after 30 seconds |
 
 The loop counts the starts with no finished round between them. A round that `run` closed sets the count back to zero; a round that the loop ended with `end-round` does not. At 5 (`SN120_LOOP_MAX_STARTS`) the loop stops with exit code 3. A crash 30 minutes into every round stops it too. The count is in memory: a new start of the loop, or a reboot, sets it to zero. So the count does not stop a box that reboots in every round.
 
-**Not landed yet:** the line on a store or a chain that does not answer at a start of `run`. A change of the loop for that case is in work; the coordinator sends the line.
+A store or a chain that does not answer never stops the loop. When `end-round` or `run` ends with `refused: InfraError`, the loop waits and tries again until they answer. The pause starts at 30 seconds, doubles with each try, and stays at 5 minutes (`SN120_LOOP_MAX_PAUSE_S`). Such a try is not in the count of starts, and it does not set that count back to zero. `cat $SN120_WORK_DIR/logs/run-loop.status` then shows `waiting for the store or the chain since <UTC time> (<N> tries with no answer); next try in <seconds> s; the last one ended with: ... refused: InfraError: <cause>`. With form B, `systemctl status sn120-v2-run` stays `active (running)` in that time. Read that `<cause>` once after each start of the loop. A cause on the box itself has the same word `InfraError` and does not go away: a wrong store token (for example `r2 ... failed: AccessDenied`), or a wrong grader package (`math grader needs ...`). Then stop the loop and fix it.
 
 The loop stops by itself after 5 starts with no finished round between them, when `run` is refused, and when a GPU stays in use. Then nothing starts `run` again. The last lines of `$SN120_WORK_DIR/logs/run.log` say why and what to run. `cat $SN120_WORK_DIR/logs/run-loop.status` shows the same in one line, with the exit code of the loop: 0 stopped or finished, 2 refused, 3 gave up, 4 a GPU stays in use, 64 a wrong call. With form B, `systemctl status sn120-v2-run` then says `failed` (after exit code 0: `inactive`). Send those lines to the coordinator. While `run` does not run, no round opens; the head stays, and the weights writer keeps its last valid assessment.
 
 A fault in the judging of a round stops `run` with a Python error. The round stays open, and the box result stays in the store. After the fix, `run` judges that result; no new round is needed. `end-round` leaves such a round alone and exits with 3. Only if the stored result itself is bad: `end-round --discard-result` ends the round with no decision and throws the result away. Nobody is charged.
+
+### When the store or the chain fails while `run` runs
+
+One pass of `run` is: read the chain, then the whole round. A failure of the store or the chain in a pass gives `waiting: <cause>`, then the `idle:` line, 30 seconds of sleep, and the next pass. `run` does not end, so the loop does nothing, and `run-loop.status` says `running`.
+
+**The chain.** `run` reads it only at the start of a pass. Inside a round it is not read, so a chain fault in the middle of a round does nothing. Between rounds it gives `waiting:` every 30 seconds, and no round opens. A decided round that waits for a new try of its promotion or its fold also waits for the chain. "When no round opens" says what to do when a chain line repeats.
+
+**The store**, by the phase of the round. The store client tries each call again by itself, so a short fault is not seen at all.
+
+| Phase | What `run` does | Cost |
+|---|---|---|
+| A round opens | `waiting:`. The next pass opens it again. | none |
+| Training | Not `waiting:`, not a crash. The runner tries that batch 3 times at once. Then the batch is `no_decision` ("training failed 3 times"). `run` goes on with the other batches and the scoring. | **one counted failure for that seat** (3 hold the seat), no charge |
+| Scoring | 3 tries for a block of tasks. After the stop time the block is dropped and the round ends with what it has. Before it, the runner gives up: the lease fails and the round closes with no decision. | no charge, no counted failure; the next round opens 5 minutes later |
+| Training or scoring, and the store does not answer the controller either | `waiting:`. The lease stays open. The next pass runs the whole round again under the same lease. | in the training time: a counted failure for a batch of the first group that does not finish. After it: none |
+| The box result is written | As the row above: the result was only in memory, so the scores are lost. | none, but the round decides nothing |
+| Judging (the result is stored) | `waiting:`. The next pass judges the stored result. | none |
+| Promotion | Store fully down: `waiting:`, and no try is counted. The journal works but the copy fails: a new try every 5 minutes; after 12 tries the round is `abandoned`. | `abandoned`: no new head, nobody charged |
+| Fold | `fold failed`, a new try every 5 minutes, with no limit. No new round opens before the fold is done. | none |
+| The close of the round | `waiting:`. The next pass closes it. | none |
+| Right after the close | `run` ends with `refused: InfraError`, exit code 2. This is the one place where a store fault ends a running `run`. The round is closed and safe. | none; the loop starts `run` again, and the start is not counted |
+
+So a store fault in the training time is the one case that costs a seat a counted failure. Send the coordinator the round summary of such a round.
+
+### The digests of the box and the pinned digests
+
+**Never start `run` or the loop on a box whose digests differ from the pinned ones before `set-params`.**
+
+The pinned digests are the two digests of the parameters in force: the code digest and the image digest. The last bootstrap or `set-params` pinned them. A checkout can change the code digest of the box (a file under `sn120_v2/gpu/`). An install line can change the image digest of the box (a package). A new box can have other digests than the old one.
+
+What happens when `run` starts on such a box: it does not stop. Every training is refused at once, so each round closes in seconds, and **every seat in that round gets one counted failure**. There is no pause between such rounds, and the same seats come first again. Three counted failures hold a seat, and no command releases a held seat today. Nobody is charged. The loop starts `run`, so the same holds for a start of the loop.
+
+How to see it, after each checkout, after each install line and on each new box, before any start:
+
+```
+python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"
+```
+
+- `exit=0` and no other output: the digests of this box are those of `$CUT/plan.json`. The loop can start.
+- A `diff` output and `exit=1`: the digests differ. Do not start the loop. The digest block and `set-params` come first ("After a fix"), also when the message for the fix did not say so.
+- `$CUT/plan.json` is the output of the last digest block (check 3 of "Before the mainnet bootstrap"). It holds the pinned digests only if a bootstrap or a `set-params` followed that block. A new box compares with the `plan.json` of the old box ("A new GPU box").
+
+**Not landed yet:** the guard. `run` will judge a stored result and then refuse to go on with such a box. Until it is in, only this rule protects the seats.
 
 ### After a fix: a new commit on the GPU box
 
@@ -1021,11 +1090,15 @@ This is "After a fix" of [SMOKE.md](SMOKE.md), with the same words. Three things
 
 A fix is a new commit on `v2`. The state continues at the new commit: there is no new bootstrap. Never run `bootstrap` again. The message for the fix says if it needs the install line and if it needs the digest block. The commit of a fix always holds `9b830458`: there is no way back below it (check 1 of "Before the mainnet bootstrap").
 
+**Never start `run` or the loop on a box whose digests differ from the pinned ones before `set-params`.** The check is the `diff` line of "The digests of the box and the pinned digests": run it after the checkout and the install line.
+
 Stop the loop (step 10.4 of "GPU box"), not `run` alone: a `kill -9` of `run` makes the loop start it again. A stop in the middle of a round costs that round: the loop ends it with no decision at its next start. Nobody is charged, no failure is counted, and the seats are first in the next round. Then look at the state:
 
 ```
 python -m sn120_v2 status --state-dir $STATE          # "phase": "IDLE", "RUNNING" or "APPLY"
 ```
+
+If the phase is `RUNNING` and the fix needs the digest block, run the `end-round` line below now, **before the checkout**. Exit code 0: the round is ended; go on. Exit code 3: a box result of the round is in the store; go to "A stored result that is not judged, and a fix with the digest block" below, before the checkout.
 
 Then:
 
@@ -1037,31 +1110,58 @@ python -m pytest
 
 The fix needs **no** digest block: start the loop again. In phase `RUNNING` the round must end first (stop `run`, free the GPUs, `end-round`, start): a start of `run` in the training time of an open round can count a failure for a seat. The loop does this order by itself, so there is nothing more to do.
 
-A fix for a fault in the judging: the round is open and its box result is in the store ("A crash or a restart of `run`"). Start the loop: `run` judges the stored result.
+A fix for a fault in the judging, with no digest block: the round is open and its box result is in the store ("A crash or a restart of `run`"). Start the loop: `run` judges the stored result.
 
 The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
 
 - `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then start the loop. The file holds the whole set of overrides, not only the change. With form B, write `$CUT/run.env` again before the start (the first two lines of the block): the digest block can change `SN120_IMAGE_DIGEST`, and the unit reads it from that file.
-- `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. Nobody is charged, no failure is counted for a seat, and its seats are first in the next round:
+- `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. This is the `end-round` that you ran before the checkout; if you did not, run it now (it works after the checkout too). Nobody is charged, no failure is counted for a seat, and its seats are first in the next round:
 
   ```
   python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack
   ```
 
-  Then do the `IDLE` line. Run `end-round` by hand here, with the loop stopped: `set-params` comes before the start of the loop. If `end-round` exits with 3, a box result of the round is in the store and the round stays open: tell the coordinator before you go on. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
+  Then do the `IDLE` line. Run `end-round` by hand here, with the loop stopped: `set-params` comes before the start of the loop, and `set-params` is refused while a round is open and not decided. If `end-round` exits with 3, a box result of the round is in the store and the round stays open: see the part below. Without `end-round`, the jobs of the old round are refused 3 times each, and every seat gets one counted failure.
 - `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only. `run` then finishes the fold with the new code. The sign that the fold is done: `run` prints `idle: N seats wait, phase IDLE`, or `status` in a second shell shows `"phase": "IDLE"`. `run` prints no round summary for it. If valid files wait, `run` does not print the line: it starts the next round at once.
 
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop the loop first. It is refused (exit code 2, `no round is open and undecided`) when no round is open, and when the round is already decided.
 
 After any failed lease, the next round opens 5 minutes later at the earliest (`apply_retry_s` 300).
 
+#### A stored result that is not judged, and a fix with the digest block
+
+This is the case where `end-round` exits with 3 and the fix needs the digest block. The new code can judge the old result: the judging takes its parameters from the stored record of the round, and it never reads the digests of the box. But `run` does not stop after the judging. In the same pass it opens the next round with the old pinned digests, and that is the fault of the rule in bold. So "checkout, start the loop, `set-params` later" is wrong. There are three orders. Take the first one that fits.
+
+- **Order B: the fix comes as two commits.** The coordinator keeps a fix of the judging and a change of the digests in two commits and names both. Take the commit with the judging fix first: stop the loop, check out, no digest block, start the loop; `run` judges the stored result. Take the commit with the new digests later, between two rounds, with the `IDLE` line. Nobody pays.
+- **Order C: the old commit can still judge.** This fits when the result waits because `run` died between the store of the result and the decision, and not because of a fault in the judging. Do it **before the checkout**: `end-round` exits with 3; start the loop at the old commit; `run` judges. When `"rounds_closed"` of `status` is one more than before, stop the loop. Then do the fix from the start of this part: the line of the phase that `status` shows (for `RUNNING`, `end-round` ends the round that `run` opened next, at no cost), the checkout, the digest block, `set-params`, the loop. Nobody pays. After the checkout it is too late for this order.
+- **Order A: throw the result away.** `end-round --discard-result`, the checkout, the digest block, `set-params`, the loop. Nothing refuses. The cost is for the seats of that round only: their result is thrown away. They are not charged, no failure is counted, and they are first in the next round, which opens 5 minutes later at the earliest. A batch that would have won must win again. Tell the coordinator before you use this order.
+
+  ```
+  python -m sn120_v2 end-round --state-dir $STATE --stack sn120_v2.assembly:stack --discard-result
+  ```
+
+**Not landed yet:** one order for this case that costs nobody anything. It comes with the guard.
+
 ### A new GPU box
 
+**Never start `run` or the loop on a box whose digests differ from the pinned ones before `set-params`.** A new box can have other digests than the old one. So step 4 comes before step 6, and step 5 says which case you have.
+
 1. Stop the loop on the old box, if the box still answers (step 10.4 of "GPU box"). With form B use `sudo systemctl disable --now sn120-v2-run`, so that a reboot of the old box does not start it.
-2. On the new box: the checkout, the install, step 2 of "GPU box" with the same store settings, and `SN120_IMAGE_DIGEST` from `python -m sn120_v2.gpu.plan`.
+2. On the new box: the checkout, the install, and step 2 of "GPU box" with the same store settings. Put the `plan.json` of the old box (the run records, step 11 of "GPU box") at `$CUT/plan-old-box.json`. Then the digest block (check 3 of "Before the mainnet bootstrap"): it writes `$CUT/plan.json` for this box and sets `SN120_IMAGE_DIGEST`.
 3. The state directory of the new box is new and empty: `mkdir -p $STATE`. Copy nothing into it. Without the directory the loop does not start: it prints `the state directory ... does not exist` and ends with exit code 64.
-4. If the new box gives other digests than the pinned parameters hold, pin them first with `set-params`. If the old box died in a round, end that round first: the `RUNNING` line of "After a fix".
-5. Start the loop (step 10 of "GPU box"). Its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
+4. Compare the digests, and look at the state in the store. On a new box, `status` without `--stack` reads the empty local directory.
+
+   ```
+   diff $CUT/plan.json $CUT/plan-old-box.json; echo "exit=$?"     # exit=0 and no other output: the same digests
+   python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack     # "phase"
+   ```
+
+   The file of the old box holds the pinned digests only if no `set-params` with other digests came after it. If you are not sure, tell the coordinator before step 6.
+5. **The same digests:** go to step 6. **Other digests:** do not start the loop. What comes first depends on the phase that step 4 shows:
+   - `IDLE`: a `$CUT/params.json` with the two new digests, then `set-params` with that file.
+   - `RUNNING` (the old box died in a round): `end-round` by hand, then the `IDLE` line. `end-round` works with the old pinned digests on the new box: it pulls the journal copy into the empty state directory and ends the round with no decision. Nobody is charged, no failure is counted, and the seats are first in the next round. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`. If `end-round` exits with 3, the dead box stored its result: that is "A stored result that is not judged, and a fix with the digest block" of "After a fix". On a new box only order A is left; tell the coordinator first.
+   - `APPLY` (the old box left a decided round): `set-params` with a file that differs from the pinned one in the two digests only. `run` on the new box then finishes the promotion and the fold.
+6. Start the loop (step 10 of "GPU box"). With the same digests, its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
 
 Two `run` processes never both write: the newer one takes over the journal, and the older one stops with `refused: FencedError` at its next write. The loop of the old box does not start a refused `run` again: it stops with exit code 2. Never start it again by hand on the old box.
 
