@@ -253,6 +253,42 @@ def test_at_the_end_of_the_training_time_a_running_job_is_stopped_and_the_scorin
     assert world.controller.state.served_hotkeys == {"hk1"} and world.store.list("pending/") == []
 
 
+def test_a_batch_whose_try_failed_and_whose_next_try_is_cut_by_the_training_time_is_not_counted(tmp_path):
+    """The box took a part of the batch's time with its own failure (out of memory, the tuner). The seat does not pay for it."""
+    world = SimWorld(tmp_path, sim_params(n_gpus=2))  # two slots: A and B start at the lease, C starts when A is done
+    world.runner.poll_s = 0.01
+    real, close, stopped, again, tries = world.trainer.train, world.trainer.close, threading.Event(), threading.Event(), []
+
+    def train(request):
+        hotkey = request.entry.reg.hotkey
+        tries.append(hotkey)
+        if hotkey == "hk1":
+            return real(request)
+        if hotkey == "hk2" and tries.count("hk2") == 1:
+            raise InfraError("simulated crash of the training job: out of memory")
+        if hotkey == "hk2":
+            again.set()
+        else:
+            assert again.wait(10), "B must be in its second try when the training time ends"
+            world.now += world.params.train_time_budget_s
+        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
+        raise InfraError("the training job was stopped")
+
+    world.trainer.train = train
+    world.trainer.close = lambda: (stopped.set(), close())
+    for uid in (1, 2, 3):
+        world.register(uid, 0.3)
+    record = world.round()
+    by_uid = {entry.uid: entry for entry in record.decision.entries}
+    assert sorted(tries) == ["hk1", "hk2", "hk2", "hk3"], "B had a first try that failed and a second try that the end of the time stopped"
+    assert (by_uid[1].status, record.outcome) == ("winner", "applied")
+    assert by_uid[2].status == "not_trained" and "while this batch trained" in by_uid[2].reason, "B started at the lease, but not with the whole time for one try"
+    assert by_uid[3].status == "not_trained"
+    queue = world.controller.state.queue
+    assert {key[0]: (seat.front, seat.infra_attempts, seat.held) for key, seat in queue.items()} == {2: (True, 0, False), 3: (True, 0, False)}
+    assert world.controller.state.served_hotkeys == {"hk1"}
+
+
 def test_a_box_that_starts_a_round_after_its_training_time_charges_nobody(tmp_path):
     world = SimWorld(tmp_path, sim_params())
     world.register(1, 0.3)
