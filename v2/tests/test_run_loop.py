@@ -204,6 +204,9 @@ if command == "end-round":
 assert command == "run" and sys.argv[1:3] == ["-m", "sn120_v2"]
 left = [pid for pid in (home / "children").read_text().split() if alive(int(pid))] if (home / "children").exists() else []
 note(f"run {{' '.join(sys.argv[4:])}} mark={{os.environ.get('SN120_LOOP_MARK')}} left={{len(left)}}")
+request = Path(os.environ["SN120_WORK_DIR"]) / "logs" / "run-loop.stop-after-round"
+if request.exists():
+    note("a request is there at the start of run")
 for step in take("exit:0"):
     name, _, value = step.partition(":")
     if name == "round":  # run closed one round
@@ -224,6 +227,12 @@ for step in take("exit:0"):
     elif name == "hang":
         (home / "hanging").write_text(str(os.getpid()))
         time.sleep(300)
+    elif name == "ask":  # the operator, from a second shell, while run works
+        request.touch()
+    elif name == "unask":
+        request.unlink()
+    elif name == "obey":  # the last line of a run that stops for the request; the fake then ends with 0 if no step follows
+        print("stop after the round: obeyed. Asked at 2026-11-14T18:00:00Z. Round r000009 is closed (applied). No round is open. run ends with exit code 0.", file=sys.stderr, flush=True)
 """
 
 FAKE_NVIDIA_SMI = """#!/usr/bin/env bash
@@ -455,6 +464,97 @@ def test_on_a_new_box_the_loop_starts_from_an_empty_state_directory(box, tmp_pat
     assert "(rounds closed so far: unknown)" in box.log
 
 
+# ------------------------------------------------------------ a stop after the round (stopafter.py)
+
+OBEYED_LAST = "STOPPED after the round, as asked. The request file is removed, and nothing starts run again: to go on, start the loop again. run said: Asked at 2026-11-14T18:00:00Z. Round r000009 is closed (applied). No round is open. run ends with exit code 0."
+OTHER_WAY = "A request to stop after the round was open. The loop stops now by another way, so the request is removed: the next start of the loop runs on."
+SEEN = "a request is there at the start of run"
+
+
+def request_of(box: Box) -> Path:
+    return box.work / "logs" / "run-loop.stop-after-round"
+
+
+def test_the_loop_stops_with_0_and_removes_the_request_when_run_obeyed_it_and_the_next_start_runs_on(box):
+    assert box.loop(["ask round obey", "exit:1"]) == 0 and box.runs == 1, "nothing starts run again"
+    assert box.log.splitlines()[-1].endswith(OBEYED_LAST), "one clear last line"
+    assert "stopped after the round, as asked (exit code 0 of the loop)" in box.status and not request_of(box).exists()
+    assert OTHER_WAY not in box.log and "FROM BEFORE THIS START" not in box.log and not (box.work / "logs" / "run-loop.pid").exists()
+    assert box.loop(["round exit:0"]) == 0 and box.runs == 2 and SEEN not in box.calls
+    assert "STOPPED: run finished with exit code 0" in box.last_lines(2) and box.log.count("as asked") == 1
+
+
+def test_with_no_request_the_loop_says_nothing_of_one(box):
+    assert box.loop(["exit:1", "round exit:1", "ask unask exit:0"]) == 0 and box.runs == 3
+    assert not any(text in box.log for text in ("stop after the round", "A request", "REQUEST", "as asked")) and not request_of(box).exists()
+
+
+def test_a_run_that_crashes_with_a_request_is_started_again_and_that_run_finds_the_request(box):
+    assert box.loop(["ask exit:1", "kill:KILL", "obey"]) == 0 and box.runs == 3
+    assert box.calls.count(SEEN) == 2, "the request is a file: each new run finds it"
+    assert box.log.count("next start in 0 s") == 2 and box.log.splitlines()[-1].endswith(OBEYED_LAST) and not request_of(box).exists()
+
+
+def test_a_run_that_dies_after_its_line_and_before_its_exit_is_started_again_and_the_old_line_does_not_count(box):
+    """The loop removes the request only for a run that said the line and ended with 0. So this request is not lost."""
+    assert box.loop(["ask obey kill:KILL", "exit:1", "obey"]) == 0 and box.runs == 3 and box.calls.count(SEEN) == 2
+    assert "exit code 137 (SIGKILL" in box.log and "exit code 1 (a Python error" in box.log
+    assert box.log.splitlines()[-1].endswith(OBEYED_LAST) and box.log.count("as asked") == 1 and not request_of(box).exists()
+
+
+def test_a_run_that_ends_with_0_without_the_line_is_a_finished_run_and_the_open_request_is_removed_with_a_note(box):
+    """``--rounds`` or ``--max-idle`` ended ``run`` before it came to the request. The loop is stopped, which is what was asked for."""
+    assert box.loop(["ask obey kill:KILL", "exit:0"]) == 0 and box.runs == 2
+    lines = box.log.splitlines()
+    assert lines[-3].endswith(OTHER_WAY) and "STOPPED: run finished with exit code 0" in lines[-2] and "as asked" not in box.log
+    assert not request_of(box).exists()
+
+
+@pytest.mark.parametrize("step, code", [("refuse:ConfigError", 2), ("exit:130", 0), ("exit:1", 3)])
+def test_each_other_stop_of_the_loop_removes_an_open_request_and_says_so(box, step, code):
+    assert box.loop([f"ask {step}", step, step]) == code
+    assert OTHER_WAY in box.log and "as asked" not in box.log and not request_of(box).exists()
+
+
+def test_a_signal_to_the_loop_stops_it_at_once_and_removes_an_open_request(box):
+    box.plan(["ask child hang", "exit:0"])
+    process = box.start()
+    wait_for(box.home / "hanging")
+    assert request_of(box).exists()
+    process.send_signal(signal.SIGTERM)
+    assert process.wait(timeout=30) == 0 and box.runs == 1
+    assert "STOPPED by the operator (SIGTERM to the loop; run ended with exit code 143)" in box.last_lines(2)
+    assert box.log.count(OTHER_WAY) == 1 and "as asked" not in box.log and not request_of(box).exists()
+
+
+def test_a_request_from_before_the_start_of_the_loop_is_named_in_its_first_lines_with_its_time_and_then_obeyed(box):
+    request_of(box).parent.mkdir(parents=True)
+    request_of(box).touch()
+    os.utime(request_of(box), (1_700_000_000, 1_700_000_000))
+    assert box.loop(["obey", "exit:1"]) == 0 and box.runs == 1 and box.calls[-1] == SEEN
+    lines = box.log.splitlines()
+    assert "loop started (pid " in lines[0]
+    assert lines[1].endswith(f"A REQUEST TO STOP AFTER THE ROUND IS THERE FROM BEFORE THIS START: the file {request_of(box)}, made at 2023-11-14T22:13:20Z.")
+    assert lines[2].endswith(f'If the request is old and not wanted, take it back now: rm "{request_of(box)}"') and "this loop stops with 0 as soon as no round is open" in lines[2]
+    assert lines[-1].endswith(OBEYED_LAST) and not request_of(box).exists()
+    assert box.loop(["round exit:0"]) == 0 and box.runs == 2 and box.log.count("FROM BEFORE THIS START") == 1, "the start after it runs on"
+
+
+def test_the_look_line_says_since_when_a_stop_is_asked_for_or_that_none_is(box):
+    """The one line that a block for the box can print. It reads the file and changes nothing."""
+    look = 'F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -e "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi'
+    assert look in LOOP.read_text(), "the header of the loop script gives the same line"
+
+    def said() -> str:
+        return subprocess.run(["bash", "-c", look], env=box.env, capture_output=True, text=True, check=True).stdout
+
+    assert said() == "no stop is asked for\n"
+    request_of(box).parent.mkdir(parents=True)
+    request_of(box).touch()
+    os.utime(request_of(box), (1_700_000_000, 1_700_000_000))
+    assert said() == "a stop is asked for since 2023-11-14T22:13:20Z\n" and request_of(box).exists()
+
+
 # ------------------------------------------------------------ the loop with the real command line
 
 
@@ -502,3 +602,43 @@ def test_the_unit_starts_the_same_loop_and_keeps_its_stops_stopped():
     stops = [code for code in re.findall(r"\d+", codes) if code != "0"]
     assert f"RestartPreventExitStatus={' '.join(stops)}\n" in body and "Restart=on-failure\n" in body, "systemd starts the loop again only when the loop itself died"
     assert "KillMode=mixed\n" in body and "WantedBy=multi-user.target" in body and "EnvironmentFile=SN120_ENV_FILE\n" in body
+
+
+IDLE = ["--max-idle", "2", "--idle-sleep", "0"]  # no --rounds: only a request, or two passes with no round, ends this run
+
+
+def test_the_loop_with_the_real_run_stops_after_the_round_that_run_found_open_and_removes_the_request(box, tmp_path):
+    """The real ``run`` under the real loop: the request is there before the start, and a round with a stored result is open."""
+    directory, _, _ = result_then_judging_fault(tmp_path / "real")
+    request_of(box).parent.mkdir(parents=True)
+    request_of(box).touch()
+    done = subprocess.run([str(LOOP), sys.executable, "--state-dir", str(directory), "--stack", "sn120_v2.sim:stack", *IDLE], env=box.env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    log = box.log
+    assert "A REQUEST TO STOP AFTER THE ROUND IS THERE FROM BEFORE THIS START" in log.splitlines()[1]
+    assert f"stop after the round: run looks for the file {request_of(box)} each time before it opens a round" in log and "Now a request of " in log
+    assert "Round r000002 is open (phase RUNNING): run stops when it is closed." in log
+    said = re.search(r"^stop after the round: obeyed\. (Asked at \S+Z\. Round r000002 is closed \(applied\)\. No round is open\. All that a close writes is in the store\. run ends with exit code 0\. The run loop removes the request file\.)$", log, re.M)
+    assert said, log
+    assert log.splitlines()[-1].endswith(f"STOPPED after the round, as asked. The request file is removed, and nothing starts run again: to go on, start the loop again. run said: {said.group(1)}")
+    assert "stopped after the round, as asked" in box.status and not request_of(box).exists()
+    state = load(directory / JOURNAL_FILE)
+    assert state.round is None and [(record.round_id, record.outcome) for record in state.rounds] == [("r000001", "applied"), ("r000002", "applied")]
+    assert state.failed_leases == 0 and [king.uid for king in state.kings] == [9, 1, 4], "the stored result was judged, and no round more was opened"
+
+
+def test_the_real_run_with_no_loop_stops_before_the_round_and_removes_the_request_itself(tmp_path, monkeypatch, capsys):
+    directory, stack = open_round(tmp_path)
+    assert main(["end-round", *stack]) == 0
+    before = (directory / JOURNAL_FILE).read_bytes()
+    monkeypatch.setenv("SN120_WORK_DIR", str(tmp_path / "work"))
+    monkeypatch.delenv("SN120_LOOP_MARK", raising=False)
+    request = tmp_path / "work" / "logs" / "run-loop.stop-after-round"
+    request.parent.mkdir(parents=True)
+    request.touch()
+    capsys.readouterr()
+    assert main(["run", *stack, *IDLE]) == 0
+    last = capsys.readouterr().err.splitlines()[-1]
+    assert last.startswith("stop after the round: obeyed. Asked at ") and "Round r000002 is closed (no_decision). No round is open." in last
+    assert last.endswith("No run loop is over this run, so run removed the request file: the next start runs on.") and not request.exists()
+    assert (directory / JOURNAL_FILE).read_bytes()[: len(before)] == before and load(directory / JOURNAL_FILE).round is None and len(load(directory / JOURNAL_FILE).rounds) == 2

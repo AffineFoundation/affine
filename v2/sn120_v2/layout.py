@@ -84,6 +84,11 @@ def pending_fold_prefix(version_id: str) -> str:
     return f"{PENDING}/folds/{_part(version_id)}"
 
 
+def pending_fold_ahead_prefix(round_id: str) -> str:
+    """The staged files of a fold that starts before its head is in the journal (``afterking.py``). The delete of the round's prefix removes them."""
+    return f"{pending_round_prefix(round_id)}/fold-ahead"
+
+
 def public_lora_prefix(lora_hash: str) -> str:
     return f"public/loras/{_part(lora_hash)}"
 
@@ -111,6 +116,20 @@ def public_lora_file(lora_hash: str, name: str) -> str:
 
 def head_manifest(version_id: str) -> str:
     return f"public/heads/{_part(version_id)}.json"
+
+
+# The head chain (``headchain.py``): genesis, then one step for each fold, and which heads are checkpoints.
+HEAD_CHAIN = "public/head_chain.json"
+
+
+def head_checkpoint(version_id: str) -> str:
+    """The marker of a checkpoint head. It is written last, after the full base and master are verified in the store."""
+    return f"public/head_checkpoints/{_part(version_id)}.json"
+
+
+def head_fold(version_id: str) -> str:
+    """How the box folded the head ``version_id`` (the head with the stacked LoRAs) when it kept the weights local."""
+    return f"public/head_folds/{_part(version_id)}.json"
 
 
 def round_file(round_id: str) -> str:

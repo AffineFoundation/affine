@@ -32,11 +32,13 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
 from .admission import verdict_log
+from .afterking import PUBLISH, Beside, Overlap
 from .canonical import canonical_json, to_jsonable
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
@@ -73,7 +75,7 @@ from .state import (
     load,
     replay,
 )
-from .store import delete_pending, get_record, promote_fold, promote_lora, publish_head, put_record
+from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
 from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
     NOT_SCORED,
@@ -82,13 +84,16 @@ from .types import (
     SKIP,
     BoxResult,
     ChainSnapshot,
+    FoldArtifact,
     FrozenBatch,
     HeadManifest,
     HeadVersion,
     King,
+    LoRAArtifact,
     Registration,
     RoundTicket,
     V1Import,
+    Verdict,
 )
 
 Leases = list[tuple[RoundTicket, BoxResult]]
@@ -115,6 +120,21 @@ class StackContext:
 
 
 @dataclasses.dataclass
+class HeadPublish:
+    """How a folded head goes public, and what the box does for its local copy. The default is the full upload.
+
+    ``headchain.py`` and ``headfold.py`` give the other form: the weights stay on the box, and the chain is public.
+    """
+
+    promote: Callable[[ObjectStore, FoldArtifact], None] = promote_fold  # what goes from pending/ to public/ after a fold
+    chain: Callable[[State], Mapping[str, Any]] | None = None  # writes the chain file; returns the part that mining.json shows
+    prepare: Callable[[State], None] | None = None  # at the start of ``run``: prove the local head, or rebuild it
+    after_round: Callable[[State], None] | None = None  # after each pass of the loop of ``run``, with a new round or with none
+    checkpoint: Callable[[State], Mapping[str, Any]] | None = None  # the command ``checkpoint``: upload the full files of the head now
+    proven: Callable[[bool], None] | None = None  # the order ``overlap``: raises HeadLost when the local head did not read back as folded; with True it first waits for that read
+
+
+@dataclasses.dataclass
 class Stack:
     """Every part the controller needs. ``python -m sn120_v2 run --stack module:function`` builds one."""
 
@@ -128,6 +148,18 @@ class Stack:
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
+    head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+    settings: tuple[str, ...] = ()  # one line for each setting that the stack chooses to show, and where its value comes from; ``run`` prints them at its start
+    overlap: bool = False  # ``run`` uses the order ``overlap`` after a king (``afterking.py``)
+    entropy_now: Callable[[], str] | None = None  # the hash of the newest block, in one read: the round's entropy with ``overlap``
+
+
+def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
+    """The public snapshot. In chain mode the chain file is written first, and the snapshot shows its newest part."""
+    shown = snapshot(state, params, now, verdicts, checked_at)
+    if head.chain is not None and state.heads:
+        shown["head_chain"] = head.chain(state)
+    return shown
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
@@ -148,9 +180,10 @@ class Controller:
         folder: Folder | None = None,
         publisher: Publisher | None = None,
         pins: Callable[[Params], None] | None = None,
+        head: HeadPublish | None = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
-        self.folder, self.publisher, self.pins = folder, publisher, pins
+        self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
@@ -158,6 +191,8 @@ class Controller:
         self._verdicts_at: int | None = None
         self._file_notes: dict[str, str] = {}  # what the log last said of each seat's file, by hotkey; this process only
         self._published: object = None  # what the last snapshot showed of the queue and its files
+        self._published_at: int | None = None  # how many records the journal had at the last snapshot that reached the store
+        self.overlap: Overlap | None = None  # ``run`` sets it for the order ``overlap``; None: each step in its turn (``serial``)
         self._pin()
 
     @property
@@ -191,6 +226,37 @@ class Controller:
 
     def _log(self, kind: str, data: dict[str, Any], now: int) -> None:
         apply(self.state, self.journal.append(kind, data, now))
+
+    # ------------------------------------------------------------ the order ``overlap`` (afterking.py)
+
+    def use_overlap(self, overlap: Overlap) -> None:
+        """``run`` only: take the steps after a king out of the line. Every other command leaves the order as it is.
+
+        The first kept steps are those that a ``run`` which stopped has possibly not made: the delete of what
+        the last closed round left in ``pending/``, and the public files of the state as it is now.
+        """
+        self.overlap = overlap
+        if self.state.rounds:
+            last = self.state.rounds[-1].round_id
+            overlap.keep(f"the delete of what round {last} left in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(last)))
+        overlap.keep("the public files at the start of run", self._publish, PUBLISH)
+
+    def _after(self, step: str, work: Callable[[int], None], now: int, kind: str = "") -> None:
+        """A step that the next open does not need. ``serial``: here, at ``now``. ``overlap``: after that open, while the box trains, at the time of then."""
+        if self.overlap is None:
+            with timed(step):
+                work(now)
+        else:
+            self.overlap.keep(step, work, kind)
+
+    def _kept_done(self, problems: Sequence[str]) -> None:
+        if problems:
+            self.last_error = f"after the open: {problems[-1]}"
+
+    def _proven(self, wait: bool) -> None:
+        """``overlap``: stop with ``HeadLost`` when the local head did not read back as the fold wrote it."""
+        if self.overlap is not None and self.head.proven is not None:
+            self.head.proven(wait)
 
     # ------------------------------------------------------------ bootstrap
 
@@ -286,12 +352,15 @@ class Controller:
         return verdicts
 
     def open_round(
-        self, now: int, entropy: str, boxes: Sequence[str] = ("box-0",), clock: Callable[[], int] | None = None
+        self, now: int, entropy: str | Callable[[], str], boxes: Sequence[str] = ("box-0",), clock: Callable[[], int] | None = None
     ) -> list[RoundTicket]:
         """Start a round with the seats that are ready now. Returns no ticket when nothing can start.
 
         With ``clock``, the lease time is read after the waiting files are read
         and checked, so that work does not use the round's time limit.
+
+        ``entropy`` as a call is read after the batches of the round are frozen, so the value is not
+        older than the files that it draws tasks for.
         """
         state, params = self.state, self.params
         if state.round is not None:
@@ -302,7 +371,9 @@ class Controller:
             return []
         if state.failed_leases and now < state.last_failure_at + params.apply_retry_s:
             return []
-        verdicts = self.check_files(now)
+        started = time.monotonic()
+        with timed("open: the check of the waiting files"):
+            verdicts = self.check_files(now)
         moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
@@ -310,6 +381,8 @@ class Controller:
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
             return []
+        if callable(entropy):
+            entropy = entropy()
         if clock is not None:
             now = clock()  # the lease starts here
         head = state.head
@@ -326,7 +399,8 @@ class Controller:
             len(draw.task_ids), now, tuple(leases), picked.skipped,
         )
         self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
-        self._publish(now)
+        log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
+        self._after(f"open: the public files of round {round_id}", self._publish, now, PUBLISH)
         return tickets
 
     def _ticket(self, record: RoundRecord, lease: Lease) -> RoundTicket:
@@ -405,43 +479,101 @@ class Controller:
     def _finish(self, now: int) -> None:
         record = self.state.round
         pairs, winner = self._leases(record, "done"), record.decision.winner
+        made = None
         if winner is not None and not record.applied:
+            if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
+                self.overlap.look_ahead(now)
             try:
-                self._apply(record, pairs, now)
+                made = self._apply(record, pairs, now)
             except VerifyError as exc:
                 return self._close(ABANDONED, pairs, now, str(exc))
             except InfraError as exc:
                 if record.apply_attempts + 1 >= self.params.apply_max_attempts:
                     return self._close(ABANDONED, pairs, now, f"apply failed {self.params.apply_max_attempts} times: {exc}")
                 return self._log(APPLY_DEFERRED, {"round_id": record.round_id, "reason": str(exc)}, now)
-        if fold_due(self.state.head, self.params) and not self.fold_if_due(now, in_round=True):
+        if fold_due(self.state.head, self.params) and not self.fold_if_due(now, in_round=True, made=made):
             return
         charged = any(entry.charged for entry in record.decision.entries)
         self._close(APPLIED if winner else (NULL if charged else NO_DECISION), pairs, now)
 
-    def _apply(self, record: RoundRecord, pairs: Leases, now: int) -> None:
-        """Verify and promote the winner, then append the new head. The journal record is the commit point."""
+    def _apply(self, record: RoundRecord, pairs: Leases, now: int) -> FoldArtifact | None:
+        """Verify and promote the winner, then append the new head. The journal record is the commit point.
+
+        ``overlap``: the fold of the new head runs while the winner's files go to ``public/``. It is returned for ``fold_if_due``.
+        """
         winner = record.decision.winner
         ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
         seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
         artifact = next(e for e in result.entries if e.queue_pos == winner.queue_pos).lora
-        promote_lora(self.store, artifact)
-        public_batch = layout.winner_batch(record.round_id)
-        try:
-            self.store.copy(seat.batch.uri, public_batch)
-        except KeyError:
-            raise VerifyError("the winner's frozen batch is missing") from None
-        if self.store.sha256(public_batch) != seat.batch.batch_sha256:
-            self.store.delete(public_batch)
-            raise VerifyError("the winner's frozen batch does not match its sha256")
+
+        def to_public() -> None:
+            with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
+                promote_lora(self.store, artifact)
+            started = time.monotonic()
+            public_batch = layout.winner_batch(record.round_id)
+            try:
+                self.store.copy(seat.batch.uri, public_batch)
+            except KeyError:
+                raise VerifyError("the winner's frozen batch is missing") from None
+            if self.store.sha256(public_batch) != seat.batch.batch_sha256:
+                self.store.delete(public_batch)
+                raise VerifyError("the winner's frozen batch does not match its sha256")
+            log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
+
+        def stacked() -> HeadVersion:
+            return apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
+
+        made = None
+        if self.overlap is None:
+            to_public()
+            head = stacked()
+        else:
+            head = stacked()
+            made = self._fold_beside(record, head, artifact, to_public, now)
         parent = self.state.manifest
-        head = apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
         manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
         king = King(seat.reg.uid, seat.reg.hotkey, record.round_id, head.version_id, now, winner.score.z)
         self._log(HEAD_APPLIED, {"round_id": record.round_id, "manifest": manifest.to_dict(), "king": king.to_dict()}, now)
+        return made
 
-    def fold_if_due(self, now: int, in_round: bool = False) -> bool:
-        """Fold the stacked LoRAs into a new base when a fold is due. Returns True when the head is folded."""
+    def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int) -> FoldArtifact | None:
+        """``overlap``: fold ``head`` here while a second thread puts the winner's files in ``public/``.
+
+        ``head`` is not in the journal yet. The fold reads the winner's LoRA from ``pending/``; its hash is
+        the proof of the bytes, as it is for the evaluator. Nothing of the fold is public or recorded before
+        ``HEAD_APPLIED``. When the winner's files do not reach ``public/``, the fold is dropped and the error
+        is raised as ``serial`` raises it. A fold that fails here waits for ``fold_if_due``, as a fold that fails there.
+        """
+        public = Beside(to_public, "sn120-v2-winner-to-public")
+        made, ahead = None, getattr(self.folder, "fold_ahead", None)
+        try:
+            pinned = True
+            try:
+                if self.pins is not None:
+                    self.pins(self.params)
+            except InfraError:
+                pinned = False  # ``fold_if_due`` stops ``run`` for it, after the apply as always
+            if ahead is not None and pinned and fold_due(head, self.params) and now >= self._retry_at:
+                try:
+                    with timed(f"fold of {head.version_id[:12]}: the box, beside the winner's files (the sum, the upload to pending/ and its check)"):
+                        made = ahead(head, self.params, layout.pending_fold_ahead_prefix(record.round_id), {artifact.lora_hash: artifact.prefix})
+                except (InfraError, VerifyError, HeadMismatchError) as exc:
+                    self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
+        finally:
+            public.wait()
+        try:
+            public.result()
+        except BaseException:
+            if made is not None:
+                self.folder.drop(self.state.head)  # the head did not move: the files of the fold leave the box
+            raise
+        return made
+
+    def fold_if_due(self, now: int, in_round: bool = False, made: FoldArtifact | None = None) -> bool:
+        """Fold the stacked LoRAs into a new base when a fold is due. Returns True when the head is folded.
+
+        ``made``: the fold of this head is done already (``_fold_beside``). Its staged files are under the round's prefix.
+        """
         head = self.state.head
         if not fold_due(head, self.params) or (self.state.round is not None and not in_round) or now < self._retry_at:
             return False
@@ -449,15 +581,22 @@ class Controller:
             raise ConfigError("a fold is due, but no folder is configured")
         self._check_pins("the fold was not started")
         try:
-            fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
-            promote_fold(self.store, fold)
+            if made is not None and made.parent_version_id == head.version_id:
+                fold = made
+            else:
+                with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
+                    fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
+            with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
+                self.head.promote(self.store, fold)
             folded = fold_head(head, fold, now)
         except (InfraError, VerifyError, HeadMismatchError) as exc:
             self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
             return False
         manifest = HeadManifest(folded, fold.base_files, fold.master_files, {})
         self._log(HEAD_FOLDED, {"manifest": manifest.to_dict()}, now)
-        delete_pending(self.store, fold.prefix)
+        if fold is not made:  # the delete of the round's prefix, at the close, removes the staged files of a fold made beside
+            with timed(f"fold of {head.version_id[:12]}: the delete of its files in pending/"):
+                delete_pending(self.store, fold.prefix)
         return True
 
     def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
@@ -477,6 +616,7 @@ class Controller:
                     attempted.append(key)
                     if queue[tuple(key)].infra_attempts + 1 >= params.max_infra_attempts:
                         held.append(key)
+        started = time.monotonic()
         snapshot_id = self.state.snapshot_id
         if outcome in (APPLIED, NULL) and pairs:
             snapshot_id = self._update_sampler(pairs, outcome)
@@ -491,9 +631,18 @@ class Controller:
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
-        self._sync_pointer()
-        delete_pending(self.store, layout.pending_round_prefix(record.round_id))
-        self._publish(now)
+        log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
+        with timed(f"close of {record.round_id}: the head pointer"):
+            self._sync_pointer()
+        if self.overlap is not None and self.head.chain is not None:
+            # The chain file is the public record of a new head, and it is one small write. It stays at the close, as with ``serial``.
+            try:
+                with timed(f"close of {record.round_id}: the chain file"):
+                    self.head.chain(self.state)
+            except InfraError as exc:
+                self.last_error = f"publish failed: {exc}"
+        self._after(f"close of {record.round_id}: the delete of its files in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(record.round_id)), now)
+        self._after(f"close of {record.round_id}: the public files", self._publish, now, PUBLISH)
 
     def _wall(self, pairs: Leases, now: int) -> dict[str, int]:
         """Wall seconds of each phase of the open round. Box phases come from the box; the others from the journal."""
@@ -556,10 +705,10 @@ class Controller:
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
-        shown = self._shown()
+        shown, records = self._shown(), len(self.journal.records)
         try:
-            self.publisher.publish(snapshot(self.state, self.params, now, self._verdicts, self._verdicts_at))
-            self._published = shown
+            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self._published, self._published_at = shown, records
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"
 
@@ -582,6 +731,38 @@ class Controller:
         self._publish(now)
         return True
 
+    # ------------------------------------------------------------ a stop between two rounds (stopafter.py)
+
+    def close_in_public(self, now: int) -> str:
+        """No round is open and ``run`` stops here: bring to the store all that the close of a round writes.
+
+        The record of the close and the round file are there: no round is open. This call makes sure of the rest:
+        the head pointer, the delete of what the last round left in ``pending/``, and the public files (in chain
+        mode the chain file is one of them). A ``run`` that closed the round itself and got no error has done all
+        of it, so this call writes nothing. With ``overlap`` the delete and the public files wait for the next
+        open: there is none now, so they are done here. A ``run`` that started after another one died in a close
+        has written nothing of it. Returns what is not done yet, or an empty text.
+        """
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; its close is not complete")
+        before, self.last_error = self.last_error, ""
+        try:
+            self._sync_pointer()
+            if self.overlap is not None:
+                self._kept_done(self.overlap.flush(now))
+            if self.state.rounds:
+                delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
+            if self._published_at != len(self.journal.records) or self._shown() != self._published:
+                self._publish(now)  # the public files do not show the journal as it is now
+        except InfraError as exc:
+            self.last_error = f"the store did not answer: {exc}"
+        problem, self.last_error = self.last_error, self.last_error or before
+        return problem
+
+    def local_head_proven(self) -> None:
+        """``overlap``: wait for the second sha256 of the local head, and raise ``HeadLost`` when it failed. ``serial``: nothing, the fold made it in its line."""
+        self._proven(wait=True)
+
     # ------------------------------------------------------------ the loop
 
     def tick(self, now: int) -> None:
@@ -603,23 +784,46 @@ class Controller:
         else:
             self.fold_if_due(now)
 
-    def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str) -> RoundRecord | None:
-        """One round on one box, start to end. Returns the closed round, or None when no round could start."""
-        self.tick(clock())  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
+    def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str | Callable[[], str], hold: Callable[[], bool] | None = None) -> RoundRecord | None:
+        """One round on one box, start to end. Returns the closed round, or None when no round could start.
+
+        ``hold`` is asked before a round is opened, and never for a round that is open. True: no round is opened,
+        and the call returns None (``stopafter.py``). What was not finished before this call is finished first.
+
+        ``overlap`` (``afterking.py``): the kept steps run in a second thread while the box trains, and this
+        thread waits for them before its next record. No box result is stored before the local head is proven:
+        a head that did not read back fails the lease, and the next call raises ``HeadLost``, which stops ``run``.
+        """
+        overlap = self.overlap
+        self._proven(wait=False)
+        started = clock()
+        self.tick(started)  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
         if self.state.round is None:
+            if hold is not None and hold():
+                return None
             self._check_pins("no round was opened")
-            tickets = self.open_round(clock(), entropy, clock=clock)
+            started = clock()
+            tickets = self.open_round(started, entropy, clock=clock)
         else:
             tickets = self.tickets()
             if tickets:
                 self._check_pins("the open round was not run", "end-round (the round pins the old digests), ")
+        if overlap is not None and not tickets:
+            self._kept_done(overlap.flush(started))
         for ticket in tickets:
             try:
-                result = runner.run(ticket)
+                if overlap is not None:
+                    overlap.release(ticket.issued_at)  # the time of the open: the public files of the round carry it, as with ``serial``
+                try:
+                    result = runner.run(ticket)
+                finally:
+                    if overlap is not None:
+                        self._kept_done(overlap.settle())
                 failed = [entry.reason for entry in result.entries if entry.status == ENTRY_NO_DECISION]
                 if failed and not any(entry.status in (SCORED, NOT_SCORED) for entry in result.entries):
                     # Not one batch trained, so the fault is taken as the box's, not a seat's: the lease fails, and no failure is counted for a seat.
                     raise InfraError(f"no training finished in this round: {len(failed)} of {len(result.entries)} batches failed. The first: {failed[0]}")
+                self._proven(wait=True)  # ``HeadLost`` here fails the lease as a fault of the box does: the result is not stored, nobody is charged
                 self.submit_result(result, clock())
             except Exception as exc:  # a box failure of any kind must not stop the controller
                 record = self.state.round

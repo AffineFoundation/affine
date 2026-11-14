@@ -14,12 +14,29 @@ Every setting comes from the environment. A missing one is an error.
   SN120_V2_CHAIN_NETWORK    "finney" or a node address: the queue follows the chain and the round
                             seed uses a block hash. "none": no chain read (the smoke test)
   SN120_WORK_DIR, SN120_IMAGE_DIGEST                        the box; read by ``run`` only
+  SN120_HEAD_PUBLISH (optional)  "full" (the default): each folded head is uploaded. "chain": the folded
+                            weight files stay on the box, and the store gets the LoRAs and the head chain
+                            (``headchain.py``). Then also: SN120_CHECKPOINT_EVERY, and the fold settings
+                            SN120_FOLD_IMPLEMENTATION, SN120_FOLD_TWICE, SN120_FOLD_DEVICES, SN120_FOLD_THREADS
+                            (``headfold.FoldSettings``); read by ``run`` and ``checkpoint`` only
+  SN120_CHECK_STREAMS (optional)  how many waiting files the live check reads from the store at one time, 1 to 32.
+                            Not set: 1, one file after the other. The verdicts are the same for each count.
+                            Read by each command that makes the live check: ``run``, ``status``, ``publish``
+                            and ``bootstrap``
+  SN120_AFTER_KING (optional)  "serial" (the default): after a king, each step waits for the one before it.
+                            "overlap": the fold and the check of the waiting files are before the next open; the
+                            other steps run beside the fold or after the open (``afterking.py``). Only with
+                            SN120_HEAD_PUBLISH=chain; read by ``run`` only
+
+``run`` prints one line at its start for each of SN120_HEAD_PUBLISH, SN120_CHECK_STREAMS and SN120_AFTER_KING,
+with the words NOT SET when the shell does not hold the variable. It prints no line for another setting.
 
 The box holds no wallet. It only reads the chain.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import os
 import time
@@ -29,10 +46,11 @@ from typing import Callable
 from transformers import AutoTokenizer
 
 from . import layout
-from .admission import HFTokens, LazyPool, StoreAdmission, check_batch, pool_grader
+from .admission import SERIAL_STREAMS, STREAMS_ENV, HFTokens, LazyPool, StoreAdmission, check_batch, check_streams, pool_grader
+from .afterking import ORDER_ENV, OVERLAP, after_king
 from .canonical import file_sha256
 from .chain import Feed, SubtensorClient
-from .controller import Stack, StackContext, stored_irt_snapshot
+from .controller import HeadPublish, Stack, StackContext, stored_irt_snapshot
 from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
@@ -40,6 +58,8 @@ from .gpu.evaluator import VllmEvaluator
 from .gpu.folder import LoraFolder
 from .gpu.plan import BoxConfig, check_pins, code_digest
 from .gpu.trainer import LoraTrainer
+from .headchain import CHAIN, MODE_ENV, ChainWriter, checkpoint_every, mode, promote_fold
+from .headfold import ChainFolder, FoldSettings, HeadKeeper
 from .irt import IRTSampler
 from .params import Params, require_env
 from .publisher import StorePublisher
@@ -56,6 +76,7 @@ NONE = "none"
 ADMISSION_GRADE_WORKERS = min(8, os.cpu_count() or 1)
 ADMISSION_GRADE_TIMEOUT_S = 20.0
 WEIGHT_SUFFIX = ".safetensors"
+BOX_COMMANDS = ("run", "checkpoint")  # the commands that work on the local head of the box
 
 
 class HeadTokens:
@@ -128,6 +149,12 @@ def box_pins(image_digest: str, params: Params) -> None:
         raise InfraError("; ".join(differs) or str(exc)) from None
 
 
+def setting(name: str, meaning: str) -> str:
+    """One line for the start of ``run``: what a setting does now, and whether the shell holds it."""
+    value = os.environ.get(name, "").strip()
+    return f"{meaning} ({name}={value})" if value else f"{meaning} ({name} is NOT SET: this is the default)"
+
+
 def stack(context: StackContext) -> Stack:
     store = R2Store.from_env()
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
@@ -136,7 +163,16 @@ def stack(context: StackContext) -> Stack:
     tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
+    streams = check_streams()
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    order = after_king()
+    if order == OVERLAP and mode() != CHAIN:
+        raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")
+    shown = (
+        setting(MODE_ENV, f"the head goes public in the mode {mode()!r}"),
+        setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
+        setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
+    )
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
@@ -145,6 +181,7 @@ def stack(context: StackContext) -> Stack:
     feed = None if network == NONE else ChainFeed(params.netuid, network)
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None
     entropy: Callable[[], str] = feed.entropy if feed else lambda: os.urandom(16).hex()
+    entropy_now: Callable[[], str] | None = feed.entropy_now if feed else None
     runner = folder = pins = None
     if context.command == "run":
         box = BoxConfig.from_env()
@@ -153,4 +190,16 @@ def stack(context: StackContext) -> Stack:
         runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         folder = LoraFolder(store, box)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True)
+    head = HeadPublish()
+    if mode() == CHAIN:
+        writer = ChainWriter(store)
+        head = HeadPublish(promote=promote_fold, chain=writer)
+        if context.command in BOX_COMMANDS:
+            box, settings = BoxConfig.from_env(), FoldSettings.from_env()
+            if folder is not None:
+                folder = ChainFolder(store, box, settings)
+                head = dataclasses.replace(head, proven=folder.proven)
+            keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
+            head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
+    overlap = order == OVERLAP and context.command == "run"
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, settings=shown, overlap=overlap, entropy_now=entropy_now)

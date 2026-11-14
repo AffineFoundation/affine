@@ -6,6 +6,8 @@
   run         the round loop
   status      read-only summary; with ``--stack`` also the count of queued files per verdict rule
   publish     read-only for the journal: write llms.txt and mining.json again
+  checkpoint  read-only for the journal: with a stack that keeps the folded weight files on the box, upload the
+              full files of the last folded head now and mark it as a checkpoint (``run`` can go on)
   round       print the summary of a closed round as a short text to paste
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
@@ -40,17 +42,22 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import layout
-from .controller import Controller, Stack, StackContext
-from .errors import ConfigError, FencedError, InfraError, V2Error
+from .afterking import Overlap
+from .controller import Controller, Stack, StackContext, public_snapshot
+from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
-from .public import phase, round_text, snapshot
+from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
-from .store import verify_files
+from .stopafter import SAID, StopRequest, say, stamp
+from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
+
+
+HEAD_LOST_EXIT = 75  # ``run`` stopped because the local head did not read back as folded. The run loop takes every code but 0, 2, 130 and 143 as a crash, and starts ``run`` again
 
 
 def now() -> int:
@@ -98,7 +105,7 @@ def open_controller(args: argparse.Namespace, command: str) -> tuple[Controller,
     context, stack = open_stack(args, command)
     owner = f"{os.uname().nodename}:{os.getpid()}"
     journal = Journal(context.state_dir / JOURNAL_FILE, owner, now(), Mirror(stack.store) if stack.mirror else None)
-    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher, pins=stack.pins)
+    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher, pins=stack.pins, head=stack.head)
     return controller, stack
 
 
@@ -167,21 +174,88 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
+def stopped_text(controller: Controller) -> str:
+    """What is true when ``run`` stops for a request, for its one line."""
+    last = controller.state.rounds[-1] if controller.state.rounds else None
+    text = f"Round {last.round_id} is closed ({last.outcome}). " if last else ""
+    text += "No round is open. All that a close writes is in the store."
+    if controller.overlap is not None:
+        text += " The second sha256 of the local head passed."
+    return text + " run ends with exit code 0."
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     controller, stack = open_controller(args, "run")
     if stack.runner is None:
         raise ConfigError("this stack has no round runner")
+    for line in stack.settings:  # a setting that the shell does not hold shows here: it does not pass in silence
+        print(f"setting: {line}", file=sys.stderr, flush=True)
+    stop = StopRequest.from_env()
+    if stop.path is not None:
+        say(stop.at_start())
+    if stack.head.prepare is not None:
+        with timed("the proof of the local head"):
+            stack.head.prepare(controller.state)
+    overlap = Overlap(stack.chain) if stack.overlap else None
+    if overlap is not None:
+        controller.use_overlap(overlap)
     done = idle = 0
+    told = obeyed = None
+    hold = (lambda: stop.asked() is not None) if stop.path is not None else None
     while args.rounds is None or done < args.rounds:
+        # A request to stop after the round (``stopafter.py``) is read before a round opens, and nowhere else: here,
+        # and in ``run_round`` after it finished a round that it found open (``hold``).
+        asked = stop.asked()
+        if asked is not None and controller.state.round is None:
+            waits = controller.close_in_public(now())
+            if not waits:
+                try:
+                    if controller.overlap is not None:
+                        with timed("the stop after the round: the wait for the second sha256 of the local head"):
+                            controller.local_head_proven()
+                except HeadLost as exc:
+                    # As in a round: this ``run`` must not end as if these files were the head. The run loop starts ``run``
+                    # again, that start rebuilds the head from the chain, finds the request, and stops.
+                    say(f"stopped: {exc}")
+                    say(f"{SAID}not obeyed yet, the request of {stamp(asked)} stays. The next start of run rebuilds the local head and then stops for it.")
+                    return HEAD_LOST_EXIT
+                obeyed = asked
+                break
+            say(f"{SAID}asked at {stamp(asked)}. No round is open, and run opens none. Not all that a close writes is in the store yet: {waits}. The next try is in {args.idle_sleep:g} s.")
+            idle += 1
+            if args.max_idle is not None and idle >= args.max_idle:
+                break
+            time.sleep(args.idle_sleep)
+            continue
+        if asked is not None and told != (asked, controller.state.round.round_id):
+            told = (asked, controller.state.round.round_id)
+            say(f"{SAID}asked at {stamp(asked)}. Round {told[1]} is open (phase {phase(controller.state)}): run stops when it is closed.")
         record = None
         try:
             if stack.chain is not None:
-                controller.sync_registrations(stack.chain(), now())
-            record = controller.run_round(stack.runner, now, stack.entropy() if stack.entropy else os.urandom(16).hex())
+                with timed("the read of the chain and the sync of the registrations"):
+                    ahead = overlap.snapshot(now()) if overlap is not None else None  # ``overlap``: read beside the fold of the last king
+                    controller.sync_registrations(ahead or (overlap.on_chain(stack.chain) if overlap is not None else stack.chain()), now())
+            # ``overlap``: the block of the seed is read at the open, not here. So the seed is not older than it is with ``serial``.
+            if overlap is not None and stack.entropy_now:
+                entropy = lambda: overlap.on_chain(stack.entropy_now)  # noqa: E731
+            else:
+                entropy = stack.entropy() if stack.entropy else os.urandom(16).hex()
+            record = controller.run_round(stack.runner, now, entropy, hold)
         except FencedError:
             raise
+        except HeadLost as exc:
+            # The local files of the head are not what the fold wrote. The round that ran on them ended with a failed lease:
+            # no result of it is stored, and nobody is charged. This ``run`` must not go on with these files. The run loop
+            # takes this exit code as a crash and starts ``run`` again, and that start rebuilds the head from the chain.
+            print(f"stopped: {exc}", file=sys.stderr, flush=True)
+            return HEAD_LOST_EXIT
         except InfraError as exc:  # the chain or the store did not answer: nothing was decided, so the next pass continues
             print(f"waiting: {exc}", file=sys.stderr, flush=True)
+        if stack.head.after_round is not None:  # also on a pass with no new round: a fold that was put off closes its round there
+            stack.head.after_round(controller.state)
+        if record is None and controller.state.round is None and hold is not None and hold():
+            continue  # no round is open and none was opened: the start of the next pass stops ``run``
         if record is None:
             idle += 1
             state = controller.state
@@ -194,7 +268,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             continue
         done, idle = done + 1, 0
         print_round(stack, record.round_id)
-    print(json.dumps(summary(controller.state, controller.params), indent=2))
+    if overlap is not None:  # the steps that waited for a next open: there is none in this ``run``
+        overlap.flush(now())
+    print(json.dumps(summary(controller.state, controller.params), indent=2), flush=True)
+    if obeyed is not None:
+        stop.obeyed(obeyed, stopped_text(controller))  # the last line of this ``run``
     return 0
 
 
@@ -212,13 +290,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Upload the full files of the last folded head and mark it as a checkpoint. ``run`` can go on: the journal is only read."""
+    state, _, stack = read_state(args, "checkpoint")
+    if stack is None or stack.head.checkpoint is None:
+        raise ConfigError("this stack makes no checkpoints: each folded head is uploaded in full")
+    print(json.dumps(stack.head.checkpoint(state)))
+    return 0
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     state, params, stack = read_state(args, "publish")
     if stack.publisher is None:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
-    stack.publisher.publish(snapshot(state, params, now(), verdicts, checked))
+    stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
     return 0
@@ -459,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--idle-sleep", type=float, default=30.0, help="seconds between polls when nothing is ready")
     command("status", cmd_status, stack=False)
     command("publish", cmd_publish, stack=True)
+    command("checkpoint", cmd_checkpoint, stack=True)
     one = command("round", cmd_round, stack=True)
     one.add_argument("--round", help="round id, such as r000001 (default: the last closed round)")
     one.add_argument("--json", action="store_true", help="print the stored JSON record instead of the text")

@@ -7,12 +7,17 @@ file against its sha256, copies it to its content-addressed key under
 
 Only keys under ``pending/`` are ever deleted here. So cleanup can never
 remove the live head, a master or a miner's file.
+
+``timed`` and ``log_time`` write how long a step took to the log of ``run``
+(stderr). A wall time never goes into a journal record or a public file.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Mapping, TypeVar
@@ -117,6 +122,30 @@ def get_record(store: ObjectStore, key: str, cls: type[R]) -> R:
     return cls.from_json(store.get(key))
 
 
+def log_time(step: str, started: float, end: str = "") -> None:
+    """One line in the log: the UTC time now, the step, and the seconds since ``started`` (a ``time.monotonic()`` value).
+
+    A log that cannot be written (a full disk, a closed stream) loses the line.
+    It never fails the step, and it never replaces the error of a step.
+    """
+    try:
+        print(f"timing {time.strftime('%H:%M:%S', time.gmtime())} UTC: {step}: {end}{time.monotonic() - started:.1f} s", file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+@contextmanager
+def timed(step: str) -> Iterator[None]:
+    """Log how long the block took. A block that an error ends is logged too, with the name of the error."""
+    started = time.monotonic()
+    try:
+        yield
+    except BaseException as exc:
+        log_time(step, started, f"ended by {type(exc).__name__} after ")
+        raise
+    log_time(step, started)
+
+
 def verify_files(store: ObjectStore, prefix: str, files: Mapping[str, str], sizes: Mapping[str, int] | None = None) -> None:
     """Fail closed unless every file is present under ``prefix`` with its size and sha256."""
     for name, expected in sorted(files.items()):
@@ -135,15 +164,20 @@ def promote_files(
     store: ObjectStore, src_prefix: str, dst_prefix: str, files: Mapping[str, str], sizes: Mapping[str, int] | None = None
 ) -> None:
     """Verify in ``pending/``, copy to the public prefix, verify the copy. Doing it again changes nothing."""
+    started = time.monotonic()
     try:
         verify_files(store, dst_prefix, files, sizes)
+        log_time(f"{dst_prefix}: a verified copy is there already, so nothing is copied", started)
         return
     except VerifyError:
-        pass
-    verify_files(store, src_prefix, files, sizes)
-    for name in sorted(files):
-        store.copy(f"{src_prefix}/{name}", f"{dst_prefix}/{name}")
-    verify_files(store, dst_prefix, files, sizes)
+        log_time(f"{dst_prefix}: no verified copy is there yet", started)
+    with timed(f"{dst_prefix}: the check of {len(files)} files in pending/"):
+        verify_files(store, src_prefix, files, sizes)
+    with timed(f"{dst_prefix}: the copy of {len(files)} files"):
+        for name in sorted(files):
+            store.copy(f"{src_prefix}/{name}", f"{dst_prefix}/{name}")
+    with timed(f"{dst_prefix}: the check of the {len(files)} copied files"):
+        verify_files(store, dst_prefix, files, sizes)
 
 
 def promote_lora(store: ObjectStore, artifact: LoRAArtifact) -> None:

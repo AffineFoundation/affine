@@ -9,6 +9,8 @@ Every number in the text comes from the ``Params`` in the snapshot. The
 miner-settable bounds come from ``Recipe.miner_bounds`` and the object keys
 from ``layout.py``. No cap, bound or key is typed here. The one exception is
 ``READ_LINKS``: the site pull job owns that file, and no module names it yet.
+``REBUILD_COST`` is measured, and it shows only when the box keeps the folded
+weight files (``head_chain`` in the snapshot).
 
 ``python -m sn120_v2.publisher check`` reads a published pair and fails when
 llms.txt is not true to the params of mining.json (``check_pair``; the
@@ -40,12 +42,13 @@ from .errors import ConfigError, ContractError, InfraError, V2Error
 from .gpu.batch import END_OF_TURN
 from .gpu.evaluator import ServeSettings, chat_body, server_argv
 from .gpu.trainer import LORA_FILES
+from .headchain import FIXED_ORDER, MATMUL
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -60,6 +63,14 @@ REPO = "https://github.com/AffineFoundation/affine"
 READ_LINKS = "public/read_links.json"
 # The local train-and-score tool. The publisher names it and does not import it: the module needs the GPU install.
 REPLICATE_MODULE, REPLICATE_BACKEND, REPLICATE_DOC = "sn120_v2.replicate", "backend", "v2/REPLICATE.md"
+# The rebuild tool needs the GPU install too, so the publisher names it and does not import it. A test compares the names.
+REBUILD_MODULE, FOLD_IMPLEMENTATION_ENV = "sn120_v2.headfold", "SN120_FOLD_IMPLEMENTATION"
+# What a rebuild of the launch model costs a reader. These numbers are measured on that model, not derived from the params.
+REBUILD_COST = (
+    "the first run downloads 37.6 GB, and a fold needs about 115 GB of free disk and about 2 GB of memory. One fold of a "
+    "rank 64 LoRA with the kernel `fixed-order-v1` takes about 21 minutes on 4 CPU cores (calculated from the measured "
+    "time of one weight shape). `--device cuda:0` runs the product on a GPU; that time is not measured."
+)
 LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
@@ -496,6 +507,13 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  not read the files. No seat and no place in the queue changes by it: the validator picks the entries of a",
         "  round from a new check of the files, never from the published value. So do not replace a good file because",
         "  of it: wait for the next check.",
+        "- The verdicts of the whole line are in mining.json under `queue.files`. Its list `verdicts` has one row for",
+        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid` and `file_verdict`.",
+        f"  `file_verdict` is `{VALID}`, `{NOT_VALID}` or `{NOT_JUDGED}`. `{NOT_JUDGED}`: the validator has no verdict for the hotkey. No file",
+        "  was stored at the last check, or the seat came after that check, or a new process made no check yet.",
+        f"  `file_valid` is yes only with `{VALID}`. `hotkeys` counts the rows; `{VALID}`, `{NOT_VALID}` and `{NOT_JUDGED}` count the rows",
+        "  with that verdict; `seats` counts the waiting seats. `checked_at` is `queue.files_checked_at`: the time at",
+        "  which that check started. The validator does not publish the sha256 of a waiting file.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
@@ -954,7 +972,13 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- If fewer than {show(params.min_cover)} of the rollouts of a LoRA resolve without an infrastructure error, its entry is",
         f"  `{NO_DECISION}`. If that is so for null M, every scored entry of the round is `{NO_DECISION}`. Neither is counted as a",
         "  failure for the seat (section 4).",
-        f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
+        f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base."
+        + (
+            " The validator publishes the LoRAs and the sha256 of every file of the new base and of the new fp32 master. It"
+            " publishes the files themselves only for a checkpoint head (section 1)."
+            if doc.get("head_chain")
+            else ""
+        ),
         "",
         *_scoring_lines(params),
         "",
@@ -1002,8 +1026,17 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  text of more than {TEXT_LIMIT} characters is cut there and ends with a note of how many characters were cut. The",
         "  same rule applies to the `reason` of a round in mining.json and in section 3. To decide what applies to your",
         "  seat, read `outcome` and `status`, not the words of a text.",
-        "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
-        "  (section 6) it is part of the new base, and there is no link for the LoRA alone.",
+        *(
+            [
+                "- The LoRA of a winner has a download link while it is stacked on the head, and after its fold for as long",
+                "  as a rebuild of the head needs it: until a newer head is a checkpoint (section 1).",
+            ]
+            if doc.get("head_chain")
+            else [
+                "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
+                "  (section 6) it is part of the new base, and there is no link for the LoRA alone.",
+            ]
+        ),
         "",
         *_replicate_lines(doc, params),
     ]
@@ -1065,6 +1098,52 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     ]
 
 
+def _weight_lines(doc: Mapping[str, Any], where: str) -> list[str]:
+    """Section 1: where the weight files of head M are. The second form is for a box that keeps the folded weight files."""
+    chain = doc.get("head_chain")
+    if not chain:
+        return [
+            "- Weight files are not served under the public address. Signed download links for the files of the current",
+            f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
+            "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
+            "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
+            "  You do not need the `master`: it is only for a check of a fold.",
+        ]
+    start, steps = chain["start"], chain["steps"]
+    kernels = ", ".join(f"`{kernel}`" for kernel in sorted({str(step["kernel"]) for step in steps}))
+    behind = f"The base of head M is {len(steps)} fold(s) after it (kernel {kernels})." if steps else "The base of head M is that checkpoint."
+    mining = f"{where}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
+    return [
+        "- Weight files are not served under the public address, and the store does not hold the weight files of every",
+        "  head. It holds the full files (the base and the fp32 master) of each **checkpoint** head, and the LoRA of every",
+        "  winner. The launch model is a checkpoint. You make the base of a head that is not a checkpoint on your",
+        "  machine: start from a checkpoint and fold each LoRA after it, in order. The result is exact: each file must",
+        "  have the sha256 that the head manifest names.",
+        "- `head_chain` in mining.json has the newest checkpoint (`start`) and one entry in `steps` for each fold after",
+        "  it: the LoRAs of the fold, its `kernel`, and the ids of the base and the fp32 master after it. The whole chain",
+        f"  from the launch model is `{chain['file']}`.",
+        f"- The newest checkpoint is head `{start['version_id']}`. {behind}",
+        f"- Signed download links are in {where}/{READ_LINKS}. Each link works until `expires_at`; fetch the file again",
+        "  for new links. Check each file against its `sha256` and `size`. `head_version_id` in that file names the head",
+        "  of the links. `loras` has the LoRAs that are stacked on the head. `checkpoints` has the base and the fp32",
+        "  master of the newest checkpoint, and `chain_loras` has the LoRAs of each fold after it. `base` and `master`",
+        "  are the files of the base of head M when it is a checkpoint, and null when it is not.",
+        f"- To get the base of head M: `python -m {REPLICATE_MODULE} fetch` (section 10), or `python -m {REBUILD_MODULE}",
+        f"  rebuild --chain {mining} --work <directory>`. It downloads what the directory does not hold (the first",
+        "  time: the fp32 master of the checkpoint, which has two times the bytes of the base), does each fold again,",
+        "  checks every file, and leaves the base in `<directory>/cache/<base_hash>/`. After that, a new king costs one",
+        "  LoRA download and one fold. Keep the directory: the next fold starts from the fp32 master in it.",
+        f"- `kernel` names the rule for the arithmetic of the LoRA product. `{FIXED_ORDER}` gives the same bytes on each",
+        f"  machine. `{MATMUL}` is the matrix product of torch on the CPU of the box, and another machine can give other",
+        "  bytes: start from a checkpoint after such a fold. Stop when you do not know a kernel name.",
+        f"- For the launch model (`{GENESIS_MODEL_REPO}`): {REBUILD_COST}",
+        f"- `{FOLD_IMPLEMENTATION_ENV}=blas` in the environment of the rebuild uses the matrix product of torch, which",
+        "  takes less time on a CPU. Its bytes are those of the rule only on some machines. The sha256 values decide:",
+        "  a fold with other values is deleted, and the tool prints a line that starts with `refused: ` and names the",
+        "  default (`reference`) as the way out.",
+    ]
+
+
 def _genesis_lines(head: HeadVersion) -> list[str]:
     """Where the base files are while the base is the launch model. Nothing when the base is a folded one."""
     if head.base_hash != GENESIS_BASE_HASH:
@@ -1108,11 +1187,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         f"- `params_hash`: `{params.params_hash}`; `recipe_id`: `{params.recipe_id}`",
         f"- Public objects are served under: {url or 'not set in this file'}. Each key below is a path under it, except",
         "  the weight files.",
-        "- Weight files are not served under the public address. Signed download links for the files of the current",
-        f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
-        "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
-        "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
-        "  You do not need the `master`: it is only for a check of a fold.",
+        *_weight_lines(doc, where),
         f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
         "  always a matching pair.",
         "- Send a client name of your own (the HTTP header `User-Agent`) with each read of a file under",
