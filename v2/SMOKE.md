@@ -641,8 +641,10 @@ The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu
 `run` itself stops when the box differs from the pinned digests. It makes the check before it opens a round, before it runs an open round again, and before a fold. Then it starts none of them, counts no failure for a seat, and ends with exit code 2 and one line:
 
 ```
-refused: ConfigError: this box differs from the pinned digests, so <what did not start>. The difference: <image or code> digest: pinned <value>, this box has <value>. Nothing is counted for a seat. Next: the digest block, then set-params with the two digests of this box, then start again
+refused: ConfigError: this box differs from the pinned digests, so <what did not start>. The difference: <image or code> digest: pinned <value>, this box has <value>. Nothing is counted for a seat. Next: the digest block, then set-params with the whole parameter file in which only the two digests are new (set-params replaces every value: a key that the file does not hold goes back to its default), then start again
 ```
+
+The parameter file for `set-params` is the whole file of the stage, made again after the digest block (the `smoke params` command), not a file with the two digests only. `set-params` replaces every value: a key that the file does not hold goes back to its default.
 
 No other command shows the pinned digests. The image digest of the box is the value of `SN120_IMAGE_DIGEST`; `run` does not compute it again. The code digest is computed from the files at each check.
 
@@ -650,7 +652,16 @@ The restart loop does not start a refused `run` again: it stops with exit code 2
 
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
 
-A fault of the box during training (not a digest difference) counts a failure for each seat that it stops. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. `status` shows both, in `held_seats` (the UIDs) and `seats_with_counted_failures` (seats with 1 or 2 counts). After the box is repaired, `release-seat` undoes them. Stop `run` first: this command takes over the journal.
+When no batch of a round trained and at least one of them failed (`no_decision`), `run` takes the fault as the box's and ends the round as a failed lease: nobody gets a counted failure, nobody is charged, the seats are first again, and the next round starts `apply_retry_s` later (5 minutes; 5 seconds with the smoke parameters). `run` goes on, and the round summary names the cause:
+
+```
+SN120 v2 round r00000N: NO_DECISION
+no winner: InfraError: no training finished in this round: 32 of 32 batches failed. The first: training failed 3 times: <the cause of the first batch>
+```
+
+The cost of this rule: `run` cannot tell a broken box from bad files, so a seat that is alone in its round with a file that makes the training fail is never held and its round repeats every 5 minutes, and `batch_cap` such seats in front fill every round so that no seat behind them gets a turn; nothing stops the loop for it, so look for `no_decision` again and again in `last_outcomes` of `status`.
+
+A fault of the box during training that lets another batch of the round train (and is not a digest difference) counts a failure for each seat that it stops. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. `status` shows both, in `held_seats` (the UIDs) and `seats_with_counted_failures` (seats with 1 or 2 counts). After the box is repaired, `release-seat` undoes them. Stop `run` first: this command takes over the journal.
 
 ```
 python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --all       # every seat that is held or has a count
