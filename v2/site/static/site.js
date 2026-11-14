@@ -177,7 +177,8 @@
 
   /* The benchmark table and its score cards, as bench.js of the v1 site. Columns: Model, Avg, then one per benchmark. The kings
      are the body, newest first, in a box about five rows deep. The reference models and the genesis head are a sticky footer, the
-     genesis head last. A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the
+     genesis head last. The reference models are in the order of the v1 page: the largest first, then the higher average. As
+     there, the footer holds only the ones that lead for their size; a link shows all. A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the
      highest. A model with no score still has its row, and the name says the state of its run. The cards show, per column, the score
      of the genesis head and of each scored king over time. */
   const RUN = {
@@ -187,7 +188,16 @@
     none: ['no run yet', 'private', 'The benchmark file does not name this model yet.'],
   };
   RUN.evaluating = RUN.running;  // the word of the v1 benchmark file
-  const REFS = 5, AVG = { id: '_avg', label: 'Avg', in_avg: true };
+  const AVG = { id: '_avg', label: 'Avg', in_avg: true };
+  // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
+  const SIZE = {
+    'qwen3.5-9b': 9.65, 'qwen3-8b': 8.19, 'deepseek-r1-0528-qwen3-8b': 8.19, 'r1-distill-qwen-7b': 7.62, 'r1-distill-llama-8b': 8.03,
+    'nemotron-nano-9b-v2': 8.89, 'glm-z1-9b-0414': 9.4, 'qwen3.5-4b': 4.66, 'qwen3-14b': 14.77, 'qwen3-4b': 4.02, 'r1-distill-qwen-14b': 14.77,
+    'openreasoning-nemotron-7b': 7.62, 'acereason-nemotron-1.1-7b': 7.62, 'skywork-or1-7b': 7.62, 'mimo-7b-rl': 7.83,
+    'llama-3.1-nemotron-nano-8b-v1': 8.03, 'openthinker3-7b': 7.62, 'phi-4-reasoning': 14.66, 'phi-4-mini-reasoning': 3.84,
+    'deepscaler-1.5b-preview': 1.78, 'r1-distill-qwen-1.5b': 1.78, 'gpt-oss-20b': 20.91,
+  };
+  const size = r => SIZE[String(r.label).toLowerCase()] ?? null;
   const STAR = '<svg class="star" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
   const shade = f => { const k = Math.min(1, Math.max(0, (.9 - f) / .75)); return `hsl(${Math.round(130 * (1 - k ** .75))} 65% 45% / ${(.3 + .28 * Math.abs(.5 - k)).toFixed(2)})`; };
   const pending = r => ['queued', 'running', 'evaluating'].includes(r.status);
@@ -197,7 +207,12 @@
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
     const every = b.rows.filter(r => r.kind === 'king'), kings = V1 ? every.filter(r => Object.keys(r.cells).length) : every;
     const genesis = b.rows.filter(r => r.kind === 'genesis');
-    const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis').sort((x, y) => (y.avg ?? -1) - (x.avg ?? -1));
+    const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (y.avg ?? -1) - (x.avg ?? -1));
+    // The rule of the v1 page: a reference model is in view when, in the average or in one counted benchmark, no reference
+    // model of its size or smaller has a higher score. A model with no size in the table, or with no score, is not in view.
+    const counted = cols.filter(c => c.in_avg), rated = refs.filter(r => size(r) != null && counted.some(c => val(r, c) != null));
+    const leads = (r, c) => val(r, c) != null && !rated.some(o => o !== r && size(o) <= size(r) && val(o, c) > val(r, c));
+    const lead = rated.filter(r => counted.some(c => leads(r, c))), pinned = allRefs || !lead.length ? refs : lead;
     const shown = [...kings, ...refs, ...genesis], span = {};
     for (const c of cols.filter(c => c.in_avg)) { const v = shown.map(r => val(r, c)).filter(x => x != null); if (v.length) span[c.id] = [Math.min(...v), Math.max(...v)]; }
     const cell = (r, c) => {
@@ -212,7 +227,7 @@
       const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : [r.label];
       return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (r.status === 'scored' || !r.status ? '' : pill(...(RUN[r.status] || [r.status, 'wait', '']))) + '</span>';
     };
-    const about = r => [r.label, r.head && 'Head ' + r.head, RUN[r.status] && RUN[r.status][2], r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
+    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.head && 'Head ' + r.head, RUN[r.status] && RUN[r.status][2], r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
@@ -222,14 +237,14 @@
       + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks, in percent. A row has it only when it has every counted benchmark.">Avg</th>`
       + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}">${esc(c.label)}</th>`).join('') + '</tr>';
     t.tBodies[0].innerHTML = kings.map(row).join('') || `<tr><td colspan="${cols.length}" class="empty">${V1 ? 'No king was scored.' : 'No king yet: no round has applied a winner.'}</td></tr>`;
-    t.tFoot.innerHTML = refs.slice(0, allRefs ? refs.length : REFS).map(row).join('') + genesis.map(row).join('');
+    t.tFoot.innerHTML = pinned.map(row).join('') + genesis.map(row).join('');
     let h = t.tHead.offsetHeight + t.tFoot.offsetHeight + 2 + (box.scrollWidth > box.clientWidth ? 12 : 0);
     for (const r of [...t.tBodies[0].rows].slice(0, 5)) h += r.offsetHeight;
     box.style.height = h + 'px';
     if (box.classList.contains('wait')) { box.classList.remove('wait'); t.classList.add('fade'); }
     const scored = every.filter(r => r.status === 'scored').length, more = document.getElementById('refs');
-    more.hidden = refs.length <= REFS;
-    more.textContent = allRefs ? `Show the best ${REFS} reference models` : `Show all ${refs.length} reference models`;
+    more.hidden = !lead.length || lead.length === refs.length;
+    more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
       : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark file yet');
 

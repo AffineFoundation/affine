@@ -226,7 +226,7 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
         elif round_id not in named and not any(other["version_id"] in named for other in heads if other["round_id"] == round_id):
             rows.append(row(round_id, KING, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
 
-    order = {KING: 0, GENESIS: 2}  # kings, newest first; then the other models, best average first; the genesis head is last
+    order = {KING: 0, GENESIS: 2}  # kings, newest first; then the other models, best average first (the page orders them by size); the genesis head is last
     have = {made["label"] for made in rows if made["kind"] not in order}
     for old in (kept or {}).get("rows", ()):
         if old.get("kind") not in order and old["label"] not in have:

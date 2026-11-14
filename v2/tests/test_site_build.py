@@ -67,6 +67,10 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
         bench = page[page.index('<section id="bench"'):]
         bench = bench[:bench.index("</section>")]
         assert '<div class="sparks"' in bench and "<thead></thead><tbody></tbody><tfoot></tfoot>" in bench and 'id="refs"' in bench
+        assert "the reference models, the largest first" in bench and "leads for its size" in bench  # the order of the v1 page
+    sizes = script[script.index("const SIZE = {"):script.index("const size = ")]  # by label in lower case, in billions of parameters
+    table = dict(re.findall(r"'([^']+)': ([\d.]+)", sizes))
+    assert len(table) == 22 and all(name == name.lower() and 1 < float(size) < 25 for name, size in table.items())
     tiles = re.findall(r'<div class="tile" id="([\w-]+)">', index)
     assert tiles == ["c-z", "c-pass", "c-batch", "c-time"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
     assert all(f"tile('{name}'" in script for name in tiles) and 'class="tile"' not in v1
@@ -193,7 +197,7 @@ def test_benchmark_table_sorts_kings_by_crowned_at_and_marks_partial_runs():
     }
     view = bench_view(bench)
     assert [column["id"] for column in view["columns"]] == ["b1", "b2", "b3"]
-    # the kings, newest first; then the reference models, best average first; the genesis head is the last row at any score
+    # the kings, newest first; then the reference models (the page orders them by size); the genesis head is the last row at any score
     assert [(row["label"], row["at"]) for row in view["rows"]] == [
         ("new", 200), ("old", 100), ("half", 50), ("Strong", None), ("Weak", None), ("Dead", None), ("Genesis", None)]
     new, old, half = view["rows"][:3]
