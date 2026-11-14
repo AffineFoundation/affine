@@ -19,8 +19,8 @@
 # After "run" ends, by its exit code:
 #   0                a finished run ("--rounds", "--max-idle"): the loop stops with 0
 #   2                "run" refused to start (parameters, state, a journal that another controller took): the loop
-#                    stops with 2. One exception: "refused: InfraError" (the store or the chain did not answer) is
-#                    a failure, and the loop starts "run" again.
+#                    stops with 2. One exception: "refused: InfraError" (the store or the chain did not answer).
+#                    The loop waits and tries again, without end: see below.
 #   130, 143         "run" was stopped with SIGINT or SIGTERM: an operator's stop, the loop stops with 0
 #   every other code a crash (1 is a Python error, 137 is SIGKILL or out of memory): the loop starts "run" again
 # A signal to the loop itself (SIGTERM, SIGINT, SIGHUP) is an operator's stop: the loop sends SIGTERM to "run",
@@ -29,6 +29,11 @@
 #
 # The loop counts the starts with no finished round between them. A round that "run" closed sets the count back
 # to zero. At SN120_LOOP_MAX_STARTS the loop stops with 3; the last lines of the log say why and what to run.
+#
+# A try that ends with "refused: InfraError", from "end-round" or from "run", is not in that count, and it does
+# not set the count back to zero. A network fault of the box at night must not stop the loop: it tries again
+# until the store and the chain answer. The pause doubles with each such try, from SN120_LOOP_PAUSE_S up to
+# SN120_LOOP_MAX_PAUSE_S. The log and run-loop.status say what the loop waits for and since when.
 # Exit codes of the loop: 0 stopped or finished, 2 refused, 3 gave up, 4 a GPU stays in use, 64 wrong call.
 #
 # Files, all in $SN120_WORK_DIR/logs:
@@ -40,6 +45,7 @@
 # Settings (environment, all optional):
 #   SN120_LOOP_PAUSE_S        seconds between the end of a "run" and the next start (30)
 #   SN120_LOOP_MAX_STARTS     starts in a row with no finished round, then the loop stops (5)
+#   SN120_LOOP_MAX_PAUSE_S    the longest pause between two tries while the store or the chain does not answer (300)
 #   SN120_LOOP_STOP_GRACE_S   seconds that "run" gets after SIGTERM at an operator's stop, then SIGKILL (30)
 #   SN120_LOOP_KILL_GRACE_S   seconds that a left process gets after SIGTERM, then SIGKILL (30)
 #   SN120_LOOP_GPU_FREE_MIB   a GPU with more used memory than this is in use (1024, the limit of the evaluator)
@@ -77,6 +83,7 @@ command -v "$PY" > /dev/null || usage "PYTHON is not a program: $PY"
 
 PAUSE_S=${SN120_LOOP_PAUSE_S:-30}
 MAX_STARTS=${SN120_LOOP_MAX_STARTS:-5}
+MAX_PAUSE_S=${SN120_LOOP_MAX_PAUSE_S:-300}
 STOP_GRACE_S=${SN120_LOOP_STOP_GRACE_S:-30}
 KILL_GRACE_S=${SN120_LOOP_KILL_GRACE_S:-30}
 GPU_FREE_MIB=${SN120_LOOP_GPU_FREE_MIB:-1024}
@@ -228,7 +235,7 @@ gave_up() {
         "Only if that stored result itself is bad: $END_ROUND --discard-result   (ends the round with no decision and THROWS THE RESULT AWAY; nobody is charged)"
 }
 
-end_open_round() {  # 0: go on. 1: the command failed, FAILURE says how. Stops the loop when the command is refused.
+end_open_round() {  # 0: go on. 1: the command failed, FAILURE says how (INFRA: with "refused: InfraError"). Stops the loop when the command is refused.
     local out rc
     out=$("$PY" -m sn120_v2 end-round --state-dir "$STATE_DIR" --stack "$STACK" 2>&1 9>&-)
     rc=$?
@@ -241,6 +248,7 @@ end_open_round() {  # 0: go on. 1: the command failed, FAILURE says how. Stops t
                 *"refused: InfraError:"*)
                     echo "$out" >> "$LOG"
                     FAILURE="end-round: $(grep -m 1 '^refused: ' <<< "$out")"
+                    INFRA=1
                     return 1
                     ;;
                 *)
@@ -267,7 +275,7 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
         exec setsid env "$MARK" "$PY" -m sn120_v2 run "${RUN_ARGS[@]}"
     ) >> "$LOG" 2>&1 < /dev/null &
     RUN_PID=$!
-    status "running: run has pid $RUN_PID, start $STARTS of at most $MAX_STARTS with no finished round"
+    status "running: run has pid $RUN_PID, start $((STARTS + 1)) of at most $MAX_STARTS with no finished round"
     while :; do
         wait "$RUN_PID" 2> /dev/null
         rc=$?
@@ -290,7 +298,7 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
         130 | 143) stopped_by_operator "run ended with exit code $rc: SIGINT or SIGTERM" ;;
         2)
             case $line in
-                "refused: InfraError:"*) FAILURE="exit code 2, $line" ;;
+                "refused: InfraError:"*) FAILURE="exit code 2, $line" && INFRA=1 ;;
                 *) refused "run" "$line" ;;
             esac
             ;;
@@ -304,6 +312,9 @@ run_once() {  # 0: start again. Stops the loop for every exit code that means "d
 echo "$$" > "$PID_FILE"
 say "loop started (pid $$): $PY -m sn120_v2 run ${RUN_ARGS[*]}"
 STARTS=0
+INFRA_SINCE=""
+INFRA_TRIES=0
+INFRA_PAUSE=$PAUSE_S
 while :; do
     status "before start: freeing the GPUs"
     if ! stop_leftovers; then
@@ -318,22 +329,44 @@ while :; do
             "Find it: nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv   Stop it (a run that was started by hand, its model servers and training jobs), then start the loop again."
     fi
     [ -z "$STOPPING" ] || stopped_by_operator "SIG$STOPPING to the loop"
-    STARTS=$((STARTS + 1))
     FAILURE=""
+    INFRA=""
+    CLOSED=0
     if end_open_round; then
         [ -z "$STOPPING" ] || stopped_by_operator "SIG$STOPPING to the loop"
         BEFORE=$(rounds_closed)
-        say "start $STARTS of at most $MAX_STARTS with no finished round between them (rounds closed so far: ${BEFORE:-unknown})"
+        say "start $((STARTS + 1)) of at most $MAX_STARTS with no finished round between them (rounds closed so far: ${BEFORE:-unknown})"
         run_once
         AFTER=$(rounds_closed)
-        if [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$AFTER" -gt "$BEFORE" ]; then
-            say "run ended with $FAILURE. It closed $((AFTER - BEFORE)) round(s) in this start: the count of starts goes back to zero."
-            STARTS=0
-        else
-            say "run ended with $FAILURE. No round finished in this start."
-        fi
+        [ -z "$BEFORE" ] || [ -z "$AFTER" ] || [ "$AFTER" -le "$BEFORE" ] || CLOSED=$((AFTER - BEFORE))
+        ENDED="run ended with $FAILURE"
     else
-        say "$FAILURE. run was not started; this counts as start $STARTS."
+        ENDED="$FAILURE. run was not started"
+    fi
+    if [ "$CLOSED" -gt 0 ]; then
+        say "$ENDED. It closed $CLOSED round(s) in this start: the count of starts goes back to zero."
+        STARTS=0
+    fi
+    if [ -n "$INFRA" ]; then
+        # The store or the chain did not answer. That is not a fault of run: the try is not counted, and the loop never gives up on it.
+        [ -n "$INFRA_SINCE" ] || INFRA_SINCE=$(stamp)
+        INFRA_TRIES=$((INFRA_TRIES + 1))
+        [ "$CLOSED" -gt 0 ] || say "$ENDED."
+        say "The store or the chain did not answer: try $INFRA_TRIES, no answer since $INFRA_SINCE. This try is not counted (the count of starts stays at $STARTS of at most $MAX_STARTS). The loop tries again until they answer. Next try in $INFRA_PAUSE s."
+        say "A cause on this box (a wrong store token, a wrong package version) does not go away by itself: then stop the loop and fix what the refused line names."
+        status "waiting for the store or the chain since $INFRA_SINCE ($INFRA_TRIES tries with no answer); next try in $INFRA_PAUSE s; the last one ended with: $FAILURE"
+        nap "$INFRA_PAUSE"
+        [ -z "$STOPPING" ] || stopped_by_operator "SIG$STOPPING to the loop"
+        INFRA_PAUSE=$((INFRA_PAUSE * 2))
+        [ "$INFRA_PAUSE" -le "$MAX_PAUSE_S" ] || INFRA_PAUSE=$((MAX_PAUSE_S > PAUSE_S ? MAX_PAUSE_S : PAUSE_S))
+        continue
+    fi
+    INFRA_SINCE=""
+    INFRA_TRIES=0
+    INFRA_PAUSE=$PAUSE_S
+    if [ "$CLOSED" -eq 0 ]; then
+        STARTS=$((STARTS + 1))
+        say "$ENDED. No round finished: this counts as start $STARTS of at most $MAX_STARTS."
     fi
     [ "$STARTS" -lt "$MAX_STARTS" ] || gave_up "$FAILURE"
     status "waiting $PAUSE_S s before the next start; the last one ended with: $FAILURE"
