@@ -238,7 +238,10 @@ class VllmEvaluator:
             # Its speeds are still logged, as their own phase: no reader may count it as a chunk that was scored.
             cut = {"serve_s": served - started, "generate_s": time.monotonic() - served, "wall_s": time.monotonic() - started}
             cut.update(models=len(models), tasks=len(tasks), rollouts=len(jobs), finished=sum(reply is not None for reply in replies), reply_cap=params.max_output_tokens)
-            log_phase(self.config.work_dir, "eval_cut", round_id=request.round_id, look=request.look, n_gpus=len(self._urls), **cut, **written_facts(written))
+            try:
+                log_phase(self.config.work_dir, "eval_cut", round_id=request.round_id, look=request.look, n_gpus=len(self._urls), **cut, **written_facts(written))
+            except Exception:  # noqa: BLE001 - the line is a help for the operator: a log that cannot be written must not change how the round ends
+                pass
             raise InfraError("the round's time limit passed during this chunk; an unfinished chunk is not scored")
         generated = time.monotonic()
         codes = self._grade(tasks, jobs, replies)
