@@ -101,7 +101,20 @@ h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 table{table-layout:fixed;width:100%;border-collapse:separate;border-spacing:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
 th,td{padding:5px 8px;font-size:11px;line-height:16px;height:27px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border-bottom:1px solid var(--line)}
 th{position:sticky;top:0;z-index:2;background:var(--bg);color:var(--muted);font-weight:400}
+th.sort{cursor:pointer;user-select:none}
+th.sort:hover,th.sorted{color:var(--ink)}
+th .sort-mark{margin-left:4px;font-size:10px;color:var(--performance)}
 th.num,td.num{text-align:right}
+#kings tbody tr{cursor:pointer}
+#kings tbody tr.open td{background:var(--hover)}
+.detail{margin:10px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:3px;font:12px/1.55 var(--mono)}
+.detail[hidden]{display:none!important}
+.detail .detail-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+.detail h3{margin:0;font:400 16px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.02em}
+.detail dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0}
+.detail dt{color:var(--muted)}
+.detail dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.detail .files a{border-bottom:1px dotted var(--muted)}
 tbody tr:hover td{background:var(--hover)}
 td a{border-bottom:1px dotted var(--muted)}
 td a:hover{border-bottom-style:solid}

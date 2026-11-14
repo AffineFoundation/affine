@@ -50,6 +50,9 @@
   };
   const PAGE = document.body.dataset.page || 'home', V1 = PAGE === 'v1', SUPPLY = PAGE === 'supply', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
+  // sort: which column of which table the visitor last chose, and the direction (1 = low to high, -1 = high to low). A second click on the same column flips the direction.
+  const sorts = {}, held = {};  // held[n] = the last rows that fill() received for table n, before the visitor's sort
+  let openKing = null;  // the hotkey of the king whose detail panel is open, or null
   let ROUND = {};  // the closed rounds of the data file, by round id: the link to the round file, and the cap-hit of M
   // The cap-hit limit of the round of a row, as the judge has it: the larger of `cap_hit_floor` and the cap-hit of M plus `cap_hit_margin`.
   // The page knows it only when the data file has the two settings and the cap-hit of M of that round. If not, no cell is marked.
@@ -87,46 +90,49 @@
       : mute('defaults', 'The miner set no train setting to a value that is not the default.' + (all ? '\n' + all : ''));
   };
 
-  // h = header, w = width in px, n = numeric (right aligned), t = header tooltip, r = cell from a row
+  // h = header, w = width in px, n = numeric (right aligned), t = header tooltip, r = cell from a row,
+  // s = value used to sort the column when the visitor clicks the header (null values sort last)
+  const num = k => r => { const v = r[k]; return v == null || v !== v ? null : +v; };
+  const text = k => r => { const v = r[k]; return v == null || v === '' ? null : String(v).toLowerCase(); };
   const C = {
-    rank: { h: '#', w: 36, n: 1, r: r => mute(r.rank) },
-    line: { h: '#', w: 36, n: 1, r: r => mute(r.line), t: 'Place in line (1 = first).' },
-    round: { h: 'Round', w: 92, r: r => r.file_url || (ROUND[r.round_id] || {}).file_url ? link(r.file_url || ROUND[r.round_id].file_url, r.round_id, 'round.json') : esc(r.round_id || '—') },
-    uid: { h: 'UID', w: 52, n: 1, r: r => esc(r.uid ?? '—') },
-    hot: { h: 'Hotkey', w: 104, r: r => key(r.hotkey) },
-    z: { h: 'z', w: 60, n: 1, r: r => score(r.z, 2, 'z = gain / standard error', unscored(r)), t: 'Gain over the head M, in standard errors.' },
-    head: { h: 'Head', w: 132, r: r => (r.head ? key(r.head, 8, 0) : unscored(r)) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
+    rank: { h: '#', w: 36, n: 1, s: num('rank'), r: r => mute(r.rank) },
+    line: { h: '#', w: 36, n: 1, s: num('line'), r: r => mute(r.line), t: 'Place in line (1 = first).' },
+    round: { h: 'Round', w: 92, s: text('round_id'), r: r => r.file_url || (ROUND[r.round_id] || {}).file_url ? link(r.file_url || ROUND[r.round_id].file_url, r.round_id, 'round.json') : esc(r.round_id || '—') },
+    uid: { h: 'UID', w: 52, n: 1, s: num('uid'), r: r => esc(r.uid ?? '—') },
+    hot: { h: 'Hotkey', w: 104, s: text('hotkey'), r: r => key(r.hotkey) },
+    z: { h: 'z', w: 60, n: 1, s: num('z'), r: r => score(r.z, 2, 'z = gain / standard error', unscored(r)), t: 'Gain over the head M, in standard errors.' },
+    head: { h: 'Head', w: 132, s: text('head'), r: r => (r.head ? key(r.head, 8, 0) : unscored(r)) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
     files: { h: 'Files', w: 136, r: files, t: 'Published for a winner only: the batch, and the hash of the LoRA.' },
-    reg: { h: 'Reg block', w: 88, n: 1, r: r => esc(r.registration_block ?? '—') },
-    check: { h: 'File', w: 96, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
-    flags: { h: 'Status', w: 170, r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
-    result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
-    gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, r.rank && !r.imported ? no('The round of this king is no longer in the history of mining.json, so this page has no gain for it.', 'not listed') : unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
-    bar: { h: 'vs bar', w: 96, n: 1, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
-    capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => overCap(r) ? `<span class="dn" title="Above the cap-hit limit of this round, ${pct(capLimit(r))}: the larger of ${pct(D.cap_hit_floor)} and the cap-hit of M plus ${pct(D.cap_hit_margin)}. A LoRA above the limit cannot win.">${pct(r.cap_rate)}</span>` : pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed. Red: above the cap-hit limit of the round.' },
-    look: { h: 'Dropped', w: 68, n: 1, r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
-    size: { h: 'Batch', w: 76, n: 1, r: batchSize, t: 'Prompts × mean rollouts for each prompt. The totals are in the tooltip. Public for a winner only.' },
+    reg: { h: 'Reg block', w: 88, n: 1, s: num('registration_block'), r: r => esc(r.registration_block ?? '—') },
+    check: { h: 'File', w: 96, s: r => r.file_valid ? 1 : 0, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
+    flags: { h: 'Status', w: 170, s: r => (r.flags || []).join(' '), r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
+    result: { h: 'Result', w: 112, s: text('status'), r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
+    gain: { h: 'Gain', w: 76, n: 1, s: num('delta'), r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, r.rank && !r.imported ? no('The round of this king is no longer in the history of mining.json, so this page has no gain for it.', 'not listed') : unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
+    bar: { h: 'vs bar', w: 96, n: 1, s: r => r.z == null ? null : r.z - D.z_bar, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
+    capHit: { h: 'Cap-hit', w: 68, n: 1, s: num('cap_rate'), r: r => overCap(r) ? `<span class="dn" title="Above the cap-hit limit of this round, ${pct(capLimit(r))}: the larger of ${pct(D.cap_hit_floor)} and the cap-hit of M plus ${pct(D.cap_hit_margin)}. A LoRA above the limit cannot win.">${pct(r.cap_rate)}</span>` : pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed. Red: above the cap-hit limit of the round.' },
+    look: { h: 'Dropped', w: 68, n: 1, s: num('look'), r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
+    size: { h: 'Batch', w: 76, n: 1, s: num('batch_prompts'), r: batchSize, t: 'Prompts × mean rollouts for each prompt. The totals are in the tooltip. Public for a winner only.' },
     hp: { h: 'Hparams', w: 146, r: hparams, t: HP_HELP },
     hpWide: { h: 'Hparams', w: 210, r: hparams, t: HP_HELP },
-    sha: { h: 'Batch sha256', w: 100, r: r => key(r.sha, 8, 0) },
-    at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
-    date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
-    env: { h: 'Env', w: 60, r: r => esc(r.env) },
-    seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is in this number.' },
-    skipped: { h: 'Skipped', w: 68, n: 1, r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
-    tasks: { h: 'Tasks', w: 64, n: 1, r: r => esc(r.tasks) },
-    mPass: { h: 'M pass', w: 68, n: 1, r: r => pct(r.null_pass, noM(r)) },
-    mCap: { h: 'M cap-hit', w: 76, n: 1, r: r => pct(r.null_cap, noM(r)) },
-    outcome: { h: 'Outcome', w: 132, r: r => (OUTCOME[r.outcome] || (() => esc(r.outcome)))(r) },
-    kind: { h: 'Kind', w: 84, r: r => r.folded ? mute('folded', 'The LoRAs are merged into the base.') : mute('stacked', 'The winning LoRA is stacked on the base.') },
+    sha: { h: 'Batch sha256', w: 100, s: text('sha'), r: r => key(r.sha, 8, 0) },
+    at: { h: 'When', w: 92, n: 1, s: num('at'), r: r => ago(r.at) },
+    date: { h: 'Date (UTC)', w: 124, n: 1, s: num('at'), r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
+    env: { h: 'Env', w: 60, s: text('env'), r: r => esc(r.env) },
+    seats: { h: 'Batches', w: 68, n: 1, s: num('seats'), r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is in this number.' },
+    skipped: { h: 'Skipped', w: 68, n: 1, s: num('skipped'), r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
+    tasks: { h: 'Tasks', w: 64, n: 1, s: num('tasks'), r: r => esc(r.tasks) },
+    mPass: { h: 'M pass', w: 68, n: 1, s: num('null_pass'), r: r => pct(r.null_pass, noM(r)) },
+    mCap: { h: 'M cap-hit', w: 76, n: 1, s: num('null_cap'), r: r => pct(r.null_cap, noM(r)) },
+    outcome: { h: 'Outcome', w: 132, s: text('outcome'), r: r => (OUTCOME[r.outcome] || (() => esc(r.outcome)))(r) },
+    kind: { h: 'Kind', w: 84, s: r => r.folded ? 1 : 0, r: r => r.folded ? mute('folded', 'The LoRAs are merged into the base.') : mute('stacked', 'The winning LoRA is stacked on the base.') },
     manifest: { h: 'Manifest', w: 84, r: r => r.manifest ? link(r.manifest, 'head.json', 'File hashes of this head') : no('No manifest file of this head is on this site. The validator writes the manifest of a head only while that head is the current one.', 'no file') },
-    epoch: { h: 'Epoch', w: 64, n: 1, r: r => 'E' + esc(r.epoch) },
-    verdict: { h: 'Result', w: 92, r: r => pill(...({ green: ['GREEN', 'up', 'Applied to the head.'], red: ['RED', 'dn', 'Not applied.'] }[r.verdict] || [r.verdict, 'wait', 'Not decided when v1 stopped.'])) },
-    share: { h: 'Weight', w: 68, n: 1, r: r => pct(r.share), t: 'Share of the miner weight when v1 stopped.' },
-    batch: { h: 'Batch', w: 92, n: 1, r: r => r.tasks == null ? mute('—') : esc(r.tasks) + (r.rollouts == null ? '' : ' · ' + esc(r.rollouts)), t: 'Tasks in the batch, then rollouts.' },
-    cPass: { h: 'Cand. pass', w: 84, n: 1, r: r => pct(r.c_pass), t: 'Pass rate of the trained candidate on the scoring sample.' },
-    hPass: { h: 'Head pass', w: 84, n: 1, r: r => pct(r.h_pass), t: 'Pass rate of the head on the same sample.' },
-    cand: { h: 'Candidate', w: 100, r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
+    epoch: { h: 'Epoch', w: 64, n: 1, s: num('epoch'), r: r => 'E' + esc(r.epoch) },
+    verdict: { h: 'Result', w: 92, s: text('verdict'), r: r => pill(...({ green: ['GREEN', 'up', 'Applied to the head.'], red: ['RED', 'dn', 'Not applied.'] }[r.verdict] || [r.verdict, 'wait', 'Not decided when v1 stopped.'])) },
+    share: { h: 'Weight', w: 68, n: 1, s: num('share'), r: r => pct(r.share), t: 'Share of the miner weight when v1 stopped.' },
+    batch: { h: 'Batch', w: 92, n: 1, s: num('tasks'), r: r => r.tasks == null ? mute('—') : esc(r.tasks) + (r.rollouts == null ? '' : ' · ' + esc(r.rollouts)), t: 'Tasks in the batch, then rollouts.' },
+    cPass: { h: 'Cand. pass', w: 84, n: 1, s: num('c_pass'), r: r => pct(r.c_pass), t: 'Pass rate of the trained candidate on the scoring sample.' },
+    hPass: { h: 'Head pass', w: 84, n: 1, s: num('h_pass'), r: r => pct(r.h_pass), t: 'Pass rate of the head on the same sample.' },
+    cand: { h: 'Candidate', w: 100, s: text('candidate'), r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
   };
   const T = {
     kings: { cols: ['rank', 'uid', 'hot', 'size', 'hpWide', 'round', 'at', 'z', 'gain', 'head', 'files'], empty: 'No king yet.' },
@@ -139,22 +145,56 @@
   };
 
   const table = n => document.querySelector(`#${n} table`);
+  function ordered(n, rows) {
+    const cur = sorts[n];
+    if (!cur || !C[cur.key]?.s) return rows;
+    const key = C[cur.key].s, dir = cur.dir;
+    return rows.map((r, i) => [key(r), i, r]).sort((a, b) => {
+      if (a[0] == null && b[0] == null) return a[1] - b[1];
+      if (a[0] == null) return 1;
+      if (b[0] == null) return -1;
+      return a[0] < b[0] ? -dir : a[0] > b[0] ? dir : a[1] - b[1];
+    }).map(x => x[2]);
+  }
   function shell(n) {
-    const t = table(n), cols = T[n].cols.map(k => C[k]);
+    const t = table(n), cols = T[n].cols.map(k => C[k]), cur = sorts[n];
     t.querySelectorAll('colgroup,thead').forEach(el => el.remove());
     t.style.minWidth = cols.reduce((a, c) => a + c.w, 0) + 'px';
     t.insertAdjacentHTML('afterbegin', '<colgroup>' + cols.map(c => `<col style="width:${c.w}px">`).join('') + '</colgroup><thead><tr>'
-      + cols.map(c => `<th class="${c.n ? 'num' : ''}"${c.t ? ` title="${esc(c.t)}"` : ''}>${esc(c.h)}</th>`).join('') + '</tr></thead>');
+      + T[n].cols.map(k => {
+        const c = C[k], on = cur && cur.key === k, tip = [c.t, c.s ? 'Click to sort.' : ''].filter(Boolean).join(' ');
+        return `<th class="${c.n ? 'num' : ''}${c.s ? ' sort' : ''}${on ? ' sorted' : ''}"${c.s ? ` data-sort="${k}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}${on ? ` aria-sort="${cur.dir > 0 ? 'ascending' : 'descending'}"` : ''}>${esc(c.h)}${on ? `<span class="sort-mark" aria-hidden="true">${cur.dir > 0 ? '↑' : '↓'}</span>` : ''}</th>`;
+      }).join('') + '</tr></thead>');
+  }
+  function kingDetail(r) {
+    const box = document.getElementById('king-detail');
+    if (!box) return;
+    if (!r) { box.hidden = true; box.innerHTML = ''; return; }
+    const lines = [
+      ['UID', esc(r.uid ?? '—')],
+      ['Hotkey', r.hotkey ? `<button type="button" class="key" data-copy="${esc(r.hotkey)}" title="${esc(r.hotkey)} (click to copy)">${esc(r.hotkey)}</button>` : mute('—')],
+      ['Round', r.file_url ? link(r.file_url, r.round_id || 'round.json', 'round.json') : esc(r.round_id || '—')],
+      ['When', r.at ? esc(utc(r.at)) : mute('—')],
+      ['z', r.z == null ? unscored(r) : esc(sgn(r.z))],
+      ['Gain', r.delta == null ? unscored(r) : esc(sgn(100 * r.delta) + ' pp')],
+      ['Head', r.head ? `<button type="button" class="key" data-copy="${esc(r.head)}" title="${esc(r.head)} (click to copy)">${esc(r.head)}</button>` : unscored(r)],
+      ['Files', `<span class="files">${files(r)}</span>`],
+    ];
+    box.innerHTML = `<div class="detail-top"><h3>UID ${esc(r.uid ?? '—')}</h3><button type="button" class="link" data-close-detail>Close</button></div><dl>${lines.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`;
+    box.hidden = false;
   }
   function fill(n, rows, reading, more) {
     if (!table(n)) return;
-    const cols = T[n].cols, body = table(n).tBodies[0], box = body.closest('.scroll');
-    body.innerHTML = (rows.length
-      ? rows.map(r => '<tr>' + cols.map(k => `<td class="${C[k].n ? 'num' : ''}">${C[k].r(r)}</td>`).join('') + '</tr>').join('')
+    held[n] = { rows, reading, more };
+    const cols = T[n].cols, body = table(n).tBodies[0], box = body.closest('.scroll'), view = ordered(n, rows);
+    shell(n);  // refresh the sort mark on the header of this table
+    body.innerHTML = (view.length
+      ? view.map(r => `<tr${n === 'kings' && openKing && r.hotkey === openKing ? ' class="open"' : ''}${n === 'kings' && r.hotkey ? ` data-king="${esc(r.hotkey)}"` : ''}>` + cols.map(k => `<td class="${C[k].n ? 'num' : ''}">${C[k].r(r)}</td>`).join('') + '</tr>').join('')
       : `<tr><td colspan="${cols.length}" class="empty">${esc(T[n].empty)}</td></tr>`)
       + (more ? `<tr class="more"><td colspan="${cols.length}">${esc(more)}</td></tr>` : '');
     document.querySelector(`#${n} .reading`).textContent = reading;
     if (box.classList.contains('wait')) { box.classList.remove('wait'); body.classList.add('fade'); }
+    if (n === 'kings') kingDetail(openKing ? view.find(r => r.hotkey === openKing) || rows.find(r => r.hotkey === openKing) : null);
   }
 
   /* One chart for every tile and every score card, as k1.js and bench.js of the v1 site: grid lines with their values, bars or a
@@ -676,7 +716,9 @@
   const savedTheme = () => { try { const t = localStorage.getItem('affine:theme'); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
   function theme(next) {
     root.dataset.theme = next;
-    document.querySelector('meta[name="theme-color"]').content = next === 'light' ? '#ffffff' : '#000000';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = next === 'light' ? '#ffffff' : '#000000';
+    if (!themeButton) return;
     const other = next === 'light' ? 'dark' : 'light';
     themeButton.setAttribute('aria-pressed', String(next === 'light'));
     themeButton.setAttribute('aria-label', `Switch to ${other} mode`);
@@ -684,7 +726,7 @@
   }
   const deviceTheme = () => device.matches ? 'light' : 'dark';
   theme(savedTheme() || deviceTheme());
-  themeButton.addEventListener('click', () => {
+  themeButton?.addEventListener('click', () => {
     const next = root.dataset.theme === 'light' ? 'dark' : 'light';
     try { localStorage.setItem('affine:theme', next); } catch { /* the choice then holds for this page only */ }
     theme(next);
@@ -709,6 +751,7 @@
   const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   let priceFeed = true, lastPrices = null, priceFails = 0;
   function showPrices(p) {
+    if (!priceRow || !priceEl.tao || !priceEl.alpha || !priceEl.rate) return;
     const now = Date.now() / 1000;
     const fresh = (v, at) => typeof v === 'number' && isFinite(v) && v > 0 && typeof at === 'number' && now - at < PRICE_MAX_AGE && now - at > -300;
     const tao = p && fresh(p.tao_usd, p.tao_usd_at) ? p.tao_usd : null, alpha = tao !== null && fresh(p.alpha_tao, p.alpha_tao_at) ? p.alpha_tao : null;
@@ -738,10 +781,10 @@
     showPrices(lastPrices);
     setTimeout(prices, PRICE_WAITS[Math.min(priceFails, PRICE_WAITS.length - 1)] * 60000);
   }
-  prices();
+  if (priceRow) prices();
 
   const copyView = document.getElementById('copy-view');
-  copyView.addEventListener('click', async () => {
+  copyView?.addEventListener('click', async () => {
     let done = false;
     try { await navigator.clipboard.writeText(location.href); done = true; } catch { /* no clipboard in this browser or context */ }
     copyView.textContent = done ? 'Copied' : 'Copy unavailable';
@@ -772,6 +815,22 @@
   document.addEventListener('click', e => {
     const b = e.target.closest && e.target.closest('.key');
     if (b && navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(() => { b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900); }, () => { });
+    if (e.target.closest && e.target.closest('[data-close-detail]')) { openKing = null; if (held.kings) fill('kings', held.kings.rows, held.kings.reading, held.kings.more); return; }
+    const th = e.target.closest && e.target.closest('th[data-sort]');
+    if (th) {
+      const n = th.closest('section')?.id, key = th.dataset.sort;
+      if (n && T[n] && C[key]?.s && held[n]) {
+        const cur = sorts[n];
+        sorts[n] = { key, dir: cur && cur.key === key ? -cur.dir : (C[key].n ? -1 : 1) };
+        fill(n, held[n].rows, held[n].reading, held[n].more);
+      }
+      return;
+    }
+    const row = e.target.closest && e.target.closest('#kings tbody tr[data-king]');
+    if (row && !e.target.closest('a,button')) {
+      openKing = openKing === row.dataset.king ? null : row.dataset.king;
+      if (held.kings) fill('kings', held.kings.rows, held.kings.reading, held.kings.more);
+    }
   });
   document.getElementById('filter')?.addEventListener('input', e => { filter = e.target.value; if (D) render(); });
   document.getElementById('refs')?.addEventListener('click', () => { allRefs = !allRefs; if (D) bench(D.bench); });
