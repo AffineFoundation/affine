@@ -28,6 +28,9 @@ One run does this, in this order:
 2. Copies the head pointer (``layout.CURRENT``), and writes ``LINKS``: signed
    read links for the weight files of the current head, with the expiry time
    and the sha256 and size of each file. Weight files are never copied.
+   When the store has a head chain of that head (``layout.HEAD_CHAIN``: the
+   box keeps the folded weight files), the chain file is copied, and ``LINKS``
+   has the links of the newest checkpoint and of the LoRAs after it.
 3. Copies ``public/heads/``, ``public/rounds/``, the task tables of
    ``public/irt/`` that mining.json names, and ``public/benchmarks.json``.
 4. Removes its own old round files and task tables above ``--keep-rounds``.
@@ -60,6 +63,7 @@ from typing import Any, Callable
 import build
 from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
+from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
@@ -71,7 +75,7 @@ LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS)
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
 STALE_TMP_S = 3600
@@ -206,8 +210,21 @@ class Pull:
         """The head pointer, and the signed read links for the weight files of that head."""
         pointer = self.store.get(layout.CURRENT)
         manifest = HeadManifest.from_json(pointer)  # a pointer that does not hash to its ids is refused
-        links = read_links(self.store, manifest, ttl_s, self.now)
+        chain = None
+        try:
+            raw = self.store.get(layout.HEAD_CHAIN)
+            doc = json.loads(raw)
+            check_chain(doc)
+            if doc["head_version_id"] == manifest.head.version_id:  # a chain of another head is not used: the links below then need the full files
+                chain = doc
+        except KeyError:
+            pass  # a store whose box uploads each head in full has no chain
+        links = read_links(self.store, manifest, ttl_s, self.now, chain)
         self.put(layout.CURRENT, pointer)
+        if chain is not None:
+            self.put(layout.HEAD_CHAIN, raw)
+        elif layout.HEAD_CHAIN in self.owned:
+            self.remove(layout.HEAD_CHAIN)  # the copy is of an older head, and the links above are of the full files
         self.put(LINKS, json.dumps(links, indent=1).encode())
 
     def heads(self) -> None:
@@ -292,8 +309,13 @@ class Pull:
                 self.problems.append(f"index: {type(error).__name__}: {error}")
 
 
-def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int) -> dict[str, Any]:
-    """Signed read links for every weight file of one head. Each file is looked up in the store, so no link is dead."""
+def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int, chain: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Signed read links for every weight file of one head. Each file is looked up in the store, so no link is dead.
+
+    With ``chain`` (the head chain of this head): the links of the newest
+    checkpoint and of the LoRAs of each step after it. ``base`` and ``master``
+    are then null unless that checkpoint is the base of the head itself.
+    """
 
     def file_set(set_id: str, files: dict[str, str], key_of: Callable[[str, str], str]) -> dict[str, Any]:
         rows = []
@@ -303,6 +325,21 @@ def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int) -> dict
         return {"id": set_id, "bytes": sum(row["size"] for row in rows), "files": rows}
 
     head = manifest.head
+    master_note = {"note": "The fp32 master. It is needed only to check a fold. A miner does not need it. Keep it out of the directory of the base."}
+    if chain is None:
+        base = file_set(head.base_hash, manifest.base_files, layout.public_base_file)
+        master = file_set(head.base_fp32_master_digest, manifest.master_files, layout.public_master_file) | master_note
+        rebuild = {}
+    else:
+        rebuild = chain_links(store, chain, ttl_s, target=heads_of(chain)[-1]["version_id"])
+        point = rebuild["checkpoints"][0]
+        here = point["base"]["id"] == head.base_hash
+        base, master = (point["base"], point["master"] | master_note) if here else (None, None)
+        rebuild["rebuild"] = (
+            "The box keeps the folded weight files. checkpoints has the newest head whose full files are in the store. "
+            "chain_loras has the LoRAs of each fold after it, in order. base and master are null when the head is not that checkpoint. "
+            "Then make the head: python -m sn120_v2.headfold rebuild --chain <mining.json> --links <this file> --work <directory>"
+        )
     return {
         "schema": LINKS_SCHEMA,
         "generated_at": now,
@@ -311,14 +348,13 @@ def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int) -> dict
         "head_version_id": head.version_id,
         "how": "GET each url before expires_at, then check the size and the sha256 of the file. The id of a file set is the "
                "sha256 of the canonical JSON of {file name: sha256}. This file is written again on every run with new links.",
-        "base": file_set(head.base_hash, manifest.base_files, layout.public_base_file),
+        "base": base,
         "loras": [
             file_set(ref.lora_hash, manifest.lora_files[ref.lora_hash], layout.public_lora_file) | {"round_id": ref.round_id}
             for ref in head.loras
         ],
-        "master": file_set(head.base_fp32_master_digest, manifest.master_files, layout.public_master_file)
-        | {"note": "The fp32 master. It is needed only to check a fold. A miner does not need it. Keep it out of the directory of the base."},
-    }
+        "master": master,
+    } | rebuild
 
 
 def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, max_bytes: int, v1_history: str | None, now: int) -> int:
