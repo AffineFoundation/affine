@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import threading
 from dataclasses import replace
+from fractions import Fraction
 
 import pytest
 
-from sn120_v2 import layout, sim
+from sn120_v2 import layout, sim, worker
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import FencedError, InfraError, JournalCorrupt, V2Error
 from sn120_v2.journal import JOURNAL_FILE, Journal, Mirror, pull, read_journal
@@ -20,7 +22,7 @@ from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
 from sn120_v2.state import load_from_store, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
-from sn120_v2.worker import AT_THE_LEASE_S
+from sn120_v2.worker import AT_THE_LEASE_S, TrainLoad, gpu_counts, start_order
 
 
 def frozen(record) -> dict[int, str]:
@@ -362,19 +364,175 @@ def test_the_launch_limits_are_32_batches_100_minutes_and_temperature_1():
         Params(train_time_budget_s=5400)  # no time left for the scoring
 
 
-def test_batches_train_at_the_same_time_on_separate_gpu_slots(tmp_path):
-    world = SimWorld(tmp_path, sim_params(batch_cap=8))
-    real, slots = world.trainer.train, []
+# r000002 on mainnet: four jobs ran 115, 367, 630 and 883 s on one GPU each. About 50 s of each is not steps.
+R000002 = [65, 317, 580, 833]
+
+
+@pytest.mark.parametrize(
+    "token_steps, counts",
+    [
+        ([5], [8]),  # 1 batch: all GPUs
+        ([5, 5], [4, 4]),
+        ([5, 5, 5], [3, 3, 2]),  # equal batches: the GPUs that are left go by queue position
+        ([5, 5, 5, 5], [2, 2, 2, 2]),
+        ([5, 5, 5, 5, 5], [2, 2, 2, 1, 1]),
+        ([5] * 8, [1] * 8),
+        ([5] * 9, [1] * 9),  # more batches than GPUs: one GPU each, and a batch waits for a free GPU
+        ([5] * 32, [1] * 32),
+        (R000002, [1, 2, 2, 3]),
+        ([833, 580, 317, 65], [3, 2, 2, 1]),  # the count follows the batch, not its place in the queue
+        (R000002 + [700], [1, 1, 2, 2, 2]),  # r000002 as it was, with a fifth seat whose job then failed
+        ([7_900_000, 100_000], [7, 1]),  # every batch has at least one GPU
+        ([6, 3], [5, 3]),  # 6/5 against 3/3: the small batch is ahead for the last GPU
+        ([4, 2, 2], [4, 2, 2]),  # a tie (4/3, 2/1, 2/1 at the fourth GPU of six): the lower queue position has it
+        ([], []),
+    ],
+)
+def test_the_gpus_of_a_round_go_to_the_batches_by_their_token_steps(token_steps, counts):
+    assert gpu_counts(8, [TrainLoad(load, 2000) for load in token_steps]) == counts
+    if token_steps and len(token_steps) <= 8:
+        assert sum(counts) == 8 and min(counts) >= 1, "no GPU is left over, and every batch has one"
+        worst = max(Fraction(load, count) for load, count in zip(token_steps, counts))
+        for others in itertools.product(range(1, 9), repeat=len(token_steps)) if len(token_steps) <= 5 else ():
+            if sum(others) == 8:
+                assert worst <= max(Fraction(load, count) for load, count in zip(token_steps, others)), "no other split has a smaller largest job"
+
+
+def test_a_batch_gets_no_more_gpus_than_it_has_rows_that_train_and_a_file_that_was_not_read_keeps_one():
+    assert gpu_counts(8, [TrainLoad(900, 2), TrainLoad(100, 500)]) == [2, 6], "the job of the first batch can use two GPUs"
+    assert gpu_counts(8, [TrainLoad(900, 2), TrainLoad(100, 3)]) == [2, 3], "three GPUs stay free: no batch can use them"
+    assert gpu_counts(8, [TrainLoad(0, 1), TrainLoad(5, 500), TrainLoad(5, 500)]) == [1, 4, 3], "a file whose load was not read"
+    assert gpu_counts(8, [TrainLoad(5, 1)] * 9) == [1] * 9
+
+
+def test_the_start_order_is_the_queue_order_or_the_most_token_steps_first():
+    loads = [TrainLoad(cost, 10) for cost in (3, 9, 9, 1)]
+    assert start_order(loads, longest_first=False) == [0, 1, 2, 3]
+    assert start_order(loads, longest_first=True) == [1, 2, 0, 3], "between equal batches: queue order"
+
+
+def recorded(world: SimWorld, token_steps: dict[str, int] | None = None) -> tuple[dict[str, tuple[int, ...]], list[str]]:
+    """Record the GPUs of each training job and the entries whose token-steps the runner asked for."""
+    real, gpus, asked = world.trainer.train, {}, []
 
     def train(request):
-        slots.append(request.gpu_ids)
+        gpus[request.entry.reg.hotkey] = request.gpu_ids
         return real(request)
 
+    def load_of(entry, params):
+        asked.append(entry.reg.hotkey)
+        return TrainLoad(token_steps[entry.reg.hotkey], 2000)
+
     world.trainer.train = train
+    world.runner.load_of = load_of if token_steps is not None else None
+    return gpus, asked
+
+
+def test_with_8_batches_each_has_one_gpu_and_no_token_steps_are_read(tmp_path):
+    world = SimWorld(tmp_path, sim_params(batch_cap=8))
+    gpus, asked = recorded(world, {f"hk{uid}": uid for uid in range(1, 9)})
     for uid in range(1, 9):
         world.register(uid, 0.0)
     world.round()
-    assert sorted(slots) == [(gpu,) for gpu in range(8)], "8 batches on 8 GPUs: one GPU each, no GPU twice"
+    assert sorted(gpus.values()) == [(gpu,) for gpu in range(8)], "8 batches on 8 GPUs: one GPU each, no GPU twice"
+    assert asked == [], "no GPU is left over, so the token-steps change nothing"
+
+
+def test_with_fewer_batches_than_gpus_every_gpu_has_a_job_and_the_long_jobs_have_more(tmp_path):
+    world = SimWorld(tmp_path, sim_params(batch_cap=8))
+    gpus, asked = recorded(world, dict(zip(("hk1", "hk2", "hk3", "hk4"), R000002)))
+    for uid in (1, 2, 3, 4):
+        world.register(uid, 0.0)
+    record = world.round()
+    assert asked == ["hk1", "hk2", "hk3", "hk4"], "one read for each batch, before the first job"
+    assert gpus == {"hk1": (0,), "hk2": (1, 2), "hk3": (3, 4), "hk4": (5, 6, 7)}, "a run of GPU ids for each batch, in queue order"
+    assert {entry.status for entry in record.decision.entries} == {"lost"}
+
+
+def test_a_batch_whose_job_fails_keeps_its_gpus_and_the_other_jobs_do_not_change(tmp_path):
+    """r000002: five seats, and the job of one failed in each try. Its GPUs are given at the lease, like the others."""
+    world = SimWorld(tmp_path, sim_params(batch_cap=8))
+    gpus, _ = recorded(world, dict(zip(("hk1", "hk2", "hk3", "hk4", "hk5"), R000002 + [700])))
+    tries = []
+    real = world.trainer.train
+    world.trainer.train = lambda request: (tries.append((request.entry.reg.hotkey, request.gpu_ids)), real(request))[1]
+    world.trainer.fail_hotkeys = {"hk5"}
+    for uid in (1, 2, 3, 4, 5):
+        world.register(uid, 0.0)
+    record = world.round()
+    assert [ids for hotkey, ids in tries if hotkey == "hk5"] == [(6, 7)] * world.runner.attempts, "each try has the same GPUs"
+    assert {hotkey: len(ids) for hotkey, ids in tries} == {"hk1": 1, "hk2": 1, "hk3": 2, "hk4": 2, "hk5": 2}
+    statuses = {entry.uid: entry.status for entry in record.decision.entries}
+    assert statuses == {1: "lost", 2: "lost", 3: "lost", 4: "lost", 5: "no_decision"}
+    seat = world.controller.state.queue[(5, 1005)]
+    assert (seat.front, seat.infra_attempts, seat.held) == (True, 0, False), "a training job that failed is never counted"
+
+
+def test_a_file_whose_load_cannot_be_read_keeps_one_gpu_and_the_round_goes_on(tmp_path, capsys):
+    world = SimWorld(tmp_path, sim_params(batch_cap=8))
+    gpus, _ = recorded(world)
+    for uid in (1, 2, 3):
+        world.register(uid, 0.0)
+    assert world.round().outcome == "null" and [len(gpus[f"hk{uid}"]) for uid in (1, 2, 3)] == [3, 3, 2], "no source of the loads (a test stack): equal batches"
+
+    def load_of(entry, params):
+        if entry.reg.hotkey == "hk5":
+            raise InfraError("the store does not answer")
+        return TrainLoad(700, 2000)
+
+    world.runner.load_of = load_of
+    for uid in (4, 5, 6):
+        world.register(uid, 0.0)
+    capsys.readouterr()
+    assert world.round().outcome == "null", "a fault of the read does not stop the round"
+    assert gpus["hk4"] == (0, 1, 2, 3) and gpus["hk5"] == (4,) and gpus["hk6"] == (5, 6, 7), "the same counts in every pass with the same fault"
+    log = capsys.readouterr().err
+    assert "the load of queue position 1 (UID 5) was not read, so its job has 1 GPU: InfraError: the store does not answer" in log
+    assert "queue position 0 (UID 4): 700 token-steps, 2000 rows that train, 4 GPU(s)" in log and "queue position 1 (UID 5): 0 token-steps, 1 rows that train, 1 GPU(s)" in log
+
+
+@pytest.mark.parametrize("longest_first", [False, True])
+def test_with_more_batches_than_gpus_each_has_one_gpu_and_the_start_order_is_one_constant(tmp_path, monkeypatch, longest_first):
+    """Two GPUs, three batches, and the training time ends while the second and the third job run."""
+    monkeypatch.setattr(worker, "LONGEST_FIRST", longest_first)
+    world = SimWorld(tmp_path, sim_params(n_gpus=2))
+    world.runner.poll_s = 0.01
+    real, close, stopped, started, both = world.trainer.train, world.trainer.close, threading.Event(), [], threading.Event()
+    token_steps, asked = {"hk1": 10, "hk2": 30, "hk3": 20}, []
+    first = "hk2" if longest_first else "hk1"  # the job that finishes
+
+    def train(request):
+        hotkey = request.entry.reg.hotkey
+        assert len(request.gpu_ids) == 1
+        started.append(hotkey)
+        if len(started) == 2:
+            both.set()
+        if hotkey == first:
+            assert both.wait(10), "the two jobs of the first group run side by side"
+            return real(request)
+        if len(started) == 3:
+            world.now += world.params.train_time_budget_s  # the training time ends while two jobs still run
+        assert stopped.wait(10), "the runner must stop a job that runs past the training time"
+        raise InfraError("the training job was stopped")
+
+    world.trainer.train = train
+    world.trainer.close = lambda: (stopped.set(), close())
+    world.runner.load_of = lambda entry, params: (asked.append(entry.reg.hotkey), TrainLoad(token_steps[entry.reg.hotkey], 2000))[1]
+    for uid in (1, 2, 3):
+        world.register(uid, 0.3)
+    record = world.round()
+    by_uid = {entry.uid: entry for entry in record.decision.entries}
+    if longest_first:  # the start order: hk2 (30), hk3 (20), hk1 (10). The first group: hk2 and hk3.
+        assert sorted(started[:2]) == ["hk2", "hk3"] and started[2] == "hk1" and asked == ["hk1", "hk2", "hk3"]
+        winner, counted, waited = 2, 3, 1
+    else:  # queue order. The first group: hk1 and hk2.
+        assert sorted(started[:2]) == ["hk1", "hk2"] and started[2] == "hk3" and asked == [], "the token-steps are not read"
+        winner, counted, waited = 1, 2, 3
+    assert (by_uid[winner].status, record.outcome) == ("winner", "applied")
+    assert by_uid[counted].status == "no_decision" and "had the whole training time" in by_uid[counted].reason, "of the first group"
+    assert by_uid[waited].status == "not_trained" and "while this batch trained" in by_uid[waited].reason, "it waited for a GPU"
+    queue = world.controller.state.queue
+    assert {key[0]: (seat.front, seat.infra_attempts) for key, seat in queue.items()} == {counted: (True, 1), waited: (True, 0)}
 
 
 # ------------------------------------------------------------ pinned parameters
