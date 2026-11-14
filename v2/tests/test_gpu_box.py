@@ -23,7 +23,7 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError
 from sn120_v2.gpu import batch, plan, procs
 from sn120_v2.gpu import evaluator as evaluator_module
-from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, read_reply, server_argv, server_env, socket_room
+from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, lora_table, read_reply, server_argv, server_env, socket_room
 from sn120_v2.gpu import resident as resident_module
 from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
 from sn120_v2.gpu.trainer import LORA_FILES, LoraTrainer
@@ -720,6 +720,29 @@ def test_a_process_that_starts_with_1024_open_files_holds_2048_sockets_after_the
     before, raised, after = (tuple(int(part) for part in line.split()) for line in done.stdout.splitlines())
     assert 900 < before[0] < 1024 and before[1] == errno.EMFILE
     assert raised == (2048, 2048 + ServeSettings().spare_files) and after == (2048, 0)
+
+
+def test_the_lora_table_of_the_servers_is_the_batches_of_the_round_in_every_look(box):
+    farm = Farm(lambda model, task: ("P", "stop"))
+    seam, table = evaluator(box, farm), lambda server: server.argv[server.argv.index("--max-loras") + 1]
+    first = box.build.replace(eval_request(box, n_loras=3), batches=5)  # the ticket has 5 batches; 3 of them trained
+    seam.evaluate(first)
+    assert [table(server) for server in farm.servers] == ["5", "5"], "the batches of the ticket: not the LoRAs that trained, not max_loras_per_box"
+    seam.evaluate(box.build.replace(first, loras=first.loras[:1], look=1))  # a later look with fewer LoRAs
+    assert len(farm.servers) == 2, "the same servers and the same table for every look of the round"
+    logged = json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert (logged["phase"], logged["max_loras"], logged["open_files_limit"]) == ("eval", 5, resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+    with pytest.raises(ContractError, match="inside the LoRA table of its round"):
+        seam.evaluate(box.build.replace(first, batches=2))  # 3 LoRAs, a table of 2
+    with pytest.raises(ContractError, match="inside max_loras_per_box"):
+        seam.evaluate(box.build.replace(first, batches=first.params.max_loras_per_box + 1))
+    assert len(farm.servers) == 2 and all(server.up for server in farm.servers), "a refused look starts and stops nothing"
+    seam.evaluate(box.build.replace(first, batches=4))  # servers of another table never serve a look: they are replaced
+    assert [table(server) for server in farm.servers[2:]] == ["4", "4"] and not any(server.up for server in farm.servers[:2])
+    params = first.params
+    assert (lora_table(params), lora_table(params, 1), lora_table(params, params.max_loras_per_box)) == (params.max_loras_per_box, 1, params.max_loras_per_box)
+    for argv, want in ((server_argv("/base", 8100, params), params.max_loras_per_box), (server_argv("/base", 8100, params, 256, 6), 6)):
+        assert table(SimpleNamespace(argv=argv)) == str(want)  # without a table the command is as before: the bench tool calls it so
 
 
 def test_server_command_line_and_refused_requests(box):

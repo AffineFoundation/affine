@@ -60,6 +60,7 @@ REPO = "https://github.com/AffineFoundation/affine"
 READ_LINKS = "public/read_links.json"
 # The local train-and-score tool. The publisher names it and does not import it: the module needs the GPU install.
 REPLICATE_MODULE, REPLICATE_BACKEND, REPLICATE_DOC = "sn120_v2.replicate", "backend", "v2/REPLICATE.md"
+LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
@@ -789,6 +790,7 @@ def _server_command(params: Params) -> list[str]:
     The address of the server is left out: it is local to the box and changes no score.
     """
     argv = server_argv("<directory of the base files>", 0, params, ServeSettings().clients_per_server)
+    argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
     start = argv.index("-m")
     options: list[list[str]] = []
     for word in argv[start + 2 :]:
@@ -834,7 +836,8 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
         "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
         "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
-        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. The command of one server,",
+        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
+        "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
         "  without its local address:",
         "",
         "```",
