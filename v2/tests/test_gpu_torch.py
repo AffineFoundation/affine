@@ -114,10 +114,14 @@ def test_same_seed_same_lora_and_replicas_give_the_one_gpu_result(head_dir, tmp_
 
 
 def test_the_warm_up_row_changes_no_byte_of_what_training_makes(head_dir, tmp_path, monkeypatch):
-    warm = {n: hash_tree(run(head_dir, tmp_path / f"warm{n}", devices=("cpu",) * n) and tmp_path / f"warm{n}") for n in (1, 2)}
+    # float32: on a busy CPU a bf16 run is not always repeatable, with or without the warm-up row, and this test compares bytes.
+    def tree(name: str, n: int) -> dict:
+        run(head_dir, tmp_path / name, devices=("cpu",) * n, dtype="float32")
+        return hash_tree(tmp_path / name)  # the LoRA, its config and the train report
+
+    warm = {n: tree(f"warm{n}", n) for n in (1, 2)}
     monkeypatch.setattr(train_job.Replica, "warm_up", lambda self, ids: None)  # the job as it was before the warm-up row
-    for n in (1, 2):
-        assert hash_tree(run(head_dir, tmp_path / f"cold{n}", devices=("cpu",) * n) and tmp_path / f"cold{n}") == warm[n]  # LoRA, config and report
+    assert {n: tree(f"cold{n}", n) for n in (1, 2)} == warm
 
 
 def test_the_warm_up_row_runs_once_per_replica_before_any_row_and_leaves_nothing_behind(head_dir, tmp_path, monkeypatch):
