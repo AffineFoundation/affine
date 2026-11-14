@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `68b8abc5` is the last of the eight, and the commit that the coordinator named for the mainnet start when this text was written. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `6baf0d74` is the last of the eight. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 
 ## Hosts
 
@@ -99,7 +99,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 68b8abc5a4b7d72520cd3a12a239350328b820cc; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 6baf0d743134fc014d55a55d753af574bc27cdd5; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
@@ -117,11 +117,13 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
    | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
    | `e0faff2d` (PR #157 and PR #159) | The guard of `run`: it compares the box with the pinned digests before it opens a round, before it runs an open round again and before a fold. On a difference it starts none of them and ends with exit code 2 ("The digests of the box and the pinned digests" below). | `run` does not stop on such a box. Each round closes in seconds, and every seat in it gets one counted failure. |
-   | `68b8abc5` (PR #166; it holds PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Four things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. |
+   | `6baf0d74` (PR #164; it holds PR #166, `68b8abc5`, PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Five things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). From `6baf0d74`: `set-params` prints `changed`, each parameter whose value differs, with the value before and after ("The value `squat_min_wait_s`" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. `set-params` prints only the two hashes, so nothing shows a key that went back to its default. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
    These eight are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
+
+   Each change on `v2` from `1d7d0628` to `6baf0d74` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -689,7 +691,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       - The title line shows a page title: the browser view works.
       - `grep -c` prints `0`: the root still shows v1's page.
       - The `Where to get the link` line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, see step 13.
-      - The `squat_min_wait_s` line shows `31536000`. With `86400`, the bootstrap got a file without the key (check 5 of "Before the mainnet bootstrap"). Tell the coordinator at once: the repair is a `set-params` with the right file between two rounds, and it must come before the first entry is charged.
+      - The `squat_min_wait_s` line shows `31536000`. With `86400`, the bootstrap got a file without the key (check 5 of "Before the mainnet bootstrap"). Tell the coordinator at once: the repair is a `set-params` with the right file between two rounds, and it must come before the first entry is charged. Its `changed` must then show `"squat_min_wait_s": {"before": 86400, "after": 31536000}` and no other key.
       - After 60 seconds the hash is still `H`. If it changed, another v1 process writes `llms.txt`: v1's source speaks of "legacy website pushes". Find it (`pm2 ls`, `crontab -l`, `grep -rl llms ~/.config/systemd/user/`), stop it, and run the command again.
 
       With `exit=1`, the file in the site directory did not change. `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong. `not of the same snapshot` means that a publish was in progress: run it again.
@@ -972,7 +974,7 @@ On the GPU box, in the shell of step 2 of "GPU box".
 | `python -m sn120_v2 release-seat --state-dir $STATE --stack sn120_v2.assembly:stack --all` | Releases every held seat and sets the count of failures of every seat back to 0. `--uid 12` does it for one UID. Stop the loop first: this command takes over the journal. See "After a fault of the box in training". |
 | `python -m sn120_v2 force-sync --state-dir $STATE --stack sn120_v2.assembly:stack` | Shows the chain sync that `run` refuses: the seats that leave. It writes nothing and is safe while the loop runs. With `--confirm-remove N` it applies the sync; stop the loop before that. See "When `run` refuses the chain sync". |
 | `python -m sn120_v2 publish --state-dir $STATE --stack sn120_v2.assembly:stack` | Writes `llms.txt` and `mining.json` again. It does not change the journal. |
-| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change: a key that the file does not hold goes back to its default. So each file holds `"squat_min_wait_s": 31536000` ("The value `squat_min_wait_s`"). |
+| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. From `6baf0d74` it also prints `changed`: each parameter whose value differs, with the value `before` and `after`. Read `changed` after each `set-params` ("The value `squat_min_wait_s`"). Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change: a key that the file does not hold goes back to its default. So each file holds `"squat_min_wait_s": 31536000` ("The value `squat_min_wait_s`"). |
 
 `--params` on `run`, `status` and `publish` is only a check: a file that differs from the pinned parameters is refused.
 
@@ -1000,7 +1002,7 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 There are four kinds of cause:
 
 1. **The store did not answer** (`r2 <action> '<key>' failed: ...`). The lines stop by themselves at a later try.
-2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `chain read of the registrations did not end in 90 s: the connection is dropped`, `the chain head is N s old: the node is behind`, `partial chain read ...`). The lines stop by themselves when the chain answers again. **Do not stop the loop for a chain line: a restart does not help.** From `e9958463` (check 1 tests it with `c87b81ea`), one chain read of `run` ends in 90 s at most. A read that fails or does not end drops the connection, `run` prints `waiting:`, and the next pass opens a new connection. One pass waits for the chain 180 s at most (90 s for the registrations, 90 s for the block hash). A normal read of the registrations takes 5 to 8 s. What was tried: reads through a local relay to finney, with faults put into the relay. The chain library (bittensor 11.0.2) connected again in every case. What is not proven: a real outage on the box. If the same chain line still comes after 15 minutes, send the line to the coordinator.
+2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `chain read of the registrations did not end in 90 s: the connection is dropped`, `the chain head is N s old: the node is behind`, `partial chain read ...`). The lines stop by themselves when the chain answers again. **Do not stop the loop for a chain line: a restart does not help.** From `e9958463` (check 1 tests it with `6baf0d74`), one chain read of `run` ends in 90 s at most. A read that fails or does not end drops the connection, `run` prints `waiting:`, and the next pass opens a new connection. One pass waits for the chain 180 s at most (90 s for the registrations, 90 s for the block hash). A normal read of the registrations takes 5 to 8 s. What was tried: reads through a local relay to finney, with faults put into the relay. The chain library (bittensor 11.0.2) connected again in every case. What is not proven: a real outage on the box. If the same chain line still comes after 15 minutes, send the line to the coordinator.
 3. **`run` refuses the chain sync** (`sync would remove N of M seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command`). Nothing ends it by itself, and a new start does not help. The way out is the command `force-sync`: see "When `run` refuses the chain sync" below.
 4. **Our own checker fails its known-good case**, on this machine. Then nothing ends it, and a new start does not help. These are the texts of that case:
 
@@ -1023,7 +1025,7 @@ This is not the case of one bad miner file. A file that makes the checker fail w
 
 Words used here. A **seat** is one registration (UID and registration block) that waits in the queue for a round. The **chain sync**: at each pass, `run` reads the registrations from the chain; seats that are no longer on the chain leave the queue, and new registrations enter it.
 
-The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. With 256 seats that is 65 or more seats in one read. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap").
+The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. With 256 seats that is 65 or more seats in one read. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`).
 
 When the refusal can come:
 
@@ -1201,7 +1203,7 @@ This part is for a fault of the box that is not a digest difference: a GPU fault
 
 ### A round in which no training finished
 
-The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap"): when no batch of a round trained, and at least one batch ended as `no_decision`, `run` takes the fault as a fault of the box. The round ends as a failed lease. There is no decision, nobody is charged, and no failure is counted for a seat. The seats are first again, and the next round opens `apply_retry_s` (5 minutes) later. `run` goes on, and the loop does not stop.
+The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`): when no batch of a round trained, and at least one batch ended as `no_decision`, `run` takes the fault as a fault of the box. The round ends as a failed lease. There is no decision, nobody is charged, and no failure is counted for a seat. The seats are first again, and the next round opens `apply_retry_s` (5 minutes) later. `run` goes on, and the loop does not stop.
 
 - "Trained" means that the entry is `scored` or `not_scored`. A skipped entry or a `not_trained` entry in the same round changes nothing.
 - Both kinds of `no_decision` are in the rule: "training failed 3 times", and a batch that had the whole training time of the round and did not finish (a slow or hung box).
@@ -1287,6 +1289,24 @@ The mainnet `params.json` holds `"squat_min_wait_s": 31536000` (check 5 of "Befo
 
 **Each later file for `set-params` must hold the same key.** `set-params` does not add a file to the pinned parameters. It replaces them, and a key that the file does not hold goes back to its default (86400). So a file with only the two new digests switches squat-trim on. Run the check line of check 5 on each file before `set-params`: its first number must be `31536000`. In phase `APPLY`, `set-params` refuses such a file, because it differs from the pinned one in more than the two digests. In phase `IDLE` nothing refuses it.
 
+**Read `changed` after each `set-params`.** From `6baf0d74` (check 1 of "Before the mainnet bootstrap"), `set-params` prints a third key, `changed`: each parameter whose value differs from the pinned one, with the value `before` and `after`. A value of the recipe has the name `recipe.<name>`. The output is still one line of JSON, with the two hashes first. This is the output for a file that lacks `squat_min_wait_s` and has a new code digest:
+
+```
+{"params_hash_before": "4a17...c253", "params_hash": "2658...4d49", "changed": {"squat_min_wait_s": {"before": 31536000, "after": 86400}, "recipe.code_digest": {"before": "", "after": "sha256:abab...abab"}}}
+```
+
+- The same file a second time prints `"changed": {}`, and the two hashes are the same.
+- After the digest block of "After a fix", `changed` holds `recipe.code_digest`, `recipe.image_digests`, or both, and no other key.
+- A line `"squat_min_wait_s": {"before": 31536000, "after": 86400}` means that the file lacks the key. **Do not start the loop.** Give `set-params` the right file: the digest block of "After a fix" writes it. `changed` then shows the reverse, `{"before": 86400, "after": 31536000}`. `params_hash` is the hash that the check line prints for the right file: the parameters are hashed by content, so a file equal to the one that was pinned before gives the old hash again.
+- Any other key that you did not want to change: the same. Do not start the loop, and give `set-params` the right file.
+- While the loop is stopped, no round uses the wrong value, so nothing is lost on the box. `set-params` writes two records to the journal (the takeover and one `params_set`). It moves no seat and charges nobody. Squat-trim reads the value only when `run` picks the entries of a round.
+
+**One limit: the weights writer does not wait for the loop.** The weights writer on AffineValidator reads five values from the pinned parameters at minute 05 of each hour: `kings_window`, `burn_uid`, `netuid`, `weights_cadence_s` and `weights_rate_limit_blocks`. If `changed` holds one of these five by mistake, put it right before the next minute 05.
+
+Do not run `publish` by hand between the wrong `set-params` and the right one. It would put the wrong values into the public snapshot (`llms.txt`, `mining.json`), and they would stay there until the next publish.
+
+At a commit before `6baf0d74`, `set-params` prints only the two hashes. Then the check line on the file before `set-params` is the only check.
+
 How to see what is pinned, in two ways:
 
 - The check line of check 5 prints the hash of a file's parameters. `"params_hash"` of `status` is the hash of the pinned ones. The same hash means that this file is pinned.
@@ -1345,7 +1365,7 @@ Do not start the loop yet. What comes next depends on the phase:
   python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $CUT/params.json
   ```
 
-  It prints `{"params_hash_before": "...", "params_hash": "..."}`. `params_hash` must be the hash of the last line of the digest block. Put the new `$CUT/params.json` and `$CUT/plan.json` with the run records (step 11 of "GPU box"): a new box needs them.
+  It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. `params_hash` must be the hash of the last line of the digest block. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". Put the new `$CUT/params.json` and `$CUT/plan.json` with the run records (step 11 of "GPU box"): a new box needs them.
 - `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it by hand first, with the loop stopped. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`.
 
   ```
@@ -1378,7 +1398,7 @@ Before it: the loop is stopped (on a new box: not started yet). The checkout, th
    python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $CUT/params.json
    ```
 
-   It prints `{"params_hash_before": "...", "params_hash": "..."}`. In `APPLY` the file must differ from the pinned parameters in the two digests only (`recipe.image_digests`, `recipe.code_digest`); the file of the digest block is such a file. In `IDLE` any file is taken, so the hash check of the digest block is the only check there.
+   It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". In `APPLY` the file must differ from the pinned parameters in the two digests only (`recipe.image_digests`, `recipe.code_digest`); the file of the digest block is such a file. In `IDLE` any file is taken, so the hash check of the digest block and `changed` are the two checks there.
 5. Start the loop. After a winner, `run` finishes the fold, closes the round as `applied`, and opens the next round with the new digests.
 
 `end-round --discard-result` is needed only when the stored result itself is bad. It ends the round with no decision and throws the result away. The seats of that round are not charged, no failure is counted, and they are first in the next round; a batch that would have won must win again. Tell the coordinator before you use it.
@@ -1408,9 +1428,9 @@ A new box can have other digests than the old one. `run` on the new box sees tha
    ```
 
    Never write that file by hand. What comes next depends on the phase that step 4 showed:
-   - `IDLE`: `set-params` with `$CUT/params.json` (the `IDLE` line of "After a fix"), then step 6.
+   - `IDLE`: `set-params` with `$CUT/params.json` (the `IDLE` line of "After a fix", with its check of `changed`), then step 6.
    - `RUNNING` (the old box died in a round): `end-round` by hand. It works with the old pinned digests on the new box: it pulls the journal copy into the empty state directory. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`. Exit code 0: the round is ended with no decision; nobody is charged, no failure is counted, and the seats are first in the next round. Then the `IDLE` line. Exit code 3: the dead box stored its result. Then do "A stored result that is not judged, and a box with other digests" of "After a fix" from its step 3: the loop (it judges the result, then `run` is refused), `set-params`, the loop again. It costs nobody anything.
-   - `APPLY` (the old box left a decided round): `set-params` with `$CUT/params.json`, then step 6. `run` on the new box then finishes the promotion and the fold.
+   - `APPLY` (the old box left a decided round): `set-params` with `$CUT/params.json` and the same check of `changed`, then step 6. `run` on the new box then finishes the promotion and the fold.
 6. Start the loop (step 10 of "GPU box"). With the same digests, its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
 
 Two `run` processes never both write: the newer one takes over the journal, and the older one stops with `refused: FencedError` at its next write. The loop of the old box does not start a refused `run` again: it stops with exit code 2. Never start it again by hand on the old box.

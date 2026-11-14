@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -41,7 +42,7 @@ from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide
 from .params import GenesisSpec, Params
-from .public import round_report, snapshot
+from .public import public_text, round_report, snapshot
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
@@ -465,7 +466,11 @@ class Controller:
         if outcome in (APPLIED, NULL) and pairs:
             snapshot_id = self._update_sampler(pairs, outcome)
         closed = dataclasses.replace(record, outcome=outcome, closed_at=now)
-        report = round_report(closed, pairs) | {"note": reason, "wall_s": self._wall(pairs, now)}
+        report = round_report(closed, pairs) | {"note": public_text(reason), "wall_s": self._wall(pairs, now)}
+        # The public file holds the safe form of each text. The journal keeps the text as it was; so does the log of ``run``.
+        texts = [reason, *((decision.reason, *(entry.reason for entry in decision.entries)) if decision else ())]
+        for text in dict.fromkeys(text for text in texts if public_text(text) != text):
+            print(f"round {record.round_id}: the public round file holds a changed form of this text. The full text: {text}", file=sys.stderr, flush=True)
         report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
         self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
