@@ -528,7 +528,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  hotkey already had its turn, the seat is removed.",
         "- One submission for each miner in a round. A second seat of the same hotkey or of the same owner coldkey",
         "  waits for a later round. The owner coldkey is the chain's `SubtensorModule.Owner` of the seat's hotkey,",
-        "  read at the same block as the round-open registration snapshot.",
+        "  read at the same block as the registrations, in the read of the chain before the round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         "  queue.",
         "- A failure is counted for your seat in one case only: your submission had the whole training time of the",

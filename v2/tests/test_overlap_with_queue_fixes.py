@@ -14,6 +14,8 @@ Each part was tested alone. Here they run together, on a real tiny head, in the 
 * The chain file and its checkpoints while a round with such a seat is open.
 * One seat for each coldkey when the registrations of the open were read beside the fold, and the round opens
   while the second sha256 of the folded head still runs.
+* Each query of a read of the chain names one block. With ``overlap`` the read of an open can be older than
+  the head of the chain at that open, and llms.txt says no more than that.
 """
 
 from __future__ import annotations
@@ -24,7 +26,9 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -33,9 +37,9 @@ torch = pytest.importorskip("torch")
 
 from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 
-from sn120_v2 import cli, headfold, layout  # noqa: E402
+from sn120_v2 import cli, headfold, layout, publisher  # noqa: E402
 from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
-from sn120_v2.chain import FakeChain, Reader  # noqa: E402
+from sn120_v2.chain import FakeChain, Reader, SubtensorClient  # noqa: E402
 from sn120_v2.controller import Stack  # noqa: E402
 from sn120_v2.headchain import CHAIN, check_chain, checkpoints, heads_of, tail  # noqa: E402
 from sn120_v2.headfold import READ_BACK  # noqa: E402
@@ -505,4 +509,90 @@ def test_a_round_that_opens_while_the_second_sha256_runs_takes_one_seat_for_each
     else:
         assert reads == ["MainThread"] * 3 and opens == [True]
     world.wait()
+    whole(world)
+
+
+# ---- the block of each chain query, and the read that an open uses ----
+
+READ = ("SubnetworkN", "Keys", "BlockAtRegistration", "Owner")  # the storage items of one read of the registrations
+NAMES = SimpleNamespace(storage=SimpleNamespace(SubtensorModule=SimpleNamespace(**{name: name for name in READ})))
+READ_TIME = 1_800_000_000
+
+
+class MovingChain:
+    """The SDK calls of ``SubtensorClient`` on a chain that moves. It keeps the thread and the block of each query.
+
+    The head moves one block while a read of the registrations runs, and the test moves it more. ``owner`` has the owner
+    coldkey of a hotkey from a block on. So the answer of an Owner query shows the block that the query named.
+    """
+
+    def __init__(self, uids: range, block: int) -> None:
+        self.block, self.uids, self.asked = block, uids, []
+        self.owner: dict[str, tuple[int, str]] = {}
+
+    def block_info(self, block):
+        return SimpleNamespace(number=block, hash=f"0xhash{block}", timestamp=datetime.fromtimestamp(READ_TIME, timezone.utc))
+
+    def query(self, item, params, *, block=None):
+        self.asked.append((threading.current_thread().name, item, block))
+        if item == "SubnetworkN":
+            return len(self.uids)
+        since, coldkey = self.owner.get(params[0], (0, ""))
+        return coldkey if coldkey and block >= since else params[0].replace("hk", "ck")
+
+    def query_map(self, item, params, *, block=None):
+        self.asked.append((threading.current_thread().name, item, block))
+        self.block += item == "BlockAtRegistration"  # the chain makes a block before the Owner queries of this read
+        return [(uid, {"Keys": f"hk{uid}", "BlockAtRegistration": 1000 + uid}[item]) for uid in self.uids]
+
+    def reads(self) -> list[tuple[str, int]]:
+        """(thread, block) of each read of the registrations. A read is one UID count, the two maps, and one Owner query for each hotkey, at one block."""
+        size = 3 + len(self.uids)
+        parts = [self.asked[at : at + size] for at in range(0, len(self.asked), size)]
+        for part in parts:
+            assert [item for _, item, _ in part] == [*READ[:3], *["Owner"] * len(self.uids)]
+            assert len({(thread, block) for thread, _, block in part}) == 1, "one thread and one block for all the queries of a read"
+        return [(part[0][0], part[0][2]) for part in parts]
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_each_owner_query_names_the_block_of_the_registration_read_and_an_open_uses_one_such_read(tmp_path, monkeypatch, order):
+    """After the first king is decided the chain moves 40 blocks, and in the new block hk3 owns hk4 and hk5 owns hk6."""
+    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=order)
+    world.start(CHAIN)
+    for uid, quality in ((1, 0.3), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)):
+        world.register(uid, quality)
+    chain = MovingChain(range(7), block=2000)
+    reader = Reader(SubtensorClient(world.params.netuid, chain, sdk=NAMES), world.params.netuid, clock=lambda: READ_TIME)
+
+    def move():
+        for thread in threading.enumerate():
+            if thread.name == READ_AHEAD:
+                thread.join(WAIT_S)
+        chain.block = 2040
+        chain.owner = {"hk4": (2040, "ck3"), "hk6": (2040, "ck5")}
+
+    at_record(world, HEAD_FOLDED, move)
+    heads = []
+    real = world.runner.run
+    world.runner.run = lambda ticket: (heads.append(chain.block), real(ticket))[1]
+    assert run(world, monkeypatch, rounds=3, chain=reader.snapshot) == 0
+    world.wait()
+    reads, rounds = chain.reads(), [seats_of(record) for record in world.state.rounds]
+    synced = [(data["block"], [(reg["uid"], reg["coldkey"]) for reg in data["refreshed"]]) for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED and data.get("refreshed")]
+    every = [(uid, f"ck{uid}") for uid in range(1, 7)]
+    if order == OVERLAP:
+        assert reads == [("MainThread", 2000), (READ_AHEAD, 2001), ("MainThread", 2040)]
+        assert heads == [2001, 2040, 2041], "the head of the chain when the box got each round: the second open used a read that was 39 blocks old"
+        assert rounds == [[1, 2], [3, 4], [5]], "at block 2001 hk3 and hk4 had two owners, so the second round took the two"
+        assert synced == [(2000, every), (2040, [(6, "ck5")])], "the read beside the fold changed nothing, so it has no record"
+    else:
+        assert reads == [("MainThread", 2000), ("MainThread", 2040), ("MainThread", 2041)]
+        assert heads == [2001, 2041, 2042], "each open used the read of its pass"
+        assert rounds == [[1, 2], [3, 5], [4, 6]], "at block 2040 hk3 owns hk4 and hk5 owns hk6, so the second round took one seat of each owner"
+        assert synced == [(2000, every), (2040, [(4, "ck3"), (6, "ck5")])]
+    flat = " ".join(publisher.render(json.loads(json.dumps(world.publisher.snapshots[-1])), "https://site.example")[1].decode().split())
+    assert "The validator reads the chain before each round." in flat
+    assert "The owner coldkey is the chain's `SubtensorModule.Owner` of the seat's hotkey, read at the same block as the registrations, in the read of the chain before the round." in flat
+    assert "round-open" not in flat, "with ``overlap`` the read of an open is made beside the fold of the last king, not at the open"
     whole(world)
