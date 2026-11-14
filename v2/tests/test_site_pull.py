@@ -297,6 +297,30 @@ def test_the_reference_models_of_the_v1_history_are_in_the_table_from_the_first_
     assert layout.BENCHMARKS in json.loads((site / INDEX).read_text())["files"]
 
 
+def test_a_round_with_no_result_is_on_the_site_after_one_run(env, tmp_path):
+    """No training finished: the round has no result, and mining.json gives its entry no ``status``."""
+    world = sim.SimWorld(tmp_path / "world", sim.sim_params())
+    world.register(3, 0.0)
+    world.register(4, 0.3)
+    assert world.round().outcome == "applied"
+    world.register(8, 0.0)
+    world.trainer.fail_hotkeys = {"hk8"}
+    assert world.round().outcome == "no_decision"
+    store = R2Store.from_env(env, attempts=1)
+    for key in world.store.list(""):
+        store.put(key, world.store.get(key))
+    mining, llms = render(json.loads(json.dumps(world.publisher.snapshots[-1])), URL)
+    store.put(layout.MINING_JSON, mining)
+    store.put(layout.LLMS_TXT, llms)
+    assert "status" not in json.loads(mining)["history"][-1]["entries"][0]
+    site = tmp_path / "site"
+    done = pull(env, site)
+    assert done.returncode == 0 and "failed steps 0; site built" in done.stdout, done.stderr
+    data = json.loads((site / "site-data.json").read_text())
+    assert [(row["uid"], row["status"]) for row in data["history"] if row["round_id"] == "r000002"] == [(8, None)]
+    assert [(row["round_id"], row["outcome"]) for row in data["rounds"]] == [("r000002", "no_decision"), ("r000001", "applied")]
+
+
 def test_a_store_with_the_pointer_only_at_its_old_key_fails_one_step_until_the_controller_writes_the_new_key(env, store, tmp_path):
     """The head pointer moved from ``public/current.json``. The pull never reads the old key: at an empty prefix it is an object of v1."""
     site, old, pointer = tmp_path / "site", "public/current.json", store.get(layout.CURRENT)
