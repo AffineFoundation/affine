@@ -1538,13 +1538,18 @@ After any failed lease, the next round opens 5 minutes later at the earliest (`a
 
 This is the short form of the part above, for a commit that changes no digest. The message for the commit says "a checkout only". `0c29cb6c` is such a commit for a box at `1d7d0628` or later (check 1 of "Before the mainnet bootstrap"). `run` loads the code only at a start, so a checkout changes nothing in a `run` process that runs: the stop and the start are needed.
 
-1. **Before the stop: no round is open.** In a second shell with the same exports, `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`. Anybody can read the same value: `"phase"` in `https://affine.io/mining.json`, once the site shows v2's file.
+1. **Before the stop: no round is open.** The cheapest moment for the stop is right after a round closes. In a second shell with the same exports, `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`. Anybody can read the same value: `"phase"` in `https://affine.io/mining.json`, once the site shows v2's file.
    - `RUNNING` or `APPLY`: wait for `IDLE`. The promotion of a winner comes at most 100 minutes after the lease. The fold comes after it and has no time limit; during the fold `status` shows `APPLY` and the site still shows `RUNNING` ("The time limit of a round"). `run` prints the round summary at the close.
-   - When valid files wait, `run` opens the next round at once, and no look shows `IDLE`. Then stop the loop right after a round summary in `run.log`: the round that is lost is the one that opened a moment ago. The part above says what a stop in a round costs: that round, and nothing for a seat.
-2. **Stop the loop** (step 10.4 of "GPU box"). Then run the `status` line again.
-   - `IDLE`: go on.
-   - `RUNNING`: a round opened between the look and the stop. Go on: at its next start the loop ends that round with no decision. Nobody is charged, no failure is counted, and its seats are first in the next round.
-   - `APPLY`: go on. `run` finishes the fold after the start.
+   - When valid files wait, `run` opens the next round at once, and no look shows `IDLE`. Then stop the loop right after a round summary in `run.log`: the round that is lost is the one that opened a moment ago. The table of step 2 says what a stop in a round costs: that round, and nothing for a seat.
+2. **Stop the loop** (step 10.4 of "GPU box"). Then run the `status` line again. Go on in each case: the start of step 4 does the right thing by itself.
+
+   | `status` after the stop | What the start does | The cost |
+   |---|---|---|
+   | `IDLE` | Nothing is left from a round. | None. |
+   | `RUNNING`, no box result in the store | The loop's `end-round` ends the round with no decision. `run.log`: `run-loop: end-round: the open round is ended with no decision. Nobody is charged and no failure is counted.` | That round: its training and its scores are discarded. Nobody is charged, no failure is counted, and its seats are first in the next round. The next round opens 5 minutes later at the earliest (`apply_retry_s` 300), with a new draw of tasks. |
+   | `RUNNING`, the box result is in the store, not judged | The round stays open: `end-round` ends nothing (exit code 3). `run` judges the result in its first pass. `run.log`: `run-loop: end-round: a box result of the open round is in the store. The round stays open, and run judges that result.` | None. |
+   | `APPLY`, the round is decided, the winner not promoted | `run` promotes the winner, folds and closes the round. | None. |
+   | `APPLY`, the winner promoted, the fold not done | `run` folds and closes the round. | None. |
 3. **The checkout, then the `diff` line.**
 
    ```
@@ -1553,15 +1558,52 @@ This is the short form of the part above, for a commit that changes no digest. T
    python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"
    ```
 
-   The second line prints the commit. The `diff` line prints only `exit=0`. With any other output the commit is not a checkout only: do not start the loop, and do the digest block of the part above.
+   The second line prints the commit. The `diff` line prints only `exit=0`. With a difference in its output and `exit=1`, the commit is not a checkout only: do not start the loop, and do the digest block of the part above.
+
+   **`diff: .../plan.json: No such file or directory` and `exit=2`: the `diff` line checked nothing.** `$CUT/plan.json` is not there: the state was not made with the steps of "GPU box", or `$CUT` is not set in this shell (`echo $CUT`). Do this check in its place. It needs v2's `mining.json` on the site.
+
+   ```
+   python -m sn120_v2.gpu.plan
+   echo $SN120_IMAGE_DIGEST                              # with form B: grep '^SN120_IMAGE_DIGEST=' $CUT/run.env
+   curl -fsS https://affine.io/mining.json | python3 -c "import json,sys; r = json.load(sys.stdin)['params']['recipe']; print(r['code_digest'], r['image_digests'])"
+   ```
+
+   - The first line prints `{"code_digest": "...", "image_digest": "..."}`: the two digests of this box at this commit.
+   - The third line prints the two pinned values. On 14 Nov 2026 they were `4366d82d3a2d68856b2da0876bdfbe0ce31c00ff661cddd0a08e8033d93a410f` (code) and a list with `9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a` (image).
+   - The check passes when the `code_digest` of the first line is the code digest of the third line, its `image_digest` is in the list of the third line, and the second line prints that same image digest.
+   - Then save the file, so that the `diff` line works the next time: `python -m sn120_v2.gpu.plan > $CUT/plan.json`.
+   - When one value differs: do not start the loop, and tell the coordinator.
 4. **Start the loop** (step 10.2 of "GPU box": the line of form A again, or `sudo systemctl start sn120-v2-run`). Read the status line once (step 10.3 of "GPU box").
+
+   **Form A in a new shell: check the variables before the start.** With form A the loop takes its variables from the shell that starts it. With form B the unit reads them from `$CUT/run.env`, which the checkout does not change.
+
+   ```
+   env | grep '^SN120_' | sed 's/=.*//' | sort           # the names only, no value
+   echo $SN120_LINKS_URL
+   ```
+
+   - The first line prints the nine names of the check of form B (step 10.2 of "GPU box"). `SN120_R2_PREFIX` is not there.
+   - The second line prints `https://affine.io/ff/links`. **`SN120_LINKS_URL` is the one variable that no command demands.** Without it the loop starts, and the first publish of the new `run` writes `llms.txt` and `mining.json` with no address for the upload links (`Where to get the link: not published yet`). Then a miner cannot find its link.
+   - A missing store variable, `SN120_PUBLIC_URL` or `SN120_V2_CHAIN_NETWORK`: the loop's `end-round` is refused with `refused: ConfigError: environment variable <name> is not set; refusing to guess a default`. The loop stops with exit code 2, and `run-loop.status` says `stopped: end-round refused`. An open round stays open, and nothing is counted. Export the variable and start the loop again.
+   - A missing `SN120_IMAGE_DIGEST`: only `run` reads it. So the loop's `end-round` runs first (the table of step 2), then `run` is refused with the same `ConfigError` line, and the loop stops with exit code 2. Export it (check 3 of "Before the mainnet bootstrap") and start the loop again.
+   - A missing `SN120_WORK_DIR`: the loop does not start (exit code 64, `SN120_WORK_DIR is not set`). The line of form A sends this message away, so the sign is that `run-loop.status` has no new line.
 5. **What you see.** `run` prints no line for a publish. A new `run` process writes `mining.json` and `llms.txt` into the store in its first pass:
    - No round opens in that pass: `run.log` shows `idle: N seats wait, phase IDLE`, and `run` writes the two files right after this line. At a later pass with no round, `run` writes them only when the queue or the result of a file check changed.
    - A round opens in that pass: `run` writes the two files at the open of the round, and `run.log` shows no `idle:` line.
+   - **A round that the start judges or finishes gets no summary in `run.log`** (the last three rows of the table of step 2). The log goes straight to `idle: N seats wait, phase IDLE`, or to the next round. Read the result of that round with `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` ("What a closed round looks like").
    - The sign in the file: line 3 of `llms.txt`, `Generated <time> UTC from snapshot`, shows the time of that pass. `generated_at` in `mining.json` is the same second.
    - `idle: ..., last problem: publish failed: <cause>`: the store did not take the files in the pass before. The next pass with no round writes them again, 30 seconds later. The text `last problem:` stays in the later lines, so the sign of the write is the `Generated` line, not the log.
    - The way to the site: after step 12 of "AffineValidator", the pull copies the two files within about a minute (its timer starts a run at second 30 of each minute). Before step 12 nothing copies them: run the command of step 8.4 of "AffineValidator" again.
-6. **The check.** `curl -s https://affine.io/llms.txt | grep -c "A round with no result"` prints `1` (step 8.2 of "AffineValidator"). If it prints `0` two minutes after the start, read line 3 of the public file (`curl -s https://affine.io/llms.txt | sed -n 3p`):
+6. **The check.** Two lines on the public file:
+
+   ```
+   curl -s https://affine.io/llms.txt | grep -c "A round with no result"
+   curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
+   ```
+
+   The second line still names `https://affine.io/ff/links/<hotkey>.json`. If it says `not published yet`, the new `run` has no `SN120_LINKS_URL`: do the repair of step 13 of "AffineValidator".
+
+   The first line prints `1` (step 8.2 of "AffineValidator"). If it prints `0` two minutes after the start, read line 3 of the public file (`curl -s https://affine.io/llms.txt | sed -n 3p`):
    - The time is older than the start: the write or the copy did not happen. Read the last lines of `run.log`, and look at the last run of the pull ("Public pull and site").
    - The time is that of the start or later: the `run` process does not run the new commit. Run `git rev-parse HEAD` on the GPU box, and read the `run-loop:` lines of `run.log`: there must be a new `loop started` line after the checkout.
 
