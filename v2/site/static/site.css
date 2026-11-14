@@ -50,6 +50,16 @@ td a{border-bottom:1px dotted var(--muted)}
 td a:hover{border-bottom-style:solid}
 td.empty,tr.more td{color:var(--muted);white-space:normal;height:auto;padding:10px 8px;border-bottom:0}
 td.empty{text-align:center;padding:28px}
+/* as k1-tables.css of the v1 site: the header in capital letters, and the first column in view when a table scrolls sideways */
+.scroll thead th{text-transform:uppercase}
+.scroll th:first-child,.scroll td:first-child{position:sticky;left:0;background:var(--bg);z-index:1}
+.scroll thead th:first-child{z-index:3}
+.scroll tbody tr:hover td:first-child{background:var(--hover)}
+.scroll td.empty,.scroll tr.more td{position:static}
+td .bar{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px}
+td .bar i{display:inline-block;height:6px;border-radius:1px;background:currentColor;opacity:.55}
+.hp{display:block;white-space:normal;cursor:help}
+.hp span{white-space:nowrap}
 .key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono)}
 .key:hover,.key:focus-visible{color:var(--ink)}
 .key.copied::after{content:' copied';font-size:9px;color:var(--performance)}
@@ -80,6 +90,12 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 #bench tfoot tr:first-child td{border-top:2px solid var(--axis)}
 #bench tfoot tr:last-child td{border-bottom:0}
 #bench tr.genesis td{border-top:1px solid var(--muted)}
+#bench .avg,#bench tr.genesis td{font-weight:600}
+#bench .name a{border-bottom:1px dotted var(--muted)}
+#bench .name a:hover{border-bottom-style:solid}
+.meta{display:block;font-size:10px;line-height:14px;color:var(--muted);font-weight:400;white-space:normal}
+.meta span{white-space:nowrap}
+@media(max-width:640px){#bench .name{white-space:normal;vertical-align:top}#bench .who{flex-wrap:wrap;gap:2px 6px}}
 .star{width:9px;height:9px;margin-right:4px;vertical-align:-.5px;fill:#f5c542}
 @media(prefers-color-scheme:light){.star{fill:#c98a00}}
 
@@ -94,6 +110,7 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 .tile h2{font-size:17px}
 .chart{position:relative;height:200px}
 .spark .chart{height:92px}
+.spark .chart:empty{background:linear-gradient(var(--line),var(--line)) 32px 6px/calc(100% - 38px) 1px no-repeat,linear-gradient(var(--line),var(--line)) 32px 41px/calc(100% - 38px) 1px no-repeat,linear-gradient(var(--line),var(--line)) 32px 76px/calc(100% - 38px) 1px no-repeat}
 .chart svg{display:block;width:100%;height:100%;overflow:visible}
 .chart text{font:9px var(--mono);fill:var(--muted)}
 .chart .grid{stroke:var(--line)}
