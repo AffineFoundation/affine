@@ -49,6 +49,8 @@ K1_VERSION, QUEUE_VERSION, QUEUE_RULE = "sn120-k1-public-v1", "sn120-k1-queue-v2
 DECIDED = ("green", "red")  # every other v1 verdict (pending, timeout-promote) is undecided: never a king
 V1_PAYEES = 10  # v1 pays its last 10 distinct GREEN UIDs
 MAX_EPOCH_GAP = 2  # mining.json may be at most this many epochs after the last epoch in k1.json
+# One v1 epoch is about 15 minutes. Two k1.json reads this far apart with the same last epoch prove v1 stopped.
+SOURCE_IDLE_PROOF_S = 20 * 60
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 Seat = tuple[int, int]  # (uid, registration_block)
@@ -104,6 +106,43 @@ def build_genesis(master_digest: Any, validator_hotkey: Any) -> GenesisSpec:
     return GenesisSpec(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GENESIS_BASE_HASH, master_digest, check_ss58(validator_hotkey))
 
 
+def last_epoch(k1: Mapping[str, Any], where: str = "k1.json") -> int:
+    """The epoch_index of the last row in ``turns``. That row is a turn or a skip."""
+    window = _get(k1, "turns", list, where)
+    _need(bool(window), f"{where} has no turns")
+    return _get(window[-1], "epoch_index", int, "turn")
+
+
+def require_source_idle(k1: Mapping[str, Any], earlier: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse when v1 may still be taking turns.
+
+    Needs at least one ``earlier`` copy of k1.json whose ``generated_at`` is at
+    least ``SOURCE_IDLE_PROOF_S`` before this k1's, and whose last epoch equals
+    this k1's. That is the coded form of the runbook's two reads 20 minutes
+    apart with the same last line. Without it, a future import can miss turns
+    that v1 takes after the snapshot (see CUTOVER.md, known double turns).
+    """
+    last = last_epoch(k1)
+    now_gen = _get(k1, "generated_at", float, "k1.json")
+    proofs = [
+        (now_gen - _get(old, "generated_at", float, "earlier k1.json"), last_epoch(old, "earlier k1.json"))
+        for old in earlier
+        if now_gen - _get(old, "generated_at", float, "earlier k1.json") >= SOURCE_IDLE_PROOF_S
+    ]
+    if not proofs:
+        raise CutoverError(
+            f"refusing: v1 may still be dispatching. Give --earlier-k1 a copy of k1.json taken at least "
+            f"{SOURCE_IDLE_PROOF_S // 60} minutes before this one, with the same last epoch (now e{last}). "
+            "Two reads that far apart with the same last line prove the source is idle."
+        )
+    for age_s, old_last in proofs:
+        if old_last != last:
+            raise CutoverError(
+                f"refusing: v1 last epoch moved from e{old_last} to e{last} over {age_s:.0f} s: the source is still "
+                "dispatching. Stop v1's lifecycle, wait until the last epoch stands still, then import again."
+            )
+
+
 def build_import(
     k1: Mapping[str, Any],
     mining: Mapping[str, Any],
@@ -123,12 +162,15 @@ def build_import(
     ``earlier`` holds saved copies of k1.json from before ``k1``. k1.json shows
     only v1's last 200 epochs, and a turn without a verdict must not be lost
     when it leaves that window. The newest copy that shows a turn decides it.
+    At least one earlier copy must also prove the source is idle (see
+    ``require_source_idle``).
     """
     queue = _get(k1, "queue", dict, "k1.json")
     _need(k1.get("version") == K1_VERSION and queue.get("version") == QUEUE_VERSION, "k1.json has an unknown format version")
     _need(queue.get("enabled") is True and queue.get("queue_rule") == QUEUE_RULE, "the v1 queue is off or uses an unknown rule")
     age = now - _get(k1, "generated_at", float, "k1.json")
     _need(-300 <= age <= max_age_s, f"k1.json is {age:.0f} s old (limit {max_age_s} s): refusing a stale read")
+    require_source_idle(k1, earlier)
     chain_block = _get(queue, "chain_block", int, "queue")
 
     # 1. What v1 served. The served lists and the turn history must agree.
@@ -349,7 +391,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m sn120_v2.cutover", description="Build the v2 genesis and the import of v1's state.")
     parser.add_argument("--k1", default=K1_URL, help="v1 k1.json: https URL or file (default: %(default)s)")
     parser.add_argument("--mining", default=MINING_URL, help="v1 mining.json: https URL or file (default: %(default)s)")
-    parser.add_argument("--earlier-k1", action="append", default=[], metavar="FILE", help="a saved earlier copy of k1.json; give it once per copy")
+    parser.add_argument(
+        "--earlier-k1",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help=(
+            "a saved earlier copy of k1.json; give it once per copy. Required: at least one copy from "
+            f">={SOURCE_IDLE_PROOF_S // 60} minutes before this k1 with the same last epoch (proves v1 stopped), "
+            "and any copies that keep turns that left the 200-epoch window"
+        ),
+    )
     parser.add_argument("--chain", help="file with a ChainSnapshot as JSON: check and print the starting queue and weights; --out copies it as chain.json")
     parser.add_argument("--owner-hotkey", help="SS58 address of the subnet owner hotkey: refuse when UID 0 of --chain is another hotkey")
     parser.add_argument("--master-digest", help="sha256 digest of the genesis fp32 master files")
