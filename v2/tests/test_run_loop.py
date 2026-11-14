@@ -12,6 +12,7 @@ Three parts:
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -25,7 +26,9 @@ from pathlib import Path
 import pytest
 
 import sn120_v2
+from sn120_v2 import sim
 from sn120_v2.cli import RESULT_STORED, main
+from sn120_v2.gpu import plan
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.state import load
 from sn120_v2.worker import LocalRunner
@@ -120,6 +123,39 @@ def test_end_round_keeps_a_stored_box_result_unless_the_operator_discards_it(tmp
     seats = [seat for seat in state.queue.values() if seat.reg.uid in (4, 5)]
     assert len(seats) == 2 and all(seat.front and not seat.leased and not seat.held and seat.infra_attempts == 0 for seat in seats), "nobody is charged"
     assert main(["end-round", *stack]) == 2 and "refused: V2Error: no round is open" in capsys.readouterr().err, "the text that the loop reads"
+
+
+def test_a_stored_result_on_a_box_with_other_digests_is_judged_and_then_the_new_digests_are_pinned_at_no_cost(tmp_path, monkeypatch, capsys):
+    """The order for a new box, or for a fix with the digest block: end-round (3), run (2), set-params, run."""
+    directory, stack, _ = result_then_judging_fault(tmp_path)
+    old = load(directory / JOURNAL_FILE)
+    monkeypatch.setattr(time, "time", lambda: old.round.lease(old.round.leases[0].lease_id).expires_at + 3600.0)
+    (directory / JOURNAL_FILE).unlink()  # a new box: its state directory is empty, and the journal copy is in the store
+    new_image, cpu_stack = "the-image-of-the-new-box", sim.stack
+
+    def other_box(context):
+        parts = cpu_stack(context)
+        parts.pins = functools.partial(plan.check_pins, new_image) if context.command == "run" else None  # as the real stack
+        return parts
+
+    monkeypatch.setattr(sim, "SIM_IMAGE", new_image)
+    monkeypatch.setattr(sim, "stack", other_box)
+    assert main(["end-round", *stack]) == RESULT_STORED and "kept: round r000002 has a box result in the store" in capsys.readouterr().err
+    for _ in range(2):
+        assert main(["run", *stack, *RUN]) == 2, "run judges and promotes, then it is refused before the fold"
+        text = capsys.readouterr()
+        assert "refused: ConfigError: this box differs from the pinned digests, so the fold was not started. The difference: " in text.err
+        assert main(["status", *stack]) == 0 and json.loads(capsys.readouterr().out)["phase"] == "APPLY"
+    state = load(directory / JOURNAL_FILE)
+    assert state.round.decision.winner.uid == 4 and state.round.applied and not state.head.folded and [king.uid for king in state.kings] == [9, 1, 4]
+    assert all(seat.infra_attempts == 0 and not seat.held for seat in state.queue.values()) and state.failed_leases == 0
+    pinned = state.params.to_dict()
+    pinned["recipe"]["image_digests"] = [new_image]
+    (tmp_path / "params.json").write_text(json.dumps(pinned))
+    assert main(["set-params", *stack, "--params", str(tmp_path / "params.json")]) == 0, "a decided round takes the two new digests"
+    assert main(["run", *stack, *RUN]) == 0
+    state = load(directory / JOURNAL_FILE)
+    assert state.round is None and state.head.folded and (state.rounds[-1].round_id, state.rounds[-1].outcome) == ("r000002", "applied")
 
 
 # ------------------------------------------------------------ the loop with a fake run

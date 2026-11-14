@@ -18,7 +18,9 @@ from sn120_v2.cli import main  # noqa: E402
 from sn120_v2.controller import StackContext  # noqa: E402
 from sn120_v2.errors import ConfigError, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu.evaluator import VllmEvaluator  # noqa: E402
+from sn120_v2.gpu import plan  # noqa: E402
 from sn120_v2.gpu.folder import LoraFolder  # noqa: E402
+from sn120_v2.gpu.plan import code_digest  # noqa: E402
 from sn120_v2.gpu.trainer import LoraTrainer  # noqa: E402
 from sn120_v2.irt import IRTSampler  # noqa: E402
 from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
@@ -122,10 +124,26 @@ def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any
     monkeypatch.setenv("SN120_IMAGE_DIGEST", "sha256:" + "cd" * 32)  # as after a package change with no set-params
     capsys.readouterr()
     assert main(run) == 2, "exit code 2: the restart loop does not start run again"
-    refused = "refused: ConfigError: this box differs from the pinned digests (worker image sha256:cdcdcdcdc is not in the pinned set), so no round was opened."
-    assert refused in capsys.readouterr().err
+    refused = "refused: ConfigError: this box differs from the pinned digests, so no round was opened. The difference: "
+    values = f"image digest: pinned {IMAGE}, this box has sha256:{'cd' * 32} (the value of SN120_IMAGE_DIGEST). Nothing is counted for a seat. Next: the digest block"
+    assert refused + values in capsys.readouterr().err, "the line shows both values: no command shows the pinned digests"
     assert len(box.list(layout.JOURNAL)) == records + 1, "only the record of the start; nothing else was written"
     assert main(["end-round", *common]) == 2 and "no round is open" in capsys.readouterr().err, "the commands that need no GPU part are not refused for the pins"
+
+
+def test_the_pin_check_of_the_box_is_the_one_of_the_trainer_and_names_each_digest_that_differs_with_both_values(monkeypatch):
+    code = code_digest()
+    params = Params(recipe=Recipe(image_digests=(IMAGE, "sha256:second"), code_digest=code))
+    assembly.box_pins(IMAGE, params)
+    assembly.box_pins(IMAGE, Params(recipe=Recipe(image_digests=(IMAGE,))))  # no code digest is pinned: as check_pins, only the image counts
+    with pytest.raises(InfraError, match=f"^image digest: pinned {IMAGE} or sha256:second, this box has sha256:other \\(the value of SN120_IMAGE_DIGEST\\)$"):
+        assembly.box_pins("sha256:other", params)
+    monkeypatch.setattr(assembly, "code_digest", lambda: "the-code-after-a-fix")
+    monkeypatch.setattr(plan, "code_digest", lambda: "the-code-after-a-fix")
+    with pytest.raises(InfraError, match=f"^code digest: pinned {code}, this box has the-code-after-a-fix$"):
+        assembly.box_pins(IMAGE, params)
+    with pytest.raises(InfraError, match="^image digest: .*; code digest: pinned"):
+        assembly.box_pins("sha256:other", params)
 
 
 def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head(tmp_path, box):

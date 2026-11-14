@@ -178,7 +178,7 @@ class Controller:
             self.pins(self.params)
         except InfraError as exc:
             raise ConfigError(
-                f"this box differs from the pinned digests ({exc}), so {not_started}. Nothing is counted for a seat. "
+                f"this box differs from the pinned digests, so {not_started}. The difference: {exc}. Nothing is counted for a seat. "
                 f"Next: {first}the digest block, then set-params with the two digests of this box, then start again"
             ) from None
 
