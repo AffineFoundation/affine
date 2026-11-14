@@ -51,7 +51,7 @@ from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
-from .worker import LocalRunner
+from .worker import AT_THE_LEASE_S, LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
 # The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
@@ -436,6 +436,9 @@ def _round_time_lines(params: Params) -> list[str]:
         f"  training did not finish in that time, that is a failure of ours: `{NO_DECISION}`. Section 4 says when such a",
         "  failure is counted for the seat. If a try of its training failed before (a failure of the box) and a later try",
         f"  is stopped at the end of the training time, the batch is `{NOT_TRAINED}` as above: the box took a part of its time.",
+        f"- The box can start its work on a round later than {AT_THE_LEASE_S} s after the start of the lease, for example when the",
+        "  validator's program started again in the round. Then no batch had the whole training time: a batch that",
+        f"  does not finish is `{NOT_TRAINED}` as above, and no failure is counted for the seat.",
         f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. An open LoRA is a",
         "  LoRA that was not dropped at a look (section 6).",
         "- The stop time cuts every look, the first one too. The box starts no new chunk after the stop time, and a",
@@ -506,9 +509,10 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         "  queue.",
-        "- A failure is counted for your seat in one case only: your batch had the whole training time of the round,",
-        "  the first try of its training did not finish in that time (section 3), and at least one other batch of the",
-        "  same round finished its training.",
+        "- A failure is counted for your seat in one case only: your batch had the whole training time of the round",
+        f"  (it started at the lease, and the box started its work on the round at most {AT_THE_LEASE_S} s after the start of the",
+        "  lease), the first try of its training did not finish in that time (section 3), and at least one other batch",
+        "  of the same round finished its training.",
         f"  Your entry then has the status `{NO_DECISION}` and no scores. When {params.max_infra_attempts} failures",
         "  are counted for a seat, the seat is held: it takes no turn until the operator releases it. A release also",
         f"  sets the count to zero. A `{NO_DECISION}` that comes from the scoring (section 6) has scores and is not counted.",

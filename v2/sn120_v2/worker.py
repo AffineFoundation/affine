@@ -54,6 +54,13 @@ from .types import (
     TrainRequest,
 )
 
+# A pass of the box started "at the lease" when it started at most this long after the start of the lease. Only then
+# did a batch of the first group have the whole training time. A pass that started later (run started again in the
+# round, or the round ran again under the same lease) gave it less: a batch that does not finish is then not_trained,
+# and nothing is counted. A normal pass starts a few seconds after the lease: the controller writes the ticket, the
+# journal record and the public files in between. The weight hash and the downloads come after the start of the pass.
+AT_THE_LEASE_S = 120
+
 
 def gpu_slots(n_gpus: int, n_batches: int) -> list[tuple[int, ...]]:
     """Split the box's GPUs into equal slots of floor(n_gpus / batches) GPUs, at least one GPU each."""
@@ -74,7 +81,7 @@ class LocalRunner:
         # promotion still fit inside the round's time limit. ``train_end``: the end of the training time.
         limit = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
         train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
-        reports = self._train_all(ticket, train_end)
+        reports = self._train_all(ticket, train_end, at_the_lease=started - ticket.issued_at <= AT_THE_LEASE_S)
         trained = {pos: report for pos, report in reports.items() if isinstance(report, LoRAArtifact)}
         train_done = self.clock()
         null, scored, dropped, stopped = self._evaluate(ticket, trained, limit) if trained else ((), {}, {}, False)
@@ -105,11 +112,12 @@ class LocalRunner:
             phase_s={"training": train_done - started, "evaluation": finished - train_done},
         )
 
-    def _train_all(self, ticket: RoundTicket, train_end: int) -> dict[int, EntryResult | LoRAArtifact]:
+    def _train_all(self, ticket: RoundTicket, train_end: int, at_the_lease: bool) -> dict[int, EntryResult | LoRAArtifact]:
         """Train the batches in queue order until ``train_end``, as many at a time as there are GPU slots.
 
         Returns one report per queue position. At ``train_end`` every job that
         still runs is stopped, so the scoring always starts on time.
+        ``at_the_lease``: this pass started at the lease (``AT_THE_LEASE_S``).
         """
         slots = gpu_slots(ticket.params.n_gpus, len(ticket.entries))
         free: queue.SimpleQueue[tuple[int, ...]] = queue.SimpleQueue()
@@ -119,8 +127,8 @@ class LocalRunner:
         def one(index: int, entry: Entry) -> EntryResult | LoRAArtifact:
             slot = free.get()
             try:
-                # The first batches start at the lease, so each of them has the whole training time.
-                return self._train(ticket, entry, slot, train_end, whole_time=index < len(slots))
+                # In a pass that started at the lease, the first batches start at the lease: each has the whole training time.
+                return self._train(ticket, entry, slot, train_end, whole_time=at_the_lease and index < len(slots))
             finally:
                 free.put(slot)
 
