@@ -9,31 +9,41 @@ Every number in the text comes from the ``Params`` in the snapshot. The
 miner-settable bounds come from ``Recipe.miner_bounds`` and the object keys
 from ``layout.py``. No cap, bound or key is typed here. The one exception is
 ``READ_LINKS``: the site pull job owns that file, and no module names it yet.
+
+``python -m sn120_v2.publisher check`` reads a published pair and fails when
+llms.txt is not true to the params of mining.json (``check_pair``; the
+operator's steps are in LLMS_CHECK.md).
 """
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
+import difflib
 import json
 import math
 import re
+import sys
 import textwrap
 import time
+import urllib.request
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
 from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256
-from .errors import ContractError, InfraError, V2Error
+from .errors import ConfigError, ContractError, InfraError, V2Error
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
+from .journal import JOURNAL_FILE
 from .judging import drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
 from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
-from .state import ABANDONED
+from .state import ABANDONED, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
@@ -49,6 +59,14 @@ OWN_KEYS = ("snapshot_digest", "contract")
 # A presigned upload link signs these headers (``Presigner.presign_put``). An upload without them is refused.
 UPLOAD_HEADERS = {"Content-Type": "application/octet-stream"}
 ENTRY_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "status", "delta", "se", "z", "cap_rate")
+# The order of ``public.snapshot``. mining.json is written with sorted keys, and llms.txt must be the same text from
+# the snapshot and from the mining.json that was read back (``check_pair``). A key that is not named here comes
+# after these, in sorted order.
+ROUND_FIELDS = ("round_id", "head_version_id", "params_hash", "recipe_id", "round_seed", "irt_snapshot_id", "n_tasks", "opened_at", "closed_at")
+ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pass_rate", "null_cap_rate")
+QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
+KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
+PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -105,6 +123,17 @@ def utc(seconds: Any) -> str:
 def table(columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
     lines = ["| " + " | ".join(columns) + " |", "|" + " --- |" * len(columns)]
     return lines + ["| " + " | ".join(show(cell) for cell in row) + " |" for row in rows]
+
+
+def in_order(keys: Iterable[str], first: Sequence[str]) -> list[str]:
+    """The keys of a row in the order of ``first``, then every other key in sorted order."""
+    found = set(keys)
+    return [key for key in first if key in found] + sorted(found - set(first))
+
+
+def rows_table(rows: Sequence[Mapping[str, Any]], first: Sequence[str]) -> list[str]:
+    columns = in_order(rows[0], first)
+    return table(columns, ([row.get(column) for column in columns] for row in rows))
 
 
 def reflow(lines: Iterable[str], width: int = 112) -> list[str]:
@@ -324,7 +353,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
         "  new head is being published). The last closed rounds are in mining.json under `history`.",
-        *(f"- {key}: {show(value)}" for key, value in round_now.items() if not isinstance(value, (dict, list))),
+        *(f"- {key}: {show(round_now[key])}" for key in in_order(round_now, ROUND_FIELDS) if not isinstance(round_now[key], (dict, list))),
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
         "  for a full round. Registrations for the next round are always open.",
@@ -337,7 +366,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"Seats that wait: {show(queue.get('length'))}. The next seats, in order:",
         "",
-        *(table(tuple(seats[0]), (row.values() for row in seats)) if seats else ["The queue is empty."]),
+        *(rows_table(seats, QUEUE_COLUMNS) if seats else ["The queue is empty."]),
         "",
         "- `file_valid`: the validator's verdict on the file that was stored for the hotkey at its last check of the",
         f"  files: {utc(checked) if checked else 'no check yet'} (`queue.files_checked_at` in mining.json). The validator reads the waiting files when it picks the entries",
@@ -393,9 +422,9 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Squat-trim moves a seat to the back of the queue. It applies only to a seat that has no valid file stored",
         f"  when the validator picks the entries of a round, and only when the registration of that seat is older than {show(params.squat_age_factor)} x its expected",
         f"  wait. Expected wait = max({duration(params.squat_min_wait_s)}, seats ahead x seconds per turn). Seconds per turn = {SECONDS_PER_DAY} / the number",
-        "  of entries that were charged in the last 24 hours.",
+        f"  of entries that were charged in the last {SECONDS_PER_DAY // 3600} hours.",
         f"- So a seat with no file or with an invalid file keeps its place for at least {duration(params.squat_age_factor * params.squat_min_wait_s)} after its",
-        "  registration, and for as long as no entry was charged in the last 24 hours. The two values",
+        f"  registration, and for as long as no entry was charged in the last {SECONDS_PER_DAY // 3600} hours. The two values",
         "  (`squat_min_wait_s`, `squat_age_factor`) are parameters (section 11). The validator can change them. This",
         "  text always shows the values that it uses.",
         "- A seat at the back still gets its turn: a round takes it when it has room after the front seats and the",
@@ -623,7 +652,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
         "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",
         "",
-        *(table(tuple(kings[0]), (row.values() for row in kings)) if kings else ["There is no king yet."]),
+        *(rows_table(kings, KING_COLUMNS) if kings else ["There is no king yet."]),
         "",
         "## 8. The IRT snapshot",
         "",
@@ -727,7 +756,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         *_judging_lines(doc, params),
         "",
-        "## 11. Every parameter",
+        f"## 11. {PARAMS_HEADING}",
         "",
         "Each value is pinned into a round when the round starts.",
         "",
@@ -746,6 +775,119 @@ def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "
     doc = mining_document(snapshot, public_url, links_url)
     mining = json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
     return mining.encode("utf-8"), llms_text(doc).encode("utf-8")
+
+
+SNAPSHOT_NAMED = re.compile(r"from snapshot\s+`([0-9a-f]{64})`")
+PARAM_ROW = re.compile(r"^\| `(\w+)` \| (.*) \|$", re.MULTILINE)
+
+
+def stated_params(text: str) -> dict[str, str]:
+    """Each parameter with the value that a llms.txt text states for it, from the table of the section "Every parameter"."""
+    section = re.split(rf"^## \d+\. {PARAMS_HEADING}$", text, flags=re.MULTILINE)
+    return dict(PARAM_ROW.findall(section[1])) if len(section) == 2 else {}
+
+
+def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_text: bool = True) -> list[str]:
+    """What is wrong with a published pair of mining.json and llms.txt. An empty list: llms.txt is true to the params.
+
+    Four checks, each on the bytes as a reader gets them:
+
+    1. mining.json is whole: its content has the ``snapshot_digest`` that it names, and its params have the
+       ``params_hash`` and the ``recipe_id`` that it names.
+    2. llms.txt is the text of that mining.json: it names the same digest, the same ``params_hash`` and the same
+       ``recipe_id``, and its parameter table states each parameter of mining.json with the same value.
+    3. With ``live`` (the params of the validator's state): they are the published params.
+    4. With ``whole_text``: llms.txt is, byte for byte, the text that this code renders from that mining.json. A
+       difference means that other code published the files, or that a file was changed after it was written.
+    """
+    try:
+        doc, text = json.loads(mining), llms.decode("utf-8")
+        params, named = Params.from_dict(doc["params"]), doc["contract"]
+        whole = digest({key: value for key, value in doc.items() if key not in OWN_KEYS}) == doc["snapshot_digest"]
+    except (ValueError, KeyError, TypeError, V2Error) as exc:
+        return [f"mining.json or llms.txt cannot be read: {type(exc).__name__}: {exc}"]
+    problems = [] if whole else ["mining.json: the content does not have the `snapshot_digest` that the file names"]
+    for name, real in (("params_hash", params.params_hash), ("recipe_id", params.recipe_id)):
+        if not real == doc.get(name) == named.get(name):
+            problems.append(f"mining.json: `{name}` is not the id of its own params ({real})")
+        if f"`{real}`" not in text:
+            problems.append(f"llms.txt does not name the `{name}` of the params in mining.json ({real})")
+    found = SNAPSHOT_NAMED.search(text)
+    if found is None or found.group(1) != doc["snapshot_digest"]:
+        problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
+    stated = stated_params(text)
+    values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"}
+    for name in sorted(values.keys() | stated.keys()):
+        if stated.get(name) != values.get(name):
+            problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")
+    if live is not None and live.params_hash != params.params_hash:
+        ours, theirs = to_jsonable(live.to_dict()), to_jsonable(params.to_dict())
+        names = sorted(key for key in ours.keys() | theirs.keys() if ours.get(key) != theirs.get(key))
+        problems.append(f"the published params are not the params of the state: {', '.join(names)} differ")
+    if whole_text:
+        try:
+            ours = llms_text(doc)
+        except Exception as exc:  # a document of other code can lack anything; the cause is named, never raised
+            return problems + [f"this code cannot render the published mining.json: {type(exc).__name__}: {exc}"]
+        if ours != text:
+            theirs, mine = text.splitlines(), ours.splitlines()
+            changes = [op for op in difflib.SequenceMatcher(None, theirs, mine, autojunk=False).get_opcodes() if op[0] != "equal"]
+            _, i1, i2, j1, j2 = changes[0]
+            first = f'published "{" ".join(theirs[i1:i2])[:200]}", this code "{" ".join(mine[j1:j2])[:200]}"'
+            count = sum(max(i2 - i1, j2 - j1) for _, i1, i2, j1, j2 in changes)
+            problems.append(f"llms.txt is not the text that this code renders from mining.json: {count} lines differ. The first, at line {i1 + 1}: {first}")
+    return problems
+
+
+def fetch(location: str) -> bytes:
+    """The bytes of a file or of an http(s) address, as any reader gets them."""
+    if not location.startswith(("http://", "https://")):
+        return Path(location).read_bytes()
+    request = urllib.request.Request(location, headers={"User-Agent": "sn120-v2-publisher-check", "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(request, timeout=30) as reply:
+        return reply.read()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """``python -m sn120_v2.publisher check``: exit 0 when the published llms.txt is true to the params, 1 when not."""
+    parser = argparse.ArgumentParser(prog="python -m sn120_v2.publisher", description="Check a published llms.txt against the params.")
+    check = parser.add_subparsers(dest="command", required=True).add_parser("check", help="compare llms.txt with mining.json and the params")
+    check.add_argument("--url", help="the public address: the two files are read from <url>/llms.txt and <url>/mining.json")
+    check.add_argument("--mining-json", help="a mining.json file or address, in place of --url")
+    check.add_argument("--llms-txt", help="a llms.txt file or address, in place of --url")
+    check.add_argument("--state-dir", help="the state directory of the validator: its params must be the published params")
+    check.add_argument("--values-only", action="store_true", help="do not compare the whole text: for a host whose code is not the code that publishes")
+    check.add_argument("--tries", type=int, default=3, help="fetch again this many times when the two files are not a pair (an update is in progress)")
+    check.add_argument("--wait-s", type=float, default=5.0, help="seconds between two tries")
+    args = parser.parse_args(argv)
+    names = [key.rsplit("/", 1)[-1] for key in (layout.MINING_JSON, layout.LLMS_TXT)]
+    places = [args.mining_json, args.llms_txt] if args.mining_json and args.llms_txt else [f"{(args.url or '').rstrip('/')}/{name}" for name in names]
+    if not (args.url or (args.mining_json and args.llms_txt)):
+        parser.error("give --url, or both --mining-json and --llms-txt")
+    try:
+        live = None
+        if args.state_dir:
+            live = load(Path(args.state_dir) / JOURNAL_FILE).params
+            if live is None:
+                raise ConfigError(f"the state in {args.state_dir} holds no params")
+        for attempt in range(max(1, args.tries)):
+            mining, llms = (fetch(place) for place in places)
+            problems = check_pair(mining, llms, live, whole_text=not args.values_only)
+            if not any("are not a pair" in problem for problem in problems):
+                break
+            time.sleep(args.wait_s if attempt + 1 < args.tries else 0)
+    except (OSError, V2Error) as exc:
+        print(f"the check did not run: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    if problems:
+        print(f"DIVERGED: {places[1]} against {places[0]}:", file=sys.stderr)
+        for problem in problems:
+            print(f"- {problem}", file=sys.stderr)
+        return 1
+    doc = json.loads(mining)
+    scope = "every stated parameter" if args.values_only else "every line"
+    print(f"ok: {places[1]} is true to the params of {places[0]} ({scope}; params_hash {doc['params_hash']}; generated {utc(doc.get('generated_at'))})")
+    return 0
 
 
 class StorePublisher:
@@ -780,3 +922,7 @@ class StorePublisher:
             raise
         except Exception as exc:  # any store failure is ours: the controller retries the same snapshot
             raise InfraError(f"cannot publish the miner contract: {exc}") from exc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
