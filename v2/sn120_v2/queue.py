@@ -175,10 +175,11 @@ class SyncPlan:
     added: tuple[Registration, ...]
     removed: tuple[RegKey, ...]
     rehotkeyed: tuple[Registration, ...]
+    refreshed: tuple[Registration, ...] = ()  # same hotkey; owner coldkey (or other snapshot fields) caught up
 
     @property
     def empty(self) -> bool:
-        return not (self.added or self.removed or self.rehotkeyed)
+        return not (self.added or self.removed or self.rehotkeyed or self.refreshed)
 
 
 def plan_sync(
@@ -197,6 +198,11 @@ def plan_sync(
     or a hotkey that already had its turn, never enters again. A seat whose
     registration left the chain is removed, unless it is in an open round.
 
+    The owner coldkey of each seat is the ``SubtensorModule.Owner`` value of
+    its hotkey at the snapshot block. A seat whose hotkey stayed but whose
+    coldkey in the queue is empty or stale is refreshed so the one-entry-per-
+    coldkey rule of ``select_round`` can apply.
+
     A bad chain read must not empty the paid queue. So an empty snapshot, a
     snapshot of another subnet, or a plan that removes more than
     ``max_remove_frac`` of the queue raises ``InfraError`` unless ``force``.
@@ -214,6 +220,14 @@ def plan_sync(
     rehotkeyed = [
         reg for key, reg in on_chain.items() if key in queue and not queue[key].leased and queue[key].reg.hotkey != reg.hotkey
     ]
+    refreshed = [
+        reg
+        for key, reg in on_chain.items()
+        if key in queue
+        and not queue[key].leased
+        and queue[key].reg.hotkey == reg.hotkey
+        and queue[key].reg.coldkey != reg.coldkey
+    ]
     removed = [key for key, seat in queue.items() if key not in on_chain and not seat.leased]
     if not force and len(queue) >= 8 and len(removed) > max_remove_frac * len(queue):
         raise InfraError(
@@ -221,4 +235,9 @@ def plan_sync(
             "If the chain is right, an operator applies it with the force-sync command"
         )
     by_turn = lambda reg: (reg.registration_block, reg.uid)
-    return SyncPlan(tuple(sorted(added, key=by_turn)), tuple(sorted(removed)), tuple(sorted(rehotkeyed, key=by_turn)))
+    return SyncPlan(
+        tuple(sorted(added, key=by_turn)),
+        tuple(sorted(removed)),
+        tuple(sorted(rehotkeyed, key=by_turn)),
+        tuple(sorted(refreshed, key=by_turn)),
+    )
