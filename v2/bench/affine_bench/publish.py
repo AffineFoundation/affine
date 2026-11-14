@@ -119,6 +119,14 @@ def row_key(r):
     return (r.get("model_id"), r.get("benchmark_id"), r.get("env_version") or "")
 
 
+def profiles(results, models):
+    """The settings profiles that the rows and the results name: what a run with each of them sends with each request, and the
+    window of its server. A name that the settings file does not have (a row that was put in, or an older file) is left out."""
+    known = R.model_settings()["profiles"]
+    named = sorted({r.get("profile") for r in list(results) + list(models) if isinstance(r.get("profile"), str)} & set(known))
+    return {name: {k: st[k] for k in R.SENT + ("max_model_len",)} for name in named for st in [R.profile_settings(name)]}
+
+
 def publish(rows, S, max_fail=3):
     """`S` is the service's view of the rows in work (daemon.view): runs, fail, stopped, pods, waiting, queue, history."""
     bs = R.benchmarks(); sv = R.serving()
@@ -269,6 +277,7 @@ def publish(rows, S, max_fail=3):
         version="affine-bench-v2",
         updated_at=time.time(),
         serving=sv,
+        profiles=profiles(recs, models),
         about="Public math benchmarks of the SN120 v2 launch model and of every king (the folded head of each applied winner). "
               "The last king of v1 (kind v1-king, with its v1 epoch, uid and hotkey) is run by this service in the same way: "
               "the same benchmarks, settings and budget. A row of any other kind (a reference model) is not run by this "
@@ -298,6 +307,15 @@ def publish(rows, S, max_fail=3):
               "never by a result or by the order of the output. In such a row score_full, se_full and samples_full are the score, "
               "the standard error and the count of samples of the larger run. "
               "Each result row carries env_version, budget, profile and cap_rate so the protocol is unambiguous. "
+              "serving says how the server of a node starts and the limit of its client (v2/bench/config/serving.toml); "
+              "serving.version is a part of each env_version. serving has no sampling value: the server takes no sampling "
+              "defaults from the files of a model (generation_config vllm), and a run sends the sampling values of its profile "
+              "with each request. "
+              "serving.server.max_model_len is the window of a server that is started with none given; a run starts its server "
+              "with the max_model_len of its profile. "
+              "profiles has each profile that a row or a result of this file names, with the values that a run with it sends with "
+              f"each request ({', '.join(R.SENT)}) and the max_model_len of its server, as v2/bench/config/model_settings.toml of "
+              "this version of the code has them. A profile name that is not in profiles is not in that settings file. "
               "profile names the sampling settings (v2/bench/config/model_settings.toml) that ran: a king, and the v1 king, run "
               "with qwen3.5-family-pp0 (presence_penalty 0.0: the kings are not trained with a presence penalty); the launch model "
               "runs with qwen3.5-family (presence_penalty 1.5, its model card); the two differ in nothing else. A king row that says "
