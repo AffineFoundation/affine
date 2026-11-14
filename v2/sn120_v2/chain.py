@@ -17,8 +17,10 @@ one snapshot to a file. It only reads the chain and it uses no wallet.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -33,6 +35,7 @@ except ImportError:  # the SDK is the optional "chain" extra: the control plane 
     bittensor = None
 
 BLOCK_SECONDS = 12  # Bittensor block time, used to estimate the time of an old block
+FEED_TIMEOUT_S = 90.0  # the bound of one chain read of the round runner; a complete read takes a few seconds
 SIGN_CHECK = b"sn120-v2 weights writer: a check that the hotkey file can sign. This is not a transaction."
 
 
@@ -88,6 +91,74 @@ class Reader:
 
     def block_hash(self, block: int) -> str:
         return _read(f"the hash of block {block}", lambda: self.client.block_hash(block))
+
+
+def _close(reader: Any) -> None:
+    """Close the connection of a dropped reader, in the background: a dead connection must not delay the caller."""
+    close = getattr(getattr(reader, "client", None), "close", None)
+
+    def quiet() -> None:
+        with contextlib.suppress(Exception):
+            close()
+
+    if close is not None:
+        threading.Thread(target=quiet, name="sn120-v2-chain-close", daemon=True).start()
+
+
+class Feed:
+    """Registrations and the round's entropy for the round runner, from one read-only connection.
+
+    The connection opens at the first read. A read that fails, or that does not end in ``timeout_s``, drops the
+    connection, and the next read opens a new one. So a dead connection costs one pass and never stops the runner.
+    """
+
+    def __init__(self, netuid: int, connect: Callable[[], ChainClient], *, timeout_s: float = FEED_TIMEOUT_S) -> None:
+        self.netuid, self.connect, self.timeout_s = netuid, connect, timeout_s
+        self._reader: Reader | None = None
+        self._block = 0
+
+    def snapshot(self) -> ChainSnapshot:
+        snapshot = self._bounded("the registrations", lambda reader: reader.snapshot())
+        self._block = snapshot.block
+        return snapshot
+
+    def entropy(self) -> str:
+        """The hash of the block of the last snapshot: a value this validator cannot choose."""
+        block = self._block
+        if not block:
+            raise InfraError("no chain snapshot yet, so there is no block hash for the round seed")
+        return self._bounded(f"the hash of block {block}", lambda reader: reader.block_hash(block))
+
+    def _bounded(self, what: str, read: Callable[[Any], Any]) -> Any:
+        """Open the connection when there is none, then read, all in ``timeout_s``. A read that hangs is abandoned."""
+        held, opened, outcome = self._reader, [], []
+        abandoned = threading.Event()
+
+        def work() -> None:
+            try:
+                reader = held or Reader(self.connect(), self.netuid)
+                opened.append(reader)
+                if abandoned.is_set():
+                    _close(reader)
+                else:
+                    outcome.append((read(reader), None))
+            except BaseException as exc:
+                outcome.append((None, exc))
+
+        thread = threading.Thread(target=work, name="sn120-v2-chain-read", daemon=True)
+        thread.start()
+        thread.join(self.timeout_s)
+        value, error = outcome[0] if outcome else (None, None)
+        if outcome and error is None:
+            self._reader = opened[0]
+            return value
+        abandoned.set()
+        self._reader = None
+        for reader in list(opened):
+            _close(reader)
+        if error is not None:
+            raise error
+        raise InfraError(f"chain read of {what} did not end in {self.timeout_s:g} s: the connection is dropped")
 
 
 class Setter:
@@ -272,6 +343,10 @@ class SubtensorClient:
 
     def block_hash(self, block: int) -> str:
         return str(self.chain.block_info(block).hash)
+
+    def close(self) -> None:
+        """Close the connection and stop the SDK's thread. After this the client is of no use."""
+        self.chain.close()
 
     def uid_count(self, block: int) -> int:
         return int(self._query("SubnetworkN", block))

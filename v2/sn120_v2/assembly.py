@@ -30,7 +30,7 @@ from transformers import AutoTokenizer
 from . import layout
 from .admission import HFTokens, LazyPool, StoreAdmission, check_batch, pool_grader
 from .canonical import file_sha256
-from .chain import Reader, SubtensorClient
+from .chain import Feed, SubtensorClient
 from .controller import Stack, StackContext, stored_irt_snapshot
 from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
@@ -99,29 +99,12 @@ class HeadTokens:
         return self._load().output_tokens(text)
 
 
-class ChainFeed:
-    """Registrations and the round's entropy from one read-only chain connection, opened on first use."""
+class ChainFeed(Feed):
+    """Registrations and the round's entropy from one read-only chain connection: opened on first use, and again after a failed read."""
 
     def __init__(self, netuid: int, network: str) -> None:
-        self.netuid, self.network = netuid, network
-        self._reader: Reader | None = None
-        self._block = 0
-
-    def _open(self) -> Reader:
-        if self._reader is None:
-            self._reader = Reader(SubtensorClient.connect(self.netuid, self.network), self.netuid)  # no wallet
-        return self._reader
-
-    def snapshot(self) -> ChainSnapshot:
-        snapshot = self._open().snapshot()
-        self._block = snapshot.block
-        return snapshot
-
-    def entropy(self) -> str:
-        """The hash of the block of the last snapshot: a value this validator cannot choose."""
-        if not self._block:
-            raise InfraError("no chain snapshot yet, so there is no block hash for the round seed")
-        return self._open().block_hash(self._block)
+        super().__init__(netuid, lambda: SubtensorClient.connect(netuid, network))  # no wallet
+        self.network = network
 
 
 def _read_groups(raw: bytes, hotkey: str, params: Params):
