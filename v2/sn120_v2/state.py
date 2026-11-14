@@ -164,7 +164,7 @@ def _v1_imported(state: State, data: dict, at: int) -> None:
 def _registrations_synced(state: State, data: dict, at: int) -> None:
     for key in _keys(data["removed"]):
         state.queue.pop(key, None)
-    for raw in data["rehotkeyed"]:
+    for raw in (*data["rehotkeyed"], *data.get("coldkeyed", ())):  # a record of an older commit has no "coldkeyed"
         reg = Registration.from_dict(raw)
         _edit(state, reg.key, reg=reg)
     for raw in data["added"]:

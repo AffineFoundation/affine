@@ -175,10 +175,11 @@ class SyncPlan:
     added: tuple[Registration, ...]
     removed: tuple[RegKey, ...]
     rehotkeyed: tuple[Registration, ...]
+    coldkeyed: tuple[Registration, ...] = ()  # seats that get the coldkey of the chain: a seat saved before the coldkey was read has ""
 
     @property
     def empty(self) -> bool:
-        return not (self.added or self.removed or self.rehotkeyed)
+        return not (self.added or self.removed or self.rehotkeyed or self.coldkeyed)
 
 
 def plan_sync(
@@ -197,6 +198,10 @@ def plan_sync(
     or a hotkey that already had its turn, never enters again. A seat whose
     registration left the chain is removed, unless it is in an open round.
 
+    A waiting seat gets the coldkey that the chain has for it. That changes
+    the coldkey only: the seat keeps its place and its flags. A seat in an
+    open round is not touched.
+
     A bad chain read must not empty the paid queue. So an empty snapshot, a
     snapshot of another subnet, or a plan that removes more than
     ``max_remove_frac`` of the queue raises ``InfraError`` unless ``force``.
@@ -214,11 +219,16 @@ def plan_sync(
     rehotkeyed = [
         reg for key, reg in on_chain.items() if key in queue and not queue[key].leased and queue[key].reg.hotkey != reg.hotkey
     ]
+    coldkeyed = [
+        replace(queue[key].reg, coldkey=reg.coldkey)
+        for key, reg in on_chain.items()
+        if key in queue and not queue[key].leased and queue[key].reg.hotkey == reg.hotkey and reg.coldkey not in ("", queue[key].reg.coldkey)
+    ]
     removed = [key for key, seat in queue.items() if key not in on_chain and not seat.leased]
     if not force and len(queue) >= 8 and len(removed) > max_remove_frac * len(queue):
         raise InfraError(
             f"sync would remove {len(removed)} of {len(queue)} seats; refusing without force (possible bad chain read). "
             "If the chain is right, an operator applies it with the force-sync command"
         )
-    by_turn = lambda reg: (reg.registration_block, reg.uid)
-    return SyncPlan(tuple(sorted(added, key=by_turn)), tuple(sorted(removed)), tuple(sorted(rehotkeyed, key=by_turn)))
+    by_turn = lambda regs: tuple(sorted(regs, key=lambda reg: (reg.registration_block, reg.uid)))
+    return SyncPlan(by_turn(added), tuple(sorted(removed)), by_turn(rehotkeyed), by_turn(coldkeyed))
