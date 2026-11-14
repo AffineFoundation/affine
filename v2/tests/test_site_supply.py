@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError, EndpointConnectionError
 from moto.server import ThreadedMotoServer
 
 from sn120_v2 import layout, sim
@@ -31,6 +32,7 @@ from sn120_v2.public import QUEUE_PREVIEW
 SITE = Path(sim.__file__).resolve().parents[1] / "site"
 supply = SimpleNamespace(**runpy.run_path(str(SITE / "supply.py"), run_name="supply"))  # a script of v2/site, not a module of the package
 
+ROUND_FILES = layout.round_file("x").partition("x")[0]
 ACCESS, SECRET, BUCKET = "supply-test-access-key", "supply-test-secret-key-0123456789", "sn120-supply-test"
 
 
@@ -42,7 +44,7 @@ class Bucket:
         self.snapshot_extra: dict | None = None
 
     def stamp(self) -> None:
-        keys = self.world.store.list("private/")
+        keys = self.world.store.list("private/") + self.world.store.list(ROUND_FILES)
         for key in keys:
             etag = hashlib.md5(self.world.store.get(key), usedforsecurity=False).hexdigest()
             if self.seen.get(key, ("", 0, 0))[0] != etag:
@@ -223,7 +225,8 @@ def test_a_file_that_a_round_took_counts_at_the_time_of_the_round_when_its_miner
     closed = taken(stage)
     row = stage.last()  # the first run: the store has only the new file of the miner
     assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 1
-    assert lists == [supply.MINERS, layout.frozen_batch(closed["round_id"], "x")[:-len("x.json")]], "the same two list calls as before"
+    frozen = layout.frozen_batch(closed["round_id"], "x")[:-len("x.json")]
+    assert lists == [supply.MINERS, frozen, layout.round_file(closed["round_id"])], "the list of the miners, the folder of the round, its round file"
     new, old = stage.entry(11, 0), stage.entry(11, 1)
     assert old["time_from"] == "round" and old["uploaded_at"] == closed["opened_at"] and old["ended_at"] is not None
     assert (old["verdict"], old["proof"], old["sha"]) == ("valid", f"round {closed['round_id']}", closed["entries"][0]["batch_sha256"])
@@ -236,7 +239,7 @@ def test_a_file_that_a_round_took_counts_at_the_time_of_the_round_when_its_miner
         stage.wait(60)
         row = stage.last()
         assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 1
-    assert lists.count(supply.MINERS) == 4 and len(lists) == 5, "the folder of the closed round is listed one time"
+    assert lists.count(supply.MINERS) == 4 and len(lists) == 6, "the folder and the round file of the closed round are listed one time"
     stage.upload(11, quality=0.1)  # the miner stores the bytes of the round's file again: the same file, at the round's time
     row = stage.last()
     assert numbers(row) == (2, 1, 0, 0, 1) and row["at_round_time"] == 1
@@ -393,6 +396,125 @@ def test_only_the_first_seats_have_a_verdict_until_the_snapshot_has_the_table_of
     assert (waiting["valid"], waiting["source"], waiting["whole_line"]) == (seats - 1, "queue.files", True)
     stage.bucket.snapshot_extra = {"files": {"verdicts": [{"hotkey": "hk100", "file_verdict": "maybe"}]}}
     assert stage.poll()["waiting"]["source"] == "queue.next", "a table of another form is not used"
+
+
+class RoundFiles:
+    """A store with the public round files only: ``written`` is the write time of the file of each round."""
+
+    def __init__(self, written: dict[str, int], error: Exception | None = None) -> None:
+        self.written, self.error, self.calls, self.date = written, error, [], None
+
+    def list(self, prefix: str) -> list[supply.Stored]:
+        self.calls.append(prefix)
+        if self.error:
+            raise self.error
+        return [supply.Stored(layout.round_file(name), "etag", at, 1) for name, at in self.written.items() if layout.round_file(name).startswith(prefix)]
+
+
+OPEN = 1_000_000
+
+
+def rounds(*closed: tuple[str, int], limit: object = 10800, open_gap: int = 4000) -> tuple[dict, dict[str, int]]:
+    """A snapshot with one closed round for each (outcome, seconds from ``closed_at`` to the write of the round file), then an open round."""
+    history, written, at = [], {}, OPEN
+    for number, (outcome, extra) in enumerate(closed, 1):
+        name = f"r{number:06d}"
+        history.append({"round_id": name, "opened_at": at, "closed_at": at + 5400, "outcome": outcome})
+        written[name] = at + 5400 + extra
+        at += 5400 + open_gap
+    running = {"round_id": f"r{len(closed) + 1:06d}", "opened_at": at, "closed_at": 0, "outcome": ""}
+    return {"params": {"round_time_limit_s": limit}, "history": history, "round": running}, written
+
+
+def test_the_time_of_a_round_comes_from_the_params_and_from_the_last_three_rounds_with_a_new_king():
+    snap, written = rounds(("applied", 2615), ("applied", 2769), ("null", 38), ("applied", 2979), ("applied", 2818))
+    store = RoundFiles(written)
+    takes, kept = supply.round_time(store, {}, snap)
+    assert takes["king_rounds"] == [{"round_id": "r000002", "extra_s": 2769}, {"round_id": "r000004", "extra_s": 2979}, {"round_id": "r000005", "extra_s": 2818}]
+    assert (takes["limit_s"], takes["king_extra_s"], takes["king_read"]) == (10800, 2818, "ok"), "the median of the last three; a null round is no king"
+    assert takes["words"] == "up to about 180 minutes, about 227 minutes with a king"
+    assert store.calls == [layout.round_file(name) for name in ("r000002", "r000004", "r000005")] and kept == {name: written[name] for name in kept}
+    again, kept_again = supply.round_time(store, kept, snap)
+    assert again == takes and kept_again == kept and len(store.calls) == 3, "a round file with a write time in the record is not listed again"
+    snap["params"]["round_time_limit_s"] = 77 * 60  # the operator changes the limit: the words follow at the next run
+    assert supply.round_time(store, kept, snap)[0]["words"] == "up to about 77 minutes, about 124 minutes with a king"
+    for none in (None, 0, -5, "10800", True, 10800.5):
+        snap["params"]["round_time_limit_s"] = none
+        takes = supply.round_time(store, kept, snap)[0]
+        assert takes["limit_s"] is None and takes["words"] == "the public snapshot gives no time limit of a round now"
+    assert supply.round_time(store, kept, {"history": [], "round": None})[0]["limit_s"] is None, "a snapshot with no params"
+
+
+def test_fewer_than_three_rounds_with_a_king_give_the_median_of_those_and_a_new_round_moves_it():
+    snap, written = rounds(("no_decision", 20), ("applied", 2600))
+    assert supply.round_time(RoundFiles(written), {}, snap)[0]["king_extra_s"] == 2600
+    snap, written = rounds(("applied", 2600), ("applied", 3000))
+    takes = supply.round_time(RoundFiles(written), {}, snap)[0]
+    assert takes["king_extra_s"] == 2800 and takes["words"] == "up to about 180 minutes, about 227 minutes with a king"
+    snap, written = rounds(("applied", 2800), ("applied", 2800), ("applied", 2800), ("applied", 240), ("applied", 200))  # the fold got fast
+    takes = supply.round_time(RoundFiles(written), {}, snap)[0]
+    assert takes["king_extra_s"] == 240 and takes["words"] == "up to about 180 minutes, about 184 minutes with a king"
+
+
+@pytest.mark.parametrize("closed", [(), (("null", 30), ("no_decision", 20), ("abandoned", 2000))])
+def test_with_no_king_measured_the_words_give_the_limit_only_and_no_time_for_a_king(closed):
+    snap, written = rounds(*closed)
+    store = RoundFiles(written)
+    takes, kept = supply.round_time(store, {}, snap)
+    assert (takes["limit_s"], takes["king_extra_s"], takes["king_rounds"], takes["king_read"]) == (10800, None, [], "ok")
+    assert takes["words"] == "up to about 180 minutes; a round that gives a new king takes longer, by a time that is not measured now"
+    assert store.calls == [] and kept == {}, "no round with a king: no list call"
+
+
+@pytest.mark.parametrize("error", [ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2"), EndpointConnectionError(endpoint_url="https://store")])
+def test_a_list_call_that_fails_does_not_stop_the_run_and_gives_no_time_for_a_king(error):
+    snap, written = rounds(("applied", 2615), ("applied", 2769), ("applied", 2979))
+    known = {"r000001": written["r000001"]}  # an older run measured the first round
+    takes, kept = supply.round_time(RoundFiles(written, error), dict(known), snap)
+    assert (takes["king_read"], takes["king_extra_s"]) == ("failed", None) and kept == known, "the record keeps what it has"
+    assert takes["words"] == "up to about 180 minutes; a round that gives a new king takes longer, by a time that is not measured now"
+    takes, kept = supply.round_time(RoundFiles(written), kept, snap)  # the next run: the store answers again
+    assert (takes["king_read"], takes["king_extra_s"]) == ("ok", 2769) and len(kept) == 3
+
+
+def test_a_round_file_that_was_written_again_is_no_measure_and_the_record_keeps_the_first_write_time():
+    snap, written = rounds(("applied", 2615), ("applied", 2769), ("applied", 2979))
+    late = written | {"r000002": snap["history"][2]["opened_at"] + supply.SKEW_S + 1}  # written again after the next round opened
+    takes = supply.round_time(RoundFiles(late), {}, snap)[0]
+    assert [row["round_id"] for row in takes["king_rounds"]] == ["r000001", "r000003"] and takes["king_extra_s"] == (2615 + 2979) // 2
+    early = written | {"r000003": snap["history"][2]["closed_at"] - 1}  # a write time before the close is no measure
+    assert [row["round_id"] for row in supply.round_time(RoundFiles(early), {}, snap)[0]["king_rounds"]] == ["r000001", "r000002"]
+    takes, kept = supply.round_time(RoundFiles(written), {}, snap)
+    later = {name: at + 86400 for name, at in written.items()}  # every file is written again a day later
+    assert supply.round_time(RoundFiles(later), kept, snap)[0] == takes, "the first write time that a run saw stays"
+    missing = {name: at for name, at in written.items() if name != "r000003"}
+    takes, kept = supply.round_time(RoundFiles(missing), {}, snap)
+    assert takes["king_extra_s"] == (2615 + 2769) // 2 and "r000003" not in kept, "a round file that is not in the list is asked for again at the next run"
+
+
+def test_the_words_of_the_round_time_are_in_the_label_in_the_method_and_in_the_page(stage):
+    closed = taken(stage)
+    assert closed["outcome"] == "applied"
+    key = layout.round_file(closed["round_id"])
+    stage.bucket.stamp()
+    stage.bucket.seen[key] = (stage.bucket.seen[key][0], closed["closed_at"] + 1500, stage.bucket.seen[key][2])  # the fold took 25 minutes
+    doc, limit = stage.poll(), stage.world.params.round_time_limit_s
+    takes = doc["round_time"]
+    assert (takes["limit_s"], takes["king_extra_s"]) == (limit, 1500) and takes["king_rounds"] == [{"round_id": closed["round_id"], "extra_s": 1500}]
+    words = f"up to about {round(limit / 60)} minutes, about {round((limit + 1500) / 60)} minutes with a king"
+    assert takes["words"] == words and f"({words})" in doc["labels"]["no_verdict"] and f"({words}; see round_time)" in doc["method"]
+    assert json.loads(stage.record.read_bytes())["round_files"] == {closed["round_id"]: closed["closed_at"] + 1500}
+    assert any("a round takes " + words in line for line in supply.report(doc))
+    first_form = json.loads(stage.record.read_bytes())
+    del first_form["round_files"]  # a record of before this change
+    stage.record.write_bytes(json.dumps(first_form).encode())
+    assert stage.poll()["round_time"] == takes
+    # No time of a round is a constant: not in the recorder, and not in the page. The page takes the words from the public file.
+    source, page, script = ((SITE / name).read_text() for name in ("supply.py", "static/index.html", "static/site.js"))
+    for stale in ("90 minutes", "100 minutes", "137 minutes", "180 minutes", "227 minutes", "5400", "6000", "7200", "10800"):
+        assert stale not in source and stale not in page
+    assert 'until that round is over (<span data-f="round-time">' in page
+    assert "el.querySelectorAll('[data-f=round-time]').forEach(x => { x.textContent = S.round_time.words; });" in script
 
 
 def test_the_public_file_has_counts_only(stage):

@@ -321,6 +321,7 @@
       + (w.whole_line ? `of ${esc(w.hotkeys)} hotkeys in the waiting line.` : `in the first ${esc(w.seats)} of ${esc(w.line)} seats of the waiting line. The files of the other seats have no published verdict.`)
       + (w.checked_at ? ` Last file check of the validator: ${esc(utc(w.checked_at))}, ${dur(age + S.generated_at - w.checked_at)} ago.` : ' The validator has published no file check yet.')
       + (S.phase === 'IDLE' ? '' : ' A round runs now: the next file check comes when it is over.');
+    if (S.round_time) el.querySelectorAll('[data-f=round-time]').forEach(x => { x.textContent = S.round_time.words; });
     const day = S.windows[S.windows.length - 1];
     el.querySelector('.tile .reading').textContent = `${n(day, 'uploads')} in ${day.hours} h`;
     chart(el.querySelector('.chart'), {

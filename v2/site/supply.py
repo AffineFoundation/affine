@@ -39,7 +39,12 @@ What one run does:
       in the list that this run read after the snapshot.
    A file that the validator once called valid stays counted. A file with a
    "not valid" verdict can become valid at a later check.
-6. Writes the record, then the public file. Each write is a rename.
+6. Says how long a round can take (``round_time``). No time is written in
+   this file: the limit is ``params.round_time_limit_s`` of the snapshot, and
+   the extra time of a round that gives a new king is measured from the write
+   time of the public round files (one list call for a round that the record
+   has no write time for).
+7. Writes the record, then the public file. Each write is a rename.
 
 Clocks. "now" is the ``Date`` header of the store's answer to the list call,
 so "now" and the upload times come from one clock. Without that header, "now"
@@ -65,6 +70,7 @@ import fcntl
 import json
 import os
 import sys
+import statistics
 import tempfile
 import time
 from dataclasses import dataclass
@@ -81,6 +87,7 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.public import SCHEMA as SNAPSHOT_SCHEMA
 from sn120_v2.r2_names import PREFIX, store_env
+from sn120_v2.state import APPLIED
 
 SCHEMA = "sn120-v2-miner-supply-1"
 STATE_SCHEMA = "sn120-v2-supply-state-1"
@@ -96,14 +103,14 @@ VALID, NOT_VALID, NOT_JUDGED = "valid", "not_valid", "not_judged"
 KINDS = ("validated", "no_verdict", "not_valid", "replaced")
 COSTA_RICA = timezone(timedelta(hours=-6))  # Costa Rica has no daylight saving time
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-ROUND_WORDS = "about 90 minutes, about 137 minutes with a king"
+KING_ROUNDS = 3  # the extra time of a round with a new king comes from this many of the last such rounds
 AT_ROUND_WORDS = ("A file that a round took and that its miner replaced before the record saw it is counted at the time the round "
                   "took it, because the store no longer has its upload time (at_round_time in each row). A file that came into "
                   "more than one round counts one time.")
 Proof = tuple[str, str, str, str, int | None]  # hotkey, ETag of the frozen copy, batch_sha256, round, the time the round opened
 
 
-def labels(scope: dict[str, Any]) -> dict[str, str]:
+def labels(scope: dict[str, Any], round_words: str) -> dict[str, str]:
     """What each count is, in the operator's three names, with the time of the validator's last file check."""
     checked = scope["checked_at"]
     last = "The validator has published no file check yet." if checked is None else f"Last file check: {both(checked)}."
@@ -119,7 +126,7 @@ def labels(scope: dict[str, Any]) -> dict[str, str]:
         "no_verdict": "Uploads with no verdict yet: the file is still the stored file, and no published file check after its "
                       "upload gives a verdict for it. The validator checks files when it tries to open a round and at each "
                       "publish between rounds, never inside a round. So an upload during a round has no verdict until that "
-                      f"round is over ({ROUND_WORDS}). {last} {reach}",
+                      f"round is over ({round_words}). {last} {reach}",
         "not_valid": "Not valid at the last check: the validator's last file check after the upload did not call the file valid.",
         "replaced": "Replaced before a verdict: the miner stored another file before a file check gave a verdict.",
         "waiting": f"Valid files waiting now: hotkeys in the waiting line with a valid file at the last file check. {last} {reach}",
@@ -268,6 +275,74 @@ def file_check(snap: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
                               "seats": len(queue["next"])}
 
 
+def king_rounds(snap: dict[str, Any]) -> list[tuple[str, int, int | None]]:
+    """The last ``KING_ROUNDS`` closed rounds of the snapshot that gave a new king: the round, its ``closed_at``, and the open of the round after it."""
+    rows = [row for row in [*(snap.get("history") or []), *([snap["round"]] if snap.get("round") else [])] if isinstance(row, dict)]
+    found = []
+    for row, after in zip(rows, [*rows[1:], None]):
+        closed, opened = row.get("closed_at"), (after or {}).get("opened_at")
+        if row.get("outcome") == APPLIED and isinstance(closed, int) and closed > 0:
+            found.append((str(row["round_id"]), closed, opened if isinstance(opened, int) and opened > 0 else None))
+    return found[-KING_ROUNDS:]
+
+
+def round_time(listing: Listing, written: dict[str, int], snap: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+    """How long a round can take, in numbers and in words, and the write times of the round files for the record.
+
+    No time is a constant of this file. The limit is ``params.round_time_limit_s``
+    of the snapshot. A round that gives a new king takes longer: the validator
+    folds the king into the head, and only then it writes the public round file
+    and the next snapshot. ``closed_at`` of the round is the time before that
+    work, so the extra time of one round is the store's write time of its
+    round file minus its ``closed_at``. A write time is no measure when it is
+    before ``closed_at``, or later than the open of the next round (the file
+    was written again). The record keeps the first write time that a run saw.
+    A list call that fails does not stop the run: then the words give no time
+    for a round with a king.
+    """
+    params = snap.get("params")
+    limit = params.get("round_time_limit_s") if isinstance(params, dict) else None
+    limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else None
+    rounds, kept, read = king_rounds(snap), {}, "ok"
+    for round_id, _, _ in rounds:
+        at = written.get(round_id)
+        if not isinstance(at, int):
+            key = layout.round_file(round_id)
+            try:
+                at = next((stored.modified for stored in listing.list(key) if stored.key == key), None)
+            except (ClientError, BotoCoreError):
+                at, read = None, "failed"
+        if at is not None:
+            kept[round_id] = at
+    measured = [{"round_id": round_id, "extra_s": kept[round_id] - closed} for round_id, closed, next_open in rounds
+                if round_id in kept and closed <= kept[round_id] and (next_open is None or kept[round_id] <= next_open + SKEW_S)]
+    extra = int(statistics.median(row["extra_s"] for row in measured)) if measured and read == "ok" else None
+
+    def minutes(seconds: int) -> int:
+        return int(seconds / 60 + 0.5)
+
+    if limit is None:
+        words = "the public snapshot gives no time limit of a round now"
+    elif extra is None:
+        words = f"up to about {minutes(limit)} minutes; a round that gives a new king takes longer, by a time that is not measured now"
+    else:
+        words = f"up to about {minutes(limit)} minutes, about {minutes(limit + extra)} minutes with a king"
+    return {
+        "limit_s": limit,
+        "king_extra_s": extra,
+        "king_rounds": measured,
+        "king_read": read,
+        "words": words,
+        "rule": "limit_s is params.round_time_limit_s of the public snapshot: the time limit of a round. A round that gives a new "
+                "king takes longer, because the validator folds the king into the head before it publishes the close. "
+                f"king_extra_s is that extra time, measured: for each of the last {KING_ROUNDS} closed rounds with the outcome "
+                f"'{APPLIED}', the store's write time of {layout.round_file('ROUND')} minus closed_at of the round in the "
+                "snapshot; then the median of these. A write time before closed_at or after the open of the next round is no "
+                "measure. king_extra_s is null when no such round has a measure or when a list call failed (king_read). "
+                "No time in words is a constant of the recorder.",
+    }, kept
+
+
 # ------------------------------------------------------------ the record
 
 
@@ -358,7 +433,7 @@ def counts(entries: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 
 def public(state: dict[str, Any], verdicts: dict[str, str], scope: dict[str, Any], snap: dict[str, Any], now: int,
-           clock: dict[str, Any]) -> dict[str, Any]:
+           clock: dict[str, Any], takes: dict[str, Any]) -> dict[str, Any]:
     """The public file: counts only. No hotkey, no ETag and no time of one file is in it."""
     entries = [entry for group in state["files"].values() for entry in group if not entry.get("same_bytes")]
 
@@ -381,7 +456,8 @@ def public(state: dict[str, Any], verdicts: dict[str, str], scope: dict[str, Any
         "clock": clock,
         "counting_since": state["since"],
         "gaps": [gap for gap in state["gaps"] if gap[1] > now - HOURS_SHOWN * HOUR],
-        "labels": labels(scope),
+        "labels": labels(scope, takes["words"]),
+        "round_time": takes,
         "windows": windows,
         "hours": series,
         "waiting": {"valid": sum(verdict == VALID for verdict in verdicts.values()), **scope},
@@ -391,7 +467,7 @@ def public(state: dict[str, Any], verdicts: dict[str, str], scope: dict[str, Any
                   f"says valid: a round froze the file, or the last file check after the upload called it valid. {AT_ROUND_WORDS} "
                   "That time is opened_at of the round in the public snapshot, the validator's clock. The validator "
                   "checks files when it tries to open a round and at each publish between rounds, never inside a round, so an "
-                  f"upload during a round has no verdict until that round is over ({ROUND_WORDS}). "
+                  f"upload during a round has no verdict until that round is over ({takes['words']}; see round_time). "
                   + ("No file check is published yet. " if scope["checked_at"] is None else f"Last file check: {both(scope['checked_at'])}. ")
                   + "A file of a hotkey with no seat in the waiting line gets no check. A window or an hour with complete=false "
                   "began before counting_since or meets a gap with no run: its counts are 'at least', because a file that "
@@ -421,7 +497,8 @@ def poll(listing: Listing, state: dict[str, Any] | None, host_now: int) -> tuple
     proofs, state["rounds"] = round_proofs(listing, state["rounds"], snap)
     verdicts, scope = file_check(snap)
     record(state, files, proofs, verdicts, scope["checked_at"], now)
-    return state, public(state, verdicts, scope, snap, now, clock)
+    takes, state["round_files"] = round_time(listing, state.get("round_files") or {}, snap)
+    return state, public(state, verdicts, scope, snap, now, clock, takes)
 
 
 # ------------------------------------------------------------ files on this host
@@ -486,6 +563,11 @@ def report(doc: dict[str, Any]) -> list[str]:
     reach = (f"all {waiting['hotkeys']} hotkeys of the line" if waiting["whole_line"]
              else f"only the first {waiting.get('seats', waiting['hotkeys'])} of {waiting['line']} seats have a published verdict")
     lines.append(f"valid files waiting now: {waiting['valid']} ({reach}; source {waiting['source']}), {checked}; phase {doc.get('phase')}")
+    takes = doc.get("round_time")
+    if takes:
+        used = ", ".join(f"{row['round_id']} {row['extra_s']} s" for row in takes["king_rounds"]) or "none"
+        lines.append(f"a round takes {takes['words']} | limit {takes['limit_s']} s from the snapshot's params | extra time with a king "
+                     f"{takes['king_extra_s']} s | measured rounds: {used} | read of the round files: {takes['king_read']}")
     return lines
 
 
