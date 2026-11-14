@@ -641,8 +641,10 @@ The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu
 `run` itself stops when the box differs from the pinned digests. It makes the check before it opens a round, before it runs an open round again, and before a fold. Then it starts none of them, counts no failure for a seat, and ends with exit code 2 and one line:
 
 ```
-refused: ConfigError: this box differs from the pinned digests (<which digest>), so <what did not start>. Nothing is counted for a seat. Next: the digest block, then set-params with the two digests of this box, then start again
+refused: ConfigError: this box differs from the pinned digests, so <what did not start>. The difference: <image or code> digest: pinned <value>, this box has <value>. Nothing is counted for a seat. Next: the digest block, then set-params with the two digests of this box, then start again
 ```
+
+No other command shows the pinned digests. The image digest of the box is the value of `SN120_IMAGE_DIGEST`; `run` does not compute it again. The code digest is computed from the files at each check.
 
 The restart loop does not start a refused `run` again: it stops with exit code 2. A box result that is stored and not judged is judged first, also on a box with other digests: judging reads the digests of the round, not those of the box. So when a box result waits and the fix needs the digest block, the order is: the checkout, the digest block, start `run` (it judges the result, then it refuses), `set-params`, start `run` again. `--discard-result` is not needed for it.
 

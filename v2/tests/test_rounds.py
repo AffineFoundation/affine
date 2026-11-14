@@ -363,7 +363,7 @@ def test_no_round_opens_without_a_pinned_worker_image(tmp_path):
 # ------------------------------------------------------------ a box that differs from the pinned digests
 
 OLD_CODE, NEW_CODE = "code-before-the-fix", "code-after-the-fix"
-NOTHING_COUNTED = r"\. Nothing is counted for a seat\. Next: "
+NOTHING_COUNTED = r"\. The difference: the training code on this box differs from recipe\.code_digest\. Nothing is counted for a seat\. Next: "
 
 
 @pytest.fixture
@@ -393,7 +393,7 @@ def test_a_box_that_differs_from_the_pins_judges_a_stored_result_and_then_opens_
     store_a_result(world)
     trainings = world.trainer.closed
     for _ in range(4):  # without the stop, 3 such starts hold every seat of the next round
-        with pytest.raises(ConfigError, match=r"differs from recipe\.code_digest\), so no round was opened" + NOTHING_COUNTED + "the digest block, then set-params"):
+        with pytest.raises(ConfigError, match="so no round was opened" + NOTHING_COUNTED + "the digest block, then set-params"):
             world.round()
     state = world.controller.state
     assert state.round is None and [record.outcome for record in state.rounds] == ["null"], "the result that the old digests made is judged"

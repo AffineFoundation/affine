@@ -38,7 +38,7 @@ from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
 from .gpu.evaluator import VllmEvaluator
 from .gpu.folder import LoraFolder
-from .gpu.plan import BoxConfig, check_pins
+from .gpu.plan import BoxConfig, check_pins, code_digest
 from .gpu.trainer import LoraTrainer
 from .irt import IRTSampler
 from .params import Params, require_env
@@ -129,6 +129,22 @@ def _read_groups(raw: bytes, hotkey: str, params: Params):
     return check_batch(raw, hotkey, params).groups
 
 
+def box_pins(image_digest: str, params: Params) -> None:
+    """The check of the trainer (``check_pins``), with the pinned value and the value of this box in the text.
+
+    No command shows the pinned digests, so the refusal of ``run`` must show them.
+    """
+    try:
+        check_pins(image_digest, params)
+    except InfraError as exc:
+        recipe, code, differs = params.recipe, code_digest(), []
+        if image_digest not in recipe.image_digests:
+            differs.append(f"image digest: pinned {' or '.join(recipe.image_digests)}, this box has {image_digest} (the value of SN120_IMAGE_DIGEST)")
+        if recipe.code_digest and recipe.code_digest != code:
+            differs.append(f"code digest: pinned {recipe.code_digest}, this box has {code}")
+        raise InfraError("; ".join(differs) or str(exc)) from None
+
+
 def stack(context: StackContext) -> Stack:
     store = R2Store.from_env()
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
@@ -153,5 +169,5 @@ def stack(context: StackContext) -> Stack:
         evaluator = VllmEvaluator(store, box, pool, GradePool())
         runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         folder = LoraFolder(store, box)
-        pins = functools.partial(check_pins, box.image_digest)  # the check of the trainer, made before any work starts
+        pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
     return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True)
