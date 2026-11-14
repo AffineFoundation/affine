@@ -19,9 +19,11 @@ decay). One step is one pass over the whole batch and one Adam update.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,6 +34,11 @@ import transformers
 from safetensors import safe_open
 from safetensors.torch import save_file
 
+try:  # Triton comes with the GPU install. A machine without it runs no Triton kernel, so it needs no lock.
+    from triton.runtime.autotuner import Autotuner
+except ImportError:
+    Autotuner = None
+
 from ..canonical import canonical_json
 from ..errors import BatchRejected, InfraError
 from ..params import Recipe
@@ -39,6 +46,44 @@ from .batch import END_OF_TURN, derail_keep, fit_tokens
 
 LOGIT_CHUNK = 2048  # tokens per pass through the output layer: a memory knob, with no effect on the result
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"
+# GPU memory that torch never takes. Triton loads a kernel, and the CUDA libraries make their handles, with memory
+# of the CUDA driver. torch keeps every block it ever took, so after a long row the card can be full of blocks that
+# torch does not use, and such a load fails with "Triton Error [CUDA]: out of memory". With this part left free it cannot.
+DRIVER_RESERVE_BYTES = 8 * 2**30
+WARM_UP_TOKENS = 2048  # the most tokens of the warm-up row: one length class of FLA's l2norm kernels, about 9 GiB at the head's size
+
+
+def torch_share(total_bytes: int) -> float:
+    """The share of a GPU's memory that torch may take: all but the driver's part, and never less than 15/16."""
+    return 1.0 - min(DRIVER_RESERVE_BYTES, total_bytes // 16) / total_bytes
+
+
+def leave_room_for_the_driver(device: str) -> None:
+    """Cap torch's memory on this GPU. At the cap torch frees its unused blocks, and only then fails, with its own text."""
+    if device != "cpu":
+        torch.cuda.set_per_process_memory_fraction(torch_share(torch.cuda.get_device_properties(device).total_memory), device)
+
+
+def one_thread_in_the_tuner(tuner: type | None = Autotuner) -> None:
+    """Let one thread at a time into Triton's kernel tuner. Call it once, before the first kernel.
+
+    The tuner keeps the arguments of the call in the tuner object and clears
+    them when the call ends. The job runs one thread per GPU: without the
+    lock a second thread in the same tuner finds no arguments (a TypeError)
+    or the tensors of the other GPU. A kernel only starts inside the lock; it
+    runs on its GPU after the lock is free, so the GPUs still work side by side.
+    """
+    if tuner is None or getattr(tuner.run, "one_thread", False):
+        return
+    lock, run = threading.RLock(), tuner.run
+
+    @functools.wraps(run)
+    def locked(self, *args, **kwargs):
+        with lock:
+            return run(self, *args, **kwargs)
+
+    locked.one_thread = True
+    tuner.run = locked
 
 
 class LoraLinear(torch.nn.Module):
@@ -116,9 +161,23 @@ class Replica:
     """One copy of the head with LoRA layers, on one device."""
 
     def __init__(self, base_dir: str, device: str, dtype: str, recipe: Recipe, seed: int):
+        leave_room_for_the_driver(device)
         self.model, self.device, self.recipe = load_head(base_dir, dtype).to(device).eval().requires_grad_(False), device, recipe
         self.layers = add_lora(self.model, recipe, seed)
         self.weights = [w for layer in self.layers.values() for w in (layer.lora_A, layer.lora_B)]
+
+    def warm_up(self, ids: Sequence[int]) -> None:
+        """One short row forward and backward through the layers. It leaves no gradient, changes no weight and draws no random number.
+
+        A Triton kernel is tuned, compiled and loaded at its first call, and
+        the CUDA libraries make their handles at their first use. Without
+        this pass that happens in the first backward of the longest row: the
+        memory peak of the whole job. Here the GPU holds only the head.
+        """
+        hidden = self.model.base_model(input_ids=torch.tensor([list(ids)], device=self.device)).last_hidden_state
+        hidden.float().square().sum().backward()
+        for weight in self.weights:
+            weight.grad = None
 
     def train_rows(self, rows: Sequence[dict], n_rows: int) -> tuple[float, int]:
         """Add the gradient of these rows. Returns their share of the loss and the tokens that trained."""
@@ -181,9 +240,12 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     devices = list(devices or [f"cuda:{i}" for i in range(torch.cuda.device_count())])[: len(active)]
     if not devices:  # never train on the CPU by accident: it would run for hours and then pass the lease
         raise InfraError("the training job sees no GPU")
+    one_thread_in_the_tuner()
     replicas = [Replica(job["base_dir"], device, job["dtype"], recipe, job["seed"]) for device in devices]
     first = replicas[0]
     check_names(job["base_dir"], list(first.layers))
+    for replica in replicas:  # one GPU after another, before any long row: see Replica.warm_up
+        replica.warm_up((active[0]["prompt_ids"] + active[0]["tokens"])[:WARM_UP_TOKENS])
     optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr)
     loaded = time.monotonic()
     losses, grad_norms, trained = [], [], 0

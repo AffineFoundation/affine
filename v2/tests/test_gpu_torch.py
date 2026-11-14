@@ -7,7 +7,10 @@ import math
 import shutil
 import string
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -108,6 +111,77 @@ def test_same_seed_same_lora_and_replicas_give_the_one_gpu_result(head_dir, tmp_
     _, one, _ = run(head_dir, tmp_path / "one", dtype="float32")
     _, two, _ = run(head_dir, tmp_path / "two", dtype="float32", devices=("cpu", "cpu"))  # the elastic split: more GPUs, the same step
     assert all(torch.allclose(one[key], two[key], atol=1e-7) for key in one)
+
+
+def test_the_warm_up_row_changes_no_byte_of_what_training_makes(head_dir, tmp_path, monkeypatch):
+    # float32: on a busy CPU a bf16 run is not always repeatable, with or without the warm-up row, and this test compares bytes.
+    def tree(name: str, n: int) -> dict:
+        run(head_dir, tmp_path / name, devices=("cpu",) * n, dtype="float32")
+        return hash_tree(tmp_path / name)  # the LoRA, its config and the train report
+
+    warm = {n: tree(f"warm{n}", n) for n in (1, 2)}
+    monkeypatch.setattr(train_job.Replica, "warm_up", lambda self, ids: None)  # the job as it was before the warm-up row
+    assert {n: tree(f"cold{n}", n) for n in (1, 2)} == warm
+
+
+def test_the_warm_up_row_runs_once_per_replica_before_any_row_and_leaves_nothing_behind(head_dir, tmp_path, monkeypatch):
+    warm_up, train_rows, events = train_job.Replica.warm_up, train_job.Replica.train_rows, []
+
+    def watched(self, ids):
+        weights, state = [weight.detach().clone() for weight in self.weights], torch.get_rng_state()
+        warm_up(self, ids)
+        events.append(("warm-up", id(self), len(ids)))
+        assert all(weight.grad is None for weight in self.weights) and all(torch.equal(a, b) for a, b in zip(weights, self.weights))
+        assert torch.equal(state, torch.get_rng_state())  # no draw from the random source of the process
+
+    def rows(self, *args):
+        events.append(("rows", id(self), 0))
+        return train_rows(self, *args)
+
+    monkeypatch.setattr(train_job.Replica, "warm_up", watched)
+    monkeypatch.setattr(train_job.Replica, "train_rows", rows)
+    monkeypatch.setattr(train_job, "WARM_UP_TOKENS", 5)
+    run(head_dir, tmp_path / "out", devices=("cpu", "cpu"))
+    assert [kind for kind, _, _ in events] == ["warm-up", "warm-up", "rows", "rows", "rows", "rows"]  # 2 replicas, then 2 steps
+    assert len({replica for _, replica, _ in events[:2]}) == 2 and {size for _, _, size in events[:2]} == {5}  # the longest row, cut
+
+
+def test_torch_leaves_a_part_of_each_gpu_to_the_driver_and_the_cpu_is_not_asked(monkeypatch):
+    gib = 2**30
+    assert train_job.torch_share(288 * gib) == 1 - 8 / 288 and train_job.torch_share(128 * gib) == 15 / 16
+    assert train_job.torch_share(24 * gib) == 15 / 16  # a small card: a sixteenth, not 8 GiB
+    calls = []
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda device: SimpleNamespace(total_memory=160 * gib))
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", lambda share, device: calls.append((share, device)))
+    train_job.leave_room_for_the_driver("cpu")
+    train_job.leave_room_for_the_driver("cuda:3")
+    assert calls == [(0.95, "cuda:3")]
+
+
+def test_one_thread_at_a_time_is_in_the_kernel_tuner():
+    class Tuner:  # Triton's tuner in small: the arguments live in the object for the time of the call
+        nargs, inside, most = None, 0, 0
+
+        def run(self, value):
+            self.nargs = {"x": value}
+            Tuner.inside += 1
+            Tuner.most = max(Tuner.most, Tuner.inside)
+            time.sleep(0.002)
+            out = {**self.nargs}["x"]  # without the lock: a TypeError when another call has ended, or the other call's value
+            Tuner.inside -= 1
+            self.nargs = None
+            return out
+
+    plain = Tuner.run
+    train_job.one_thread_in_the_tuner(Tuner)
+    locked = Tuner.run
+    train_job.one_thread_in_the_tuner(Tuner)  # a second call adds no second lock
+    assert Tuner.run is locked is not plain and locked.__wrapped__ is plain
+    tuner = Tuner()
+    with ThreadPoolExecutor(8) as pool:
+        assert list(pool.map(tuner.run, range(64))) == list(range(64))
+    assert Tuner.most == 1
+    train_job.one_thread_in_the_tuner(None)  # no Triton on this machine: nothing to lock
 
 
 def test_miner_values_change_the_step_and_the_norm_cap_scales_the_whole_update(head_dir, tmp_path):
