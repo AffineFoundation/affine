@@ -9,10 +9,13 @@ Outcome codes: ``P`` pass and ``F`` fail come from the official grader.
 ``C`` is a reply that was cut at the token cap: it is never graded. ``E`` is
 a failure of ours (request or grader): it is not a pass and it stays in the
 count. A dead server is not an ``E``: the whole look is an ``InfraError``.
+The same holds for a rollout that this process could not send because it
+had no file left for the socket.
 """
 
 from __future__ import annotations
 
+import errno
 import json
 import resource
 import sys
@@ -72,6 +75,12 @@ def http_json(url: str, body: dict | None, timeout_s: float) -> dict:
 Http = Callable[[str, dict | None, float], dict]
 
 
+def no_file_left(exc: OSError) -> bool:
+    """True when the request was never sent: this process, or the machine, had no file left for its socket."""
+    cause = exc.reason if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, OSError) else exc
+    return cause.errno in (errno.EMFILE, errno.ENFILE)
+
+
 def socket_room(sockets: int, spare: int) -> int:
     """How many sockets this process may hold next to ``spare`` other files. It first raises its soft limit of open files.
 
@@ -106,6 +115,7 @@ class ServeSettings:
     start_timeout_s: float = 1800.0  # model load time of one server
     clients_per_server: int = 256  # requests in flight per server, and the server's --max-num-seqs
     retries: int = 2  # extra tries after a transport failure or a 5xx reply
+    retry_pause_s: float = 5.0  # wait before each extra try
     spare_files: int = 512  # open files of this process next to the sockets of a look: logs, pipes, the grader's workers
     free_limit_mib: int = 1024  # a GPU above this is still in use
     free_timeout_s: float = 120.0
@@ -235,19 +245,25 @@ class VllmEvaluator:
             list(threads.map(load, self._urls))
         self._loaded.update(name for name, _ in fresh)
         jobs = [(model, sample, index) for model in models for sample in range(params.samples_per_task) for index in range(len(tasks))]
-        served = time.monotonic()
+        served, unsent = time.monotonic(), []  # unsent: rollouts that this process could not send for lack of a file
 
         def rollout(job: tuple[str, int, int]) -> tuple[str, bool] | None:
             model, sample, index = job
             messages = self.pool.task(tasks[index]).messages()
             body = chat_body(model, messages, rollout_seed(request.round_seed, tasks[index], sample), params)
             url = self._urls[index % len(self._urls)] + "/v1/chat/completions"
-            for _ in range(self.settings.retries + 1):
+            starved = False  # the last try failed because this process had no file left for its socket
+            for attempt in range(self.settings.retries + 1):
+                if unsent:  # the look is already lost: send nothing more
+                    return None
+                if attempt:
+                    self.sleep(self.settings.retry_pause_s)
                 budget = float(params.eval_time_budget_s)
                 if request.deadline:  # the round's time limit: no rollout of this chunk may run past it
                     budget = min(budget, request.deadline - time.time())
                     if budget <= 0:
                         return None
+                starved = False
                 try:
                     sent = time.monotonic()
                     reply = self.http(url, body, budget)
@@ -258,8 +274,12 @@ class VllmEvaluator:
                 except HttpError as exc:
                     if exc.status < 500:
                         return None
-                except (OSError, KeyError, IndexError, TypeError, ValueError):
-                    pass
+                except OSError as exc:
+                    starved = no_file_left(exc)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    starved = False
+            if starved:  # the last try never left this process: that says nothing about the model
+                unsent.append(job)
             return None
 
         with ThreadPoolExecutor(clients) as threads:
@@ -267,6 +287,9 @@ class VllmEvaluator:
         if not all(server.alive() for server in self._servers):
             self.close()
             raise InfraError("a vLLM server died during the look; nothing of it can be scored")
+        if unsent:
+            # Not an E: an E counts against its model, and these rollouts never reached a server. So the look is not scored at all.
+            raise InfraError(f"this process had no file left for the socket of {len(unsent)} rollouts (too many open files); nothing of the look is scored")
         if request.deadline and time.time() >= request.deadline and any(reply is None for reply in replies):
             # A rollout that the limit cut is not an error of its model. Long outputs are cut first, so this chunk is not scored at all.
             # Its speeds are still logged, as their own phase: no reader may count it as a chunk that was scored.
