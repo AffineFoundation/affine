@@ -88,9 +88,9 @@ def load_stack(spec: str, context: StackContext) -> Stack:
     return builder(context)
 
 
-def open_stack(args: argparse.Namespace, command: str) -> tuple[StackContext, Stack]:
+def open_stack(args: argparse.Namespace, command: str, owns_journal: bool = True) -> tuple[StackContext, Stack]:
     given = load_params(args.params) if getattr(args, "params", None) else None
-    context = StackContext(Path(args.state_dir), given or Params(), command)
+    context = StackContext(Path(args.state_dir), given or Params(), command, owns_journal)
     stack = load_stack(args.stack, context)
     pinned = (context.state_dir / JOURNAL_FILE).exists() and load(context.state_dir / JOURNAL_FILE).params
     if pinned:  # the journal's parameters are the only ones in force
@@ -114,7 +114,7 @@ def read_state(args: argparse.Namespace, command: str) -> tuple[State, Params, S
     if not getattr(args, "stack", None):
         state = load(Path(args.state_dir) / JOURNAL_FILE)
         return state, state.params or Params(), None
-    context, stack = open_stack(args, command)
+    context, stack = open_stack(args, command, owns_journal=False)
     state = context.load(stack.store if stack.mirror else None)
     return state, context.params, stack
 

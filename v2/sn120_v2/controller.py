@@ -108,6 +108,7 @@ class StackContext:
     state_dir: Path
     params: Params  # after ``load``: the parameters pinned in the journal, when it has them
     command: str = "run"  # a builder may leave out the runner and the folder for any other command
+    owns_journal: bool = True  # False: the command only reads the journal. ``run`` can go on beside it, and the state that it read can be an older one
 
     def load(self, store: ObjectStore | None = None) -> State:
         """The replayed state. Call it before ``params`` is read.
@@ -632,8 +633,10 @@ class Controller:
         log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
         with timed(f"close of {record.round_id}: the head pointer"):
             self._sync_pointer()
-        if self.overlap is not None and self.head.chain is not None:
+        if self.overlap is not None and self.head.chain is not None and outcome == APPLIED:
             # The chain file is the public record of a new head, and it is one small write. It stays at the close, as with ``serial``.
+            # A close with no new head writes none: the write lists the checkpoint markers, and it would move ``start``
+            # in the chain file while mining.json keeps the older one until the publish after the next open.
             try:
                 with timed(f"close of {record.round_id}: the chain file"):
                     self.head.chain(self.state)

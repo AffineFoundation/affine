@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.request
 import uuid
 from pathlib import Path
@@ -26,6 +27,7 @@ torch = pytest.importorskip("torch")
 from sn120_v2.sim_head import ChainWorld, is_weight  # noqa: E402 - after the skip guard
 
 from sn120_v2 import headfold, layout, replicate  # noqa: E402
+from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, FIXED_ORDER, FULL, MATMUL, heads_of  # noqa: E402
 from sn120_v2.publisher import render  # noqa: E402
@@ -155,6 +157,33 @@ def test_after_the_marker_of_the_head_the_links_have_the_form_of_a_store_with_ea
     contract = replicate.Contract.load(str(site / layout.MINING_JSON))
     fetched = replicate.fetch(contract, tmp_path / "miner", links_source=str(site / LINKS))
     assert "replayed_folds" not in fetched and fetched["fetched"] == len(head.base_files), "the base is a download: no fold on the reader's machine"
+    assert hash_tree(Path(fetched["dir"])) == head.base_files
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_marker_of_the_head_from_the_thread_of_run_and_the_mining_json_of_before_it_give_the_plain_files(env, tmp_path, order):
+    """The chain file moves ``start`` to the head with the marker, and mining.json keeps the older ``start`` to the next publish. ``fetch`` then takes ``base`` of the links."""
+    world = ChainWorld(tmp_path / "world", sim_params(), order=order)
+    world.start(CHAIN, every=1)  # a checkpoint for each head, made by the thread of ``run``
+    world.store.gate = threading.Event()  # its upload waits
+    head = world.king()
+    assert world.controller.close_in_public(world.clock()) == ""  # ``overlap``: the public files of the close
+    count, genesis = len(world.publisher.snapshots), world.chain_file()["genesis"]["version_id"]
+    assert world.chain_file()["start"]["version_id"] == genesis
+    world.store.gate.set()
+    sync(world, env)  # it waits for the upload, the marker and ``mark``
+    site = tmp_path / "site"
+    assert len(world.publisher.snapshots) == count, "no publish came after the marker"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    links, mining = read(site)
+    chain = json.loads((site / layout.HEAD_CHAIN).read_bytes())
+    assert chain["start"]["version_id"] == head.head.version_id and chain["start"]["steps_to_head"] == 0
+    assert mining["head_chain"]["start"]["version_id"] == genesis and mining["head_chain"]["start"]["steps_to_head"] == 1
+    assert links["base"]["id"] == head.head.base_hash and [point["version_id"] for point in links["checkpoints"]] == [head.head.version_id]
+    contract = replicate.Contract.load(str(site / layout.MINING_JSON))
+    fetched = replicate.fetch(contract, tmp_path / "miner", links_source=str(site / LINKS))
+    assert "replayed_folds" not in fetched and fetched["fetched"] == len(head.base_files), "the base is a download: ``start`` of mining.json is not used"
     assert hash_tree(Path(fetched["dir"])) == head.base_files
 
 
