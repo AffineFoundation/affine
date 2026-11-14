@@ -32,7 +32,8 @@ from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .queue import SECONDS_PER_DAY
 from .seams import ObjectStore
-from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, HeadManifest, HeadVersion
+from .state import ABANDONED
+from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 
 REPO = "https://github.com/AffineFoundation/affine"
 # The site pull job (``v2/site/pull.py``, ``LINKS``) writes this file on the web host, under the public address. It
@@ -143,7 +144,6 @@ def object_keys() -> dict[str, str]:
         "master_file": layout.public_master_prefix("MASTER_DIGEST") + "/FILE",
         "lora_file": layout.public_lora_prefix("LORA_HASH") + "/FILE",
         "round_file": layout.round_file("ROUND_ID"),
-        "round_scores": layout.round_scores("ROUND_ID"),
         "winner_batch": layout.winner_batch("ROUND_ID"),
         "irt_snapshot": layout.irt_snapshot("SNAPSHOT_ID"),
     }
@@ -235,8 +235,8 @@ def _recipe_lines(params: Params) -> list[str]:
         "  `train` makes the whole file invalid.",
         f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
         "- Your `train` values are published only if your batch wins.",
-        "- A file with `train` keys that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The hotkey keeps",
-        "  its place and is not charged until the miner uploads a new file.",
+        "- A file with `train` keys that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The seat is",
+        "  skipped and not charged, as with any invalid file (section 4), until the miner uploads a valid file.",
         "",
         "### What the trainer does with them",
         "",
@@ -337,7 +337,8 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  rule code and the reason.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
-        "  To enter again, register again.",
+        "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
+        "  registration. A turn in v1 that the cutover imported counts too. To enter again, register a new hotkey.",
         f"- Order: registration block, then UID. UID {params.burn_uid} has no seat.",
         "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
@@ -347,6 +348,11 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
         f"- `{NOT_SCORED}`: the time limit of the round came before the first look of the scoring (section 3). You are",
         "  not charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
+        f"- `{SKIP}`: the trainer could not train the copy of your file, for example because the training gave a number",
+        "  that is not finite. You are not charged and you keep your place.",
+        f"- A round with the outcome `{ABANDONED}`: a winner was named, but its files could not be checked or applied.",
+        "  The head does not change, no entry of the round is charged, and a seat that was scored goes to the front of",
+        "  the queue.",
         "",
         "### Your place while you wait",
         "",
@@ -395,7 +401,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "window. The validator copies the latest file when a round takes the entry: that copy is",
         "what is trained. The admission checks run again on each new file. The only rule that moves a waiting seat",
         "back is squat-trim (section 4): it applies to a seat with no valid file stored, never to a seat with a valid",
-        "file. The file stays private unless it wins. Then the exact file and the LoRA are published.",
+        "file. The file stays private unless it wins. Then the exact file is published (section 9).",
         "",
         "```json",
         json.dumps(example, indent=1),
@@ -409,7 +415,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- Caps: {params.max_prompts} prompts and {params.max_rollouts} rollouts. Whole groups are kept in file order while",
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
         f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
-        f"  {params.max_context_tokens} tokens. The prompt is counted as one user message in the chat template of the",
+        f"  {params.max_context_tokens} tokens: an output below the output cap counts 1 token more there, its end-of-sequence",
+        "  token. The prompt is counted as one user message in the chat template of the",
         f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
         f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid: the trainer",
         "  truncates it (section 2).",
@@ -440,21 +447,24 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
         "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
-        "  `--tokenizer`: only a token count can tell that an output stopped at the cap.",
+        "  `--tokenizer`: only a token count can tell that an output stopped at the cap. Install, from a copy of the",
+        '  code (section 2): `pip install -e "v2[miner,envs]"`.',
         "",
         "### Rule codes",
         "",
-        "The validator and the `check` command name the first rule that a file breaks. The rules run in this order:",
+        "A check stops at the first rule that a file breaks. The `check` command names that rule. The validator",
+        "publishes only `file_valid` (section 4), not the rule. The rules run in this order:",
         "",
         *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
         "",
         f"Not a final verdict: {', '.join(f'`{code}`' for code in TRANSIENT)}. Such a code comes from one check on our machine at one",
         f"moment, so the validator checks the file again when it tries to open a round, at most once each {FAULT_HOLD_S // 60} minutes.",
-        "A failed check is counted only when our checker passes its own known-good case at that moment. The reason",
-        f"shows the count: `(check 1 of {FAULT_TRIES})`. After {FAULT_TRIES} counted checks in a row that fail at the same place of the same",
+        "A failed check is counted only when our checker passes its own known-good case at that moment. After",
+        f"{FAULT_TRIES} counted checks in a row that fail at the same place of the same",
         "file, the verdict stays until you upload a new file. A new file is checked at the next try, with no wait.",
-        "With such a code, before and after that, a round does not take the file: you are not charged and the seat",
-        "keeps its place (section 4). Every other code is final for those bytes: upload a new file.",
+        "With such a code, before and after that, a round does not take the file: you are not charged, and the seat",
+        "is skipped as with any invalid file (section 4). The validator does not publish the code or the count: you",
+        "see only `file_valid`. Every other code is final for those bytes: upload a new file.",
         "",
         "### How to upload",
         "",
@@ -499,7 +509,8 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  is signed for that header: without it the store refuses the upload.",
         "- The opened URL is a secret. Anyone who has it can replace your file until the link expires.",
         "- HTTP 404 on your link file means one of three things: the hotkey is not registered, it has no activation, or",
-        "  its entry was evaluated. After a new registration or activation, wait for the next link file.",
+        "  its entry was evaluated. After a new registration or activation, wait for the next link file. A hotkey",
+        "  whose entry was evaluated gets no link again (section 4).",
         "- After the upload, read `file_valid` in section 4.",
     ]
 
@@ -509,7 +520,7 @@ def _pool_lines(params: Params) -> list[str]:
         return []
     return [
         f"- Task pool: `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
-        f"  instruction as the system message and the problem as the user message: {json.dumps(MANDATE)}",
+        f'  instruction as the system message and the problem as the user message: "{MANDATE}"',
         "- A prompt of your file is a pool task when it is the problem text, with or without that instruction and one",
         "  blank line before it. The official grader is `sn120_v2.envs.math_grader.grade(task, output, capped)`. It",
         "  grades model outputs in scoring and the rewards in your file.",
@@ -596,8 +607,10 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- A file set (base, fp32 master, LoRA) has the id sha256(canonical JSON of {file name: sha256}). Check each",
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
-        "- Only a winner has a public batch, LoRA and `train` values. For every other entry the round file shows the",
-        "  decision, the batch sha256 and the scores only.",
+        "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
+        "  shows the decision, the batch sha256 and the scores only.",
+        "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
+        "  (section 6) it is part of the new base, and there is no link for the LoRA alone.",
         "",
         "## 10. Reproduce a round at home",
         "",
@@ -675,6 +688,10 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "Each value is pinned into a round when the round starts.",
         "",
         *table(("parameter", "value"), numbers),
+        "",
+        "- `eval_time_budget_s`: the longest time that the box waits for one answer of a model in scoring. It is not the",
+        "  time of the scoring: the times of a round are in section 3.",
+        "- `burn_uid`: the UID of the owner. It has no seat (section 4) and gets no weight: nothing is burned (section 7).",
         "",
     ]
     return "\n".join(reflow(lines)) + "\n"

@@ -25,6 +25,7 @@ bittensor
 
 # miner: miner tooling and llms.txt
 transformers
+jinja2
 
 # envs: math task pool and grader
 math_verify
