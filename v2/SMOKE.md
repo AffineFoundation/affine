@@ -82,7 +82,7 @@ Pass: `plan.json` is one line, `{"code_digest": "<64 hex>", "image_digest": "<64
 
 For a first round that takes minutes, not hours, see "Tiny first" after step 4.
 
-`bootstrap` (step 4) pins these parameters. A change of `params.json` after step 4 has no effect by itself. To change a parameter later: stop `run`, edit the file, then run `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params.json`. It prints the old and the new `params_hash`.
+`bootstrap` (step 4) pins these parameters. A change of `params.json` after step 4 has no effect by itself. To change a parameter later: stop `run`, edit the file, then run `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $SMOKE/params.json`. It prints the old and the new `params_hash`, and under `changed` each parameter whose value differs, with the value before and after.
 
 After any `uv pip install` or `git pull`, run this block again. A stale digest stops the first train call with an error; it never gives a wrong score.
 
@@ -228,6 +228,7 @@ For `5-full`, the copy command is `python -m sn120_v2.smoke copy --state-dir $ST
 What the three commands do:
 
 1. `set-params` prints the old and the new `params_hash`. It is refused while a round is open. `n_gpus` changes only here, between two `run` commands.
+   Read `changed` in its output after each `set-params`: it holds each parameter whose value differs, with the value `before` and `after` (a value of the recipe has the name `recipe.<name>`). A key that the file does not hold goes back to its default with no refusal, and `changed` is the only place that shows it. If `changed` holds a key that you did not want to change, do not start `run`: while the loop is stopped no round uses the pinned parameters, so a wrong file costs nothing, and a second `set-params` with the right file puts it right.
 2. `copy` gives the next seats of the queue a miner file: as many as the round takes (`batch_cap`). It reads v1's bucket and writes only under the smoke prefix. Without `--whole` it writes a **small copy**: at most 2 groups of the real file. A group is one prompt with its rollouts. Each group is copied whole and unchanged. A group is used only when it has two different rewards and every rollout of it is within the reply cap. The copy has no `train` object, so it trains with the default recipe (1 step). The copy must pass the full admission check, or it is not written.
 3. `run` runs one round and prints the round summary.
 
