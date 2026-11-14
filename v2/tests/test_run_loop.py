@@ -279,7 +279,7 @@ def test_the_exit_codes_of_run_that_mean_do_not_start_again(box, step, code, run
     elif runs == 1:
         assert "STOPPED by the operator" in box.last_lines(2) and "start the loop again" in box.last_lines(1)
     else:
-        assert "run ended with exit code 2, refused: InfraError: the fake says no. No round finished in this start." in box.log
+        assert "run ended with exit code 2, refused: InfraError: the fake says no." in box.log and "This try is not counted" in box.log
 
 
 def test_the_loop_gives_up_after_the_set_starts_with_no_finished_round_and_a_finished_round_resets_the_count(box):
@@ -326,9 +326,53 @@ def test_the_loop_ends_an_open_round_before_a_start_but_never_a_round_with_a_sto
 def test_an_end_round_that_fails_counts_as_a_start_and_one_that_is_refused_stops_the_loop(box):
     assert box.loop(["exit:0"], end_round=["refuse:InfraError", "crash", "none"]) == 0
     assert [call.split()[0] for call in box.calls] == ["end-round", "end-round", "end-round", "run"]
-    assert "end-round: refused: InfraError: the fake says no. run was not started; this counts as start 1." in box.log
+    assert "end-round: refused: InfraError: the fake says no. run was not started." in box.log
+    assert "end-round ended with exit code 1. run was not started. No round finished: this counts as start 1 of at most 3." in box.log
     assert box.loop(["exit:0"], end_round=["refuse:JournalCorrupt"]) == 2 and box.runs == 1, "run was not started again"
     assert "STOPPED: end-round refused, and a new start cannot change that: refused: JournalCorrupt" in box.last_lines(2)
+
+
+def test_a_store_or_chain_that_does_not_answer_never_stops_the_loop_and_never_counts_as_a_start(box):
+    """More such tries than the limit, from end-round and from run. Then a normal start."""
+    refused = ["refuse:InfraError"]
+    assert box.loop(refused * 3 + ["exit:0"], end_round=refused * 2, SN120_LOOP_MAX_STARTS="3") == 0
+    assert [call.split()[0] for call in box.calls] == ["end-round"] * 3 + ["run", "end-round"] * 2 + ["run", "end-round", "run"]
+    assert box.log.count("This try is not counted (the count of starts stays at 0 of at most 3)") == 5 and "try 5, no answer since" in box.log
+    assert box.log.count("start 1 of at most 3 with no finished round") == 4 and "STOPPED: 3 starts" not in box.log
+    assert "STOPPED: run finished with exit code 0" in box.last_lines(2) and "stopped: run finished" in box.status
+
+
+def test_the_count_of_crashes_stays_through_the_tries_with_no_answer(box):
+    """Two crashes, then tries with no answer, then the third crash: the loop gives up. Such tries do not set the count to zero."""
+    refused = ["refuse:InfraError"]
+    plan = ["exit:1", *refused * 2, "exit:1", *refused * 2, "exit:1", "exit:0"]
+    assert box.loop(plan, end_round=["none", "none", "refuse:InfraError"], SN120_LOOP_MAX_STARTS="3") == 3
+    assert box.runs == 7 and box.log.count("This try is not counted") == 5, "the last line of the plan never ran"
+    assert "the count of starts stays at 1 of at most 3" in box.log and "the count of starts stays at 2 of at most 3" in box.log
+    assert "No round finished: this counts as start 3 of at most 3." in box.log
+    assert "STOPPED: 3 starts in a row and no round finished. The last one ended with: exit code 1" in box.last_lines(4)
+
+
+def test_the_wait_for_the_store_or_the_chain_says_since_when_and_its_pause_grows_to_a_limit(box):
+    box.plan(["refuse:InfraError"] * 3 + ["exit:0"])
+    box.env.update(SN120_LOOP_PAUSE_S="1", SN120_LOOP_MAX_PAUSE_S="2")
+    process = box.start()
+    deadline = time.monotonic() + 20
+    while "waiting for the store" not in (status := wait_for(box.work / "logs" / "run-loop.status")):
+        assert time.monotonic() < deadline, status
+        time.sleep(0.02)
+    waiting = re.fullmatch(
+        r"\S+ waiting for the store or the chain since (\S+Z) \(\d tries with no answer\); next try in \d s; "
+        r"the last one ended with: exit code 2, refused: InfraError: the fake says no\n",
+        status,
+    )
+    assert waiting, status
+    process.communicate(timeout=60)
+    assert process.returncode == 0
+    lines = re.findall(r"try (\d), no answer since (\S+)\. .* Next try in (\d) s\.", box.log)
+    assert [(line[0], line[2]) for line in lines] == [("1", "1"), ("2", "2"), ("3", "2")], "the pause doubles, up to the limit"
+    assert {line[1] for line in lines} == {waiting.group(1)}, "every line names the time of the first try with no answer"
+    assert "stop the loop and fix what the refused line names" in box.log
 
 
 def wait_for(path: Path, seconds: float = 20.0) -> str:
