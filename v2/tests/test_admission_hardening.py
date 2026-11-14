@@ -18,7 +18,7 @@ from sn120_v2 import admission, layout
 from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, NO_SIGNAL, RULES, TIME_LIMIT, TOKENIZER_FAULT, TRAIN_COST, TRANSIENT, GraderFault, GraderTimeLimit, Invalid, StoreAdmission, check_batch, env_grader, final_answer, pool_grader, trained_tokens
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.cli import main
-from sn120_v2.errors import InfraError
+from sn120_v2.errors import InfraError, VerifyError
 from sn120_v2.gpu.batch import fit_tokens, training_rows
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.sim import STORE_DIR, SimAdmission
@@ -742,6 +742,30 @@ def test_file_above_the_training_cost_cap_is_invalid(build):
     assert (rule(steps, build.params(max_train_token_steps=2940)), rule(steps, build.params(max_train_token_steps=2939))) == ("", TRAIN_COST)
     blind = check_batch(raw, HOTKEY, build.params(max_train_token_steps=1), tokens=None)
     assert (blind.train_token_steps, blind.checked) == (0, ("format",)), "without a tokenizer the cost rule does not run"
+
+
+def test_the_cost_of_a_frozen_file_is_kept_at_the_freeze_and_another_process_counts_it_again(build):
+    """The source of the GPU plan of a round (``assembly.train_load``): the same file gives the same numbers in every pass."""
+    store, params = Store(), build.params()
+    store[layout.miner_object(HOTKEY)] = file(train={"steps": 3})
+    adm = StoreAdmission(store, params, tokens=WordTokens(), grader=None)
+    frozen = adm.freeze(build.reg(1, hotkey=HOTKEY), "r000001")
+    checked = check_batch(store[frozen.uri], HOTKEY, params, tokens=WordTokens())
+    assert (checked.train_token_steps, checked.train_rows) == (3 * 980, 20), "20 rollouts train, each in each of the 3 steps"
+    reads = []
+    real = store.get
+    store.get = lambda key: reads.append(key) or real(key)
+    assert adm.train_cost(frozen, params) == (2940, 20) and reads == [], "the process that froze the file reads nothing"
+    later = StoreAdmission(store, params, tokens=WordTokens(), grader=None)  # run started again in the round
+    assert later.train_cost(frozen, params) == (2940, 20) and reads == [frozen.uri], "the frozen copy, counted again"
+    assert later.train_cost(frozen, params) == (2940, 20) and len(reads) == 1, "one read for each file"
+    store[frozen.uri] = file()  # not the frozen bytes
+    with pytest.raises(VerifyError):
+        StoreAdmission(store, params, tokens=WordTokens(), grader=None).train_cost(frozen, params)
+    wrong = file([{"prompt": "double 1", "rollouts": [row(2, 1), row(2, 1)]}])  # nothing trains: the file is not valid
+    store[frozen.uri] = wrong
+    with pytest.raises(Invalid):
+        StoreAdmission(store, params, tokens=WordTokens(), grader=None).train_cost(replace(frozen, batch_sha256=sha256_hex(wrong)), params)
 
 
 def test_only_rollouts_that_train_count_toward_the_cost(build):

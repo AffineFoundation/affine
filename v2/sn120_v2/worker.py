@@ -8,8 +8,10 @@ Rules it keeps:
 
 * One failing batch must not take the box down. A training failure is tried
   again, then that entry becomes ``no_decision`` and the others go on.
-* Batches train at the same time, each on its own slot of GPUs. With more
-  batches than slots, a batch waits for a free slot.
+* Batches train at the same time, each on its own GPUs. With no more batches
+  than GPUs every batch starts at the lease, and the GPUs go to the batches
+  by their token-steps (``gpu_counts``). With more batches than GPUs each
+  batch has one GPU, and a batch waits for a free GPU.
 * The trainer is closed before evaluation starts, so its GPUs are free.
 * Null M is scored in every look, with the same tasks and seeds as the LoRAs.
 * The round's time limit is hard. It cuts every look, the first one too:
@@ -27,12 +29,15 @@ Rules it keeps:
 from __future__ import annotations
 
 import queue
+import sys
 from concurrent.futures import ThreadPoolExecutor, wait
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, Sequence
 
 from . import layout
 from .errors import BatchRejected, ContractError, InfraError
 from .judging import drop_at_look, score_entry
+from .params import Params
 from .sampling import train_seed
 from .seams import Evaluator, Trainer
 from .types import (
@@ -55,25 +60,78 @@ from .types import (
 )
 
 # A pass of the box started "at the lease" when it started at most this long after the start of the lease. Only then
-# did a batch of the first group have the whole training time. A pass that started later (run started again in the
-# round, or the round ran again under the same lease) gave it less: a batch that does not finish is then not_trained,
-# and nothing is counted. A normal pass starts a few seconds after the lease: the controller writes the ticket, the
-# journal record and the public files in between. The weight hash and the downloads come after the start of the pass.
+# did a batch of the first group have the whole training time. The first group: the batches that start with the pass
+# (all of them when the round has no more batches than GPUs, else as many as there are GPUs). A pass that started
+# later (run started again in the round, or the round ran again under the same lease) gave it less: a batch that does
+# not finish is then not_trained, and nothing is counted. A normal pass starts a few seconds after the lease: the
+# controller writes the ticket, the journal record and the public files in between. The weight hash, the downloads
+# and the read of the loads (``LoadOf``) come after the start of the pass.
 AT_THE_LEASE_S = 120
 
 
-def gpu_slots(n_gpus: int, n_batches: int) -> list[tuple[int, ...]]:
-    """Split the box's GPUs into equal slots of floor(n_gpus / batches) GPUs, at least one GPU each."""
-    per_lora = max(1, n_gpus // max(1, n_batches))
-    return [tuple(range(start, start + per_lora)) for start in range(0, n_gpus - per_lora + 1, per_lora)]
+# A round with more batches than GPUs: each batch has one GPU, and the batches start in this order. False: queue
+# order. True: the batch with the most token-steps first, and queue order between equal batches. Then the long jobs
+# run side by side from the lease and the short jobs fill the GPUs after them, so the training phase ends sooner.
+LONGEST_FIRST = False
+
+
+@dataclass(frozen=True)
+class TrainLoad:
+    """What the training of one batch costs: the two numbers that the GPU plan of a round needs."""
+
+    token_steps: int  # steps times the tokens of the rollouts that train: the cost of admission's rule ``train_cost``
+    rows: int  # the rollouts that train. A training job puts no more copies of the model on GPUs than this.
+
+
+# The one source of the load of a batch. The box gives the function: today it reads the frozen file and counts with
+# the tokenizer of the head. When the ticket holds these numbers, only this function changes.
+LoadOf = Callable[[Entry, Params], TrainLoad]
+
+
+def gpu_counts(n_gpus: int, loads: Sequence[TrainLoad]) -> list[int]:
+    """How many GPUs the training job of each batch has, in queue order. All integers: the same on every machine.
+
+    More batches than GPUs: one GPU each. Else every batch gets one GPU. Then each GPU that is left, one at a time,
+    goes to the batch with the most token-steps for each GPU that it has now. Between equal batches the lower queue
+    position wins. A batch gets no more GPUs than it has rows that train: its job cannot use them. So the largest
+    value of token-steps / GPUs over the batches is as small as whole GPUs allow, and a GPU stays free only when no
+    batch can use it.
+    """
+    n = len(loads)
+    counts = [1] * n
+    if n > n_gpus:
+        return counts
+    for _ in range(n_gpus - n):
+        best = None
+        for i in range(n):
+            if counts[i] < loads[i].rows and (best is None or loads[i].token_steps * counts[best] > loads[best].token_steps * counts[i]):
+                best = i
+        if best is None:
+            break
+        counts[best] += 1
+    return counts
+
+
+def start_order(loads: Sequence[TrainLoad], longest_first: bool) -> list[int]:
+    """The order in which the batches of a round start: queue order, or the most token-steps first."""
+    order = list(range(len(loads)))
+    return sorted(order, key=lambda i: (-loads[i].token_steps, i)) if longest_first else order
 
 
 class LocalRunner:
     def __init__(
-        self, trainer: Trainer, evaluator: Evaluator, clock: Callable[[], int], image_digest: str, attempts: int = 3, poll_s: float = 1.0
+        self,
+        trainer: Trainer,
+        evaluator: Evaluator,
+        clock: Callable[[], int],
+        image_digest: str,
+        attempts: int = 3,
+        poll_s: float = 1.0,
+        load_of: LoadOf | None = None,
     ) -> None:
         self.trainer, self.evaluator = trainer, evaluator
         self.clock, self.image_digest, self.attempts, self.poll_s = clock, image_digest, attempts, poll_s
+        self.load_of = load_of
 
     def run(self, ticket: RoundTicket) -> BoxResult:
         started, params = self.clock(), ticket.params
@@ -112,38 +170,76 @@ class LocalRunner:
             phase_s={"training": train_done - started, "evaluation": finished - train_done},
         )
 
+    def _loads(self, ticket: RoundTicket) -> list[TrainLoad]:
+        """The load of each batch, in queue order. The same files give the same loads in every pass.
+
+        With no source (a test stack, or a round of one batch at home) the batches count as equal. A file whose load
+        cannot be read has no token-steps and keeps one GPU: its training job fails or is rejected for the same
+        cause, so no GPU more is held for it. A fault here never stops the round.
+        """
+        if self.load_of is None:
+            return [TrainLoad(1, ticket.params.n_gpus)] * len(ticket.entries)
+        loads = []
+        for entry in ticket.entries:
+            try:
+                loads.append(self.load_of(entry, ticket.params))
+            except Exception as exc:  # noqa: BLE001 - a store fault, a tokenizer fault or a bad file: the trainer judges the file
+                loads.append(TrainLoad(0, 1))
+                print(f"{ticket.round_id}: the load of queue position {entry.queue_pos} (UID {entry.reg.uid}) was not read, so its job has 1 GPU: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return loads
+
     def _train_all(self, ticket: RoundTicket, train_end: int, at_the_lease: bool) -> dict[int, EntryResult | LoRAArtifact]:
-        """Train the batches in queue order until ``train_end``, as many at a time as there are GPU slots.
+        """Train the batches until ``train_end``, side by side, each job on its own GPUs.
 
         Returns one report per queue position. At ``train_end`` every job that
         still runs is stopped, so the scoring always starts on time.
         ``at_the_lease``: this pass started at the lease (``AT_THE_LEASE_S``).
         """
-        slots = gpu_slots(ticket.params.n_gpus, len(ticket.entries))
+        entries, n_gpus = ticket.entries, ticket.params.n_gpus
+        side_by_side = len(entries) <= n_gpus  # every batch has its own GPUs and starts at the start of the pass
+        # The loads are read only when they change something: GPUs are left over, or the start order follows them.
+        needed = len(entries) < n_gpus or (not side_by_side and LONGEST_FIRST)
+        loads = self._loads(ticket) if needed else [TrainLoad(1, 1)] * len(entries)
+        own: list[tuple[int, ...]] = []
         free: queue.SimpleQueue[tuple[int, ...]] = queue.SimpleQueue()
-        for slot in slots:
-            free.put(slot)
+        if side_by_side:
+            for count in gpu_counts(n_gpus, loads):
+                first = own[-1][-1] + 1 if own else 0
+                own.append(tuple(range(first, first + count)))
+        else:
+            for gpu in range(n_gpus):
+                free.put((gpu,))
+        if needed and self.load_of is not None:
+            plan = "; ".join(
+                f"queue position {entry.queue_pos} (UID {entry.reg.uid}): {load.token_steps} token-steps, {load.rows} rows that train"
+                + (f", {len(gpus)} GPU(s)" if side_by_side else "")
+                for entry, load, gpus in zip(entries, loads, own or [()] * len(entries))
+            )
+            print(f"{ticket.round_id}: the loads of the training jobs: {plan}", file=sys.stderr, flush=True)
+        order = start_order(loads, LONGEST_FIRST and not side_by_side)
+        width = len(entries) if side_by_side else n_gpus  # the batches of the first group: they start with the pass
 
-        def one(index: int, entry: Entry) -> EntryResult | LoRAArtifact:
-            slot = free.get()
+        def one(place: int, index: int) -> EntryResult | LoRAArtifact:
+            gpus = own[index] if side_by_side else free.get()
             try:
-                # In a pass that started at the lease, the first batches start at the lease: each has the whole training time.
-                return self._train(ticket, entry, slot, train_end, whole_time=at_the_lease and index < len(slots))
+                # In a pass that started at the lease, the first group starts at the lease: each has the whole training time.
+                return self._train(ticket, entries[index], gpus, train_end, whole_time=at_the_lease and place < width)
             finally:
-                free.put(slot)
+                if not side_by_side:
+                    free.put(gpus)
 
         try:
-            with ThreadPoolExecutor(len(slots)) as threads:
-                jobs = [threads.submit(one, index, entry) for index, entry in enumerate(ticket.entries)]
-                running = set(jobs)
+            with ThreadPoolExecutor(max(1, width)) as threads:
+                jobs = {index: threads.submit(one, place, index) for place, index in enumerate(order)}
+                running = set(jobs.values())
                 while running:
                     _, running = wait(running, timeout=self.poll_s)
                     if running and self.clock() >= train_end:
                         self.trainer.close()  # the training time is over: stop every job that still runs
-                reports = [job.result() for job in jobs]
+                reports = {entry.queue_pos: jobs[index].result() for index, entry in enumerate(entries)}
         finally:
             self.trainer.close()
-        return {entry.queue_pos: report for entry, report in zip(ticket.entries, reports)}
+        return reports
 
     def _train(
         self, ticket: RoundTicket, entry: Entry, gpu_ids: tuple[int, ...], train_end: int, whole_time: bool

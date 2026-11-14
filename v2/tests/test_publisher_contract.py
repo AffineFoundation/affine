@@ -138,7 +138,8 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "Time limit: 80 minutes from the lease to the promotion of the winner." in flat
     assert "The box stops scoring 5 minutes before it, at minute 75 (the stop time)" in flat  # worker.LocalRunner.run
     assert "ends early, as soon as every LoRA is dropped or decided" in flat
-    assert "Training time: the first 25 minutes." in flat and "A slot is floor(4 / batches) GPUs, and at least 1." in flat
+    assert "Training time: the first 25 minutes." in flat and "A round of 4 batches or fewer: all batches train at the same time, and each one starts at the lease." in flat
+    assert "A round of more than 4 batches: each batch trains on one GPU, 4 batches at a time. The batches start in queue order. The first 4 of them start at the lease." in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
     assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
     assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
