@@ -1326,7 +1326,7 @@ One chain line does not end by itself. After a stop of `run` of more than about 
 | Phase | What `run` does | Cost |
 |---|---|---|
 | A round opens | `waiting:`. The next pass opens it again. | none |
-| Training | Not `waiting:`, not a crash. The runner tries that batch 3 times at once. Then the batch is `no_decision` ("training failed 3 times"). `run` goes on with the other batches and the scoring. | When another batch of the round trained: **one counted failure for that seat** (3 hold the seat), no charge. When no batch of the round trained: the lease fails, and nothing is counted ("A round in which no training finished"). |
+| Training | Not `waiting:`, not a crash. The runner tries that batch 3 times at once. Then the batch is `no_decision` ("training failed 3 times"). `run` goes on with the other batches and the scoring. | From `2b7046a3` on: no counted failure and no charge; the seat is first in the next round. (A commit before it counted one failure for that seat when another batch of the round trained.) When no batch of the round trained: the lease fails, and nothing is counted ("A round in which no training finished"). |
 | Scoring | 3 tries for a block of tasks. After the stop time the block is dropped and the round ends with what it has. Before it, the runner gives up: the lease fails and the round closes with no decision. | no charge, no counted failure; the next round opens 5 minutes later |
 | Training or scoring, and the store does not answer the controller either | `waiting:`. The lease stays open. The next pass runs the whole round again under the same lease. | in the training time: a counted failure for a batch of the first group that does not finish, when another batch of the round trained. After it: none |
 | The box result is written | As the row above: the result was only in memory, so the scores are lost. | none, but the round decides nothing |
@@ -1336,11 +1336,18 @@ One chain line does not end by itself. After a stop of `run` of more than about 
 | The close of the round | `waiting:`. The next pass closes it. | none |
 | Right after the close | `run` ends with `refused: InfraError`, exit code 2. This is the one place where a store fault ends a running `run`. The round is closed and safe. | none; the loop starts `run` again, and the start is not counted |
 
-So a store fault in the training time is the one case that costs a seat a counted failure, and only in a round in which another batch trained. When no batch of the round trained, the lease fails and nothing is counted. Send the coordinator the round summary of such a round. "After a fault of the box in training" below says how to undo the counts: `release-seat --all`.
+So, from `2b7046a3` on, a store fault that makes a training job fail costs a seat nothing. One row still costs a counted failure, and only in a round in which another batch trained: the pass that runs the whole round again in the training time, when a batch of the first group then does not finish. When no batch of the round trained, the lease fails and nothing is counted. Send the coordinator the round summary of such a round. "After a fault of the box in training" below says how to undo the counts: `release-seat --all`.
 
 ### After a fault of the box in training
 
-This part is for a fault of the box that is not a digest difference: a GPU fault, or a store fault during the training (the row "Training" of the table above). The guard of `run` does not see such a fault. When the fault lets another batch of the round train, each seat whose training it stops gets one counted failure. A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. A count never goes back by itself. Nobody is charged. When the fault stops every training of the round, nothing is counted: see "A round in which no training finished" below.
+This part is for a fault of the box that is not a digest difference: a GPU fault, or a store fault during the training (the row "Training" of the table above). The guard of `run` does not see such a fault. What is counted for a seat, from commit `2b7046a3` on:
+
+- **A training job that failed is never counted**: out of memory, a crash of the job, any other error of the training. The entry is `no_decision` with a `reason` that starts with `training failed`. The seat is first in the next round.
+- **One failure is counted**, and only when another batch of the round trained: a batch that started at the lease, whose first try ran to the end of the training time and did not finish. Its `reason` starts with `this batch had the whole training time of the round`.
+- From commit `e35a09c4` on: when a try of a batch failed and a later try is stopped at the end of the training time, the batch is `not_trained`, and nothing is counted. With an earlier commit this case is counted.
+- A commit before `2b7046a3` counted each failed training. A count that such a commit wrote stays in the state after the checkout: `release-seat` takes it away.
+
+A seat with 3 counted failures (`max_infra_attempts`) is held: it takes no turn. A count never goes back by itself. Nobody is charged. When the fault stops every training of the round, nothing is counted: see "A round in which no training finished" below.
 
 `release-seat` undoes both: the hold and the counts. It is there from `c87b81ea` (check 1 of "Before the mainnet bootstrap").
 
@@ -1372,7 +1379,7 @@ The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap" tests it wi
 
 - "Trained" means that the entry is `scored` or `not_scored`. A skipped entry or a `not_trained` entry in the same round changes nothing.
 - Both kinds of `no_decision` are in the rule: "training failed 3 times", and a batch that had the whole training time of the round and did not finish (a slow or hung box).
-- A round in which another batch trained is as before: a failed batch is one counted failure for its seat.
+- A round in which another batch trained: from `2b7046a3` on, a batch whose training job failed is not counted either. Only a batch that had the whole training time and did not finish is one counted failure for its seat ("After a fault of the box in training").
 
 What you see in `run.log`, and with `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack`:
 
