@@ -211,7 +211,7 @@ class LocalRunner:
                         break
                     end = min(stop, start + params.eval_chunk_tasks)
                     loras = tuple(trained[pos] for pos in alive)
-                    chunk = self._look(EvalRequest(ticket.round_id, ticket.head, loras, draw.task_ids[start:end], draw.round_seed, look, params, deadline))
+                    chunk = self._look(EvalRequest(ticket.round_id, ticket.head, loras, draw.task_ids[start:end], draw.round_seed, look, params, deadline, len(ticket.entries)))
                     if chunk is None:
                         stopped = True
                         break

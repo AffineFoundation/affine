@@ -14,6 +14,7 @@ count. A dead server is not an ``E``: the whole look is an ``InfraError``.
 from __future__ import annotations
 
 import json
+import resource
 import sys
 import time
 import urllib.error
@@ -71,6 +72,32 @@ def http_json(url: str, body: dict | None, timeout_s: float) -> dict:
 Http = Callable[[str, dict | None, float], dict]
 
 
+def socket_room(sockets: int, spare: int) -> int:
+    """How many sockets this process may hold next to ``spare`` other files. It first raises its soft limit of open files.
+
+    Every rollout in flight holds one socket, and a look sends up to 256
+    rollouts per GPU at once. A shell or a container starts a process with a
+    soft limit of 1,024 open files. Past the limit a socket cannot be
+    opened: the rollouts of the first models in the order get the sockets,
+    and every later rollout fails with "Too many open files" before any
+    server sees it. So the soft limit is raised here to ``sockets + spare``,
+    as far as the hard limit allows. The caller compares the answer with
+    what the look needs. A limit that is already high enough is not changed.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY:
+        return sockets
+    wanted = sockets + spare
+    reachable = wanted if hard == resource.RLIM_INFINITY else min(wanted, hard)
+    if reachable > soft:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (reachable, hard))
+            soft = reachable
+        except (OSError, ValueError):  # the limit stays as it was: the answer says so
+            pass
+    return max(0, soft - spare)
+
+
 @dataclass(frozen=True)
 class ServeSettings:
     """Local serving knobs. None of them changes a score."""
@@ -79,12 +106,27 @@ class ServeSettings:
     start_timeout_s: float = 1800.0  # model load time of one server
     clients_per_server: int = 256  # requests in flight per server, and the server's --max-num-seqs
     retries: int = 2  # extra tries after a transport failure or a 5xx reply
+    spare_files: int = 512  # open files of this process next to the sockets of a look: logs, pipes, the grader's workers
     free_limit_mib: int = 1024  # a GPU above this is still in use
     free_timeout_s: float = 120.0
     grade_tries: int = 3  # times a reply is graded when the grader's worker process dies on it
 
 
-def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeSettings.clients_per_server) -> list[str]:
+def lora_table(params: Params, batches: int = 0) -> int:
+    """The size of a server's LoRA table (``--max-loras``) for a round: the entries of the box's ticket.
+
+    vLLM sizes its LoRA kernels by this table, not by the adapters in use: a
+    table of 32 makes five adapters slower than a table of five. The count is
+    that of the ticket, not of the LoRAs that trained, so it is the same on
+    any box and on a rerun, and the same for every look of the round. A base
+    request takes no place in the table: vLLM keeps one more for it itself.
+    """
+    if not 0 <= batches <= params.max_loras_per_box:
+        raise ContractError("the batches of a look must be inside max_loras_per_box")
+    return batches or params.max_loras_per_box
+
+
+def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeSettings.clients_per_server, max_loras: int | None = None) -> list[str]:
     rank = params.recipe.bound("rank")
     max_rank = int(rank.high) if rank else params.recipe.rank
     return [
@@ -93,7 +135,7 @@ def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeS
         *("--host", "127.0.0.1", "--port", str(port)),
         *("--dtype", params.dtype, "--max-model-len", str(params.max_context_tokens)),
         *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
-        *("--max-loras", str(params.max_loras_per_box), "--max-lora-rank", str(max_rank)),
+        *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
         # Text only. v1 lesson: without this limit vLLM does not load this checkpoint.
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
     ]
@@ -168,13 +210,15 @@ class VllmEvaluator:
         gpus_free: Callable[[int, float], None] = wait_gpus_free,
         settings: ServeSettings = ServeSettings(),
         sleep: Callable[[float], None] = time.sleep,
+        room: Callable[[int, int], int] = socket_room,
     ):
         self.store, self.config, self.pool, self.grader = store, config, pool, grader
-        self.spawn, self.http, self.gpus_free, self.settings, self.sleep = spawn, http, gpus_free, settings, sleep
+        self.spawn, self.http, self.gpus_free, self.settings, self.sleep, self.room = spawn, http, gpus_free, settings, sleep, room
         self.resident = Resident(store, config.work_dir)
         self._servers: list[Process] = []
         self._urls: list[str] = []
         self._head: HeadVersion | None = None
+        self._table = 0  # --max-loras of the servers that run
         self._loaded: set[str] = set()
 
     def evaluate(self, request: EvalRequest) -> EvalChunk:
@@ -184,9 +228,15 @@ class VllmEvaluator:
         if any(lora.head_version_id != request.head.version_id for lora in request.loras):
             raise ContractError("a LoRA of this look was trained on another head")
         models = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
-        if len(set(models)) != len(models) or len(request.loras) > params.max_loras_per_box:
-            raise ContractError("the LoRAs of a look must be distinct and inside max_loras_per_box")
-        self._serve(request.head, params)
+        table = lora_table(params, request.batches)
+        if len(set(models)) != len(models) or len(request.loras) > table:
+            raise ContractError("the LoRAs of a look must be distinct and inside the LoRA table of its round")
+        # Before anything is sent: a look that cannot hold its sockets would turn the rollouts of the later models into E.
+        clients = params.n_gpus * self.settings.clients_per_server
+        room = self.room(clients, self.settings.spare_files)
+        if room < clients:
+            raise InfraError(f"the open file limit of this process has room for {room} sockets; a look holds {clients}. Raise the limit (ulimit -n) and start run again")
+        self._serve(request.head, params, table)
         fresh = [(lora.lora_hash, str(self.resident.tree(lora.prefix, lora.lora_hash))) for lora in request.loras if lora.lora_hash not in self._loaded]
 
         def load(url: str) -> None:  # one server loads its adapters one after another; the servers load side by side
@@ -228,7 +278,7 @@ class VllmEvaluator:
                     pass
             return None
 
-        with ThreadPoolExecutor(len(self._urls) * self.settings.clients_per_server) as threads:
+        with ThreadPoolExecutor(clients) as threads:
             replies = list(threads.map(rollout, jobs))
         if not all(server.alive() for server in self._servers):
             self.close()
@@ -237,7 +287,7 @@ class VllmEvaluator:
             # A rollout that the limit cut is not an error of its model. Long outputs are cut first, so this chunk is not scored at all.
             # Its speeds are still logged, as their own phase: no reader may count it as a chunk that was scored.
             cut = {"serve_s": served - started, "generate_s": time.monotonic() - served, "wall_s": time.monotonic() - started}
-            cut.update(models=len(models), tasks=len(tasks), rollouts=len(jobs), finished=sum(reply is not None for reply in replies), reply_cap=params.max_output_tokens)
+            cut.update(models=len(models), tasks=len(tasks), rollouts=len(jobs), finished=sum(reply is not None for reply in replies), reply_cap=params.max_output_tokens, max_loras=table, open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0])
             try:
                 log_phase(self.config.work_dir, "eval_cut", round_id=request.round_id, look=request.look, n_gpus=len(self._urls), **cut, **written_facts(written))
             except Exception:  # noqa: BLE001 - the line is a help for the operator: a log that cannot be written must not change how the round ends
@@ -250,7 +300,7 @@ class VllmEvaluator:
             for model in models
         }
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
-        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls)}
+        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls), "max_loras": table, "open_files_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
         log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts, **written_facts(written))
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
@@ -286,9 +336,9 @@ class VllmEvaluator:
                 return codes
         raise InfraError(f"a grader worker died on {len(ended)} replies in every one of {self.settings.grade_tries} tries; the look is not scored")
 
-    def _serve(self, head: HeadVersion, params: Params) -> None:
-        """Make one server per GPU serve ``head``. Servers of another head are stopped first."""
-        if self._head is not None and self._head.version_id == head.version_id:
+    def _serve(self, head: HeadVersion, params: Params, table: int) -> None:
+        """Make one server per GPU serve ``head`` with a LoRA table of ``table``. Servers of another head or table are stopped first."""
+        if self._head is not None and self._head.version_id == head.version_id and self._table == table:
             if all(server.alive() for server in self._servers):
                 return
         self.close()
@@ -296,10 +346,10 @@ class VllmEvaluator:
         self.gpus_free(self.settings.free_limit_mib, self.settings.free_timeout_s)  # training must be gone first
         logs = self.config.work_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        self._head = head
+        self._head, self._table = head, table
         for gpu in range(params.n_gpus):
             port = self.settings.first_port + gpu
-            self._servers.append(self.spawn(server_argv(str(base_dir), port, params, self.settings.clients_per_server), server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
+            self._servers.append(self.spawn(server_argv(str(base_dir), port, params, self.settings.clients_per_server, table), server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
             self._urls.append(f"http://127.0.0.1:{port}")
         waited = 0.0
         for server, url in zip(self._servers, self._urls):

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import resource
 import shutil
+import subprocess
 import sys
+import textwrap
 import threading
 import time
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,7 +23,7 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError
 from sn120_v2.gpu import batch, plan, procs
 from sn120_v2.gpu import evaluator as evaluator_module
-from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, read_reply, server_argv, server_env
+from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, lora_table, read_reply, server_argv, server_env, socket_room
 from sn120_v2.gpu import resident as resident_module
 from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
 from sn120_v2.gpu.trainer import LORA_FILES, LoraTrainer
@@ -592,6 +597,152 @@ def test_a_look_that_failed_while_it_loaded_its_loras_can_run_again(box):
         seam.evaluate(request)
     seam.evaluate(request)  # the same servers: each one loads only what it does not hold
     assert len(farm.servers) == 2 and sorted(farm.loads) == sorted((port, lora.lora_hash, ["adapter_config.json", "adapter_model.safetensors"]) for port in (8100, 8101) for lora in request.loras)
+
+
+class FileLimit:
+    """Wraps the fake servers with an open file limit: at most ``limit`` chat requests hold a socket at once.
+
+    A request past the limit fails as ``urllib`` fails when the process has
+    no file left. A request that got its socket keeps it until ``limit`` of
+    them are in flight and ``failures`` tries have failed, as a rollout that
+    generates keeps its socket while the others fail.
+    """
+
+    def __init__(self, farm: Farm, limit: int, failures: int):
+        self.farm, self.limit, self.failures = farm, limit, failures
+        self.lock, self.go = threading.Lock(), threading.Event()
+        self.flying = self.most = self.failed = 0
+
+    def http(self, url, body, timeout_s):
+        if not url.endswith("/v1/chat/completions"):
+            return self.farm.http(url, body, timeout_s)
+        with self.lock:
+            refused = self.flying >= self.limit
+            self.failed += refused
+            self.flying += not refused
+            self.most = max(self.most, self.flying)
+            if self.flying == self.limit and self.failed >= self.failures:
+                self.go.set()
+        if refused:
+            raise urllib.error.URLError(OSError(errno.EMFILE, "Too many open files"))
+        try:
+            assert self.go.wait(30.0)
+            return self.farm.http(url, body, timeout_s)
+        finally:
+            with self.lock:
+                self.flying -= 1
+
+
+def limited(box, limit: int, failures: int, room) -> tuple[VllmEvaluator, FileLimit]:
+    farm = Farm(lambda model, task: ("P", "stop"))
+    seam = evaluator(box, farm, clients_per_server=12)
+    files = FileLimit(farm, limit, failures)
+    seam.http, seam.room = files.http, room
+    return seam, files
+
+
+def test_a_look_that_cannot_hold_its_sockets_fails_before_any_rollout_is_sent(box):
+    """Mainnet r000001 and r000002: a soft limit of 1,024 open files, and 1,000 and 2,500 rollouts sent at once."""
+    request = eval_request(box, tasks=tuple(f"t{index}" for index in range(8)))  # null M and 2 LoRAs: 24 rollouts, 2 servers x 12 clients
+    # What happened: 12 rollouts hold the 12 sockets, each of the 12 others fails its 3 tries at once, and those were E.
+    seam, files = limited(box, 12, 36, room=lambda sockets, spare: sockets)
+    outcomes = seam.evaluate(request).outcomes
+    assert sum(text.count("E") for (text,) in outcomes.values()) == 12 and files.failed == 36
+    # Now the look asks first. With too little room it is a failure of the box: no server starts and no rollout is sent.
+    asked = []
+    seam, files = limited(box, 12, 0, room=lambda sockets, spare: asked.append((sockets, spare)) or 12)
+    with pytest.raises(InfraError, match="room for 12 sockets; a look holds 24"):
+        seam.evaluate(request)
+    assert asked == [(24, ServeSettings().spare_files)] and not files.farm.servers and not files.farm.bodies
+    seam, files = limited(box, 24, 0, room=lambda sockets, spare: 24)
+    assert set(seam.evaluate(request).outcomes.values()) == {("PPPPPPPP",)} and (files.most, files.failed) == (24, 0)
+
+
+@pytest.mark.parametrize(
+    "soft, hard, raised, room",
+    [
+        (1024, 524288, 2560, 2048),  # the usual start of a shell or a container: raised to what the look needs
+        (1024, resource.RLIM_INFINITY, 2560, 2048),
+        (1024, 2000, 2000, 1488),  # a hard limit below the need: raised to it, and the answer is too small for the look
+        (1024, 1024, None, 512),
+        (300, 300, None, 0),
+        (65536, 65536, None, 65024),  # already enough: nothing is changed
+        (resource.RLIM_INFINITY, resource.RLIM_INFINITY, None, 2048),
+    ],
+)
+def test_the_soft_limit_of_open_files_is_raised_only_as_far_as_needed_and_allowed(monkeypatch, soft, hard, raised, room):
+    calls = []
+    monkeypatch.setattr(evaluator_module.resource, "getrlimit", lambda which: (soft, hard))
+    monkeypatch.setattr(evaluator_module.resource, "setrlimit", lambda which, limits: calls.append((which, limits)))
+    assert socket_room(2048, 512) == room
+    assert calls == ([] if raised is None else [(resource.RLIMIT_NOFILE, (raised, hard))])
+
+
+def test_a_limit_that_cannot_be_raised_is_reported_as_it_is(monkeypatch):
+    def refuse(which, limits):
+        raise ValueError("not allowed to raise maximum limit")
+
+    monkeypatch.setattr(evaluator_module.resource, "getrlimit", lambda which: (1024, 524288))
+    monkeypatch.setattr(evaluator_module.resource, "setrlimit", refuse)
+    assert socket_room(2048, 512) == 512
+
+
+def test_a_process_that_starts_with_1024_open_files_holds_2048_sockets_after_the_raise(tmp_path):
+    """The real limit of a real process: before the raise the sockets stop near 1,024; after it 2,048 are held."""
+    script = textwrap.dedent(
+        """
+        import resource, socket, sys
+        from sn120_v2.gpu.evaluator import ServeSettings, socket_room
+
+        def held(count):
+            sockets = []
+            try:
+                while len(sockets) < count:
+                    sockets.append(socket.socket())
+            except OSError as exc:
+                return len(sockets), exc.errno
+            finally:
+                for item in sockets:
+                    item.close()
+            return len(sockets), 0
+
+        hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+        if hard != resource.RLIM_INFINITY and hard < 4096:
+            sys.exit(77)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (1024, hard))
+        print(*held(2048))
+        print(socket_room(2048, ServeSettings().spare_files), resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+        print(*held(2048))
+        """
+    )
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, cwd=Path(__file__).resolve().parents[1])
+    assert done.returncode == 0, done.stderr  # 77: the hard limit of this machine is below 4,096; the box needs more
+    before, raised, after = (tuple(int(part) for part in line.split()) for line in done.stdout.splitlines())
+    assert 900 < before[0] < 1024 and before[1] == errno.EMFILE
+    assert raised == (2048, 2048 + ServeSettings().spare_files) and after == (2048, 0)
+
+
+def test_the_lora_table_of_the_servers_is_the_batches_of_the_round_in_every_look(box):
+    farm = Farm(lambda model, task: ("P", "stop"))
+    seam, table = evaluator(box, farm), lambda server: server.argv[server.argv.index("--max-loras") + 1]
+    first = box.build.replace(eval_request(box, n_loras=3), batches=5)  # the ticket has 5 batches; 3 of them trained
+    seam.evaluate(first)
+    assert [table(server) for server in farm.servers] == ["5", "5"], "the batches of the ticket: not the LoRAs that trained, not max_loras_per_box"
+    seam.evaluate(box.build.replace(first, loras=first.loras[:1], look=1))  # a later look with fewer LoRAs
+    assert len(farm.servers) == 2, "the same servers and the same table for every look of the round"
+    logged = json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert (logged["phase"], logged["max_loras"], logged["open_files_limit"]) == ("eval", 5, resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+    with pytest.raises(ContractError, match="inside the LoRA table of its round"):
+        seam.evaluate(box.build.replace(first, batches=2))  # 3 LoRAs, a table of 2
+    with pytest.raises(ContractError, match="inside max_loras_per_box"):
+        seam.evaluate(box.build.replace(first, batches=first.params.max_loras_per_box + 1))
+    assert len(farm.servers) == 2 and all(server.up for server in farm.servers), "a refused look starts and stops nothing"
+    seam.evaluate(box.build.replace(first, batches=4))  # servers of another table never serve a look: they are replaced
+    assert [table(server) for server in farm.servers[2:]] == ["4", "4"] and not any(server.up for server in farm.servers[:2])
+    params = first.params
+    assert (lora_table(params), lora_table(params, 1), lora_table(params, params.max_loras_per_box)) == (params.max_loras_per_box, 1, params.max_loras_per_box)
+    for argv, want in ((server_argv("/base", 8100, params), params.max_loras_per_box), (server_argv("/base", 8100, params, 256, 6), 6)):
+        assert table(SimpleNamespace(argv=argv)) == str(want)  # without a table the command is as before: the bench tool calls it so
 
 
 def test_server_command_line_and_refused_requests(box):
