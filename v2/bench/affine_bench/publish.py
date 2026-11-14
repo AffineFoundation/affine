@@ -5,10 +5,11 @@ protocol is clear. For the same (model, benchmark), the higher-protocol row is o
 shows it as latest; superseded rows remain in the file under results (and results_prior).
 
 Never publishes per-task results. Informational only: nothing that decides a king or a weight reads this file."""
-import glob, json, math, os, time
+import glob, hashlib, json, math, os, time
 from . import config as C, registry as R
 
 OUT = os.path.join(C.SITE, "benchmarks.json")
+OWN_KINDS = ("king", "genesis")  # the rows that source.models() makes
 
 
 def _rj(p):
@@ -86,7 +87,7 @@ def _row_from_disk(r, bid, b, full):
     )
 
 
-def _row_key(r):
+def row_key(r):
     """Identity for merge: same model + benchmark + protocol version is one row."""
     return (r.get("model_id"), r.get("benchmark_id"), r.get("env_version") or "")
 
@@ -148,7 +149,7 @@ def publish(rows, S, max_fail=3):
         if not b:
             # keep unknown-benchmark prior rows only if still meaningful — skip
             continue
-        merged[_row_key(r)] = r
+        merged[row_key(r)] = r
 
     recs = list(merged.values())
 
@@ -186,40 +187,39 @@ def publish(rows, S, max_fail=3):
         if cur is None or _protocol_rank(r.get("env_version"), r.get("budget")) >= _protocol_rank(cur.get("env_version"), cur.get("budget")):
             best[k] = r
     results_prior = [r for r in recs if r.get("benchmark_id") not in pooled_ids and best.get((r.get("model_id"), r.get("benchmark_id"))) is not r
-                     and _row_key(r) != _row_key(best.get((r.get("model_id"), r.get("benchmark_id"))) or {})]
+                     and row_key(r) != row_key(best.get((r.get("model_id"), r.get("benchmark_id"))) or {})]
 
     have = {r["model_id"] for r in recs}
-    run = (S or {}).get("running")
+    run = (S or {}).get("running"); running = run and run["model"]["model_id"]
+    runnable = R.benchmarks(enabled_only=True, runnable_only=True); done = {row_key(r) for r in recs}
     models = []
     for m in rows:
-        if m["kind"] == "king" and m["model_id"] not in have and not (run and run["model"]["model_id"] == m["model_id"]):
-            status = "queued"
+        mid = m["model_id"]; fails = (S or {}).get("fail", {}).get(mid, 0)
+        n_done = sum((mid, b["id"], R.bench_version(b)) in done for b in runnable)
+        if running == mid:
+            status = "evaluating"
+        elif n_done == len(runnable):
+            status = "scored"
         else:
-            status = "evaluating" if run and run["model"]["model_id"] == m["model_id"] else ("scored" if m["model_id"] in have else "queued")
-            if status == "queued" and (m["model_id"] in (S or {}).get("unavailable", []) or (S or {}).get("fail", {}).get(m["model_id"], 0) >= max_fail):
-                status = "failed"
+            status = "failed" if mid in (S or {}).get("unavailable", []) or fails >= max_fail else "queued"
         # Model-level budget/profile = latest scored row's, else registry resolve
-        scored = [r for r in recs if r["model_id"] == m["model_id"] and r.get("budget") is not None]
+        scored = [r for r in recs if r["model_id"] == mid and r.get("budget") is not None]
         if scored:
             latest = max(scored, key=lambda r: _protocol_rank(r.get("env_version"), r.get("budget")))
             budget, profile = latest.get("budget"), latest.get("profile")
         else:
-            try:
-                st = R.resolve_settings(m["model_id"], m.get("kind"))
-                budget, profile = st["budget"], st["profile"]
-            except Exception:
-                budget, profile = None, None
-        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "king", "round_id", "head_version_id", "crowned_at", "green")}
-                      | dict(status=status, budget=budget, profile=profile))
+            st = R.resolve_settings(mid, m.get("kind"))
+            budget, profile = st["budget"], st["profile"]
+        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "base_hash", "round_id", "head_version_id", "crowned_at", "uid", "hotkey")}
+                      | dict(status=status, benchmarks_done=n_done, benchmarks_total=len(runnable), fails=fails, budget=budget, profile=profile))
 
-    # Preserve models from prior publish that current rows() dropped (still scored).
+    # A published row that is no longer listed stays while it has a result. It is not in work: only a listed row is run.
+    # A row of a kind that this service does not make (a reference model that an operator put in the table) always stays.
     seen = {m["model_id"] for m in models}
     for pm in (prev.get("models") or []):
-        if pm.get("model_id") in seen:
-            continue
-        if pm.get("model_id") in have:
-            pm = dict(pm, status="scored")
-            models.append(pm); seen.add(pm["model_id"])
+        if pm.get("model_id") not in seen and (pm.get("model_id") in have or pm.get("kind") not in OWN_KINDS):
+            models.append(dict(pm, status="queued" if pm.get("status") == "evaluating" else pm.get("status")))
+            seen.add(pm["model_id"])
 
     hist = [h for h in (S or {}).get("history", []) if not h["model"].count(".")]
     per = sorted(h["wall_s"] for h in hist[-20:]) if hist else []
@@ -229,7 +229,9 @@ def publish(rows, S, max_fail=3):
         version="affine-bench-v2",
         updated_at=time.time(),
         serving=sv,
-        about="Public math benchmarks for every applied SN120 king. Merge-only publish: a published row is never dropped. "
+        about="Public math benchmarks of the SN120 v2 launch model and of every king (the folded head of each applied winner). "
+              "A row of another kind (a reference model) is not run by this service: it is kept as it was put in. "
+              "Merge-only publish: a published result is never dropped. "
               "Each result row carries env_version, budget, and cap_rate so the protocol is unambiguous. "
               "Where two protocols exist, the table shows the latest; results_prior holds superseded rows. "
               "Score = mean over problems of the per-problem mean over rollouts (an errored rollout counts as wrong); "
@@ -248,3 +250,9 @@ def publish(rows, S, max_fail=3):
                       median_model_wall_s=med, eta_hours=round(left * med / 3600, 1) if med else None),
     )
     t = OUT + ".tmp"; json.dump(out, open(t, "w"), separators=(",", ":")); os.chmod(t, 0o644); os.replace(t, OUT)
+
+
+def signature():
+    """Hash of the local table without its write time. A change of it is the reason to write the table to the store."""
+    table = _rj(OUT) or {}
+    return hashlib.sha256(json.dumps({k: v for k, v in table.items() if k != "updated_at"}, sort_keys=True).encode()).hexdigest()

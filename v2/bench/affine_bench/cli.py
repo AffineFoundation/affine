@@ -1,9 +1,12 @@
 """affine-bench CLI.
   node-run   (node) evaluate one model on benchmarks          affine-bench node-run --help
   daemon     (host) queue-driven scheduler + publisher        affine-bench daemon
-  once       (host) benchmark every waiting king, release the pod, exit
-  publish    (host) rebuild benchmarks.json now
-  status     (host) queue / results summary"""
+  once       (host) benchmark every waiting row, release the pod, exit
+  status     (host) queue / results summary; reads only
+The next three need the daemon stopped (one process per state directory):
+  publish    (host) rebuild benchmarks.json now and write it to the store when it changed
+  retry      (host) queue a failed row again                  affine-bench retry MODEL_ID...
+  release    (host) give the rented node back now"""
 import sys
 
 
