@@ -105,14 +105,42 @@ def test_a_training_failure_is_no_decision_for_that_seat_only_and_repeats_hold_i
     seat = world.controller.state.queue[(2, 1002)]
     assert (seat.front, seat.leased, seat.infra_attempts, seat.held) == (True, False, 1, False)
     assert "hk2" not in world.controller.state.served_hotkeys, "not charged"
-    world.round()
-    world.round()
+    for uid in (3, 4):  # a failure is counted only in a round in which another batch trained
+        world.register(uid, 0.0)
+        world.round()
     seat = world.controller.state.queue[(2, 1002)]
     assert (seat.infra_attempts, seat.held) == (3, True)
     world.trainer.fail_hotkeys = set()
     assert world.round() is None, "a held seat is passed over until the operator releases it"
     world.controller.release_seat((2, 1002), world.clock())
     assert seats(world.round()) == [2]
+
+
+def test_a_round_in_which_no_training_finished_fails_its_lease_and_counts_nothing_for_a_seat(world, capsys):
+    """A fault of the box fails every training. Without this rule a few such rounds, minutes apart, hold the whole queue."""
+    for uid in (1, 2, 3):
+        world.register(uid, 0.0)
+    world.trainer.fail_hotkeys, world.trainer.reject_hotkeys = {"hk1", "hk3"}, {"hk2"}  # a skip in the round changes nothing
+    cause = "InfraError: no training finished in this round: 2 of 3 batches failed. The first: training failed 3 times: simulated trainer crash"
+    for failures in (1, 2, 3, 4):
+        record = world.round()
+        state = world.controller.state
+        assert record.outcome == "no_decision" and record.decision is None and [lease.status for lease in record.leases] == ["failed"]
+        assert all((seat.front, seat.leased, seat.infra_attempts, seat.held) == (True, False, 0, False) for seat in state.queue.values())
+        assert not state.served_regs and state.failed_leases == failures, "nobody is charged"
+        assert world.round() is None, "the next round waits apply_retry_s, as after any failed lease"
+        world.now += world.params.apply_retry_s
+    closed = [record.data for record in read_journal(world.root / JOURNAL_FILE) if record.kind == ROUND_CLOSED]
+    assert all(data["reason"] == cause and not data["attempted"] and not data["held"] for data in closed) and len(closed) == 4
+    assert main(["round", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]) == 0
+    assert f"no winner: {cause}" in capsys.readouterr().out, "the round summary names the cause"
+    world.reopen()
+    world.trainer.fail_hotkeys = {"hk3"}  # the box works again; one batch still fails: that failure is counted, as before
+    world.trainer.reject_hotkeys = set()
+    record = world.round()
+    queue = world.controller.state.queue
+    assert record.outcome == "null" and world.controller.state.failed_leases == 0 and sorted(seats(record)) == [1, 2, 3]
+    assert list(queue) == [(3, 1003)] and (queue[(3, 1003)].infra_attempts, queue[(3, 1003)].front) == (1, True)
 
 
 def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys):
@@ -123,10 +151,12 @@ def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(worl
     common = ["--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]
     assert main(["release-seat", *common, "--all"]) == 2 and "refused: V2Error: no seat is held or has a counted failure" in capsys.readouterr().err
     world.reopen()  # the command took the journal over, as set-params does
-    world.trainer.fail_hotkeys = {"hk1", "hk2", "hk3"}  # the box is at fault: every training fails
-    world.round()
-    world.round()
+    world.trainer.fail_hotkeys = {"hk1", "hk2", "hk3"}  # a fault of the box that lets one batch train in each round
+    for uid in (10, 11):
+        world.register(uid, 0.0)
+        world.round()
     world.register(3, 0.0)
+    world.register(12, 0.0)
     world.round()
     queue = world.controller.state.queue
     assert sorted((seat.reg.uid, seat.infra_attempts, seat.held) for seat in queue.values()) == [(1, 3, True), (2, 3, True), (3, 1, False), (4, 0, False)]

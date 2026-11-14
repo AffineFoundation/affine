@@ -73,7 +73,9 @@ from .state import (
 from .store import delete_pending, get_record, promote_fold, promote_lora, publish_head, put_record
 from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
+    NOT_SCORED,
     NULL_MODEL,
+    SCORED,
     SKIP,
     BoxResult,
     ChainSnapshot,
@@ -179,7 +181,8 @@ class Controller:
         except InfraError as exc:
             raise ConfigError(
                 f"this box differs from the pinned digests, so {not_started}. The difference: {exc}. Nothing is counted for a seat. "
-                f"Next: {first}the digest block, then set-params with the two digests of this box, then start again"
+                f"Next: {first}the digest block, then set-params with the whole parameter file in which only the two digests are new "
+                f"(set-params replaces every value: a key that the file does not hold goes back to its default), then start again"
             ) from None
 
     def _log(self, kind: str, data: dict[str, Any], now: int) -> None:
@@ -348,6 +351,16 @@ class Controller:
         self._log(LEASE_FAILED, {"round_id": record.round_id, "lease_id": lease_id, "reason": reason}, now)
         self._settle(now)
 
+    def _lease_failures(self) -> str:
+        """Why the leases of the open round failed, from the journal: the note of a round that closes with no box result."""
+        reasons: list[str] = []
+        for item in reversed(self.journal.records):
+            if item.kind == LEASE_FAILED and item.data["reason"] not in reasons:
+                reasons.insert(0, item.data["reason"])
+            if item.kind == ROUND_OPENED:
+                break
+        return "; ".join(reasons)
+
     def _leases(self, record: RoundRecord, status: str) -> Leases:
         pairs = []
         for lease in record.leases:
@@ -365,7 +378,7 @@ class Controller:
         if len(pairs) < len(open_leases):
             return
         if not pairs:
-            return self._close(NO_DECISION, [], now)
+            return self._close(NO_DECISION, [], now, self._lease_failures())
         decision = decide(pairs)
         results = {ticket.lease_id: result.digest() for ticket, result in pairs}
         self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": results}, now)
@@ -582,7 +595,12 @@ class Controller:
                 self._check_pins("the open round was not run", "end-round (the round pins the old digests), ")
         for ticket in tickets:
             try:
-                self.submit_result(runner.run(ticket), clock())
+                result = runner.run(ticket)
+                failed = [entry.reason for entry in result.entries if entry.status == ENTRY_NO_DECISION]
+                if failed and not any(entry.status in (SCORED, NOT_SCORED) for entry in result.entries):
+                    # Not one batch trained, so the fault is taken as the box's, not a seat's: the lease fails, and no failure is counted for a seat.
+                    raise InfraError(f"no training finished in this round: {len(failed)} of {len(result.entries)} batches failed. The first: {failed[0]}")
+                self.submit_result(result, clock())
             except Exception as exc:  # a box failure of any kind must not stop the controller
                 record = self.state.round
                 running = record is not None and record.decision is None and record.lease(ticket.lease_id).status == "open"

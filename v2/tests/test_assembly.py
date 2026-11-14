@@ -125,7 +125,7 @@ def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any
     capsys.readouterr()
     assert main(run) == 2, "exit code 2: the restart loop does not start run again"
     refused = "refused: ConfigError: this box differs from the pinned digests, so no round was opened. The difference: "
-    values = f"image digest: pinned {IMAGE}, this box has sha256:{'cd' * 32} (the value of SN120_IMAGE_DIGEST). Nothing is counted for a seat. Next: the digest block"
+    values = f"image digest: pinned {IMAGE}, this box has sha256:{'cd' * 32} (the value of SN120_IMAGE_DIGEST). Nothing is counted for a seat. Next: the digest block, then set-params with the whole parameter file in which only the two digests are new (set-params replaces every value: a key that the file does not hold goes back to its default), then start again"
     assert refused + values in capsys.readouterr().err, "the line shows both values: no command shows the pinned digests"
     assert len(box.list(layout.JOURNAL)) == records + 1, "only the record of the start; nothing else was written"
     assert main(["end-round", *common]) == 2 and "no round is open" in capsys.readouterr().err, "the commands that need no GPU part are not refused for the pins"
