@@ -11,12 +11,15 @@ benchmarked once however often it is listed, and a host with an empty disk does 
 resumed in place (vf-eval --resume keeps finished rollouts).
 
 Queue: every row that has a missing result, newest first; the launch model (genesis) is the oldest row. Nothing else.
+A row whose weight files are not in the store yet waits outside the queue: no fail, no rent, nothing sent to the node.
+It is queued by the step that finds its files (waiting(), below).
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
 Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
 empty queue; a pod Lium reclaims is detected (node-gone) and replaced the same way. Nothing on the pod is deleted by
 this service: the king's weights go away with the pod (results on the host are never deleted)."""
 import fcntl, json, os, shlex, subprocess, time, traceback
+from sn120_v2.errors import InfraError
 from . import config as C, registry as R
 from .node import Node
 from .fetch import fetch as fetch_king
@@ -28,6 +31,8 @@ for d in (ST, RES, PRIV):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
+WAIT_LATE_S = 3600  # weight files still not in the store this long after the head was applied: the table says `waiting`
+BEAT_S = 300  # while a row runs, the table gets the time and the counts of the service's look at the node this often
 NODE = Node()
 
 
@@ -71,14 +76,54 @@ def missing(m, bs, done=None):
     return out
 
 
-def queue(rows=None):
-    rows = model_rows() if rows is None else rows; bs = R.benchmarks(enabled_only=True, runnable_only=True); done = published()
+def candidates(rows):
+    """Rows with a missing result that have not failed MAX_FAIL times, newest first."""
+    bs = R.benchmarks(enabled_only=True, runnable_only=True); done = published()
     ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs, done)
     seen, out = set(), []
     for m in sorted(rows, key=lambda m: -(m.get("crowned_at") or 0)):
         if m["model_id"] not in seen and ok(m):
             seen.add(m["model_id"]); out.append(dict(m, why="new-" + m["kind"]))
     return out
+
+
+def waiting(rows, tell=lambda **k: None):
+    """Rows that cannot start: model_id -> dict(file=<a weight file that the store does not hold>, late=<bool>).
+
+    Such a row waits. It gets no fail, no node is rented for it and nothing is sent to the node. Each step asks the store
+    again, so the row is queued by the step that finds every file. `late` says that the head was applied more than
+    WAIT_LATE_S ago: the table then shows the row as `waiting`. The row in work is not asked about: its weights are on
+    the node. A store that fails to answer holds no row back: the download on the node decides then, and a failure
+    there (a refused link, a wrong sha256) is a failed try as before."""
+    run = S.get("running"); out = {}
+    for m in candidates(rows):
+        if run and run["model"]["model_id"] == m["model_id"]:
+            continue
+        try:
+            name = source.absent(m["base_hash"])
+        except InfraError as e:
+            tell(event="store-check-failed", model=m["model_id"], error=str(e)[-200:]); continue
+        if name:
+            out[m["model_id"]] = dict(file=name, late=now() - (m.get("crowned_at") or 0) > WAIT_LATE_S)
+    return out
+
+
+def note_waiting(rows):
+    """waiting(), with one log line when a row starts to wait, when it is late, and when its files are there."""
+    was = S.get("waiting") or {}; wait = waiting(rows, log)
+    for mid, w in wait.items():
+        if mid not in was: log(event="waiting", model=mid, file=w["file"])
+        if w["late"] and not was.get(mid, {}).get("late"): log(event="waiting-late", model=mid, file=w["file"], minutes=WAIT_LATE_S // 60)
+    for mid in was:
+        if mid not in wait: log(event="waiting-over", model=mid)
+    if wait != was:
+        S["waiting"] = wait; save()
+    return wait
+
+
+def queue(rows=None, wait=None):
+    rows = model_rows() if rows is None else rows; wait = waiting(rows) if wait is None else wait
+    return [m for m in candidates(rows) if m["model_id"] not in wait]
 
 
 # ------------------------------------------------------------------------------------------------ node ops
@@ -122,7 +167,7 @@ def launch(m, bids):
 
 def node_status(rk, pid):
     o = NODE.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
-                 f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo ok=1", timeout=90)
+                 f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo ok=1", timeout=90)
     d = {}
     for line in o.splitlines():
         if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()
@@ -235,9 +280,9 @@ def publish_table(rows):
 def step():
     sync_table()
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
-    run = S.get("running")
-    if not run and not pod_ready(queue(rows)):
-        S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows); return
+    run = S.get("running"); wait = note_waiting(rows)
+    if not run and not pod_ready(queue(rows, wait)):
+        S["queue"] = [m["model_id"] for m in queue(rows, wait)]; publish_table(rows); return
     if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
         # The run belonged to a pod that has since been replaced; its run dir went with that pod.
         # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
@@ -252,6 +297,8 @@ def step():
         lines = int(st.get("lines") or 0)
         if lines > run.get("progress", 0):
             run["progress"] = lines; run["last_progress"] = now(); save()
+        if now() - run.get("beat", {}).get("at", 0) >= BEAT_S:  # the table says that the service looks, and what it sees
+            run["beat"] = dict(at=now(), lines=lines, grew=run["last_progress"], finished=int(st.get("finished") or 0)); save()
         if st.get("done") == "1":
             collect(run); S["running"] = None; save()
         elif st.get("alive") != "1":
@@ -261,7 +308,7 @@ def step():
             k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
             log(event="stalled", model=run["run_key"]); abort(run); S["running"] = None; save()
     if not S.get("running"):
-        q = queue(rows)
+        q = queue(rows, wait)
         for m in q:
             bids = missing(m, bs)
             if not ensure_weights(m):
@@ -273,7 +320,7 @@ def step():
                 except Exception: log(event="prefetch-failed", model=nxt["model_id"])
             break
     maybe_release()
-    S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows)
+    S["queue"] = [m["model_id"] for m in queue(rows, wait)]; publish_table(rows)
 
 
 def only_instance():
@@ -285,7 +332,8 @@ def only_instance():
 
 
 def main(once=False):
-    """daemon: loop for ever. once: return when every waiting row is benchmarked and the pod is released."""
+    """daemon: loop for ever. once: return when every queued row is benchmarked and the pod is released. A row whose
+    weight files are not in the store is not queued: `once` leaves it for a later run."""
     log(event="start", pid=os.getpid())
     while True:
         try:
@@ -300,9 +348,9 @@ def main(once=False):
 
 def cli(cmd, argv):
     if cmd == "status":
-        q = queue(); r = S.get("running")
+        rows = model_rows(); wait = waiting(rows); q = queue(rows, wait); r = S.get("running")
         print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_cr=cr(r["started"]), progress=r.get("progress")),
-                              queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], fails=S["fail"], unavailable=S["unavailable"],
+                              queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], waiting=wait, fails=S["fail"], unavailable=S["unavailable"],
                               pod=dict(C_POD) or None, last=S["history"][-5:]), indent=1)); return
     if cmd not in ("daemon", "once", "publish", "retry", "release"):
         raise SystemExit("unknown command " + cmd)
