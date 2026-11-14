@@ -68,7 +68,7 @@ for ((i = 0; i < ${#RUN_ARGS[@]}; i++)); do
     esac
 done
 [ -n "$STATE_DIR" ] && [ -n "$STACK" ] || usage "--state-dir and --stack are required"
-[ -d "$STATE_DIR" ] || usage "the state directory $STATE_DIR does not exist: bootstrap first"
+[ -d "$STATE_DIR" ] || usage "the state directory $STATE_DIR does not exist. On a new box make it empty (mkdir -p): run pulls the journal copy from the store."
 [ -n "${SN120_WORK_DIR:-}" ] || usage "SN120_WORK_DIR is not set"
 case $PY in
     */*) PATH="$(dirname "$PY"):$PATH" && export PATH ;;  # as an active virtual environment does
