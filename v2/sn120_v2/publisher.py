@@ -45,7 +45,7 @@ from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -496,6 +496,13 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  not read the files. No seat and no place in the queue changes by it: the validator picks the entries of a",
         "  round from a new check of the files, never from the published value. So do not replace a good file because",
         "  of it: wait for the next check.",
+        "- The verdicts of the whole line are in mining.json under `queue.files`. Its list `verdicts` has one row for",
+        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid` and `file_verdict`.",
+        f"  `file_verdict` is `{VALID}`, `{NOT_VALID}` or `{NOT_JUDGED}`. `{NOT_JUDGED}`: the validator has no verdict for the hotkey. No file",
+        "  was stored at the last check, or the seat came after that check, or a new process made no check yet.",
+        f"  `file_valid` is yes only with `{VALID}`. `hotkeys` counts the rows; `{VALID}`, `{NOT_VALID}` and `{NOT_JUDGED}` count the rows",
+        "  with that verdict; `seats` counts the waiting seats. `checked_at` is `queue.files_checked_at`: the time at",
+        "  which that check started. The validator does not publish the sha256 of a waiting file.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",

@@ -11,17 +11,19 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from collections import Counter
 from typing import Any, Mapping, Sequence
 
 from .params import Params
 from .payout import payees
 from .queue import waiting
 from .state import RoundRecord, State
-from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, RoundTicket, Verdict
+from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
 HISTORY_PREVIEW = 20
+VALID, NOT_VALID, NOT_JUDGED = "valid", "not_valid", "not_judged"  # ``file_verdict`` in ``queue.files``, and the name of its count
 
 # ``public_text``: the rule for a text that an exception made, before it goes into a public file.
 TEXT_LIMIT = 600  # characters. The longest text today has about 520: a failed round that quotes the last line of a job log.
@@ -133,6 +135,47 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
     return view
 
 
+def file_verdict(verdict: Verdict | None) -> str:
+    """The last check of a hotkey's stored file, as one of three texts.
+
+    ``file_valid`` is false for a file that breaks a rule and also when
+    there is no verdict. This text tells the two apart. There is no verdict
+    when no file was stored at the check, when the seat came after the
+    check, and before the first check of a new process.
+    """
+    if verdict is None:
+        return NOT_JUDGED
+    return VALID if verdict.valid else NOT_VALID
+
+
+def files_view(line: Sequence[QueueEntry], verdicts: Mapping[str, Verdict], checked_at: int | None) -> dict[str, Any]:
+    """``queue.files``: the verdict on the stored file of every hotkey that has a waiting seat, and the counts.
+
+    A file belongs to a hotkey, so there is one row for each hotkey, with
+    the lowest UID of its waiting seats. The rows are in UID order: the
+    place of a seat in the queue and its flags are shown only by
+    ``queue.next``. A row never holds the sha256 of a waiting file, the
+    rule that the file breaks or the reason.
+    """
+    uids: dict[str, int] = {}
+    for seat in line:
+        uids[seat.reg.hotkey] = min(seat.reg.uid, uids.get(seat.reg.hotkey, seat.reg.uid))
+    rows = [
+        {"uid": uid, "hotkey": hotkey, "file_valid": bool(verdicts.get(hotkey) and verdicts[hotkey].valid), "file_verdict": file_verdict(verdicts.get(hotkey))}
+        for uid, hotkey in sorted((uid, hotkey) for hotkey, uid in uids.items())
+    ]
+    counts = Counter(row["file_verdict"] for row in rows)
+    return {
+        "checked_at": checked_at,
+        "seats": len(line),
+        "hotkeys": len(rows),
+        VALID: counts[VALID],
+        NOT_VALID: counts[NOT_VALID],
+        NOT_JUDGED: counts[NOT_JUDGED],
+        "verdicts": rows,
+    }
+
+
 def snapshot(
     state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None
 ) -> dict[str, Any]:
@@ -141,6 +184,9 @@ def snapshot(
     ``verdicts`` is admission's last check of the waiting files, taken at
     ``files_checked_at``. A file that a miner stored after that time shows
     the old verdict until the next check.
+
+    ``queue.next`` is the first ``QUEUE_PREVIEW`` seats. ``queue.files`` is
+    the verdict for the whole line (``files_view``).
     """
     verdicts = verdicts or {}
     line = waiting(state.queue)
@@ -174,6 +220,7 @@ def snapshot(
                 }
                 for position, seat in enumerate(line[:QUEUE_PREVIEW])
             ],
+            "files": files_view(line, verdicts, files_checked_at),
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
     }
