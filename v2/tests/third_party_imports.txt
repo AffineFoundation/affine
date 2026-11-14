@@ -14,6 +14,8 @@ huggingface_hub
 safetensors
 torch
 transformers
+# triton is installed with torch on Linux. The training job only puts a lock around its kernel tuner.
+triton
 
 # r2: R2 head store (moto is the S3 fake, used by tests only)
 boto3
