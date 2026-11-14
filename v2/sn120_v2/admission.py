@@ -86,6 +86,11 @@ _AGAIN = f"checked again at a try to open a round, at most once each {FAULT_HOLD
 ENV_TIME_LIMIT = "time-limit"
 PROBE_TEXT = "What is 1 + 1?"  # the tokenizer works when it counts at least one token in this text, as a prompt and as an output
 PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
+# A worker process of the grade pool is new at the first file of a process, and after the pool killed it. The time
+# limit of a row runs from the moment the row is sent, so the row of a new worker would pay for its start. So known-good
+# cases go to the workers first, and again up to this many times while one of them comes back with no grade. Each
+# time takes at most the time limit of the pool. Still no grade after the last one: the failure is ours.
+WARM_TRIES = 3
 PROBE_HOTKEY = "known-good"  # the owner named in the known-good file of the checker
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
@@ -139,10 +144,15 @@ class EnvGrader:
     has ``reward`` and ``machine_cause``: an expired time limit gives ``GraderTimeLimit`` for that row, and any
     other cause (a dead worker) gives ``GraderFault``. The rows go out ``chunk`` at a time, so a caller that
     stops at the first bad row does not wait for the rest of the file.
+
+    With ``warm`` the grades come from worker processes that can be new (``pool_grader``). Then no row of a file
+    is sent to a new worker: see ``_warm``.
     """
 
-    def __init__(self, pool: Any, grade_many: Callable[[Sequence[tuple[Any, str, bool]]], Sequence[Any]], chunk: int) -> None:
+    def __init__(self, pool: Any, grade_many: Callable[[Sequence[tuple[Any, str, bool]]], Sequence[Any]], chunk: int, warm: bool = False) -> None:
         self.pool, self.grade_many, self.chunk = pool, grade_many, max(1, chunk)
+        self._new = warm  # a worker may be new: at the start, and after a row that came back with a machine cause
+        self._warms = warm
 
     def __call__(self, prompt: str, output: str, capped: bool) -> float | None:
         outcome = next(self.many([(prompt, output, capped)]))
@@ -154,6 +164,8 @@ class EnvGrader:
         for start in range(0, len(rows), self.chunk):
             jobs = [(self.pool.task_for_prompt(prompt), output, capped) for prompt, output, capped in rows[start : start + self.chunk]]
             known = [job for job in jobs if job[0] is not None]
+            if known:
+                self._warm()
             try:
                 grades = list(self.grade_many(known)) if known else []
             except InfraError:
@@ -162,6 +174,7 @@ class EnvGrader:
                 grades = [exc] * len(known)
             if len(grades) != len(known):
                 raise InfraError(f"the official grader returned {len(grades)} grades for {len(known)} rows")
+            self._new = self._warms and any(isinstance(grade, Exception) or grade.machine_cause is not None for grade in grades)
             answers = iter(grades)
             for task, _, _ in jobs:
                 yield None if task is None else self._outcome(next(answers))
@@ -176,6 +189,35 @@ class EnvGrader:
             return GraderFault(str(grade.machine_cause))
         return float(grade.reward)
 
+    def _warm(self) -> None:
+        """Make every worker ready before a row is sent to it, so the time limit of a row never holds the start of its worker.
+
+        One call sends ``chunk`` known-good cases: one for each worker that the next rows can reach. A new worker
+        starts inside the time limit of that case, not of a row. A case with no grade (the start took longer than
+        the limit, or the worker died) has a new worker again, so the call is made again, ``WARM_TRIES`` times at
+        most. After that the failure is ours, as for a failed known-good case in ``probe``: ``InfraError``, no verdict.
+        """
+        if not self._new:
+            return
+        tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
+        if not tasks:
+            return
+        jobs = [(task, _BOXED + "{" + task.answer + "}", False) for task in (tasks[k % len(tasks)] for k in range(self.chunk))]
+        for _ in range(WARM_TRIES):
+            try:
+                grades = list(self.grade_many(jobs))
+                ready = all(grade.machine_cause is None for grade in grades)
+            except InfraError:
+                raise
+            except Exception as exc:
+                raise InfraError(f"the official grader failed on a known-good case: {type(exc).__name__}") from exc
+            if len(grades) != len(jobs):
+                raise InfraError(f"the official grader returned {len(grades)} grades for {len(jobs)} rows")
+            if ready:
+                self._new = False
+                return
+        raise InfraError(f"the workers of the official grader are not ready: a known-good case has no grade after {WARM_TRIES} tries")
+
     def cases(self) -> list[tuple[str, str]]:
         """Known-good cases: the batch prompt and the reference answer of the first pool tasks."""
         tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
@@ -188,12 +230,14 @@ class EnvGrader:
         count a failed row against its file (``FAULT_TRIES``): a pool that loses rows at random loses some of
         these cases too.
         """
+        self._warm()  # the pool gave a new worker for the one it killed: the known-good cases must not pay for its start
         tasks = [self.pool.task(task_id) for task_id in self.pool.task_ids[:PROBE_TASKS]]
         try:
             grades = self.grade_many([(task, _BOXED + "{" + task.answer + "}", False) for task in tasks])
             works = [grade.machine_cause is None and grade.reward == 1.0 for grade in grades]
         except Exception as exc:
             raise InfraError(f"the official grader failed on a known-good case: {type(exc).__name__}") from exc
+        self._new = self._warms and any(grade.machine_cause is not None for grade in grades)
         if not any(works):
             raise InfraError("the official grader gives no known-good case its reward")
         return len(works) == len(tasks) and all(works)
@@ -235,9 +279,10 @@ def pool_grader(pool: Any, grade_pool: Any, chunk: int = 32) -> EnvGrader:
 
     A row that hangs is killed at ``GradePool.timeout_s`` and the rows of a file are graded in parallel. At most
     ``chunk`` rows are sent before the checker looks at the results, so the worst wait for one file that hangs on
-    every row is ``chunk / workers * timeout_s``.
+    every row is ``chunk / workers * timeout_s``. The worker processes are made ready with known-good cases before
+    a row of a file goes to them (``WARM_TRIES``), so the time limit of a row never holds the start of a worker.
     """
-    return EnvGrader(pool, grade_pool.grade_many, chunk)
+    return EnvGrader(pool, grade_pool.grade_many, chunk, warm=True)
 
 
 class Tokens(Protocol):
