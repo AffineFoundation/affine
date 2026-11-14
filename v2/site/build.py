@@ -3,8 +3,12 @@
 The site reads only public files. This builder reads ``public/mining.json``
 (the publisher's snapshot) and ``public/benchmarks.json`` (the benchmark
 service's file); it never calls the controller. ``view`` and ``bench_view``
-are the only code that knows the shape of those two files. A missing or bad
-benchmark file leaves the benchmark table empty and nothing else.
+are the only code that knows the shape of those two files. The benchmark table
+has one row for the genesis head and one for every king, with or without the
+benchmark file: a missing or bad file leaves those rows with no score, and
+nothing else. The reference models (models of other labs, scored by v1) come
+from the frozen v1 history that is installed in the site (``v1-data.json``),
+so they do not depend on the benchmark file or on a file of v1.
 
     python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--v1-history <file or URL>] [--every 60]
 
@@ -33,9 +37,10 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from sn120_v2 import layout
+from sn120_v2.headlog import GENESIS_ROUND
 from sn120_v2.public import SCHEMA
 from sn120_v2.state import APPLIED
 from sn120_v2.types import WINNER
@@ -49,6 +54,10 @@ V1_DATA = "v1-data.json"
 V1_SCHEMA = "sn120-v1-archive-1"
 NOTED: dict[str, str] = {}  # the last note printed per topic
 FLAGS = ("front", "demoted", "held")
+# The state of the benchmark run of one row. The benchmark file of v1 says "evaluating" for a run in progress.
+SCORED, QUEUED, RUNNING, FAILED, NO_RUN = "scored", "queued", "running", "failed", "none"
+RUN_STATE = {"scored": SCORED, "done": SCORED, "queued": QUEUED, "running": RUNNING, "evaluating": RUNNING, "failed": FAILED}
+KING, GENESIS = "king", "genesis"
 
 
 def fetch(location: str) -> bytes:
@@ -99,11 +108,12 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
 
     history, rounds, lora_of = [], [], {}
     for record in closed:
-        round_id = record["round_id"]
+        round_id, winner_pass = record["round_id"], None
+        best_z = max((entry["z"] for entry in record["entries"] if entry.get("z") is not None), default=None)
         for entry in record["entries"]:
             won = record["outcome"] == APPLIED and entry["status"] == WINNER
             if won:
-                lora_of[round_id] = entry.get("lora_hash")
+                lora_of[round_id], winner_pass, best_z = entry.get("lora_hash"), entry.get("pass_rate"), entry.get("z")
             history.append({
                 "round_id": round_id, "uid": entry["uid"], "hotkey": entry["hotkey"], "status": entry["status"],
                 "delta": entry.get("delta"), "se": entry.get("se"), "z": entry.get("z"), "cap_rate": entry.get("cap_rate"),
@@ -116,6 +126,10 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
             "seats": record["seats"], "skipped": record["skipped"], "tasks": record["n_tasks"],
             "null_pass": record.get("null_pass_rate"), "null_cap": record.get("null_cap_rate"),
             "outcome": record["outcome"], "winner_uid": record.get("winner_uid"), "at": record["closed_at"],
+            # for the charts: the open time, the pass rate of the applied winner, its z (with no winner: the highest z), and
+            # the number of entries with a z. An entry whose training failed has none. ``reason`` is the validator's own text.
+            "opened_at": record["opened_at"], "winner_pass": winner_pass, "best_z": best_z,
+            "with_z": sum(entry.get("z") is not None for entry in record["entries"]), "reason": record.get("reason") or None,
         })
 
     kings = []  # the snapshot gives the payee window, newest first; a king carried over from v1 has no v2 head and no v2 files
@@ -152,32 +166,74 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
     }
 
 
-def bench_view(bench: dict[str, Any]) -> dict[str, Any]:
-    """``benchmarks.json`` of the benchmark service, cut down to one table: kings first, newest ``crowned_at`` first.
+def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The benchmark table of the v1 site: one row for every king, the reference models, and the genesis head.
 
-    ``partial`` marks a result that lost samples (``complete=false``). Aggregates only; the node record is not copied.
+    ``bench`` is ``benchmarks.json`` of the benchmark service, or None when there is no such file. ``heads`` is the
+    head list of the snapshot (the newest heads, oldest first). A king is one applied round. A king or a genesis head
+    that the file does not name still has its row, made from ``heads``, with the state ``none``.
+
+    ``kept`` is a table that this function made before: the benchmark part of the frozen v1 history. Its rows of a kind
+    other than king and genesis (the reference models) are added, with ``v1`` set, unless ``bench`` has a row of that
+    kind with the same label. A king or a genesis row of ``kept`` is a model of v1 and is never added. When ``bench``
+    has no column, the columns of ``kept`` are the columns.
+
+    A row says the state of its run: ``scored``, ``queued``, ``running``, ``failed`` or ``none``. ``avg`` is the mean
+    of the ``in_avg`` columns, and only a row that has all of them gets one: a mean over fewer benchmarks cannot be
+    compared. ``partial`` marks a result that lost samples (``complete=false``). Aggregates only; the node record is
+    not copied.
     """
-    columns = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
+    bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
+    enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
+    columns = [{"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
+               for b in enabled or (kept or {}).get("columns", ())]
+    counted = [b["id"] for b in columns if b["in_avg"]]
     cells: dict[str, dict[str, Any]] = {}
     for result in bench["results"]:  # the file orders the newest protocol of one (model, benchmark) last
         cells.setdefault(result["model_id"], {})[result["benchmark_id"]] = {
             "score": result["score"], "se": result.get("se"), "partial": result.get("complete") is False,
             "samples": result.get("samples"), "expected": result.get("samples_expected"), "cap_rate": result.get("cap_rate"),
         }
-    rows = []
-    for model in sorted(bench["models"], key=lambda m: (m.get("kind") != "king", -(m.get("crowned_at") or 0))):
-        row = cells.get(model["model_id"], {})
-        counted = [row[b["id"]] for b in columns if b.get("in_avg", True) and b["id"] in row]
-        rows.append({
-            "label": model.get("label") or model["model_id"], "kind": model.get("kind"), "status": model.get("status"),
-            "round_id": model.get("round_id"), "head": model.get("head_version_id"), "at": model.get("crowned_at"),
-            "avg": sum(cell["score"] for cell in counted) / len(counted) if counted else None,
-            "avg_partial": any(cell["partial"] for cell in counted), "cells": row,
-        })
-    return {
-        "updated_at": bench["updated_at"], "rows": rows,
-        "columns": [{"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True)} for b in columns],
-    }
+
+    def row(label: str, kind: Any, status: str, round_id: Any, head: Any, at: Any, scores: dict[str, Any]) -> dict[str, Any]:
+        if kind == KING and round_id and head:  # one name for a king, with or without the benchmark file
+            label = f"{round_id} {head[:8]}"
+        if kind == GENESIS and label.lower().startswith(GENESIS):  # the service writes "genesis <model name>"
+            label = "Genesis" + label[len(GENESIS):]
+        full = bool(counted) and all(name in scores for name in counted)
+        return {
+            "label": label, "kind": kind, "status": status, "round_id": round_id, "head": head, "at": at,
+            "avg": sum(scores[name]["score"] for name in counted) / len(counted) if full else None,
+            "avg_partial": any(scores[name]["partial"] for name in counted if name in scores), "cells": scores,
+        }
+
+    rows = [row(
+        model.get("label") or model["model_id"], model.get("kind"), RUN_STATE.get(model.get("status"), model.get("status") or NO_RUN),
+        model.get("round_id"), model.get("head_version_id"), model.get("crowned_at"), cells.get(model["model_id"], {}),
+    ) for model in bench["models"]]
+
+    by_round: dict[str, dict[str, Any]] = {}  # the head that is served for a benchmark: the folded head of the round
+    for head in heads:
+        if head["round_id"] not in by_round or head["folded"]:
+            by_round[head["round_id"]] = head
+    named = {name for made in rows for name in (made["round_id"], made["head"]) if name}
+    genesis = next((made for made in rows if made["kind"] == GENESIS), None)
+    for round_id, head in by_round.items():
+        if round_id == GENESIS_ROUND and genesis:  # the file may give the genesis row with no head id and no time
+            genesis |= {"round_id": round_id, "head": genesis["head"] or head["version_id"], "at": genesis["at"] or head["applied_at"]}
+        elif round_id == GENESIS_ROUND:
+            rows.append(row("Genesis", GENESIS, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
+        elif round_id not in named and not any(other["version_id"] in named for other in heads if other["round_id"] == round_id):
+            rows.append(row(round_id, KING, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
+
+    order = {KING: 0, GENESIS: 2}  # kings, newest first; then the other models, best average first (the page orders them by size); the genesis head is last
+    have = {made["label"] for made in rows if made["kind"] not in order}
+    for old in (kept or {}).get("rows", ()):
+        if old.get("kind") not in order and old["label"] not in have:
+            state = RUN_STATE.get(old.get("status"), old.get("status") or NO_RUN)
+            rows.append(row(old["label"], old.get("kind"), state, None, None, None, old["cells"]) | {"v1": True})
+    rows.sort(key=lambda made: (order.get(made["kind"], 1), -(made["at"] or 0) if made["kind"] == KING else -(made["avg"] or 0)))
+    return {"updated_at": bench["updated_at"], "rows": rows, "columns": columns}
 
 
 def build_static(out: Path, link: Callable[[str], str]) -> None:
@@ -192,20 +248,44 @@ def build_static(out: Path, link: Callable[[str], str]) -> None:
         write(out / name, data)
 
 
-def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
-    snap = json.loads(read(source, layout.MINING_JSON))
-    bench = None
-    try:  # the benchmark table is informational: without it the rest of the page is still built
-        bench = bench_view(json.loads(read(source, layout.BENCHMARKS)))
-        json.dumps(bench, allow_nan=False)
+def tried(topic: str, what: str, make: Callable[[], Any], quiet: Callable[[Exception], bool] = lambda error: False) -> Any:
+    """``make()``, or None when the input is missing or bad. The reason is printed once, not on every rebuild."""
+    try:
+        made = make()
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        bench = None
-        note = f"site: no benchmark table: {type(error).__name__}: {error}"
-        quiet = quiet_missing and isinstance(error, FileNotFoundError)  # no file yet is the state at launch
-        if note != NOTED.get("bench") and not quiet:  # say it once, not on every rebuild
+        note = f"site: {what}: {type(error).__name__}: {error}"
+        if note != NOTED.get(topic) and not quiet(error):
             print(note, file=sys.stderr)
-        NOTED["bench"] = note
-    write(out / DATA, json.dumps(view(snap, bench, link), separators=(",", ":"), allow_nan=False).encode())
+        NOTED[topic] = note
+        return None
+    NOTED.pop(topic, None)
+    return made
+
+
+def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
+    """Write the data file. The benchmark file and the v1 history are informational: without one of them, or with a bad
+    one, the page is still built, and the genesis head and each king still have their rows."""
+    snap = json.loads(read(source, layout.MINING_JSON))
+    heads = snap["heads"] if snap.get("schema") == SCHEMA else []  # ``view`` refuses any other snapshot
+
+    def usable(bench: dict[str, Any] | None, kept: dict[str, Any] | None) -> dict[str, Any] | None:
+        json.dumps(bench_view(bench, heads, kept), allow_nan=False)  # an input that gives no table is not used
+        return bench or kept
+
+    def v1_models() -> dict[str, Any]:
+        doc = json.loads((out / V1_DATA).read_bytes())  # the frozen v1 history, as ``install_v1`` copied it
+        if doc.get("schema") != V1_SCHEMA:
+            raise ValueError(f"{V1_DATA} is not a v1 archive ({V1_SCHEMA})")
+        return usable(None, doc["bench"])
+
+    def missing(error: Exception) -> bool:
+        return isinstance(error, FileNotFoundError)
+
+    bench = tried("bench", "no benchmark file, so no benchmark score", lambda: usable(json.loads(read(source, layout.BENCHMARKS)), None),
+                  lambda error: quiet_missing and missing(error))  # no file yet is the state at launch
+    kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
+    table = bench_view(bench, heads, kept)
+    write(out / DATA, json.dumps(view(snap, table, link), separators=(",", ":"), allow_nan=False).encode())
 
 
 def install_v1(location: str, out: Path) -> None:

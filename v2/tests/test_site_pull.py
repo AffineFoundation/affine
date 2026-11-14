@@ -267,6 +267,36 @@ def test_a_store_that_does_not_answer_keeps_the_last_good_files(env, store, tmp_
     assert pull(env, site).returncode == 0  # the benchmark file that was copied stays; the site is built again
 
 
+def test_the_reference_models_of_the_v1_history_are_in_the_table_from_the_first_run_and_stay_under_the_stores_table(env, store, tmp_path):
+    def cell(score: float) -> dict:
+        return {"score": score, "se": 0.01, "partial": False, "samples": 100, "expected": 100, "cap_rate": 0.0}
+
+    site, history = tmp_path / "site", tmp_path / "v1-history.json"
+    history.write_text(json.dumps({"schema": "sn120-v1-archive-1", "archived_at": 1.0, "kings": [], "turns": [], "bench": {
+        "updated_at": 5, "columns": [{"id": "b1", "label": "B1", "in_avg": True}],
+        "rows": [{"label": "Ref-8B", "kind": "reference", "status": "scored", "cells": {"b1": cell(0.75)}},
+                 {"label": "E12 abcd", "kind": "king", "status": "scored", "cells": {"b1": cell(0.9)}}]}}))
+
+    def rows() -> list:
+        done = pull(env, site, "--v1-history", str(history))
+        assert done.returncode == 0, done.stderr
+        bench = json.loads((site / "site-data.json").read_text())["bench"]
+        return [(row["label"].split()[0], row["kind"], row["status"], row["avg"]) for row in bench["rows"]]
+
+    waiting = [("r000001", "king", "none", None), ("Ref-8B", "reference", "scored", 0.75), ("Genesis", "genesis", "none", None)]
+    assert rows() == waiting  # the first run: the history is installed before the data is built
+    assert not (site / layout.BENCHMARKS).exists() and layout.BENCHMARKS not in json.loads((site / INDEX).read_text())["files"]
+    folded = next(line for line in json.loads(store.get(layout.MINING_JSON))["heads"] if line["folded"] and line["round_id"] == "r000001")
+    store.put(layout.BENCHMARKS, json.dumps({  # the first table of the benchmark service: its own rows, no reference model
+        "updated_at": 9, "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True)],
+        "models": [dict(model_id="king-1", label="r000001 base", kind="king", status="evaluating", round_id="r000001",
+                        head_version_id=folded["version_id"], crowned_at=folded["applied_at"]),
+                   dict(model_id="genesis-1", label="genesis Launch", kind="genesis", status="queued", round_id="genesis")],
+        "results": []}).encode())
+    assert rows() == [("r000001", "king", "running", None), waiting[1], ("Genesis", "genesis", "queued", None)]
+    assert layout.BENCHMARKS in json.loads((site / INDEX).read_text())["files"]
+
+
 def test_a_store_with_the_pointer_only_at_its_old_key_fails_one_step_until_the_controller_writes_the_new_key(env, store, tmp_path):
     """The head pointer moved from ``public/current.json``. The pull never reads the old key: at an empty prefix it is an object of v1."""
     site, old, pointer = tmp_path / "site", "public/current.json", store.get(layout.CURRENT)

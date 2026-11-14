@@ -198,8 +198,9 @@ def test_reference_rows_that_an_operator_put_in_the_table_stay(world, where):
     store.inner.put(layout.BENCHMARKS, seed.encode()) if where == "store" else pathlib.Path(TABLE).write_text(seed)
     D.step(); D.step()
     rows = BENCH_VIEW(json.loads(store.tables[-1]))["rows"]
-    assert [(r["label"], r["kind"], r["status"]) for r in rows[1:]] == [("Qwen3.5-9B", "reference", "scored"), ("GLM-Z1-9B-0414", "reference", "failed")]
-    assert (rows[0]["kind"], rows[0]["status"]) == ("genesis", "scored") and rows[1]["cells"]["math500"]["score"] == 0.9 and not rows[2]["cells"]
+    # the site builder puts the genesis head last, under the other models
+    assert [(r["label"], r["kind"], r["status"]) for r in rows[:2]] == [("Qwen3.5-9B", "reference", "scored"), ("GLM-Z1-9B-0414", "reference", "failed")]
+    assert (rows[2]["kind"], rows[2]["status"]) == ("genesis", "scored") and rows[0]["cells"]["math500"]["score"] == 0.9 and not rows[1]["cells"]
     assert len(D.S["rents"]) == 1 and D.queue() == []  # a reference row is never run by this service
 
 
