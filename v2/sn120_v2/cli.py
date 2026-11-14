@@ -19,6 +19,8 @@
   force-sync  for a chain sync that ``run`` refuses because more than a quarter of the seats would leave:
               show the changes that two chain reads agree on; with ``--confirm-remove N`` apply them once
               (stop ``run`` first: with ``--confirm-remove`` this command takes over the journal)
+  coldkey-share  read-only: how many waiting seats share an owner coldkey (impact of one seat per coldkey
+              per round). Reads the journal and a chain snapshot; writes nothing.
 
 ``--stack module:function`` names the builder of the parts. The real ones are
 ``sn120_v2.assembly:stack``; the CPU ones are ``sn120_v2.sim:stack``.
@@ -46,7 +48,7 @@ from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, load_params
 from .payout import payees
 from .public import phase, round_text, snapshot
-from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
+from .queue import BACK, FRONT, FrontMove, SyncPlan, coldkey_share_report, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
 from .store import verify_files
@@ -209,6 +211,19 @@ def cmd_status(args: argparse.Namespace) -> int:
         verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in seats])
         report["queued_files"] = dict(sorted(Counter(verdict_rule(verdicts.get(seat.reg.hotkey)) for seat in seats).items()))
     print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_coldkey_share(args: argparse.Namespace) -> int:
+    """Read-only dry run: count waiting seats that share an owner coldkey. Writes nothing."""
+    state, _, stack = read_state(args, "coldkey-share")
+    if getattr(args, "chain", None):
+        snapshot = ChainSnapshot.from_json(Path(args.chain).read_bytes())
+    elif stack is not None and stack.chain is not None:
+        snapshot = stack.chain()
+    else:
+        raise ConfigError("give --chain FILE (a ChainSnapshot JSON), or --stack with a chain reader")
+    print(json.dumps(coldkey_share_report(state.queue, snapshot.registrations), indent=2))
     return 0
 
 
@@ -378,9 +393,14 @@ def two_chain_reads(read: Callable[[], ChainSnapshot]) -> tuple[ChainSnapshot, C
     raise InfraError(f"the chain stayed at block {first.block} for {CHAIN_READ_TRIES * CHAIN_READ_WAIT_S:g} s: there is no second read to compare with")
 
 
-def _changes(plan: SyncPlan) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int, str]]]:
-    """What a sync plan changes, without the clock times of a read: seats that leave, seats that enter, new hotkeys."""
-    return list(plan.removed), [reg.key for reg in plan.added], [(*reg.key, reg.hotkey) for reg in plan.rehotkeyed]
+def _changes(plan: SyncPlan) -> tuple:
+    """What a sync plan changes, without the clock times of a read: seats that leave, seats that enter, new hotkeys, refreshed coldkeys."""
+    return (
+        list(plan.removed),
+        [reg.key for reg in plan.added],
+        [(*reg.key, reg.hotkey) for reg in plan.rehotkeyed],
+        [(*reg.key, reg.coldkey) for reg in plan.refreshed],
+    )
 
 
 def cmd_force_sync(args: argparse.Namespace) -> int:
@@ -407,7 +427,10 @@ def cmd_force_sync(args: argparse.Namespace) -> int:
         raise InfraError(f"two chain reads give different changes of the queue ({counts}); nothing was changed. Run the command again")
     seats, leave = len(state.queue), len(plan.removed)
     print(f"chain blocks {first.block} and {second.block} ({len(second.registrations)} registrations) give the same changes to the queue of {seats} seats:")
-    print(f"  remove {leave} seats, add {len(plan.added)} seats, change the hotkey of {len(plan.rehotkeyed)} seats")
+    print(
+        f"  remove {leave} seats, add {len(plan.added)} seats, change the hotkey of {len(plan.rehotkeyed)} seats, "
+        f"refresh the coldkey of {len(plan.refreshed)} seats"
+    )
     names = {FRONT: "front", BACK: "back"}
     for key in plan.removed:
         seat = state.queue[key]
@@ -475,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     front.add_argument("--dryrun", "--dry-run", dest="dry_run", action="store_true", help="print what would change; write nothing")
     force = command("force-sync", cmd_force_sync, stack=True)
     force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
+    share = command("coldkey-share", cmd_coldkey_share, stack=False)  # --stack optional: use with a live chain reader
+    share.add_argument("--chain", help="ChainSnapshot JSON with Owner coldkeys; or omit and use --stack's chain reader")
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
