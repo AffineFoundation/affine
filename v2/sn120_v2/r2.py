@@ -3,7 +3,9 @@
 The rules this file holds:
 
 * ``sha256`` reads the stored bytes back and hashes them. It never trusts an
-  ETag, object metadata or a value the uploader sent.
+  ETag, object metadata or a value the uploader sent. An object above
+  ``part_size`` is read as ranges, several at a time, and hashed in file
+  order: one stream for each file is too slow for a 56 GB head.
 * ``copy`` uses multipart UploadPartCopy above ``part_size``. One CopyObject
   call on a ~4 GB shard timed out in v1.
 * No write returns before the store confirms it. Upload bodies are signed.
@@ -23,22 +25,24 @@ holds an object at a key that v2 writes. Run it before v2 starts in a bucket it 
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import hashlib
 import inspect
+import itertools
 import os
 import tempfile
 import time
 import urllib.request
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from . import layout
 from .errors import ContractError, InfraError, V2Error
@@ -48,6 +52,8 @@ MIB = 1024 * 1024
 MAX_PRESIGN_S = 7 * 24 * 3600  # the longest life SigV4 allows for a presigned URL
 PUT_HEADERS = {"Content-Type": "application/octet-stream"}  # signed: an upload must send exactly these
 _MISSING_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
+READ_RANGE = 32 * MIB  # the largest range of one read when ``sha256`` hashes a large object
+READ_STREAMS = 16  # ranges that are read at one time, for all ``sha256`` calls of one store together
 
 
 class R2Store:
@@ -61,6 +67,8 @@ class R2Store:
             raise ContractError("part_size must be at least 5 MiB (S3 multipart minimum)")
         self._bucket = bucket
         self._part_size = part_size
+        self._attempts = attempts
+        self._readers = ThreadPoolExecutor(max_workers=READ_STREAMS, thread_name_prefix="r2-read")
         self._prefix = f"{prefix.strip('/')}/" if prefix.strip("/") else ""
         # R2 needs every part but the last to have the same size; a fixed chunk size gives that.
         self._transfer = TransferConfig(multipart_threshold=part_size, multipart_chunksize=part_size, max_concurrency=8)
@@ -74,7 +82,7 @@ class R2Store:
                 retries={"max_attempts": attempts, "mode": "standard"},
                 connect_timeout=10,
                 read_timeout=120,
-                max_pool_connections=16,
+                max_pool_connections=2 * READ_STREAMS,  # the range reads of ``sha256``, and the parts of a copy or a transfer
                 # R2 does not need the optional CRC trailers; integrity is checked here instead.
                 request_checksum_calculation="when_required",
                 response_checksum_validation="when_required",
@@ -180,12 +188,50 @@ class R2Store:
         digest, seen = hashlib.sha256(), 0
         with self._guard("sha256", key):
             reply = self._s3.get_object(Bucket=self._bucket, Key=self._k(key))
+            if int(reply["ContentLength"]) > self._part_size:
+                reply["Body"].close()
+                return self._sha256_ranges(key, int(reply["ContentLength"]), reply["ETag"])
             for chunk in reply["Body"].iter_chunks(4 * MIB):
                 digest.update(chunk)
                 seen += len(chunk)
             if seen != int(reply["ContentLength"]):
                 raise InfraError(f"r2 sha256 {key!r}: read {seen} of {reply['ContentLength']} bytes")
         return digest.hexdigest()
+
+    def _sha256_ranges(self, key: str, size: int, etag: str) -> str:
+        """Hash a large object from range reads that run at the same time. The hasher gets the ranges in file order.
+
+        ``IfMatch`` binds every range to one version of the object: a range of
+        another version fails the read. The ETag proves nothing else; the hash
+        is of the bytes that were read, and each range must have its full length.
+        """
+        step = min(self._part_size, READ_RANGE)
+
+        def read(first: int) -> bytes:
+            want = min(step, size - first)
+            for attempt in range(self._attempts):
+                try:
+                    reply = self._s3.get_object(Bucket=self._bucket, Key=self._k(key), Range=f"bytes={first}-{first + want - 1}", IfMatch=etag)
+                    data = reply["Body"].read()
+                except BotoCoreError:  # the stream broke after the store answered: botocore does not read a body again
+                    if attempt + 1 == self._attempts:
+                        raise
+                    continue
+                if len(data) == want:
+                    return data
+            raise InfraError(f"r2 sha256 {key!r}: a read of {want} bytes at {first} came back short")
+
+        digest, starts = hashlib.sha256(), iter(range(0, size, step))
+        ahead: collections.deque[Future[bytes]] = collections.deque()
+        try:
+            while True:
+                ahead.extend(self._readers.submit(read, first) for first in itertools.islice(starts, READ_STREAMS - len(ahead)))
+                if not ahead:
+                    return digest.hexdigest()
+                digest.update(ahead.popleft().result())
+        finally:
+            for future in ahead:
+                future.cancel()
 
     def copy(self, src: str, dst: str) -> None:
         before = self._head(src)
