@@ -94,6 +94,31 @@ The first copies are in this repo: `tests/data/cutover/k1.json` and `tests/data/
 
 **The import dry run can run at any time, as long as the site serves v1's `mining.json`.** It reads only public files and the chain. Do the real run on the cutover build, right before the bootstrap. Once the site serves v2's `mining.json`, the import with the two public URLs is refused: "GPU box", step 7 has the way.
 
+## Known double turns after the first import (do not revoke)
+
+v1 kept taking turns after the first import snapshot was taken. These three UIDs got a v1 turn after that snapshot and were also charged or seated in v2. **Nothing is revoked.** They already had their one turn (in v1 and again in v2). The idle guard below exists so a future import cannot repeat this.
+
+| UID | What happened |
+| --- | --- |
+| **893** | v1 epoch 1321 (turn). Charged again in a v2 round. |
+| **876** | v1 epoch 1324 (turn). Charged again in a v2 round. |
+| **981** | v1 epoch 1325 (turn). Seated in open v2 round `r000011`. |
+
+## Idle guard (source must not still be dispatching)
+
+The import **refuses** unless you give `--earlier-k1` a copy of `k1.json` taken at least 20 minutes before the current one, with the **same last epoch**. That is the coded form of the two reads 20 minutes apart in "The state of v1" above. If the last epoch moved, v1 is still dispatching: stop the lifecycle and wait.
+
+```
+# Save k1 now, wait >= 20 minutes, save again, then dry-run with both:
+T0=$(date -u +%Y%m%dT%H%M%SZ)
+curl -fsS https://affine.io/k1.json -o k1-$T0.json
+# ... wait until v1's last epoch has stood still for >= 20 minutes ...
+T1=$(date -u +%Y%m%dT%H%M%SZ)
+curl -fsS https://affine.io/k1.json -o k1-$T1.json
+curl -fsS https://affine.io/mining.json -o mining-$T1.json
+python -m sn120_v2.cutover --dry-run --k1 k1-$T1.json --mining mining-$T1.json --earlier-k1 k1-$T0.json
+```
+
 ## What the import carries
 
 `python -m sn120_v2.cutover` reads two public files, `https://affine.io/k1.json` and `https://affine.io/mining.json`. It needs no credential, reads no v1 host and no bucket, and writes nothing to the chain. It writes:

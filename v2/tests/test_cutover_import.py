@@ -15,7 +15,16 @@ import pytest
 
 from sn120_v2 import cli, cutover, layout
 from sn120_v2.canonical import manifest_digest, sha256_hex
-from sn120_v2.cutover import CutoverError, build_genesis, build_import, chain_report, copy_miner_files, preview_queue
+from sn120_v2.cutover import (
+    SOURCE_IDLE_PROOF_S,
+    CutoverError,
+    build_genesis,
+    build_import,
+    chain_report,
+    copy_miner_files,
+    preview_queue,
+    require_source_idle,
+)
 from sn120_v2.errors import ConfigError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec, Params
 from sn120_v2.payout import weights
@@ -41,8 +50,20 @@ def v1() -> dict:
     return copy.deepcopy(RAW)
 
 
+def idle_proof(k1: dict) -> dict:
+    """An earlier k1 with the same last epoch, old enough to prove v1 stood still."""
+    proof = copy.deepcopy(k1)
+    proof["generated_at"] = k1["generated_at"] - SOURCE_IDLE_PROOF_S
+    return proof
+
+
 def load(v1: dict, undecided: str | None = "front", earlier: tuple[dict, ...] = ()) -> V1Import:
-    return build_import(v1["k1"], v1["mining"], now=NOW, undecided=undecided, earlier=earlier)
+    """Import with an idle proof when the caller did not already give one that is old enough."""
+    copies = list(earlier)
+    now_gen = v1["k1"]["generated_at"]
+    if not any(now_gen - old.get("generated_at", 0) >= SOURCE_IDLE_PROOF_S for old in copies):
+        copies.insert(0, idle_proof(v1["k1"]))
+    return build_import(v1["k1"], v1["mining"], now=NOW, undecided=undecided, earlier=tuple(copies))
 
 
 def turn(k1: dict, epoch: int) -> dict:
@@ -77,6 +98,28 @@ def test_a_start_that_would_pay_no_king_is_refused(v1):
         chain_report(imp, None, nobody, Params())
     with pytest.raises(CutoverError, match="validator hotkey"):
         chain_report(imp, build_genesis(DIGEST, "5HoHVmesgr4F7Trw1ow5wNyFTrm4zs3rLHZir7LAVSHUvFi9"), nobody, Params())
+
+
+def test_import_refuses_while_v1_is_still_dispatching(v1):
+    """Without an idle-proof earlier k1, or when the last epoch moved, the import stops."""
+    with pytest.raises(CutoverError, match="still be dispatching"):
+        build_import(v1["k1"], v1["mining"], now=NOW, undecided="front", earlier=())
+    recent = copy.deepcopy(v1["k1"])
+    recent["generated_at"] = v1["k1"]["generated_at"] - 60  # only one minute older: not a proof
+    with pytest.raises(CutoverError, match="still be dispatching"):
+        build_import(v1["k1"], v1["mining"], now=NOW, undecided="front", earlier=(recent,))
+    moved = idle_proof(v1["k1"])
+    moved["turns"] = list(moved["turns"]) + [
+        {**moved["turns"][-1], "epoch_index": moved["turns"][-1]["epoch_index"] + 1, "status": "skip", "uid": None, "hotkey": None}
+    ]
+    # proof is older and ends at e1310; current k1 also ends at e1310 — make current advance instead
+    advanced = copy.deepcopy(v1["k1"])
+    advanced["turns"] = list(advanced["turns"]) + [
+        {**advanced["turns"][-1], "epoch_index": advanced["turns"][-1]["epoch_index"] + 1, "status": "skip", "uid": None, "hotkey": None}
+    ]
+    with pytest.raises(CutoverError, match="still dispatching"):
+        require_source_idle(advanced, (idle_proof(v1["k1"]),))
+    require_source_idle(v1["k1"], (idle_proof(v1["k1"]),))  # same last epoch, far enough apart: ok
 
 
 def test_turns_without_a_verdict_need_the_operators_decision(v1):
@@ -227,24 +270,36 @@ def test_genesis_is_fresh_mimo_with_the_given_hotkey_and_no_defaults():
             build_genesis(digest, hotkey)
 
 
+def write_idle_proof(directory: Path) -> str:
+    """Write a k1 copy old enough to prove the source stood still; return its path."""
+    path = directory / "k1-idle-proof.json"
+    path.write_text(json.dumps(idle_proof(RAW["k1"])))
+    return str(path)
+
+
 def test_dry_run_prints_and_writes_nothing(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    proof = write_idle_proof(tmp_path)
+    args = [*FILES, "--earlier-k1", proof]
     assert cutover.main([*FILES, "--max-age-s", "60", "--dry-run"]) == 2  # the fixture is older than a minute
     assert "CUTOVER IMPORT REFUSED" in capsys.readouterr().err
+    assert cutover.main([*FILES, "--dry-run"]) == 2  # no idle-proof earlier k1
+    assert "still be dispatching" in capsys.readouterr().err
     snapshot = tmp_path / "chain.json"
     snapshot.write_bytes(chain(RAW).to_json())
-    assert cutover.main([*FILES, "--chain", str(snapshot), "--dry-run"]) == 0  # the 14 open turns go to the front by default
+    assert cutover.main([*args, "--chain", str(snapshot), "--dry-run"]) == 0  # the 14 open turns go to the front by default
     out = capsys.readouterr().out
     assert "v1-e1211 uid 920" in out and "front of the queue: 14 seats" in out and "first weights" in out and "DRY RUN" in out
     assert "UID 0 is owner: it has no seat and gets no weight; not checked" in out and "e1290 took 125 prompts, 1000 rollouts; 15 v1 turns in all" in out
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["chain.json"]
-    assert cutover.main([*FILES, "--undecided", "front", "--owner-hotkey", OWNER, "--dry-run"]) == 2  # nothing to check it against
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["chain.json", "k1-idle-proof.json"]
+    assert cutover.main([*args, "--undecided", "front", "--owner-hotkey", OWNER, "--dry-run"]) == 2  # nothing to check it against
     assert "--owner-hotkey needs --chain" in capsys.readouterr().err
 
 
 def test_a_uid_0_that_is_not_the_owner_hotkey_is_refused(tmp_path, capsys):
     """v2 gives UID 0 no seat and no weight. The operator names the owner hotkey; another hotkey at UID 0 stops the cutover."""
-    args = [*FILES, "--undecided", "front", "--dry-run", "--chain"]
+    proof = write_idle_proof(tmp_path)
+    args = [*FILES, "--earlier-k1", proof, "--undecided", "front", "--dry-run", "--chain"]
     for name, holder in (("owner.json", OWNER), ("other.json", VALIDATOR)):
         (tmp_path / name).write_bytes(chain(RAW, (Registration(0, holder, 1),)).to_json())
     assert cutover.main([*args, str(tmp_path / "owner.json"), "--owner-hotkey", OWNER]) == 0
@@ -257,16 +312,17 @@ def test_a_uid_0_that_is_not_the_owner_hotkey_is_refused(tmp_path, capsys):
 
 def test_real_run_writes_both_records_once(tmp_path, capsys):
     out = tmp_path / "import"
+    proof = write_idle_proof(tmp_path)
     genesis = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR]
     assert cutover.main([*FILES, "--undecided", "front", "--out", str(out)]) == 2  # no genesis inputs, no defaults
     assert cutover.main([*FILES, "--master-digest", DIGEST, "--validator-hotkey", VALIDATOR[:-1] + "m", "--out", str(out)]) == 2
     assert not out.exists()
-    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--earlier-k1", str(DATA / "k1.json"), "--out", str(out)]) == 0
+    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--earlier-k1", proof, "--out", str(out)]) == 0
     assert sorted(path.name for path in out.iterdir()) == ["earlier-1-k1.json", "genesis.json", "k1.json", "mining.json", "v1_import.json"]
     imp = V1Import.from_json((out / "v1_import.json").read_bytes())
     assert imp.kings == load(copy.deepcopy(RAW)).kings and "sha256=" in imp.source and "undecided=front" in imp.source
     assert (out / "k1.json").read_bytes() == (DATA / "k1.json").read_bytes()
-    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--out", str(out)]) == 2  # never replaces an import
+    assert cutover.main([*FILES, *genesis, "--undecided", "front", "--earlier-k1", proof, "--out", str(out)]) == 2  # never replaces an import
     assert "exists already" in capsys.readouterr().err
 
 
@@ -281,7 +337,8 @@ def test_the_controller_starts_from_the_written_files_with_the_previewed_queue(t
     store.put(layout.public_base_file(manifest_digest(base_files), "model.bin"), b"base")
     store.put(layout.public_master_file(DIGEST, "master.bin"), b"master")
     (tmp_path / "genesis_files.json").write_text(json.dumps({"base_files": base_files, "master_files": master_files}))
-    inputs = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR, "--undecided", "front", "--owner-hotkey", OWNER]
+    proof = write_idle_proof(tmp_path)
+    inputs = ["--master-digest", DIGEST, "--validator-hotkey", VALIDATOR, "--undecided", "front", "--owner-hotkey", OWNER, "--earlier-k1", proof]
     assert cutover.main([*FILES, *inputs, "--chain", str(tmp_path / "snapshot.json"), "--out", str(out)]) == 0
     assert (out / "chain.json").read_bytes() == snapshot.to_json()
     genesis = replace(GenesisSpec.from_json((out / "genesis.json").read_bytes()), base_hash=manifest_digest(base_files))
