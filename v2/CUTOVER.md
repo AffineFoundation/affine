@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Five changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"), but work after them is still open (the guard of point 3, and a change of `llms.txt`), so no commit is pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Six changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"); the last one, `4e23a275`, is the least commit for `llms.txt`. Work after them is still open (the guard of point 3), so no commit is pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 3. The guard for a box whose digests differ from the pinned ones: `run` will judge a stored result and then refuse to go on with such a box. It is in work. Until it is in, the rule in bold of "The digests of the box and the pinned digests" holds, and a fix that changes the digests while a stored result waits has three orders and not one ("After a fix").
 
 ## Hosts
@@ -100,14 +100,14 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
    uv pip install -e ".[dev,gpu,r2,chain,envs,miner]"
    ```
 
-   **The mainnet bootstrap and `run` use only a commit that contains these five.** Each line of the loop must end with `exit=0`.
+   **The mainnet bootstrap and `run` use only a commit that contains these six.** Each line of the loop must end with `exit=0`.
 
    | Commit | What it holds | With an earlier commit |
    | --- | --- | --- |
@@ -116,10 +116,11 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `5ce10ce7` (PR #146) | The limit of 3 checks for a file that makes the checker fail, with 10 minutes between two checks of the same file. | A hostile file is checked again at every pass. `llms.txt` must not go up from such a build. |
    | `97a67ea4` (PR #149 and PR #151) | The restart loop of `run` ("GPU box", step 10). | Nothing starts `run` again after a crash or a reboot. |
    | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
+   | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
-   These five are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
+   These six are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -132,7 +133,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    python -m sn120_v2 sim --state-dir /tmp/sn120-sim-cutover --rounds 6 --miners 4
    ```
 
-3. The digests. A new commit has a new code digest, and new packages give a new image digest. The digests of the smoke test are stale: with them, the first train call stops with an error.
+3. The digests. A commit that changes a file under `sn120_v2/gpu/` has a new code digest, and new packages give a new image digest. Run this block for the cutover build in any case: with stale digests of the smoke test, the first train call stops with an error.
 
    ```
    export CUT=<a local disk with 300 GB free>/sn120-mainnet
@@ -157,8 +158,25 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
 5. A new parameter file, `$CUT/params.json`. Never give the mainnet bootstrap a file of the smoke test. The six small files of `smoke params` (`params-1-tiny.json` to `params-4-multi.json`, `params-limit-judged.json`, `params-limit-not-scored.json`) set values that are for the smoke test only: a win rule of `z_bar` 0, a few tasks, short time limits. `params-5-full.json` and the file of step 4 of SMOKE.md hold the digests of the smoke commit. The coordinator names `global_norm_cap` (about 4 times the update norm that the smoke test measured, SMOKE.md step 9) and any other value that the smoke test changed.
 
    ```
-   {"recipe": {"image_digests": ["<image_digest of plan.json>"], "code_digest": "<code_digest of plan.json>", "global_norm_cap": <number>}}
+   {"squat_min_wait_s": 31536000, "recipe": {"image_digests": ["<image_digest of plan.json>"], "code_digest": "<code_digest of plan.json>", "global_norm_cap": <number>}}
    ```
+
+   `"squat_min_wait_s": 31536000` (365 days, in seconds) switches squat-trim off for the seats that come from v1. Squat-trim is the rule that moves a waiting seat with no valid file to the back of the queue.
+
+   - With the default (86400, one day), a seat whose registration is older than 2 days and that has no valid file in v2 moves to the back of the queue, and stays there. This happens at the first try to open a round after the first charged entry. A seat from v1 has no valid file in v2 when it has only v1 `train` keys, or no file. On 14 Nov 2026 (chain block 9501013), 963 of the 1,000 registrations on the chain were older than 2 days.
+   - Jacob's rule (13 Nov 2026, 4:33 PM): such a hotkey keeps its place, not charged, until the miner uploads a new file.
+   - With 31536000, no seat moves whose registration is younger than 730 days. On that day the oldest registration was 54 days old. (UID 0, the owner hotkey, is older, but it has no seat.)
+   - Only two things read the value: the step that opens a round, and the text of `llms.txt`. No range is checked for it.
+   - The key stands at the top level, not inside `recipe`, and the number has no decimal point. A file with one of these faults is refused.
+   - Jacob decides on this value. Without the key, the default holds.
+
+   Check the file before the bootstrap:
+
+   ```
+   python -c "import os; from sn120_v2.params import load_params; p = load_params(os.environ['CUT'] + '/params.json'); print(p.squat_min_wait_s, p.params_hash)"
+   ```
+
+   It prints the value and the hash of the whole file's parameters. The value must be `31536000`. `86400` means that the key is missing. An error that ends with `unknown field(s) ['squat_min_wait_s'] for Recipe` means that the key is inside `recipe`. Write the hash down: after the bootstrap, `"params_hash"` of `status` must be the same ("GPU box", step 8).
 
 6. A new, empty state directory and the production store settings ("GPU box", step 2). Never use the state directory of the smoke test: `run` would copy the smoke journal into the production bucket.
 
@@ -292,7 +310,7 @@ Run every command from `v2/`, inside the virtual environment.
    python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack
    ```
 
-   Check: `bootstrap` ends with exit code 0 and prints no line `not finished:`. `kings` holds the 10 UIDs of step 4; `queue` is the count of waiting seats of step 7; `published` is `true`; `queued_files` of `status` shows how many waiting seats have a valid file.
+   Check: `bootstrap` ends with exit code 0 and prints no line `not finished:`. `kings` holds the 10 UIDs of step 4; `queue` is the count of waiting seats of step 7; `published` is `true`; `params_hash` is the hash that the check line of check 5 printed for `$CUT/params.json` (so `squat_min_wait_s` is pinned as 31536000); `queued_files` of `status` shows how many waiting seats have a valid file.
 
    - `bootstrap` also writes the head pointer, `public/head.json`. The first run of the pull on AffineValidator needs it (step 12 there).
    - A line `not finished: head pointer not published yet: <cause>` (exit code 1): the store did not take the pointer. The genesis is written; do not run `bootstrap` again. The first pass of `run` (step 10) writes the pointer.
@@ -627,8 +645,8 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       The token can only read, and only this one bucket. It is not the credentials file of the upload links job: that one can sign uploads.
    2. **Check that the store's `llms.txt` comes from the cutover build.** `llms.txt` must not go up from a store that an older commit published.
 
-      - The commit of the GPU box holds the five commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` five times. Two of them are the reason for this step: the round time hard stop (`9b830458`) and the limit of 3 checks (`5ce10ce7`).
-      - **Not landed yet:** the commit for the cutover. Work after those five is still open, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
+      - The commit of the GPU box holds the six commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` six times. Three of them are the reason for this step: the round time hard stop (`9b830458`), the limit of 3 checks (`5ce10ce7`) and the corrected text of `llms.txt` (`4e23a275`).
+      - **Not landed yet:** the commit for the cutover. Work after those six is still open, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
       - **Not landed yet:** the text check of the store's `llms.txt`. The command comes with the commit.
 
       Do not go on before you have both.
@@ -660,6 +678,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       curl -fsS -H 'Accept: text/html' https://affine.io/llms.txt | grep -o '<title>[^<]*</title>'
       curl -fsS https://affine.io/ | grep -c 'site.js?v='
       curl -fsS https://affine.io/llms.txt | grep 'Where to get the link'
+      grep squat_min_wait_s "$SITE/llms.txt"
       sleep 60; sha256sum "$SITE/llms.txt"
       ```
 
@@ -669,6 +688,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       - The title line shows a page title: the browser view works.
       - `grep -c` prints `0`: the root still shows v1's page.
       - The `Where to get the link` line names `https://affine.io/ff/links/<your hotkey>.json`. If it says `not published yet`, see step 13.
+      - The `squat_min_wait_s` line shows `31536000`. With `86400`, the bootstrap got a file without the key (check 5 of "Before the mainnet bootstrap"). Tell the coordinator at once: the repair is a `set-params` with the right file between two rounds, and it must come before the first entry is charged.
       - After 60 seconds the hash is still `H`. If it changed, another v1 process writes `llms.txt`: v1's source speaks of "legacy website pushes". Find it (`pm2 ls`, `crontab -l`, `grep -rl llms ~/.config/systemd/user/`), stop it, and run the command again.
 
       With `exit=1`, the file in the site directory did not change. `missing in the store` means that the GPU box has not published yet, or that the bucket is wrong. `not of the same snapshot` means that a publish was in progress: run it again.
@@ -949,7 +969,7 @@ On the GPU box, in the shell of step 2 of "GPU box".
 | `python -m sn120_v2 status --state-dir $STATE --stack sn120_v2.assembly:stack` | The same, read through the store, plus `queued_files`: the count of queued files for each admission result. |
 | `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` | The summary of the last closed round, as a text to paste. `--round r000007` picks one; `--json` prints the stored record. |
 | `python -m sn120_v2 publish --state-dir $STATE --stack sn120_v2.assembly:stack` | Writes `llms.txt` and `mining.json` again. It does not change the journal. |
-| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change. |
+| `python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params <file>` | Pins new parameters and prints the old and the new `params_hash`. Stop the loop first: this command takes over the journal, and a `run` that still runs stops at its next write. Then start the loop again. The file holds the whole set of overrides, not only the change: a key that the file does not hold goes back to its default. So each file holds `"squat_min_wait_s": 31536000` ("The value `squat_min_wait_s`"). |
 
 `--params` on `run`, `status` and `publish` is only a check: a file that differs from the pinned parameters is refused.
 
@@ -1072,6 +1092,8 @@ The pinned digests are the two digests of the parameters in force: the code dige
 
 What happens when `run` starts on such a box: it does not stop. Every training is refused at once, so each round closes in seconds, and **every seat in that round gets one counted failure**. There is no pause between such rounds, and the same seats come first again. Three counted failures hold a seat, and no command releases a held seat today. Nobody is charged. The loop starts `run`, so the same holds for a start of the loop.
 
+A commit that changes `v2/pyproject.toml` does not need the install line and the digest block for that reason alone. The message for the commit says if the install line is needed. Example: `4e23a275` adds `jinja2` to the `miner` line. A box with the `gpu` extra has that package already, so this commit is a checkout only. The `diff` line below shows it for this box.
+
 How to see it, after each checkout, after each install line and on each new box, before any start:
 
 ```
@@ -1083,6 +1105,19 @@ python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"
 - `$CUT/plan.json` is the output of the last digest block (check 3 of "Before the mainnet bootstrap"). It holds the pinned digests only if a bootstrap or a `set-params` followed that block. A new box compares with the `plan.json` of the old box ("A new GPU box").
 
 **Not landed yet:** the guard. `run` will judge a stored result and then refuse to go on with such a box. Until it is in, only this rule protects the seats.
+
+### The value `squat_min_wait_s`
+
+The mainnet `params.json` holds `"squat_min_wait_s": 31536000` (check 5 of "Before the mainnet bootstrap"). With it, squat-trim moves no seat whose registration is younger than 730 days. A seat from v1 with no valid file keeps its place and is not charged.
+
+**Each later file for `set-params` must hold the same key.** `set-params` does not add a file to the pinned parameters. It replaces them, and a key that the file does not hold goes back to its default (86400). So a file with only the two new digests switches squat-trim on. Run the check line of check 5 on each file before `set-params`: its first number must be `31536000`. In phase `APPLY`, `set-params` refuses such a file, because it differs from the pinned one in more than the two digests. In phase `IDLE` nothing refuses it.
+
+How to see what is pinned, in two ways:
+
+- The check line of check 5 prints the hash of a file's parameters. `"params_hash"` of `status` is the hash of the pinned ones. The same hash means that this file is pinned.
+- `llms.txt` lists every parameter: `grep squat_min_wait_s` on that file prints one line with the name and the number.
+
+**To switch squat-trim on later** is Jacob's decision. It is a `set-params` between two rounds (phase `IDLE`, the loop stopped) with a file that holds the wanted number, or no such key for the default. Know this before you do it: **at that moment every old seat with no valid file moves to the back at once.** More exactly: at the next try to open a round, if an entry was charged in the last 24 hours, each waiting seat of the normal part of the queue that has no valid file and a registration older than 2 times the new number moves to the back (older still, when many seats wait ahead of it and few entries are charged in a day). Front seats do not move. A moved seat stays at the back, also when a valid file comes later. No command moves it forward again.
 
 ### After a fix: a new commit on the GPU box
 
@@ -1114,7 +1149,7 @@ A fix for a fault in the judging, with no digest block: the round is open and it
 
 The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu/` changed). What to do depends on the phase:
 
-- `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then start the loop. The file holds the whole set of overrides, not only the change. With form B, write `$CUT/run.env` again before the start (the first two lines of the block): the digest block can change `SN120_IMAGE_DIGEST`, and the unit reads it from that file.
+- `IDLE`: the digest block, a `$CUT/params.json` with the two new digests, `set-params` with that file, then start the loop. The file holds the whole set of overrides, not only the change. Make the file from the pinned `$CUT/params.json` and change the two digests only: a file without `"squat_min_wait_s": 31536000` switches squat-trim on ("The value `squat_min_wait_s`"). With form B, write `$CUT/run.env` again before the start (the first two lines of the block): the digest block can change `SN120_IMAGE_DIGEST`, and the unit reads it from that file.
 - `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it first. This is the `end-round` that you ran before the checkout; if you did not, run it now (it works after the checkout too). Nobody is charged, no failure is counted for a seat, and its seats are first in the next round:
 
   ```
@@ -1158,7 +1193,7 @@ This is the case where `end-round` exits with 3 and the fix needs the digest blo
 
    The file of the old box holds the pinned digests only if no `set-params` with other digests came after it. If you are not sure, tell the coordinator before step 6.
 5. **The same digests:** go to step 6. **Other digests:** do not start the loop. What comes first depends on the phase that step 4 shows:
-   - `IDLE`: a `$CUT/params.json` with the two new digests, then `set-params` with that file.
+   - `IDLE`: a `$CUT/params.json` with the two new digests, then `set-params` with that file. Make the file from the pinned `$CUT/params.json` and change the two digests only: a file without `"squat_min_wait_s": 31536000` switches squat-trim on ("The value `squat_min_wait_s`").
    - `RUNNING` (the old box died in a round): `end-round` by hand, then the `IDLE` line. `end-round` works with the old pinned digests on the new box: it pulls the journal copy into the empty state directory and ends the round with no decision. Nobody is charged, no failure is counted, and the seats are first in the next round. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`. If `end-round` exits with 3, the dead box stored its result: that is "A stored result that is not judged, and a fix with the digest block" of "After a fix". On a new box only order A is left; tell the coordinator first.
    - `APPLY` (the old box left a decided round): `set-params` with a file that differs from the pinned one in the two digests only. `run` on the new box then finishes the promotion and the fold.
 6. Start the loop (step 10 of "GPU box"). With the same digests, its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
