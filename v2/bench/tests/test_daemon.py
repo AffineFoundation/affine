@@ -14,9 +14,13 @@ BENCH_VIEW = runpy.run_path(str(pathlib.Path(__file__).resolve().parents[2] / "s
 
 class Store:
     """No copy and no delete, and a put to one key only: any other write by the service fails the test."""
-    def __init__(self, inner): self.inner, self.signed, self.hidden, self.down, self.tables, self.read = inner, [], set(), False, [], []
-    def put(self, key, data): assert key == layout.BENCHMARKS; self.tables.append(data); self.inner.put(key, data)
+    def __init__(self, inner): self.inner, self.signed, self.hidden, self.down, self.tables, self.read, self.read_only = inner, [], set(), False, [], [], False
     def presign_get(self, key, ttl_s): self.signed.append(key); return f"https://signed.example/{key}?ttl={ttl_s}"
+
+    def put(self, key, data):
+        assert key == layout.BENCHMARKS
+        if self.read_only: raise InfraError(f"r2 put {key!r} failed: AccessDenied")  # the text of R2Store for a token that can only read
+        self.tables.append(data); self.inner.put(key, data)
 
     def get(self, key):
         self.read.append(key)
@@ -131,7 +135,7 @@ def test_genesis_is_benchmarked_once_and_each_new_king_once_each_on_a_pod_releas
     for _ in range(3):  # listed again at each poll: no second run, no second rent, no second write of the table
         D.step()
     assert len(D.S["rents"]) == 1
-    assert [json.loads(t)["models"][0]["status"] for t in store.tables] == ["evaluating", "scored"]  # one write per change
+    assert [json.loads(t)["models"][0]["status"] for t in store.tables] == ["queued", "evaluating", "scored"]  # one write per change
     # the expiring links reach the node on stdin only: never in a command line, never in a log line
     assert sum("signed.example" in (s or "") for s in node.stdin) == 1
     assert "signed.example" not in " ".join(node.cmds) + capsys.readouterr().out
@@ -184,6 +188,37 @@ def test_a_host_with_an_empty_disk_reads_the_published_table_and_runs_no_row_aga
     D.publish_table(D.model_rows())
     assert {r["model_id"] for r in json.loads(store.tables[-1])["results"]} == {r["model_id"] for r in published["results"]}
     assert ids(king) in states()
+
+
+def test_a_store_that_refuses_the_table_stops_the_step_before_any_rent(world, monkeypatch, capsys):
+    v2, store, node, removed = world
+    genesis, king, lium = v2.controller.state.head, green(v2, 1), []
+
+    def rent(S, log):
+        lium.append("up"); log(event="rented", pod=POD["huid"]); P.save(POD)
+        return dict(POD)
+    monkeypatch.setattr(P, "rent", rent)
+    monkeypatch.setattr(P, "listed", lambda: (lium.append("ps"), [dict(id=POD["id"], name=P.NAME)])[-1])
+    refused = "r2 put 'public/benchmarks.json' failed: AccessDenied"
+
+    store.read_only = True  # the token reads the public files and the missing table, and cannot write
+    for _ in range(3):
+        with pytest.raises(InfraError, match=refused):
+            D.step()
+    with monkeypatch.context() as loop, pytest.raises(KeyboardInterrupt):  # the daemon logs the refusal as an error line, then sleeps
+        loop.setattr(D.time, "sleep", lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+        D.main()
+    out = capsys.readouterr().out
+    assert [m["model_id"] for m in D.queue()] == [ids(king), ids(genesis)] and '"event": "error"' in out and refused in out
+    assert lium == [] and removed == [] and node.cmds == [] and not D.C_POD and not store.tables  # no Lium call, no node, no table
+    assert '"rented"' not in out and '"table-written"' not in out
+
+    store.read_only = False  # with a token that can write: the waiting rows are in the store first, then the rent
+    D.step()
+    out = capsys.readouterr().out
+    assert lium == ["up"] and out.index('"table-written"') < out.index('"rented"')
+    assert [{m["model_id"]: m["status"] for m in json.loads(t)["models"]} for t in store.tables] == [
+        {ids(genesis): "queued", ids(king): "queued"}, {ids(genesis): "queued", ids(king): "evaluating"}]
 
 
 @pytest.mark.parametrize("where", ["store", "disk"])
@@ -262,6 +297,7 @@ def test_the_operator_document_and_the_unit_file_are_true_to_the_code():
         f"at most {defaults['round_time_limit_s'] // 60} minutes (`round_time_limit_s = {defaults['round_time_limit_s']}`)",
         f"take {R.serving()['server']['gpu_memory_utilization']:.2f} of each GPU's memory", f"vLLM {R.serving()['server']['engine'].split('==')[1]} serves",
         "holds more than 1024 MiB. It waits 120 seconds", "genesis-" + GENESIS_BASE_HASH[:16],
+        f"`r2 put '{layout.BENCHMARKS}' failed` in `tb`", "No node is rented while this write fails.", "The rows that wait are in the store as `queued`, before a node is rented.",
     ):
         assert fact in doc, fact
     assert "free_limit_mib: int = 1024" in evaluator and "free_timeout_s: float = 120.0" in evaluator
