@@ -1718,6 +1718,12 @@ journalctl -u sn120-v2-links.service -n 5 --no-pager
 ```
 
 - The dry run is the command of step 5: it writes nothing to the chain. stderr says `kings: read from the journal copy in the store`, and the JSON line has `"status": "would set"`. Do not start the weights unit by hand for this check: a run inside the rate limit uses the attempt of the hour (step 9).
+  - **The proof of the replay is this stderr line, word for word: `kings: read from the journal copy in the store`.** The JSON line then has `"kings_from": "the journal copy in the store"`; this key is there only when the state loaded.
+  - This command has no `--wallet`, so it does not check the rate limit: it prints `"status": "would set"` also right after a write of v1's writer. The dry run with `--wallet` (step 6) can print `"status": "would defer"` with `recent write: the rate limit allows the next one in N blocks`. The writer loads the state before that check, so the two lines above are printed then too, and the replay is proven. No wait is needed.
+  - No proof: `kings: read from the cache of the journal copy, because ...`. The writer then replayed its own older copy, because the store did not answer or holds fewer records. Run the command again until the line names the store.
+  - The state did not load: stderr says `kings: not read: <cause>`, and the JSON line is `"status": "would defer"` with the reason `the state failed to load: <cause>`, with no `weights` and no `kings_from`. For a checkout that does not know the record kind, the cause is `unknown journal record kind 'seats_fronted'`.
+  - No `kings:` line at all, and a reason that ends with `nothing submitted, the last valid weights stay`: the chain did not answer at the start. This proves nothing: run the command again.
+  - **The exit code is 0 in each of these cases.** Read the lines, not the exit code.
 - The links job is the command of step 11, the same run as a timer run. The log shows `links: issued N of M waiting hotkeys (...), removed R, valid 86400 s`.
 - **What this proves before the run on the GPU box:** the new checkout runs, and both jobs read the journal as it is now. It does not prove that they know the new kind: the journal holds no such record yet. The lines `exit=0` and `True` above prove that.
 
@@ -1762,7 +1768,7 @@ for row in json.load(sys.stdin)['queue']['next']:
     if row['front']: print(row['position'], row['uid'], row['hotkey'], 'front', row['front'], 'demoted', row['demoted'])"
 ```
 
-It prints the front group in turn order: the UIDs of `front_seats_after`, each with `front True demoted False`.
+It prints the front group in turn order: the UIDs of `front_seats_after`, each with `front True`. Each seat that the command named shows `demoted False`. A seat that came to the front from a round with no decision keeps its `demoted` value: such a row can show `front True demoted True`, and that is correct (UID 929 on 14 Nov 2026). `demoted` changes no turn of a front seat.
 
 **d. The way back, and its limit.**
 
