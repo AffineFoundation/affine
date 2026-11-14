@@ -16,6 +16,57 @@ header{height:96px;display:flex;align-items:center;justify-content:space-between
 nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
 nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
 nav a:hover,nav a[aria-current]{text-decoration-color:currentColor}
+/* header, footer and page frame of the v1 site (network.css): the theme button, the links, the prices, the skip link,
+   the full-width page and its spaces. Every rule is in this block and wins by its longer selector, so the lines above
+   and below stay as they are. The theme button sets data-theme on <html>; these two lists repeat the values of :root
+   above. A new block is right in both themes when it takes every colour from these variables, and writes a rule for
+   light only as :root[data-theme=light] and not inside @media(prefers-color-scheme:light). */
+:root[data-theme=dark]{color-scheme:dark;--bg:#000000;--hover:#1c1c1c;--ink:#ededed;--muted:#a1a1a1;--line:#242424;--axis:#3a3a3a;--accepted:#d6b580;--performance:#85c8b4;--rejected:#d18e91}
+:root[data-theme=light]{color-scheme:light;--bg:#ffffff;--hover:#eeeeee;--ink:#171717;--muted:#646464;--line:#e4e4e4;--axis:#b5b5b5;--accepted:#936821;--performance:#217a65;--rejected:#b54d57}
+:root[data-theme=dark] .star{fill:#f5c542}
+:root[data-theme=light] .star{fill:#c98a00}
+body>header,body>main,body>footer,body>.noscript,body>.prices{width:calc(100% - 48px);max-width:none}
+body>header{height:76px}
+body>header .wordmark{font-size:26px;letter-spacing:5px}
+body>header .wordmark svg{width:22px;height:25px}
+body>header nav{align-items:center;justify-content:flex-end;gap:4px 18px;font-size:11px;color:var(--muted)}
+body>header nav a{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;transition:color .14s ease-out}
+body>header nav a:hover,body>header nav a[aria-current]{color:var(--ink)}
+body>header nav a:focus-visible,.theme:focus-visible,#copy-view:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:3px}
+.arrow{width:9px;height:9px;flex:none;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}
+.theme{display:inline-flex;font:inherit;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.theme svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.theme .moon,:root[data-theme=light] .theme .sun{display:none}
+:root[data-theme=light] .theme .moon{display:block}
+.theme:active{background:var(--hover);color:var(--ink)}
+@media(hover:hover){.theme:hover{background:var(--hover);color:var(--ink)}}
+.skip-link{position:fixed;top:12px;left:12px;z-index:20;padding:12px;border-radius:3px;background:var(--ink);color:var(--bg);font:12px var(--mono);transform:translateY(-180%)}
+.skip-link:focus{transform:translateY(0)}
+/* prices: a line under the header, with no rule of its own; from 1280 px, where the links leave room, it lies in the header row.
+   The line keeps its height when it has no price to show, so a price that arrives later does not move the page. */
+body>.prices{display:flex;align-items:center;gap:22px;height:32px;margin:0 auto;font:11px var(--mono);white-space:nowrap}
+.prices div{display:flex;align-items:baseline;gap:8px}
+.prices dt{color:var(--muted)}
+.prices dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
+.prices small{font-size:10px;color:var(--muted)}
+.prices dt small,.prices dd small:not(:empty){margin-left:5px}
+.prices .sn{padding:1px 4px;border:1px solid var(--line);border-radius:3px}
+main>section:first-child>.section-heading{padding-top:10px}
+main>section{padding:8px 0}
+main>section:first-child{padding-top:0}
+body>footer{align-items:center;padding:14px 0 22px}
+.foot-right{display:inline-flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0}
+#copy-view{flex:none;min-width:86px;text-align:right;color:var(--muted);text-decoration-color:transparent;white-space:nowrap}
+#copy-view:hover{color:var(--ink);text-decoration-color:currentColor}
+@media(min-width:1000px){html{scroll-padding-top:84px}body>header{position:sticky;top:0;z-index:10;background:var(--bg)}}
+@media(min-width:1280px){body>.prices{position:sticky;top:0;z-index:11;align-items:center;width:max-content;height:75px;margin:-76px 0 0 176px}main>section:first-child>.section-heading{padding-top:14px}}
+@media(max-width:700px){body>header,body>main,body>footer,body>.noscript,body>.prices{width:calc(100% - 40px)}
+  body>header{height:76px;padding:0;flex-direction:row;align-items:center;gap:12px}
+  body>header .wordmark{font-size:20px;letter-spacing:4px}body>header .wordmark svg{width:17px;height:20px}
+  body>header nav{gap:2px 10px;font-size:10px}body>header nav .same,body>header nav .arrow{display:none}
+  .theme{width:28px;height:28px}
+  main>section{padding:6px 0}
+  body>footer{align-items:flex-start;gap:12px}#copy-view{min-height:32px}}
 section{min-width:0;padding:28px 0}
 .section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
 h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
