@@ -23,6 +23,9 @@ What one run does:
 4. Records each new file: a hotkey with an ETag that the record does not have
    for that hotkey. The time of the file is its ``LastModified``. The same
    ETag with a newer ``LastModified`` is the same file and counts one time.
+   A frozen copy of a round whose ETag the record does not have for that
+   hotkey is a file too: its miner replaced it before a run saw it. The store
+   no longer has its upload time, so its time is the time the round opened.
 5. Gives a file the validator's verdict. Only the validator says "valid":
    a. A round froze the file: the frozen copy of that hotkey has the same
       ETag as the miner's file, and the public entry of the round names the
@@ -44,9 +47,11 @@ is the clock of this host; the public file says which clock gave "now". The
 time of a file check is the validator's clock.
 
 What the record cannot know, and the public file says so:
-* The store keeps one file per hotkey. A file that was replaced before the
-  first run is not counted: a window that starts before ``counting_since`` is
-  marked ``complete: false``, and its counts are "at least".
+* The store keeps one file per hotkey. A file that no round took and that was
+  replaced before the first run is not counted: a window that starts before
+  ``counting_since`` is marked ``complete: false``, and its counts are "at
+  least". A file that a round took is always counted: the folder of the round
+  keeps it.
 * The same holds for a time with no run (``gaps``), and for a file that a
   miner replaced before the next run saw it (one run each minute).
 * The validator checks the files between rounds, never inside a round. A file
@@ -92,6 +97,10 @@ KINDS = ("validated", "no_verdict", "not_valid", "replaced")
 COSTA_RICA = timezone(timedelta(hours=-6))  # Costa Rica has no daylight saving time
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 ROUND_WORDS = "about 90 minutes, about 137 minutes with a king"
+AT_ROUND_WORDS = ("A file that a round took and that its miner replaced before the record saw it is counted at the time the round "
+                  "took it, because the store no longer has its upload time (at_round_time in each row). A file that came into "
+                  "more than one round counts one time.")
+Proof = tuple[str, str, str, str, int | None]  # hotkey, ETag of the frozen copy, batch_sha256, round, the time the round opened
 
 
 def labels(scope: dict[str, Any]) -> dict[str, str]:
@@ -103,8 +112,9 @@ def labels(scope: dict[str, Any]) -> dict[str, str]:
              "the files of the other seats show as no verdict yet.")
     return {
         "uploads": "Uploads per hour from R2 LastModified: new miner files, by the upload time in the store's list. "
-                   "The same bytes stored again count one time.",
+                   f"The same bytes stored again count one time. {AT_ROUND_WORDS}",
         "validated": "Validated so far: uploads that the validator called valid, at a file check or when a round took the file. "
+                     "Each file that a round took is in this count, also when its miner replaced it since. "
                      "The count of a past hour can still grow, because a verdict can come later than the upload.",
         "no_verdict": "Uploads with no verdict yet: the file is still the stored file, and no published file check after its "
                       "upload gives a verdict for it. The validator checks files when it tries to open a round and at each "
@@ -212,8 +222,8 @@ def frozen_etags(listing: Listing, round_id: str, hotkeys: Iterable[str]) -> dic
     return {wanted[stored.key]: stored.etag for stored in listing.list(prefix) if stored.key in wanted}
 
 
-def round_proofs(listing: Listing, cache: dict[str, dict[str, str]], snap: dict[str, Any]) -> tuple[list[tuple[str, str, str, str]], dict[str, dict[str, str]]]:
-    """``(hotkey, etag, batch_sha256, round_id)`` for each file that a round of the snapshot froze, and the new cache.
+def round_proofs(listing: Listing, cache: dict[str, dict[str, str]], snap: dict[str, Any]) -> tuple[list[Proof], dict[str, dict[str, str]]]:
+    """One ``Proof`` for each file that a round of the snapshot froze, the oldest round first, and the new cache.
 
     The frozen copies of a round are written when the round opens and never
     change, so a closed round is listed one time. A round that the snapshot
@@ -229,8 +239,10 @@ def round_proofs(listing: Listing, cache: dict[str, dict[str, str]], snap: dict[
             etags = frozen_etags(listing, round_id, named)
         if closed:
             kept[round_id] = etags
-        proofs += [(hotkey, etags[hotkey], sha, round_id) for hotkey, sha in named.items() if hotkey in etags]
-    return proofs, kept
+        opened = row.get("opened_at")
+        opened = int(opened) if isinstance(opened, (int, float)) else None
+        proofs += [(hotkey, etags[hotkey], sha, round_id, opened) for hotkey, sha in named.items() if hotkey in etags]
+    return sorted(proofs, key=lambda proof: (proof[4] is None, proof[4] or 0)), kept
 
 
 def file_check(snap: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
@@ -263,9 +275,9 @@ def new_state(now: int) -> dict[str, Any]:
     return {"schema": STATE_SCHEMA, "since": now, "last_poll": None, "gaps": [], "files": {}, "rounds": {}}
 
 
-def record(state: dict[str, Any], files: dict[str, Stored], proofs: list[tuple[str, str, str, str]], verdicts: dict[str, str],
+def record(state: dict[str, Any], files: dict[str, Stored], proofs: list[Proof], verdicts: dict[str, str],
            checked_at: int | None, now: int) -> None:
-    """Bring the record up to this run: new files, files that went away, then the validator's verdicts."""
+    """Bring the record up to this run: new files, files that went away, files that only a round's folder has, then the validator's verdicts."""
     if state["last_poll"] is not None and now - state["last_poll"] > GAP_S:
         state["gaps"].append([state["last_poll"], now])
     state["last_poll"] = now
@@ -291,8 +303,18 @@ def record(state: dict[str, Any], files: dict[str, Stored], proofs: list[tuple[s
         if entry["verdict"] != VALID:
             entry.update(verdict=VALID, proof=proof, decided_at=now)
 
-    for hotkey, etag, sha, round_id in proofs:
-        for entry in known.get(hotkey, []):
+    for hotkey, etag, sha, round_id, opened_at in proofs:
+        entries = known.setdefault(hotkey, [])
+        # An ETag with "-" is not the MD5 of the bytes (a multipart upload), so it cannot say that the frozen copy is
+        # another file. Then the frozen copy is not counted by itself: a count that is too low, never one file two times.
+        in_record = opened_at is None or any(entry["etag"] == etag or ("-" in entry["etag"] and entry["uploaded_at"] <= opened_at)
+                                             for entry in entries)
+        if not in_record and now - KEEP_S <= opened_at <= now:
+            # The miner replaced this file before a run saw it. The frozen copy is the record of it: one file, at the
+            # time of the first round that took it. It is not the stored file, so it starts as ended.
+            entries.append({"etag": etag, "uploaded_at": opened_at, "stored_at": opened_at, "size": None, "seen_at": now,
+                            "ended_at": now, "verdict": None, "proof": None, "sha": None, "decided_at": None, "time_from": "round"})
+        for entry in entries:
             if entry["etag"] == etag:
                 valid(entry, f"round {round_id}")
                 entry["sha"] = sha
@@ -327,10 +349,11 @@ def kind(entry: dict[str, Any]) -> str:
 
 
 def counts(entries: Iterable[dict[str, Any]]) -> dict[str, int]:
-    found = {"uploads": 0, **{name: 0 for name in KINDS}}
+    found = {"uploads": 0, **{name: 0 for name in KINDS}, "at_round_time": 0}
     for entry in entries:
         found["uploads"] += 1
         found[kind(entry)] += 1
+        found["at_round_time"] += entry.get("time_from") == "round"  # of the uploads: the files with the round's time
     return found
 
 
@@ -365,12 +388,14 @@ def public(state: dict[str, Any], verdicts: dict[str, str], scope: dict[str, Any
         "snapshot_at": snap.get("generated_at"),
         "phase": snap.get("phase"),
         "method": "A count goes to the hour of the file's upload time (LastModified of the store's list). Only the validator "
-                  "says valid: a round froze the file, or the last file check after the upload called it valid. The validator "
+                  f"says valid: a round froze the file, or the last file check after the upload called it valid. {AT_ROUND_WORDS} "
+                  "That time is opened_at of the round in the public snapshot, the validator's clock. The validator "
                   "checks files when it tries to open a round and at each publish between rounds, never inside a round, so an "
                   f"upload during a round has no verdict until that round is over ({ROUND_WORDS}). "
                   + ("No file check is published yet. " if scope["checked_at"] is None else f"Last file check: {both(scope['checked_at'])}. ")
                   + "A file of a hotkey with no seat in the waiting line gets no check. A window or an hour with complete=false "
-                  "began before counting_since or meets a gap with no run: its counts are 'at least'.",
+                  "began before counting_since or meets a gap with no run: its counts are 'at least', because a file that "
+                  "no round took and that was replaced in that time is not in them.",
     }
 
 
@@ -444,13 +469,15 @@ def report(doc: dict[str, Any]) -> list[str]:
 
     def numbers(row: dict[str, Any]) -> str:
         return (f"uploads {row['uploads']} | validated so far {row['validated']} | no verdict yet {row['no_verdict']} | "
-                f"not valid at the last check {row['not_valid']} | replaced before a verdict {row['replaced']}")
+                f"not valid at the last check {row['not_valid']} | replaced before a verdict {row['replaced']}"
+                + (f" | of the uploads, {row['at_round_time']} have the time of their round" if row.get("at_round_time") else ""))
 
     for row in doc["windows"]:
         cover = "complete" if row["complete"] else "AT LEAST: the record does not cover all of this window"
         lines.append(f"last {row['hours']:>2} h: {numbers(row)} | per hour: uploads {row['uploads_per_hour']:.2f}, "
                      f"validated {row['validated_per_hour']:.2f} | {cover}")
-    lines.append("by hour, by the upload time (LastModified); each hour in UTC, and in Costa Rica time in the brackets:")
+    lines.append("by hour, by the upload time (LastModified, or the time of the round for a file that only a round's folder has); "
+                 "each hour in UTC, and in Costa Rica time in the brackets:")
     for row in doc["hours"]:
         cover = "this hour is not over" if row["open"] else "complete" if row["complete"] else "at least"
         lines.append(f"  {utc_text(row['t'])[5:16]} UTC ({costa_rica(row['t']).split(' Costa')[0]}): uploads {row['uploads']:>3} | validated "

@@ -205,6 +205,128 @@ def test_a_round_that_froze_the_file_is_a_proof_and_gives_the_batch_sha256(stage
     assert lists == [supply.MINERS], "the frozen copies of a closed round are listed one time"
 
 
+def taken(stage, uid: int = 11) -> dict:
+    """A round takes the file of ``uid``, then the miner stores another file. No run of the recorder saw the first file."""
+    stage.upload(uid, quality=0.1)
+    stage.wait(600)
+    assert stage.world.round() is not None
+    closed = stage.world.publisher.snapshots[-1]["history"][-1]
+    stage.wait(7200)
+    stage.upload(uid, quality=0.2)
+    stage.wait(60)
+    return closed
+
+
+def test_a_file_that_a_round_took_counts_at_the_time_of_the_round_when_its_miner_replaced_it_before_the_record_saw_it(stage):
+    lists = []
+    stage.bucket.list = lambda prefix, real=stage.bucket.list: lists.append(prefix) or real(prefix)
+    closed = taken(stage)
+    row = stage.last()  # the first run: the store has only the new file of the miner
+    assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 1
+    assert lists == [supply.MINERS, layout.frozen_batch(closed["round_id"], "x")[:-len("x.json")]], "the same two list calls as before"
+    new, old = stage.entry(11, 0), stage.entry(11, 1)
+    assert old["time_from"] == "round" and old["uploaded_at"] == closed["opened_at"] and old["ended_at"] is not None
+    assert (old["verdict"], old["proof"], old["sha"]) == ("valid", f"round {closed['round_id']}", closed["entries"][0]["batch_sha256"])
+    assert "time_from" not in new and new["verdict"] is None and new["ended_at"] is None
+    hours = {row["t"]: row for row in stage.doc["hours"] if row["uploads"]}
+    at_round = hours[closed["opened_at"] - closed["opened_at"] % 3600]
+    assert (at_round["validated"], at_round["at_round_time"]) == (1, 1), "the count is in the hour in which the round opened"
+    assert [row["complete"] for row in stage.doc["windows"]] == [False, False, False], "a file that no round took can still be missing"
+    for _ in range(3):  # more runs: the file of the round stays one file
+        stage.wait(60)
+        row = stage.last()
+        assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 1
+    assert lists.count(supply.MINERS) == 4 and len(lists) == 5, "the folder of the closed round is listed one time"
+    stage.upload(11, quality=0.1)  # the miner stores the bytes of the round's file again: the same file, at the round's time
+    row = stage.last()
+    assert numbers(row) == (2, 1, 0, 0, 1) and row["at_round_time"] == 1
+    assert stage.entry(11, 1)["ended_at"] is None and stage.entry(11, 1)["uploaded_at"] == closed["opened_at"]
+
+
+def test_a_frozen_file_that_the_record_saw_as_the_stored_file_keeps_its_upload_time_and_counts_one_time(stage):
+    stage.upload(11, quality=0.1)
+    stage.wait(600)
+    stage.poll()  # the record sees the file with its upload time
+    uploaded = stage.entry(11)["uploaded_at"]
+    assert stage.world.round() is not None
+    stage.wait(600)
+    row = stage.last()
+    assert numbers(row) == (1, 1, 0, 0, 0) and row["at_round_time"] == 0, "still the stored file: one count, at the upload time"
+    stage.upload(11, quality=0.2)  # the miner replaces it after the round
+    stage.wait(60)
+    row = stage.last()
+    assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 0
+    assert stage.entry(11, 0)["uploaded_at"] == uploaded and len(json.loads(stage.record.read_bytes())["files"]["hk11"]) == 2
+
+
+def test_a_file_that_came_into_two_rounds_counts_one_time_at_the_first_round(stage):
+    stage.upload(11, quality=0.1)
+    stage.wait(600)
+    stage.world.trainer.fail_hotkeys = {"hk11"}  # no decision: nobody is charged, and the seat has its turn again
+    assert stage.world.round().outcome == "no_decision"
+    stage.wait(600)
+    stage.world.trainer.fail_hotkeys = set()
+    assert stage.world.round() is not None
+    first, second = stage.world.publisher.snapshots[-1]["history"][-2:]
+    assert first["opened_at"] < second["opened_at"]
+    assert first["entries"][0]["batch_sha256"] == second["entries"][0]["batch_sha256"], "the same bytes of hk11 in two rounds"
+    stage.wait(600)
+    stage.upload(11, quality=0.3)
+    stage.wait(60)
+    for _ in range(2):
+        stage.poll()
+        entries = json.loads(stage.record.read_bytes())["files"]["hk11"]
+        old = [entry for entry in entries if entry.get("time_from") == "round"]
+        assert len(entries) == 2 and len(old) == 1 and old[0]["uploaded_at"] == first["opened_at"]
+        day = stage.doc["windows"][-1]
+        assert (day["uploads"], day["validated"], day["at_round_time"]) == (2, 1, 1), "two seats, one file: one count"
+        stage.wait(60)
+
+
+def test_a_record_of_the_first_form_gets_the_files_of_the_rounds_by_itself(stage):
+    taken(stage)
+    stage.poll()
+    state = json.loads(stage.record.read_bytes())
+    for hotkey, entries in state["files"].items():  # the record as the first form of the recorder wrote it
+        state["files"][hotkey] = [entry for entry in entries if "time_from" not in entry]
+    assert len(state["files"]["hk11"]) == 1 and "time_from" not in json.dumps(state)
+    stage.record.write_text(json.dumps(state))
+    stage.wait(60)
+    row = stage.last()
+    assert numbers(row) == (2, 1, 1, 0, 0) and row["at_round_time"] == 1
+    after = json.loads(stage.record.read_bytes())
+    assert (after["since"], after["gaps"], after["schema"]) == (state["since"], state["gaps"], state["schema"])
+    assert stage.doc["counting_since"] == state["since"]
+
+
+def test_a_stored_file_with_an_etag_that_is_not_an_md5_is_never_counted_a_second_time_from_the_round(stage):
+    stage.upload(11, quality=0.1)
+    stage.wait(600)
+    assert stage.world.round() is not None
+    closed = stage.world.publisher.snapshots[-1]["history"][-1]
+    stage.wait(60)
+    stage.bucket.stamp()
+    key, real = layout.miner_object("hk11"), stage.bucket.stamp
+    md5 = stage.bucket.seen[key][0]
+    assert stage.bucket.seen[layout.frozen_batch(closed["round_id"], "hk11")][0] == md5
+
+    def stamp() -> None:  # the miner's object as after a multipart upload: its ETag is not the MD5 of its bytes
+        real()
+        stage.bucket.seen[key] = (md5 + "-2", *stage.bucket.seen[key][1:])
+
+    stage.bucket.stamp = stamp
+    row = stage.last()
+    assert numbers(row) == (1, 0, 1, 0, 0) and row["at_round_time"] == 0, "one file, as before: this ETag cannot prove the round"
+
+
+def test_a_round_that_is_older_than_the_record_keeps_gives_no_file(stage):
+    taken(stage)
+    stage.wait(supply.KEEP_S)
+    stage.poll()
+    assert len(json.loads(stage.record.read_bytes())["files"]["hk11"]) == 1
+    assert all(row["at_round_time"] == 0 for row in stage.doc["windows"])
+
+
 def test_a_file_that_comes_after_the_check_has_no_verdict_until_the_next_check(stage):
     stage.upload(11)
     stage.wait(60)
@@ -283,6 +405,11 @@ def test_the_public_file_has_counts_only(stage):
     for private in ("hk11", "hk12", stage.entry(12)["etag"], stage.entry(11)["sha"]):
         assert private in record and private not in text
     assert set(stage.doc["labels"]) == {"uploads", "validated", "no_verdict", "not_valid", "replaced", "waiting"}
+    heads = {"uploads": "Uploads per hour from R2 LastModified: ", "validated": "Validated so far: ", "no_verdict": "Uploads with no verdict yet: "}
+    assert all(stage.doc["labels"][name].startswith(head) for name, head in heads.items()), "the operator's three names, word for word"
+    assert "at the time the round took it" in stage.doc["labels"]["uploads"] and "at the time the round took it" in stage.doc["method"]
+    for row in [*stage.doc["windows"], *stage.doc["hours"]]:
+        assert row["uploads"] == row["validated"] + row["no_verdict"] + row["not_valid"] + row["replaced"] and row["at_round_time"] <= row["uploads"]
     assert stage.doc["clock"]["now"] == "host" and stage.doc["schema"] == supply.SCHEMA
 
 
