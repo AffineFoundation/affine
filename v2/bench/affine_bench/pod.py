@@ -15,11 +15,12 @@ Guard rails (owner's spending rules):
   - a pod lives POD_MAX_HOURS at most (daemon.py).
   - Pod.release() is the only place that sends a delete to Lium. It sends it for the exact Lium id in the row's record,
     only while Lium lists that id under the row's exact name, and never for a protected pod (PROTECTED_IDS,
-    PROTECTED_NAMES, HELD_FOR_ROW). No delete is ever made from a name, a prefix or a listing.
+    PROTECTED_NAMES). No delete is ever made from a name, a prefix or a listing.
   - a listing that does not have a pod is no proof that the pod is gone (a listing can be empty for a moment). A record
     is dropped, or says `released`, only after a delete that Lium took, or when Lium says of that exact id that it was
     deleted (state()). Until then the record stays and the row asks again.
-  - the row of HELD_FOR_ROW rents nothing while its pod is at Lium or in the record of the single-node service."""
+  - the pod of the single-node service (BENCH_STATE/pod.json) is given back by the service, with the same delete, only
+    when no run is recorded on it (daemon.release_single). No row and no pod id is named in the code."""
 import fcntl, glob, json, os, re, signal, subprocess, time
 from . import config as C
 
@@ -41,8 +42,6 @@ RENT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 # Never deleted by this service, whatever a record says: the prod GPU box and the operator's own pod (Jacob, 2026-11-14).
 PROTECTED_IDS = ("6cb913e4", "c44cb565")
 PROTECTED_NAMES = ("sn120-v2-prod-dublin", "casper-h100-ask-before-delete")
-# A pod that only the worker of one row gives back, and only when that row's results are in the published table.
-HELD_FOR_ROW = {"296c5237": "king-10757e879efe5b91"}
 
 
 def _rj(p):
@@ -177,21 +176,14 @@ def name_of(row):
     return (PREFIX + row)[:NAME_MAX]
 
 
-def held_pod(row, pods):
-    """The id prefix of the pod that is kept for this row (HELD_FOR_ROW) while that pod is at Lium or in the record of
-    the single-node service; else None. A listing without the pod does not clear it while that record names the pod."""
-    rec = str((_rj(C.STATE + "/pod.json") or {}).get("id") or "")
-    return next((x for x, r in HELD_FOR_ROW.items() if r == row and (rec.startswith(x) or any(str(p.get("id") or "").startswith(x) for p in pods))), None)
-
-
 def claimed(pod_id):
     """The records (of every row, and of the single-node service) that name this Lium id."""
     return [f for f in glob.glob(C.ROWS + "/*/pod.json") + [C.STATE + "/pod.json"] if (_rj(f) or {}).get("id") == pod_id]
 
 
 class Pod:
-    """The pod of one row. `first`: the row runs on the pod that the single-node service rented; that pod keeps its
-    name, its record and its ssh script, and no new commit is put on it."""
+    """The pod of one row. `first`: the pod that the single-node service rented, with its name, its record and its ssh
+    script. No row runs on it under this code: the service gives it back (daemon.release_single)."""
 
     def __init__(self, row, first=False):
         self.row, self.first = row, first
@@ -258,10 +250,6 @@ class Pod:
         pods = listed()
         if pods is None:
             log(event="rent-deferred", why="lium ps failed"); return None
-        kept = held_pod(self.row, pods)
-        if kept:  # never a rent for the row whose pod is still there: the operator decides
-            S["held"] = dict(at=time.time(), why=f"pod {kept} is kept for this row and is still at Lium or in the record of the single-node service: no rent")
-            log(event="rent-refused", why=S["held"]["why"]); return None
         mine = [p for p in pods if p.get("name") == self.name]
         rec = self.load()
         if len(mine) > 1:  # never one more, and no guess which of them is the row's
@@ -324,9 +312,9 @@ class Pod:
         log(event="bootstrapped", pod=rec["huid"], minutes=round((time.time() - rec["rented_at"]) / 60, 1))
         return rec
 
-    def release(self, log, why, row_done=False):
+    def release(self, log, why):
         """Give back the pod of this row's record. The only place that sends a delete to Lium: for that exact Lium id, and
-        only while Lium lists the id under the row's exact name. `row_done`: the row's results are in the published table."""
+        only while Lium lists the id under the row's exact name."""
         rec = _rj(self.record) or {}
         pid = rec.get("id")
         if not pid:
@@ -338,9 +326,8 @@ class Pod:
         names = [rec.get("name"), rec.get("huid")] + [x for p in hit for x in (p.get("name"), p.get("huid"))]
         if protected(pid, *names):
             log(event="release-refused", why=f"pod {str(pid)[:8]} is protected: this service never deletes it"); return False
-        held = next((row for x, row in HELD_FOR_ROW.items() if str(pid).startswith(x)), None)
-        if held and not (row_done and self.row == held):
-            log(event="release-refused", why=f"pod {str(pid)[:8]} is kept until row {held} is done"); return False
+        if not self.name.startswith(PREFIX):
+            log(event="release-refused", why=f"the name {self.name!r} is not a bench name ({PREFIX}...): this service never deletes such a pod"); return False
         if hit and hit[0].get("name") != self.name:
             log(event="release-refused", why=f"pod {str(pid)[:8]} is named {hit[0].get('name')!r}, not {self.name!r}"); return False
         if hit:

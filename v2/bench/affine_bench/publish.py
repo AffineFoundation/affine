@@ -193,8 +193,11 @@ def publish(rows, S, max_fail=3):
             have_pooled.add((r["model_id"], r["benchmark_id"]))
 
     # Prefer higher protocol last so bench.js last-wins indexer shows latest
+    now_version = {b["id"]: R.bench_version(b) for b in bs if not b.get("pooled_from")}  # at one rank, the version of the settings of now is shown
+
     def sort_key(r):
-        return (r.get("model_id") or "", r.get("benchmark_id") or "", _protocol_rank(r.get("env_version"), r.get("budget")))
+        return (r.get("model_id") or "", r.get("benchmark_id") or "", _protocol_rank(r.get("env_version"), r.get("budget")),
+                r.get("env_version") == now_version.get(r.get("benchmark_id")))
     recs = sorted(recs, key=sort_key)
 
     # results_prior: for each (mid, bid) with multiple protocols, the non-preferred ones
@@ -278,8 +281,9 @@ def publish(rows, S, max_fail=3):
               "A row with stopped (failed, held, rent_failed, expired) is not tried again until the operator says so. "
               "models[].pod.state release-refused says that the row's node could not be given back yet and still costs money (since: the first refusal). "
               "alarms lists what the operator must look at: release-refused (a node that was not given back after several tries), "
-              "kept-pod-without-row and pod-without-row (a rented node that no row runs on and that no row gives back). "
-              "first-row-stalled (the run on the node of the single-node service wrote no new line for 2400 seconds and its runner is alive; the node stays) "
+              "single-pod-not-released (the node of the single-node service has no run and was not given back after several tries: "
+              "Lium or a guard refused, or the per-problem lines of a scored row may be on that node only), "
+              "pod-without-row (a rented node that no row runs on and that no row gives back) "
               "and rent-no-answer (a rent call gave no answer; Lium may have made a node under the row's name). "
               "While a row is evaluating, its progress.checked_at is the time of the service's last look at its node, renewed "
               "about each 5 minutes, with the count of finished rollouts (output_lines) and of finished benchmarks; "

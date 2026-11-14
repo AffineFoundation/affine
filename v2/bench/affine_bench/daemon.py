@@ -20,17 +20,19 @@ rows. A row whose weight files are not in the store yet waits outside the queue:
 At most P.MAX_PODS rows are in work at a time; the next row starts when one of them is done.
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
-The first row: the row that ran on the one pod of the single-node service (before 2026-11-14) keeps that pod, its
-record (BENCH_STATE/pod.json) and its ssh wrapper (BENCH_NODE_SSH). No new commit is put on that pod, and no run is
-ever started or killed on it by this code: the run goes on with the settings of that pod's checkout
-(FIRST_ROW_PROFILE), and each of its results says so. When that run is over, dead or without progress and a result is
-missing, the row is `held`: what the node has is brought to the host, the pod goes back, and a new run is the
-operator's word (`retry`). A result that it makes with more samples a problem than the settings now ask for is brought to
-the settings' count by the fixed rule of derive.py.
+The single-node service (the code of before 2026-11-14) had one pod and one run at a time. At the first start of this
+code its run in work is cut (take_over_single): the record of the run goes to `cut_run`, the run's row is a row as any
+other and runs again on a pod of its own. The pod of that service (BENCH_STATE/pod.json) gets no run from this code:
+the service gives it back by its exact id when no run is recorded on it (release_single). No row and no pod has a name
+in this code. The code paths of a "first row" (a row with the marker `first`) are not reached any more.
+
+A stored result with more samples a problem than the settings ask for now (a run of before the count was cut) is
+brought to the settings' count on this host by the fixed rule of derive.py (derive_stored). Its row is not run again
+for it. When the rule gives no value, the row is `held` until the operator says `retry`.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
 Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted)."""
-import fcntl, json, os, shlex, subprocess, sys, time, traceback
+import fcntl, glob, json, os, shlex, subprocess, sys, time, traceback
 from sn120_v2.errors import InfraError
 from . import config as C, derive, registry as R
 from .node import Node
@@ -357,7 +359,7 @@ class Row:
         if self.first and S.get("held") and not self.tried("keep-output", self.keep_output, missing(m, bs)) and S.get("kept", {}).get("tries", 0) < KEEP_TRIES:
             S["release_tried"] = now(); self.save(); return False
         said = []
-        if self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=why, row_done=whole and not left):
+        if self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=why):
             self.rec = {}; self.not_first()
             for k in ("idle_since", "release_waits", "release_tried", "release_refused", "node_down"): S.pop(k, None)
             self.tell("released"); self.save(); return True
@@ -495,21 +497,83 @@ def start_worker(mid):
 
 
 def take_over_single():
-    """Once, at the first start of this code: the run and the pod of the single-node service become the first row.
-    `running` stays in the service's state as it was, so that the code of before finds its run if it is put back."""
+    """Once, at the first start of this code: the run in work of the single-node service is cut. Its record goes from
+    `running` to `cut_run` (kept, for the operator), and the run's row is a row as any other: it runs again on a pod of
+    its own. No run is adopted. The fails of that service stay with their rows."""
     if S.get("rows_mode"):
         return
-    run = S.get("running")
     for mid, n in S["fail"].items():
         if n and not os.path.exists(f"{ROWS}/{mid}/daemon.json"):
             os.makedirs(f"{ROWS}/{mid}", exist_ok=True); wj(f"{ROWS}/{mid}/daemon.json", dict(fails=n, history=[]))
+    run = S.get("running")
     if run:
-        mid = run["model"]["model_id"]; os.makedirs(f"{ROWS}/{mid}", exist_ok=True)
-        wj(f"{ROWS}/{mid}/daemon.json", dict(fails=S["fail"].get(mid, 0), history=[], running=run, model=run["model"],
-                                             phase=dict(state="running", since=run.get("started")), node_down=S.get("node_down")))
-        open(f"{ROWS}/{mid}/first", "w").write("the row that runs on the pod of the single-node service\n")
-        log(event="first-row", row=mid, pod_id=run.get("pod_id"))
+        S["cut_run"] = dict(run, cut_at=now()); S["running"] = None; S.pop("node_down", None)
+        log(event="single-run-cut", row=(run.get("model") or {}).get("model_id"), started_cr=cr(run.get("started")), pod_id=str(run.get("pod_id") or "")[:8])
     S["rows_mode"] = now(); save()
+
+
+def single_pod():
+    """The pod of the single-node service (BENCH_STATE/pod.json)."""
+    return P.Pod("", first=True)
+
+
+def release_single(force=False):
+    """The pod of the single-node service is given back when no run is recorded on it: by its exact id, through
+    pod.Pod.release (the only delete), tried again each RELEASE_RETRY_S. True: that pod is not rented any more.
+    It stays while the per-problem lines of a scored row are not on this host (derive_stored): they may be on that pod
+    only. `force` is the operator's word (`release-single`): no wait, and not that guard. The guards of the delete hold."""
+    if not single_pod().load():
+        return True
+    if S.get("running") or any(is_first(mid) for mid in row_ids()) or (not force and now() - S.get("single_release_tried", 0) < RELEASE_RETRY_S):
+        return False
+    said = []; lost = [f for f in S.get("lines_missing") or [] if not os.path.exists(f)]
+    if lost and not force:  # the lines may be on that pod only: it stays until they are on this host, or until the operator's word (`release-single`)
+        said.append(dict(why=f"the per-problem lines of a scored row are not on this host and may be on this pod: {', '.join(os.path.relpath(f, PRIV) for f in lost)}"))
+        log(event="release-refused", **said[-1])
+    elif single_pod().release(lambda **k: (said.append(k), log(**k)), why="no row runs on the pod of the single-node service"):
+        S.pop("single_release", None); S.pop("single_release_tried", None); save(); return True
+    r = S.setdefault("single_release", dict(since=now(), tries=0)); r["tries"] += 1
+    r["why"] = str((said[-1].get("why") or said[-1].get("err") or said[-1].get("event")) if said else "")[:200]
+    S["single_release_tried"] = now(); save(); return False
+
+
+def hold_row(mid, why):
+    """A row with no worker is stopped until the operator says `retry`."""
+    s = row_state(mid); s.setdefault("fails", 0); s.setdefault("history", [])
+    s["held"] = dict(at=now(), why=why)
+    os.makedirs(f"{ROWS}/{mid}", exist_ok=True); wj(f"{ROWS}/{mid}/daemon.json", s)
+
+
+def derive_stored():
+    """A result on this host of a run with more samples a problem than the settings ask for now, of a row that is not in
+    work: its value at the settings' count, by the fixed rule of derive.py, from the per-problem lines that the host
+    has. Nothing is rented for it. The full run's result is kept beside the lines (`<benchmark>.full.json`), and that
+    file says that the result was looked at: once only. No value: the row is `held`; it is never run again by itself."""
+    for b in R.benchmarks(enabled_only=True, runnable_only=True):
+        bid, want = b["id"], R.bench_version(b)
+        for f in sorted(glob.glob(f"{RES}/*/{bid}.json")):
+            mid = os.path.basename(os.path.dirname(f)); r = rj(f); full = f"{PRIV}/{mid}/{bid}.full.json"
+            try:
+                more = isinstance(r, dict) and r.get("bench_version") != want and int(r.get("rollouts") or 0) > int(b["rollouts"])
+            except (TypeError, ValueError):
+                more = False
+            if not more or os.path.exists(full) or row_state(mid).get("running") or pod_of(mid).load():
+                continue  # a row in work: its worker brings the result to the settings' count (Row.collect)
+            lines = f"{PRIV}/{mid}/{bid}.per_task.jsonl"
+            try:
+                os.makedirs(f"{PRIV}/{mid}", exist_ok=True); wj(full, r, 0o600)
+                new, why = derive.from_full(r, open(lines).read(), int(b["rollouts"]), want, b.get("problems")) if os.path.exists(lines) else \
+                    (None, "the per-problem lines of the full run are not on this host")
+                if new is not None:
+                    publish.row_of(new, b)  # raises when the table could not show this result
+            except Exception as e:
+                new, why = None, f"the result on this host cannot be read ({type(e).__name__}: {str(e)[:80]})"
+            if new is None:
+                if not os.path.exists(lines):  # release_single keeps the pod of the single-node service while these lines are not here
+                    S["lines_missing"] = sorted(set(S.get("lines_missing") or []) | {lines}); save()
+                hold_row(mid, f"{bid}: {why}"); log(event="no-value", row=mid, bench=bid, why=why); continue
+            wj(f, new)
+            log(event="derived", row=mid, bench=bid, rule=derive.RULE, score=round(new["score"], 4), score_full=new["score_full"], samples_full=new["samples_full"])
 
 
 def plan(rows, wait):
@@ -543,28 +607,27 @@ def view(rows, wait):
             last = (rj(pod_of(mid).record) or {}).get("last") or {}
             v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),
                                   state=ph.get("state"), since=ph.get("since"))
+    if (S.get("single_release") or {}).get("tries", 0) >= ALARM_TRIES and single_pod().load():
+        v["alarms"].append(dict(what="single-pod-not-released", pod=P.NAME, since=S["single_release"]["since"], tries=S["single_release"]["tries"]))
     v["history"].sort(key=lambda h: h.get("finished") or 0)
     return v
 
 
 def lium_check():
-    """Each LIUM_CHECK_S, from one listing of Lium (a read): the alarms that a person must see in the table.
-    `kept-pod-without-row`: a pod of P.HELD_FOR_ROW is at Lium and its row does not run on it (nobody gives it back).
+    """Each LIUM_CHECK_S, from one listing of Lium (a read): the alarm that a person must see in the table.
     `pod-without-row`: a pod with a bench name that no row's record names (it costs money and no row gives it back).
-    A listing that fails leaves the alarms as they were. Nothing is deleted here."""
+    The pod of the single-node service is not one of them: the service gives it back, and says so when it cannot
+    (`single-pod-not-released`, view()). A listing that fails leaves the alarms as they were. Nothing is deleted here."""
     if now() - S.get("lium_checked", 0) < LIUM_CHECK_S:
         return
     S["lium_checked"] = now(); pods = P.listed()
     if pods is not None:
-        mine = {r["id"] for r in (pod_of(mid).load() for mid in row_ids()) if r}
+        mine = {r["id"] for r in [pod_of(mid).load() for mid in row_ids()] + [single_pod().load()] if r}
         coming = {P.name_of(mid) for mid in row_ids() if (row_state(mid).get("phase") or {}).get("state") in ("renting", "setup")}
         out = []
         for p in sorted(pods, key=lambda p: str(p.get("name"))):
             pid, name = str(p.get("id") or ""), str(p.get("name") or "")
-            row = next((r for x, r in P.HELD_FOR_ROW.items() if pid.startswith(x)), None)
-            if row and not (is_first(row) and pid in mine):
-                out.append(dict(what="kept-pod-without-row", row=row, pod=name))
-            elif not row and name.startswith(P.PREFIX) and pid not in mine and name not in coming:
+            if name.startswith(P.PREFIX) and pid not in mine and name not in coming:
                 out.append(dict(what="pod-without-row", pod=name))
         for a in out: log(event="alarm", **a)
         S["alarms"] = out
@@ -596,6 +659,8 @@ def publish_table(rows, wait=None):
 def step():
     sync_table()
     take_over_single()
+    derive_stored()
+    release_single()
     rows = model_rows(); wait = note_waiting(rows)
     work = plan(rows, wait)
     for mid in work:
@@ -637,17 +702,16 @@ def pods_check():
     if pods is None:
         raise SystemExit("Lium could not be asked: nothing is known")
     recs = {mid: pod_of(mid).load() for mid in row_ids()}
-    by_id = {r["id"]: mid for mid, r in recs.items() if r}
+    by_id = {r["id"]: mid for mid, r in recs.items() if r}; single = single_pod().load().get("id")
     lines = ["%-9s %-42s %-26s %-12s %7s %7s" % ("ID", "NAME", "ROW", "STATE", "AGE_H", "USD_H")]
     ids = set()
     for p in sorted(pods, key=lambda p: str(p.get("name"))):
         name, pid = str(p.get("name") or ""), str(p.get("id") or "")
-        if not name.startswith(P.PREFIX) and pid not in by_id:
+        if not name.startswith(P.PREFIX) and pid not in by_id and pid != single:
             continue
         ids.add(pid); mid = by_id.get(pid); rec = recs.get(mid) or {}
         state = (row_state(mid).get("phase") or {}).get("state") or "-" if mid else "-"
-        kept = next((r for x, r in P.HELD_FOR_ROW.items() if pid.startswith(x)), None)
-        row = mid or "NO ROW CLAIMS THIS POD" + (f" (IT IS KEPT FOR ROW {kept})" if kept else "")
+        row = mid or ("THE POD OF THE SINGLE-NODE SERVICE: no row runs on it, the service gives it back" if pid == single else "NO ROW CLAIMS THIS POD")
         if mid and name != pod_of(mid).name:
             row += " (THE NAME IS NOT THE ROW'S)"
         age = "%.1f" % ((now() - rec["rented_at"]) / 3600) if rec.get("rented_at") else "?"
@@ -687,13 +751,15 @@ def cli(cmd, argv):
             for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at"): s.pop(k, None)
             s["fails"] = 0; wj(f"{ROWS}/{mid}/daemon.json", s); lock.close()
         print(json.dumps(dict(retry=argv))); return
-    if cmd not in ("daemon", "once", "publish", "release"):
+    if cmd not in ("daemon", "once", "publish", "release", "release-single"):
         raise SystemExit("unknown command " + cmd)
     lock = only_instance()  # held until the process exits: each of these commands does the service's work
     if cmd in ("daemon", "once"):
         return main(once=cmd == "once")
     if cmd == "publish":
         sync_table(); publish_table(model_rows()); print("published"); return
+    if cmd == "release-single":  # the pod of the single-node service, when no run is recorded on it
+        print(json.dumps(dict(single_pod_rented=not release_single(force=True)))); return
     for mid in argv:  # release ROW...: give the pod of a row back now; the next start runs what the row still misses on a new pod
         row = Row(mid)
         if row.pod.release(log, why="operator"):
