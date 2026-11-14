@@ -1192,7 +1192,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "- **round**: one open tournament on the current head (not an epoch; v1 used that word).",
         "- **king**: the round winner whose LoRA was applied to the head. Only kings earn.",
         "- **task**: one problem drawn for the round. **rollout**: one answer text for a prompt in your file.",
-        "- **look**: a scoring checkpoint after a fixed number of tasks (early looks can only drop a LoRA).",
+        "- **look**: a point after a fixed number of tasks where the scores are compared (early looks can only drop a LoRA).",
         "",
         "## 1. Network and head",
         "",
