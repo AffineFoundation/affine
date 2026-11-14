@@ -89,10 +89,12 @@ def finished(b, d):
         return False
 
 
-def resumable(vf, rollouts):
+def resumable(vf, b):
     """The saved config of a run that may go on with --resume, or None. vf-eval resumes with the saved count of samples
     and writes a row when a sample ENDS, so a run that was made with another count cannot be cut to this one: the
-    first rows of a problem are its shortest answers. Such a run is moved aside, and the benchmark starts new."""
+    first rows of a problem are its shortest answers. A run of another version of the benchmark is not this benchmark.
+    Such a run is moved aside, and the benchmark starts new. vf/bench_version is written at a new start; a run with no
+    such file was made before 2026-11-14, when every benchmark had version 1."""
     prev = glob.glob(vf + "/*/configs/resolved/eval.json")
     if not prev:
         return None
@@ -100,11 +102,15 @@ def resumable(vf, rollouts):
         made_with = int(json.load(open(prev[0]))["num_rollouts"])
     except (OSError, ValueError, KeyError, TypeError):
         made_with = None
-    if made_with == int(rollouts):
+    try:
+        version = open(vf + "/bench_version").read().strip()
+    except OSError:
+        version = R.bench_version(dict(b, version=1))
+    if made_with == int(b["rollouts"]) and version == R.bench_version(b):
         return prev[0]
-    aside = f"{vf}.r{made_with or 'x'}"; n = 1
+    aside = vf + ".old"; n = 1
     while os.path.exists(aside):
-        n += 1; aside = f"{vf}.r{made_with or 'x'}.{n}"
+        n += 1; aside = f"{vf}.old.{n}"
     os.replace(vf, aside); os.makedirs(vf)
     return None
 
@@ -162,10 +168,12 @@ def main(argv=None):
             os.replace(d + "/FAILED", d + f"/FAILED.{attempt - 1}")
         c = min(MAX_C, max(64, int(total_c * weights[b["id"]] / W)))
         # --resume keeps valid finished rollouts and re-runs failed ones
-        prev = resumable(vf, b["rollouts"])
+        prev = resumable(vf, b)
         if prev:
             cmd = ["vf-eval", "@", prev, "--resume", "--no-rich", "--no-push"]
         else:
+            with open(vf + "/bench_version", "w") as f:
+                f.write(R.bench_version(b))
             cmd = ["vf-eval", b["env"], "-m", "bench", "--client.base-url", "http://127.0.0.1:8000/v1", "--client.api-key-var", "BENCH_API_KEY",
                    "-r", str(b["rollouts"]), "-c", str(c), "--no-push", "--no-rich", "--env.agent.harness.id", b.get("harness", "null"),
                    "--env.agent.runtime.type", b.get("runtime", "subprocess"),
