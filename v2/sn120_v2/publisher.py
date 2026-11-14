@@ -1010,8 +1010,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  error counts as wrong.",
         "- A result there can have `derived_from`. Such a result was computed from a larger run of the same benchmark,",
         "  and its `score_full` and `samples_full` are the score and the count of samples of that larger run.",
-        "- A score from few samples is less sure than a score from many. Read `samples` of each result before you",
-        "  compare two scores.",
+        "- A score from few samples is less sure than a score from many, and two models can have different counts for",
+        "  the same benchmark. Read `rollouts` and `samples` of each result before you compare two scores.",
         "",
         *_replicate_lines(doc, params),
     ]
