@@ -115,6 +115,39 @@ def test_a_training_failure_is_no_decision_for_that_seat_only_and_repeats_hold_i
     assert seats(world.round()) == [2]
 
 
+def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys):
+    """The command line for ``Controller.release_seat``: after a fault of the box, no seat stays held or one fault from a hold."""
+    world.register(1, 0.0)
+    world.register(2, 0.0)
+    world.register(4, None)  # a seat with no file: it takes no turn, so it has no count
+    common = ["--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]
+    assert main(["release-seat", *common, "--all"]) == 2 and "refused: V2Error: no seat is held or has a counted failure" in capsys.readouterr().err
+    world.reopen()  # the command took the journal over, as set-params does
+    world.trainer.fail_hotkeys = {"hk1", "hk2", "hk3"}  # the box is at fault: every training fails
+    world.round()
+    world.round()
+    world.register(3, 0.0)
+    world.round()
+    queue = world.controller.state.queue
+    assert sorted((seat.reg.uid, seat.infra_attempts, seat.held) for seat in queue.values()) == [(1, 3, True), (2, 3, True), (3, 1, False), (4, 0, False)]
+    assert main(["status", "--state-dir", str(world.root)]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert (status["held_seats"], status["seats_with_counted_failures"]) == ([1, 2], 1), "status shows what there is to release"
+    assert main(["release-seat", *common, "--uid", "4"]) == 2 and "refused: V2Error: no seat of UID 4 is held or has a counted failure" in capsys.readouterr().err
+    assert main(["release-seat", *common, "--uid", "2"]) == 0
+    assert json.loads(capsys.readouterr().out)["released"] == [{"uid": 2, "registration_block": 1002, "hotkey": "hk2", "was_held": True, "counted_failures": 3}]
+    assert main(["release-seat", *common, "--all"]) == 0
+    assert [(seat["uid"], seat["was_held"], seat["counted_failures"]) for seat in json.loads(capsys.readouterr().out)["released"]] == [(1, True, 3), (3, False, 1)]
+    queue = world.reopen().state.queue
+    assert all(not seat.held and seat.infra_attempts == 0 for seat in queue.values())
+    assert [seat.reg.uid for seat in queue.values() if seat.front] == [1, 2, 3], "still first: a release changes no turn"
+    assert main(["status", "--state-dir", str(world.root)]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert (status["held_seats"], status["seats_with_counted_failures"]) == ([], 0)
+    world.trainer.fail_hotkeys = set()
+    assert sorted(seats(world.round())) == [1, 2, 3]
+
+
 def test_a_batch_rejected_at_train_time_is_a_skip(world):
     world.register(1, 0.0)
     world.trainer.reject_hotkeys = {"hk1"}
