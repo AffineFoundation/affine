@@ -152,7 +152,7 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "`not_scored`: the time limit of the round came before the first look of the scoring (section 3)." in flat
     assert "With fewer tasks than the first look, there is no decision: `not_scored` (section 3)." in flat
     assert "The lease ends 150 minutes after it starts." in flat
-    assert "reported `no_decision` for your entry 5 times" in flat and "so it never holds a seat" in flat
+    assert "When 5 failures are counted for a seat, the seat is held" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
     assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
     assert "keeps its place for at least 21600 s after its registration, and for as long as no entry was charged in the last 24 hours" in flat
@@ -175,6 +175,51 @@ def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_
     assert "A seat that is in an open round stays until that round closes." in flat
     assert "the seat keeps its place. The validator then reads the file of the new hotkey" in flat
     assert "When the new hotkey already had its turn, the seat is removed." in flat
+
+
+def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_round_file_shows(tmp_path):
+    """Each sentence here stands next to the case that it describes, played by the real controller."""
+    made = world(tmp_path, max_infra_attempts=2, apply_retry_s=420)
+    state = made.controller.state
+    for uid in (1, 2, 3):
+        made.register(uid, 0.0)
+    made.trainer.fail_hotkeys = {"hk1", "hk2", "hk3"}  # no training finishes: a round with no result (Controller.run_round)
+    report = json.loads(made.store.get(layout.round_file(made.round().round_id)))
+    doc, text, _ = published(made.publisher.snapshots[-1])
+    flat, last = " ".join(text.split()), doc["history"][-1]
+    assert "A round with no result: the box failed, not a seat." in flat
+    assert "when the training failed for at least one batch and finished for no batch, when the box stopped with an error, when its result did not arrive before the end of the lease, or when the operator ended the round" in flat
+    assert "nobody is charged, no failure is counted for a seat, and each seat of the round goes to the front of the queue" in flat
+    assert not state.served_regs and all((seat.front, seat.infra_attempts, seat.held) == (True, 0, False) for seat in state.queue.values())
+    assert "The next round starts 420 s after the failure, or later." in flat and made.round() is None
+    assert "In the round file (section 9) you see it thus: `outcome` is `no_decision`, no entry has a `status`, and `note` gives the cause." in flat
+    assert report["outcome"] == "no_decision" and report["note"].startswith("InfraError: no training finished") and not any("status" in entry for entry in report["entries"])
+    assert "In `history` of mining.json the round has the same `outcome` and its entries have no `status`; the `note` is only in the round file." in flat
+    assert last["outcome"] == "no_decision" and "note" not in last and not any("status" in entry for entry in last["entries"])
+    assert "A box result that arrives after the end of the lease is never used: the round then has no result (section 4)." in flat
+    assert "each entry of that box is" not in flat and "has reported `no_decision`" not in flat, "the words of the rule before Controller.run_round failed the lease"
+
+    made.trainer.fail_hotkeys = {"hk3"}  # one training fails and the others finish: the one case that is counted
+    for count, other in ((1, None), (2, 4)):
+        made.now += made.params.apply_retry_s
+        if other:
+            made.register(other, 0.0)
+        report = json.loads(made.store.get(layout.round_file(made.round().round_id)))
+        mine = next(entry for entry in report["entries"] if entry["uid"] == 3)
+        assert report["outcome"] == "null" and report["note"] == "" and mine["status"] == "no_decision" and "delta" not in mine
+        assert (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (count, count == 2)
+    assert "A failure is counted for your seat in one case only: the box could not train your batch (the training failed, or the batch had the whole training time and did not finish), and at least one other batch of the same round finished its training." in flat
+    assert "Your entry then has the status `no_decision` and no scores. When 2 failures are counted for a seat, the seat is held: it takes no turn until the operator releases it." in flat
+    made.controller.release_seat((3, 1003), made.now)
+    assert "A release also sets the count to zero." in flat and (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (0, False)
+
+    assert "A `no_decision` that comes from the scoring (section 6) has scores and is not counted." in flat  # Controller._close: only a status of the box
+    assert "If that is so for null M, every scored entry of the round is `no_decision`. Neither is counted as a failure for the seat (section 4)." in flat
+    assert "A round that has a result also gets the outcome `no_decision` when none of its entries was charged." in flat
+    assert "`no_decision` as the status of an entry means: not charged, and the seat goes to the front of the queue (section 4)." in flat
+    assert "The `note` is empty unless the round had no result or has the outcome `abandoned` (section 4)." in flat
+    assert "Do not rely on their exact words: the validator is free to cut a text short, and to put a marker in square brackets in the place of a part of it" in flat
+    assert "To decide what applies to your seat, read `outcome` and `status`." in flat
 
 
 def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
