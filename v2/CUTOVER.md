@@ -413,7 +413,7 @@ Run every command from `v2/`, inside the virtual environment.
        - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
        - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
        - `status` shows a `phase` other than `IDLE` after the first lease.
-       - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. A round ends at most 100 minutes after its lease ("The time limit of a round" below).
+       - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. The 100 minutes of the time limit are from the lease to the promotion, not to the close: with a winner the round closes after the fold ("The time limit of a round" and "What a closed round looks like" below).
     4. **The stop**, for each later step that says "stop the loop". `run` and its servers end, and nothing starts them again.
 
        ```
@@ -614,7 +614,9 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
      python -m sn120_v2.weights_writer --state-dir "$WSTATE" --from-store --network finney --dry-run )
    ```
 
-   Check: stderr says `kings: read from the journal copy in the store`. The JSON line has `"status": "would set"`; `weights` holds the 10 UIDs of the import at 0.1 each, and no UID 0; `validator_hotkey` is the hotkey above; `"validator_registered": true`. The parentheses keep the token out of the shell that the later steps use.
+   Check: stderr says `kings: read from the journal copy in the store`. The JSON line has `"status": "would set"`; `weights` holds 10 UIDs at 0.1 each, and no UID 0; `validator_hotkey` is the hotkey above; `"validator_registered": true`. The parentheses keep the token out of the shell that the later steps use.
+
+   Which 10 UIDs: before v2's first winner the line has `"kings": 10`, and the UIDs are the 10 kings of the import. After a winner of v2 they are not: step 9.1 says which UIDs are right then.
 6. **Dry run with the wallet, and the chain check.** The dry run also reads the hotkey file and runs every check that comes before a submission. Still no chain write.
 
    ```
@@ -755,7 +757,18 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
 
    1. **Check before the stop.** Run the chain check and the dry run with the wallet (step 6) again.
 
-      Check: write down `last write block`; this is v1's last write. The `weights` of the dry run hold the 10 UIDs of the import, and before v2's first winner they are the UIDs of `weights on chain`; if the two sets differ, stop and ask the coordinator. The dry run gives `"preflight": "passed"` or the reason `recent write`.
+      Check: write down `last write block`; this is v1's last write. The dry run gives `"preflight": "passed"` or the reason `recent write`. Its `weights` hold 10 UIDs at 0.1 each. Compare these UIDs with the UIDs of `weights on chain`:
+
+      - **Before v2's first winner** (the dry run has `"kings": 10`): the two sets are the same 10 UIDs, the kings of the import.
+      - **After a winner of v2, the two sets differ, and that is correct.** `weights on chain` is v1's last write: v1 pays its own 10 kings and knows no winner of v2. v2 pays the last 10 kings: each winner of v2 with a new UID takes one place, and the oldest king of the import leaves.
+        - The kings of the import, oldest first (the import printed them as `kings, oldest first`; these are the UIDs of 14 Nov 2026): 955, 956, 942, 821, 851, 909, 822, 852, 918, 920.
+        - After one winner: the dry run has `"kings": 11`. Its `weights` hold the winner and 9 UIDs of the import. UID 955 is not there. After two winners: `"kings": 12`; UIDs 955 and 956 are not there. And so on down the list.
+        - A winner whose UID is already one of the 10 takes no new place: `"kings"` is one more, and the UIDs do not change.
+      - **How to check it.** On the GPU box, `python -m sn120_v2 status --state-dir $STATE` prints `"kings"`: the 10 paid UIDs, newest first. The UIDs of `weights` in the dry run are this list, as a set. Then:
+        - each UID that is in the dry run and not on chain is a winner of v2: it is at the start of `"kings"`, and the `winner:` line of a round summary names it;
+        - the UIDs that are on chain and not in the dry run are the same count, and they are the first UIDs of the list above, with no gap.
+      - The site is late here: v2 writes `mining.json` at the close of the round, after the fold, and the journal copy that the writer reads has the winner from the promotion on. So during a fold the dry run shows the winner and the site does not yet. `status` on the GPU box is the truth.
+      - **Any other difference: stop and ask the coordinator.** These are: a UID in the dry run that is no winner of v2 and no king of the import; a UID on chain that is no king of the import (v1 still takes turns, so v1 can make a king after the import); a king of the import that is missing while an older one is still there; fewer or more than 10 UIDs; a weight other than 0.1; UID 0.
    2. **Stop v1's writer.** "v1 units", group B, gives the candidate names; the host is the truth. For the timer and the service that the first two commands show:
 
       ```
@@ -1034,6 +1047,37 @@ On the GPU box, in the shell of step 2 of "GPU box".
 
 On AffineValidator: `journalctl -u sn120-v2-weights.service --since "3 hours ago" --no-pager` shows the last runs. The dry run of step 5 of "AffineValidator" shows `blocks_since_last_write`; one hour is 300 blocks, so it stays below about 310 while each hourly run sets. If the first log line of a run says `read from the cache of the journal copy`, the store did not answer or the store settings are wrong: the writer then pays the last kings that it read.
 
+### What a closed round looks like
+
+`run` prints the round summary when a round closes, and `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints it again. [SMOKE.md](SMOKE.md) has the whole text with its table. The first three lines say what happened; `<...>` stands for a value.
+
+**A winner.**
+
+```
+SN120 v2 round r000001: APPLIED
+winner: UID <uid> (<hotkey>), delta +0.<4 digits>, z <number>
+head: 9fa81073eeae -> <the first 12 characters of the new head>
+```
+
+- The head before the arrow is the head of the round. For the first round it is the genesis head (`9fa81073eeae` for the state of 14 Nov 2026). The head after the arrow is the folded head.
+- `status` after the first winner: `"heads": 3` (the genesis head, the head with the winner's LoRA, the folded head), `"head_folded": true`, `"rounds_closed": 1`, `"last_outcomes": ["applied"]`, and the winner's UID first in `"kings"`. `"served"` is higher by the count of the charged seats, and `"queue"` is lower by the same count.
+- The round closes after the fold, so the summary comes later than the promotion ("The time limit of a round").
+- The weights: the next run of v2's writer pays the winner and no longer pays the oldest king (step 9.1 of "AffineValidator").
+
+**No winner, with a scored batch.**
+
+```
+SN120 v2 round r000001: NULL
+no winner: <the reason>
+head: 9fa81073eeae (unchanged)
+```
+
+- Each scored batch is charged, win or lose: its seat leaves the queue (`"served"` rises and `"queue"` falls by that count). A batch with the verdict `not_trained` or `not_scored` is not charged and is first in the next round.
+- `status`: `"heads"` and `"kings"` do not change, and `"last_outcomes"` ends with `"null"`.
+- There is no wait after such a round: when valid files wait, `run` opens the next round at once.
+
+**No decision.** The first line ends with `NO_DECISION`. Nobody is charged, and the seats are first in the next round. "A round in which no training finished" and "A crash or a restart of `run`" have the `no winner:` texts.
+
 ### The time limit of a round
 
 A round has a time limit of 100 minutes from the lease to the promotion. It is a hard stop.
@@ -1044,6 +1088,13 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 | 90 | The box stops scoring. A block of tasks that still runs is stopped and is not used. |
 | 100 | The limit. The 10 minutes after the stop are for the grading of the last block, the judging and the promotion. |
 | 120 | The lease ends (`lease_timeout_s` 7200; it was 14400). A result that arrives later is not used. |
+
+**With a winner, the round does not close at minute 100.** The limit is from the lease to the promotion. `fold_every_k` is 1, so each winner is folded inside its round. The order is: judging, promotion, fold, then the close. `run` prints the round summary and writes `mining.json` only at the close. So during the fold:
+
+- `status` on the GPU box shows `"phase": "APPLY"` and `"heads": 2` after the first winner; the winner is already first in `"kings"`.
+- The site still shows `"phase": "RUNNING"` and the open round, and its `kings` are still the old ones. This is no fault.
+- The code has no time limit for the fold. A fold that fails is tried again 5 minutes later (`apply_retry_s` 300); `run` then prints `idle: N seats wait, phase APPLY, last problem: fold failed: <cause>`.
+- The stop that the code makes is the stop of the scoring at minute 90. The 10 minutes after it are a reserve; no timer ends the steps in them.
 
 - A LoRA that is still open at the stop is judged on the blocks that null M and every open LoRA finished. It is charged, win or lose. The first line of the round summary then ends with `(stopped at the time limit)`.
 - If fewer tasks than the first look are scored at the stop (500 tasks, a quarter of the 2,000 of a round), every trained LoRA has the verdict `not_scored`. It is not charged, it is first in the next round, and no failure is counted for its seat. The round summary then has the line `not scored: N of M batches. The time limit of the round came before the first look. They are not charged and are first in the next round.`
@@ -1189,7 +1240,7 @@ What a restart does to an open round:
 |---|---|---|
 | In the training time (to minute 40) | All batches train again from zero. A batch of the first group that does not finish gets `no_decision`. When another batch of the round trained, that is **one counted failure** for that seat (3 hold the seat). When no batch trained, the lease fails and nothing is counted ("A round in which no training finished"). Nobody is charged. | `end-round`: no decision, nobody charged, no failure counted. The seats are first in the next round, which opens 5 minutes later at the earliest. |
 | After the training time, no result stored | The round closes with no decision. Nobody charged, no failure counted. | The same, at once. |
-| After the lease end, no result stored | The lease is failed ("the lease expired"). No charge, no counted failure. | The same. |
+| After the lease end, no result stored | The lease is failed, and the round closes with no decision: `no winner: the lease expired`. No charge, no counted failure. | The same effect, with another text: the loop's `end-round` runs first, so the summary says `no winner: ended by the operator`. |
 | The box result is stored, not judged | `run` judges the stored result, also after the lease end. | The same: the loop skips `end-round`. |
 | Decided (`"phase": "APPLY"`) | `run` finishes the promotion and the fold. The charges were fixed with the decision. | The same. |
 
@@ -1285,7 +1336,14 @@ head: <12 characters> (unchanged)
 
 Between such rounds `run` prints `idle: N seats wait, phase IDLE`. `status` shows `"no_decision"` at the end of `"last_outcomes"`, and `"held_seats"` does not change.
 
-Every round that closes with no box result names its cause in the same place: `no winner: ended by the operator` after `end-round`, `no winner: the lease expired` after an expired lease, and `no winner: <error class>: <text>` after another fault of the box.
+Every round that closes with no box result names its cause in the same place:
+
+- `no winner: ended by the operator` after `end-round`, by hand or by the loop.
+- `no winner: LeaseError: the lease has expired; a late result is never used` when a `run` that is alive brings its result after the lease end.
+- `no winner: the lease expired` only when `run` is started by hand after the lease end, with no result in the store. Through the loop this text never comes: the loop's `end-round` runs first, and the text is the first one.
+- `no winner: <error class>: <text>` after another fault of the box.
+
+The first three have the same effect: the round closes with no decision, nobody is charged, no failure is counted, and the seats are first in the next round.
 
 **The cost of this rule.** `run` cannot tell a broken box from bad files.
 
@@ -1481,7 +1539,7 @@ After any failed lease, the next round opens 5 minutes later at the earliest (`a
 This is the short form of the part above, for a commit that changes no digest. The message for the commit says "a checkout only". `0c29cb6c` is such a commit for a box at `1d7d0628` or later (check 1 of "Before the mainnet bootstrap"). `run` loads the code only at a start, so a checkout changes nothing in a `run` process that runs: the stop and the start are needed.
 
 1. **Before the stop: no round is open.** In a second shell with the same exports, `python -m sn120_v2 status --state-dir $STATE` shows `"phase": "IDLE"`. Anybody can read the same value: `"phase"` in `https://affine.io/mining.json`, once the site shows v2's file.
-   - `RUNNING` or `APPLY`: wait. A round ends at most 100 minutes after its lease ("The time limit of a round"), and `run` prints its summary. After a winner, the fold comes next; wait for `IDLE`.
+   - `RUNNING` or `APPLY`: wait for `IDLE`. The promotion of a winner comes at most 100 minutes after the lease. The fold comes after it and has no time limit; during the fold `status` shows `APPLY` and the site still shows `RUNNING` ("The time limit of a round"). `run` prints the round summary at the close.
    - When valid files wait, `run` opens the next round at once, and no look shows `IDLE`. Then stop the loop right after a round summary in `run.log`: the round that is lost is the one that opened a moment ago. The part above says what a stop in a round costs: that round, and nothing for a seat.
 2. **Stop the loop** (step 10.4 of "GPU box"). Then run the `status` line again.
    - `IDLE`: go on.
