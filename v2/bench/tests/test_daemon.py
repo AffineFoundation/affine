@@ -4,7 +4,7 @@ The service starts one worker process for each row. Here a worker is one call in
 the service gives each row in work one poll, in the order in which the service starts the workers."""
 import ast, dataclasses, hashlib, importlib, json, os, pathlib, re, runpy, shutil, types
 import pytest
-from sn120_v2 import layout, sim
+from sn120_v2 import canonical, layout, sim
 from sn120_v2.errors import ConfigError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, Params
 from affine_bench import config as C, daemon as D, derive, pod as P, publish, registry as R, source
@@ -24,7 +24,7 @@ class Store:
         self.read_only = False  # the table cannot be written
 
     def exists(self, key):
-        assert key.startswith(("public/bases/", "v1-king/")); self.asked.append(key)
+        assert key.startswith(("public/bases/", "mimo/")); self.asked.append(key)
         if self.refused: raise InfraError("r2 head failed: 403")
         return key not in self.gone and self.inner.exists(key)
 
@@ -791,14 +791,14 @@ def test_a_restart_of_the_service_leaves_each_run_and_each_wait_as_it_is(world):
 
 
 # ---------------------------------------------------------------------------------------------- the last king of v1
-def v1_source(world, monkeypatch, files=None):
-    """The operator sets the source: a prefix in the store with the descriptor and each file."""
-    row = source.extra_rows()[0]; files = {"model.safetensors": b"v1 weights", "config.json": b"{}"} if files is None else files
-    desc = dict(id=row["base_hash"], files={n: hashlib.sha256(d).hexdigest() for n, d in files.items()})
-    world.store.inner.put("v1-king/b6d592c3/descriptor.json", json.dumps(desc).encode())
-    for n, d in files.items(): world.store.inner.put(f"v1-king/b6d592c3/{n}", d)
-    monkeypatch.setenv("BENCH_V1_KING_SOURCE", "v1-king/b6d592c3/")
-    return desc
+V1_SOURCE = "mimo/v1-run/checkpoints/" + source.V1_KING["checkpoint"] + "/model"  # the form of v1's own place in the bucket
+
+
+def v1_source(world, monkeypatch):
+    """The operator sets the source: the prefix in the store where the 16 files of the checkpoint are."""
+    for n in source.V1_KING_FILES: world.store.inner.put(f"{V1_SOURCE}/{n}", b"v1 " + n.encode())
+    monkeypatch.setenv("BENCH_V1_KING_SOURCE", V1_SOURCE + "/")
+    return dict(id=source.V1_KING["checkpoint"], files=dict(source.V1_KING_FILES))
 
 
 def test_the_v1_king_has_a_row_of_its_own_kind_and_changes_no_king_row_and_not_the_kings_order(world, monkeypatch):
@@ -808,6 +808,8 @@ def test_the_v1_king_has_a_row_of_its_own_kind_and_changes_no_king_row_and_not_t
     assert (row["model_id"], row["kind"], row["uid"], row["v1_epoch"]) == ("v1king-b6d592c3bb1b4393", "v1-king", 920, 1211)
     assert row["hotkey"] == "5FaTFWogz3AiQbEFRnL9CZcqR1keeypEYkd7f1L5YLbWH1cP" and row["base_hash"] == "b6d592c3bb1b439365e82147a47e65d93c083a13444aceae078f8a2053cd5ce3"
     assert 37 <= len(P.PREFIX + V1) <= 40 and "v1-king" in publish.OWN_KINDS
+    # the file map in the code is the checkpoint's: its id by the rule of v1 and v2 is the checkpoint
+    assert len(source.V1_KING_FILES) == 16 and canonical.manifest_digest(source.V1_KING_FILES) == row["base_hash"]
     # the same settings and budget as a king, and the same ten benchmarks
     assert R.resolve_settings(V1, "v1-king") == R.resolve_settings(ids(first), "king") and R.resolve_settings(V1, "v1-king")["budget"] == 65536
     world.steps(3)
@@ -836,22 +838,21 @@ def test_the_v1_king_is_queued_once_and_only_once_and_rents_nothing_without_a_re
     assert (model(V1)["status"], model(V1)["waiting_for"]) == ("waiting", "source") and D.S["waiting"][V1]["file"] == "the source is not set (BENCH_V1_KING_SOURCE)"
     assert [e["event"] for e in events(capsys) if e.get("model") == V1] == []  # it waited before: no line at each poll
     desc = v1_source(world, monkeypatch)
-    for fault in ("no descriptor", "another checkpoint", "a file is not there", "the store does not answer"):
-        store.hidden, store.gone, store.refused = set(), set(), False
-        if fault == "no descriptor": store.hidden = {"v1-king/b6d592c3/descriptor.json"}
-        if fault == "another checkpoint": store.inner.put("v1-king/b6d592c3/descriptor.json", json.dumps(dict(desc, id="0" * 64)).encode())
-        if fault == "a file is not there": store.inner.put("v1-king/b6d592c3/descriptor.json", json.dumps(desc).encode()); store.gone = {"v1-king/b6d592c3/config.json"}
+    for fault in ("a small file is not there", "a weight file is not there", "the store does not answer"):
+        store.gone, store.refused = set(), False
+        if fault == "a small file is not there": store.gone = {f"{V1_SOURCE}/config.json"}
+        if fault == "a weight file is not there": store.gone = {f"{V1_SOURCE}/model-00010-of-00010.safetensors"}
         if fault == "the store does not answer": store.refused = True
         world.steps(2)
         assert (model(V1)["status"], model(V1)["waiting_for"]) == ("waiting", "source"), fault
         assert len(lium.ups) == ups and not lium.pods and len(world.polled) == polled and not os.path.isdir(f"{D.ROWS}/{V1}"), fault  # no rent, no worker, no pod that waits
-    assert not any("v1-king/" in key for key in store.signed)
-    store.refused = False
+    assert not any(V1_SOURCE in key for key in store.signed)
+    store.gone, store.refused = set(), False
     world.steps()  # readable: queued by this step, with no word of a person
     assert states(v1=True)[V1] == "evaluating" and lium.ups[-1][1] == P.PREFIX + V1 and len(lium.ups) == ups + 1
     node = world.nodes[V1]
     blob = json.loads(next(s for s in node.stdin if s))
-    assert blob["descriptor"] == desc and sorted(blob["urls"]) == sorted(desc["files"]) and all("v1-king/b6d592c3/" in u for u in blob["urls"].values())
+    assert blob["descriptor"] == desc and sorted(blob["urls"]) == sorted(desc["files"]) and all(V1_SOURCE + "/" in u for u in blob["urls"].values())
     assert f"--model-dir {C.NODE_KINGS}/{desc['id']} " in node.cmds[-1] and "--reasoning-parser qwen3 " in node.cmds[-1]
     world.steps(2)
     assert states(v1=True)[V1] == "scored" and not lium.pods

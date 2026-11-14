@@ -1,6 +1,6 @@
 """The one place where the benchmark service touches v2 state. It reads public objects of the store, with `get`,
 `exists` and `presign_get`. Its only write is the result table at `layout.BENCHMARKS`.
-The one row that is not of v2, the last king of v1, reads its weights from a store prefix that the operator sets.
+The one row that is not of v2, the last king of v1, reads its weight files from a store prefix that the operator sets.
 
 Rows come from the public chain of heads: the head pointer, and for each head the head it came from. A stacked head
 names that head as its parent. A folded head names its round, and the public round file names the head the round opened
@@ -21,6 +21,27 @@ URL_TTL_S = 7200  # the node gets links that expire, never a store credential
 # full checkpoint of v1's training line, of the model family of the v2 launch model: the node serves it as it serves a king.
 V1_KING = dict(checkpoint="b6d592c3bb1b439365e82147a47e65d93c083a13444aceae078f8a2053cd5ce3", v1_epoch=1211, uid=920,
                hotkey="5FaTFWogz3AiQbEFRnL9CZcqR1keeypEYkd7f1L5YLbWH1cP")
+# Its files: name -> sha256, from v1's signed opening manifest. The sha256 of the canonical JSON of this map is the
+# checkpoint id above (the rule of sn120_v2.canonical.manifest_digest; a test proves it), so the map needs no other record.
+# The node checks each file against it after the download.
+V1_KING_FILES = {
+    "chat_template.jinja": "59a64ebb4df6d1489d09a91267cf3ceb106162d4a893c4f84833cfb8c897ff63",
+    "config.json": "44a011dc9cc7203c8b13867f643ef12b7056b2eb8bbf9410704e30a2cec27928",
+    "generation_config.json": "cde05246e60160302c49ac904fbc45365d4a98b16e003b4a1ee15cfc7315bd92",
+    "model-00001-of-00010.safetensors": "ff7603c5b1b9f3af737de319653abfa9f36640ea86171b2a7f2f1d8637ec3c1e",
+    "model-00002-of-00010.safetensors": "e0d3dbbb773813f99ee5c6755a3d5d5c2dfc6cbf5af6ee71507b2efb6ae44975",
+    "model-00003-of-00010.safetensors": "22f7d3306cdf77e245c807d66d56dfd6d69c3a7bc09c5517f98dbfb7537e768a",
+    "model-00004-of-00010.safetensors": "babfdcac6be9d009a841071c7b283f5dd45ad662695add64ca1e88b946ad1c54",
+    "model-00005-of-00010.safetensors": "fe17918dab3b558fb08765ebf2ffd65b808c2e26e244c01b49fd2b75ac275a53",
+    "model-00006-of-00010.safetensors": "a6dedc20c92228f14a0bcc28a09cf0998d33f98bb7a35c75c8a1006fd5d4bb58",
+    "model-00007-of-00010.safetensors": "3774f926187202c81fa6c467d1dbb2aa22d17b93a3544e6074b2fe59ee63fa54",
+    "model-00008-of-00010.safetensors": "642aa3b1d241112ad21a53d4bf2bc9a8a40b6bdc6e1fafc2e6217ba760ec106c",
+    "model-00009-of-00010.safetensors": "d387c109dc1de422c5662ce05a0fc2cca82f34e45c43c60fe0673d35dcc7bf28",
+    "model-00010-of-00010.safetensors": "19f5f1f58d5932c21aae05b74f8f99a05627c66ad3ac3b9513aa21a3ac45becf",
+    "model.safetensors.index.json": "e6b1277a7962e812d1a3f6773ac6c55cc32f203b9af71e2d320e482b744d7608",
+    "tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "tokenizer_config.json": "7488550a894dcf741616126e322ea31d66cf9457b59ec5825f4c7efdced421f8",
+}
 # A head version is content-addressed and the file of a closed round is written once, so a cached one never changes.
 _manifests = {}  # version_id -> HeadManifest
 _rounds = {}  # round_id -> (version_id of the head the round opened on, uid of the winner, hotkey of the winner)
@@ -101,26 +122,13 @@ def models():
 
 def extra_rows():
     """The rows that are not heads of v2: the last king of v1. Its kind is its own; it has no time of a v2 head, so it is
-    the last row of the queue and changes no king row. `source` is the operator's setting BENCH_V1_KING_SOURCE: a prefix
-    in the service's store that holds `descriptor.json` ({"id": <the checkpoint>, "files": {<name>: <sha256>}}, the form
-    of v1's publication record) and each file under its name. Empty: the row waits and nothing is rented for it."""
+    the last row of the queue and changes no king row. `source` is the operator's setting BENCH_V1_KING_SOURCE: the prefix
+    in the service's store under which the files of V1_KING_FILES are, each under its name (v1 wrote them to
+    `<v1 namespace>/checkpoints/<checkpoint>/model`). Empty: the row waits and nothing is rented for it."""
     k = V1_KING["checkpoint"]
     return [dict(model_id="v1king-" + k[:16], kind="v1-king", label=f"v1 king E{V1_KING['v1_epoch']} {k[:8]}", base_hash=k, reasoning_parser="qwen3",
                  round_id=None, head_version_id=None, crowned_at=None, uid=V1_KING["uid"], hotkey=V1_KING["hotkey"], v1_epoch=V1_KING["v1_epoch"],
                  source=os.environ.get("BENCH_V1_KING_SOURCE", "").strip().strip("/"))]
-
-
-def _own_files(m):
-    """(file name -> sha256, store key of each file) of a row with a source of its own. Raises KeyError when the
-    descriptor is not there, VerifyError when it is not the descriptor of the row's checkpoint."""
-    d = json.loads(store().get(m["source"] + "/descriptor.json"))
-    files = d.get("files") if isinstance(d, dict) else None
-    if not isinstance(files, dict) or not files or d.get("id") != m["base_hash"]:
-        raise VerifyError(f"the descriptor at the source of {m['model_id']} is not of checkpoint {m['base_hash'][:12]}")
-    for n, h in files.items():
-        if not isinstance(n, str) or not n or n.startswith(".") or "/" in n or "\\" in n or not isinstance(h, str) or len(h) != 64:
-            raise VerifyError(f"the descriptor at the source of {m['model_id']} has a file name or a sha256 that cannot be used")
-    return files, {n: f"{m['source']}/{n}" for n in files}
 
 
 def absent(m):
@@ -129,17 +137,11 @@ def absent(m):
     The head of a king can be public before its weight files: the box sends them after the next round has opened. An
     object is at its name only when its upload is complete. The answer is never kept: the store is asked each time.
     A store failure other than "not there" is raised. For a row with a source of its own the answer also says that the
-    source is not set, or that its descriptor is not there or not the row's."""
+    source is not set."""
     if m.get("source") is not None:
         if not m["source"]:
             return "the source is not set (BENCH_V1_KING_SOURCE)"
-        try:
-            files, keys = _own_files(m)
-        except KeyError:
-            return "descriptor.json is not at the source"
-        except (VerifyError, ValueError) as e:
-            return str(e)
-        return next((n for n in sorted(files) if not store().exists(keys[n])), None)
+        return next((n for n in sorted(V1_KING_FILES) if not store().exists(f"{m['source']}/{n}")), None)
     base_hash = m["base_hash"]
     if base_hash not in _served:
         models()
@@ -150,8 +152,7 @@ def presigned(m):
     """What the node needs to fetch one row's weights: the file hashes, and one expiring GET link per file."""
     base_hash = m["base_hash"]
     if m.get("source"):
-        files, keys = _own_files(m)
-        return dict(descriptor=dict(id=base_hash, files=files), urls={n: store().presign_get(keys[n], URL_TTL_S) for n in files})
+        return dict(descriptor=dict(id=base_hash, files=dict(V1_KING_FILES)), urls={n: store().presign_get(f"{m['source']}/{n}", URL_TTL_S) for n in V1_KING_FILES})
     if base_hash not in _served:
         models()
     files = dict(_served[base_hash].base_files)  # layout refuses a file name that is not one plain path segment

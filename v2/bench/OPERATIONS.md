@@ -304,18 +304,20 @@ Shown by a run of the commands on the build machine, with the store class of pro
 
 ## 12. The last king of v1
 
-The table has one row for the last king of v1: `v1king-b6d592c3bb1b4393`, kind `v1-king`, UID 920, v1 epoch 1211, v1 checkpoint `b6d592c3bb1b439365e82147a47e65d93c083a13444aceae078f8a2053cd5ce3` (v1's public record: `https://affine.io/v1-data.json`). The service runs it like a king row: the same 10 benchmarks, the same settings and budget (v1's benchmark service served its kings with the same profile, `qwen3.5-family`), a node of its own, the same guards and ceilings. It has no time of a v2 head, so it is the last row of the queue, and it changes no king row.
+The table has one row for the last king of v1: `v1king-b6d592c3bb1b4393`, kind `v1-king`, UID 920, v1 epoch 1211, v1 checkpoint `b6d592c3bb1b439365e82147a47e65d93c083a13444aceae078f8a2053cd5ce3` (v1's public record: `https://affine.io/v1-data.json`). The service runs it like a king row of v2: the same 10 benchmarks, the same settings and budget, a node of its own, the same guards and ceilings. It has no time of a v2 head, so it is the last row of the queue, and it changes no king row.
 
-Its weights are not in v2's public files. The operator says where they are, with one setting in the settings file:
+The checkpoint has 16 files. Their names and sha256 values are in the code (`V1_KING_FILES` in `affine_bench/source.py`), from v1's signed opening manifest. The id of this file map, by the rule that v1 and v2 share, is the checkpoint above; a test proves it. The operator says where the 16 files are, with one setting in the settings file:
 
 ```
 BENCH_V1_KING_SOURCE=<a prefix in the store of the service>
 ```
 
-- Under that prefix the store holds `descriptor.json` and each weight file under its plain name. `descriptor.json` is `{"id": "<the v1 checkpoint>", "files": {"<file name>": "<sha256 of the file>", ...}}`. This is the form of v1's publication record. `id` must be the checkpoint above.
-- This is the one form that the service takes today. It does not read a Hugging Face repository. The setting holds no secret: the service reads the files with its store token and gives the node read links that expire.
-- While the setting is empty, or `descriptor.json` or a file cannot be read, the row has the status `waiting` with `"waiting_for": "source"` in the table, and `bench status` says why under `waiting`. Nothing is rented for it, and it holds up no other row.
-- The service reads the setting at its start. After a change of the settings file, restart the unit. The row is queued by the first step that can read the source.
+- Under that prefix the store holds each of the 16 files under its plain name. v1 wrote them to `<v1 namespace>/checkpoints/<the checkpoint>/model` in the same bucket. With that value the service reads them in place and writes nothing to the bucket. A copy under another prefix works the same way.
+- This is the one form that the service takes today. It does not read a Hugging Face repository; no Hugging Face copy of this checkpoint is known. The setting holds no secret: the service asks for the files with its store token and gives the node read links that expire.
+- While the setting is empty, or the store does not show one of the 16 files, or the store refuses the question, the row has the status `waiting` with `"waiting_for": "source"` in the table, and `bench status` says why under `waiting`. Nothing is rented for it, and it holds up no other row.
+- The service reads the setting at its start. After a change of the settings file, restart the unit. The row is queued by the first step that can see the 16 files.
 - The node checks the sha256 of each file after the download. A download that fails counts as a fail; after 3 fails the row is `failed` and its node is given back.
 
-Not proven: that vLLM serves the v1 checkpoint's files from the store on a v2 bench node. v1's service served the same checkpoint with the same serving settings.
+One difference to v1's own row of this king. v1's public table shows this row with the profile `qwen3.5-family-pp0` (presence penalty 0). This service gives the row the profile of the v2 kings, `qwen3.5-family` (presence penalty 1.5), so the row compares with the v2 king rows and not with v1's own row.
+
+Not proven: that the store token of the service can read v1's part of the bucket, and that vLLM serves the checkpoint's files on a v2 bench node.
