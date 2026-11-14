@@ -61,7 +61,7 @@ Nothing serves the bucket to the public. The public pull on AffineValidator copi
 
 **v1 still takes turns, and it goes on until its units are stopped.** v1's evaluation was reported as torn down on 13 Nov 2026 at 4:55 PM Costa Rica time (22:55 UTC). The public `k1.json` does not show that: v1's lifecycle still makes an epoch about every 15 minutes. It starts a new turn when a seat has a valid file, and with no valid file it writes a skip. On 14 Nov 2026: epoch 1320 a skip at 00:34:41 UTC, epoch 1321 a turn for UID 893 at 00:38:49 (verdict `pending`), epoch 1322 a skip at 00:54:11, epoch 1323 a skip at 01:09:29. So the part "stop v1's rounds" is not done. What also runs: v1's hourly weight writer, `affine-ff.service` (upload links) and the publishers of the v1 site. Jacob stops each of them at its step of the list "AffineValidator".
 
-**The sign that anybody can read:** a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that v1's lifecycle runs. This line prints the last four rows (epoch, `turn` or `skip`, UID, time in UTC):
+**The sign that anybody can read:** a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that v1's lifecycle runs. The sign works only while `affine-k1.service` runs: that unit writes `k1.json` (point 2 below). This line prints the last four rows (epoch, `turn` or `skip`, UID, time in UTC):
 
 ```
 curl -fsS https://affine.io/k1.json | python3 -c 'import json,sys,time
@@ -72,8 +72,10 @@ On 14 Nov 2026 at 01:11 UTC its last line was `1323 skip None 2026-11-14 01:09:2
 
 What the operator checks, on the host where v1's round path runs (`systemctl --user`). The order is the same as before: first the units, then the last epoch, then the import.
 
-1. No unit of group A in "v1 units" is active or enabled. While one is, v1 goes on. The watchdogs come first: a watchdog that still runs starts v1's round path again.
+1. No unit of group A in "v1 units" is active or enabled. While one is, v1 goes on. The watchdogs come first: a watchdog that still runs starts v1's round path again. By v1's code in this repository, each watchdog has ended by itself, so the result to expect is a list with no watchdog that reverts v1 ("v1 units", group A, point 1).
 2. v1's last epoch does not move. Run the line above two times, 20 minutes apart, so that the time of one v1 epoch lies between them: the last line must be the same. Then run the import dry run ("GPU box", step 4) two times in the same way: `v1_last_epoch` in the `source:` line, the kings and the front seats must be the same. If the last epoch moved, the lifecycle still runs: go back to point 1. Not proven: that the last epoch stands still when no unit of group A runs. If it still moves then, send the output to the coordinator.
+
+   **`k1.json` is a proof only while `affine-k1.service` runs.** That unit writes `k1.json`. Once it is stopped (step 10 of "AffineValidator"), `k1.json` stands still, whatever the lifecycle does. Then the proof that v1 takes no turn is the state of the unit: `systemctl --user is-active affine-mimo-lifecycle.service` prints `inactive`, and `systemctl --user is-enabled affine-mimo-lifecycle.service` prints `disabled`.
 
 **The numbers in this file are those of the moment.** They move while v1 runs and while miners register. On 13 Nov 2026 at 23:04 UTC the dry run gave `v1_last_epoch=1314`, 10 kings, 14 front seats and 256 waiting seats. On 14 Nov 2026 at 01:00 UTC, v1's files of epoch 1310 and the chain of that minute gave 257 waiting seats (14 front, 49 normal, 194 back), and 8 minutes later 258. Check a number against the output of your own run, not against this file.
 
@@ -428,7 +430,7 @@ Run every command from `v2/`, inside the virtual environment.
 
 ## AffineValidator: the order at the cutover
 
-One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. Step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap). Step 12 also needs step 10 of "GPU box" (the round loop runs).
+One list, in this order. Each step has its check. Do not start a step before the check of the step before it passes. One exception: step 11 can go before step 9 (step 11 says how). Step 4 must be done before step 7 of "GPU box" (the import's real run). Steps 5 to 13 need step 8 of "GPU box" (the bootstrap). Step 12 also needs step 10 of "GPU box" (the round loop runs).
 
 **What can be done now, before the smoke test is green: steps 1, 2, 3 and 4, the chain check of step 6, and the file check 8.1.** None of them changes anything that is live: they start no unit, enable no timer, stop nothing of v1, and write nothing to the chain, to the store or into the site directory. Each one is marked **Can be done now** in the list.
 
@@ -441,7 +443,7 @@ One list, in this order. Each step has its check. Do not start a step before the
 | 6, the chain check only | The script file. It only reads the chain. | Nothing. Step 9 runs it again. |
 | 8.1 | Nothing. It reads the mode and the names of the pull's credentials file. | Step 8 runs it again. |
 
-Set the session names and the helper `with_token` again in each new shell.
+**In each new shell:** set the session names and the helper `with_token` again, then run `cd "$REPO/v2" && source .venv/bin/activate`. Steps 5, 6 and 9 call `python` with no path, and only this line makes it the Python of the checkout. Without it the weights writer ends with `No module named sn120_v2`. Nothing is written then: run the line, then the command again.
 
 Everything else waits. Step 5, the two dry runs of step 6 and step 7 read the journal copy in the production store, and that copy exists only after the bootstrap. From 8.3 on, each step changes something that is live.
 
@@ -751,7 +753,9 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
    To take only this step back (the new `llms.txt` is up, the site is still v1's): `cp -p "$BACKUP/llms.txt" "$SITE/llms.txt.tmp" && mv "$SITE/llms.txt.tmp" "$SITE/llms.txt"`, then start `affine-network-dashboard.service` again.
 9. **Move the weights writer from v1 to v2. This is one step: do not pause inside it.** Only one writer can set weights: two writers on one hotkey block each other at the rate limit, and each overwrites the other. While v1's writer runs, every v2 run defers at the rate limit, so v1 stops first.
 
-   **The best time: between minute 25 and minute 55 of an hour.** v1 writes at minute 01. The chain allows one write per 100 blocks for one hotkey (20 minutes), so from minute 21 the next write is allowed. Before minute 55, v1's next run is still far.
+   **The clean window for the first write (9.4): minute 25 to minute 44 of an hour.** v1 writes at minute 01. The chain allows one write per 100 blocks for one hotkey (20 minutes), so from minute 21 the next write is allowed. v2's timer runs at minute 05 of each hour. After a first write up to about minute 44, 100 blocks or more lie before that run, and it writes.
+
+   **A first write from minute 45 to minute 55 is also correct.** Then fewer than 100 blocks lie before the timer's run at minute 05. That run defers with `recent write: the rate limit allows the next one in N blocks`, and it uses the attempt of its hour. Nothing is lost: v2's first table stays on chain, and the next write comes one hour later (9.7). Do 9.2 before minute 55 in any case: v1's next run is still far then.
 
    SN120 has commit-reveal on: the weights go to the chain hidden (the commit), and the chain opens them by itself after one epoch, at most 72 minutes later (the reveal). So `set` means that the chain accepted the commit; the weights change at the reveal.
 
@@ -796,7 +800,12 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       journalctl -u sn120-v2-weights.service -n 20 --no-pager
       ```
 
-      Check: the log shows `kings: read from the journal copy in the store`, then one JSON line with `"status":"set"`. With `"status":"deferred"`, nothing was submitted and the reason is in the line; v1's last weights stay on chain. Correct the cause, then run one more attempt by hand. `--force` only skips the rule of one attempt for each clock hour; every other check stays.
+      Check: the log shows `kings: read from the journal copy in the store`, then one JSON line with `"status":"set"`. With `"status":"deferred"`, the reason is in the line. It says if a submission went out:
+
+      - **The reason starts with `submission failed:`, or it is a text of the chain** (none of the writer's own texts of the next point): a submission was sent, and the writer did not see the chain accept it. Run the chain check before any other command. If `last write block` is still the block of 9.1, the chain took nothing: correct the cause, then run one more attempt by hand. If `last write block` is new, the commit is on chain: go on with 9.5 and 9.6, run no second attempt, and send the line to the coordinator.
+      - **Every other reason: nothing was submitted**, and v1's last weights stay on chain. These are the writer's own texts: `recent write: ...`, `plan failed: ...`, `plan refused: ...`, `this hour already had its attempt`, `another weights writer holds the lock`, `the writer state file is unreadable: ...`, `the weight setter failed: ...`, `the validator hotkey is not registered on the subnet`, `UIDs [...] are not on chain`, `the wallet does not sign as the validator hotkey`, and each text that ends with `nothing submitted` or with `nothing submitted, the last valid weights stay`. Correct the cause, then run one more attempt by hand.
+
+      `--force` only skips the rule of one attempt for each clock hour; every other check stays.
 
       ```
       ( set -a; . "$WENV"; set +a
@@ -814,26 +823,59 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
       Check: the timer is listed with its next run. If the first run and the first timer run are in the same clock hour, the timer run prints `this hour already had its attempt`; this is normal.
    6. **Check the commit, then the reveal.** Run the chain check at once.
 
-      Check: `last write block` is a few blocks after the `block` of the `set` line, and a line `commit that waits for its reveal: block <the same block> | opens at <time>` is there. About 3 minutes after that time, run the chain check again: the `commit that waits` line is gone, and `weights on chain` equals the `weights` of the dry run.
+      Check: `last write block` is a few blocks after the `block` of the `set` line, and a line `commit that waits for its reveal: block <the same block> | opens at <time>` is there. About 3 minutes after that time, run the chain check again: no `commit that waits` line has that block any more, and `weights on chain` equals the `weights` of the dry run. Compare the block, not the presence of a line: a later write puts a new `commit that waits` line there with another block. The timer's run at minute 05 is such a write.
    7. **Check the first timer run**, after the next minute 05: `journalctl -u sn120-v2-weights.service --since "70 minutes ago" --no-pager`.
 
-      Check: the timer's run shows `"status":"set"`. A run that shows `recent write` means that another writer wrote in the last 20 minutes: find that writer and stop it (9.2).
+      Check: the timer's run shows `"status":"set"`.
+
+      - **`recent write: the rate limit allows the next one in N blocks` is normal after a first write (9.4) later than about minute 44.** Fewer than 100 blocks lie between the two. Nothing is lost: v2's first table stays on chain. The proof: the chain check shows the `last write block` of 9.6. The next write is one hour later: read the log again after the next minute 05, and that run shows `"status":"set"`.
+      - `recent write` in any other case, or a `last write block` that moved while no v2 run shows `"status":"set"`: another writer wrote in the last 20 minutes. Find that writer and stop it (9.2).
 
    Go on with step 10 after the check of 9.5. The checks of 9.6 and 9.7 come later by the clock; do them when their time comes.
 10. **Stop v1's writers of the site directory, then check that nothing writes.** v1's weight writer is already stopped (step 9). Stop and disable `affine-ff.service`, `affine-k1.service` and each other unit of group C in "v1 units" that the list of step 4 shows as active. Two writers of one public file are never allowed: a v1 unit that still runs writes `mining.json` or `llms.txt` over v2's files, and the pull writes them back a minute later, so the public files change back and forth.
 
+    **Where v1's round path still runs (group A of "v1 units"), the order is: the watchdogs, then group A, then this step.** In the order of this runbook, group A is stopped before the import ("The state of v1", point 1), so this step starts at the first line of the block. The reason for the order is in v1's code in this repository; nobody read it from the host:
+
+    - A watchdog that still runs can bring back a unit that this step stopped. The revert of `ff-watchdog` starts `affine-mimo-lifecycle.service` and runs `systemctl --user restart` on `affine-mining-discovery` and four more units. A restart also starts a unit that is stopped and disabled. `affine-mining-discovery` is v1's writer of `mining.json`, so v1's file would go over v2's. "v1 units", group A, point 1 has the detail.
+    - The first line of the block lists the watchdogs. **The result to expect: no watchdog that reverts v1**, because each one has ended by itself. `affine-perf-watchdog` can be in the list: see the next point. If another watchdog is listed, stop and disable it before any other unit.
+    - `affine-perf-watchdog.timer` runs every 5 minutes. It restarts `affine-perf-eval` and `affine-perf-eval-2` when they are not active and still enabled. So `stop` alone does not hold for these two units: use `disable --now` as in the block, or stop the timer first.
+
     ```
+    systemctl --user list-units '*watchdog*'
     systemctl --user disable --now affine-ff.service affine-k1.service        # and each other unit of group C that is active
     touch "$KEEP/mark"; sleep 90
     find "$SITE" -newer "$KEEP/mark" -type f -not -path "$SITE/ff/links/*" -not -name links.json -not -path "$SITE/public/*"
     ```
 
     Check: for each unit, `systemctl --user is-active <unit>` prints `inactive` and `is-enabled` prints `disabled`. `issued_at` in `https://affine.io/ff/links.json` does not change any more, and `generated_at` in `https://affine.io/ff/status.json` does not change any more: v1's service writes both, and v2 writes no `ff/status.json`. `find` prints nothing. Each line that it prints is a file that some process still writes: find that process and stop it, then run the last two lines again.
-11. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped (step 10), and the bootstrap is done. See "Upload links job" for the reason.
+
+    **`find` when v2's pull already runs** (step 12 was done before this step). The pull writes `mining.json`, `llms.txt` and `site-data.json` at the root of the site when `run` published a new snapshot, and only then. So `find` can print these three names, and the writer can be v2's own pull. The test: run the last two lines again; the three names must not come again. A second test for `mining.json`: `python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("epoch"))' "$SITE/mining.json"` prints `None` for v2's file. If it prints an epoch name of v1, `affine-mining-discovery.service` runs again. Any other name in the output of `find` is not from the pull.
+
+    **What can start a stopped unit again** (from the repository, not from the host):
+
+    - `systemctl --user stop` holds. No unit file in the repository has `OnFailure=`, `PartOf=`, `BindsTo=` or `Requires=`, and `Wants=` names only `network-online.target`. The repository does not hold the unit files of the lifecycle, of `affine-k1`, of `affine-mining-discovery`, of `affine-training-params`, of `affine-k1-transparency` and of the gate. For these the host is the truth: `systemctl --user cat <unit> | grep -E '^(Restart|OnFailure|PartOf|BindsTo|Requires|Wants)='`.
+    - A kill is not a stop. `affine-ff.service`, `affine-perf-eval`, `affine-perf-eval-2`, `affine-bench` and `affine-fp32-master-publish` have `Restart=always`: systemd starts them again after a kill or a crash (`affine-ff.service` after 20 seconds), not after a stop. Never use `kill` on a unit.
+    - `systemctl --user restart` starts a stopped unit. These scripts of v1 run it on `affine-ff`, `affine-mining-discovery`, `affine-training-params` and `affine-k1-transparency`: `activate_tp.sh`, `activate_sm.sh`, `activate_12k.sh` (the switch and the revert of each) and `tools/caps/caps_apply.py`. Run none of them after this step.
+    - The public sign that `affine-ff.service` is back: `generated_at` in `https://affine.io/ff/status.json` moves again.
+
+    After the stop of `affine-k1.service`, `k1.json` stands still and proves nothing about v1's lifecycle: "The state of v1", point 2, has the check of the unit.
+11. **First run of the links job, then its timer.** Two conditions: `affine-ff.service` is stopped, and the bootstrap is done. See "Upload links job" for the reason.
+
+    **This step needs the stop of `affine-ff.service` only. It does not need step 9, and it does not need the other stops of step 10.** So when step 9 waits for its minute, do this step first:
+
+    1. The first line of the block of step 10: no watchdog that reverts v1 is listed.
+    2. `systemctl --user disable --now affine-ff.service`, with the check of step 10 for this one unit: `is-active` prints `inactive`, `is-enabled` prints `disabled`, and `generated_at` in `https://affine.io/ff/status.json` does not change any more.
+    3. The block below. Then step 9, then the rest of step 10.
+
+    Why this is safe, from v1's code in this repository:
+
+    - v1's weight writer does not need `affine-ff.service`. By the text of v1's K1 service (`ops/k1_pass_rates/services/k1_service.py`), the hourly writer reads `website/scores.json`, and `affine-k1.service` writes that file from v1's turns and verdicts. Step 9 stops the writer, and step 10 stops `affine-k1.service` after it.
+    - The stop of `affine-ff.service` alone starts no revert: `ff-watchdog` reads no file of that service.
+    - The stop does not end v1's turns either. v1's lifecycle takes the hotkeys from the chain file of `affine-k1.service` and lists the miners' files in the bucket by itself. A miner's file has the same key for v1 and for v2. So while the lifecycle runs, a file that is valid for v1 gets a v1 turn. v1 only copies the file: the seat in v2 is not touched. The stop of the lifecycle ends the turns ("v1 units", group A).
 
     Do not wait with this step. v1's service gives no link to a hotkey that had its v1 turn. The front seats of v2 are such hotkeys: the v1 turns with no verdict ("What the import carries"). So while v1's service issues the links, a front seat has no link file (HTTP 404 at `https://affine.io/ff/links/<hotkey>.json`) and cannot upload a new file. It needs a new file when its v1 file has train keys that only v1 had: v2 takes that file as invalid ("What the import carries"). The other seats are not blocked in the meantime: the link that v1 issued points to the same object that v2 reads.
 
-    The numbers of a read on 14 Nov 2026, 01:13 UTC, with v1's service as the writer: the index named 209 hotkeys; v2's job would issue 224 link files, the 209 among them; the 15 others were the 14 front seats and UID 893, which had its v1 turn at 00:38 UTC. v2 found no valid file for a front seat.
+    The numbers of a read on 14 Nov 2026, 01:13 UTC, with v1's service as the writer: the index named 209 hotkeys. v2's job would issue a link file for each of them, and for the hotkeys that v1 gives no link: the 14 front seats, and each hotkey that had a v1 turn after the import. At that read this was UID 893 (its v1 turn at 00:38 UTC); UID 876 came at 01:20:51 UTC. **This count is not fixed.** While v1's lifecycle runs, each v1 turn adds one hotkey that v1 gives no more link and that keeps its seat in v2. v2 found no valid file for a front seat.
 
     ```
     sudo systemctl start sn120-v2-links.service
@@ -1778,10 +1820,21 @@ Stop: `sudo systemctl disable --now sn120-v2-site-pull.timer`. The files stay as
 
 The names come from documents in this repository. The repository does not show which of them run now. The host is the truth: `systemctl --user list-units 'affine-*' 'sn120-*' '*watchdog*'` and `systemctl --user list-timers --all`.
 
-**Group A: the round path. Check that each is inactive and disabled.** The sign that anybody can read: a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that the lifecycle runs. On 14 Nov 2026 it did ("The state of v1" has the line that prints the rows).
+**Group A: the round path. Check that each is inactive and disabled.** The sign that anybody can read: a new row in `turns` of `https://affine.io/k1.json` about every 15 minutes means that the lifecycle runs. On 14 Nov 2026 it did ("The state of v1" has the line that prints the rows). The sign works only while `affine-k1.service` runs. After its stop the proof is the unit state: `systemctl --user is-active affine-mimo-lifecycle.service` prints `inactive`.
 
-1. The watchdogs: `tp-watchdog`, `ff-watchdog`, and any other unit that `systemctl --user list-units '*watchdog*'` shows. A watchdog reverts v1 or starts it again when the lifecycle is down for 90 seconds (`ops/free_file/README.md`, `ops/ff_train_params/README.md`).
-2. `affine-mimo-lifecycle.service`: selects the next turn and starts the training.
+1. The watchdogs: `tp-watchdog`, `ff-watchdog`, and any other unit that `systemctl --user list-units '*watchdog*'` shows. A watchdog reverts v1 or starts it again when the lifecycle is down for 90 seconds (`ops/free_file/README.md`, `ops/ff_train_params/README.md`). The points below are from v1's code in this repository, not from the host.
+   - **The result to expect: the list shows no watchdog that reverts v1.** Each watchdog is started for a fixed time or for a fixed count of epochs. Then it ends by itself with exit code 0, and nothing starts it again (its unit has `Restart=on-failure` or no `Restart=`).
+     - `ff-watchdog`: until 31 Oct 2026, 9:00 AM Costa Rica time (`WATCH_UNTIL=1793458800` in `activate_ff.sh` and `activate_tp.sh`). Its last log line is `watch window over; exiting`.
+     - `tp-watchdog`: 24 hours. `12k-watchdog`: 3 days. `sm-watchdog`: 7 days.
+     - The watchdogs of the gate (`affine-vl-watchdog`, `affine-cap-watchdog`, `affine-zflat-watchdog`, `affine-prior-watchdog`, `affine-irt-watchdog`): 24 to 72 hours.
+     - `ts-watchdog`, `ts-watchdog-f` and `legacy-watchdog`: 2 or 3 trainings or epochs.
+     - The newest commit that starts one of them is of 2 Nov 2026, so the longest window ended about 9 Nov 2026.
+   - `affine-perf-watchdog.timer` and its service can be in the list. They revert nothing: group C has them.
+   - **If another watchdog is listed** (somebody armed it again by hand, or a change that is not in the repository): `systemctl --user stop <unit>` first, before any unit of group A, then `systemctl --user disable <unit>`. `systemd-run` started these units, so `disable` can print an error for a unit that has no unit file; the proof is that the list does not show the unit any more.
+   - **Why first.** `ff-watchdog` runs the revert of `ops/free_file/activation/activate_ff.sh` when the lifecycle is not active for 90 seconds, when no epoch is finalized for 45 minutes, or when the selection failed in 2 epochs. The revert starts `affine-mimo-lifecycle.service` again. Then it runs `systemctl --user restart` on `affine-training-params`, `affine-k1`, `affine-k1-transparency`, `affine-mining-discovery` and `affine-promotion-gate`. A restart also starts a unit that is stopped and disabled. So a stopped unit of group A or group C comes back, and v1's `mining.json` goes over v2's.
+2. `affine-mimo-lifecycle.service`: selects the next turn and starts the training. From v1's code in this repository:
+   - It gives turns without `affine-ff.service`: it takes the hotkeys from the chain file of `affine-k1.service` (`K1-CHAIN.json`, written every 300 seconds) and lists the miners' files in the bucket by itself. Only its own stop ends the epochs.
+   - When `affine-k1.service` is stopped and the lifecycle still runs, the chain file gets too old (the limit is a value on the host). Then each selection ends as a skip with the reason `ff-selection-error`: v1 gives no more turns, but the lifecycle still makes epochs, and `k1.json` no longer shows them.
 3. `affine-promotion-gate.service`: judges a turn. With it stopped, the set of turns with no verdict does not change.
 4. `affine-mimo-trainer-supervised.service` and `affine-mimo-evaluator-supervised.service`, with their `-tunnel` units (`ops/pods/roles.json`).
 
@@ -1797,7 +1850,7 @@ The names come from documents in this repository. The repository does not show w
 - `affine-ff.service`: issues the miners' upload links, checks their files, writes `ff/links/`, `ff/links.json` and `ff/status.json`.
 - `affine-k1.service`: writes `website/scores.json` and `website/k1.json`. It does not write to the chain. The import refuses a `k1.json` older than one hour, so stop it after the import's real run, or use `--max-age-s`.
 - `affine-mining-discovery.service` (`mining.json`), `affine-k1-transparency.service`, `affine-training-params.service`.
-- `affine-prior-table.service`, `affine-perf-eval.service`, `affine-perf-eval-2.service`, `affine-perf-watchdog.timer`, `affine-bench.service`.
+- `affine-prior-table.service`, `affine-perf-eval.service`, `affine-perf-eval-2.service`, `affine-perf-watchdog.timer`, `affine-bench.service`. The timer runs `ops/performance_eval/perf_watchdog.sh` every 5 minutes: it restarts `affine-perf-eval` and `affine-perf-eval-2` when they are not active and still enabled. Disable these two, or stop the timer first; `stop` alone does not hold.
 - `affine-site-baseline.timer`, `affine-site-k1-tables.timer`, `affine-site-slices.timer`, `affine-site-metrics.service`.
 
 Leave `sn120-disk-guard.timer` on. `sn120-pod-watch.timer` only reports the state of the v1 pods and never rents (`ops/pods/README.md`); stop it when the v1 pods are released. Do not run `replace_pod.py replace` for a v1 role after the cutover.
