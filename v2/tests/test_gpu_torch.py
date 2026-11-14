@@ -45,7 +45,7 @@ TEMPLATE = "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] 
 
 @pytest.fixture(autouse=True)
 def one_thread():
-    """bf16 on CPU is not repeatable when torch runs threads inside threads; one thread is."""
+    """One torch thread in each test. This alone does not make a bf16 run on a CPU repeat: see ``amx_off`` in conftest.py."""
     before = torch.get_num_threads()
     torch.set_num_threads(1)
     yield
@@ -104,7 +104,7 @@ def test_the_lora_has_the_names_of_the_weight_files_and_the_reported_norm(head_d
     assert (config["r"], config["lora_alpha"], config["peft_type"]) == (16, 32.0, "LORA")
 
 
-def test_same_seed_same_lora_and_replicas_give_the_one_gpu_result(head_dir, tmp_path):
+def test_same_seed_same_lora_and_replicas_give_the_one_gpu_result(head_dir, tmp_path, amx_off):
     first = hash_tree(run(head_dir, tmp_path / "a") and tmp_path / "a")
     assert hash_tree(run(head_dir, tmp_path / "b") and tmp_path / "b") == first
     assert hash_tree(run(head_dir, tmp_path / "c", seed=8) and tmp_path / "c") != first
@@ -114,7 +114,7 @@ def test_same_seed_same_lora_and_replicas_give_the_one_gpu_result(head_dir, tmp_
 
 
 def test_the_warm_up_row_changes_no_byte_of_what_training_makes(head_dir, tmp_path, monkeypatch):
-    # float32: on a busy CPU a bf16 run is not always repeatable, with or without the warm-up row, and this test compares bytes.
+    # float32: this test compares bytes, and float32 on a CPU uses no AMX (for bf16 see ``amx_off`` in conftest.py).
     def tree(name: str, n: int) -> dict:
         run(head_dir, tmp_path / name, devices=("cpu",) * n, dtype="float32")
         return hash_tree(tmp_path / name)  # the LoRA, its config and the train report
