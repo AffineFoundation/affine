@@ -495,11 +495,15 @@
      in USD is the Alpha price in TAO times the TAO price, so it needs the two.
      A feed that gives an error status or a bad file is not asked again until the page is loaded again: the browser
      writes one console line for each such request, and one line for each page load is the most that this page causes.
-     The prices in view still go out of view when they become too old. */
+     The prices in view still go out of view when they become too old.
+     A request with no answer at all (no network) is asked again, but less and less often: PRICE_WAITS is the wait in
+     minutes, by the count of such requests in a row. One answer brings the wait back to 1 minute. A page that is not
+     in view (`document.hidden`) makes no request. */
+  const PRICE_WAITS = [1, 1, 2, 4, 10];
   const PRICE_MAX_AGE = 7200;
   const priceRow = document.querySelector('.prices'), priceEl = { tao: document.getElementById('tao-usd'), alpha: document.getElementById('alpha-usd'), rate: document.getElementById('alpha-tao') };
   const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  let priceFeed = true, lastPrices = null;
+  let priceFeed = true, lastPrices = null, priceFails = 0;
   function showPrices(p) {
     const now = Date.now() / 1000;
     const fresh = (v, at) => typeof v === 'number' && isFinite(v) && v > 0 && typeof at === 'number' && now - at < PRICE_MAX_AGE && now - at > -300;
@@ -518,18 +522,19 @@
     }
   }
   async function prices() {
-    if (priceFeed) {
+    if (priceFeed && !document.hidden) {
       let res = null;
-      try { res = await fetch('incentive-live.json?t=' + Date.now(), { cache: 'no-store' }); } catch { /* no network now: the next minute asks again */ }
+      try { res = await fetch('incentive-live.json?t=' + Date.now(), { cache: 'no-store' }); } catch { /* no network now: the wait grows */ }
+      priceFails = res ? 0 : priceFails + 1;
       if (res) {
         const p = res.ok ? (await res.json().catch(() => null) || {}).incentive_prices : null;
         if (p && typeof p === 'object') lastPrices = p; else priceFeed = false;
       }
     }
     showPrices(lastPrices);
+    setTimeout(prices, PRICE_WAITS[Math.min(priceFails, PRICE_WAITS.length - 1)] * 60000);
   }
   prices();
-  setInterval(prices, 60000);
 
   const copyView = document.getElementById('copy-view');
   copyView.addEventListener('click', async () => {
