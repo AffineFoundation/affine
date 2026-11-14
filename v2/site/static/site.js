@@ -467,6 +467,96 @@
     el.textContent = V1 ? (D ? `Archived ${utc(D.archived_at)}. This page does not change.` : 'The v1 archive is not on this site.')
       : !D ? 'No data yet.' : (failed ? 'Refresh failed; this is the last good data. ' : '') + `Last change published ${dur(Date.now() / 1000 - D.generated_at)} ago.`;
   }
+  /* header and footer of the v1 site (network-desktop.js, top.js): the theme button, the prices, "Copy view", the old anchors */
+  const root = document.documentElement, themeButton = document.getElementById('theme'), device = matchMedia('(prefers-color-scheme:light)');
+  const savedTheme = () => { try { const t = localStorage.getItem('affine:theme'); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
+  function theme(next) {
+    root.dataset.theme = next;
+    document.querySelector('meta[name="theme-color"]').content = next === 'light' ? '#ffffff' : '#000000';
+    const other = next === 'light' ? 'dark' : 'light';
+    themeButton.setAttribute('aria-pressed', String(next === 'light'));
+    themeButton.setAttribute('aria-label', `Switch to ${other} mode`);
+    themeButton.title = `Switch to ${other} mode`;
+  }
+  const deviceTheme = () => device.matches ? 'light' : 'dark';
+  theme(savedTheme() || deviceTheme());
+  themeButton.addEventListener('click', () => {
+    const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+    try { localStorage.setItem('affine:theme', next); } catch { /* the choice then holds for this page only */ }
+    theme(next);
+  });
+  addEventListener('storage', e => { if (e.key === 'affine:theme') theme(savedTheme() || deviceTheme()); });
+  device.addEventListener('change', () => { if (!savedTheme()) theme(deviceTheme()); });
+
+  /* Prices of the header. The feed is incentive-live.json, the same file that the v1 header read; its prices come from
+     the chain (Alpha in TAO) and from a price service (TAO in USD) and do not depend on the v1 game. A price is shown
+     only when the time of that price (`tao_usd_at`, `alpha_tao_at`) is less than PRICE_MAX_AGE seconds before now.
+     In all other cases the header shows no price: no dash and no message, and the price row is closed. The Alpha price
+     in USD is the Alpha price in TAO times the TAO price, so it needs the two.
+     A feed that gives an error status or a bad file is not asked again until the page is loaded again: the browser
+     writes one console line for each such request, and one line for each page load is the most that this page causes.
+     The prices in view still go out of view when they become too old.
+     A request with no answer at all (no network) is asked again, but less and less often: PRICE_WAITS is the wait in
+     minutes, by the count of such requests in a row. One answer brings the wait back to 1 minute. A page that is not
+     in view (`document.hidden`) makes no request. */
+  const PRICE_WAITS = [1, 1, 2, 4, 10];
+  const PRICE_MAX_AGE = 7200;
+  const priceRow = document.querySelector('.prices'), priceEl = { tao: document.getElementById('tao-usd'), alpha: document.getElementById('alpha-usd'), rate: document.getElementById('alpha-tao') };
+  const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let priceFeed = true, lastPrices = null, priceFails = 0;
+  function showPrices(p) {
+    const now = Date.now() / 1000;
+    const fresh = (v, at) => typeof v === 'number' && isFinite(v) && v > 0 && typeof at === 'number' && now - at < PRICE_MAX_AGE && now - at > -300;
+    const tao = p && fresh(p.tao_usd, p.tao_usd_at) ? p.tao_usd : null, alpha = tao !== null && fresh(p.alpha_tao, p.alpha_tao_at) ? p.alpha_tao : null;
+    priceEl.tao.closest('div').hidden = tao === null;
+    priceEl.alpha.closest('div').hidden = alpha === null;
+    priceRow.hidden = tao === null;
+    if (tao !== null) {
+      priceEl.tao.textContent = usd(tao);
+      priceEl.tao.title = `TAO in US dollars, read ${utc(p.tao_usd_at)}.`;
+    }
+    if (alpha !== null) {
+      priceEl.alpha.textContent = usd(alpha * tao);
+      priceEl.alpha.title = `Alpha of subnet 120 in US dollars: its price in TAO times the price of TAO. Read ${utc(p.alpha_tao_at)}.`;
+      priceEl.rate.textContent = alpha.toFixed(5) + ' TAO';
+    }
+  }
+  async function prices() {
+    if (priceFeed && !document.hidden) {
+      let res = null;
+      try { res = await fetch('incentive-live.json?t=' + Date.now(), { cache: 'no-store' }); } catch { /* no network now: the wait grows */ }
+      priceFails = res ? 0 : priceFails + 1;
+      if (res) {
+        const p = res.ok ? (await res.json().catch(() => null) || {}).incentive_prices : null;
+        if (p && typeof p === 'object') lastPrices = p; else priceFeed = false;
+      }
+    }
+    showPrices(lastPrices);
+    setTimeout(prices, PRICE_WAITS[Math.min(priceFails, PRICE_WAITS.length - 1)] * 60000);
+  }
+  prices();
+
+  const copyView = document.getElementById('copy-view');
+  copyView.addEventListener('click', async () => {
+    let done = false;
+    try { await navigator.clipboard.writeText(location.href); done = true; } catch { /* no clipboard in this browser or context */ }
+    copyView.textContent = done ? 'Copied' : 'Copy unavailable';
+    setTimeout(() => { copyView.textContent = 'Copy view'; }, 1800);
+  });
+
+  /* Links to the v1 page used #k1-kings, #k1-queue and #k1-history. Each old id is put at the start of the section
+     that now holds that table, so such a link opens the right place. */
+  for (const id of ['kings', 'queue', 'history']) {
+    const section = document.getElementById(id);
+    if (!section || document.getElementById('k1-' + id)) continue;
+    const mark = document.createElement('a');
+    mark.id = 'k1-' + id;
+    mark.setAttribute('aria-hidden', 'true');
+    section.prepend(mark);
+  }
+  const oldAnchor = /^#k1-(kings|queue|history)$/.exec(location.hash);
+  if (oldAnchor && document.getElementById(oldAnchor[1])) location.replace('#' + oldAnchor[1]);
+
   async function load(first) {
     try {
       const res = await (first || fetch(DATA + '?t=' + Date.now(), { cache: 'no-store' }));
