@@ -1,5 +1,5 @@
-"""The one place where the benchmark service touches v2 state. It reads public objects of the store, with `get` and
-`presign_get`. Its only write is the result table at `layout.BENCHMARKS`.
+"""The one place where the benchmark service touches v2 state. It reads public objects of the store, with `get`,
+`exists` and `presign_get`. Its only write is the result table at `layout.BENCHMARKS`.
 
 Rows come from the public chain of heads: the head pointer, and for each head the head it came from. A stacked head
 names that head as its parent. A folded head names its round, and the public round file names the head the round opened
@@ -92,6 +92,17 @@ def models():
             row |= dict(model_id="king-" + k[:16], kind="king", label=f"{head.round_id} {k[:8]}", uid=uid, hotkey=hotkey)
         rows.append(row)
     return sorted(rows, key=lambda r: r["crowned_at"])
+
+
+def absent(base_hash):
+    """The name of a weight file of a listed row that the store does not hold, or None when it holds them all.
+
+    The head of a king can be public before its weight files: the box sends them after the next round has opened. An
+    object is at its name only when its upload is complete. The answer is never kept: the store is asked each time.
+    A store failure other than "not there" is raised."""
+    if base_hash not in _served:
+        models()
+    return next((n for n in sorted(_served[base_hash].base_files) if not store().exists(layout.public_base_file(base_hash, n))), None)
 
 
 def presigned(base_hash):
