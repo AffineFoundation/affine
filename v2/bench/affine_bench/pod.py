@@ -1,6 +1,6 @@
-"""Bench pod lifecycle on Lium: rent on demand when a king is queued, release when idle (Jacob pt1079u-era decision,
-2026-11-02: bench only new GREEN kings; ~1 king per 1-3 h and ~30 min per king, so an idle $30/h pod costs more than
-re-renting). Runs on the host; the Lium key stays in the operator's Lium config and is never printed or logged.
+"""Bench pod lifecycle on Lium: rent on demand when a row is queued, release when idle (Jacob's decision for v1,
+2026-11-02: an idle pod costs more than renting again; v1's rate of kings and v1's price are not v2's, see
+OPERATIONS.md). Runs on the host; the Lium key stays in the operator's Lium config and is never printed or logged.
 
 Guard rails (owner's spending rules): one bench pod at most, always named NAME; never above BENCH_MAX_PRICE $/h; at most
 MAX_RENTS_PER_DAY rents per 24 h; release touches only the exact Lium id this module rented (recorded in RECORD) and only

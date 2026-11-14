@@ -1,2 +1,0 @@
-[console_scripts]
-affine-bench = affine_bench.cli:main
