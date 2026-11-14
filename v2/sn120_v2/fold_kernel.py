@@ -22,8 +22,9 @@ Each step of the head chain names the kernel that made its product:
     one time to the nearest fp32, ties to the even last bit. The scale is
     ``lora_alpha / rank`` rounded to fp32, and it is applied one time, after the
     sum. No library decides the order, so the bits are the same on every CPU
-    and on a GPU. The code does each step in fp64 and rounds the fp64 sum to
-    odd; the rounding to fp32 that follows then gives exactly the fused result.
+    and on a GPU. The code does each step in fp64 and rounds the sum to fp32.
+    For the few numbers where those two roundings can differ from one rounding,
+    it rounds the fp64 sum to odd first; that gives exactly the fused result.
 ``torch-matmul-v1``
     ``scale * (B @ A)`` by torch on the CPU, as ``gpu/folder.py`` does it. The
     matrix library of the torch build and the type of the CPU decide the bits.
@@ -37,16 +38,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
-import os
+import queue
 import shutil
 import struct
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator, Sequence
+from typing import BinaryIO, Callable, Iterator, Sequence, TypeVar
 
 import torch
 from safetensors.torch import load_file
@@ -54,6 +57,7 @@ from safetensors.torch import load_file
 from .canonical import manifest_digest
 from .errors import VerifyError
 
+_T, _R = TypeVar("_T"), TypeVar("_R")
 FIXED_ORDER, TORCH_MATMUL = "fixed-order-v1", "torch-matmul-v1"
 KERNELS = (FIXED_ORDER, TORCH_MATMUL)
 PART_BYTES = 4 * 1024**3  # the same limit as gpu/folder.py: one master part is one upload
@@ -62,10 +66,14 @@ _META = {"format": "pt"}
 _FLOATS = {"F32": (torch.float32, 4), "BF16": (torch.bfloat16, 2), "F16": (torch.float16, 2)}
 _BITS = {2: torch.int16, 4: torch.int32}
 _BLOCK = 64 * 1024**2  # bytes of fp32 that one read of an unchanged tensor holds
-# torch runs an operation on fewer elements than this in the thread that calls it.
-# So the threads of this module do not fight with the threads of torch.
-_CPU_CHUNK = 32768
+# torch gives each of its threads at least this number of elements of one operation.
+# One piece of work has this number for each thread, so the numbers of one thread stay in its cache.
+_GRAIN = 32768
 _GPU_CHUNK = 1 << 24
+# A cast from fp64 to fp32 drops 29 bits. A shift by 35 puts them at the top of 64 bits, and the
+# pattern 1000...0 (the middle of two fp32 numbers) is then the lowest whole number of 64 bits.
+_DROPPED_TO_TOP, _MIDDLE = 35, -(1 << 63)
+_SMALL = 0x00FFFFFF  # (bits - 1) without the sign is below this: not zero and smaller than 2**-125
 
 # The five shapes (rows, columns) of the weights that a LoRA of the launch model changes.
 SHAPES = {"gate_up": (12288, 4096), "down": (4096, 12288), "q": (8192, 4096), "kv": (1024, 4096), "o": (4096, 4096)}
@@ -90,28 +98,55 @@ MARKS = {
 # ---- the product ----
 
 
-def _fused_rows(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """``acc = fma(b[:, k], a[k, :], acc)`` for each rank in order. ``a`` and ``b`` are fp64 copies of fp32 values."""
+def _one_rounding(product: torch.Tensor, before: torch.Tensor) -> torch.Tensor:
+    """The fp32 number nearest to the exact ``product + before``. Both are fp64, and the product is exact.
+
+    A sum that is not finite stays as IEEE 754 gives it: the fused operation gives the same.
+    """
+    total = product + before  # rounded to the nearest fp64
+    part = total - product
+    lost = (product - (total - part)) + (before - part)  # exactly what that rounding lost (the error term of the two-sum)
+    inexact = lost.abs() > 0  # not true when the sum is not finite: then ``lost`` is not a number
+    # Round to odd: go back to the fp64 value nearer to zero, then set the last bit.
+    # The rounding to fp32 that follows then gives the one-rounding result of the fused operation.
+    bits = total.view(torch.int64)
+    away = ((lost.view(torch.int64) ^ bits) < 0) & inexact
+    bits -= away.to(torch.int64)
+    bits |= inexact.to(torch.int64)
+    return total.float()
+
+
+def _fused_rows(a: torch.Tensor, b: torch.Tensor, every: bool = False) -> torch.Tensor:
+    """``acc = fma(b[:, k], a[k, :], acc)`` for each rank in order. ``a`` and ``b`` are fp64 copies of fp32 values.
+
+    The quick way for one step is the fp64 sum and its rounding to fp32. Those two roundings give the
+    one-rounding result, but for two kinds of element, and these get ``_one_rounding``:
+
+    - the fp64 sum is exactly in the middle of two fp32 numbers (the 29 bits that fp32 drops are 1000...0);
+    - the result is not zero and is smaller than 2**-125, where fp32 keeps fewer than 24 bits.
+
+    A result of zero needs no care: its fp64 sum is exact. ``every`` gives all elements the careful way.
+    """
     rows, columns, device = b.shape[0], a.shape[1], a.device
     acc = torch.zeros(rows, columns, dtype=torch.float32, device=device)
-    product, before, total, part, lost = (torch.empty(rows, columns, dtype=torch.float64, device=device) for _ in range(5))
-    bits, lost_bits = total.view(torch.int64), lost.view(torch.int64)
+    before = torch.zeros(rows, columns, dtype=torch.float64, device=device)
+    total = torch.empty_like(before)
+    dropped = torch.empty(rows, columns, dtype=torch.int64, device=device)
+    size = torch.empty(rows, columns, dtype=torch.int32, device=device)
+    bits, acc_bits = total.view(torch.int64), acc.view(torch.int32)
     for k in range(a.shape[0]):
-        torch.mul(b[:, k : k + 1], a[k : k + 1, :], out=product)  # exact: 24 bits times 24 bits fit in the 53 bits of fp64
-        before.copy_(acc)
-        torch.add(product, before, out=total)  # rounded to the nearest fp64
-        torch.sub(total, product, out=part)
-        torch.sub(total, part, out=lost)
-        torch.sub(product, lost, out=lost)
-        before.sub_(part)
-        lost.add_(before)  # exactly what the rounding of ``total`` lost (the error term of the two-sum)
-        inexact = lost != 0
-        # Round to odd: go back to the fp64 value nearer to zero, then set the last bit.
-        # The rounding to fp32 that follows then gives the one-rounding result of the fused operation.
-        away = ((lost_bits ^ bits) < 0) & inexact
-        bits -= away.to(torch.int64)
-        bits |= inexact.to(torch.int64)
+        # The product is exact (24 bits times 24 bits fit in the 53 bits of fp64), so a fused and a
+        # separate multiply give the same sum here.
+        torch.addcmul(before, b[:, k : k + 1], a[k : k + 1, :], out=total)
+        torch.bitwise_left_shift(bits, _DROPPED_TO_TOP, out=dropped)
         acc.copy_(total)
+        torch.sub(acc_bits, 1, out=size)  # zero goes to the largest value; the sign bit goes away in the next line
+        size.bitwise_and_(0x7FFFFFFF)
+        if every or int(dropped.min()) == _MIDDLE or int(size.min()) < _SMALL:
+            doubt = torch.ones_like(acc, dtype=torch.bool) if every else (dropped == _MIDDLE) | (size < _SMALL)
+            i, j = doubt.nonzero(as_tuple=True)
+            acc[i, j] = _one_rounding(b[i, k] * a[k, j], before[i, j])
+        before.copy_(acc)
     return acc
 
 
@@ -120,8 +155,9 @@ def lora_update(
 ) -> torch.Tensor:
     """``scale * (b @ a)`` in fp32, on the CPU, for LoRA matrices ``a`` (rank x columns) and ``b`` (rows x rank).
 
-    ``device`` is where the fixed-order kernel computes: ``cpu`` or ``cuda:N``. ``threads`` and ``chunk``
-    (elements of the result that one piece of work holds) change the time, never the bits.
+    ``device`` is where the fixed-order kernel computes: ``cpu`` or ``cuda:N``. ``threads`` (the threads
+    of torch on the CPU; ``None``: as torch is set) and ``chunk`` (elements of the result that are in
+    work at one time) change the time, never the bits.
     A kernel name that this code does not know stops the work.
     """
     if kernel not in KERNELS:
@@ -133,42 +169,73 @@ def lora_update(
         return scale * (b @ a)
     a, b = a.to(device=device, dtype=torch.float64), b.to(device=device, dtype=torch.float64)
     factor = torch.tensor(scale, dtype=torch.float32, device=device)  # the scale is rounded to fp32, as torch does it
-    on_cpu = a.device.type == "cpu"
-    rows = max(1, (chunk or (_CPU_CHUNK if on_cpu else _GPU_CHUNK)) // a.shape[1])
+    on_cpu, set_before = a.device.type == "cpu", torch.get_num_threads()
+    count = (threads or set_before) if on_cpu else set_before  # a GPU run leaves the threads of torch as they are
+    rows = max(1, (chunk or (count * _GRAIN if on_cpu else _GPU_CHUNK)) // a.shape[1])
     out = torch.empty(b.shape[0], a.shape[1], dtype=torch.float32)
-
-    def work(start: int) -> None:
-        out[start : start + rows] = (_fused_rows(a, b[start : start + rows]) * factor).cpu()
-
-    starts = range(0, b.shape[0], rows)
-    workers = min(len(starts), (threads or os.cpu_count() or 1) if on_cpu else 1)
-    if workers <= 1:
-        for start in starts:
-            work(start)
-    else:
-        with ThreadPoolExecutor(workers) as pool:
-            list(pool.map(work, starts))
+    if count != set_before:
+        torch.set_num_threads(count)
+    try:
+        for start in range(0, b.shape[0], rows):
+            out[start : start + rows] = (_fused_rows(a, b[start : start + rows]) * factor).cpu()
+    finally:
+        if count != set_before:
+            torch.set_num_threads(set_before)
     return out
 
 
-def check_arithmetic(device: str = "cpu", threads: int | None = None) -> None:
+def _devices(device: str | Sequence[str]) -> list[str]:
+    """``"cuda:0,cuda:1"`` or a list of names: the devices that share the work of one fold."""
+    names = [name.strip() for name in device.split(",")] if isinstance(device, str) else list(device)
+    if not names or not all(names):
+        raise VerifyError("no device is named for the fold")
+    return names
+
+
+def check_arithmetic(device: str | Sequence[str] = "cpu", threads: int | None = None) -> None:
     """Known answers that a machine gives only with IEEE 754 arithmetic. A wrong answer stops the work.
 
     They fail when small numbers are flushed to zero, when the rounding is not to the nearest even,
-    and when an fp64 sum is rounded two times.
+    and when an fp64 sum is rounded two times. On the CPU each case is as large as one piece of work
+    of ``lora_update``, so every thread of torch computes it.
+
+    Each answer is written here as the 32 bits of the fp32 number, and is compared as a whole number.
+    A machine that flushes small numbers would flush an answer that is written as a floating number
+    too, and the two zeros would then be equal.
     """
     if sys.byteorder != "little":
         raise VerifyError("this code writes the bytes of a little-endian machine")
-    one, x, y = 1 + 2.0**-23, 2.0**-12 * (1 + 2.0**-23), 2.0**-12 * (1 - 2.0**-23)
-    for chunk in (1, 4):  # one row for each thread, and all rows in one piece
+    one, low = 1 + 2.0**-23, 1 - 2.0**-23
+    x, y = 2.0**-12 * one, 2.0**-12 * low
+    minus = -(1 << 31)  # the sign bit of fp32, in a whole number of 32 bits
+    one_bits, edge_bits = 0x3F800001, 0x007FFFFF  # 1 + 2**-23, and 2**-126 - 2**-149
+    cases = (
         # one + x*y is a little below the middle of two fp32 numbers; two roundings give the wrong one
-        tie = lora_update(torch.tensor([[1.0, 1.0], [y, -y]]), torch.tensor([[one, x], [-one, x]]), 1.0, device=device, threads=threads, chunk=chunk)
-        small = lora_update(torch.tensor([[2.0**-40, 2.0**10]]), torch.tensor([[2.0**-100], [2.0**-140]]), 1.0, device=device, threads=threads, chunk=chunk)
-        if tie.tolist() != [[one, one], [-one, -one]] or small.tolist() != [[2.0**-140, 2.0**-90], [0.0, 2.0**-130]]:
-            raise VerifyError(f"the arithmetic of {device} does not give the known answers of the fixed-order kernel")
+        ([[1.0, 1.0], [y, -y]], [[one, x], [-one, x]], [[one_bits, one_bits], [one_bits + minus, one_bits + minus]]),
+        # results below the smallest normal fp32 number, and one that is too small for fp32: 2**-140, 2**-90, 0, 2**-130
+        ([[2.0**-40, 2.0**10]], [[2.0**-100], [2.0**-140]], [[1 << 9, 37 << 23], [0, 1 << 19]]),
+        # the largest fp32 number below 2**-126, plus a little less than one half of its last bit
+        (
+            [[2.0**-63 * low, -(2.0**-63) * low], [2.0**-75 * low, -(2.0**-75) * low]],
+            [[2.0**-63, 2.0**-75 * one], [-(2.0**-63), -(2.0**-75) * one]],
+            [[edge_bits, edge_bits + minus], [edge_bits + minus, edge_bits]],
+        ),
+    )
+    for name in _devices(device):
+        on_cpu = torch.device(name).type == "cpu"
+        tall = 16 * ((threads or torch.get_num_threads()) if on_cpu else 1)
+        for a, b, want in cases:
+            a, b, want = torch.tensor(a).repeat(1, 512), torch.tensor(b).repeat(tall, 1), torch.tensor(want, dtype=torch.int32).repeat(tall, 512)
+            for chunk in (None, 1024):  # one piece of work for all threads, and one row at a time
+                got = lora_update(a, b, 1.0, device=name, threads=threads, chunk=chunk)
+                if not torch.equal(got.view(torch.int32), want):
+                    raise VerifyError(f"the arithmetic of {name} does not give the known answers of the fixed-order kernel")
+        wrapped = torch.tensor([-(2**31), 0], dtype=torch.int32, device=name) - 1
+        if wrapped.tolist() != [2**31 - 1, -1]:
+            raise VerifyError(f"the whole-number arithmetic of {name} does not wrap around")
     tiny = torch.full((1 << 17,), 2.0**-140)  # large, so that the threads of torch do this add
     halves = torch.tensor([1 + 2.0**-8, 1 + 3 * 2.0**-8, 1 + 2.0**-8 + 2.0**-23]).to(torch.bfloat16).float()
-    if not bool((tiny + tiny / 2 == 1.5 * 2.0**-140).all()) or halves.tolist() != [1.0, 1 + 2.0**-6, 1 + 2.0**-7]:
+    if not bool(((tiny + tiny / 2).view(torch.int32) == 3 << 8).all()) or halves.tolist() != [1.0, 1 + 2.0**-6, 1 + 2.0**-7]:  # 1.5 * 2**-140
         raise VerifyError("the fp32 add or the cast to bf16 on this machine does not give the known answers")
 
 
@@ -246,22 +313,51 @@ def read_index(path: Path) -> dict[str, Entry]:
     return index
 
 
-def _blocks(entry: Entry, block: int) -> Iterator[torch.Tensor]:
-    """The values of one floating tensor, as flat tensors of at most ``block`` bytes."""
+def _blocks(entry: Entry, block: int, spare: deque[bytearray] | None = None) -> Iterator[torch.Tensor]:
+    """The values of one floating tensor, as flat tensors of at most ``block`` bytes.
+
+    ``spare`` holds buffers of ``block`` bytes that the blocks use in turn, so the machine does not
+    give new memory for each block. A block is then good until ``len(spare) - 1`` more blocks are taken.
+    """
     dtype, size = _FLOATS[entry.dtype]
-    with open(entry.path, "rb") as file:
+    if entry.nbytes % size:
+        raise VerifyError(f"{entry.path.name} holds a part of a number")
+    with open(entry.path, "rb", buffering=0) as file:
         file.seek(entry.start)
         left = entry.nbytes
         while left:
-            raw = bytearray(file.read(min(left, block - block % size)))
-            if not raw:
-                raise VerifyError(f"{entry.path.name} is shorter than its header says")
-            left -= len(raw)
-            yield torch.frombuffer(raw, dtype=_BITS[size]).view(dtype)
+            length = min(left, block - block % size)
+            if spare:
+                raw = spare[0]
+                spare.rotate(-1)
+            else:
+                raw = bytearray(length)
+            view, at = memoryview(raw)[:length], 0
+            while at < length:
+                got = file.readinto(view[at:])
+                if not got:
+                    raise VerifyError(f"{entry.path.name} is shorter than its header says")
+                at += got
+            left -= length
+            yield torch.frombuffer(raw, dtype=_BITS[size], count=length // size).view(dtype)
 
 
-def _raw(tensor: torch.Tensor) -> bytes:
-    return tensor.contiguous().view(_BITS[tensor.element_size()]).numpy().tobytes()
+def _raw(tensor: torch.Tensor) -> memoryview:
+    """The bytes of a tensor as they are in memory: no copy."""
+    return memoryview(tensor.contiguous().view(_BITS[tensor.element_size()]).numpy()).cast("B")
+
+
+def _ahead(items: Iterator[_T]) -> Iterator[_T]:
+    """The same items in the same order. A second thread gets the next item while the caller uses the current one."""
+    end = object()
+    with ThreadPoolExecutor(1) as pool:
+        coming = pool.submit(next, items, end)
+        while True:
+            item = coming.result()
+            if item is end:
+                return
+            coming = pool.submit(next, items, end)
+            yield item
 
 
 def header_bytes(entries: Sequence[tuple[str, str, tuple[int, ...], int]], metadata: dict[str, str] | None = _META) -> bytes:
@@ -285,7 +381,7 @@ class _Out:
         self.name, self.sha = name, hashlib.sha256()
         self.file: BinaryIO | None = open(directory / name, "wb") if directory else None
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes | memoryview) -> None:
         self.sha.update(data)
         if self.file:
             self.file.write(data)
@@ -343,17 +439,52 @@ def _new_dir(path: Path | None) -> Path | None:
 def upcast_master(base_dir: Path, out_master: Path | None, part_bytes: int = PART_BYTES) -> dict[str, str]:
     """The first fp32 master of a base (genesis): ``{file name: sha256}``. With ``out_master=None`` nothing is written."""
     out_master, files = _new_dir(out_master), {}
+    spare = deque(bytearray(_BLOCK) for _ in range(2))  # two: one block in use, one that the second thread reads
     for shard in sorted(Path(base_dir).glob("*.safetensors")):
         index = read_index(shard)
         _check_floats(index, shard.name)
         for number, names in enumerate(_parts(index, part_bytes)):
             out = _Out(out_master, f"{shard.stem}.part{number:02d}.safetensors")
             out.write(header_bytes([(name, "F32", index[name].shape, 4 * (index[name].nbytes // _FLOATS[index[name].dtype][1])) for name in names]))
-            for name in names:
-                for block in _blocks(index[name], _BLOCK):
-                    out.write(_raw(block.float()))
+            for block in _ahead(block for name in names for block in _blocks(index[name], _BLOCK, spare)):
+                out.write(_raw(block.float()))
             files[out.name] = out.close()
     return files
+
+
+def _in_order(work: Callable[[_T, str], _R], items: Sequence[_T], devices: Sequence[str]) -> Iterator[_R]:
+    """``work(item, device)`` for each item, in the order of the items. Each device has one item in work at a time.
+
+    With more than one device the next items are computed while the caller uses a result.
+    At most two results for each device are in memory.
+    """
+    if len(devices) == 1:
+        for item in items:
+            yield work(item, devices[0])
+        return
+    free: queue.SimpleQueue[str] = queue.SimpleQueue()
+    for device in devices:
+        free.put(device)
+
+    def run(item: _T) -> _R:
+        device = free.get()
+        try:
+            return work(item, device)
+        finally:
+            free.put(device)
+
+    waiting: deque[Future[_R]] = deque()
+    with ThreadPoolExecutor(len(devices)) as pool:
+        try:
+            for item in items:
+                waiting.append(pool.submit(run, item))
+                if len(waiting) >= 2 * len(devices):
+                    yield waiting.popleft().result()
+            while waiting:
+                yield waiting.popleft().result()
+        finally:
+            for future in waiting:  # after an error: start no more work
+                future.cancel()
 
 
 def replay_fold(
@@ -365,25 +496,27 @@ def replay_fold(
     *,
     kernel: str = FIXED_ORDER,
     part_bytes: int = PART_BYTES,
-    device: str = "cpu",
+    device: str | Sequence[str] = "cpu",
     threads: int | None = None,
 ) -> Folded:
     """Fold ``loras``, in the given order, into the fp32 master. Returns the file hashes of the new master and base.
 
     ``base_dir`` gives the weight file names, the dtype of each tensor and the files that a fold does not change.
     An output directory may be ``None``: then that output is hashed and not written.
+    ``device`` is where fixed-order-v1 computes its products: ``"cpu"``, ``"cuda:0"``, or more than one
+    device (``"cuda:0,cuda:1"`` or a list). More devices share the tensors of the fold; the bits stay the same.
     Every check of ``gpu/folder.fold_files`` is here too, and each one fails closed.
     """
     if kernel not in KERNELS:
         raise VerifyError(f"unknown kernel {kernel}; this code knows {', '.join(KERNELS)}")
+    devices = _devices(device)
     if kernel == FIXED_ORDER:
-        check_arithmetic(device, threads)
+        check_arithmetic(devices, threads)
     master_dir, base_dir = Path(master_dir), Path(base_dir)
-    out_master, out_base = _new_dir(out_master), _new_dir(out_base)
     waiting = {name for lora in loras for name in lora.pairs}
     unread = {file.name for file in master_dir.iterdir()}
-    base_files: dict[str, str] = {}
-    master_files: dict[str, str] = {}
+    shards: list[tuple[Path, dict[str, Entry], dict[str, Entry]]] = []
+    changed: list[tuple[str, Entry]] = []
     for shard in sorted(base_dir.glob("*.safetensors")):
         base, master = read_index(shard), {}
         for part in sorted(master_dir.glob(f"{shard.stem}.part*.safetensors")):
@@ -397,31 +530,68 @@ def replay_fold(
                 raise VerifyError(f"{name} is {entry.dtype} in the master; a master is fp32 and is never upcast here")
             if entry.shape != base[name].shape:
                 raise VerifyError(f"{name} has one shape in the master and another in the base")
-        base_out = _Out(out_base, shard.name)
-        base_out.write(header_bytes([(name, entry.dtype, entry.shape, entry.nbytes) for name, entry in base.items()]))
-        for number, names in enumerate(_parts(master, part_bytes)):
-            master_out = _Out(out_master, f"{shard.stem}.part{number:02d}.safetensors")
-            master_out.write(header_bytes([(name, "F32", master[name].shape, master[name].nbytes) for name in names]))
-            for name in names:
-                entry, dtype = master[name], _FLOATS[base[name].dtype][0]
-                updates = [lora for lora in loras if name in lora.pairs]
-                for weight in _blocks(entry, entry.nbytes if updates else _BLOCK):
-                    for lora in updates:
-                        a, b = lora.pairs[name]
-                        if (b.shape[0], a.shape[1]) != entry.shape:
-                            raise VerifyError(f"the LoRA update of {name} has a wrong shape")
-                        weight = weight + lora_update(a, b, lora.scale, kernel, device=device, threads=threads).reshape(-1)
-                    if not bool(torch.isfinite(weight).all()):
-                        raise VerifyError(f"{name} is not finite after the fold")
-                    master_out.write(_raw(weight))
-                    base_out.write(_raw(weight.to(dtype)))
-                waiting.discard(name)
-            master_files[master_out.name] = master_out.close()
-        base_files[base_out.name] = base_out.close()
-    if unread or not base_files:
+        shards.append((shard, base, master))
+    if unread or not shards:
         raise VerifyError("the fp32 master does not hold exactly the weight files of the base")
-    if waiting:
-        raise VerifyError(f"{len(waiting)} LoRA tensors match no weight of the head, for example {sorted(waiting)[0]}")
+    for shard, base, master in shards:
+        for names in _parts(master, part_bytes):  # the order in which the tensors are written
+            changed.extend((name, master[name]) for name in names if name in waiting)
+    if len(changed) != len(waiting):
+        missing = sorted(waiting - {name for name, _ in changed})
+        raise VerifyError(f"{len(missing)} LoRA tensors match no weight of the head, for example {missing[0]}")
+
+    def fold_one(item: tuple[str, Entry], on: str) -> torch.Tensor:
+        name, entry = item
+        weight = next(_blocks(entry, entry.nbytes))
+        for lora in loras:
+            if name in lora.pairs:
+                a, b = lora.pairs[name]
+                if (b.shape[0], a.shape[1]) != entry.shape:
+                    raise VerifyError(f"the LoRA update of {name} has a wrong shape")
+                weight = weight + lora_update(a, b, lora.scale, kernel, device=on, threads=threads).reshape(-1)
+        return weight
+
+    def unchanged() -> Iterator[torch.Tensor | None]:
+        """In the order of the new master: each block of a tensor that the fold does not change, and ``None`` for each tensor that it changes."""
+        spare = deque(bytearray(_BLOCK) for _ in range(2))  # two: one block in use, one that the reading thread fills
+        for _, _, master in shards:
+            for names in _parts(master, part_bytes):
+                for name in names:
+                    if name in waiting:
+                        yield None
+                    else:
+                        yield from _blocks(master[name], _BLOCK, spare)
+
+    out_master, out_base = _new_dir(out_master), _new_dir(out_base)
+    folded = _in_order(fold_one, changed, devices)
+    coming = _ahead(unchanged())
+    base_files: dict[str, str] = {}
+    master_files: dict[str, str] = {}
+    try:
+        # Three threads work at one time: one reads the next block, one hashes the base, and this one
+        # does the rest. All the arithmetic of torch stays in this thread: a second thread that
+        # computes makes a second team of torch threads, and the two teams make each other slow.
+        with ThreadPoolExecutor(1) as second:
+            for shard, base, master in shards:
+                base_out = _Out(out_base, shard.name)
+                base_out.write(header_bytes([(name, entry.dtype, entry.shape, entry.nbytes) for name, entry in base.items()]))
+                for number, names in enumerate(_parts(master, part_bytes)):
+                    master_out = _Out(out_master, f"{shard.stem}.part{number:02d}.safetensors")
+                    master_out.write(header_bytes([(name, "F32", master[name].shape, master[name].nbytes) for name in names]))
+                    for name in names:
+                        count = 1 if name in waiting else -(-master[name].nbytes // _BLOCK)
+                        for weight in itertools.islice(coming, count):
+                            weight = next(folded) if weight is None else weight
+                            if not bool(torch.isfinite(weight).all()):
+                                raise VerifyError(f"{name} is not finite after the fold")
+                            base_done = second.submit(base_out.write, _raw(weight.to(_FLOATS[base[name].dtype][0])))
+                            master_out.write(_raw(weight))
+                            base_done.result()
+                    master_files[master_out.name] = master_out.close()
+                base_files[base_out.name] = base_out.close()
+    finally:
+        coming.close()
+        folded.close()
     for file in sorted(base_dir.iterdir()):  # config and tokenizer files do not change
         if file.is_file() and file.suffix != ".safetensors":
             base_files[file.name] = hashlib.sha256(file.read_bytes()).hexdigest()
@@ -456,8 +626,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     fold.add_argument("--kernel", choices=KERNELS, default=FIXED_ORDER, help="the kernel that the step names in the head chain")
     marks = commands.add_parser("marks", help="run fixed-order-v1 on made-up matrices of the real shapes and compare with the known marks")
     for command in (fold, marks):
-        command.add_argument("--device", default="cpu", help="where fixed-order-v1 computes: cpu or cuda:N")
-        command.add_argument("--threads", type=int, default=None, help="CPU threads; they change the time of fixed-order-v1, never its bits")
+        command.add_argument("--device", default="cpu", help="where fixed-order-v1 computes: cpu, cuda:N, or devices that share the work, as cuda:0,cuda:1")
+        command.add_argument("--threads", type=int, default=None, help="the threads of torch on the CPU; they change the time of fixed-order-v1, never its bits")
     fold.add_argument("--out-base", type=Path, default=None, help="write the new base here; without it the base is only hashed")
     for command in (up, fold):
         command.add_argument("--out-master", type=Path, default=None, help="write the fp32 master here; without it the master is only hashed")
@@ -468,12 +638,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "marks":
         check_arithmetic(args.device, args.threads)
         equal = True
-        for (shape, rank, scale), want in MARKS.items():
-            a, b = mark_pair(shape, rank)
-            at = time.monotonic()
-            got = mark(lora_update(a, b, scale, device=args.device, threads=args.threads))
-            equal = equal and got == want
-            print(f"{FIXED_ORDER} {args.device} {shape} rank {rank} scale {scale:.6g}: {got}  {'EQUAL' if got == want else 'DIFFERENT'}  {time.monotonic() - at:.2f} s")
+        for device in _devices(args.device):
+            for (shape, rank, scale), want in MARKS.items():
+                a, b = mark_pair(shape, rank)
+                at = time.monotonic()
+                got = mark(lora_update(a, b, scale, device=device, threads=args.threads))
+                equal = equal and got == want
+                print(f"{FIXED_ORDER} {device} {shape} rank {rank} scale {scale:.6g}: {got}  {'EQUAL' if got == want else 'DIFFERENT'}  {time.monotonic() - at:.2f} s")
+            if torch.device(device).type == "cuda":
+                print(f"{device} memory: peak {torch.cuda.max_memory_reserved(device) >> 20} MiB")
         print(f"{time.monotonic() - started:.0f} s")
         return 0 if equal else 1
     record = json.loads(args.record.read_text(encoding="utf-8")) if args.record else {}

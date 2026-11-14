@@ -89,7 +89,7 @@ class FoldSettings:
     implementation: str = REFERENCE  # the code of the first fold: ``reference`` or ``blas``
     twice: bool = True  # the box folds a second time with ``reference`` and compares the hashes
     devices: tuple[str, ...] = (CPU,)  # where the product of ``reference`` runs; the second fold takes the second device
-    threads: int | None = None  # CPU threads of ``reference``; they change the time, never the bytes
+    threads: int | None = None  # threads of torch on the CPU for one fold (``None``: ``in_children`` gives each fold its share); the time changes, never the bytes
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ, box: bool = True) -> FoldSettings:
@@ -184,11 +184,21 @@ def inline(jobs: Sequence[FoldJob]) -> list[FoldResult]:
     return [run_fold(job) for job in jobs]
 
 
+def _fold_in_child(job: FoldJob, threads: int) -> FoldResult:
+    torch.set_num_threads(threads)
+    return run_fold(job)
+
+
 def in_children(jobs: Sequence[FoldJob]) -> list[FoldResult]:
-    """Each fold in a new process (start method ``spawn``), all at the same time. The first error is raised after all ended."""
+    """Each fold in a new process (start method ``spawn``), all at the same time. The first error is raised after all ended.
+
+    The folds share the threads of torch that this process has. Without that, each fold has a full team
+    of threads on the same cores, and the teams wait on each other: two folds then take many times the time of one.
+    """
+    share = max(1, torch.get_num_threads() // len(jobs))
     results, errors = [], []
     with ProcessPoolExecutor(len(jobs), mp_context=multiprocessing.get_context("spawn")) as pool:
-        for future in [pool.submit(run_fold, job) for job in jobs]:
+        for future in [pool.submit(_fold_in_child, job, job.threads or share) for job in jobs]:
             try:
                 results.append(future.result())
             except V2Error as exc:
