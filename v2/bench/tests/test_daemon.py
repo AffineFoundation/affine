@@ -1,8 +1,10 @@
 """The host path: public files and a store from the CPU simulation of v2, a fake node for each row and a fake Lium.
 
 The service starts one worker process for each row. Here a worker is one call in this process: each `D.step()` of
-the service gives each row in work one poll, in the order in which the service starts the workers."""
-import ast, dataclasses, hashlib, importlib, json, os, pathlib, re, runpy, shutil, subprocess, types
+the service gives each row in work one poll, in the order in which the service starts the workers. A poll is made by a
+new Row object, as by a worker that has just started; `world.one_worker` gives a row one Row object for all its polls,
+as the worker process has (daemon.row_main), with the worker's own handling of a poll that raises."""
+import ast, dataclasses, hashlib, importlib, json, os, pathlib, re, runpy, shutil, subprocess, time, types
 import pytest
 from sn120_v2 import canonical, layout, sim
 from sn120_v2.errors import ConfigError, InfraError
@@ -142,6 +144,7 @@ def empty_host(monkeypatch):
 class World:
     def __init__(self, monkeypatch, tmp_path):
         self.v2, self.lium, self.nodes, self.polled, self.setups = sim.SimWorld(tmp_path, sim.sim_params()), Lium(), {}, [], []
+        self.one_worker, self.workers = False, {}
         v2 = self.v2
         v2.store.put(layout.public_base_file(v2.controller.state.head.base_hash, "model.bin"), b"sim base")  # as the genesis job leaves it
         self.store = store = Store(v2.store)
@@ -164,7 +167,12 @@ class World:
 
     def poll(self, mid):
         """What the worker process of a row does in one poll."""
-        row = D.Row(mid); self.polled.append(mid)
+        self.polled.append(mid)
+        if self.one_worker:  # the worker lives from poll to poll, until it says that it has ended
+            if mid not in self.workers: self.workers[mid] = D.Row(mid)
+            if self.workers[mid].poll(RUNNABLE): del self.workers[mid]
+            return
+        row = D.Row(mid)
         row.S.setdefault("model", next(m for m in D.model_rows() if m["model_id"] == mid))
         row.step(row.S["model"], RUNNABLE); row.save()
 
@@ -185,6 +193,13 @@ def model(mid): return next(m for m in table()["models"] if m["model_id"] == mid
 def states(v1=False): return {m["model_id"]: m["status"] for m in table()["models"] if v1 or m["model_id"] != V1}
 def ids(head): return ("king-" if head.parent_version_id else "genesis-") + head.base_hash[:16]
 def rm(pod): return ("rm", pod["id"], "--name-only", "-y")
+
+
+def clock(monkeypatch):
+    """A clock that the test moves forward, for a worker whose state is in its memory. Returns the function that moves it."""
+    real, ahead = time.time, [0.0]
+    monkeypatch.setattr(time, "time", lambda: real() + ahead[0])
+    return lambda seconds: ahead.__setitem__(0, ahead[0] + seconds)
 
 
 def test_rows_are_the_launch_model_and_each_folded_king_read_from_public_files_only(world, monkeypatch, tmp_path):
@@ -399,6 +414,128 @@ def test_a_setup_that_fails_gives_the_pod_back_and_counts_as_a_failed_rent(world
     world.steps(P.RENT_TRIES)
     assert len(lium.ups) == P.RENT_TRIES and len(lium.removed) == P.RENT_TRIES and not lium.pods and D.stopped(gen) == "rent_failed"
     assert world.nodes.get(gen) is None or world.nodes[gen].launches == 0
+
+
+# ---------------------------------------------------------------------------------------------- a setup past its limit
+# 2026-11-14, the row of UID 961: a setup of 39 min 58 s, 2 s under the limit. Past it, the code of that day began the
+# setup again on the same pod at the next poll: no try was counted, no pod was given back, and the worker did not know
+# the pod, so the cap of its hours did not hold either. Each test here has one worker object for the row, as the service.
+def past_limit(world, when=lambda: True):
+    """A setup that has no end in its 40 minutes while `when` says so. Returns the pods that it was run on."""
+    on = []
+    def setup(ssh):
+        on.append(dict(next(p for p in world.lium.pods if p["name"] == P.name_of(pathlib.Path(ssh).parent.name))))
+        if when(): raise subprocess.TimeoutExpired([ssh, "bootstrap.sh"], 2400)
+        return True, "BOOTSTRAP_OK"
+    return on, setup
+
+
+def test_a_setup_that_passes_its_limit_is_a_failed_try_its_pod_goes_back_and_the_next_try_rents_another(world, monkeypatch, capsys):
+    lium, gen = world.lium, ids(world.genesis); world.one_worker = True; forward = clock(monkeypatch)
+    monkeypatch.setattr(P, "RENT_WAIT_S", 120)
+    on, setup = past_limit(world, lambda: len(on) == 1); monkeypatch.setattr(P, "setup", setup)
+    world.steps()
+    s, row, ev = D.row_state(gen), model(gen), events(capsys)
+    assert lium.removed == [rm(on[0])] and not lium.pods  # the pod is given back
+    assert s["rent_tries"] == 1 and 100 < s["rent_wait_until"] - D.now() <= 120  # one failed try of the rent, with the wait of one
+    assert (row["status"], row["fails"], row["pod"]["state"], row["pod"]["failed_tries"]) == ("queued", 0, "setup", 1)
+    assert {k: row["pod"]["last_failure"][k] for k in ("what", "pod")} == dict(what="bootstrap-past-limit", pod=on[0]["huid"]) and table()["alarms"] == []
+    assert [(e["pod"], e["out"]) for e in ev if e["event"] == "bootstrap-past-limit"] == [(on[0]["huid"], "no end in 40 minutes")]
+    assert [(e["tries"], e["what"], e["gives_up"]) for e in ev if e["event"] == "rent-failed"] == [(1, "bootstrap-past-limit", False)]
+    assert [e["why"] for e in ev if e["event"] == "released"] == ["bootstrap past limit"] and "error" not in [e["event"] for e in ev]
+    world.steps()
+    assert len(lium.ups) == 1 and len(on) == 1  # the wait runs: no rent, and no setup
+    forward(121); world.steps()
+    assert len(lium.ups) == 2 and len(on) == 2 and on[1]["id"] != on[0]["id"] and states()[gen] == "evaluating"  # another pod, and the row runs on it
+    row = model(gen)
+    assert "failed_tries" not in row["pod"] and row["pod"]["name"] == on[1]["huid"] and row["pod"]["last_failure"]["pod"] == on[0]["huid"]
+    world.steps(2)
+    assert states()[gen] == "scored" and not lium.pods and model(gen)["fails"] == 0 and "setup-again" not in [e["event"] for e in events(capsys)]
+    assert P.SETUP_S == 2400
+
+
+def test_a_setup_past_its_limit_on_each_of_four_pods_stops_the_row_as_rent_failed_and_no_pod_is_set_up_twice(world, monkeypatch, capsys):
+    lium, gen = world.lium, ids(world.genesis); world.one_worker = True; forward = clock(monkeypatch)
+    monkeypatch.setattr(P, "RENT_WAIT_S", 120)
+    ok = []; on, setup = past_limit(world, lambda: not ok); monkeypatch.setattr(P, "setup", setup)
+    waits = []
+    for n in range(P.RENT_TRIES):
+        world.steps(); wait = D.row_state(gen).get("rent_wait_until", 0) - D.now(); waits.append(round(wait / 60))
+        assert len(lium.ups) == len(on) == len(lium.removed) == n + 1 and not lium.pods  # each try: a new pod, one setup, and the pod goes back
+        world.steps(); assert len(lium.ups) == n + 1  # the wait runs
+        forward(max(wait, 0) + 1)
+    assert waits[:3] == [2, 4, 8] and len({p["id"] for p in on}) == P.RENT_TRIES
+    s, row, ev = D.row_state(gen), model(gen), events(capsys)
+    assert (row["status"], row["stopped"], row["pod"]["state"], row["fails"], row["pod"]["failed_tries"]) == ("failed", "rent_failed", "rent-failed", 0, P.RENT_TRIES)
+    assert row["pod"]["last_failure"]["what"] == "bootstrap-past-limit" and s["rent_failed"]["tries"] == P.RENT_TRIES and "40 minutes" in s["rent_failed"]["why"]
+    assert [(e["tries"], e["gives_up"]) for e in ev if e["event"] == "rent-failed"] == [(1, False), (2, False), (3, False), (4, True)]
+    assert [e["event"] for e in ev].count("bootstrap-past-limit") == P.RENT_TRIES and not {"setup-again", "error"} & {e["event"] for e in ev}
+    polled = len(world.polled); world.steps(3)
+    assert len(world.polled) == polled and len(lium.ups) == P.RENT_TRIES and not world.workers  # the worker has ended: no further try, no spend
+    ok.append(1); D.cli("retry", [gen]); world.steps(3)  # the operator's word
+    assert states()[gen] == "scored" and len(lium.ups) == P.RENT_TRIES + 1 and "last_failure" not in model(gen)["pod"]
+
+
+def test_the_cap_of_a_pods_hours_holds_in_setup_too(world, monkeypatch, capsys):
+    lium, gen = world.lium, ids(world.genesis); world.one_worker = True; forward = clock(monkeypatch)
+    monkeypatch.setattr(P, "RENT_WAIT_S", 7 * 3600)
+    refuses = [True]  # Lium does not delete the pod: the worst case, the pod of a setup past its limit stays the row's
+    monkeypatch.setattr(P, "lium", lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="Lium is busy") if a[0] == "rm" and refuses[0] else lium.cli(*a, **k))
+    on, setup = past_limit(world); monkeypatch.setattr(P, "setup", setup)
+    world.steps()
+    (pod,) = lium.pods; s = D.row_state(gen)
+    assert s["phase"]["state"] == "setup" and D.pod_of(gen).load()["id"] == pod["id"] and not D.stopped(gen)
+    forward(P.POD_MAX_HOURS * 3600 - 2400); world.steps()
+    assert not D.stopped(gen)  # under the cap
+    forward(2401); world.steps()
+    row, ev = model(gen), [e["event"] for e in events(capsys)]
+    assert D.stopped(gen) == "expired" and ev.count("pod-expired") == 1  # the cap, in the state `setup`
+    assert s["rent_tries"] == 1 and len(on) == 1 and len(lium.ups) == 1  # one counted try; no further setup, no new pod
+    assert (row["status"], row["stopped"], row["pod"]["state"], row["pod"]["name"]) == ("failed", "expired", "release-refused", pod["huid"]) and lium.pods == [pod]
+    refuses.clear(); refuses.append(False); world.steps()
+    row = model(gen)
+    assert lium.removed[-1] == rm(pod) and not lium.pods and (row["stopped"], row["pod"]["state"]) == ("expired", "released") and not world.workers
+
+
+def test_a_pod_that_lium_does_not_take_back_after_a_setup_past_its_limit_is_set_up_again_as_a_counted_try_and_never_a_fifth_time(world, monkeypatch, capsys):
+    lium, gen = world.lium, ids(world.genesis); world.one_worker = True
+    monkeypatch.setattr(P, "lium", lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="Lium is busy") if a[0] == "rm" else lium.cli(*a, **k))
+    on, setup = past_limit(world); monkeypatch.setattr(P, "setup", setup)
+    world.steps(P.RENT_TRIES + 3)
+    ev = events(capsys)
+    assert len(on) == P.RENT_TRIES and len({p["id"] for p in on}) == 1 and len(lium.ups) == 1  # never a second pod beside one that is still the row's
+    assert [e["setups"] for e in ev if e["event"] == "setup-again"] == [2, 3, 4] and D.stopped(gen) == "rent_failed"
+    assert model(gen)["pod"]["state"] == "release-refused" and len(lium.pods) == 1  # it still costs money, and the table says so
+
+
+def test_a_row_that_runs_and_a_slow_download_of_weights_are_as_before_with_the_limit_of_the_setup(world, monkeypatch, capsys):
+    v2, lium, gen = world.v2, world.lium, ids(world.genesis); world.one_worker = True; forward = clock(monkeypatch)
+    on, setup = past_limit(world, lambda: False); monkeypatch.setattr(P, "setup", setup)
+    world.steps()
+    (pod,) = lium.pods
+    assert states()[gen] == "evaluating" and model(gen)["pod"] == dict(name=pod["huid"], gpu="8xH100", usd_h=0.8, state="running", since=model(gen)["pod"]["since"])
+    forward(3 * 3600); world.steps(2)  # a run of three hours on one pod: under the cap, nothing is cut
+    assert states()[gen] == "scored" and lium.removed == [rm(pod)] and len(on) == 1 and world.nodes[gen].launches == 1 and model(gen)["fails"] == 0
+
+    # a download of weights that passes its hour: a fail of the row, on the same pod, with no new setup and no failed try of the rent
+    king = green(v2, 1); mid = ids(king); real = D.fetch_weights; slow = [True]
+    def fetch(m, node):
+        if slow[0]: raise subprocess.TimeoutExpired("gate_fetch.py", 3600)
+        return real(m, node)
+    monkeypatch.setattr(D, "fetch_weights", fetch)
+    seen = []
+    for _ in range(D.MAX_FAIL - 1):
+        world.steps(); forward(3600); seen.append((D.row_state(mid)["fails"], D.row_state(mid)["phase"]["state"], len(lium.pods), len(on), "rent_tries" in D.row_state(mid)))
+    assert seen == [(1, "setup", 1, 2, False), (2, "setup", 1, 2, False)] and "last_failure" not in model(mid)["pod"]
+    (pod,) = lium.pods; slow[0] = False; world.steps(3)
+    row, ev = model(mid), [e["event"] for e in events(capsys)]
+    assert (row["status"], row["fails"], row["pod"]["name"]) == ("scored", 2, pod["huid"]) and lium.removed[-1] == rm(pod) and len(lium.ups) == 2
+    assert ev.count("weights-failed") == 2 and not {"bootstrap-past-limit", "setup-again", "error", "pod-expired"} & set(ev)
+
+    # and one that never ends: after three fails the row is `failed` and its pod goes back, as before
+    last = green(v2, 2); mid = ids(last); slow[0] = True
+    world.steps(D.MAX_FAIL + 1)
+    assert (model(mid)["status"], model(mid)["stopped"], model(mid)["fails"]) == ("failed", "failed", D.MAX_FAIL) and not lium.pods and len(lium.ups) == 3 and len(on) == 3
 
 
 # ---------------------------------------------------------------------------------------------- the one place that deletes

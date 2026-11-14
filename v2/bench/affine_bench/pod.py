@@ -11,6 +11,10 @@ Guard rails (owner's spending rules):
   - secure tier only, a whole node of a kind in GPU_PREF, never above BENCH_MAX_PRICE $/h: the cheapest such offer.
   - a failed rent is tried RENT_TRIES times with a growing wait; then the row says `rent-failed` and its worker ends.
     A `lium up` that gave no answer is never tried again by the row: `rent-failed` at once, with an alarm.
+  - the setup of a new pod has SETUP_S. A setup that passes it is a failed try as one that ends without OK: the pod is
+    given back and the next try rents another. Only a pod that Lium did not take back is set up again (never a second
+    pod beside it), as a counted try. (2026-11-14, at commit 1228bd11: a setup past its limit began again on the same
+    pod at the next poll, with no count and no end, and the worker did not know the pod, so POD_MAX_HOURS did not hold.)
   - at most MAX_PODS rows have a pod at a time (daemon.py), and at most MAX_RENTS_PER_DAY pods are made in 24 h, over all rows.
   - a pod lives POD_MAX_HOURS at most (daemon.py).
   - Pod.release() is the only place that sends a delete to Lium. It sends it for the exact Lium id in the row's record,
@@ -38,6 +42,7 @@ MAX_PODS = int(os.environ.get("BENCH_MAX_PODS", "8"))
 POD_MAX_HOURS = float(os.environ.get("BENCH_POD_MAX_HOURS", "6"))
 CLAIM_S = 900.0  # an offer that a row has chosen is left to that row this long
 UP_TIMEOUT_S = 1500.0  # `lium up` with no answer is cut after this long
+SETUP_S = 2400.0  # the setup of a new pod (clone and bootstrap) is cut after this long
 RENT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "rent.sh")
 # Never deleted by this service, whatever a record says: the prod GPU box and the operator's own pod (Jacob, 2026-11-14).
 PROTECTED_IDS = ("6cb913e4", "c44cb565")
@@ -163,10 +168,11 @@ def up(offer, name, ssh):
 
 
 def setup(ssh):
-    """Put the pinned commit of this repository on a new pod and run its bootstrap. True when the pod is ready."""
+    """Put the pinned commit of this repository on a new pod and run its bootstrap. True when the pod is ready.
+    A setup that has no end in SETUP_S raises subprocess.TimeoutExpired (the ssh is cut; the pod is not touched)."""
     b = subprocess.run([ssh, f"mkdir -p {C.NODE_ROOT}/logs && cd {C.NODE_ROOT} && (test -d repo || git clone -q {C.REPO_URL} repo) && git -C repo checkout -q --detach {C.REPO_REF} "
                         f"&& bash {C.NODE_REPO}/bench/deploy/bootstrap.sh > {C.NODE_ROOT}/logs/bootstrap.log 2>&1; tail -1 {C.NODE_ROOT}/logs/bootstrap.log"],
-                       capture_output=True, text=True, timeout=2400)
+                       capture_output=True, text=True, timeout=SETUP_S)
     return "BOOTSTRAP_OK" in b.stdout, mask(b.stdout + b.stderr)[-300:]
 
 
@@ -229,17 +235,19 @@ class Pod:
         os.chmod(self.ssh, 0o700)  # it holds the address of the pod
         return True
 
-    def _failed(self, S, log, why, no_answer=False, **more):
+    def _failed(self, S, log, why, no_answer=False, what="rent-failed", **more):
         """One failed try of a rent: the next try waits twice as long; after RENT_TRIES the row is `rent-failed`.
+        `what` and the pod of the try stay in the row's state for the table (`rent_last_fail`), also after a later try went well.
         `no_answer`: `lium up` was cut. Lium may make that pod later, and a second `lium up` would make a second pod of the
         same name. So the row is `rent-failed` at once, with an alarm; `bench retry` is the way on (it takes a pod that
         Lium lists under the row's name before it rents)."""
         n = S["rent_tries"] = S.get("rent_tries", 0) + 1
+        S["rent_last_fail"] = dict(what=what, at=time.time(), why=why[-200:], try_no=n) | {k: more[k] for k in ("pod", "minutes") if more.get(k) is not None}
         if n >= RENT_TRIES or no_answer:
             S["rent_failed"] = dict(at=time.time(), why=why[-200:], tries=n) | (dict(no_answer=True) if no_answer else {})
         else:
             S["rent_wait_until"] = time.time() + RENT_WAIT_S * 2 ** (n - 1)
-        log(event="rent-failed", tries=n, of=RENT_TRIES, gives_up=n >= RENT_TRIES or no_answer, why=why[-300:], **more)
+        log(event="rent-failed", tries=n, of=RENT_TRIES, gives_up=n >= RENT_TRIES or no_answer, why=why[-300:], **(dict(what=what) if what != "rent-failed" else {}), **more)
         if no_answer:
             log(event="alarm", what="rent-no-answer", do="`bench pods`: Lium may have made a pod under this row's name. Then `bench retry` for this row")
 
@@ -303,10 +311,22 @@ class Pod:
         if rec["cost"] is None or rec["cost"] > MAX_PRICE:  # offers() filters on the price; this is the belt to its braces
             log(event="rent-over-cap", usd_h=rec["cost"]); self.release(log, why="over price cap")
             self._failed(S, log, "the pod's price is above the cap"); return None
-        ok, out = setup(self.ssh)
+        rec["setups"] = rec.get("setups", 0) + 1; self.save(rec)  # more than 1: a setup that a worker's end cut, or a pod that could not be given back
+        if rec["setups"] > 1:
+            log(event="setup-again", pod=rec["huid"], setups=rec["setups"])
+        began, what = time.time(), "bootstrap-failed"
+        try:
+            ok, out = setup(self.ssh)
+        except Exception as e:  # no end in SETUP_S, or an ssh that cannot start: a failed try as a setup that ends without OK
+            late = isinstance(e, subprocess.TimeoutExpired)
+            ok, what = False, "bootstrap-past-limit" if late else "bootstrap-failed"
+            out = f"no end in {round(SETUP_S / 60)} minutes" if late else type(e).__name__ + ": " + mask(str(e))[-200:]
         if not ok:
-            log(event="bootstrap-failed", pod=rec["huid"], out=out); self.release(log, why="bootstrap failed")
-            self._failed(S, log, "the setup of the pod failed"); return None
+            minutes = round((time.time() - began) / 60, 1)
+            log(event=what, pod=rec["huid"], out=out, minutes=minutes); self.release(log, why=what.replace("-", " "))
+            self._failed(S, log, f"the setup of the pod passed its {round(SETUP_S / 60)} minutes" if what == "bootstrap-past-limit" else "the setup of the pod failed",
+                         what=what, pod=rec["huid"], minutes=minutes)
+            return None
         rec["bootstrapped"] = True; rec.pop("taken_by_name", None); self.save(rec)
         S.pop("rent_tries", None); S.pop("rent_wait_until", None)
         log(event="bootstrapped", pod=rec["huid"], minutes=round((time.time() - rec["rented_at"]) / 60, 1))
