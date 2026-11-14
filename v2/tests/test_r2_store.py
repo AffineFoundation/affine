@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
+import time
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError, ReadTimeoutError
+from botocore.exceptions import ClientError, ReadTimeoutError, ResponseStreamingError
 from moto.server import ThreadedMotoServer
 
-from sn120_v2 import layout, links
+from sn120_v2 import layout, links, r2
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.r2 import MAX_PRESIGN_S, MIB, R2Store, main, preflight, self_test, written_roots
 from sn120_v2.seams import ObjectStore, Presigner
@@ -114,6 +117,99 @@ def test_large_file_upload_download_and_multipart_copy(store, tmp_path):
     target = tmp_path / "deep" / "dir" / "out.bin"
     store.get_file("public/bases/h/shard", target)
     assert target.read_bytes() == BIG and [p.name for p in target.parent.iterdir()] == ["out.bin"]
+
+
+def ranged_reads(store, before=lambda span: None):
+    """Record every range read that ``sha256`` sends, as (range, IfMatch). ``before`` runs ahead of each one."""
+    seen, real = [], store._s3.get_object
+
+    def get_object(**kw):
+        if "Range" in kw:
+            seen.append((kw["Range"], kw.get("IfMatch")))
+            before(kw["Range"])
+        return real(**kw)
+
+    store._s3.get_object = get_object
+    return seen
+
+
+def test_a_large_object_is_hashed_from_ranges_of_one_version_and_a_small_one_from_one_read(store):
+    """The fold's promotion read a 56 GB head two times on one stream. Ranges run side by side; the hash is still of every stored byte."""
+    spans = [f"bytes=0-{5 * MIB - 1}", f"bytes={5 * MIB}-{10 * MIB - 1}", f"bytes={10 * MIB}-{len(BIG) - 1}"]
+    store.put("pending/big", BIG)
+    store.put("pending/part", BIG[: 5 * MIB])  # exactly one part: one read, as before
+    etag = store._head("pending/big")["ETag"]
+    seen = ranged_reads(store, lambda span: time.sleep(0.3) if span == spans[0] else None)  # the first range comes back last
+    assert store.sha256("pending/big") == sha(BIG)
+    assert sorted(seen) == sorted((span, etag) for span in spans)
+    assert store.sha256("pending/part") == sha(BIG[: 5 * MIB]) and len(seen) == 3, "no range read for an object of one part"
+    damaged = BIG[:-5] + b"X" + BIG[-4:]  # one byte in the last range, same size
+    store.put("pending/big", damaged)
+    assert store.sha256("pending/big") == sha(damaged) != sha(BIG)
+
+
+def test_the_range_hash_never_mixes_two_versions_of_an_object(store):
+    """A box could write the object again while the controller reads it. Parts of two versions must not hash as one file."""
+    store.put("pending/big", BIG)
+    other = bytes(reversed(BIG))
+    seen = ranged_reads(store, lambda span: raw_put(store, "pending/big", other) if len(seen) == 2 else None)
+    with pytest.raises(InfraError, match="PreconditionFailed"):
+        store.sha256("pending/big")
+    assert store.sha256("pending/big") == sha(other)
+    seen = ranged_reads(store, lambda span: store.delete("pending/big") if len(seen) == 2 else None)
+    with pytest.raises(KeyError):
+        store.sha256("pending/big")
+
+
+def test_the_range_hash_reads_ahead_only_as_far_as_its_streams(store, monkeypatch):
+    """Memory stays bounded: at most READ_STREAMS ranges are read or held before the hasher took the first one."""
+    monkeypatch.setattr(r2, "READ_STREAMS", 2)
+    data = BIG + BIG  # five ranges
+    store.put("pending/big", data)
+    gate, started = threading.Event(), threading.Event()
+    seen = ranged_reads(store, lambda span: (started.set(), gate.wait(10)) if span.startswith("bytes=0-") else None)
+    with ThreadPoolExecutor(1) as pool:
+        result = pool.submit(store.sha256, "pending/big")
+        assert started.wait(10)
+        time.sleep(0.5)
+        held = len(seen)
+        gate.set()
+        assert result.result(30) == sha(data)
+    assert held == 2 and len(seen) == 5
+
+
+class Broken:
+    """A reply body whose stream breaks, or ends early, after the store answered."""
+
+    def __init__(self, data=None):
+        self.data = data
+
+    def read(self):
+        if self.data is None:
+            raise ResponseStreamingError(error="the connection was reset")
+        return self.data
+
+
+@pytest.mark.parametrize("body", [Broken(), Broken(b"short")])
+def test_a_range_whose_stream_breaks_is_read_again_and_never_hashed_short(env, body):
+    store = R2Store.from_env(env, part_size=5 * MIB, attempts=3)
+    store.put("pending/big", BIG)
+    real, tries = store._s3.get_object, []
+
+    def get_object(**kw):
+        if kw.get("Range", "").startswith(f"bytes={5 * MIB}-"):
+            tries.append(kw["Range"])
+            if len(tries) <= fails:
+                return {"Body": body}
+        return real(**kw)
+
+    store._s3.get_object = get_object
+    fails = 2
+    assert store.sha256("pending/big") == sha(BIG) and len(tries) == 3
+    fails, tries[:] = 3, []
+    with pytest.raises(InfraError):
+        store.sha256("pending/big")
+    assert len(tries) == 3
 
 
 @pytest.mark.parametrize("error", [ClientError({"Error": {"Code": "InternalError"}}, "UploadPartCopy"), TIMEOUT])
