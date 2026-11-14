@@ -332,19 +332,19 @@
     const penalty = p => (b.profiles && b.profiles[p] || {}).presence_penalty, tag = p => penalty(p) == null ? p : penalty(p) ? 'pp ' + penalty(p) : 'pp0';
     const meta = r => {
       const caps = Object.values(r.cells).map(x => x.cap_rate).filter(x => x != null), profiles = had(r).length ? had(r) : r.profile && run(r) === RUN.running ? [r.profile] : [];
-      return [r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tok`, caps.length && `cut-off ${share(caps.reduce((a, x) => a + x, 0) / caps.length)}`, ...profiles.map(tag)].filter(Boolean).join(' · ');
+      return [r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tok`, caps.length && `cut-off ${share(caps.reduce((a, x) => a + x, 0) / caps.length)}`, ...profiles.map(tag)].filter(Boolean);
     };
     const name = r => {
       const other = r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king', billions = other && size(r) != null ? size(r).toFixed(1) + 'B' : '';
       const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : r.kind === 'v1-king' && r.uid != null ? [r.label, 'UID ' + r.uid] : [SHORT[String(r.label).toLowerCase()] || r.label, ...(billions ? [billions] : [])];
       const model = other && r.repo ? `<a href="https://huggingface.co/${esc(r.repo)}" target="_blank" rel="noopener" title="${esc(r.repo + (billions ? ` · ${billions} params` : ''))}">${esc(first)}</a>` : esc(first);
-      return `<span class="who"><span>${model}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>' + (meta(r) ? `<span class="meta">${esc(meta(r))}</span>` : '');
+      return `<span class="who"><span>${model}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>' + (meta(r).length ? `<span class="meta">${meta(r).map((x, i, all) => `<span>${esc(x)}${i < all.length - 1 ? ' ·' : ''}</span>`).join(' ')}</span>` : '');
     };
     const about = r => [r.label, r.repo && r.kind === 'reference' && `Hugging Face ${r.repo}${r.repo_rev ? ' at ' + String(r.repo_rev).slice(0, 8) : ''}`, r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tokens`, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + (r.v1_epoch != null ? `v1 epoch ${r.v1_epoch} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], had(r).length ? 'Sampling: ' + list(had(r).map(pp)) : r.profile && run(r) === RUN.running && 'Sampling of its run: ' + pp(r.profile), r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
-    const nameW = nameWidth(Math.max(0, ...[...kings, ...pinned, ...genesis, ...old].map(r => meta(r).length)), box.clientWidth - 64 - 88 * b.columns.length);
+    const nameW = nameWidth(Math.max(0, ...[...kings, ...pinned, ...genesis, ...old].map(r => meta(r).join(' · ').length)), box.clientWidth - 64 - 88 * b.columns.length);
     t.insertAdjacentHTML('afterbegin', `<colgroup><col style="width:${nameW}px"><col style="width:64px">${b.columns.map(() => '<col style="width:88px">').join('')}</colgroup>`);
     t.style.minWidth = nameW + 64 + 88 * b.columns.length + 'px';
     t.tHead.innerHTML = (suites.length > 1 ? `<tr class="suites"><th></th><th class="avg"></th>${suites.map(x => `<th class="suite" colspan="${b.columns.filter(c => c.suite === x).length}">${esc(x)}</th>`).join('')}</tr>` : '')

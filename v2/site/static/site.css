@@ -92,6 +92,7 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 #bench .name a{border-bottom:1px dotted var(--muted)}
 #bench .name a:hover{border-bottom-style:solid}
 .meta{display:block;font-size:10px;line-height:14px;color:var(--muted);font-weight:400;white-space:normal}
+.meta span{white-space:nowrap}
 @media(max-width:640px){#bench .name{white-space:normal;vertical-align:top}#bench .who{flex-wrap:wrap;gap:2px 6px}}
 .star{width:9px;height:9px;margin-right:4px;vertical-align:-.5px;fill:#f5c542}
 @media(prefers-color-scheme:light){.star{fill:#c98a00}}
