@@ -186,7 +186,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "`group_size`: 0 means one group per prompt",
         "A value G above 0 cuts",
         "||(alpha / rank) * B @ A||_F^2)",
-        f"floor({params.n_gpus} / batches) GPUs, and at least 1.",
+        publisher.GPU_COUNT_AND_RESULT,  # a measurement of the GPU worker on a CPU
         '"reward": 1.0',
         '"reward": 0.0',
         "Each prompt has at least 1 rollout",
@@ -248,6 +248,22 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
 
 
+def test_the_text_states_the_gpus_of_a_round_and_follows_the_start_order_of_the_code(tmp_path, monkeypatch):
+    world, params = made_world(tmp_path), launch_params()
+    flat = " ".join(text_of(world, params).split())
+    assert "A round of 8 batches or fewer: all batches train at the same time, and each one starts at the lease. Each batch has one GPU." in flat
+    assert "to the batch with the largest value of: its token-steps / the GPUs that it has now. Between two equal values: the batch that is earlier in the queue order." in flat
+    assert "A batch gets no more GPUs than it has rollouts that train. With that many rollouts, one batch alone has all 8 GPUs." in flat
+    assert "The batches start in queue order. The first 8 of them start at the lease." in flat
+    assert "you cannot compute your GPU count before the round" in flat and "in a log of the box, not in a public file" in flat
+    assert publisher.GPU_COUNT_AND_RESULT + " That is a test on a CPU. The difference on GPUs is not measured." in flat
+    assert "floor(" not in flat and " slot" not in flat, "the rule of equal slots is gone"
+    monkeypatch.setattr(worker, "LONGEST_FIRST", True)
+    other = " ".join(text_of(world, params).split())
+    assert "The batches start with the most token-steps first, and between equal token-steps in queue order. The first 8 of them start at the lease." in other
+    assert "start in queue order" not in other
+
+
 def assigned(path: Path, name: str) -> object:
     """The value that a module assigns to ``name`` at its top level, read from the source: the module is not imported."""
     (value,) = [
@@ -265,7 +281,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The text states the tries of the round runner and the settings of the servers as the code has them by default.
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
-    assert "LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
+    assert "LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest, load_of=functools.partial(train_load, admission))" in stack
     assert "VllmEvaluator(store, box, pool, GradePool())" in stack
 
 

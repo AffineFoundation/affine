@@ -36,11 +36,6 @@ def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip
     assert Params.from_json(changed.to_json()) == changed and Params.from_json(changed.to_json()).params_hash == changed.params_hash
 
 
-@pytest.mark.parametrize("batches,expected", [(1, 8), (2, 4), (3, 2), (4, 2), (5, 1), (8, 1), (9, 1), (32, 1)])
-def test_gpus_per_lora_is_floor_of_eight_over_batches(batches, expected):
-    assert Params().gpus_per_lora(batches) == expected
-
-
 def test_look_sizes_end_with_every_task():
     params = Params()
     assert (params.look_sizes(), params.look_sizes(10), params.look_sizes(2), params.look_sizes(1)) == ((500, 1000, 2000), (3, 5, 10), (1, 2), (1,))
