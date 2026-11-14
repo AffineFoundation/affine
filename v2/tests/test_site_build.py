@@ -514,6 +514,101 @@ def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_
         assert json.loads(text)["bench"] == bare and json.loads(text)["kings"] == data["kings"]
 
 
+def public_round(tmp_path: Path, train: dict | None = None) -> tuple[Path, Path]:
+    """Put the round file of round r000001 of ``snapshot`` and a winning batch of 2 prompts and 5 rollouts in the store of ``build``."""
+    made = tmp_path / "world" / "store" / layout.round_file("r000001")
+    report, batch = tmp_path / "store" / layout.round_file("r000001"), tmp_path / "store" / layout.winner_batch("r000001")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(made, report)
+    groups = [dict(prompt=f"p{at}", rollouts=[dict(output="o", reward=float(reward)) for reward in range(size)]) for at, size in enumerate((2, 3))]
+    batch.write_text(json.dumps(dict(version="affine-batch-v3", hotkey="hk4", groups=groups) | ({} if train is None else {"train": train})))
+    return report, batch
+
+
+def test_a_closed_round_gets_its_phase_times_and_a_winner_the_size_and_the_settings_of_its_batch(tmp_path):
+    """``extend``: the values come from ``round.json`` and from the winner's ``batch.json``. Without a file its fields are None."""
+    settable = [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[], allowed="1e-06 to 0.0001", decided="recipe")]
+    snap = snapshot(tmp_path) | {"contract": {"public_url": "https://x.example", "miner_settable": settable}}
+    winner = next(entry for entry in snap["history"][0]["entries"] if entry["status"] == "winner")
+    done, _, text = build(tmp_path, snap)  # no round file and no batch in the store: the page is built, and nothing is said
+    assert done.returncode == 0 and "phase time" not in done.stderr and "batch size" not in done.stderr
+    bare, none = json.loads(text), dict(batch_prompts=None, batch_rollouts=None, train=None)
+    assert all(row["phases"] is None and row | none == row for row in bare["rounds"])
+    assert all(row | none == row for row in bare["history"]) and all(king | none == king for king in bare["kings"])
+    assert bare["train_settable"] == [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[])]
+    assert [(king["delta"], king["se"]) for king in bare["kings"]] == [(winner["delta"], winner["se"]), (None, None)]  # the gain needs no file
+
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    wall = json.loads(report.read_text())["wall_s"]
+    done, out, text = build(tmp_path, snap)
+    data, facts = json.loads(text), dict(batch_prompts=2, batch_rollouts=5, train={"lora_lr": 2e-05})
+    assert done.returncode == 0, done.stderr
+    times = data["rounds"][0]["phases"]
+    assert list(times) == ["training", "evaluation", "promote", "fold", "other", "total"] and times["total"] == wall["total"]
+    assert {name: times[name] for name in ("training", "evaluation", "promote", "fold")} == {
+        name: wall[name] for name in ("training", "evaluation", "promote", "fold")}
+    assert times["other"] == wall["total"] - wall["training"] - wall["evaluation"] - wall["promote"] - wall["fold"] >= 0
+    rows = {row["uid"]: row for row in data["history"]}
+    assert data["rounds"][0] | facts == data["rounds"][0] and rows[4] | facts == rows[4] and data["kings"][0] | facts == data["kings"][0]
+    assert all(rows[uid] | none == rows[uid] for uid in (3, 7)) and data["kings"][1] | none == data["kings"][1]  # only a winner's batch is public
+    for name in ("phases", *none):  # no field of before is removed or changed
+        for row in (*data["rounds"], *data["history"], *data["kings"]):
+            row.pop(name, None)
+    for name in ("phases", *none):
+        for row in (*bare["rounds"], *bare["history"], *bare["kings"]):
+            row.pop(name, None)
+    assert data == bare
+
+    report.unlink(), batch.unlink()  # a closed round does not change: the last data file has its values, so no file is read again
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and again == text
+    (out / "site-data.json").write_text("{not json")  # a bad last file is not used, and the build goes on
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and "the last site-data.json gives no value" in done.stderr and json.loads(again)["rounds"][0]["phases"] is None
+
+
+def test_a_bad_round_file_or_batch_leaves_its_fields_empty_and_a_batch_with_no_train_block_sets_nothing(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path)
+    done, out, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["train"] == {} and json.loads(text)["train_settable"] is None
+    for bad_report, bad_batch in (("{not json", "[1]"), (json.dumps({"wall_s": {"training": 1}}), json.dumps({"groups": [{"prompt": "p"}]})),
+                                  (json.dumps({"outcome": "applied"}), json.dumps({"groups": [], "train": {"lora_lr": float("nan")}}))):
+        (out / "site-data.json").unlink()
+        report.write_text(bad_report), batch.write_text(bad_batch)
+        done, _, text = build(tmp_path, snap)
+        data = json.loads(text)
+        assert done.returncode == 0 and "no phase time of round r000001" in done.stderr and "no batch size of round r000001" in done.stderr
+        assert data["rounds"][0]["phases"] is None and data["kings"][0]["batch_prompts"] is None and data["kings"][0]["train"] is None
+    batch.write_text("[" * 100_000)  # an error of any other kind: the page of before is still written
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and "not all fields of the round files and the batches: RecursionError" in done.stderr
+    assert json.loads(text)["kings"][0]["uid"] == 4 and json.loads(text)["kings"][0].get("train") is None
+    batch.unlink()
+    report.write_text(json.dumps({"wall_s": {"training": 4, "evaluation": 3, "total": 9}}))  # a round that applied no head has two phases
+    done, _, text = build(tmp_path, snap)  # the next build reads a file again when the last build got no value
+    assert json.loads(text)["rounds"][0]["phases"] == dict(training=4, evaluation=3, promote=None, fold=None, other=2, total=9)
+
+
+def test_a_benchmark_row_has_its_budget_and_a_reference_model_its_repo_and_its_size(tmp_path):
+    snap = snapshot(tmp_path)
+    folded = next(line for line in snap["heads"] if line["folded"] and line["round_id"] == "r000001")
+    path = tmp_path / "store" / layout.BENCHMARKS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    models = [king("king-0123", folded["applied_at"], "r000001", folded["version_id"]) | {"budget": 65536},
+              dict(model_id="q", label="Qwen3-8B", kind="reference", status="scored"),
+              dict(model_id="n", label="New-1B", kind="reference", status="scored", hf="org/New-1B@abc", budget=1000),
+              dict(model_id="u", label="Unknown-2B", kind="reference", status="scored")]
+    path.write_text(json.dumps({"updated_at": 5, "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True)], "models": models,
+                                "results": [result(model["model_id"], "b1", 0.5) for model in models]}))
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    rows = {row["label"]: (row["repo"], row["repo_rev"], row["size_b"], row["budget"]) for row in json.loads(text)["bench"]["rows"]}
+    assert rows.pop(f"r000001 {folded['version_id'][:8]}") == (None, None, None, 65536) and rows.pop("Genesis") == (None, None, None, None)
+    assert rows == {"Qwen3-8B": ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
+                    "New-1B": ("org/New-1B", "abc", None, 1000), "Unknown-2B": (None, None, None, None)}
+
+
 def v1_site(root: Path) -> Path:
     """The four public files of the v1 website, with the fields that v1 writes."""
     def turn(epoch: int, status: str, verdict: str | None, **more: object) -> dict:

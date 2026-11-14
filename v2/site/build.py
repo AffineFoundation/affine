@@ -10,6 +10,12 @@ nothing else. The reference models (models of other labs, scored by v1) come
 from the frozen v1 history that is installed in the site (``v1-data.json``),
 so they do not depend on the benchmark file or on a file of v1.
 
+``extend`` adds what those two files do not hold: the phase times of a closed
+round (its ``round.json``), and the size and the train settings of a winning
+batch (its ``batch.json``). A closed round does not change, so a value that the
+last ``site-data.json`` holds is not read again. Without one of these files the
+fields are null and the page is still built.
+
     python v2/site/build.py --source <dir or URL> --public-url <URL> --out <dir> [--v1-history <file or URL>] [--every 60]
 
   --source      root of the object store: a local directory or an http(s) URL.
@@ -62,6 +68,37 @@ FULL = ":full"  # the end of the column id of a benchmark's full run: the score 
 RUN_STATE = {"scored": SCORED, "done": SCORED, "queued": QUEUED, "running": RUNNING, "evaluating": RUNNING, "failed": FAILED}
 KING, GENESIS = "king", "genesis"
 V1_KING = "v1-king"  # a row of the benchmark file: a king of v1 that the benchmark service of v2 scores. It won no round of v2
+PHASES = ("training", "evaluation", "promote", "fold")  # the phases of a round in ``wall_s`` of its round file, in the order of the round
+BATCH_FACTS = ("batch_prompts", "batch_rollouts", "train")
+SETTABLE = ("key", "default", "low", "high", "integer", "choices")
+MODEL_FACTS = ("repo", "repo_rev", "size_b", "budget")
+# The reference models of the frozen v1 history, by label in small letters: the Hugging Face repo with its revision, the
+# parameters in billions, and the token budget of the v1 run. No file of v2 holds these; they are from ``models[].hf`` and
+# ``models[].budget`` of the last benchmark file of v1. A model of the benchmark file that gives ``hf`` or ``budget`` wins.
+REFERENCE: dict[str, tuple[str, float, int]] = {
+    "qwen3.5-9b": ("Qwen/Qwen3.5-9B@c202236235762e1c871ad0ccb60c8ee5ba337b9a", 9.65, 65536),
+    "qwen3-8b": ("Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
+    "deepseek-r1-0528-qwen3-8b": ("deepseek-ai/DeepSeek-R1-0528-Qwen3-8B@6e8885a6ff5c1dc5201574c8fd700323f23c25fa", 8.19, 32768),
+    "r1-distill-qwen-7b": ("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B@916b56a44061fd5cd7d6a8fb632557ed4f724f60", 7.62, 32768),
+    "r1-distill-llama-8b": ("deepseek-ai/DeepSeek-R1-Distill-Llama-8B@6a6f4aa4197940add57724a7707d069478df56b1", 8.03, 32768),
+    "nemotron-nano-9b-v2": ("nvidia/NVIDIA-Nemotron-Nano-9B-v2@6533e8de2c68e4536bf7c411d7a3ce5734111476", 8.89, 32768),
+    "glm-z1-9b-0414": ("zai-org/GLM-Z1-9B-0414@b221b06fefb23ca320922cf6e68ab5f2fb82de81", 9.4, 30000),
+    "qwen3.5-4b": ("Qwen/Qwen3.5-4B@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a", 4.66, 32768),
+    "qwen3-14b": ("Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18", 14.77, 32768),
+    "qwen3-4b": ("Qwen/Qwen3-4B@1cfa9a7208912126459214e8b04321603b3df60c", 4.02, 32768),
+    "r1-distill-qwen-14b": ("deepseek-ai/DeepSeek-R1-Distill-Qwen-14B@1df8507178afcc1bef68cd8c393f61a886323761", 14.77, 32768),
+    "openreasoning-nemotron-7b": ("nvidia/OpenReasoning-Nemotron-7B@3afbc681aa2679fa65304f7d498e7eb28163962b", 7.62, 64000),
+    "acereason-nemotron-1.1-7b": ("nvidia/AceReason-Nemotron-1.1-7B@2be9ed2fe532f39332ee47fd21899cab5fd6ec15", 7.62, 32768),
+    "skywork-or1-7b": ("Skywork/Skywork-OR1-7B@5bd323a9cdea40b9412cb2a200ee284201e930ae", 7.62, 32768),
+    "mimo-7b-rl": ("XiaomiMiMo/MiMo-7B-RL@7c7707596b0ef1032ef82970d7a4a484ca457c4d", 7.83, 32768),
+    "llama-3.1-nemotron-nano-8b-v1": ("nvidia/Llama-3.1-Nemotron-Nano-8B-v1@54641c1611fcff44fa4865626462445e0a153fc7", 8.03, 32768),
+    "openthinker3-7b": ("open-thoughts/OpenThinker3-7B@864fb9aefbb91f257c4911e4b9f85a6986f8eab2", 7.62, 30720),
+    "phi-4-reasoning": ("microsoft/Phi-4-reasoning@1de18ec97600877ce63dbf60c73b998da99f0195", 14.66, 30720),
+    "phi-4-mini-reasoning": ("microsoft/Phi-4-mini-reasoning@0e3b1e2d02ee478a3743abe3f629e9c0cb722e0a", 3.84, 32768),
+    "deepscaler-1.5b-preview": ("agentica-org/DeepScaleR-1.5B-Preview@e3f524ce413a296b4d388e7560dd5c82c1c56725", 1.78, 32768),
+    "r1-distill-qwen-1.5b": ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B@ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562", 1.78, 32768),
+    "gpt-oss-20b": ("openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee", 20.91, 32768),
+}
 
 
 def fetch(location: str) -> bytes:
@@ -358,6 +395,99 @@ def tried(topic: str, what: str, make: Callable[[], Any], quiet: Callable[[Excep
     return made
 
 
+def absent(error: Exception) -> bool:
+    """True when the object is not there: no file, or a 404 over http(s)."""
+    return isinstance(error, FileNotFoundError) or (isinstance(error, urllib.error.HTTPError) and error.code == 404)
+
+
+def phases(report: dict[str, Any]) -> dict[str, Any]:
+    """The wall seconds of each phase of a closed round, from its round file.
+
+    Training and evaluation are always numbers. Promote and fold are None for a round that applied no head. ``other``
+    is the part of ``total`` that is in no phase.
+    """
+    wall = report["wall_s"]
+    if not number(wall.get("total")):
+        raise ValueError("wall_s has no total")
+    times = {name: wall[name] if number(wall.get(name)) else None for name in PHASES}
+    times |= {name: times[name] or 0 for name in PHASES[:2]}
+    return times | {"other": max(0, wall["total"] - sum(value or 0 for value in times.values())), "total": wall["total"]}
+
+
+def batch_facts(batch: dict[str, Any]) -> dict[str, Any]:
+    """The size of a published batch, and the train settings that its miner set. A batch with no ``train`` sets none."""
+    groups, train = batch["groups"], batch.get("train")
+    return {"batch_prompts": len(groups), "batch_rollouts": sum(len(group["rollouts"]) for group in groups),
+            "train": train if isinstance(train, dict) else {}}
+
+
+def plain(value: Any) -> Any:
+    """``value`` when the data file can hold it. A value that JSON cannot hold, such as NaN, is an error here, so it does not stop the build."""
+    json.dumps(value, allow_nan=False)
+    return value
+
+
+def known(last: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Per round, the fields of ``extend`` that a data file of this builder already holds."""
+    found: dict[str, dict[str, Any]] = {}
+    for row in [*last["rounds"], *last["kings"]]:
+        found.setdefault(row["round_id"], {}).update({name: row[name] for name in ("phases", *BATCH_FACTS) if row.get(name) is not None})
+    return found
+
+
+def extend(data: dict[str, Any], snap: dict[str, Any], bench: dict[str, Any] | None, load: Callable[[str], bytes],
+           have: dict[str, dict[str, Any]]) -> None:
+    """Add to the page data of ``view`` what the snapshot and the benchmark table do not hold. Every field can be None.
+
+    A closed round gets ``phases`` from its round file. A round with an applied winner, the row of that winner and its
+    king get the size of the winning batch and its train settings from the published batch: only a winner's batch is
+    public. A king also gets the gain of its round. ``train_settable`` is what a miner may set, from the contract of the
+    snapshot. A benchmark row gets the token budget of its run, and a reference model its repo and its size.
+
+    ``load`` reads one object of the store. ``have`` is ``known`` of the last data file: a closed round does not change,
+    so a value that is there is not read again. A file that is not there or is bad leaves its fields None, and the next
+    build reads it again.
+    """
+    def facts(round_id: str, names: Sequence[str], what: str, key: str, make: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+        old = have.get(round_id, {})
+        if all(name in old for name in names):
+            return {name: old[name] for name in names}
+        return tried(f"{what} {round_id}", f"no {what} of round {round_id}", lambda: plain(make(json.loads(load(key)))), absent) or dict.fromkeys(names)
+
+    won = {row["round_id"]: row for row in data["history"] if row["batch"]}
+    public = sorted(won.keys() | {king["round_id"] for king in data["kings"] if king["batch"]})
+    batches = {round_id: facts(round_id, BATCH_FACTS, "batch size", layout.winner_batch(round_id), batch_facts) for round_id in public}
+    none = dict.fromkeys(BATCH_FACTS)
+    for row in data["rounds"]:
+        row |= facts(row["round_id"], ("phases",), "phase time", layout.round_file(row["round_id"]), lambda report: {"phases": phases(report)})
+        row |= batches.get(row["round_id"], none)
+    for row in data["history"]:
+        row |= batches[row["round_id"]] if row["batch"] else none
+    for king in data["kings"]:
+        winner = won.get(king["round_id"], {}) if king["batch"] else {}
+        king |= (batches[king["round_id"]] if king["batch"] else none) | {"delta": winner.get("delta"), "se": winner.get("se")}
+    data["train_settable"] = tried("settable", "no list of the train settings", lambda: plain([
+        {name: row[name] for name in SETTABLE} for row in snap["contract"]["miner_settable"]]), lambda error: isinstance(error, KeyError))
+
+    def model_key(kind: Any, round_id: Any, epoch: Any, label: Any) -> tuple[Any, ...]:
+        return (kind, round_id) if kind == KING else (kind, epoch) if kind == V1_KING else (kind,) if kind == GENESIS else (kind, label)
+
+    def model_facts() -> list[dict[str, Any]]:
+        models = {model_key(model.get("kind"), model.get("round_id"), model.get("v1_epoch"), model.get("label") or model["model_id"]): model
+                  for model in (bench or {}).get("models", ())}
+        found = []
+        for row in rows:
+            model = models.get(model_key(row["kind"], row["round_id"], row.get("v1_epoch"), row["label"]), {})
+            hf, size, budget = (None, None, None) if row["kind"] in (KING, GENESIS, V1_KING) else REFERENCE.get(str(row["label"]).lower(), (None, None, None))
+            repo, _, revision = (model["hf"] if isinstance(model.get("hf"), str) else hf or "").partition("@")
+            found.append(dict(zip(MODEL_FACTS, (repo or None, revision or None, size, whole(model.get("budget")) or budget))))
+        return found
+
+    rows = data["bench"]["rows"]
+    for row, more in zip(rows, tried("models", "no repo and no budget of a benchmark row", model_facts) or [dict.fromkeys(MODEL_FACTS)] * len(rows)):
+        row |= more
+
+
 def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
     """Write the data file. The benchmark file and the v1 history are informational: without one of them, or with a bad
     one, the page is still built, and the genesis head and each king still have their rows."""
@@ -382,6 +512,11 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
     table = bench_view(bench, heads, kept)
     data = view(snap, table, link, lambda key: exists(source, key))
+    have = tried("last", f"the last {DATA} gives no value", lambda: known(json.loads((out / DATA).read_bytes())), absent) or {}
+    try:
+        extend(data, snap, bench, lambda key: read(source, key), have)
+    except Exception as error:  # noqa: BLE001 - these fields are informational: the page of ``view`` is written without the rest of them
+        print(f"site: not all fields of the round files and the batches: {type(error).__name__}: {error}", file=sys.stderr)
     write(out / DATA, json.dumps(data, separators=(",", ":"), allow_nan=False).encode())
 
 
