@@ -234,10 +234,12 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     ``score_full`` it also gives the score of that longer run: one more cell, under the id of the benchmark with
     ``FULL`` at its end. The column of these cells stands directly after its benchmark, is never in the average, and
     is there only when a row has such a cell; ``head`` is its short name for the head of the table. ``pod`` of a row
-    is the state of its machine and the time of that state.
+    is the state of its machine and the time of that state. ``waiting_for`` says what a row waits for, and ``stopped``
+    why the benchmark service starts no run of it. ``profile`` of a cell is the settings profile of that result, and
+    ``profile`` of a row the one that the file gives the model: the sampling of a run.
 
-    A row of the kind ``V1_KING`` has the label "v1 king" and its ``uid``, and no round, no head and no time: these
-    are of v2, and it won no round of v2. It is not a king here and not a reference model.
+    A row of the kind ``V1_KING`` has the label "v1 king", its ``uid`` and its ``v1_epoch``, and no round, no head and
+    no time: these are of v2, and it won no round of v2. It is not a king here and not a reference model.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
     enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
@@ -254,14 +256,15 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
         scores[bench_id] = {
             "score": result["score"], "se": result.get("se"), "partial": result.get("complete") is False,
             "samples": result.get("samples"), "expected": result.get("samples_expected"), "cap_rate": result.get("cap_rate"),
-            "rollouts": each, "derived": bool(result.get("derived_from")),
+            "rollouts": each, "derived": bool(result.get("derived_from")), "profile": result.get("profile"),
         }
         scores.pop(bench_id + FULL, None)
         if number(result.get("score_full")):
             total = whole(result.get("samples_full"))
             scores[bench_id + FULL] = {
-                "score": result["score_full"], "se": None, "partial": False, "samples": total, "expected": total, "cap_rate": None,
-                "rollouts": total // count if total and count and total % count == 0 else None,
+                "score": result["score_full"], "se": result.get("se_full"), "partial": False, "samples": total, "expected": total,
+                "cap_rate": result.get("cap_rate"),  # the benchmark service keeps the cap rate of the full run in a computed result
+                "rollouts": total // count if total and count and total % count == 0 else None, "profile": result.get("profile"),
             }
 
     def per_problem(name: str, cell: dict[str, Any]) -> int | None:
@@ -284,9 +287,11 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             "avg_partial": any(scores[name]["partial"] for name in counted if name in scores), "cells": scores,
         }
 
-    def more(model: dict[str, Any]) -> dict[str, Any]:  # the machine of a row, and the UID of a king of v1
-        pod, uid = model.get("pod"), model.get("uid")
-        found = {"uid": uid} if model.get("kind") == V1_KING and number(uid) else {}
+    def more(model: dict[str, Any]) -> dict[str, Any]:
+        found = {name: model[name] for name in ("waiting_for", "stopped", "profile") if isinstance(model.get(name), str)}
+        if model.get("kind") == V1_KING:
+            found |= {name: model[name] for name in ("uid", "v1_epoch") if number(model.get(name))}
+        pod = model.get("pod")
         if isinstance(pod, dict) and isinstance(pod.get("state"), str):
             found["pod"] = {"state": pod["state"], "since": pod["since"] if number(pod.get("since")) else None}
         return found

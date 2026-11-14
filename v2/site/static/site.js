@@ -203,6 +203,7 @@
     none: ['no run yet', 'private', 'No run yet: the benchmark file does not name this model.', 'no run yet'],
   };
   RUN.evaluating = RUN.running;  // the word of the benchmark file, for a data file whose builder left it as it is
+  RUN.waiting = ['waiting', 'wait', 'The benchmark file lists this model as waiting: its run did not start.', 'waiting'];
   // The state of the machine of a row, where it says more than the state of the run: the run waits for the machine, or got none.
   const POD = {
     renting: ['renting', 'wait', 'The benchmark service rents a machine for the run of this model.', 'renting'],
@@ -210,6 +211,19 @@
     'rent-failed': ['failed', 'dn', 'The rent of a machine for the run of this model failed: the run did not start.', 'rent failed'],
   };
   const NO_FILE = 'No run yet: no benchmark file is published.';
+  // Why the benchmark service starts no run of a row until the operator says so (`stopped`), and what a row waits for (`waiting_for`).
+  const STOP = {
+    held: ['held', 'dn', 'The run of this model ended and gave no value for a benchmark. The benchmark service starts no new run of it until the operator says so.', 'held'],
+    expired: ['expired', 'dn', 'The machine of this model reached its time limit. The benchmark service starts no new run of it until the operator says so.', 'expired'],
+    rent_failed: POD['rent-failed'],
+  };
+  const WAIT = {
+    weights: 'The weight files of this model are not in the store yet: its run starts when they are.',
+    source: 'The benchmark service cannot read the source of the weights of this model yet: it rents no machine for it.',
+  };
+  // The sampling of a score, from the settings profile that the benchmark file names. A profile that this page does not know is shown by its name.
+  const PP = { 'qwen3.5-family': 'presence penalty 1.5', 'qwen3.5-family-pp0': 'presence penalty 0' };
+  const pp = name => PP[name] || `profile ${name}`;
   const V1_KING = 'A king of v1, scored by the benchmark service of v2. It won no round of v2, so it has no round and no head here.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
@@ -233,6 +247,8 @@
     const since = r => r.pod.since ? ` Since ${utc(r.pod.since)}.` : '';
     const run = r => r.status === 'scored' || !r.status ? undefined
       : r.pod && POD[r.pod.state] ? POD[r.pod.state].map((x, i) => i === 2 ? x + since(r) : x)
+      : STOP[r.stopped] ? STOP[r.stopped]
+      : WAIT[r.waiting_for] ? [r.status, 'wait', WAIT[r.waiting_for], r.status]
       : r.status === 'none' && !b.updated_at && !V1 ? [...RUN.none.slice(0, 2), NO_FILE, RUN.none[3]]
       : RUN[r.status] || [r.status, 'wait', `The benchmark file gives this model the state "${r.status}".`, 'no score'];
     const every = b.rows.filter(r => r.kind === 'king'), kings = V1 ? every.filter(r => Object.keys(r.cells).length) : every;
@@ -251,13 +267,25 @@
     // computed from a longer run of the same model gets one more sentence: from how many of the samples, and where the full score is.
     const samples = n => `${n} sample${n === 1 ? '' : 's'}`, list = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0];
     const longer = c => b.columns.find(o => o.full_of === c.id), first = r => r.kind === 'v1-king' ? 'the v1 king' : String(r.label).split(' ')[0];
+    const part = (sets, has) => list(sets.map(([n, name]) => [n.filter(has).length, n.length, name]).filter(([m]) => m).map(([m, all, name]) => m < all ? `${m} of ${name}` : name));
+    // The sampling of the scores of a row: the profiles of its cells. For a model with no score the file has the profile of its node, or
+    // of the settings of the moment: the row tooltip shows it only while the run is in work, and the sentence of the note never.
+    const had = r => [...new Set(Object.values(r.cells).map(x => x.profile).filter(Boolean))];
+    const sampling = () => {
+      const sets = [[kings, 'the kings'], [old, old.length > 1 ? 'the v1 kings' : 'the v1 king'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head']]
+        .map(([rows, name]) => [rows.map(had).filter(a => a.length), name]);
+      const all = [...new Set(sets.flatMap(([n]) => n.flat()))], both = shown.filter(r => had(r).length > 1);
+      return all.length < 2 ? '' : 'Sampling: ' + all.map(p => `${pp(p)} for ${part(sets, a => a.includes(p))}`).join(', ') + '.'
+        + (both.length ? ` ${list(both.map(first))} ${both.length > 1 ? 'have' : 'has'} scores of more than one sampling: each score names its own in its tooltip.` : '')
+        + (pinned.some(r => !had(r).length) ? ' The data does not name the sampling of the reference models.' : '') + ' ';
+    };
     const from = (one, all) => `${one.rollouts || 'a part'} of the ${all && all.rollouts ? all.rollouts + ' ' : ''}samples of each problem`;
     const differ = c => {
       if (c.full_of) return '';
       const sets = [[kings, 'the kings'], [old, old.length > 1 ? 'the v1 kings' : 'the v1 king'], [genesis, genesis.length > 1 ? 'the genesis heads' : 'the genesis head'], [pinned, 'the reference models']]
         .map(([rows, name]) => [rows.map(r => r.cells[c.id] && r.cells[c.id].rollouts).filter(Boolean), name]);
       const counts = [...new Set(sets.flatMap(([n]) => n))].sort((x, y) => x - y), each = c.problems ? `each of the ${c.problems} problems` : 'each problem';
-      const who = k => list(sets.map(([n, name]) => [n.filter(x => x === k).length, n.length, name]).filter(([m]) => m).map(([m, all, name]) => m < all ? `${m} of ${name}` : name));
+      const who = k => part(sets, x => x === k);
       const wide = longer(c), made = [...kings, ...pinned, ...genesis, ...old].filter(r => r.cells[c.id] && r.cells[c.id].derived), many = made.length > 1;
       const how = r => from(r.cells[c.id], wide && r.cells[wide.id]), one = made.every(r => how(r) === how(made[0]));
       const all = wide && made.every(r => r.cells[wide.id]) && made[0].cells[wide.id].rollouts;
@@ -276,7 +304,7 @@
         return `<td class="num na${avg}" title="${esc(text)}">${esc(word)}</td>`;
       }
       const f = s && s[1] > s[0] ? (x - s[0]) / (s[1] - s[0]) : 1, top = s && Math.round(1000 * x) === Math.round(1000 * s[1]);
-      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') + (one.derived ? ` · computed from ${from(one, longer(c) && r.cells[longer(c).id])} of the full run` : '') : 'Mean of the counted benchmarks.');
+      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` + (one.rollouts ? ` · ${samples(one.rollouts)} for each problem` : '') + (one.profile ? ` · ${pp(one.profile)}` : '') + (one.derived ? ` · computed from ${from(one, longer(c) && r.cells[longer(c).id])} of the full run` : '') : 'Mean of the counted benchmarks.');
       return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
         + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
     };
@@ -284,7 +312,7 @@
       const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : r.kind === 'v1-king' && r.uid != null ? [r.label, 'UID ' + r.uid] : [r.label];
       return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>';
     };
-    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
+    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + (r.v1_epoch != null ? `v1 epoch ${r.v1_epoch} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], had(r).length ? 'Sampling: ' + list(had(r).map(pp)) : r.profile && run(r) === RUN.running && 'Sampling of its run: ' + pp(r.profile), r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
@@ -302,7 +330,7 @@
     const scored = every.filter(r => r.status === 'scored').length, more = document.getElementById('refs');
     more.hidden = !lead.length || lead.length === refs.length;
     if (more.previousSibling?.own !== 1) more.before(Object.assign(document.createTextNode(''), { own: 1 }));
-    more.previousSibling.data = (old.length ? `v1 king: ${V1_KING[0].toLowerCase() + V1_KING.slice(1)} ` : '') + b.columns.map(c => differ(c) && differ(c) + ' ').join('');
+    more.previousSibling.data = (old.length ? `v1 king: ${V1_KING[0].toLowerCase() + V1_KING.slice(1)} ` : '') + b.columns.map(c => differ(c) && differ(c) + ' ').join('') + sampling();
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
       : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');

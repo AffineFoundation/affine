@@ -455,9 +455,9 @@ def test_a_full_run_has_its_own_column_and_a_row_has_its_machine_and_the_v1_king
     columns = [dict(id="ax", label="ArXivMath", suite="math", enabled=True, in_avg=False, order=1), dict(id="b1", label="B1", suite="math", enabled=True, order=2)]
     pod = dict(name="affine-v2-bench-king-1", gpu="8xH100", usd_h=23.2, state="renting", since=30)
     models = [
-        dict(model_id="king-1", label="one", kind="king", round_id="r000001", head_version_id="f1" * 32, crowned_at=20.0, status="evaluating", pod=pod),
-        dict(model_id="old", label="v1 king e1211", kind="v1-king", round_id="e1211", head_version_id="c" * 64, crowned_at=5.0, uid=920, status="queued", pod="none"),
-        dict(model_id="g", label="genesis M", kind="genesis", status="scored", pod=pod | {"state": "released", "since": "then"}),
+        dict(model_id="king-1", label="one", kind="king", round_id="r000001", head_version_id="f1" * 32, crowned_at=20.0, status="evaluating", pod=pod, profile="q"),
+        dict(model_id="old", label="v1 king E1211", kind="v1-king", round_id=None, uid=920, v1_epoch=1211, status="waiting", waiting_for="source", pod="none"),
+        dict(model_id="g", label="genesis M", kind="genesis", status="failed", stopped="held", v1_epoch=7, pod=pod | {"state": "released", "since": "then"}),
     ]
     short = result("king-1", "ax", 0.5) | {"rollouts": 2, "samples": 206, "samples_expected": 206, "n": 103}
 
@@ -469,15 +469,18 @@ def test_a_full_run_has_its_own_column_and_a_row_has_its_machine_and_the_v1_king
     king, old, genesis = plain["rows"]
     assert king["pod"] == {"state": "renting", "since": 30} and genesis["pod"] == {"state": "released", "since": None} and "uid" not in king
     assert (old["label"], old["kind"], old["uid"], old["round_id"], old["head"], old["at"]) == ("v1 king", "v1-king", 920, None, None, None) and "pod" not in old
+    assert (old["status"], old["waiting_for"], old["v1_epoch"]) == ("waiting", "source", 1211) and "stopped" not in old and "waiting_for" not in king and king["profile"] == "q" and "profile" not in old
+    assert (genesis["status"], genesis["stopped"]) == ("failed", "held") and "v1_epoch" not in genesis and king["cells"]["ax"]["profile"] is None
     assert king["cells"]["ax"]["derived"] is False and list(king["cells"]) == ["ax"]
 
     # the value of the king was computed from its run of 16 samples for each problem, and that run has its own score
-    full = made([short | {"derived_from": "ax/v1", "score_full": 0.25, "samples_full": 1648}])
+    full = made([short | {"derived_from": "ax/v1", "score_full": 0.25, "se_full": 0.04, "samples_full": 1648, "cap_rate": 0.2, "profile": "p"}])
     assert [(column["id"], column["label"], column.get("head"), column["in_avg"], column.get("full_of")) for column in full["columns"]] == [
         ("ax", "ArXivMath", None, False, None), ("ax:full", "ArXivMath, full run", "full run", False, "ax"), ("b1", "B1", None, True, None)]
     cells = full["rows"][0]["cells"]
     assert cells["ax"]["derived"] is True and (cells["ax"]["score"], cells["ax"]["rollouts"]) == (0.5, 2)
     assert (cells["ax:full"]["score"], cells["ax:full"]["samples"], cells["ax:full"]["rollouts"]) == (0.25, 1648, 16)
+    assert (cells["ax:full"]["se"], cells["ax:full"]["cap_rate"], cells["ax:full"]["profile"], cells["ax"]["profile"]) == (0.04, 0.2, "p", "p")
     # a derived value with no score of the full run, and a later result of the same model with none: no column
     for results in ([short | {"derived_from": "ax/v1"}], [short | {"score_full": 0.25, "samples_full": 1648}, short]):
         assert [column["id"] for column in made(results)["columns"]] == ["ax", "b1"]
