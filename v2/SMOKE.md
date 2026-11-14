@@ -561,11 +561,13 @@ Which exit codes of `run` the loop does not start again:
 | Exit code of `run` | Meaning | The loop |
 |---|---|---|
 | 0 | Finished (`--rounds`, `--max-idle`) | stops, exit code 0 |
-| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again. |
+| 2 | Refused: a line `refused: <cause>` (parameters, state, a journal that another controller took) | stops, exit code 2. Only `refused: InfraError` (the store or the chain did not answer) is tried again, without end: see below. |
 | 130, 143 | Stopped with SIGINT or SIGTERM | stops, exit code 0 |
 | every other code | A crash (1 is a Python error, 137 is SIGKILL or out of memory) | starts `run` again after 30 seconds |
 
 The loop counts the starts with no finished round between them. A round that `run` closed sets the count back to zero; a round that the loop ended with `end-round` does not. At 5 (`SN120_LOOP_MAX_STARTS`) the loop stops with exit code 3. A crash 30 minutes into every round stops it too. The last lines of `$SN120_WORK_DIR/logs/run.log` then say why, and what to run.
+
+A store or a chain that does not answer never stops the loop. When `end-round` or `run` ends with `refused: InfraError`, the loop waits and tries again until they answer. The pause starts at 30 seconds (`SN120_LOOP_PAUSE_S`), doubles with each try, and stays at 5 minutes (`SN120_LOOP_MAX_PAUSE_S`). Such a try is not in the count of starts, and it does not set that count back to zero. `cat $SN120_WORK_DIR/logs/run-loop.status` then shows `waiting for the store or the chain since <UTC time> (<N> tries with no answer); next try in <seconds> s; the last one ended with: ... refused: InfraError: <cause>`, and `run.log` has the same in each try. Read that `<cause>` once after you start the loop. A cause on the box itself has the same word `InfraError` and does not go away: a wrong store token (for example `r2 ... failed: AccessDenied`), or a wrong grader package (`math grader needs ...`). Then stop the loop and fix it.
 
 **A box without systemd** (a rented container). In `v2/`, in the shell of step 2:
 
