@@ -94,6 +94,31 @@ The first copies are in this repo: `tests/data/cutover/k1.json` and `tests/data/
 
 **The import dry run can run at any time, as long as the site serves v1's `mining.json`.** It reads only public files and the chain. Do the real run on the cutover build, right before the bootstrap. Once the site serves v2's `mining.json`, the import with the two public URLs is refused: "GPU box", step 7 has the way.
 
+## Known double turns after the first import (do not revoke)
+
+v1 kept taking turns after the first import snapshot was taken. These three UIDs got a v1 turn after that snapshot and were also charged or seated in v2. **Nothing is revoked.** They already had their one turn (in v1 and again in v2). The idle guard below exists so a future import cannot repeat this.
+
+| UID | What happened |
+| --- | --- |
+| **893** | v1 epoch 1321 (turn). Charged again in a v2 round. |
+| **876** | v1 epoch 1324 (turn). Charged again in a v2 round. |
+| **981** | v1 epoch 1325 (turn). Seated in open v2 round `r000011`. |
+
+## Idle guard (source must not still be dispatching)
+
+The import **refuses** unless you give `--earlier-k1` a copy of `k1.json` taken at least 20 minutes before the current one, with the **same last epoch**. That is the coded form of the two reads 20 minutes apart in "The state of v1" above. If the last epoch moved, v1 is still dispatching: stop the lifecycle and wait.
+
+```
+# Save k1 now, wait >= 20 minutes, save again, then dry-run with both:
+T0=$(date -u +%Y%m%dT%H%M%SZ)
+curl -fsS https://affine.io/k1.json -o k1-$T0.json
+# ... wait until v1's last epoch has stood still for >= 20 minutes ...
+T1=$(date -u +%Y%m%dT%H%M%SZ)
+curl -fsS https://affine.io/k1.json -o k1-$T1.json
+curl -fsS https://affine.io/mining.json -o mining-$T1.json
+python -m sn120_v2.cutover --dry-run --k1 k1-$T1.json --mining mining-$T1.json --earlier-k1 k1-$T0.json
+```
+
 ## What the import carries
 
 `python -m sn120_v2.cutover` reads two public files, `https://affine.io/k1.json` and `https://affine.io/mining.json`. It needs no credential, reads no v1 host and no bucket, and writes nothing to the chain. It writes:
@@ -420,7 +445,7 @@ Run every command from `v2/`, inside the virtual environment.
        - The status line says `running: run has pid N, start 1 of at most 5 with no finished round`. **Read this line once after each start of the loop.** If it says `waiting for the store or the chain since ...`, read the `<cause>` at its end: "A crash or a restart of `run`" says which causes do not go away.
        - `grep 'Max open files' /proc/N/limits`, with the N of that status line, prints the soft limit and the hard limit of `run`. Right: a soft limit of 4096 or more; from `5bc36ed8`, a hard limit of 2560 or more is enough ("The open file limit of `run`" in "After the start").
        - `run.log` has the lines `run-loop: loop started (pid N): ...` and `run-loop: start 1 of at most 5 with no finished round between them (rounds closed so far: 0)`.
-       - The lines `setting: ...` of this start. `grep -n -E 'run-loop: (loop started|start [0-9]+ of)|^setting: ' $SN120_WORK_DIR/logs/run.log | tail -n 5` prints the last start line of the loop and, after it, one line for each of `SN120_HEAD_PUBLISH`, `SN120_CHECK_STREAMS` and `SN120_AFTER_KING`. The lines have no time in them, so read only the ones after the last start line. A line with `is NOT SET: this is the default` means that `run` did not get that variable. For `SN120_CHECK_STREAMS=8` the line is `setting: the check of the waiting files reads 8 files at one time (SN120_CHECK_STREAMS=8)`. For `SN120_AFTER_KING=overlap` the line is `setting: after a king, only the fold is before the next open (the order 'overlap') (SN120_AFTER_KING=overlap)`.
+       - The lines `setting: ...` of this start. `grep -n -E 'run-loop: (loop started|start [0-9]+ of)|^setting: ' $SN120_WORK_DIR/logs/run.log | tail -n 5` prints the last start line of the loop and, after it, one line for each of `SN120_HEAD_PUBLISH`, `SN120_CHECK_STREAMS` and `SN120_AFTER_KING`. The lines have no time in them, so read only the ones after the last start line. A line with `is NOT SET: this is the default` means that `run` did not get that variable. For `SN120_CHECK_STREAMS=8` the line is `setting: the check of the waiting files reads 8 files at one time (SN120_CHECK_STREAMS=8)`. For `SN120_AFTER_KING=overlap` the line is `setting: after a king, the fold and the check of the waiting files are before the next open (the order 'overlap') (SN120_AFTER_KING=overlap)`.
        - The lines of `run` after them are not `waiting: ...`. If they are, see "When no round opens" below.
        - `status` shows a `phase` other than `IDLE` after the first lease.
        - `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` prints the summary when the first round has closed. The 100 minutes of the time limit are from the lease to the promotion, not to the close: with a winner the round closes after the fold ("The time limit of a round" and "What a closed round looks like" below).
@@ -1740,7 +1765,7 @@ A commit with the command `front-seats` goes to AffineValidator first: see "Seat
    - A round opens in that pass: `run` writes the two files at the open of the round, and `run.log` shows no `idle:` line.
    - **A round that the start judges or finishes gets no summary in `run.log`** (the last three rows of the table of step 2). The log goes straight to `idle: N seats wait, phase IDLE`, or to the next round. Read the result of that round with `python -m sn120_v2 round --state-dir $STATE --stack sn120_v2.assembly:stack` ("What a closed round looks like").
    - The sign in the file: line 3 of `llms.txt`, `Generated <time> UTC from snapshot`, shows the time of that pass. `generated_at` in `mining.json` is the same second.
-   - `idle: ..., last problem: publish failed: <cause>`: the store did not take the files in the pass before. The next pass with no round writes them again, 30 seconds later. The text `last problem:` stays in the later lines, so the sign of the write is the `Generated` line, not the log.
+   - `PUBLISH FAILED: 3 tries, and the store took none: <cause>. ...` in `run.log`: the store did not take the files. `run` made 3 tries, with 10 seconds between two tries, and `run` goes on. The files still show the last good publish. The lines `idle: ...` after it end with `last problem: publish failed: <cause>`. The next publish writes the files again: a pass with no round does it 30 seconds later, and a round does it at its open. The first good publish takes `last problem: publish failed: ...` away from the later lines. A `last problem:` with other words stays in the later lines.
    - The way to the site: after step 12 of "AffineValidator", the pull copies the two files within about a minute (its timer starts a run at second 30 of each minute). Before step 12 nothing copies them: run the command of step 8.4 of "AffineValidator" again.
 6. **The check.** Two lines on the public file:
 

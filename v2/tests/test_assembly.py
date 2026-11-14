@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 
@@ -27,6 +28,8 @@ from sn120_v2.headfold import ChainFolder, FoldSettings, HeadKeeper  # noqa: E40
 from sn120_v2.irt import IRTSampler  # noqa: E402
 from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
 from sn120_v2.params import GenesisSpec, Params, Recipe  # noqa: E402
+from sn120_v2.sim import sim_params  # noqa: E402
+from sn120_v2.sim_head import ChainWorld  # noqa: E402
 from sn120_v2.state import load  # noqa: E402
 from sn120_v2.store import LocalStore  # noqa: E402
 from sn120_v2.types import ChainSnapshot, Registration  # noqa: E402
@@ -137,6 +140,8 @@ def test_with_the_chain_setting_the_box_commands_get_the_parts_that_keep_the_fol
     assert stack("checkpoint").head.checkpoint is not None and stack("checkpoint").folder is None
     assert publish.folder is None and isinstance(publish.head.chain, headchain.ChainWriter) and publish.head.promote is headchain.promote_fold
     assert (publish.head.prepare, publish.head.after_round, publish.head.checkpoint) == (None, None, None), "no command but run and checkpoint works on the local head"
+    reads = assembly.stack(StackContext(tmp_path / "state", Params(), "publish", owns_journal=False))
+    assert run.head.chain.owner and not reads.head.chain.owner, "a command that only reads the journal can have an older state than run"
     monkeypatch.setenv(headchain.EVERY_ENV, "1")
     monkeypatch.setenv(headfold.IMPLEMENTATION_ENV, headfold.BLAS)
     monkeypatch.setenv(headfold.DEVICES_ENV, "cuda:0,cuda:1")
@@ -202,7 +207,7 @@ def test_the_order_after_a_king_is_a_setting_of_run_in_chain_mode_and_serial_is_
     monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
     run = stack()
     assert run.overlap and run.head.proven.__self__ is run.folder and run.entropy_now is None, "this box reads no chain (the smoke test), so no block hash"
-    assert run.settings[2] == f"after a king, only the fold is before the next open (the order 'overlap') ({ORDER_ENV}=overlap)"
+    assert run.settings[2] == f"after a king, the fold and the check of the waiting files are before the next open (the order 'overlap') ({ORDER_ENV}=overlap)"
     assert not stack("publish").overlap and not stack("end-round").overlap and not stack("checkpoint").overlap, "only run takes steps out of the line"
     assert code_digest() == plan.code_digest(), "a setting of the shell: no file under gpu/ reads it"
     monkeypatch.setenv(ORDER_ENV, "fast")
@@ -254,6 +259,33 @@ def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head
     with pytest.raises(VerifyError):
         assembly.HeadTokens(box, tmp_path / "tokenizer").output_tokens("a")
     assert not (directory / "tokenizer.json").exists()
+
+
+def test_publish_by_hand_with_a_journal_of_before_a_king_writes_no_public_file(tmp_path, box, monkeypatch, capsys):
+    """``publish`` reads the journal and takes none over. ``run`` goes on beside it: here it makes a head after that read."""
+    world = ChainWorld(tmp_path / "run", sim_params())  # ``run`` on CPU with a real tiny head; its store is the bucket of the command
+    world.start(headchain.CHAIN, every=1)
+    monkeypatch.setattr(assembly.R2Store, "from_env", classmethod(lambda cls: world.store))
+    monkeypatch.setattr(assembly, "stored_irt_snapshot", lambda store, state: None)  # the sampler of ``world`` keeps no table; ``publish`` asks no sampler
+    monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
+    command = lambda state_dir: main(["publish", "--state-dir", str(state_dir), "--stack", "sn120_v2.assembly:stack"])  # noqa: E731
+    public = lambda: (world.store.get(layout.HEAD_CHAIN), world.store.get(layout.MINING_JSON))  # noqa: E731
+    first = world.king().head.version_id
+    world.wait()
+    assert command(world.root) == 0 and json.loads(capsys.readouterr().out)["head"] == first
+    read_before = tmp_path / "read-before-the-king"
+    read_before.mkdir()
+    shutil.copy(world.root / JOURNAL_FILE, read_before / JOURNAL_FILE)  # what the command has when it read the journal here
+    second = world.king().head.version_id
+    world.wait()
+    before = public()
+    assert json.loads(before[0])["head_version_id"] == second, "run wrote the chain file of the new head"
+    assert command(read_before) == 2, "the command wrote the public files of the older head after those of run"
+    said = capsys.readouterr()
+    assert "refused: HeadMismatchError" in said.err and second[:12] in said.err and first[:12] in said.err and not said.out
+    assert public() == before
+    assert command(world.root) == 0 and json.loads(capsys.readouterr().out)["head"] == second, "with the journal of now the command publishes"
+    assert public()[0] == before[0] and json.loads(public()[1])["head_chain"]["head_version_id"] == second
 
 
 def test_a_store_bootstrapped_with_the_old_pointer_key_needs_no_new_bootstrap(tmp_path, box, capsys):

@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from sn120_v2 import controller
 from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.types import (
@@ -40,6 +41,12 @@ IMAGE = "sim-image"
 AMX_OFF = {"ONEDNN_MAX_CPU_ISA": "AVX512_CORE_BF16", "MKL_ENABLE_INSTRUCTIONS": "AVX512"}
 SET_BEFORE_TORCH = "torch" not in sys.modules
 os.environ.update(AMX_OFF)
+
+
+@pytest.fixture(autouse=True)
+def no_pause_between_the_tries_of_a_publish(monkeypatch):
+    """A test with a store that fails does not wait for the real pause. A test of the pause sets its own."""
+    monkeypatch.setattr(controller, "PUBLISH_PAUSE_S", 0.0)
 
 
 def h(text: str) -> str:

@@ -38,8 +38,9 @@ import threading
 from typing import Any, Callable, Iterable, Mapping
 
 from . import layout
+from .afterking import say
 from .canonical import manifest_digest
-from .errors import ConfigError, InfraError, VerifyError
+from .errors import ConfigError, HeadMismatchError, InfraError, V2Error, VerifyError
 from .seams import ObjectStore
 from .state import State
 from .store import promote_files
@@ -274,14 +275,43 @@ def chain_links(store: Any, doc: Mapping[str, Any], ttl_s: int, target: str | No
     }
 
 
-class ChainWriter:
-    """Writes ``layout.HEAD_CHAIN``. The controller calls it with each publish; the checkpoint job calls ``mark``."""
+def _line(doc: Mapping[str, Any]) -> list[str]:
+    """The heads of a whole chain record in the order of the journal: the launch head, the stacked and the folded head of each fold, then a head that waits for its fold."""
+    stacked = doc["stacked"]
+    folds = [version_id for step in doc["steps"] for version_id in (step["stacked_version_id"], step["version_id"])]
+    return [doc["genesis"]["version_id"], *folds, *([stacked["version_id"]] if stacked else [])]
 
-    def __init__(self, store: ObjectStore) -> None:
-        self.store = store
+
+def _ahead(stored: bytes, doc: Mapping[str, Any]) -> int:
+    """How many heads more than ``doc`` the chain file ``stored`` has, when it is of a later state of the journal of ``doc``: it has each head of ``doc`` in the same order, and more. Else 0, also for a file that this code does not read."""
+    try:
+        there = json.loads(stored)
+        check_chain(there)
+        theirs, ours = _line(there), _line(doc)
+    except (ValueError, V2Error, KeyError, TypeError, AttributeError):
+        return 0
+    return len(theirs) - len(ours) if theirs[: len(ours)] == ours else 0
+
+
+class ChainWriter:
+    """Writes ``layout.HEAD_CHAIN``. The controller calls it with each publish; the checkpoint job calls ``mark``.
+
+    A reader with no cache uses three files: mining.json, this file, and the links file that the site makes from
+    this file. This file and mining.json both name the newest checkpoint (``start``). The reader gets the head in
+    two cases only: the two name the same ``start``, or ``start`` of this file is the last folded head (the links
+    file then has the plain files of the head, and ``start`` of mining.json is not used). A publish writes the
+    first case. ``mark`` writes only the second one.
+
+    ``owner``: the process is the one writer of the journal (``run``). Its state is the newest one, so its
+    record is written over any other. A command that only reads the journal (``publish`` by hand) can have read
+    it before ``run`` made a new head: it is not the owner, and it writes no record of an older head.
+    """
+
+    def __init__(self, store: ObjectStore, owner: bool = True) -> None:
+        self.store, self.owner = store, owner
         self._lock = threading.Lock()
         self._kernels: dict[str, str] = {}
-        self._doc: dict[str, Any] | None = None
+        self._doc: dict[str, Any] | None = None  # the record that this process wrote last, or found in the store as its own
 
     def _kernel_of(self, stacked_version_id: str) -> str:
         """The kernel that the fold record names. A fold without a record was made by ``gpu/folder.py`` as it is."""
@@ -291,29 +321,68 @@ class ChainWriter:
             self._kernels[stacked_version_id] = str(record.get("kernel") or MATMUL)
         return self._kernels[stacked_version_id]
 
+    def _listed(self, state: State) -> dict[str, Any]:
+        """The chain record of ``state`` with the markers that the store has now. The caller holds the lock.
+
+        The list is made under the lock of the write. A list from before the lock can be older than a ``mark``
+        that got the lock first, and its write would then take the checkpoint of that ``mark`` back.
+        """
+        return chain_doc(state, checkpoints(self.store), self._kernel_of)
+
     def doc(self, state: State) -> dict[str, Any]:
         """The whole chain record of ``state``. Nothing is written. The markers are listed each time: another process can write one."""
-        marked = checkpoints(self.store)
         with self._lock:
-            return chain_doc(state, marked, self._kernel_of)
+            return self._listed(state)
 
     def _put(self, doc: dict[str, Any]) -> None:
-        if doc != self._doc:
-            self.store.put(layout.HEAD_CHAIN, (json.dumps(doc, indent=1, sort_keys=True) + "\n").encode("utf-8"))
-            self._doc = doc
+        """Write the record when the store does not hold these bytes. The caller holds the lock.
+
+        The compare is with the file of the store, read here. What this process wrote last does not tell what
+        the store holds: another process can write the file.
+
+        When the store has the record of a later state of this journal: a process that only read the journal
+        is refused, and the process that owns the journal writes its record and says so in one line.
+        """
+        data = (json.dumps(doc, indent=1, sort_keys=True) + "\n").encode("utf-8")
+        try:
+            stored = self.store.get(layout.HEAD_CHAIN)
+        except KeyError:
+            stored = None
+        if stored != data:
+            more = _ahead(stored, doc) if stored is not None else 0
+            if more:
+                there, here = json.loads(stored)["head_version_id"][:12], doc["head_version_id"][:12]
+                if not self.owner:
+                    raise HeadMismatchError(f"the chain file of the store names head {there}. That is a later head than head {here} of the state that this command read: run made a new head in that time. Nothing is written. Give the command again")
+                say(f"chain file: the store had the record of a later state of this journal (head {there}, {more} head(s) more than this journal has). This process owns the journal, so it writes its record (head {here}) over that one.")
+            self.store.put(layout.HEAD_CHAIN, data)
+        self._doc = doc
 
     def __call__(self, state: State) -> dict[str, Any]:
-        """Write the chain file when it changed. Returns the part of it that mining.json shows."""
-        doc = self.doc(state)
+        """Write the chain file when the store holds another one. Returns the part of it that mining.json shows."""
         with self._lock:
+            doc = self._listed(state)
             self._put(doc)
         return tail(doc)
 
     def mark(self, version_id: str) -> None:
-        """A checkpoint marker of this head was written. The chain file says so now, not at the next publish."""
+        """A checkpoint marker of this head was written. The chain file says so now, when this head is still the last folded head of the record that this process wrote last.
+
+        When the file has a newer head, nothing is written here. A write would move ``start`` to a head that
+        is not the last one, in this file only, and mining.json would keep the older ``start`` (see the class).
+        The next publish lists the markers and moves ``start`` in the two files.
+
+        Before the first publish of a process nothing is written either: this writer has no record yet. That is
+        ``run`` after its start, and the ``checkpoint`` command by hand. The next publish of ``run`` shows the marker.
+
+        The markers are listed for the write, as for a publish. So the file gets each flag that the store has,
+        also the flag of an earlier ``mark`` that wrote nothing.
+        """
         with self._lock:
-            if self._doc is not None and any(step["version_id"] == version_id and not step["checkpoint"] for step in self._doc["steps"]):
-                doc = json.loads(json.dumps(self._doc))
-                for step in doc["steps"]:
-                    step["checkpoint"] = step["checkpoint"] or step["version_id"] == version_id
-                self._put(with_start(doc))
+            if self._doc is None or not self._doc["steps"] or self._doc["steps"][-1]["version_id"] != version_id:
+                return
+            marked = checkpoints(self.store) | {version_id}
+            doc = json.loads(json.dumps(self._doc))
+            for step in doc["steps"]:
+                step["checkpoint"] = step["checkpoint"] or step["version_id"] in marked
+            self._put(with_start(doc))

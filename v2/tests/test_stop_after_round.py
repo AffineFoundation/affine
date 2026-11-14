@@ -27,7 +27,7 @@ from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 from sn120_v2 import cli, layout  # noqa: E402
 from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
 from sn120_v2.cli import HEAD_LOST_EXIT  # noqa: E402
-from sn120_v2.controller import Stack  # noqa: E402
+from sn120_v2.controller import PUBLISH_TRIES, Stack  # noqa: E402
 from sn120_v2.errors import InfraError  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, FULL, check_chain, heads_of  # noqa: E402
@@ -391,25 +391,24 @@ def test_a_run_that_dies_while_it_writes_the_public_files_of_the_last_close_is_r
 
 @pytest.mark.parametrize("order", ORDERS)
 def test_run_does_not_say_obeyed_before_the_public_files_show_the_close(tmp_path, monkeypatch, capsys, order):
-    """The store fails one time for the public files of the last close. ``run`` writes them again before it stops."""
+    """The store fails for one whole publish of the last close (all its tries). ``run`` writes the files again before it stops."""
     world = a_world(tmp_path / "world", order)
     in_the_round(world, lambda: ask(world))
     real, failed = world.publisher.publish, []
 
-    def fails_one_time(snapshot):
-        if not failed and request_file(world).exists() and snapshot["round"] is None:
+    def fails_one_publish(snapshot):
+        if len(failed) < PUBLISH_TRIES and request_file(world).exists() and snapshot["round"] is None:
             failed.append(True)
             raise InfraError("the store is down")
         real(snapshot)
 
-    world.publisher.publish = fails_one_time
+    world.publisher.publish = fails_one_publish
     capsys.readouterr()
     assert run(world, monkeypatch, max_idle=3) == 0
     text = capsys.readouterr().err
     said_obeyed(world, [line for line in text.splitlines() if not line.startswith("time: ")][-1], world.state.rounds[-1].round_id)
-    assert failed == [True] and text.count(OBEYED) == 1
-    if order == OVERLAP:  # the write was in the stop: the first try says what waits, opens no round, and the next try writes it
-        assert f"{SAID}asked at {stamp(ASKED_AT)}. No round is open, and run opens none. Not all that a close writes is in the store yet: publish failed: the store is down. The next try is in 0 s." in text
+    assert failed == [True] * PUBLISH_TRIES and text.count(OBEYED) == 1 and text.count("PUBLISH FAILED: ") == 1
+    assert "Not all that a close writes is in the store yet" not in text, "the stop wrote the files itself, and that good publish ended the problem"
     closed_in_public(world, 1)
 
 
@@ -472,4 +471,7 @@ def test_the_request_is_the_file_in_the_logs_of_the_work_directory_and_its_time_
     os.utime(request.path, (ASKED_AT, ASKED_AT))
     assert request.asked() == ASKED_AT and stamp(request.asked()) == "2023-11-14T22:13:20Z"
     request.path.unlink()
-    assert request.asked() is None
+    assert request.asked() is None and "Now no request is there." in request.at_start()
+    request.path.mkdir()
+    assert request.asked() is None, "a directory is no request: rm -f cannot remove it, so it would stop each later start"
+    assert "it is not a file, so it is NO request and run does not stop for it. Remove it by hand." in request.at_start()

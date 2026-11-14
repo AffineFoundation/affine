@@ -205,7 +205,7 @@ assert command == "run" and sys.argv[1:3] == ["-m", "sn120_v2"]
 left = [pid for pid in (home / "children").read_text().split() if alive(int(pid))] if (home / "children").exists() else []
 note(f"run {{' '.join(sys.argv[4:])}} mark={{os.environ.get('SN120_LOOP_MARK')}} left={{len(left)}}")
 request = Path(os.environ["SN120_WORK_DIR"]) / "logs" / "run-loop.stop-after-round"
-if request.exists():
+if request.is_file():
     note("a request is there at the start of run")
 for step in take("exit:0"):
     name, _, value = step.partition(":")
@@ -542,7 +542,7 @@ def test_a_request_from_before_the_start_of_the_loop_is_named_in_its_first_lines
 
 def test_the_look_line_says_since_when_a_stop_is_asked_for_or_that_none_is(box):
     """The one line that a block for the box can print. It reads the file and changes nothing."""
-    look = 'F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -e "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi'
+    look = 'F="${SN120_WORK_DIR:?}/logs/run-loop.stop-after-round"; if [ -f "$F" ]; then echo "a stop is asked for since $(date -u -r "$F" +%Y-%m-%dT%H:%M:%SZ)"; else echo "no stop is asked for"; fi'
     assert look in LOOP.read_text(), "the header of the loop script gives the same line"
 
     def said() -> str:
@@ -553,6 +553,31 @@ def test_the_look_line_says_since_when_a_stop_is_asked_for_or_that_none_is(box):
     request_of(box).touch()
     os.utime(request_of(box), (1_700_000_000, 1_700_000_000))
     assert said() == "a stop is asked for since 2023-11-14T22:13:20Z\n" and request_of(box).exists()
+    request_of(box).unlink()
+    request_of(box).mkdir()
+    assert said() == "no stop is asked for\n" and request_of(box).is_dir(), "a directory is no request"
+
+
+def test_a_directory_with_the_name_of_the_request_file_is_no_request_and_stops_no_start(box):
+    """``rm -f`` cannot remove a directory. If it were a request, the loop would say "removed" and each later start would stop at once."""
+    request_of(box).mkdir(parents=True)
+    for _ in range(2):
+        assert box.loop(["round exit:0"]) == 0 and SEEN not in box.calls
+        assert "STOPPED: run finished with exit code 0" in box.last_lines(2)
+    assert box.runs == 2 and request_of(box).is_dir(), "the loop leaves it there"
+    assert box.log.count(f"{request_of(box)} is there, but it is not a file. Only a file is a request to stop after the round") == 2
+    assert not any(text in box.log for text in ("REQUEST TO STOP", "A request to stop", "as asked", "removed"))
+
+
+def test_a_request_file_that_the_loop_cannot_remove_is_not_called_removed(box):
+    (box.bin / "rm").write_text('#!/usr/bin/env bash\nfor name; do case $name in *stop-after-round) exit 1 ;; esac; done\nexec /bin/rm "$@"\n')
+    (box.bin / "rm").chmod(0o755)
+    not_removed = f'THE LOOP COULD NOT REMOVE THE REQUEST FILE. Each later start of the loop stops at once while it is there. Remove it by hand: rm "{request_of(box)}"'
+    assert box.loop(["ask obey"]) == 0 and request_of(box).is_file()
+    assert f"STOPPED after the round, as asked. Nothing starts run again. {not_removed} run said: Asked at " in box.log.splitlines()[-1]
+    assert box.loop(["exit:0"]) == 0 and request_of(box).is_file()
+    assert f"The loop stops now by another way. {not_removed}" in box.last_lines(3)
+    assert "is removed" not in box.log
 
 
 # ------------------------------------------------------------ the loop with the real command line
