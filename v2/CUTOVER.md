@@ -1534,6 +1534,7 @@ python -m sn120_v2.gpu.plan | diff - $CUT/plan.json; echo "exit=$?"
 - `exit=0` and no other output: the digests of this box are those of `$CUT/plan.json`, the output of the last digest block. The value of `SN120_IMAGE_DIGEST` comes from that file, so it is not stale. The loop can start.
 - A `diff` output and `exit=1`: the checkout or the install line changed the digests of the box. The digest block and `set-params` come before the start ("After a fix"), also when the message for the fix did not say so.
 - `$CUT/plan.json` holds the pinned digests only if a bootstrap or a `set-params` followed that block. A new box compares with the `plan.json` of the old box ("A new GPU box").
+- **A block that changes the pinned digests writes `$CUT/plan.json` again: after the `set-params`, run `python -m sn120_v2.gpu.plan > $CUT/plan.json`, then the `diff` line must print only `exit=0`.** This is also for a `set-params` that is not after the digest block, for example one that pins the digests of an earlier commit again. Without it the file keeps the old digests, and the next `diff` line prints a difference and `exit=1` on a box whose digests are the pinned ones.
 
 Which of the two you read, and when:
 
@@ -1628,7 +1629,7 @@ Do not start the loop yet. What comes next depends on the phase:
   python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $CUT/params.json
   ```
 
-  It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. `params_hash` must be the hash of the last line of the digest block. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". Put the new `$CUT/params.json` and `$CUT/plan.json` with the run records (step 11 of "GPU box"): a new box needs them.
+  It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. `params_hash` must be the hash of the last line of the digest block. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". A block that changes the pinned digests writes `$CUT/plan.json` again: after the `set-params`, run `python -m sn120_v2.gpu.plan > $CUT/plan.json`, then the `diff` line must print only `exit=0`. Put the new `$CUT/params.json` and `$CUT/plan.json` with the run records (step 11 of "GPU box"): a new box needs them.
 - `RUNNING` (the round was not decided): the open round pins the old digests, so this box can no longer finish it. End it by hand first, with the loop stopped. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`.
 
   ```
@@ -1714,7 +1715,7 @@ A commit with the command `front-seats` goes to AffineValidator first: see "Seat
    ```
 
    - The first line prints `{"code_digest": "...", "image_digest": "..."}`: the two digests of this box at this commit.
-   - The third line prints the two pinned values. On 14 Nov 2026 they were `4366d82d3a2d68856b2da0876bdfbe0ce31c00ff661cddd0a08e8033d93a410f` (code) and a list with `9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a` (image).
+   - The third line prints the two pinned values: `code_digest` and `image_digests` of `params.recipe` in the public `mining.json`. This runbook names no value for them, because each `set-params` with new digests changes them. `status` shows only the `params_hash` of the pinned parameters, not the two digests.
    - The check passes when the `code_digest` of the first line is the code digest of the third line, its `image_digest` is in the list of the third line, and the second line prints that same image digest.
    - Then save the file, so that the `diff` line works the next time: `python -m sn120_v2.gpu.plan > $CUT/plan.json`.
    - When one value differs: do not start the loop, and tell the coordinator.
@@ -1769,7 +1770,7 @@ Before it: the loop is stopped (on a new box: not started yet). The checkout, th
    python -m sn120_v2 set-params --state-dir $STATE --stack sn120_v2.assembly:stack --params $CUT/params.json
    ```
 
-   It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". In `APPLY` the file must differ from the pinned parameters in the two digests only (`recipe.image_digests`, `recipe.code_digest`); the file of the digest block is such a file. In `IDLE` any file is taken, so the hash check of the digest block and `changed` are the two checks there.
+   It prints `{"params_hash_before": "...", "params_hash": "...", "changed": {...}}`. **Read `changed`:** it must hold `recipe.code_digest`, `recipe.image_digests`, or both, and no other key. With another key, do not start the loop: see "Read `changed` after each `set-params`" in "The value `squat_min_wait_s`". In `APPLY` the file must differ from the pinned parameters in the two digests only (`recipe.image_digests`, `recipe.code_digest`); the file of the digest block is such a file. In `IDLE` any file is taken, so the hash check of the digest block and `changed` are the two checks there. A block that changes the pinned digests writes `$CUT/plan.json` again: after the `set-params`, run `python -m sn120_v2.gpu.plan > $CUT/plan.json`, then the `diff` line must print only `exit=0`.
 5. Start the loop. After a winner, `run` finishes the fold, closes the round as `applied`, and opens the next round with the new digests.
 
 `end-round --discard-result` is needed only when the stored result itself is bad. It ends the round with no decision and throws the result away. The seats of that round are not charged, no failure is counted, and they are first in the next round; a batch that would have won must win again. Tell the coordinator before you use it.
@@ -1897,9 +1898,9 @@ A new box can have other digests than the old one. `run` on the new box sees tha
    ```
 
    Never write that file by hand. What comes next depends on the phase that step 4 showed:
-   - `IDLE`: `set-params` with `$CUT/params.json` (the `IDLE` line of "After a fix", with its check of `changed`), then step 6.
+   - `IDLE`: `set-params` with `$CUT/params.json` (the `IDLE` line of "After a fix", with its check of `changed` and its line that writes `$CUT/plan.json` again), then step 6.
    - `RUNNING` (the old box died in a round): `end-round` by hand. It works with the old pinned digests on the new box: it pulls the journal copy into the empty state directory. `set-params` before it is refused: `refused: V2Error: a round is open; set the parameters when it has closed (a decided round takes new digests only)`. Exit code 0: the round is ended with no decision; nobody is charged, no failure is counted, and the seats are first in the next round. Then the `IDLE` line. Exit code 3: the dead box stored its result. Then do "A stored result that is not judged, and a box with other digests" of "After a fix" from its step 3: the loop (it judges the result, then `run` is refused), `set-params`, the loop again. It costs nobody anything.
-   - `APPLY` (the old box left a decided round): `set-params` with `$CUT/params.json` and the same check of `changed`, then step 6. `run` on the new box then finishes the promotion and the fold.
+   - `APPLY` (the old box left a decided round): `set-params` with `$CUT/params.json`, the same check of `changed` and the same line that writes `$CUT/plan.json` again, then step 6. `run` on the new box then finishes the promotion and the fold.
 6. Start the loop (step 10 of "GPU box"). With the same digests, its `end-round` pulls the journal copy from the store and ends the open round of the dead box with no decision; a stored box result is kept, and `run` judges it. Then `run` continues. Do not run `bootstrap` again.
 
 Two `run` processes never both write: the newer one takes over the journal, and the older one stops with `refused: FencedError` at its next write. The loop of the old box does not start a refused `run` again: it stops with exit code 2. Never start it again by hand on the old box.
