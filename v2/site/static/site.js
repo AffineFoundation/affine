@@ -435,8 +435,6 @@
     if (box.classList.contains('wait')) { box.classList.remove('wait'); t.classList.add('fade'); }
     const scored = every.filter(r => r.status === 'scored').length, more = document.getElementById('refs');
     more.hidden = !lead.length || lead.length === refs.length;
-    if (more.previousSibling?.own !== 1) more.before(Object.assign(document.createTextNode(''), { own: 1 }));
-    more.previousSibling.data = (old.length ? `v1 king: ${V1_KING[0].toLowerCase() + V1_KING.slice(1)} ` : '') + b.columns.map(c => differ(c) && differ(c) + ' ').join('') + sampling();
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
       : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');

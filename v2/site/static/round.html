@@ -23,7 +23,7 @@
 </header>
 <main id="main">
 <section id="round" aria-labelledby="round-t">
-<div class="section-heading"><h2 id="round-t">Live round</h2><span class="reading">—</span></div>
+<div class="section-heading"><h2 id="round-t" title="The round that runs now, from mining.json. Queue, history and closed rounds are on the home page.">Live round</h2><span class="reading">—</span></div>
 <dl>
 <div><dt>Round</dt><dd data-f="id">—</dd></div>
 <div><dt title="IDLE: no round. RUNNING: boxes train and score. APPLY: decided; the head and the files are being published.">State</dt><dd data-f="state">—</dd></div>
@@ -34,7 +34,6 @@
 <div><dt title="Most tokens one answer may use, for scoring">Output cap, tokens</dt><dd data-f="cap">—</dd></div>
 <div><dt title="Seats that wait with a valid file">Next round</dt><dd data-f="next">—</dd></div>
 </dl>
-<p class="note">The round that runs now, from <a href="{{mining}}">mining.json</a>. A round takes the first seats of the waiting line that have a valid file, trains each batch on the head M, and scores each LoRA against M on the same tasks. The <a href="./#queue">queue</a>, the <a href="./#history">results of each batch</a> and the <a href="./#rounds">closed rounds</a> are on the home page.</p>
 </section>
 </main>
 <footer><span>Affine · Subnet 120 · <a href="{{mining}}">mining.json</a></span><span class="foot-right"><span id="status" role="status">Connecting</span><button type="button" id="copy-view" class="link">Copy view</button></span></footer>

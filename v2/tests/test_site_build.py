@@ -93,7 +93,7 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
         bench = page[page.index('<section id="bench"'):]
         bench = bench[:bench.index("</section>")]
         assert '<div class="sparks"' in bench and "<thead></thead><tbody></tbody><tfoot></tfoot>" in bench and 'id="refs"' in bench
-        assert "the reference models, the largest first" in bench and "leads for its size" in bench  # the order of the v1 page
+        assert 'class="note"' not in bench  # explanations live in heading tooltips, not under the table
     sizes = script[script.index("const SIZE = {"):script.index("const size = ")]  # by label in lower case, in billions of parameters
     table = dict(re.findall(r"'([^']+)': ([\d.]+)", sizes))
     assert len(table) == 22 and all(name == name.lower() and 1 < float(size) < 25 for name, size in table.items())

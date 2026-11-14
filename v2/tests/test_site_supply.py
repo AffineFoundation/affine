@@ -513,7 +513,7 @@ def test_the_words_of_the_round_time_are_in_the_label_in_the_method_and_in_the_p
     source, page, script = ((SITE / name).read_text() for name in ("supply.py", "static/supply.html", "static/site.js"))
     for stale in ("90 minutes", "100 minutes", "137 minutes", "180 minutes", "227 minutes", "5400", "6000", "7200", "10800"):
         assert stale not in source and stale not in page
-    assert 'until that round is over (<span data-f="round-time">' in page
+    assert 'data-f="round-time"' in page  # the page fills the words from the public file; no fixed minutes in the HTML
     assert "el.querySelectorAll('[data-f=round-time]').forEach(x => { x.textContent = S.round_time.words; });" in script
 
 

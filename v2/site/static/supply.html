@@ -23,12 +23,11 @@
 </header>
 <main id="main">
 <section id="supply" aria-labelledby="supply-t">
-<div class="section-heading"><h2 id="supply-t">Miner supply</h2><span class="reading">—</span></div>
+<div class="section-heading"><h2 id="supply-t" title="New miner files per hour from the object store, and how many the validator called valid. Numbers are in miner-supply.json.">Miner supply</h2><span class="reading">—</span></div>
 <div class="tiles">
-<div class="tile"><div class="section-heading"><h2>New miner files</h2></div><table><tbody><tr><td class="empty">No count yet.</td></tr></tbody></table><p class="note lead" data-f="waiting">Valid files waiting now: —</p></div>
+<div class="tile"><div class="section-heading"><h2>New miner files</h2></div><table><tbody><tr><td class="empty">No count yet.</td></tr></tbody></table><p class="live" data-f="waiting">Valid files waiting now: —</p><span data-f="round-time" hidden></span></div>
 <div class="tile"><div class="section-heading"><h2>Uploads by hour</h2><span class="reading">—</span></div><div class="chart"></div><p class="legend"><span><i class="sw up hollow"></i>uploads</span><span><i class="sw up"></i>validated so far</span><span><i class="sw wait hollow"></i>at least: the record does not cover all of the hour</span></p></div>
 </div>
-<p class="note">An upload is a new file of a miner in the object store. Its time is the upload time that the store gives (R2 <code>LastModified</code>). The same bytes stored again count one time. A file that a round took always counts, one time: when its miner replaced it before the record saw it, its time is the time the round took it. "Validated so far" counts the uploads that the validator called valid: at a file check, or when a round took the file. The validator checks the files when it tries to open a round and between rounds, never inside a round. So an upload during a round has no verdict until that round is over (<span data-f="round-time">its time limit is in <a href="miner-supply.json">miner-supply.json</a></span>), and the validated count of a past hour can still grow. "≥" means at least: the store keeps one file for each hotkey, so a file that no round took and that was replaced before the record began, or in a time with no run, is not counted. Counts only: no hotkey and no time of one file. The numbers are in <a href="miner-supply.json">miner-supply.json</a>, written each minute.</p>
 </section>
 </main>
 <footer><span>Affine · Subnet 120 · <a href="{{mining}}">mining.json</a></span><span class="foot-right"><span id="status" role="status">Connecting</span><button type="button" id="copy-view" class="link">Copy view</button></span></footer>
