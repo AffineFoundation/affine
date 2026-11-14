@@ -8,6 +8,9 @@ winner's LoRA and outcomes are public.
 
 from __future__ import annotations
 
+import ipaddress
+import os
+import re
 from typing import Any, Mapping, Sequence
 
 from .params import Params
@@ -19,6 +22,62 @@ from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, Ro
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
 HISTORY_PREVIEW = 20
+
+# ``public_text``: the rule for a text that an exception made, before it goes into a public file.
+TEXT_LIMIT = 600  # characters. The longest text today has about 520: a failed round that quotes the last line of a job log.
+SECRET_NAME = re.compile(r"KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|ENDPOINT|ACCOUNT", re.IGNORECASE)
+SECRET_MIN = 8  # a shorter value is a flag or a number (TOKENIZERS_PARALLELISM=false): to replace it would cut plain words
+CUT_SECRET, CUT_LOGIN, CUT_QUERY, CUT_ADDRESS = "[removed-secret]", "[removed-login]", "[removed-query]", "[removed-address]"
+_LOGIN = re.compile(r"(?<=://)[^\s/@?#]+@")
+_URL_QUERY = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://[^\s?'\"<>]*)\?[^\s'\"<>]*")
+_QUERY = re.compile(r"\?[\w.~%\[\]-]+=[^\s'\"<>]*")
+_NAMED = re.compile(
+    r"(?i)\b((?:[\w-]*[_-])?(?:api[_-]?key|access[_-]?key|secret|signature|credential|password|passwd|token|authorization)(?:[_-][\w-]*)?"
+    r"[\"']?\s*[:=]\s*[\"']?(?:(?:bearer|basic)\s+)?)(?!\[removed-)[^\s,;&'\"<>)}\]]+"
+)
+_V6 = re.compile(r"(?<![\w:.])[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*[0-9A-Fa-f:](?![\w:])")
+_V4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?!\w|\.\d)")
+
+
+def _address(match: re.Match[str]) -> str:
+    found = match.group(0)
+    try:
+        ipaddress.ip_address(found)
+    except ValueError:  # a time of day, a version number, a "::" of a test name
+        return found
+    return CUT_ADDRESS if any(char.isalnum() for char in found) else found
+
+
+def public_text(text: object, environ: Mapping[str, str] | None = None) -> str:
+    """A text from an exception, made safe for a public file. Every such text passes here before it is published.
+
+    The error class and the message stay, so a miner can read the cause of a
+    failure that its own file made. These parts are replaced by a marker:
+
+    * each value of an environment variable of this process whose name says
+      that it is a credential or a store location (``SECRET_NAME``);
+    * the login of a URL (``user:password@``) and each URL query string: a
+      signed link holds its signature there;
+    * the value after a name such as ``token=`` or ``Signature:``;
+    * each IPv4 and IPv6 address. A port stays.
+
+    Then the text is cut to ``TEXT_LIMIT`` characters. The journal and the
+    sealed box result keep the text as it was: they are not public.
+    """
+    text = " ".join(str(text).split())
+    environ = os.environ if environ is None else environ
+    secrets = {value.strip() for name, value in environ.items() if SECRET_NAME.search(name)}
+    for value in sorted((value for value in secrets if len(value) >= SECRET_MIN), key=len, reverse=True):
+        text = text.replace(value, CUT_SECRET)
+    text = _LOGIN.sub(CUT_LOGIN + "@", text)
+    text = _URL_QUERY.sub(lambda match: f"{match.group(1)}?{CUT_QUERY}", text)
+    text = _QUERY.sub("?" + CUT_QUERY, text)
+    text = _NAMED.sub(lambda match: match.group(1) + CUT_SECRET, text)
+    text = _V4.sub(_address, _V6.sub(_address, text))
+    if len(text) > TEXT_LIMIT:
+        tail = f" [cut: {len(text) - TEXT_LIMIT} more characters]"
+        text = text[:TEXT_LIMIT] + tail
+    return text
 
 
 def entry_view(entry: EntryDecision) -> dict[str, Any]:
@@ -70,7 +129,7 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
     else:
         decision = record.decision
         view["entries"] = [entry_view(entry) for entry in decision.entries]
-        view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": decision.reason, "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
+        view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": public_text(decision.reason), "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
     return view
 
 
@@ -137,7 +196,7 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
     trained = {entry.queue_pos: entry.lora.report for _, result in leases for entry in result.entries if entry.lora is not None}
     reasons = {entry.queue_pos: entry.reason for entry in record.decision.entries} if record.decision else {}
     for view in report["entries"]:
-        view["reason"] = reasons.get(view["queue_pos"], "")
+        view["reason"] = public_text(reasons.get(view["queue_pos"], ""))
         if view["queue_pos"] in trained:
             train = trained[view["queue_pos"]]
             view |= {"step_norm": train.step_norm, "norm_before_cap": train.norm_before_cap, "train_wall_s": train.wall_s}
