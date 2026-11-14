@@ -26,18 +26,22 @@ proof and at the same place, the verdict stays.
 
 from __future__ import annotations
 
+import collections
+import contextlib
+import itertools
 import json
 import math
 import os
 import threading
 import time
 from collections import Counter
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
-from .errors import BatchRejected, InfraError, VerifyError
+from .errors import BatchRejected, ConfigError, InfraError, VerifyError
 from .gpu.batch import advantages
 from .params import Params, Recipe
 from .seams import ObjectStore
@@ -87,6 +91,19 @@ ENV_TIME_LIMIT = "time-limit"
 PROBE_TEXT = "What is 1 + 1?"  # the tokenizer works when it counts at least one token in this text, as a prompt and as an output
 PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
 PROBE_HOTKEY = "known-good"  # the owner named in the known-good file of the checker
+# The live check reads each waiting file from the store to hash it. With more than one stream it reads this many
+# files at one time; the check of the bytes still runs one file after the other, in the order of the line.
+STREAMS_ENV, SERIAL_STREAMS, MAX_STREAMS = "SN120_CHECK_STREAMS", 1, 32
+
+
+def check_streams(environ: Mapping[str, str] = os.environ) -> int:
+    """How many waiting files the live check reads from the store at one time. Not set: 1, one file after the other."""
+    text = environ.get(STREAMS_ENV, "").strip()
+    if not text:
+        return SERIAL_STREAMS
+    if not text.isdigit() or not SERIAL_STREAMS <= int(text) <= MAX_STREAMS:
+        raise ConfigError(f"{STREAMS_ENV} must be a whole number from {SERIAL_STREAMS} to {MAX_STREAMS}")
+    return int(text)
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
 RULES: dict[str, str] = {
@@ -677,30 +694,104 @@ def _verdict(hotkey: str, raw: bytes, result: Batch | Invalid, now: int) -> Verd
     return Verdict(hotkey, False, str(result), batch_sha256=file_hash, checked_at=now, rule=result.rule)
 
 
+@dataclass(frozen=True)
+class _Fetched:
+    """What the store gave for one hotkey's file. Only store calls made it: no check of the bytes."""
+
+    tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash); None when there is no object
+    read: bool = False  # the object was also downloaded, because the memory had no verdict for this tag
+    raw: bytes | Invalid | None = None  # with ``read``: the bytes; the verdict of an oversized object; None when the object is gone
+    error: BaseException | None = None  # with ``read``: the download failed with this
+
+
 class StoreAdmission:
     """The ``Admission`` seam over an object store.
 
     A miner has one private object and may overwrite it until the freeze.
     ``freeze`` checks the exact bytes it copies, so what is frozen is what was
     checked and what is trained. A store failure raises ``InfraError``.
+
+    ``streams`` is the count of files that ``verdicts`` reads from the store at one time. The store calls of
+    one file, their order and the check of the bytes are the same for each count, so the verdicts are the same.
+    With more than one stream the store must take calls from several threads (``R2Store`` and ``LocalStore`` do).
     """
 
-    def __init__(self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time,
+        streams: int = SERIAL_STREAMS,
+    ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
+        self.streams = max(SERIAL_STREAMS, int(streams))
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
 
-    def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
-        """The object's bytes and their check, or None when there is no object."""
+    def _raw(self, key: str) -> bytes | Invalid | None:
+        """The object's bytes; the verdict of an oversized object, which is never downloaded; None when there is no object."""
         limit = self.params.max_batch_bytes
         try:
-            if self.store.size(key) > limit:  # never download an oversized object
-                return b"", Invalid("size", f"file must be 1..{limit} bytes")
-            raw = self.store.get(key)
+            if self.store.size(key) > limit:
+                return Invalid("size", f"file must be 1..{limit} bytes")
+            return self.store.get(key)
         except KeyError:
             return None
+
+    def _judged(self, hotkey: str, raw: bytes | Invalid | None) -> tuple[bytes, Batch | Invalid] | None:
+        if raw is None:
+            return None
+        if isinstance(raw, Invalid):
+            return b"", raw
         return raw, _judge(raw, hotkey, self.params, self.tokens, self.grader)
+
+    def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
+        """The object's bytes and their check, or None when there is no object."""
+        return self._judged(hotkey, self._raw(key))
+
+    def _fetch(self, hotkey: str) -> _Fetched:
+        """The store calls of one hotkey for ``verdicts``, in the order of always: the size, the hash, then the download.
+
+        The download is made only when the memory has no verdict for the tag. It may run in a thread of
+        ``_ahead``: it only reads the memory of its own hotkey, calls no clock and checks no bytes. A failure of
+        the size or the hash call raises here. A failure of the download is kept in ``error``, and ``verdicts``
+        raises it at the place where it would have made the download.
+        """
+        key = layout.miner_object(hotkey)
+        try:  # an oversized object is never hashed or downloaded
+            oversized = self.store.size(key) > self.params.max_batch_bytes
+            tag = ("oversized" if oversized else self.store.sha256(key), self.params.params_hash)
+        except KeyError:
+            return _Fetched(None)
+        kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+        if (kept is not None and kept[0] == tag) or (held is not None and held[0] == tag):
+            return _Fetched(tag)  # a verdict for these bytes is in the memory; ``verdicts`` reads the file itself when a hold has ended
+        try:
+            return _Fetched(tag, True, self._raw(key))
+        except Exception as exc:
+            return _Fetched(tag, True, error=exc)
+
+    def _ahead(self, hotkeys: Sequence[str]) -> Iterator[tuple[str, Callable[[], _Fetched]]]:
+        """Each hotkey in order, with a call that gives its ``_Fetched`` or raises what its store calls raised.
+
+        One stream: the store is called when the consumer asks. More: at most ``streams`` hotkeys are read
+        ahead of the consumer, each in its own thread. So no more than ``streams`` files that wait for their
+        check are in memory at one time, each one ``max_batch_bytes`` at most.
+        """
+        if self.streams <= SERIAL_STREAMS or len(hotkeys) <= 1:
+            for hotkey in hotkeys:
+                yield hotkey, lambda hotkey=hotkey: self._fetch(hotkey)
+            return
+        todo = iter(hotkeys)
+        ahead: collections.deque[tuple[str, Future[_Fetched]]] = collections.deque()
+        pool = ThreadPoolExecutor(max_workers=self.streams, thread_name_prefix="file-check")
+        try:
+            while True:
+                ahead.extend((hotkey, pool.submit(self._fetch, hotkey)) for hotkey in itertools.islice(todo, self.streams - len(ahead)))
+                if not ahead:
+                    return
+                hotkey, future = ahead.popleft()
+                yield hotkey, future.result
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)  # no read of this call goes on after the call ended
 
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
@@ -710,34 +801,39 @@ class StoreAdmission:
         time the same bytes with the same params keep the verdict and are not read. Then the next call checks
         the file again. After ``FAULT_TRIES`` such checks in a row the verdict is kept like any other
         (``_tried``). The hold is in memory only, and a clock that goes back ends it.
+
+        The files are read from the store ``streams`` at one time (``_ahead``). The verdicts and the memory are
+        made here, one hotkey after the other in the order given. So a store call that fails stops the call at
+        the same hotkey, with the same error and the same memory, for each count of streams.
         """
         out: dict[str, Verdict] = {}
-        for hotkey in hotkeys:
-            key = layout.miner_object(hotkey)
-            try:  # an oversized object is never hashed or downloaded
-                oversized = self.store.size(key) > self.params.max_batch_bytes
-                tag = ("oversized" if oversized else self.store.sha256(key), self.params.params_hash)
-            except KeyError:
-                for memory in (self._seen, self._tries, self._held):
-                    memory.pop(hotkey, None)
-                continue
-            kept, held = self._seen.get(hotkey), self._held.get(hotkey)
-            if held is not None and held[0] == tag and 0 <= self.clock() - held[2] < FAULT_HOLD_S:
-                kept = held[:2]
-            elif kept is None or kept[0] != tag:
-                found = self._read(hotkey, key)
-                if found is None:
+        with contextlib.closing(self._ahead(hotkeys)) as fetches:
+            for hotkey, fetch in fetches:
+                fetched = fetch()
+                tag = fetched.tag
+                if tag is None:
+                    for memory in (self._seen, self._tries, self._held):
+                        memory.pop(hotkey, None)
                     continue
-                result, final = self._tried(hotkey, tag, found[1])
-                now = self.clock()
-                kept = (tag, _verdict(hotkey, found[0], result, int(now)))
-                self._seen.pop(hotkey, None)
-                self._held.pop(hotkey, None)
-                if final:
-                    self._seen[hotkey] = kept
-                else:
-                    self._held[hotkey] = (*kept, now)
-            out[hotkey] = kept[1]
+                kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+                if held is not None and held[0] == tag and 0 <= self.clock() - held[2] < FAULT_HOLD_S:
+                    kept = held[:2]
+                elif kept is None or kept[0] != tag:
+                    if fetched.error is not None:
+                        raise fetched.error
+                    found = self._judged(hotkey, fetched.raw) if fetched.read else self._read(hotkey, layout.miner_object(hotkey))
+                    if found is None:
+                        continue
+                    result, final = self._tried(hotkey, tag, found[1])
+                    now = self.clock()
+                    kept = (tag, _verdict(hotkey, found[0], result, int(now)))
+                    self._seen.pop(hotkey, None)
+                    self._held.pop(hotkey, None)
+                    if final:
+                        self._seen[hotkey] = kept
+                    else:
+                        self._held[hotkey] = (*kept, now)
+                out[hotkey] = kept[1]
         return out
 
     def _tried(self, hotkey: str, tag: tuple[str, str], result: Batch | Invalid) -> tuple[Batch | Invalid, bool]:

@@ -173,6 +173,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     controller, stack = open_controller(args, "run")
     if stack.runner is None:
         raise ConfigError("this stack has no round runner")
+    for line in stack.settings:  # a setting that the shell does not hold shows here: it does not pass in silence
+        print(f"setting: {line}", file=sys.stderr, flush=True)
     if stack.head.prepare is not None:
         with timed("the proof of the local head"):
             stack.head.prepare(controller.state)

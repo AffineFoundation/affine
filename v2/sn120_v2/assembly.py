@@ -19,6 +19,10 @@ Every setting comes from the environment. A missing one is an error.
                             (``headchain.py``). Then also: SN120_CHECKPOINT_EVERY, and the fold settings
                             SN120_FOLD_IMPLEMENTATION, SN120_FOLD_TWICE, SN120_FOLD_DEVICES, SN120_FOLD_THREADS
                             (``headfold.FoldSettings``); read by ``run`` and ``checkpoint`` only
+  SN120_CHECK_STREAMS (optional)  how many waiting files the live check reads from the store at one time, 1 to 32.
+                            Not set: 1, one file after the other. The verdicts are the same for each count
+
+``run`` prints each optional setting at its start, with the word NOT SET when the shell does not hold it.
 
 The box holds no wallet. It only reads the chain.
 """
@@ -35,7 +39,7 @@ from typing import Callable
 from transformers import AutoTokenizer
 
 from . import layout
-from .admission import HFTokens, LazyPool, StoreAdmission, check_batch, pool_grader
+from .admission import SERIAL_STREAMS, STREAMS_ENV, HFTokens, LazyPool, StoreAdmission, check_batch, check_streams, pool_grader
 from .canonical import file_sha256
 from .chain import Feed, SubtensorClient
 from .controller import HeadPublish, Stack, StackContext, stored_irt_snapshot
@@ -46,7 +50,7 @@ from .gpu.evaluator import VllmEvaluator
 from .gpu.folder import LoraFolder
 from .gpu.plan import BoxConfig, check_pins, code_digest
 from .gpu.trainer import LoraTrainer
-from .headchain import CHAIN, ChainWriter, checkpoint_every, mode, promote_fold
+from .headchain import CHAIN, MODE_ENV, ChainWriter, checkpoint_every, mode, promote_fold
 from .headfold import ChainFolder, FoldSettings, HeadKeeper
 from .irt import IRTSampler
 from .params import Params, require_env
@@ -137,6 +141,12 @@ def box_pins(image_digest: str, params: Params) -> None:
         raise InfraError("; ".join(differs) or str(exc)) from None
 
 
+def setting(name: str, meaning: str) -> str:
+    """One line for the start of ``run``: what a setting does now, and whether the shell holds it."""
+    value = os.environ.get(name, "").strip()
+    return f"{meaning} ({name}={value})" if value else f"{meaning} ({name} is NOT SET: this is the default)"
+
+
 def stack(context: StackContext) -> Stack:
     store = R2Store.from_env()
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
@@ -145,7 +155,12 @@ def stack(context: StackContext) -> Stack:
     tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS))
+    streams = check_streams()
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    shown = (
+        setting(MODE_ENV, f"the head goes public in the mode {mode()!r}"),
+        setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
+    )
     sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
@@ -172,4 +187,4 @@ def stack(context: StackContext) -> Stack:
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
             if folder is not None:
                 folder = ChainFolder(store, box, settings)
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, settings=shown)

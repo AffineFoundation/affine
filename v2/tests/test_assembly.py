@@ -12,7 +12,7 @@ pytest.importorskip("math_verify")
 pytest.importorskip("sn120_v2.gpu.trainer")
 
 from sn120_v2 import assembly, controller, headchain, headfold, layout, smoke  # noqa: E402
-from sn120_v2.admission import StoreAdmission  # noqa: E402
+from sn120_v2.admission import STREAMS_ENV, StoreAdmission  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
 from sn120_v2.cli import main  # noqa: E402
 from sn120_v2.controller import HeadPublish, StackContext  # noqa: E402
@@ -144,6 +144,29 @@ def test_with_the_chain_setting_the_box_commands_get_the_parts_that_keep_the_fol
     monkeypatch.setenv(headchain.MODE_ENV, "sometimes")
     with pytest.raises(ConfigError):
         stack("publish")
+
+
+def test_the_count_of_check_streams_is_a_setting_and_a_setting_that_the_shell_does_not_hold_is_shown(tmp_path, box, monkeypatch):
+    start(tmp_path, box)
+
+    def stack():
+        return assembly.stack(StackContext(tmp_path / "state", Params(), "run"))
+
+    default = stack()
+    assert default.admission.streams == 1, "one file after the other, as before"
+    assert [(name in line, "NOT SET" in line) for name, line in zip((headchain.MODE_ENV, STREAMS_ENV), default.settings, strict=True)] == [(True, True)] * 2
+    assert "'full'" in default.settings[0] and "one file after the other" in default.settings[1]
+    monkeypatch.setenv(STREAMS_ENV, "8")
+    monkeypatch.setenv(headchain.MODE_ENV, headchain.CHAIN)
+    chosen = stack()
+    assert chosen.admission.streams == 8 and code_digest() == plan.code_digest(), "a setting of the shell: no file under gpu/ reads it"
+    assert chosen.settings == (
+        f"the head goes public in the mode 'chain' ({headchain.MODE_ENV}=chain)",
+        f"the check of the waiting files reads 8 files at one time ({STREAMS_ENV}=8)",
+    )
+    monkeypatch.setenv(STREAMS_ENV, "0")
+    with pytest.raises(ConfigError, match=STREAMS_ENV):
+        stack()
 
 
 def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any_round(tmp_path, box, monkeypatch, capsys):

@@ -145,6 +145,7 @@ class Stack:
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
     head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+    settings: tuple[str, ...] = ()  # one line for each setting of this stack and where its value comes from; ``run`` prints them at its start
 
 
 def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
