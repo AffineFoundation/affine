@@ -48,7 +48,7 @@ class WordTokens:
 @pytest.fixture(autouse=True)
 def v1_rules_only(monkeypatch):
     """v1 had no training-signal rule and no cost cap. Many recorded files give every rollout of a prompt the same reward."""
-    monkeypatch.setattr(admission, "_trains", lambda *inputs: 0)
+    monkeypatch.setattr(admission, "_trains", lambda *inputs: (0, 0))
 
 
 def judge(case, build) -> tuple:

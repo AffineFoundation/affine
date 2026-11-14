@@ -51,6 +51,7 @@ from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
+from . import worker
 from .worker import AT_THE_LEASE_S, LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
@@ -68,6 +69,13 @@ OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"  #
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
 BOX_TRIES = inspect.signature(LocalRunner.__init__).parameters["attempts"].default
+# A measurement of the GPU worker, not a value of this code: float32, on a CPU, a very small model. The training on
+# GPUs in bfloat16 is not measured, so the text says no more than this.
+GPU_COUNT_AND_RESULT = (
+    "The number of GPUs of a training job changes the order in which the gradients of the rows are added. The LoRA is"
+    " then not the same file byte for byte. In float32 tests on a CPU the update differed by less than 1 part in 10,000"
+    " of its size."
+)
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
 PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
@@ -386,9 +394,11 @@ def _training_lines(params: Params) -> list[str]:
         f"  step loss, over all A and B together, is clipped to the norm {show(recipe.max_grad_norm)} (`max_grad_norm`). Then comes one update",
         f"  with the learning rate {show(recipe.lora_lr)} (`lora_lr`). The optimizer: {OPTIMIZER}. The learning rate has no",
         f"  schedule. A gradient that is not finite stops the training: `{SKIP}`.",
-        "- GPUs: the job has the GPUs of its slot (section 3). It puts one copy of the model on each GPU, but not more",
-        "  copies than rows that train. The rows that train go to the copies in turn, the longest row first. The",
-        "  gradients of the copies are added before the clip. The job never trains on a CPU: with no GPU it stops.",
+        "- GPUs: the job has the GPUs that the round gives to its batch (section 3). It puts one copy of the model on",
+        "  each GPU, but not more copies than rows that train. The rows that train go to the copies in turn, the",
+        "  longest row first. The gradients of the copies are added before the clip. The job never trains on a CPU:",
+        "  with no GPU it stops.",
+        *textwrap.wrap(f"- {GPU_COUNT_AND_RESULT} That is a test on a CPU. The difference on GPUs is not measured.", 110, subsequent_indent="  "),
         "- After the last step: the cap `global_norm_cap` (above), then a check that each weight is finite. If one is",
         f"  not: `{SKIP}`.",
         f"- The LoRA is these files: {show([f'`{name}`' for name in LORA_FILES])}. The weight file holds A and B of each layer as",
@@ -417,6 +427,7 @@ def _round_time_lines(params: Params) -> list[str]:
     stop = min(params.lease_timeout_s, params.round_time_limit_s) - params.promote_reserve_s
     train_end = min(stop, params.train_time_budget_s)
     limit, reserve, first_look = show(params.round_time_limit_s / 60), show(params.promote_reserve_s / 60), params.look_sizes()[0]
+    start_order = "with the most token-steps first, and between equal token-steps in queue order" if worker.LONGEST_FIRST else "in queue order"
     return [
         "### The time of a round",
         "",
@@ -426,10 +437,19 @@ def _round_time_lines(params: Params) -> list[str]:
         f"- Time limit: {limit} minutes from the lease to the promotion of the winner. The box stops scoring {reserve} minutes",
         f"  before it, at minute {show(stop / 60)} (the stop time). The stop is hard. The {reserve} minutes are for the grading of the last",
         "  chunk, the judging and the promotion.",
-        f"- Training time: the first {show(train_end / 60)} minutes. Batches train in queue order. Each batch trains on its own slot of",
-        f"  GPUs, and the slots train at the same time. A slot is floor({params.n_gpus} / batches) GPUs, and at least 1. So with",
-        f"  {params.n_gpus} batches or more, each batch trains on one GPU, {params.n_gpus} batches at a time, and each other batch waits for a",
-        "  free GPU.",
+        f"- Training time: the first {show(train_end / 60)} minutes.",
+        f"- A round of {params.n_gpus} batches or fewer: all batches train at the same time, and each one starts at the lease. Each",
+        "  batch has one GPU. Then each GPU that is left goes, one GPU at a time, to the batch with the largest value",
+        "  of: its token-steps / the GPUs that it has now. Between two equal values: the batch that is earlier in the",
+        "  queue order. The token-steps of a batch are its cost in the rule `train_cost` (section 5). A batch gets no",
+        f"  more GPUs than it has rollouts that train. With that many rollouts, one batch alone has all {params.n_gpus} GPUs. Batches",
+        "  with equal token-steps have equal GPU counts, or the earlier ones have one GPU more.",
+        f"- A round of more than {params.n_gpus} batches: each batch trains on one GPU, {params.n_gpus} batches at a time. The batches start",
+        f"  {start_order}. The first {params.n_gpus} of them start at the lease. Each other batch waits for a free GPU.",
+        "- The token-steps of the other batches are not published. So you cannot compute your GPU count before the",
+        "  round. The GPU count of a finished job is in a log of the box, not in a public file.",
+        "- The GPUs of a batch stay with that batch in each try of its training. When the box cannot read the cost of",
+        "  a frozen file, that batch has one GPU, and the GPUs that are left go to the other batches by the rule above.",
         "- At the end of the training time no new training starts, and each training that still runs is stopped. Such",
         f"  a batch is `{NOT_TRAINED}`: you are not charged, your seat is first in the next round, and no failure is counted",
         "  for the seat. Scoring starts when all training is done or stopped.",
@@ -1046,7 +1066,9 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  that of mining.json.",
         "- What a run cannot repeat exactly: the text of a rollout, and so its outcome code, and so `delta` and `z`;",
         "  and the trained values of the LoRA, and so `lora_hash`. These depend on the GPU type, on the package",
-        "  versions and on the requests that a server computes together. Expect the same pass rate within the noise",
+        "  versions and on the requests that a server computes together. The trained values depend also on the number",
+        "  of GPUs of the training job (section 2): the job of `run` has all GPUs of the run, and on the box the count",
+        "  follows the batches of the round (section 3). Expect the same pass rate within the noise",
         "  of sampling, not the same text for the same seed. What a run repeats exactly: the draw with its order and",
         "  its weights, each seed, the prompt and the settings of each request, the rows that train with their",
         "  advantages and tokens, the grade of a given text, and the decision for given outcome strings.",

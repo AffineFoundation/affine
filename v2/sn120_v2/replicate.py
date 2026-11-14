@@ -170,13 +170,13 @@ def local_params(params: Params, image: str, code: str, gpus: int, round_clock: 
     if recipe is not params.recipe:
         changes["recipe"] = recipe
     if gpus != params.n_gpus:
-        note("gpus", f"This run uses {gpus} GPU(s). The box has {params.n_gpus}. One vLLM server runs on each GPU, and task i of a chunk goes to server i mod the number of GPUs.")
+        note("gpus", f"This run uses {gpus} GPU(s). The box has {params.n_gpus}. One vLLM server runs on each GPU, and task i of a chunk goes to server i mod the number of GPUs. The training job has all GPUs of this run: see the note one-batch.")
         changes["n_gpus"] = gpus
     if not round_clock:
         stop = params.round_time_limit_s - params.promote_reserve_s
         note("round-clock", f"No time limit of the round applies. On the box the training ends {params.train_time_budget_s} s after the start of the round and the scoring stops at {stop} s; what is scored by then is the whole test. The limit of one reply ({params.eval_time_budget_s} s) is the same here.")
         changes.update(round_time_limit_s=NO_ROUND_LIMIT_S, lease_timeout_s=NO_ROUND_LIMIT_S, promote_reserve_s=0, train_time_budget_s=NO_ROUND_LIMIT_S - 1)
-    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule. In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run; on the box a job has floor({params.n_gpus} / batches of the round) GPUs, at least 1. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
+    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule. In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run, but not more than the file has rollouts that train. On the box the GPU count of a job follows the batches of the round: with {params.n_gpus} batches or fewer, each batch has one GPU, and each GPU that is left goes to the batch with the most token-steps for each GPU that it has; with more batches, each has one GPU. Another GPU count adds the gradients of the rows in another order, so the LoRA is not the same file byte for byte. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
     note("no-master", "The fp32 master is not checked and not needed. The box checks it before it trains or scores, because the box also folds. This tool never folds.")
     note("free-gpus", f"Before the scoring starts, only GPUs 0 to {gpus - 1} must be free. The box waits for all of its GPUs.")
     return (dataclasses.replace(params, **changes) if changes else params), notes
