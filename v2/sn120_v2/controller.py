@@ -122,6 +122,7 @@ class Stack:
     entropy: Callable[[], str] | None = None  # a value the validator cannot choose, such as the latest block hash
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
+    pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
 
 
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
@@ -141,9 +142,10 @@ class Controller:
         *,
         folder: Folder | None = None,
         publisher: Publisher | None = None,
+        pins: Callable[[Params], None] | None = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
-        self.folder, self.publisher = folder, publisher
+        self.folder, self.publisher, self.pins = folder, publisher, pins
         self.state: State = replay(journal.records)
         self.last_error = ""
         self._retry_at = 0
@@ -160,6 +162,25 @@ class Controller:
     def _pin(self) -> None:
         if hasattr(self.admission, "params"):
             self.admission.params = self.params
+
+    def _check_pins(self, not_started: str, first: str = "") -> None:
+        """Stop before work that this box may not do: its image or its code is not what the parameters pin.
+
+        The trainer makes the same check, but there it is too late: each
+        refused training is a counted failure of a seat, and the next round
+        opens at once. A box that differs from the pins would hold the whole
+        queue in a few rounds, with nobody there. Here nothing has started,
+        so nothing is counted, and ``run`` ends with a refusal.
+        """
+        if self.pins is None:
+            return
+        try:
+            self.pins(self.params)
+        except InfraError as exc:
+            raise ConfigError(
+                f"this box differs from the pinned digests ({exc}), so {not_started}. Nothing is counted for a seat. "
+                f"Next: {first}the digest block, then set-params with the two digests of this box, then start again"
+            ) from None
 
     def _log(self, kind: str, data: dict[str, Any], now: int) -> None:
         apply(self.state, self.journal.append(kind, data, now))
@@ -397,6 +418,7 @@ class Controller:
             return False
         if self.folder is None:
             raise ConfigError("a fold is due, but no folder is configured")
+        self._check_pins("the fold was not started")
         try:
             fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
             promote_fold(self.store, fold)
@@ -550,8 +572,14 @@ class Controller:
 
     def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str) -> RoundRecord | None:
         """One round on one box, start to end. Returns the closed round, or None when no round could start."""
-        self.tick(clock())
-        tickets = self.open_round(clock(), entropy, clock=clock) if self.state.round is None else self.tickets()
+        self.tick(clock())  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
+        if self.state.round is None:
+            self._check_pins("no round was opened")
+            tickets = self.open_round(clock(), entropy, clock=clock)
+        else:
+            tickets = self.tickets()
+            if tickets:
+                self._check_pins("the open round was not run", "end-round (the round pins the old digests), ")
         for ticket in tickets:
             try:
                 self.submit_result(runner.run(ticket), clock())

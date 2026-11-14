@@ -90,7 +90,7 @@ def open_controller(args: argparse.Namespace, command: str) -> tuple[Controller,
     context, stack = open_stack(args, command)
     owner = f"{os.uname().nodename}:{os.getpid()}"
     journal = Journal(context.state_dir / JOURNAL_FILE, owner, now(), Mirror(stack.store) if stack.mirror else None)
-    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher)
+    controller = Controller(journal, stack.store, stack.admission, stack.sampler, context.params, folder=stack.folder, publisher=stack.publisher, pins=stack.pins)
     return controller, stack
 
 
