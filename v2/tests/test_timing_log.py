@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+import sys
 
 import pytest
 
-from sn120_v2.errors import VerifyError
+from sn120_v2.errors import InfraError, VerifyError
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.store import LocalStore, promote_files, timed
@@ -48,6 +49,32 @@ def test_a_step_that_an_error_ends_is_logged_with_the_error_and_the_error_goes_o
         with timed("a step"):
             raise KeyError("x")
     assert timing(capsys) == ["a step [KeyError]"]
+
+
+class Dead:
+    """A log stream that cannot be written: a full disk (``OSError``) or a closed file (``ValueError``)."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def write(self, text):
+        raise self.error
+
+    def flush(self):
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [OSError(28, "No space left on device"), ValueError("I/O operation on closed file")])
+def test_a_log_that_cannot_be_written_fails_no_step_and_replaces_no_error(tmp_path, monkeypatch, error):
+    store = LocalStore(tmp_path / "store")
+    store.put("pending/x/a.bin", b"weights")
+    files = {"a.bin": store.sha256("pending/x/a.bin")}
+    monkeypatch.setattr(sys, "stderr", Dead(error))
+    promote_files(store, "pending/x", "public/bases/abc", files)  # every file is copied and checked: the lost lines change nothing
+    assert store.get("public/bases/abc/a.bin") == b"weights"
+    with pytest.raises(InfraError, match="the store did not answer"):  # the controller tries a step again after this error, and after no other
+        with timed("a step"):
+            raise InfraError("the store did not answer")
 
 
 def test_a_round_with_a_king_logs_the_time_of_each_step_and_no_record_or_public_file_holds_one(tmp_path, capsys):
