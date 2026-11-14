@@ -223,16 +223,21 @@ def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_roun
     made.controller.release_seat((3, 1003), made.now)
     assert "A release also sets the count to zero." in flat and (state.queue[(3, 1003)].infra_attempts, state.queue[(3, 1003)].held) == (0, False)
 
-    assert "A `no_decision` that comes from the scoring (section 6) has scores and is not counted." in flat  # Controller._close: only a status of the box
+    assert "A `no_decision` that comes from the scoring (section 6) is not counted either. The public files show its `delta`, `se` and `z` as null: the entry was not judged." in flat  # Controller._close: only a status of the box; public.entry_view
+    assert "`delta`, `se` and `z` of an entry are numbers only when the entry was judged: its status is `winner` or `lost`." in flat
+    assert "has them as null in mining.json and in the round file. Its `cap_rate` and `n_tasks` stay: they say what the box ran." in flat
     assert "If that is so for null M, every scored entry of the round is `no_decision`. Neither is counted as a failure for the seat (section 4)." in flat
     assert "A round that has a result also gets the outcome `no_decision` when none of its entries was charged." in flat
     assert "`no_decision` as the status of an entry means: not charged, and the seat goes to the front of the queue (section 4)." in flat
     assert "The `note` is empty unless the round had no result or has the outcome `abandoned` (section 4)." in flat
-    markers = (public.CUT_SECRET, public.CUT_LOGIN, public.CUT_QUERY, public.CUT_ADDRESS)  # public.public_text
-    assert "a marker replaces each part that it takes for private (`{}`, `{}`, `{}` for the query string of a link, `{}` for an IP address)".format(*markers) in flat
+    markers = (public.CUT_SECRET, public.CUT_LOGIN, public.CUT_QUERY, public.CUT_ADDRESS, public.CUT_PATH)  # public.public_text
+    assert "a marker replaces each part that it takes for private (`{}`, `{}`, `{}` for the query string of a link, `{}` for an IP address, `{}` for a path of a file on the box)".format(*markers) in flat
+    assert "The text of a training job that failed does not hold the last line of the job's log. It ends with the cause in fixed words: `cause: out of memory`, or `cause: an error of the class` and the name of the class, or `the cause is in the log of the box`." in flat
+    job = public.public_text("training failed 3 times: the training job failed with code 1; log: /root/work/logs/train-x.log; last line: ValueError: bad row at /root/work/x", {})
+    assert job == "training failed 3 times: the training job failed with code 1; cause: an error of the class ValueError"
     assert f"a text of more than {public.TEXT_LIMIT} characters is cut there and ends with a note of how many characters were cut" in flat
     long = public.public_text("InfraError: 403 for url: https://user:pw@store.example/x.json?X-Amz-Signature=0123abcd from 203.0.113.7:443 " + "x" * public.TEXT_LIMIT)
-    assert all(marker in long for marker in markers[1:]) and long.endswith(" more characters]") and long.startswith("InfraError: 403 for url: https://")
+    assert all(marker in long for marker in markers[1:4]) and long.endswith(" more characters]") and long.startswith("InfraError: 403 for url: https://")
     assert "The same rule applies to the `reason` of a round in mining.json and in section 3." in flat
     assert "To decide what applies to your seat, read `outcome` and `status`, not the words of a text." in flat
 

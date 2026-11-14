@@ -45,12 +45,12 @@ from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, TEXT_LIMIT
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_PATH, CUT_QUERY, CUT_SECRET, IN_THE_LOG, OUT_OF_MEMORY, TEXT_LIMIT
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
-from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
+from .types import CAP, ERROR, FAIL, LOST, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, WINNER, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
@@ -516,7 +516,8 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  of the same round finished its training.",
         f"  Your entry then has the status `{NO_DECISION}` and no scores. When {params.max_infra_attempts} failures",
         "  are counted for a seat, the seat is held: it takes no turn until the operator releases it. A release also",
-        f"  sets the count to zero. A `{NO_DECISION}` that comes from the scoring (section 6) has scores and is not counted.",
+        f"  sets the count to zero. A `{NO_DECISION}` that comes from the scoring (section 6) is not counted either. The public",
+        "  files show its `delta`, `se` and `z` as null: the entry was not judged.",
         "- A training job that failed is never counted for your seat: out of memory on the box, a crash of the job,",
         "  any other error of the training. The box tries the training again (section 3). If each try fails, your",
         f"  entry has the status `{NO_DECISION}` and no scores, and its `reason` starts with `training failed`. You are not",
@@ -954,6 +955,9 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- If fewer than {show(params.min_cover)} of the rollouts of a LoRA resolve without an infrastructure error, its entry is",
         f"  `{NO_DECISION}`. If that is so for null M, every scored entry of the round is `{NO_DECISION}`. Neither is counted as a",
         "  failure for the seat (section 4).",
+        f"- `delta`, `se` and `z` of an entry are numbers only when the entry was judged: its status is `{WINNER}` or `{LOST}`.",
+        f"  An entry that the box scored and the judge did not use (`{NO_DECISION}` from the scoring, `{NOT_SCORED}`) has them as",
+        "  null in mining.json and in the round file. Its `cap_rate` and `n_tasks` stay: they say what the box ran.",
         f"- After {params.fold_every_k} applied winner(s), the stacked LoRAs are folded into a new base.",
         "",
         *_scoring_lines(params),
@@ -998,8 +1002,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
         f"  publishes such a text, a marker replaces each part that it takes for private (`{CUT_SECRET}`,",
-        f"  `{CUT_LOGIN}`, `{CUT_QUERY}` for the query string of a link, `{CUT_ADDRESS}` for an IP address), and a",
+        f"  `{CUT_LOGIN}`, `{CUT_QUERY}` for the query string of a link, `{CUT_ADDRESS}` for an IP address,",
+        f"  `{CUT_PATH}` for a path of a file on the box), and a",
         f"  text of more than {TEXT_LIMIT} characters is cut there and ends with a note of how many characters were cut. The",
+        "  text of a training job that failed does not hold the last line of the job's log. It ends with the cause in",
+        f"  fixed words: `{OUT_OF_MEMORY}`, or `cause: an error of the class` and the name of the class, or",
+        f"  `{IN_THE_LOG}`. The",
         "  same rule applies to the `reason` of a round in mining.json and in section 3. To decide what applies to your",
         "  seat, read `outcome` and `status`, not the words of a text.",
         "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
