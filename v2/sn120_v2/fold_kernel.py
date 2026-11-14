@@ -99,11 +99,14 @@ MARKS = {
 
 
 def _one_rounding(product: torch.Tensor, before: torch.Tensor) -> torch.Tensor:
-    """The fp32 number nearest to the exact ``product + before``. Both are fp64, and the product is exact."""
+    """The fp32 number nearest to the exact ``product + before``. Both are fp64, and the product is exact.
+
+    A sum that is not finite stays as IEEE 754 gives it: the fused operation gives the same.
+    """
     total = product + before  # rounded to the nearest fp64
     part = total - product
     lost = (product - (total - part)) + (before - part)  # exactly what that rounding lost (the error term of the two-sum)
-    inexact = lost != 0
+    inexact = lost.abs() > 0  # not true when the sum is not finite: then ``lost`` is not a number
     # Round to odd: go back to the fp64 value nearer to zero, then set the last bit.
     # The rounding to fp32 that follows then gives the one-rounding result of the fused operation.
     bits = total.view(torch.int64)
@@ -167,7 +170,7 @@ def lora_update(
     a, b = a.to(device=device, dtype=torch.float64), b.to(device=device, dtype=torch.float64)
     factor = torch.tensor(scale, dtype=torch.float32, device=device)  # the scale is rounded to fp32, as torch does it
     on_cpu, set_before = a.device.type == "cpu", torch.get_num_threads()
-    count = (threads or set_before) if on_cpu else 1
+    count = (threads or set_before) if on_cpu else set_before  # a GPU run leaves the threads of torch as they are
     rows = max(1, (chunk or (count * _GRAIN if on_cpu else _GPU_CHUNK)) // a.shape[1])
     out = torch.empty(b.shape[0], a.shape[1], dtype=torch.float32)
     if count != set_before:
@@ -195,34 +198,44 @@ def check_arithmetic(device: str | Sequence[str] = "cpu", threads: int | None = 
     They fail when small numbers are flushed to zero, when the rounding is not to the nearest even,
     and when an fp64 sum is rounded two times. On the CPU each case is as large as one piece of work
     of ``lora_update``, so every thread of torch computes it.
+
+    Each answer is written here as the 32 bits of the fp32 number, and is compared as a whole number.
+    A machine that flushes small numbers would flush an answer that is written as a floating number
+    too, and the two zeros would then be equal.
     """
     if sys.byteorder != "little":
         raise VerifyError("this code writes the bytes of a little-endian machine")
     one, low = 1 + 2.0**-23, 1 - 2.0**-23
-    x, y, edge = 2.0**-12 * one, 2.0**-12 * low, 2.0**-126 - 2.0**-149
+    x, y = 2.0**-12 * one, 2.0**-12 * low
+    minus = -(1 << 31)  # the sign bit of fp32, in a whole number of 32 bits
+    one_bits, edge_bits = 0x3F800001, 0x007FFFFF  # 1 + 2**-23, and 2**-126 - 2**-149
     cases = (
         # one + x*y is a little below the middle of two fp32 numbers; two roundings give the wrong one
-        ([[1.0, 1.0], [y, -y]], [[one, x], [-one, x]], [[one, one], [-one, -one]]),
-        # results below the smallest normal fp32 number, and one that is too small for fp32
-        ([[2.0**-40, 2.0**10]], [[2.0**-100], [2.0**-140]], [[2.0**-140, 2.0**-90], [0.0, 2.0**-130]]),
+        ([[1.0, 1.0], [y, -y]], [[one, x], [-one, x]], [[one_bits, one_bits], [one_bits + minus, one_bits + minus]]),
+        # results below the smallest normal fp32 number, and one that is too small for fp32: 2**-140, 2**-90, 0, 2**-130
+        ([[2.0**-40, 2.0**10]], [[2.0**-100], [2.0**-140]], [[1 << 9, 37 << 23], [0, 1 << 19]]),
         # the largest fp32 number below 2**-126, plus a little less than one half of its last bit
-        ([[2.0**-63 * low, -(2.0**-63) * low], [2.0**-75 * low, -(2.0**-75) * low]], [[2.0**-63, 2.0**-75 * one], [-(2.0**-63), -(2.0**-75) * one]], [[edge, -edge], [-edge, edge]]),
+        (
+            [[2.0**-63 * low, -(2.0**-63) * low], [2.0**-75 * low, -(2.0**-75) * low]],
+            [[2.0**-63, 2.0**-75 * one], [-(2.0**-63), -(2.0**-75) * one]],
+            [[edge_bits, edge_bits + minus], [edge_bits + minus, edge_bits]],
+        ),
     )
     for name in _devices(device):
         on_cpu = torch.device(name).type == "cpu"
         tall = 16 * ((threads or torch.get_num_threads()) if on_cpu else 1)
         for a, b, want in cases:
-            a, b, want = torch.tensor(a).repeat(1, 512), torch.tensor(b).repeat(tall, 1), torch.tensor(want).repeat(tall, 512)
+            a, b, want = torch.tensor(a).repeat(1, 512), torch.tensor(b).repeat(tall, 1), torch.tensor(want, dtype=torch.int32).repeat(tall, 512)
             for chunk in (None, 1024):  # one piece of work for all threads, and one row at a time
                 got = lora_update(a, b, 1.0, device=name, threads=threads, chunk=chunk)
-                if not torch.equal(got.view(torch.int32), want.view(torch.int32)):
+                if not torch.equal(got.view(torch.int32), want):
                     raise VerifyError(f"the arithmetic of {name} does not give the known answers of the fixed-order kernel")
         wrapped = torch.tensor([-(2**31), 0], dtype=torch.int32, device=name) - 1
         if wrapped.tolist() != [2**31 - 1, -1]:
             raise VerifyError(f"the whole-number arithmetic of {name} does not wrap around")
     tiny = torch.full((1 << 17,), 2.0**-140)  # large, so that the threads of torch do this add
     halves = torch.tensor([1 + 2.0**-8, 1 + 3 * 2.0**-8, 1 + 2.0**-8 + 2.0**-23]).to(torch.bfloat16).float()
-    if not bool((tiny + tiny / 2 == 1.5 * 2.0**-140).all()) or halves.tolist() != [1.0, 1 + 2.0**-6, 1 + 2.0**-7]:
+    if not bool(((tiny + tiny / 2).view(torch.int32) == 3 << 8).all()) or halves.tolist() != [1.0, 1 + 2.0**-6, 1 + 2.0**-7]:  # 1.5 * 2**-140
         raise VerifyError("the fp32 add or the cast to bf16 on this machine does not give the known answers")
 
 
@@ -632,6 +645,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 got = mark(lora_update(a, b, scale, device=device, threads=args.threads))
                 equal = equal and got == want
                 print(f"{FIXED_ORDER} {device} {shape} rank {rank} scale {scale:.6g}: {got}  {'EQUAL' if got == want else 'DIFFERENT'}  {time.monotonic() - at:.2f} s")
+            if torch.device(device).type == "cuda":
+                print(f"{device} memory: peak {torch.cuda.max_memory_reserved(device) >> 20} MiB")
         print(f"{time.monotonic() - started:.0f} s")
         return 0 if equal else 1
     record = json.loads(args.record.read_text(encoding="utf-8")) if args.record else {}

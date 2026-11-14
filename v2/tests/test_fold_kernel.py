@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import struct
+import subprocess
+import sys
 import threading
 import time
 from fractions import Fraction
@@ -158,6 +160,73 @@ def test_the_quick_way_and_the_careful_way_give_the_bits_of_the_definition(low, 
         assert same_bits(lora_update(a, b, 1.0), fold_kernel._fused_rows(a.double(), b.double(), every=True))
 
 
+def first_form(a: torch.Tensor, b: torch.Tensor, scale: float) -> torch.Tensor:
+    """fixed-order-v1 as commit 0b5de42c computed it: every element is rounded to odd, in one piece.
+
+    These are the lines of that commit, kept here apart from the code under test.
+    """
+    a, b = a.double(), b.double()
+    rows, columns = b.shape[0], a.shape[1]
+    acc = torch.zeros(rows, columns, dtype=torch.float32)
+    product, before, total, part, lost = (torch.empty(rows, columns, dtype=torch.float64) for _ in range(5))
+    bits, lost_bits = total.view(torch.int64), lost.view(torch.int64)
+    for k in range(a.shape[0]):
+        torch.mul(b[:, k : k + 1], a[k : k + 1, :], out=product)
+        before.copy_(acc)
+        torch.add(product, before, out=total)
+        torch.sub(total, product, out=part)
+        torch.sub(total, part, out=lost)
+        torch.sub(product, lost, out=lost)
+        before.sub_(part)
+        lost.add_(before)
+        inexact = lost != 0
+        away = ((lost_bits ^ bits) < 0) & inexact
+        bits -= away.to(torch.int64)
+        bits |= inexact.to(torch.int64)
+        acc.copy_(total)
+    return acc * torch.tensor(scale, dtype=torch.float32)
+
+
+def test_the_kernel_gives_the_bits_of_its_first_form_in_commit_0b5de42c():
+    # A head chain names fixed-order-v1 and no commit. So a quicker form must give the bits of the first form.
+    cases = [(wide((6, 400), 11) * 2.0**shift, wide((300, 6), 12) * 2.0**shift) for shift in (0, -40, -52, -60)]
+    cases += [near_the_middle(300, 400, 15, -20, 20), near_the_middle(300, 400, 16, -90, -55)]
+    generator = torch.Generator().manual_seed(17)
+    whole = lambda *shape: torch.randint(-3, 4, shape, generator=generator).float()  # noqa: E731
+    cases += [(whole(6, 400) * 2.0**-13, whole(300, 6) * 4097), (whole(6, 400) * 0.0 - 0.0, whole(300, 6))]  # ties, sums of zero, -0
+    cases += [mark_pair("kv", 16)]  # one whole tensor in a shape of the launch model
+    small = 0
+    for a, b in cases:
+        for scale in (2.0, 37.7 / 16):
+            want = first_form(a, b, scale)
+            small += int(((want != 0) & (want.abs() < 2.0**-126)).sum())
+            assert same_bits(lora_update(a, b, scale), want)
+            assert same_bits(lora_update(a, b, scale, threads=1, chunk=777), want)
+            assert same_bits(lora_update(a, b, scale, threads=3, chunk=a.shape[1]), want)
+    assert small > 1000  # the cases reach the numbers below the smallest normal fp32 number
+    a, b = near_the_middle(300, 400, 15, -20, 20)
+    assert not same_bits(first_form(a, b, 1.0), plain(a, b))  # and the cases can tell one rounding from two
+
+
+def test_a_sum_that_is_not_finite_is_the_one_place_where_the_first_form_differs():
+    # A sum above the largest fp32 number is infinite, and by the rule it stays infinite in the next steps.
+    # The first form made "not a number" from some of these. No fold can write either: a fold stops at a value that is not finite.
+    a = torch.tensor([[2.0**100, 1.0, -(2.0**100)], [1.0, 1.0, 1.0]])
+    b = torch.tensor([[2.0**100, 3.0], [1.0, 3.0]])
+    rule = torch.tensor([[float("inf"), 2.0**100 + 3.0, float("-inf")], [2.0**100 + 3.0, 4.0, -(2.0**100) + 3.0]])
+    assert same_bits(lora_update(a, b, 1.0), rule)
+    assert same_bits(fold_kernel._fused_rows(a.double(), b.double(), every=True), rule)  # the careful way follows the rule too
+    generator = torch.Generator().manual_seed(18)
+    large = lambda *shape: torch.randn(shape, generator=generator) * 2.0 ** torch.randint(55, 65, shape, generator=generator).float()  # noqa: E731
+    a, b = large(6, 400), large(300, 6)
+    was, now = first_form(a, b, 2.0), lora_update(a, b, 2.0)
+    finite = torch.isfinite(was)
+    assert 1000 < int(finite.sum()) < was.numel() - 1000  # both kinds are here
+    assert bool((torch.isfinite(now) == finite).all())  # the same numbers are finite
+    assert bool((was.view(torch.int32) == now.view(torch.int32))[finite].all())  # and those have the same bits
+    assert bool(torch.isinf(now[~finite]).all()) and bool(torch.isnan(was[~finite]).any())
+
+
 def test_fixed_order_at_the_ends_of_fp32():
     low, one, edge = 1 - 2.0**-23, 1 + 2.0**-23, 2.0**-126 - 2.0**-149
     # the largest number below 2**-126, plus a little less than one half of its last bit: it stays
@@ -184,6 +253,15 @@ def test_the_check_of_the_arithmetic_stops_a_machine_that_flushes_small_numbers(
     finally:
         torch.set_flush_denormal(False)
     check_arithmetic()
+
+
+def test_the_check_stops_a_process_that_flushes_small_numbers_from_its_start():
+    # Here every thread flushes, and a known answer that is written as a floating number is flushed too.
+    # So the check holds its answers as bits.
+    code = "import torch\nassert torch.set_flush_denormal(True)\nfrom sn120_v2.fold_kernel import main\nraise SystemExit(main(['marks']))"
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=Path(__file__).parents[1], timeout=120)
+    assert done.returncode == 1 and "EQUAL" not in done.stdout
+    assert "VerifyError: the arithmetic of cpu does not give the known answers" in done.stderr
 
 
 def test_whole_tensor_marks_fail_on_any_change_of_bits():
@@ -319,6 +397,24 @@ def test_more_devices_share_one_fold_and_change_no_byte(head, tmp_path):
     wrong.pairs[name] = (wrong.pairs[name][0][:, :5], wrong.pairs[name][1])
     with pytest.raises(VerifyError, match="wrong shape"):
         replay_fold(master, base, [wrong], None, None, part_bytes=PART, device=["cpu", "cpu"])
+
+
+def test_one_device_with_wrong_arithmetic_stops_the_fold_before_it_writes(head, tmp_path, monkeypatch):
+    base, master, loras = head
+    pairs = [read_pairs(path, rank) for path, rank in loras]
+    right = fold_kernel.lora_update
+
+    def one_bit_wrong_on_the_second(a, b, scale, kernel=FIXED_ORDER, *, device="cpu", threads=None, chunk=None):
+        out = right(a, b, scale, kernel, device=device, threads=threads, chunk=chunk)
+        if device == "cpu:0":
+            out.view(torch.int32)[0, 0] ^= 1
+        return out
+
+    monkeypatch.setattr(fold_kernel, "lora_update", one_bit_wrong_on_the_second)
+    with pytest.raises(VerifyError, match="the arithmetic of cpu:0 does not give the known answers"):
+        replay_fold(master, base, pairs, tmp_path / "new-master", tmp_path / "new-base", part_bytes=PART, device=["cpu", "cpu:0"])
+    assert not (tmp_path / "new-master").exists() and not (tmp_path / "new-base").exists()  # it stops; it does not go on with the good device
+    replay_fold(master, base, pairs, None, None, part_bytes=PART, device=["cpu"])  # the caller names the good devices and starts again
 
 
 def test_the_results_of_more_devices_come_in_order_and_a_device_has_one_item_at_a_time():
