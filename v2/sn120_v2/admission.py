@@ -87,6 +87,10 @@ ENV_TIME_LIMIT = "time-limit"
 PROBE_TEXT = "What is 1 + 1?"  # the tokenizer works when it counts at least one token in this text, as a prompt and as an output
 PROBE_TASKS = 4  # the grader works when it gives reward 1 to one of the first pool tasks answered with its own answer
 PROBE_HOTKEY = "known-good"  # the owner named in the known-good file of the checker
+# The characters of output text that the checker hands to the tokenizer in one call (``output_tokens_many``), when
+# the tokenizer can count many texts at once. One call holds the tokens of these texts in memory, so this is the
+# bound of that memory: the check of one file never holds more than this and one more text.
+AHEAD_CHARS = 4_000_000
 
 # Every rule code, in the order the rules run, with its meaning. llms.txt prints this table.
 RULES: dict[str, str] = {
@@ -251,6 +255,10 @@ class Tokens(Protocol):
         """Tokens of the text alone, with no special token added."""
         ...
 
+    # Optional: ``output_tokens_many(texts: Sequence[str]) -> Sequence[int]`` gives ``output_tokens`` of each text,
+    # in order, in one call. A tokenizer that can count many texts at once (on every CPU) has it. Each count must
+    # be the count that ``output_tokens`` gives. The checker falls back to ``output_tokens`` when the call fails.
+
 
 class HFTokens:
     """``Tokens`` over a Hugging Face tokenizer object. The caller loads the tokenizer; nothing is imported here."""
@@ -265,6 +273,17 @@ class HFTokens:
 
     def output_tokens(self, text: str) -> int:
         return len(self._tokenizer.encode(text, add_special_tokens=False))
+
+    def output_tokens_many(self, texts: Sequence[str]) -> list[int]:
+        """``output_tokens`` of each text. A fast tokenizer counts the texts of one call on every CPU at once.
+
+        This is the call of ``output_tokens`` with a list in place of one text: the same function of the
+        tokenizer with the same settings, and it encodes each text of the list apart from the others. So each
+        count is the same. No thread is started here: the threads are the tokenizer's own. With
+        ``TOKENIZERS_PARALLELISM=false`` in the environment it uses one thread, and nothing is gained.
+        """
+        found = self._tokenizer(list(texts), add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False)
+        return [len(ids) for ids in found["input_ids"]]
 
 
 class Invalid(ValueError):
@@ -438,6 +457,62 @@ def _count(tokens: Tokens, count: Callable[[str], int], text: str, where: str) -
         raise Invalid(TOKENIZER_FAULT, f"{where}: the tokenizer fails on this text", proven=not isinstance(cause, MACHINE)) from None
 
 
+def _reasoning(output: str) -> str | None:
+    """The text before the first boxed answer, or None when the output has no boxed answer."""
+    cut = output.find(_BOXED)
+    return None if cut < 0 else output[:cut]
+
+
+class _Ahead:
+    """The output token counts of one file, taken in one call for the next texts of the walk in ``_kept``.
+
+    The walk counts the same texts in the same order as before, and it stops at the same place with the same
+    reason: a count from here is the count that ``tokens.output_tokens`` gives, and a text with no count from
+    here is counted by ``_count``, as before. Only the time changes. The texts of one call are the next
+    ``AHEAD_CHARS`` characters of the walk, so the memory is bounded and a file that fails early costs at most one
+    call more than before. When a call fails or gives something that is not one count for each text, no other
+    call is made for this file: the walk counts one text at a time and finds the text and the reason as before.
+    """
+
+    def __init__(self, tokens: Tokens, groups: Sequence[Group]) -> None:
+        self._tokens, self._many = tokens, getattr(tokens, "output_tokens_many", None)
+        self._texts, self._counts = self._walk(groups), {}
+
+    @staticmethod
+    def _walk(groups: Sequence[Group]) -> Iterator[str]:
+        """Each text that ``_kept`` counts, in its order: an output, then its reasoning."""
+        for _, rollouts in groups:
+            for output, _ in rollouts:
+                yield output
+                reasoning = _reasoning(output)
+                if reasoning is not None:
+                    yield reasoning
+
+    def _next(self) -> dict[str, int]:
+        texts, size = [], 0
+        for text in self._texts:
+            texts.append(text)
+            size += len(text)
+            if size >= AHEAD_CHARS:
+                break
+        try:
+            counts = list(self._many(texts)) if texts else []
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:  # the walk meets the text that fails and gives the reason, with the proof of ``_count``
+            counts = None
+        if not texts or counts is None or len(counts) != len(texts) or not all(type(n) is int and n >= 0 for n in counts):
+            self._many = None
+            return {}
+        return dict(zip(texts, counts))
+
+    def count(self, text: str, where: str) -> int:
+        if self._many is not None and text not in self._counts:
+            self._counts = self._next()
+        n = self._counts.get(text)
+        return _count(self._tokens, self._tokens.output_tokens, text, where) if n is None else n
+
+
 def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tuple[set[tuple[int, int]], Sizes | None]:
     """Text, token and content rules on the kept groups.
 
@@ -449,6 +524,7 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tup
     answers: Counter[str] = Counter()
     capped: set[tuple[int, int]] = set()
     sizes: Sizes = {}
+    ahead = _Ahead(tokens, groups) if tokens is not None else None
     for i, (prompt, rollouts) in enumerate(groups):
         _text(prompt, f"groups[{i}].prompt")
         n_prompt = _count(tokens, tokens.prompt_tokens, prompt, f"groups[{i}].prompt") if tokens else 0
@@ -461,14 +537,14 @@ def _kept(groups: Sequence[Group], params: Params, tokens: Tokens | None) -> tup
                 answers[answer] += 1
             if tokens is None:
                 continue
-            n = _count(tokens, tokens.output_tokens, output, f"{here}.output")
+            n = ahead.count(output, f"{here}.output")
             _need(n <= cap, "output_tokens", f"{here}.output is {n} tokens; the cap is {cap}")
             used = n_prompt + n + (n < cap)  # an output below the cap gets one end-of-sequence token; at the cap it is cut
             capped.update({(i, j)} if n == cap else ())
             sizes[i, j] = (n_prompt, n)
             _need(used <= context, "context_tokens", f"{here}: prompt + output is {used} tokens; the cap is {context}")
-            cut = output.find(_BOXED)
-            before = n if cut < 0 else _count(tokens, tokens.output_tokens, output[:cut], f"{here}.output")  # reasoning comes before the first boxed answer
+            thought = _reasoning(output)  # reasoning comes before the first boxed answer
+            before = n if thought is None else ahead.count(thought, f"{here}.output")
             answer_only += before < params.min_reasoning_tokens
             reasoning, total = reasoning + before, total + n
     if tokens is not None:
