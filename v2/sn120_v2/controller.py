@@ -486,6 +486,10 @@ class Controller:
         texts = [reason, *((decision.reason, *(entry.reason for entry in decision.entries)) if decision else ())]
         for text in dict.fromkeys(text for text in texts if public_text(text) != text):
             print(f"round {record.round_id}: the public round file holds a changed form of this text. The full text: {text}", file=sys.stderr, flush=True)
+        for entry in decision.entries if decision else ():
+            if entry.score is not None and not entry.charged:  # the public files show null for these three (``public.entry_view``)
+                numbers = f"delta {entry.score.delta:+.4f}, se {entry.score.se:.4f}, z {entry.score.z:.2f}"
+                print(f"round {record.round_id}: UID {entry.uid} was not judged. The public files show no score for it. The box measured: {numbers}", file=sys.stderr, flush=True)
         report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
         self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
