@@ -347,14 +347,14 @@ class Row:
         S.setdefault("idle_since", now())
         try:
             left = self.results_left()
-        except InfraError as e:
-            left = ["?"]; self.log(event="store-check-failed", error=str(e)[-200:])
+        except Exception as e:  # whatever the store or the table gives: the wait below has an end, and the delete is sent
+            left = ["?"]; self.log(event="store-check-failed", error=type(e).__name__ + ": " + str(e)[-200:])
         if left and (whole and not S.get("expired") or now() - S["idle_since"] < CONFIRM_WAIT_S):
             if not S.get("release_waits"):
                 S["release_waits"] = now(); self.log(event="release-waits", why="the table in the store does not have these results yet", benchmarks=left)
             self.save(); return False
         why = "row done" if whole and not stopped(self.mid, S) else stopped(self.mid, S)
-        if self.first and S.get("held") and not self.keep_output(missing(m, bs)):
+        if self.first and S.get("held") and not self.tried("keep-output", self.keep_output, missing(m, bs)) and S.get("kept", {}).get("tries", 0) < KEEP_TRIES:
             S["release_tried"] = now(); self.save(); return False
         said = []
         if self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=why, row_done=whole and not left):
@@ -411,10 +411,16 @@ class Row:
                 run["beat"] = dict(at=now(), lines=lines, grew=run["last_progress"], finished=int(st.get("finished") or 0)); self.save()
             dead, stalled_ = st.get("alive") != "1", now() - run["last_progress"] > STALL_S
             if st.get("done") == "1":
-                self.collect(run); S["running"] = None; self.save()
-            elif (dead or stalled_) and self.first:  # never a kill on that pod: what is finished comes to the host, then the row is held
-                self.log(event="run-died" if dead else "stalled", first_row=True); self.tried("collect", self.collect, run, False)
-                S["running"] = None; self.save()
+                self.collect(run); S["running"] = None; S.pop("stalled", None); self.save()
+            elif self.first and dead:  # what is finished comes to the host, then the row is held
+                self.log(event="run-died", first_row=True); self.tried("collect", self.collect, run, False)
+                S["running"] = None; S.pop("stalled", None); self.save()
+            elif self.first:  # the runner lives: never a kill on that pod, and the pod stays. A stall is an alarm in the table, no more
+                if stalled_ and not S.get("stalled"):
+                    S["stalled"] = dict(since=run["last_progress"]); self.save()
+                    self.log(event="alarm", what="first-row-stalled", since_cr=cr(run["last_progress"]), why=f"no new line for {STALL_S} seconds, and the runner is alive")
+                elif not stalled_ and S.pop("stalled", None):
+                    self.log(event="first-row-moves-again"); self.save()
             elif dead:
                 S["fails"] += 1; self.log(event="run-died", fails=S["fails"]); S["running"] = None; self.save()
             elif stalled_:
@@ -466,6 +472,8 @@ def row_main(mid):
                 return row.log(event="row-end", state=(row.S.get("phase") or {}).get("state"), stopped=stopped(mid, row.S))
         except Exception:
             row.log(event="error", tb=traceback.format_exc()[-1500:])
+            if row.S.get("expired") and row.rec and not row.first:  # a pod past its hours goes back, whatever fails in the step
+                row.tried("release", row.pod.release, row.log, "expired")
         time.sleep(POLL_S)
 
 
@@ -527,6 +535,10 @@ def view(rows, wait):
         if stopped(mid): v["stopped"][mid] = stopped(mid)
         if rec and (s.get("release_refused") or {}).get("tries", 0) >= ALARM_TRIES:
             v["alarms"].append(dict(what="release-refused", row=mid, since=s["release_refused"]["since"], tries=s["release_refused"]["tries"]))
+        if s.get("stalled") and s.get("running") and is_first(mid):
+            v["alarms"].append(dict(what="first-row-stalled", row=mid, since=s["stalled"]["since"]))
+        if (s.get("rent_failed") or {}).get("no_answer"):
+            v["alarms"].append(dict(what="rent-no-answer", row=mid, since=s["rent_failed"]["at"]))
         if rec or ph:
             last = (rj(pod_of(mid).record) or {}).get("last") or {}
             v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),

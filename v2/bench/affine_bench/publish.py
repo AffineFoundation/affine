@@ -279,6 +279,8 @@ def publish(rows, S, max_fail=3):
               "models[].pod.state release-refused says that the row's node could not be given back yet and still costs money (since: the first refusal). "
               "alarms lists what the operator must look at: release-refused (a node that was not given back after several tries), "
               "kept-pod-without-row and pod-without-row (a rented node that no row runs on and that no row gives back). "
+              "first-row-stalled (the run on the node of the single-node service wrote no new line for 2400 seconds and its runner is alive; the node stays) "
+              "and rent-no-answer (a rent call gave no answer; Lium may have made a node under the row's name). "
               "While a row is evaluating, its progress.checked_at is the time of the service's last look at its node, renewed "
               "about each 5 minutes, with the count of finished rollouts (output_lines) and of finished benchmarks; "
               "the top-level progress has the same fields for the newest row in work, and progress.evaluating_all names every row in work. "

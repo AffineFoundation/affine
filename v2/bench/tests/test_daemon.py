@@ -1108,7 +1108,7 @@ def test_an_empty_listing_in_a_rent_never_makes_a_second_pod_beside_the_rows_rec
     assert "pod-record-dropped" not in out and "203.0.113.7" not in out and "root@ADDRESS: Permission denied" in out  # and no address in a journal line
 
 
-@pytest.mark.parametrize("end", ["the runner died", "no progress", "done without ArXivMath"])
+@pytest.mark.parametrize("end", ["the runner died", "done without ArXivMath"])
 def test_no_run_is_ever_started_or_killed_on_the_pod_of_the_first_row(world, monkeypatch, capsys, end):
     v2, lium = world.v2, world.lium
     king = green(v2, 1); mid = ids(king)
@@ -1117,7 +1117,6 @@ def test_no_run_is_ever_started_or_killed_on_the_pod_of_the_first_row(world, mon
     calm = single_node_state(world, mid, m)
     node = world.node(mid); node.results["arxivmath"] = {True: "", False: ""}  # nine benchmarks are finished on the node, ArXivMath is not
     if end == "the runner died": node.busy = "done=\nalive=\nlines=1400\nfinished=9\nok=1\n"
-    if end == "no progress": node.busy = "done=\nalive=1\nlines=5\nfinished=9\nok=1\n"; D.S["running"]["last_progress"] = D.now() - D.STALL_S - 1; D.save()
     world.steps()
     row = model(mid)
     assert node.launches == 0 and not any("kill" in c for c in node.cmds)  # no start and no kill on that pod
@@ -1129,6 +1128,78 @@ def test_no_run_is_ever_started_or_killed_on_the_pod_of_the_first_row(world, mon
     world.steps(2)
     assert [name for _, name in lium.ups] == [P.name_of(ids(world.genesis))] and model(mid)["stopped"] == "held"  # and no rent for the row by itself
     events(capsys)
+
+
+def test_a_run_of_the_first_row_that_is_quiet_and_alive_keeps_its_pod_and_is_an_alarm_only(world, monkeypatch, capsys):
+    v2, lium = world.v2, world.lium
+    king = green(v2, 1); mid = ids(king)
+    m = next(r for r in D.model_rows() if r["model_id"] == mid)
+    monkeypatch.setattr(P, "HELD_FOR_ROW", {"296c5237": mid}); monkeypatch.setattr(P, "MAX_PRICE", 35.0)
+    calm = single_node_state(world, mid, m)
+    node = world.node(mid); node.results["arxivmath"] = {True: "", False: ""}
+    node.busy = "done=\nalive=1\nlines=5\nfinished=9\nok=1\n"; D.S["running"]["last_progress"] = D.now() - D.STALL_S - 1; D.save()  # as at the first start: the last new line is old
+    world.steps(4)
+    alarm = [a for a in table()["alarms"] if a["what"] == "first-row-stalled"]
+    assert [a["row"] for a in alarm] == [mid] and model(mid)["status"] == "evaluating" and D.is_first(mid) and not D.stopped(mid)
+    assert calm in lium.pods and rm(calm) not in lium.removed and node.launches == 0 and not node.saved and not any("kill" in c or "tar -czf" in c for c in node.cmds)
+    assert [e.get("what") for e in events(capsys) if e["event"] == "alarm"] == ["first-row-stalled"]  # said once
+    node.busy = "done=\nalive=1\nlines=9\nfinished=9\nok=1\n"; world.steps()  # a new line: the alarm goes
+    assert not table()["alarms"] and "stalled" not in D.row_state(mid) and calm in lium.pods
+    node.busy = "done=\nalive=\nlines=9\nfinished=9\nok=1\n"; world.steps(3)  # only a dead runner ends it: held, the output kept, the pod back
+    assert D.stopped(mid) == "held" and node.saved == [f"{D.PRIV}/{mid}/node-output.tar.gz"] and rm(calm) in lium.removed and node.launches == 0
+
+
+def test_only_the_last_event_of_a_pod_says_that_lium_deleted_it(monkeypatch):
+    pid = "0d1f3c5a-0000-4000-8000-000000000001"
+    said = lambda text: monkeypatch.setattr(P, "lium", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=text, stderr=""))
+    old = "When                 Event            What\n2026-11-13T09:00:00  pod-lifecycle    REMOVED (migration) — the node was REMOVED and TERMINATED\n2026-11-14T15:00:00  pod-lifecycle    RUNNING\n"
+    said(f"Pod {pid} is no longer listed. Its last event: RUNNING · 2026-11-14T15:00:00\n" + old)
+    assert P.state(pid) is None  # a living pod that one listing lacks, with an old event that has the words
+    said(f"Pod {pid} is no longer listed. Its last event: FAILED (reboot) — the container was REMOVED · 2026-11-14T15:00:00\n" + old)
+    assert P.state(pid) is None  # the words in the text of the last event are not its status
+    said(f"Pod {pid} is no longer listed. Its last event:\nDELETED (user_request) · 2026-11-14T15:00:00\n" + old)
+    assert P.state(pid) == "gone"  # the client folds the line at 80 columns
+    said(f"Pod {pid} is no longer listed. Its last event: pod-delete.success · 2026-11-14T15:00:00\n" + old)
+    assert P.state(pid) is None  # a last event with no status: not proven, so not gone
+    said("Pod        calm-matrix-26\nStatus     RUNNING\nLast event DELETED (old)\n"); assert P.state(pid) == "listed"
+
+
+def test_a_pod_past_its_hours_goes_back_whatever_the_table_in_the_store_gives(world, monkeypatch, capsys):
+    gen, node, pod = one_row_in_work(world)
+    def not_json(self): raise ValueError("the table object of the store is not JSON")
+    monkeypatch.setattr(D.Row, "results_left", not_json); monkeypatch.setattr(D, "CONFIRM_WAIT_S", 0)
+    rec = D.pod_of(gen).load(); rec["rented_at"] = D.now() - 6 * 3600 - 1; D.pod_of(gen).save(rec)
+    world.steps(3)
+    ev = [e["event"] for e in events(capsys)]
+    assert "store-check-failed" in ev and D.stopped(gen) == "expired" and world.lium.removed == [rm(pod)] and not world.lium.pods
+
+
+def test_a_lium_up_with_no_answer_is_never_tried_again_by_the_row_and_is_an_alarm_at_once(world, monkeypatch, capsys):
+    v2, lium = world.v2, world.lium
+    king = green(v2, 1); mid, gen = ids(king), ids(world.genesis)
+    real_up = lium.up
+    monkeypatch.setattr(P, "up", lambda offer, name, ssh: (lium.ups.append((offer["huid"], name)), (None, P.NO_ANSWER))[-1] if name == P.name_of(mid) else real_up(offer, name, ssh))
+    world.steps()
+    row = model(mid); s = D.row_state(mid)["rent_failed"]
+    assert (row["stopped"], row["pod"]["state"]) == ("rent_failed", "rent-failed") and s["no_answer"] and s["tries"] == 1 and "no answer" in s["why"]
+    assert [a["row"] for a in table()["alarms"] if a["what"] == "rent-no-answer"] == [mid]  # at once, and it says where to look
+    assert "bench pods" in next(e["do"] for e in events(capsys) if e.get("what") == "rent-no-answer")
+    count = len(P.rents()); world.steps(4)
+    assert [n for _, n in lium.ups].count(P.name_of(mid)) == 1 and len(P.rents()) == count == 2  # no second `lium up`, and the count of the day stays
+    late = lium.pod(P.name_of(mid), price=0.8, config="8xH100")  # Lium made the pod after the cut
+    monkeypatch.setattr(P, "up", real_up); D.cli("retry", [mid]); world.steps(3)
+    assert [n for _, n in lium.ups].count(P.name_of(mid)) == 1 and not [p for p in lium.pods if p["name"] == P.name_of(mid) and p is not late]  # the retry took that pod: no second one
+    assert states()[mid] == "scored" and not table()["alarms"]
+
+
+def test_a_cut_of_lium_up_kills_it_and_leaves_no_file_with_the_address(tmp_path, monkeypatch):
+    fake = tmp_path / "lium"; ssh = tmp_path / "row" / "node-ssh"; ssh.parent.mkdir()
+    fake.write_text(f"#!/bin/bash\necho $$ > {tmp_path}/pid\necho '{{\"pod\": {{\"ip\": \"203.0.113.7\"}}}}'\nsleep 60\n"); fake.chmod(0o755)
+    monkeypatch.setattr(P, "LIUM", str(fake)); monkeypatch.setattr(P, "UP_TIMEOUT_S", 2.0); monkeypatch.setenv("TMPDIR", str(tmp_path))
+    assert P.up(dict(huid="h", gpus=8, kind="8xH100", price=1), "affine-v2-bench-x", str(ssh)) == (None, P.NO_ANSWER)
+    pid = int((tmp_path / "pid").read_text())
+    assert not os.path.exists(f"/proc/{pid}")  # `lium up` itself is dead, not only the script around it
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["lium", "pid", "row"] and not list(ssh.parent.iterdir())  # and Lium's answer is on no disk
 
 
 def test_the_output_of_the_first_rows_node_is_asked_three_times_and_then_the_pod_goes_back(world, monkeypatch):
