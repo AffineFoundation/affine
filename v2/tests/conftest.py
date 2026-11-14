@@ -10,6 +10,7 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.types import (
     NO_DECISION,
+    OUT_OF_TIME,
     SCORED,
     BoxResult,
     Draw,
@@ -169,3 +170,29 @@ class Build:
 @pytest.fixture
 def build() -> type[Build]:
     return Build
+
+
+@pytest.fixture
+def out_of_time():
+    """``out_of_time(world, hotkeys)``: the training of these hotkeys fails, and the box reports what the real runner
+    reports for a batch that had the whole training time and did not finish. This is the one failure that is counted."""
+
+    def arm(world, hotkeys) -> None:
+        world.trainer.fail_hotkeys = set(hotkeys)
+        if getattr(world.runner, "reports_out_of_time", False):
+            return
+        real = world.runner.run
+
+        def run(ticket):
+            result = real(ticket)
+            late = {entry.queue_pos for entry in ticket.entries if entry.reg.hotkey in world.trainer.fail_hotkeys}
+            reason = f"{OUT_OF_TIME} ({ticket.params.train_time_budget_s} s) and did not finish"
+            entries = tuple(
+                dataclasses.replace(entry, reason=reason) if entry.queue_pos in late and entry.status == NO_DECISION else entry
+                for entry in result.entries
+            )
+            return dataclasses.replace(result, entries=entries)
+
+        world.runner.run, world.runner.reports_out_of_time = run, True
+
+    return arm

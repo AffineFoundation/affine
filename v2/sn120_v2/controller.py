@@ -458,7 +458,7 @@ class Controller:
     def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
         record, params, queue = self.state.round, self.params, self.state.queue
         decision = record.decision
-        box_failed = {e.queue_pos for _, result in pairs for e in result.entries if e.status == ENTRY_NO_DECISION}
+        counted = {e.queue_pos for _, result in pairs for e in result.entries if e.counted_for_seat}
         served, front, attempted, held, released = [], [], [], [], []
         for entry in decision.entries if decision else ():
             key = [entry.uid, entry.registration_block]
@@ -468,7 +468,7 @@ class Controller:
                 served.append(key + [entry.hotkey])
             else:
                 front.append(key)
-                if entry.queue_pos in box_failed:
+                if entry.queue_pos in counted:
                     attempted.append(key)
                     if queue[tuple(key)].infra_attempts + 1 >= params.max_infra_attempts:
                         held.append(key)
