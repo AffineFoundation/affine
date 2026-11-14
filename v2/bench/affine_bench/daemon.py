@@ -1,39 +1,50 @@
-"""Host side: the single queue-driven daemon of the per-green benchmark, plus its CLI commands.
+"""Host side: the service of the per-row benchmark, the worker of one row, and the CLI commands.
 
-Loop (every 30 s): read the rows from v2's public files (source.py: the launch model and every folded king; no journal
-and no call into the controller), build the queue, keep exactly one row running on the node, collect finished
-benchmarks into BENCH_STATE/results/, write BENCH_SITE/benchmarks.json and, when a row or a result changed, the same
-table to the store. Nothing is published per task.
+The service (one process, `daemon`), every 30 s: read the rows from v2's public files (source.py: the launch model,
+every folded king, and the last king of v1; no journal and no call into the controller), build the queue, start a
+worker for each row that has work, and write the table: BENCH_SITE/benchmarks.json and, when a row or a result
+changed, the same table to the store. Only the service writes the table. Nothing is published per task.
+
+The worker of a row (one process for each row, `row <model_id>`, class Row): rent the row's pod, set it up, download
+the row's weights, run the benchmarks, collect them into BENCH_STATE/results/, and give the pod back when the table in
+the store has the row's results. Rows run side by side (Jacob, 2026-11-14). A worker waits for its own rent, setup and
+download only: no worker holds a lock, a pod or a file of another row. A row that fails keeps no pod.
 
 Done marker: a (row, benchmark, version) is done when the published table has its result, or a result file is on this
-host. The process reads the published table before its first step and rents nothing until it has. So a row is
+host. The service reads the published table before its first step and starts no worker until it has. So a row is
 benchmarked once however often it is listed, and a host with an empty disk does not run a king again. A crashed run is
 resumed in place (vf-eval --resume keeps finished rollouts).
 
-Queue: every row that has a missing result, newest first; the launch model (genesis) is the oldest row. Nothing else.
-A row whose weight files are not in the store yet waits outside the queue: no fail, no rent, nothing sent to the node.
-It is queued by the step that finds its files (waiting(), below).
+Queue: every row that has a missing result, newest first; the launch model (genesis) and the v1 king are the oldest
+rows. A row whose weight files are not in the store yet waits outside the queue: no fail, no rent, no worker.
+At most P.MAX_PODS rows are in work at a time; the next row starts when one of them is done.
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
-Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
-empty queue; a pod Lium reclaims is detected (node-gone) and replaced the same way. Nothing on the pod is deleted by
-this service: the king's weights go away with the pod (results on the host are never deleted)."""
-import fcntl, json, os, shlex, subprocess, time, traceback
+The first row: the row that ran on the one pod of the single-node service (before 2026-11-14) keeps that pod, its
+record (BENCH_STATE/pod.json) and its ssh wrapper (BENCH_NODE_SSH). No new commit is put on that pod and the run on it
+is not started again. A result that it makes with more samples a problem than the settings now ask for is brought to
+the settings' count by the fixed rule of derive.py.
+
+Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
+Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted)."""
+import fcntl, json, os, shlex, subprocess, sys, time, traceback
 from sn120_v2.errors import InfraError
-from . import config as C, registry as R
+from . import config as C, derive, registry as R
 from .node import Node
-from .fetch import fetch as fetch_king
+from .fetch import fetch as fetch_weights
 from . import pod as P, publish, source
 
-ST = C.STATE; RES = ST + "/results"; PRIV = ST + "/private"
-for d in (ST, RES, PRIV):
+ST = C.STATE; RES = ST + "/results"; PRIV = ST + "/private"; ROWS = C.ROWS
+for d in (ST, RES, PRIV, ROWS):
     os.makedirs(d, exist_ok=True)
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
 WAIT_LATE_S = 3600  # weight files still not in the store this long after the head was applied: the table says `waiting`
-BEAT_S = 300  # while a row runs, the table gets the time and the counts of the service's look at the node this often
-NODE = Node()
+BEAT_S = 300  # while a row runs, the table gets the time and the counts of the worker's look at the node this often
+CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the store before its pod is given back
+RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again this often
+POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
 
 
 def now(): return time.time()
@@ -47,18 +58,29 @@ def log(**k):
     k["at_cr"] = cr(now()); print(json.dumps(k), flush=True)
 
 
-S = rj(SF, {}) or {}
+S = rj(SF, {}) or {}  # the state of the service. `running`, `fail` and `history` in it are of the single-node service
 S.setdefault("fail", {}); S.setdefault("unavailable", []); S.setdefault("history", [])
 def save(): wj(SF, S)
 
 
-# ------------------------------------------------------------------------------------------------ models
+# ------------------------------------------------------------------------------------------------ rows
 def model_rows():
-    """The genesis row and one row per folded king (source.py is the only reader of v2 state). model_id is stable and file-safe."""
-    return source.models()
+    """The genesis row, one row per folded king, and the v1 king (source.py is the only reader of v2 state). model_id is stable and file-safe."""
+    return source.models() + source.extra_rows()
 
 
 def result_path(mid, bid): return f"{RES}/{mid}/{bid}.json"
+def row_state(mid): return rj(f"{ROWS}/{mid}/daemon.json", {}) or {}
+def is_first(mid): return os.path.exists(f"{ROWS}/{mid}/first")
+def pod_of(mid): return P.Pod(mid, is_first(mid))
+def row_ids(): return sorted(d for d in os.listdir(ROWS) if os.path.isdir(f"{ROWS}/{d}"))
+
+
+def stopped(mid, s=None):
+    """Why the service starts no work for a row until the operator says `retry`, or None."""
+    s = row_state(mid) if s is None else s
+    if s.get("fails", 0) >= MAX_FAIL: return "failed"
+    return next((k for k in ("held", "rent_failed", "expired") if s.get(k)), None)
 
 
 def published():
@@ -77,12 +99,11 @@ def missing(m, bs, done=None):
 
 
 def candidates(rows):
-    """Rows with a missing result that have not failed MAX_FAIL times, newest first."""
+    """Rows with a missing result that are not stopped, newest first."""
     bs = R.benchmarks(enabled_only=True, runnable_only=True); done = published()
-    ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs, done)
     seen, out = set(), []
     for m in sorted(rows, key=lambda m: -(m.get("crowned_at") or 0)):
-        if m["model_id"] not in seen and ok(m):
+        if m["model_id"] not in seen and not stopped(m["model_id"]) and missing(m, bs, done):
             seen.add(m["model_id"]); out.append(dict(m, why="new-" + m["kind"]))
     return out
 
@@ -90,21 +111,27 @@ def candidates(rows):
 def waiting(rows, tell=lambda **k: None):
     """Rows that cannot start: model_id -> dict(file=<a weight file that the store does not hold>, late=<bool>).
 
-    Such a row waits. It gets no fail, no node is rented for it and nothing is sent to the node. Each step asks the store
-    again, so the row is queued by the step that finds every file. `late` says that the head was applied more than
-    WAIT_LATE_S ago: the table then shows the row as `waiting`. The row in work is not asked about: its weights are on
-    the node. A store that fails to answer holds no row back: the download on the node decides then, and a failure
-    there (a refused link, a wrong sha256) is a failed try as before."""
-    run = S.get("running"); out = {}
+    Such a row waits. It gets no fail, no worker and no pod. Each step asks the store again, so the row is queued by the
+    step that finds every file. `late` says that the head was applied more than WAIT_LATE_S ago: the table then shows the
+    row as `waiting`. A row in work is not asked about: its weights are on its node. A store that fails to answer holds
+    no king back: the download on the node decides then, and a failure there (a refused link, a wrong sha256) is a failed
+    try as before. A row with a source of its own (the v1 king) waits also then: it starts only when the source was read."""
+    out = {}
     for m in candidates(rows):
-        if run and run["model"]["model_id"] == m["model_id"]:
+        if row_state(m["model_id"]).get("running") or pod_of(m["model_id"]).load():
             continue
         try:
-            name = source.absent(m["base_hash"])
+            name = source.absent(m)
         except InfraError as e:
-            tell(event="store-check-failed", model=m["model_id"], error=str(e)[-200:]); continue
+            tell(event="store-check-failed", model=m["model_id"], error=str(e)[-200:])
+            if m.get("source") is None:
+                continue
+            name = "the source could not be read"
         if name:
-            out[m["model_id"]] = dict(file=name, late=now() - (m.get("crowned_at") or 0) > WAIT_LATE_S)
+            if m.get("source") is not None:  # it does not start by itself: the operator sets the source
+                out[m["model_id"]] = dict(file=name, late=True, what="source")
+            else:
+                out[m["model_id"]] = dict(file=name, late=now() - (m.get("crowned_at") or 0) > WAIT_LATE_S)
     return out
 
 
@@ -113,7 +140,7 @@ def note_waiting(rows):
     was = S.get("waiting") or {}; wait = waiting(rows, log)
     for mid, w in wait.items():
         if mid not in was: log(event="waiting", model=mid, file=w["file"])
-        if w["late"] and not was.get(mid, {}).get("late"): log(event="waiting-late", model=mid, file=w["file"], minutes=WAIT_LATE_S // 60)
+        if w["late"] and not w.get("what") and not was.get(mid, {}).get("late"): log(event="waiting-late", model=mid, file=w["file"], minutes=WAIT_LATE_S // 60)
     for mid in was:
         if mid not in wait: log(event="waiting-over", model=mid)
     if wait != was:
@@ -126,205 +153,360 @@ def queue(rows=None, wait=None):
     return [m for m in candidates(rows) if m["model_id"] not in wait]
 
 
-# ------------------------------------------------------------------------------------------------ node ops
-def model_dir(m):
-    return f"{C.NODE_KINGS}/{m['base_hash']}"
+# ------------------------------------------------------------------------------------------------ the worker of one row
+def node_of(row):
+    return Node(row.pod.ssh)
 
 
-def have_weights(m):
-    return "yes" in NODE.out(f"test -f {model_dir(m)}/.verified && echo yes")
+class Row:
+    """One row in work: the state of its worker (BENCH_STATE/rows/<model_id>/daemon.json), its pod and its node."""
+
+    def __init__(self, mid):
+        self.mid = mid; self.dir = f"{ROWS}/{mid}"; os.makedirs(self.dir, exist_ok=True)
+        self.sf = self.dir + "/daemon.json"
+        self.S = row_state(mid); self.S.setdefault("fails", 0); self.S.setdefault("history", [])
+        self.attach()
+
+    def attach(self):
+        self.first = is_first(self.mid); self.pod = P.Pod(self.mid, self.first); self.rec = self.pod.load(); self.node = node_of(self)
+
+    def save(self): wj(self.sf, self.S)
+    def log(self, **k): log(row=self.mid, **k)
+
+    def tell(self, state):
+        """The row's state for the table: renting, setup, running, released, rent-failed."""
+        if (self.S.get("phase") or {}).get("state") != state:
+            self.S["phase"] = dict(state=state, since=now()); self.save()
+
+    # ---- node ops
+    def model_dir(self, m): return f"{C.NODE_KINGS}/{m['base_hash']}"
+    def have_weights(self, m): return "yes" in self.node.out(f"test -f {self.model_dir(m)}/.verified && echo yes")
+
+    def ensure_weights(self, m):
+        if self.have_weights(m):
+            return True
+        r = fetch_weights(m, self.node); self.log(event="fetch", status=r.get("status"), out=r.get("out", "")[-160:])
+        return self.have_weights(m)
+
+    def launch(self, m, bids):
+        rk = self.mid
+        st = R.resolve_settings(m["model_id"], m.get("kind"))
+        args = ["affine-bench", "node-run", "--model-id", rk, "--model-dir", self.model_dir(m), "--reasoning-parser", m.get("reasoning_parser", "qwen3"),
+                "--benchmarks", ",".join(bids), "--max-model-len", str(st["max_model_len"])]
+        ho = st.get("hf_overrides") or ""  # empty while the per-model profile clamps the window to the native context
+        if ho: args += ["--hf-overrides", ho]
+        # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
+        cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
+               f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")
+        try:
+            out = self.node.run(cmd, timeout=90).stdout.strip()
+        except subprocess.TimeoutExpired:
+            out = ""  # the runner may still have started; liveness is read from the node's runner lock, not this pid
+        self.S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=out.split()[-1] if out else None, last_progress=now(), progress=0,
+                                 pod_id=self.rec.get("id"))
+        self.tell("running"); self.save(); self.log(event="launched", bids=bids, pid=self.S["running"]["pid"])
+
+    def node_status(self, rk):
+        o = self.node.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
+                          f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo ok=1", timeout=90)
+        d = {}
+        for line in o.splitlines():
+            if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()
+        return d if d.get("ok") == "1" else None  # None = node unreachable or overloaded: decide nothing this round
+
+    def abort(self, run):
+        """Exact PIDs only: the node-run process group (setsid) -> its vf-eval children. The model server is left up."""
+        pid = run.get("pid")
+        if pid and pid.isdigit():
+            self.node.run(f"C=$(pgrep -P {pid}); kill -TERM {pid} $C 2>/dev/null; sleep 15; kill -KILL {pid} $C 2>/dev/null; true", timeout=60)
+        self.log(event="aborted", pid=pid)
+
+    def collect(self, run, whole=True):
+        """Bring the finished benchmarks of a run to the host. `whole`: the runner said that it is done, so a benchmark
+        with no result is a failed try. A result is stored only with its per-problem lines."""
+        m, rk, rec = run["model"], run["run_key"], self.rec; got = {}; no_value = {}
+        for bid in run["bids"]:
+            s = self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/summary.json 2>/dev/null", timeout=60)
+            if not s.strip():
+                continue
+            pt = self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/per_task.jsonl 2>/dev/null", timeout=120)
+            if not pt.strip():
+                self.log(event="collect-incomplete", bench=bid, why="the per-problem lines could not be read"); continue
+            r = json.loads(s)
+            r.update(model_id=m["model_id"], model_kind=m["kind"], node=dict(pod=rec.get("name"), lium_id=rec.get("id"), gpu=rec.get("gpu")),
+                     collected_at=now(), serve_s=None)
+            os.makedirs(f"{PRIV}/{rk}", exist_ok=True)
+            with open(f"{PRIV}/{rk}/{bid}.per_task.jsonl", "w") as f: f.write(pt)
+            os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
+            b = R.benchmark(bid); want = R.bench_version(b)
+            if r.get("bench_version") != want and int(r.get("rollouts") or 0) > int(b["rollouts"]):
+                # a run with more samples a problem than the settings ask for now (the first row): its value at the settings' count
+                wj(f"{PRIV}/{rk}/{bid}.full.json", r, 0o600)
+                r, why = derive.from_full(r, pt, int(b["rollouts"]), want, b.get("problems"))
+                if r is None:
+                    no_value[bid] = why; self.log(event="no-value", bench=bid, why=why); continue
+                self.log(event="derived", bench=bid, rule=derive.RULE, score=round(r["score"], 4), score_full=r["score_full"], samples_full=r["samples_full"])
+            os.makedirs(f"{RES}/{m['model_id']}", exist_ok=True); wj(result_path(m["model_id"], bid), r)
+            got[bid] = round(r["score"], 4) if r.get("score") is not None else None
+        done = self.node_done(rk)
+        self.S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
+                                      serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=rec.get("gpu"), usd_h=rec.get("cost"), pod=rec.get("huid")))
+        self.S["history"] = self.S["history"][-400:]
+        self.log(event="collected", scores=got)
+        lost = [b for b in run["bids"] if b not in got and b not in no_value]
+        if no_value:  # the run is over and gave no value at the settings' count: a new run needs the operator's word
+            self.S["held"] = dict(at=now(), why="; ".join(f"{b}: {w}" for b, w in sorted(no_value.items())))
+        elif whole and lost:
+            self.S["fails"] += 1; self.log(event="run-incomplete", benchmarks=lost, fails=self.S["fails"])
+        return got
+
+    def node_done(self, rk):
+        try: return json.loads(self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/DONE", timeout=30))
+        except Exception: return None
+
+    def node_down(self, run):
+        """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
+        whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
+        the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own."""
+        d = self.S["node_down"] = self.S.get("node_down") or dict(since=now(), checked=0, state=None)
+        if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
+            self.log(event="node-unreachable"); self.save(); return
+        d["checked"] = now(); st = P.state(self.rec.get("id")); d["state"] = st
+        if st == "gone":
+            self.log(event="node-gone", pod=self.rec.get("huid"), lium_id=self.rec.get("id"), down_since_cr=cr(d["since"]))
+            self.pod.save(dict(gone=now(), last=dict(self.rec))); self.S["running"] = None; self.S.pop("node_down", None)
+            self.not_first()
+        else:
+            self.log(event="node-unreachable", lium=st, down_min=round((now() - d["since"]) / 60))
+        self.save()
+
+    def not_first(self):
+        """The pod of the single-node service is gone or given back: from now on this is a row as any other."""
+        if self.first:
+            os.remove(self.dir + "/first")
+        self.attach()
+
+    # ---- pod
+    def pod_ready(self):
+        """True when the row's pod is set up. A rent blocks this worker for some minutes, and this worker only."""
+        if self.rec and (self.rec.get("bootstrapped") or self.first):
+            return True
+        if self.first:  # the single-node service's pod is not there any more
+            self.not_first(); return False
+        self.tell("renting")
+        rec = self.pod.rent(self.S, self.log, self.tell); self.save()
+        if rec:
+            self.rec = rec
+        elif self.S.get("rent_failed"):
+            self.tell("rent-failed")
+        else:
+            self.rec = self.pod.load()
+        return bool(rec)
+
+    def results_left(self):
+        """The results of this row on the host that the table in the store does not have yet."""
+        there = {publish.row_key(r) for r in source.table_results()}; out = []
+        for b in R.benchmarks(enabled_only=True, runnable_only=True):
+            r = rj(result_path(self.mid, b["id"]))
+            if r and (self.mid, b["id"], r.get("bench_version") or "") not in there:
+                out.append(b["id"])
+        return out
+
+    def give_back(self, m, bs):
+        """Nothing more to run on the row's pod. The pod is given back when the table in the store has each result that
+        was collected. A row that failed waits CONFIRM_WAIT_S for that at most. True: the worker has ended its work."""
+        S = self.S
+        if not self.rec:
+            return True
+        if now() - S.get("release_tried", 0) < RELEASE_RETRY_S:
+            return False
+        whole = not missing(m, bs) or bool(S.get("held"))  # held: the run is over, and what it gave is all that this pod gives
+        S.setdefault("idle_since", now())
+        try:
+            left = self.results_left()
+        except InfraError as e:
+            left = ["?"]; self.log(event="store-check-failed", error=str(e)[-200:])
+        if left and (whole and not S.get("expired") or now() - S["idle_since"] < CONFIRM_WAIT_S):
+            if not S.get("release_waits"):
+                S["release_waits"] = now(); self.log(event="release-waits", why="the table in the store does not have these results yet", benchmarks=left)
+            self.save(); return False
+        why = "row done" if whole and not stopped(self.mid, S) else stopped(self.mid, S)
+        if self.pod.release(self.log, why=why, row_done=whole and not left):
+            self.rec = {}; self.not_first()
+            for k in ("idle_since", "release_waits", "release_tried", "node_down"): S.pop(k, None)
+            self.tell("released"); self.save(); return True
+        S["release_tried"] = now(); self.save(); return False
+
+    # ---- one poll
+    def step(self, m, bs):
+        """One poll of the row. True: the worker has nothing more to do (the row is done, or it waits for the operator)."""
+        S = self.S; run = S.get("running")
+        if run and run.setdefault("pod_id", self.rec.get("id")) != self.rec.get("id"):
+            # The run belonged to a pod that has since been replaced; its run dir went with that pod.
+            # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
+            self.log(event="pod-changed", old_pod=run["pod_id"], new_pod=self.rec.get("id")); S["running"] = run = None
+            S.pop("node_down", None); self.save()
+        age = now() - (self.rec.get("rented_at") or now())
+        if self.rec and not self.first and not S.get("expired") and age > P.POD_MAX_HOURS * 3600:
+            self.log(event="pod-expired", pod=self.rec.get("huid"), hours=round(age / 3600, 2), cap_hours=P.POD_MAX_HOURS)
+            if run:
+                self.abort(run); self.collect(run, whole=False); S["running"] = run = None
+            S["expired"] = dict(at=now(), hours=round(age / 3600, 2)); self.save()
+        if run:
+            st = self.node_status(run["run_key"])
+            if st is None:
+                self.node_down(run); return False
+            if S.pop("node_down", None):
+                self.log(event="node-back"); self.save()
+            lines = int(st.get("lines") or 0)
+            if lines > run.get("progress", 0):
+                run["progress"] = lines; run["last_progress"] = now(); self.save()
+            if now() - run.get("beat", {}).get("at", 0) >= BEAT_S:  # the table says that the worker looks, and what it sees
+                run["beat"] = dict(at=now(), lines=lines, grew=run["last_progress"], finished=int(st.get("finished") or 0)); self.save()
+            if st.get("done") == "1":
+                self.collect(run); S["running"] = None; self.save()
+            elif st.get("alive") != "1":
+                S["fails"] += 1; self.log(event="run-died", fails=S["fails"]); S["running"] = None; self.save()
+            elif now() - run["last_progress"] > STALL_S:
+                S["fails"] += 1; self.log(event="stalled"); self.abort(run); S["running"] = None; self.save()
+        if S.get("running"):
+            return False
+        bids = missing(m, bs)
+        if not bids or stopped(self.mid, S):
+            return self.give_back(m, bs)
+        if not self.pod_ready():
+            return bool(S.get("rent_failed"))
+        self.tell("setup")
+        if not self.ensure_weights(m):
+            S["fails"] += 1; self.log(event="weights-failed", fails=S["fails"]); self.save(); return False
+        self.launch(m, bids); return False
 
 
-def ensure_weights(m):
-    if have_weights(m):
-        return True
-    r = fetch_king(m["base_hash"], NODE); log(event="fetch", model=m["model_id"], status=r.get("status"), out=r.get("out", "")[-160:])
-    return have_weights(m)
+def row_lock(mid):
+    """One worker per row. The lock dies with the process. None: a worker of the row is alive."""
+    os.makedirs(f"{ROWS}/{mid}", exist_ok=True)
+    lock = open(f"{ROWS}/{mid}/worker.lock", "w")
+    try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError: lock.close(); return None
+    return lock
 
 
-def run_key(m):
-    return m["model_id"]
+def row_main(mid):
+    """The worker process of one row: poll until the row is done or stopped. A stop of the service ends it; the run on
+    the node goes on, and the worker of the next start finds it."""
+    lock = row_lock(mid)
+    if lock is None:
+        raise SystemExit(f"another worker of row {mid} is alive")
+    row = Row(mid); bs = R.benchmarks(enabled_only=True, runnable_only=True); row.log(event="row-start", pid=os.getpid())
+    while True:
+        try:
+            m = row.S.get("model") or next((x for x in model_rows() if x["model_id"] == mid), None)  # read once: a store that is down later holds no pod
+            if m is None:
+                return row.log(event="row-end", why="the row is not listed")
+            row.S["model"] = m
+            if row.step(m, bs):
+                return row.log(event="row-end", state=(row.S.get("phase") or {}).get("state"), stopped=stopped(mid, row.S))
+        except Exception:
+            row.log(event="error", tb=traceback.format_exc()[-1500:])
+        time.sleep(POLL_S)
 
 
-def launch(m, bids):
-    rk = run_key(m)
-    st = R.resolve_settings(m["model_id"], m.get("kind"))
-    args = ["affine-bench", "node-run", "--model-id", rk, "--model-dir", model_dir(m), "--reasoning-parser", m.get("reasoning_parser", "qwen3"),
-            "--benchmarks", ",".join(bids), "--max-model-len", str(st["max_model_len"])]
-    ho = st.get("hf_overrides") or ""  # empty while the per-model profile clamps the window to the native context
-    if ho: args += ["--hf-overrides", ho]
-    # only the runner is backgrounded (all its fds redirected), so the ssh session returns at once
-    cmd = (f"cd {C.NODE_ROOT} && . ./env.sh && rm -f runs/{rk}/DONE && mkdir -p runs/{rk} || exit 1; "
-           f"nohup setsid {' '.join(shlex.quote(a) for a in args)} >> runs/{rk}/node-run.log 2>&1 < /dev/null & echo $!")
-    try:
-        out = NODE.run(cmd, timeout=90).stdout.strip()
-    except subprocess.TimeoutExpired:
-        out = ""  # the runner may still have started; liveness is read from the node's runner lock, not this pid
-    S["running"] = dict(model=m, run_key=rk, bids=bids, started=now(), pid=out.split()[-1] if out else None, last_progress=now(), progress=0,
-                        pod_id=C_POD.get("id"))
-    save(); log(event="launched", model=rk, bids=bids, pid=S["running"]["pid"])
+# ------------------------------------------------------------------------------------------------ the service
+KIDS = {}  # model_id -> the worker process that this service started
 
 
-def node_status(rk, pid):
-    o = NODE.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
-                 f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo ok=1", timeout=90)
-    d = {}
-    for line in o.splitlines():
-        if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()
-    return d if d.get("ok") == "1" else None  # None = node unreachable or overloaded: decide nothing this round
+def start_worker(mid):
+    k = KIDS.get(mid)
+    if k is not None and k.poll() is None:
+        return
+    lock = row_lock(mid)
+    if lock is None:
+        return  # a worker of the row lives (started by hand): never two
+    lock.close()
+    KIDS[mid] = subprocess.Popen([sys.executable, "-m", "affine_bench.cli", "row", mid])
+    log(event="row-worker", row=mid, pid=KIDS[mid].pid)
 
 
-def abort(run):
-    """Exact PIDs only: the node-run process group (setsid) -> its vf-eval children. The model server is left up."""
-    pid = run.get("pid")
-    if pid and pid.isdigit():
-        NODE.run(f"C=$(pgrep -P {pid}); kill -TERM {pid} $C 2>/dev/null; sleep 15; kill -KILL {pid} $C 2>/dev/null; true", timeout=60)
-    log(event="aborted", model=run["run_key"], pid=pid)
+def take_over_single():
+    """Once, at the first start of this code: the run and the pod of the single-node service become the first row.
+    `running` stays in the service's state as it was, so that the code of before finds its run if it is put back."""
+    if S.get("rows_mode"):
+        return
+    run = S.get("running")
+    for mid, n in S["fail"].items():
+        if n and not os.path.exists(f"{ROWS}/{mid}/daemon.json"):
+            os.makedirs(f"{ROWS}/{mid}", exist_ok=True); wj(f"{ROWS}/{mid}/daemon.json", dict(fails=n, history=[]))
+    if run:
+        mid = run["model"]["model_id"]; os.makedirs(f"{ROWS}/{mid}", exist_ok=True)
+        wj(f"{ROWS}/{mid}/daemon.json", dict(fails=S["fail"].get(mid, 0), history=[], running=run, model=run["model"],
+                                             phase=dict(state="running", since=run.get("started")), node_down=S.get("node_down")))
+        open(f"{ROWS}/{mid}/first", "w").write("the row that runs on the pod of the single-node service\n")
+        log(event="first-row", row=mid, pod_id=run.get("pod_id"))
+    S["rows_mode"] = now(); save()
 
 
-def collect(run):
-    m, rk = run["model"], run["run_key"]; got = {}
-    for bid in run["bids"]:
-        s = NODE.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/summary.json 2>/dev/null", timeout=60)
-        if not s.strip():
-            continue
-        r = json.loads(s)
-        r.update(model_id=m["model_id"], model_kind=m["kind"], node=dict(pod=C_POD.get("name"), lium_id=C_POD.get("id"), gpu=C_POD.get("gpu")),
-                 collected_at=now(), serve_s=None)
-        pt = NODE.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/per_task.jsonl 2>/dev/null", timeout=120)
-        os.makedirs(f"{PRIV}/{rk}", exist_ok=True)
-        with open(f"{PRIV}/{rk}/{bid}.per_task.jsonl", "w") as f: f.write(pt)
-        os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
-        os.makedirs(f"{RES}/{m['model_id']}", exist_ok=True); wj(result_path(m["model_id"], bid), r)
-        got[bid] = round(r["score"], 4) if r.get("score") is not None else None
-    done = rj_node_done(rk)
-    S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
-                             serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=C_POD.get("gpu"), usd_h=C_POD.get("cost"), pod=C_POD.get("huid")))
-    S["history"] = S["history"][-400:]
-    log(event="collected", model=rk, scores=got)
-    return got
+def plan(rows, wait):
+    """The rows that have a worker now: each row that has a pod or a run, then the queued rows, newest first, while fewer
+    than P.MAX_PODS rows are in work."""
+    alive = lambda mid: mid in KIDS and KIDS[mid].poll() is None
+    work = [mid for mid in row_ids() if pod_of(mid).load() or row_state(mid).get("running") or alive(mid)]
+    for m in queue(rows, wait):
+        if m["model_id"] not in work and len(work) < P.MAX_PODS:
+            work.append(m["model_id"])
+    return work
 
 
-def rj_node_done(rk):
-    try: return json.loads(NODE.out(f"cat {C.NODE_ROOT}/runs/{rk}/DONE", timeout=30))
-    except Exception: return None
-
-
-C_POD = P.load()  # mutable: replaced in place when the pod is rented, released or reclaimed
-
-
-POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
-
-
-def node_down(run):
-    """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
-    whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
-    the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the next step rents a new pod."""
-    d = S.setdefault("node_down", dict(since=now(), checked=0, state=None))
-    if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
-        log(event="node-unreachable", model=run["run_key"]); return
-    d["checked"] = now(); st = P.state(C_POD.get("id")); d["state"] = st
-    if st == "gone":
-        log(event="node-gone", model=run["run_key"], pod=C_POD.get("huid"), lium_id=C_POD.get("id"), down_since_cr=cr(d["since"]))
-        P.save(dict(gone=now(), last=dict(C_POD))); C_POD.clear(); S["running"] = None; S.pop("node_down", None)
-    else:
-        log(event="node-unreachable", model=run["run_key"], lium=st, down_min=round((now() - d["since"]) / 60))
-    save()
-
-
-def pod_ready(q):
-    """Make sure a bootstrapped pod exists iff there is work. Returns True when the node can be used this step."""
-    if C_POD and C_POD.get("bootstrapped") is False:  # a crash mid-bootstrap: start over on a fresh pod
-        if P.release(log, why="not bootstrapped"): C_POD.clear()
-        return False
-    if C_POD:
-        return True
-    if not q:
-        return False
-    rec = P.rent(S, log); save()
-    if rec:
-        C_POD.clear(); C_POD.update(rec); S.pop("idle_since", None); save()
-    return bool(rec)
-
-
-def maybe_release():
-    if not C_POD or S.get("running"):
-        S.pop("idle_since", None); return
-    S.setdefault("idle_since", now())
-    if now() - S["idle_since"] >= P.IDLE_RELEASE_S:
-        if P.release(log, why="queue empty for %d min" % round((now() - S["idle_since"]) / 60)):
-            C_POD.clear(); S.pop("idle_since", None)
-    save()
+def view(rows, wait):
+    """What the table says of the rows in work: read from the state files of the workers."""
+    v = dict(waiting=wait, queue=S.get("queue") or [], runs=[], fail={}, stopped={}, pods={}, history=list(S["history"]), max_pods=P.MAX_PODS)
+    for mid in row_ids():
+        s = row_state(mid); rec = pod_of(mid).load(); ph = s.get("phase") or {}
+        if s.get("running"): v["runs"].append(s["running"])
+        if is_first(mid): v["node_down"] = s.get("node_down")
+        v["fail"][mid] = s.get("fails", 0); v["history"] += s.get("history") or []
+        if stopped(mid): v["stopped"][mid] = stopped(mid)
+        if rec or ph:
+            last = (rj(pod_of(mid).record) or {}).get("last") or {}
+            v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),
+                                  state=ph.get("state"), since=ph.get("since"))
+    v["history"].sort(key=lambda h: h.get("finished") or 0)
+    return v
 
 
 SYNCED = {}  # set once this process has read the published table
 
 
 def sync_table():
-    """Before the first step of a process: start from the published table. A store that cannot be read raises, so nothing is rented."""
+    """Before the first step of a process: start from the published table. A store that cannot be read raises, so no worker is started."""
     if not SYNCED:
         log(event="table-read", published=source.sync_table(publish.OUT)); SYNCED["at"] = now()
 
 
-def publish_table(rows):
+def publish_table(rows, wait=None):
     """Rebuild the local table. When a row or a result changed, write it to the store too: the published table is the base
     of that merge, so a published result is never dropped. A failed upload is tried again next step."""
-    publish.publish(rows, S)
+    v = view(rows, S.get("waiting") or {} if wait is None else wait)
+    publish.publish(rows, v)
     if publish.signature() != S.get("uploaded"):
-        if source.sync_table(publish.OUT): publish.publish(rows, S)
+        if source.sync_table(publish.OUT): publish.publish(rows, v)
         source.upload_table(publish.OUT); S["uploaded"] = publish.signature(); save()
         log(event="table-written", rows={m["model_id"]: m["status"] for m in rj(publish.OUT)["models"]})
 
 
-# ------------------------------------------------------------------------------------------------ main loop
 def step():
     sync_table()
-    rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
-    run = S.get("running"); wait = note_waiting(rows)
-    if not run and not pod_ready(queue(rows, wait)):
-        S["queue"] = [m["model_id"] for m in queue(rows, wait)]; publish_table(rows); return
-    if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
-        # The run belonged to a pod that has since been replaced; its run dir went with that pod.
-        # Requeue it from scratch on the new pod; this is not counted as a failure of the model.
-        log(event="pod-changed", model=run["run_key"], old_pod=run["pod_id"], new_pod=C_POD.get("id")); S["running"] = run = None
-        S.pop("node_down", None); save()
-    if run:
-        st = node_status(run["run_key"], run.get("pid"))
-        if st is None:
-            node_down(run); publish_table(rows); return
-        if S.pop("node_down", None):
-            log(event="node-back", model=run["run_key"]); save()
-        lines = int(st.get("lines") or 0)
-        if lines > run.get("progress", 0):
-            run["progress"] = lines; run["last_progress"] = now(); save()
-        if now() - run.get("beat", {}).get("at", 0) >= BEAT_S:  # the table says that the service looks, and what it sees
-            run["beat"] = dict(at=now(), lines=lines, grew=run["last_progress"], finished=int(st.get("finished") or 0)); save()
-        if st.get("done") == "1":
-            collect(run); S["running"] = None; save()
-        elif st.get("alive") != "1":
-            k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
-            log(event="run-died", model=run["run_key"], fails=S["fail"][k]); S["running"] = None; save()
-        elif now() - run["last_progress"] > STALL_S:
-            k = run["model"]["model_id"]; S["fail"][k] = S["fail"].get(k, 0) + 1
-            log(event="stalled", model=run["run_key"]); abort(run); S["running"] = None; save()
-    if not S.get("running"):
-        q = queue(rows, wait)
-        for m in q:
-            bids = missing(m, bs)
-            if not ensure_weights(m):
-                S["fail"][m["model_id"]] = S["fail"].get(m["model_id"], 0) + 1; save(); continue
-            nxt = next((x for x in q if x["model_id"] != m["model_id"]), None)
-            launch(m, bids)
-            if nxt:
-                try: ensure_weights(nxt); S["next"] = nxt["model_id"]; save()
-                except Exception: log(event="prefetch-failed", model=nxt["model_id"])
-            break
-    maybe_release()
-    S["queue"] = [m["model_id"] for m in queue(rows, wait)]; publish_table(rows)
+    take_over_single()
+    rows = model_rows(); wait = note_waiting(rows)
+    work = plan(rows, wait)
+    for mid in work:
+        start_worker(mid)
+    S["queue"] = [m["model_id"] for m in queue(rows, wait) if m["model_id"] not in work]
+    publish_table(rows, wait)
+    return work
 
 
 def only_instance():
-    """One daemon per state directory: one pod, one runner per king and one publisher. The lock dies with the process."""
+    """One service per state directory: one publisher, and one starter of workers. The lock dies with the process."""
     lock = open(ST + "/daemon.lock", "w")
     try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError: raise SystemExit("another affine-bench daemon holds " + lock.name)
@@ -332,36 +514,84 @@ def only_instance():
 
 
 def main(once=False):
-    """daemon: loop for ever. once: return when every queued row is benchmarked and the pod is released. A row whose
+    """daemon: loop for ever. once: return when every queued row is benchmarked and every pod is given back. A row whose
     weight files are not in the store is not queued: `once` leaves it for a later run."""
     log(event="start", pid=os.getpid())
     while True:
         try:
             open(ST + "/heartbeat", "w").write(str(now()))
-            step()
-            if once and not S.get("running") and not S.get("queue") and not C_POD:
+            work = step()
+            if once and not work and not S.get("queue") and not any(k.poll() is None for k in KIDS.values()):
                 return log(event="drained")
         except Exception:
             log(event="error", tb=traceback.format_exc()[-1500:])
         time.sleep(POLL_S)
 
 
+# ------------------------------------------------------------------------------------------------ commands
+def pods_check():
+    """Reads only: every bench pod that Lium lists, with its row; a bench pod that no row claims; a row that should have a
+    pod and has none. It prints no address and deletes nothing."""
+    pods = P.listed()
+    if pods is None:
+        raise SystemExit("Lium could not be asked: nothing is known")
+    recs = {mid: pod_of(mid).load() for mid in row_ids()}
+    by_id = {r["id"]: mid for mid, r in recs.items() if r}
+    lines = ["%-9s %-42s %-26s %-12s %7s %7s" % ("ID", "NAME", "ROW", "STATE", "AGE_H", "USD_H")]
+    ids = set()
+    for p in sorted(pods, key=lambda p: str(p.get("name"))):
+        name, pid = str(p.get("name") or ""), str(p.get("id") or "")
+        if not name.startswith(P.PREFIX) and pid not in by_id:
+            continue
+        ids.add(pid); mid = by_id.get(pid); rec = recs.get(mid) or {}
+        state = (row_state(mid).get("phase") or {}).get("state") or "-" if mid else "-"
+        row = mid or "NO ROW CLAIMS THIS POD"
+        if mid and name != pod_of(mid).name:
+            row += " (THE NAME IS NOT THE ROW'S)"
+        age = "%.1f" % ((now() - rec["rented_at"]) / 3600) if rec.get("rented_at") else "?"
+        lines.append("%-9s %-42s %-26s %-12s %7s %7s" % (pid[:8], name, row, state, age, p.get("price_per_hour", rec.get("cost"))))
+    for mid, rec in recs.items():
+        if rec and rec["id"] not in ids:
+            lines.append("%-9s %-42s %-26s %-12s" % (rec["id"][:8], rec.get("name"), mid, "NOT LISTED BY LIUM: the row's record names a pod that is not there"))
+        ph = (row_state(mid).get("phase") or {}).get("state")
+        if not rec and (row_state(mid).get("running") or ph in ("setup", "running")):
+            lines.append("%-9s %-42s %-26s %-12s" % ("-", "-", mid, f"THE ROW IS IN STATE {ph} AND HAS NO POD"))
+    print("\n".join(lines)); print(f"{len(ids)} bench pods at Lium; ceiling {P.MAX_PODS} rows in work; price cap {P.MAX_PRICE} $/h")
+
+
 def cli(cmd, argv):
     if cmd == "status":
-        rows = model_rows(); wait = waiting(rows); q = queue(rows, wait); r = S.get("running")
-        print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_cr=cr(r["started"]), progress=r.get("progress")),
-                              queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], waiting=wait, fails=S["fail"], unavailable=S["unavailable"],
-                              pod=dict(C_POD) or None, last=S["history"][-5:]), indent=1)); return
-    if cmd not in ("daemon", "once", "publish", "retry", "release"):
+        rows = model_rows(); wait = waiting(rows); q = queue(rows, wait)
+        work = {mid: dict(state=(row_state(mid).get("phase") or {}).get("state"), stopped=stopped(mid), fails=row_state(mid).get("fails", 0),
+                          running=bool(row_state(mid).get("running")), pod=(pod_of(mid).load() or {}).get("huid")) for mid in row_ids()}
+        print(json.dumps(dict(rows=work, queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], waiting=wait), indent=1)); return
+    if cmd == "offers":  # reads only: what a rent could take now
+        offs, seen = P.offers(); kinds = {}
+        for o in offs: kinds.setdefault((o["kind"], o["price"]), []).append(o)
+        for (kind, price), group in sorted(kinds.items(), key=lambda kv: kv[0][1]):
+            print(f"{kind}  {price} $/h  x{len(group)}")
+        print(f"{len(offs)} offers fit: a whole free node of `{P.GPU_PREF}`, secure tier, at or below {P.MAX_PRICE} $/h. The cheapest is taken first."); return
+    if cmd == "pods":
+        return pods_check()
+    if cmd == "row":
+        return row_main(argv[0])
+    if cmd == "retry":  # a row that is stopped (failed, held, rent-failed, expired) is queued again; no stop of the service is needed
+        for mid in argv:
+            lock = row_lock(mid)
+            if lock is None:
+                raise SystemExit(f"the worker of row {mid} is alive: stop the service, or wait until the worker has ended")
+            s = row_state(mid)
+            for k in ("held", "rent_failed", "expired", "rent_tries", "rent_wait_until", "no_offer_at"): s.pop(k, None)
+            s["fails"] = 0; wj(f"{ROWS}/{mid}/daemon.json", s); lock.close()
+        print(json.dumps(dict(retry=argv))); return
+    if cmd not in ("daemon", "once", "publish", "release"):
         raise SystemExit("unknown command " + cmd)
-    lock = only_instance()  # held until the process exits: each of these commands writes the daemon's state
+    lock = only_instance()  # held until the process exits: each of these commands does the service's work
     if cmd in ("daemon", "once"):
         return main(once=cmd == "once")
     if cmd == "publish":
         sync_table(); publish_table(model_rows()); print("published"); return
-    if cmd == "retry":  # a row that failed MAX_FAIL times, or whose weights could not be fetched, is queued again
-        for mid in argv:
-            S["fail"].pop(mid, None); S["unavailable"] = [m for m in S["unavailable"] if m != mid]
-        save(); print(json.dumps(dict(retry=argv, fails=S["fail"], unavailable=S["unavailable"]))); return
-    if P.release(log, why="operator"):  # release: give the rented node back now; the next start queues a run that was in work again
-        C_POD.clear(); S["running"] = None; S.pop("idle_since", None); S.pop("node_down", None); save()
+    for mid in argv:  # release ROW...: give the pod of a row back now; the next start runs what the row still misses on a new pod
+        row = Row(mid)
+        if row.pod.release(log, why="operator"):
+            row.S["running"] = None; row.S.pop("node_down", None); row.not_first(); row.tell("released"); row.save()

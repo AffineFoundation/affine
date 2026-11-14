@@ -1,4 +1,4 @@
-"""Host side: materialize one published king checkpoint on the bench node.
+"""Host side: materialize the weights of one row on its bench node.
 
 The host makes 2 h read-only GET links (source.presigned). They are piped over ssh stdin into a 0600 file on the node,
 gate_fetch.py downloads with parallel ranged GETs and checks every file's sha256 against the head manifest, and the
@@ -7,8 +7,8 @@ import json
 from . import config as C, source
 
 
-def fetch(ck, node):
-    blob = json.dumps(source.presigned(ck))
+def fetch(m, node):
+    ck = m["base_hash"]; blob = json.dumps(source.presigned(m))
     D = C.NODE_KINGS
     cmd = (f"set -e; umask 077; mkdir -p {D} {D}/.work; cd {D}/.work && python3 -c \"import json,sys;d=json.load(sys.stdin);"
            f"json.dump(d['descriptor'],open('{D}/{ck}.descriptor.json','w'));json.dump(d['urls'],open('{ck}.urls.private.json','w'))\" && "

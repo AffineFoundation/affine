@@ -40,7 +40,7 @@ def resolve_settings(model_id, kind=None):
     ms = model_settings()
     profiles = ms["profiles"]
     mmap = ms.get("models", {})
-    if kind in ("king", "genesis") or (model_id or "").startswith(("king-", "genesis-")):
+    if kind in ("king", "genesis", "v1-king") or (model_id or "").startswith(("king-", "genesis-", "v1king-")):
         pname = ms.get("king_profile") or ms.get("default_profile")
     else:
         pname = mmap.get(model_id) or ms.get("default_profile")
