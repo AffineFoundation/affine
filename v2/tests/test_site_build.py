@@ -103,11 +103,15 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
     # a table names its columns: each name must be a column of the script, and each table must be on a page
     columns = set(re.findall(r"^    (\w+): \{ h: ", script, re.M))
     tables = dict(re.findall(r"^    (\w+): \{ cols: \[([^\]]+)\]", script, re.M))
-    assert set(tables) == {"kings", "queue", "history", "rounds", "heads", "v1kings", "v1turns"}
+    assert set(tables) == {"kings", "queueRound", "queueWait", "history", "rounds", "heads", "v1kings", "v1turns"}
     for name, cols in tables.items():
         assert set(re.findall(r"'(\w+)'", cols)) <= columns, name
-        assert f'<section id="{name}"' in index + v1
-
+        if name.startswith("queue"):
+            assert f'data-table="{name}"' in index
+        else:
+            assert f'<section id="{name}"' in index + v1
+    assert 'id="queue-totals"' in index and 'id="queue-pager"' in index
+    assert "already evaluated" not in script + index + v1
 
 def test_only_an_applied_winner_gets_files_and_unknown_fields_never_reach_the_page(tmp_path):
     snap = snapshot(tmp_path)
@@ -243,12 +247,13 @@ def test_a_cell_with_no_value_says_why_in_words(tmp_path):
     assert "V1 ? mute('—')" in unscored and "Carried over from v1" in unscored and "'Not scored. '" in unscored  # the v1 page keeps its dash
     # each other column of a v2 table that can print a dash prints it only for a field that the builder always sets
     always = {"round": "round_id", "uid": "uid", "reg": "registration_block"}
-    for name in {name for table in ("kings", "queue", "history", "rounds", "heads") for name in tables[table]}:
+    for name in {name for table in ("kings", "queueRound", "queueWait", "history", "rounds", "heads") for name in tables[table]}:
         assert "—" not in column[name] or name in always, name
     snap = snapshot(tmp_path)
     data = json.loads(build(tmp_path, snap)[2])
+    queue_with_reg = data["queue"]["round"] + [row for row in data["queue"]["waiting"] if row.get("registration_block") is not None]
     rows = {"round": data["kings"] + data["history"] + data["rounds"] + data["heads"], "uid": data["kings"] + data["queue"]["rows"] + data["history"],
-            "reg": data["queue"]["rows"]}
+            "reg": queue_with_reg}
     for name, field in always.items():
         assert rows[name] and all(row[field] is not None for row in rows[name]), name
     assert all(row[field] for field, part in (("hotkey", "kings"), ("hotkey", "history"), ("sha", "history"), ("at", "kings"), ("at", "history"),
@@ -308,15 +313,38 @@ CODE
     assert json.loads(done.stdout) == {"waits": [1, 2, 4, 10, 10, 1, 1, 1], "requests": 7}
 
 
-def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
+def test_queue_lists_round_and_waiting_separately_with_clear_totals(tmp_path):
     snap = snapshot(tmp_path)
     queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert [(row["line"], row["uid"], row["file_valid"], row["flags"]) for row in queue["rows"]] == [
-        (1, 8, True, ["leased"]), (2, 6, False, []), (3, 9, False, [])]
-    assert queue["total"] == len(queue["rows"])
+    assert [(row["line"], row["uid"], row["file_valid"], row["flags"], row["zone"]) for row in queue["round"]] == [
+        (1, 8, True, ["leased"], "round")]
+    assert [(row["line"], row["uid"], row["file_valid"], row["flags"], row["zone"], row["file_verdict"]) for row in queue["waiting"]] == [
+        (1, 6, False, [], "normal", "not_valid"), (2, 9, False, [], "normal", "not_valid")]
+    assert queue["rows"] == queue["waiting"]
+    assert queue["summary"] == {
+        "in_round": 1, "waiting": 2, "valid": 0, "not_valid": 2, "not_judged": 0, "front": 0, "back": 0,
+    }
+    assert queue["total"] == 2
     snap["queue"]["length"] = 57  # the snapshot lists only the first seats of a long line
     queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert queue["total"] - len(queue["rows"]) == 55
+    assert queue["summary"]["waiting"] == 57 and queue["total"] == 57 and len(queue["waiting"]) == 2
+    # queue.files lists every waiting hotkey: the page then shows all of them, with next's order first
+    snap["queue"]["files"] = {
+        "seats": 4, "hotkeys": 4, "valid": 1, "not_valid": 1, "not_judged": 2, "checked_at": 100,
+        "verdicts": [
+            {"uid": 6, "hotkey": snap["queue"]["next"][0]["hotkey"], "file_valid": False, "file_verdict": "not_valid"},
+            {"uid": 9, "hotkey": snap["queue"]["next"][1]["hotkey"], "file_valid": True, "file_verdict": "valid"},
+            {"uid": 90, "hotkey": "hk90", "file_valid": False, "file_verdict": "not_judged"},
+            {"uid": 91, "hotkey": "hk91", "file_valid": False, "file_verdict": "not_judged"},
+        ],
+    }
+    snap["queue"]["length"] = 4
+    queue = json.loads(build(tmp_path, snap)[2])["queue"]
+    assert [row["uid"] for row in queue["waiting"]] == [6, 9, 90, 91]
+    assert [row["file_verdict"] for row in queue["waiting"]] == ["not_valid", "valid", "not_judged", "not_judged"]
+    assert queue["summary"] == {
+        "in_round": 1, "waiting": 4, "valid": 1, "not_valid": 1, "not_judged": 2, "front": 0, "back": 0,
+    }
 
 
 def test_a_bad_or_missing_snapshot_keeps_the_last_good_data(tmp_path):

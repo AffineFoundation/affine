@@ -79,6 +79,17 @@ h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 .reading{font:12px var(--mono);color:var(--muted);text-align:right}
 .refs{margin:10px 0 0;font:11px/1.6 var(--mono)}
 .live{margin:10px 0 0;font:12px/1.55 var(--mono);color:var(--ink);min-height:38px}
+#queue .totals{display:flex;flex-wrap:wrap;gap:10px 22px;margin:0 0 14px;font:12px var(--mono)}
+#queue .totals div{display:flex;align-items:baseline;gap:8px}
+#queue .totals dt{color:var(--muted)}
+#queue .totals dd{margin:0;font-variant-numeric:tabular-nums}
+#queue .queue-block{margin-top:12px}
+#queue h3{margin:0;font:400 15px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.02em}
+#queue .pager{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 8px;font:11px var(--mono);color:var(--muted)}
+#queue .pager .pager-label{margin-right:auto}
+#queue .pager button{font:inherit;color:var(--ink);background:transparent;border:0;padding:0;cursor:pointer;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:3px}
+#queue .pager button:hover{text-decoration-color:currentColor}
+#queue .pager button:disabled{color:var(--muted);cursor:default;text-decoration:none}
 
 /* live round strip: fixed-height cells, so values arriving later do not move the page */
 #round dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;margin:0;background:var(--line);border:1px solid var(--line);border-radius:3px}

@@ -215,13 +215,94 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
             "batch": link(layout.winner_batch(round_id)) if v2 else None, "lora": lora_of.get(round_id), "imported": not v2,
         })
 
-    # Seats in the open round come first, then the waiting line. A frozen batch passed every check at round open.
-    seats = [(seat, True, ["leased"]) for seat in live.get("entries", [])]
-    seats += [(seat, seat["file_valid"], [flag for flag in FLAGS if seat[flag]]) for seat in snap["queue"]["next"]]
-    queue = [{
+    # Round seats and the waiting line are separate. ``queue.files`` (when present) lists every waiting
+    # hotkey with its file verdict; ``queue.next`` is the ordered preview with zone flags. Waiting rows
+    # are numbered from 1 in turn order: next first, then any further verdicts not already listed.
+    files = snap["queue"].get("files") if isinstance(snap["queue"].get("files"), dict) else None
+    verdict_rows = files.get("verdicts") if isinstance(files, dict) else None
+    by_hotkey = {
+        row["hotkey"]: row for row in verdict_rows or ()
+        if isinstance(row, dict) and isinstance(row.get("hotkey"), str)
+    }
+    checked_at = snap["queue"].get("files_checked_at")
+    if isinstance(files, dict) and files.get("checked_at") is not None:
+        checked_at = files.get("checked_at")
+
+    def file_verdict_of(hotkey: str, file_valid: bool | None) -> str:
+        row = by_hotkey.get(hotkey)
+        verdict = row.get("file_verdict") if isinstance(row, dict) else None
+        if verdict in ("valid", "not_valid", "not_judged"):
+            return verdict
+        if file_valid is True:
+            return "valid"
+        if file_valid is False and checked_at is None and not by_hotkey:
+            return "not_judged"
+        if file_valid is False:
+            return "not_valid"
+        return "no_file"
+
+    def zone_of(flags: list[str]) -> str:
+        if "leased" in flags:
+            return "round"
+        if "front" in flags:
+            return "front"
+        if "demoted" in flags:
+            return "back"
+        return "normal"
+
+    round_rows = [{
         "line": line, "uid": seat["uid"], "hotkey": seat["hotkey"], "registration_block": seat["registration_block"],
-        "file_valid": valid, "flags": flags,
-    } for line, (seat, valid, flags) in enumerate(seats, 1)]
+        "file_valid": True, "file_verdict": "valid", "flags": ["leased"], "zone": "round",
+    } for line, seat in enumerate(live.get("entries", []), 1)]
+
+    waiting_rows, seen = [], set()
+    for seat in snap["queue"]["next"]:
+        flags = [flag for flag in FLAGS if seat[flag]]
+        hotkey = seat["hotkey"]
+        verdict = file_verdict_of(hotkey, seat["file_valid"])
+        waiting_rows.append({
+            "line": len(waiting_rows) + 1, "uid": seat["uid"], "hotkey": hotkey,
+            "registration_block": seat["registration_block"], "file_valid": verdict == "valid",
+            "file_verdict": verdict, "flags": flags, "zone": zone_of(flags),
+        })
+        seen.add(hotkey)
+    for row in verdict_rows or ():
+        if not isinstance(row, dict):
+            continue
+        hotkey = row.get("hotkey")
+        if not isinstance(hotkey, str) or hotkey in seen:
+            continue
+        verdict = file_verdict_of(hotkey, row.get("file_valid") if "file_valid" in row else None)
+        waiting_rows.append({
+            "line": len(waiting_rows) + 1, "uid": row.get("uid"), "hotkey": hotkey,
+            "registration_block": row.get("registration_block"),
+            "file_valid": verdict == "valid", "file_verdict": verdict, "flags": [], "zone": "normal",
+        })
+        seen.add(hotkey)
+    for line, row in enumerate(waiting_rows, 1):
+        row["line"] = line
+
+    if isinstance(files, dict) and all(isinstance(files.get(key), int) and not isinstance(files.get(key), bool)
+                                       for key in ("seats", "valid", "not_valid", "not_judged")):
+        waiting_n = files["seats"]
+        valid_n, not_valid_n, not_judged_n = files["valid"], files["not_valid"], files["not_judged"]
+    else:
+        waiting_n = int(snap["queue"]["length"])
+        known = waiting_rows
+        valid_n = sum(row["file_verdict"] == "valid" for row in known)
+        not_valid_n = sum(row["file_verdict"] == "not_valid" for row in known)
+        not_judged_n = max(0, waiting_n - valid_n - not_valid_n) if len(known) < waiting_n else sum(
+            row["file_verdict"] in ("not_judged", "no_file") for row in known
+        )
+
+    summary = {
+        "in_round": len(round_rows), "waiting": waiting_n, "valid": valid_n, "not_valid": not_valid_n,
+        "not_judged": not_judged_n,
+        "front": sum(row["zone"] == "front" or "front" in row["flags"] for row in waiting_rows),
+        "back": sum(row["zone"] == "back" or "demoted" in row["flags"] for row in waiting_rows),
+    }
+    # ``rows`` stays the waiting line (numbered from 1). Round seats are only under ``round``.
+    queue = {"round": round_rows, "waiting": waiting_rows, "rows": waiting_rows, "total": waiting_n, "summary": summary}
 
     def manifest_link(version_id: str) -> str | None:
         key = layout.head_manifest(version_id)
@@ -239,7 +320,7 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         "kings_window": params["kings_window"],
         "round": {"id": live.get("round_id"), "seats": live.get("seats"), "cap": params["batch_cap"],
                   "tasks": live.get("n_tasks") or params["n_tasks"], "opened_at": live.get("opened_at")},
-        "kings": kings, "queue": {"rows": queue, "total": len(live.get("entries", [])) + snap["queue"]["length"]},
+        "kings": kings, "queue": queue,
         "history": history, "rounds": rounds, "heads": heads, "bench": bench,
     }
 

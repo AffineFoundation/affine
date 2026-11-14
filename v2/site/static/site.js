@@ -27,7 +27,7 @@
   const margin = (m, t) => `<span class="bar ${m > 0 ? 'up' : m < 0 ? 'dn' : 'mute'}" title="${esc(t)}"><i style="width:${Math.round(Math.min(1, Math.abs(m) / 3) * 22)}px"></i>${sgn(m)}</span>`;
   const RESULT = {
     winner: ['WINNER', 'up', 'Beat the head M by more than the winner bar.'],
-    lost: ['LOST', 'dn', 'Had a fair tournament and did not win. The registration is used up.'],
+    lost: ['LOST', 'dn', 'Had a fair tournament and did not win. This hotkey already had their one turn.'],
     no_decision: ['NO DECISION', 'wait', 'Our infrastructure failed. Not charged; the seat goes back to the front of the queue.'],
     skip: ['SKIP', 'private', 'The file was missing or invalid when the round froze it. Not charged; the seat keeps its place.'],
     not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this batch was trained. Not charged; the seat is first in the next round.'],
@@ -48,6 +48,20 @@
     demoted: ['back of queue', 'wait', 'Moved to the back: no valid file for too long. A seat with a valid file is never moved back.'],
     held: ['held', 'wait', 'Parked for the operator after repeated infrastructure failures. Not charged.'],
   };
+  const FILE_STATUS = {
+    valid: ['valid', 'up', 'The stored file passes every check.'],
+    not_valid: ['invalid', 'dn', 'The stored file failed a check.'],
+    not_judged: ['not judged', 'wait', 'No verdict yet at the last file check, or no upload then.'],
+    no_file: ['no file', 'wait', 'No file is stored for this seat.'],
+  };
+  const ZONE = {
+    round: ['in round', 'up', 'Leased into the round that runs now.'],
+    front: ['front', 'wait', FLAG.front[2]],
+    back: ['back', 'wait', FLAG.demoted[2]],
+    normal: ['normal', 'private', 'Ordinary place in the waiting line.'],
+  };
+  const QUEUE_PAGE = 50;
+  let queuePage = 0, queueShowAll = false;
   const PAGE = document.body.dataset.page || 'home', V1 = PAGE === 'v1', SUPPLY = PAGE === 'supply', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
   // sort: which column of which table the visitor last chose, and the direction (1 = low to high, -1 = high to low). A second click on the same column flips the direction.
@@ -106,6 +120,8 @@
     reg: { h: 'Reg block', w: 88, n: 1, s: num('registration_block'), r: r => esc(r.registration_block ?? '—') },
     check: { h: 'File', w: 96, s: r => r.file_valid ? 1 : 0, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
     flags: { h: 'Status', w: 170, s: r => (r.flags || []).join(' '), r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
+    fileStatus: { h: 'File status', w: 110, s: r => ({ valid: 0, not_valid: 1, not_judged: 2, no_file: 3 }[r.file_verdict] ?? 9), r: r => pill(...(FILE_STATUS[r.file_verdict] || [r.file_verdict || 'unknown', 'private', ''])), t: 'Live check of the stored file: valid, invalid, not judged, or no file. It never shows file content.' },
+    zone: { h: 'Zone', w: 72, s: text('zone'), r: r => { const flags = r.flags || []; const z = r.zone || (flags.includes('leased') ? 'round' : flags.includes('front') ? 'front' : flags.includes('demoted') ? 'back' : 'normal'); return z === 'normal' ? mute('normal', ZONE.normal[2]) : pill(...(ZONE[z] || [z, 'private', ''])); }, t: 'Turn-order zone: front, normal, or back of queue.' },
     result: { h: 'Result', w: 112, s: text('status'), r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
     gain: { h: 'Gain', w: 76, n: 1, s: num('delta'), r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, r.rank && !r.imported ? no('The round of this king is no longer in the history of mining.json, so this page has no gain for it.', 'not listed') : unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
     bar: { h: 'vs bar', w: 96, n: 1, s: r => r.z == null ? null : r.z - D.z_bar, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
@@ -136,7 +152,8 @@
   };
   const T = {
     kings: { cols: ['rank', 'uid', 'hot', 'size', 'hpWide', 'round', 'at', 'z', 'gain', 'head', 'files'], empty: 'No king yet.' },
-    queue: { cols: ['line', 'uid', 'hot', 'size', 'hp', 'check', 'reg', 'flags'], empty: 'No registration waits in the queue.' },
+    queueRound: { cols: ['line', 'uid', 'hot', 'fileStatus', 'reg'], empty: 'No seat is in the running round.' },
+    queueWait: { cols: ['line', 'uid', 'hot', 'fileStatus', 'zone', 'reg'], empty: 'No registration waits in the queue.' },
     history: { cols: ['round', 'uid', 'hot', 'size', 'hp', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
     rounds: { cols: ['round', 'env', 'head', 'seats', 'skipped', 'tasks', 'mPass', 'mCap', 'outcome', 'at'], empty: 'No round yet.' },
     heads: { cols: ['head', 'round', 'kind', 'manifest', 'at'], empty: 'No head yet.' },
@@ -144,7 +161,8 @@
     v1turns: { cols: ['epoch', 'uid', 'hot', 'verdict', 'z', 'cPass', 'hPass', 'capHit', 'batch', 'cand', 'head', 'date'], empty: 'No turn.' },
   };
 
-  const table = n => document.querySelector(`#${n} table`);
+  const tableRoot = n => document.querySelector(`[data-table="${n}"]`) || document.getElementById(n);
+  const table = n => tableRoot(n)?.querySelector('table');
   function ordered(n, rows) {
     const cur = sorts[n];
     if (!cur || !C[cur.key]?.s) return rows;
@@ -157,7 +175,8 @@
     }).map(x => x[2]);
   }
   function shell(n) {
-    const t = table(n), cols = T[n].cols.map(k => C[k]), cur = sorts[n];
+    const t = table(n); if (!t) return;
+    const cols = T[n].cols.map(k => C[k]), cur = sorts[n];
     t.querySelectorAll('colgroup,thead').forEach(el => el.remove());
     t.style.minWidth = cols.reduce((a, c) => a + c.w, 0) + 'px';
     t.insertAdjacentHTML('afterbegin', '<colgroup>' + cols.map(c => `<col style="width:${c.w}px">`).join('') + '</colgroup><thead><tr>'
@@ -186,15 +205,56 @@
   function fill(n, rows, reading, more) {
     if (!table(n)) return;
     held[n] = { rows, reading, more };
-    const cols = T[n].cols, body = table(n).tBodies[0], box = body.closest('.scroll'), view = ordered(n, rows);
+    const cols = T[n].cols, body = table(n).tBodies[0], box = body.closest('.scroll'), root = tableRoot(n);
+    let view = ordered(n, rows);
+    if (n === 'queueWait') {
+      const total = view.length, pages = Math.max(1, Math.ceil(total / QUEUE_PAGE));
+      if (queuePage >= pages) queuePage = pages - 1;
+      if (!queueShowAll && total > QUEUE_PAGE) {
+        const start = queuePage * QUEUE_PAGE;
+        view = view.slice(start, start + QUEUE_PAGE);
+        more = `showing ${start + 1}–${start + view.length} of ${total} waiting`;
+      } else if (total) {
+        more = `showing 1–${total} of ${total} waiting`;
+      } else {
+        more = '';
+      }
+      const pager = document.getElementById('queue-pager');
+      if (pager) {
+        pager.hidden = total <= QUEUE_PAGE;
+        if (total > QUEUE_PAGE) {
+          pager.innerHTML = `<span class="pager-label">${esc(more)}</span>`
+            + `<button type="button" data-qpage="prev" ${queueShowAll || queuePage <= 0 ? 'disabled' : ''}>Previous</button>`
+            + `<button type="button" data-qpage="next" ${queueShowAll || queuePage >= pages - 1 ? 'disabled' : ''}>Next</button>`
+            + `<button type="button" data-qpage="all">${queueShowAll ? 'Show 50 per page' : 'Show all'}</button>`;
+          more = '';  // label lives in the pager, not as a table footnote
+        }
+      }
+    }
     shell(n);  // refresh the sort mark on the header of this table
     body.innerHTML = (view.length
       ? view.map(r => `<tr${n === 'kings' && openKing && r.hotkey === openKing ? ' class="open"' : ''}${n === 'kings' && r.hotkey ? ` data-king="${esc(r.hotkey)}"` : ''}>` + cols.map(k => `<td class="${C[k].n ? 'num' : ''}">${C[k].r(r)}</td>`).join('') + '</tr>').join('')
       : `<tr><td colspan="${cols.length}" class="empty">${esc(T[n].empty)}</td></tr>`)
       + (more ? `<tr class="more"><td colspan="${cols.length}">${esc(more)}</td></tr>` : '');
-    document.querySelector(`#${n} .reading`).textContent = reading;
+    const readingEl = root?.querySelector('.reading');
+    if (readingEl) readingEl.textContent = reading;
     if (box.classList.contains('wait')) { box.classList.remove('wait'); body.classList.add('fade'); }
     if (n === 'kings') kingDetail(openKing ? view.find(r => r.hotkey === openKing) || rows.find(r => r.hotkey === openKing) : null);
+  }
+  function queueTotals(summary) {
+    const el = document.getElementById('queue-totals');
+    if (!el) return;
+    if (!summary) { el.innerHTML = ''; return; }
+    const items = [
+      ['In the running round', summary.in_round],
+      ['Waiting', summary.waiting],
+      ['Valid file', summary.valid],
+      ['Invalid file', summary.not_valid],
+      ['Not judged or no upload', summary.not_judged],
+      ['Front', summary.front],
+      ['Back of queue', summary.back],
+    ];
+    el.innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
   }
 
   /* One chart for every tile and every score card, as k1.js and bench.js of the v1 site: grid lines with their values, bars or a
@@ -679,7 +739,10 @@
   function render() {
     if (V1) return renderV1();
     ROUND = Object.fromEntries(D.rounds.map(x => [x.round_id, x]));
-    const d = D, r = d.round, q = d.queue.rows, waits = q.filter(x => !x.flags.includes('leased')), ready = waits.filter(x => x.file_valid).length;
+    const d = D, r = d.round, q = d.queue.rows || d.queue.waiting || [];
+    const ready = (d.queue.summary && d.queue.summary.valid != null)
+      ? d.queue.summary.valid
+      : q.filter(x => !(x.flags || []).includes('leased') && (x.file_verdict === 'valid' || (x.file_verdict == null && x.file_valid))).length;
     const live = {
       id: r.id || 'none open', state: d.phase, seats: r.seats == null ? 'no round' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
       head: clip(d.head, 8, 0), bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
@@ -691,10 +754,21 @@
     const won = Object.fromEntries(d.history.filter(x => x.status === 'winner').map(x => [x.round_id + ' ' + x.uid, x]));
     const kings = d.kings.map(k => k.delta != null || k.imported || !won[k.round_id + ' ' + k.uid] ? k : { ...k, delta: won[k.round_id + ' ' + k.uid].delta, se: won[k.round_id + ' ' + k.uid].se });
     fill('kings', kings, `${d.kings.length} of ${d.kings_window} places`);
-    // every count in the summary comes from the listed rows, so it can never disagree with them
-    const hidden = d.queue.total - q.length;
-    fill('queue', q, `${q.length - waits.length} in the round · ${ready} waiting with a valid file · ${waits.length - ready} waiting without`,
-      hidden > 0 ? `+${hidden} more registrations wait behind these and are not listed.` : '');
+    const qRound = d.queue.round || q.filter(x => (x.flags || []).includes('leased'));
+    const qWait = d.queue.waiting || q.filter(x => !(x.flags || []).includes('leased'));
+    const summary = d.queue.summary || {
+      in_round: qRound.length, waiting: d.queue.total ?? qWait.length,
+      valid: qWait.filter(x => x.file_verdict === 'valid' || (x.file_verdict == null && x.file_valid)).length,
+      not_valid: qWait.filter(x => x.file_verdict === 'not_valid').length,
+      not_judged: qWait.filter(x => x.file_verdict === 'not_judged' || x.file_verdict === 'no_file' || (x.file_verdict == null && !x.file_valid)).length,
+      front: qWait.filter(x => x.zone === 'front' || (x.flags || []).includes('front')).length,
+      back: qWait.filter(x => x.zone === 'back' || (x.flags || []).includes('demoted')).length,
+    };
+    queueTotals(summary);
+    document.querySelector('#queue > .section-heading .reading').textContent =
+      `${summary.in_round} in round · ${summary.waiting} waiting`;
+    fill('queueRound', qRound, `${summary.in_round}`);
+    fill('queueWait', qWait, `${summary.waiting}`);
     const f = filter.trim().toLowerCase(), hist = match(d.history, f);
     fill('history', hist, f ? `${hist.length} of ${d.history.length} results` : `${hist.length} results`);
     fill('rounds', d.rounds, `${d.rounds.length} rounds · ${d.rounds.filter(x => x.outcome === 'applied').length} applied`);
@@ -814,9 +888,18 @@
     const b = e.target.closest && e.target.closest('.key');
     if (b && navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(() => { b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900); }, () => { });
     if (e.target.closest && e.target.closest('[data-close-detail]')) { openKing = null; if (held.kings) fill('kings', held.kings.rows, held.kings.reading, held.kings.more); return; }
+    const qbtn = e.target.closest && e.target.closest('#queue-pager [data-qpage]');
+    if (qbtn && held.queueWait) {
+      const act = qbtn.dataset.qpage, total = held.queueWait.rows.length, pages = Math.max(1, Math.ceil(total / QUEUE_PAGE));
+      if (act === 'all') queueShowAll = !queueShowAll;
+      else if (act === 'prev' && !queueShowAll) queuePage = Math.max(0, queuePage - 1);
+      else if (act === 'next' && !queueShowAll) queuePage = Math.min(pages - 1, queuePage + 1);
+      fill('queueWait', held.queueWait.rows, held.queueWait.reading, held.queueWait.more);
+      return;
+    }
     const th = e.target.closest && e.target.closest('th[data-sort]');
     if (th) {
-      const n = th.closest('section')?.id, key = th.dataset.sort;
+      const n = th.closest('[data-table]')?.dataset.table || th.closest('section')?.id, key = th.dataset.sort;
       if (n && T[n] && C[key]?.s && held[n]) {
         const cur = sorts[n];
         sorts[n] = { key, dir: cur && cur.key === key ? -cur.dir : (C[key].n ? -1 : 1) };
