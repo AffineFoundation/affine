@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import replace
 
@@ -11,14 +12,15 @@ from sn120_v2 import layout
 from sn120_v2.canonical import manifest_digest
 from sn120_v2.cli import main
 from sn120_v2.errors import ConfigError, ContractError, FencedError, HeadMismatchError, InfraError, LeaseError, V2Error
+from sn120_v2.gpu import plan
 from sn120_v2.journal import read_journal
 from sn120_v2.params import GenesisSpec, Recipe
 from sn120_v2.payout import weights
 from sn120_v2.public import snapshot
 from sn120_v2.queue import waiting
-from sn120_v2.sim import JOURNAL_FILE, SimAdmission, SimWorld, sim_params
+from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, SimAdmission, SimWorld, sim_params
 from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
-from sn120_v2.store import LocalStore
+from sn120_v2.store import LocalStore, put_record
 from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
 
 
@@ -356,6 +358,89 @@ def test_no_round_opens_without_a_pinned_worker_image(tmp_path):
     world.register(1, 0.3)
     with pytest.raises(ConfigError):
         world.controller.open_round(world.clock(), "entropy")
+
+
+# ------------------------------------------------------------ a box that differs from the pinned digests
+
+OLD_CODE, NEW_CODE = "code-before-the-fix", "code-after-the-fix"
+NOTHING_COUNTED = r"\. Nothing is counted for a seat\. Next: "
+
+
+@pytest.fixture
+def fixed_box(tmp_path, monkeypatch) -> SimWorld:
+    """The parameters pin the code before a fix; the box has the code after it. The check is the one of the trainer."""
+    world = SimWorld(tmp_path, sim_params(recipe=Recipe(image_digests=(SIM_IMAGE,), code_digest=OLD_CODE)))
+    monkeypatch.setattr(plan, "code_digest", lambda: NEW_CODE)
+    world.controller.pins = functools.partial(plan.check_pins, SIM_IMAGE)
+    return world
+
+
+def store_a_result(world: SimWorld) -> None:
+    """Open a round, run it and store the box result with no judging, as a ``run`` that died there on the old code."""
+    (ticket,) = world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+    put_record(world.store, layout.sealed_result(ticket.round_id, ticket.lease_id), world.runner.run(ticket))
+
+
+def pin_the_new_code(world: SimWorld, **changes) -> None:
+    params = world.controller.params
+    world.controller.set_params(replace(params, recipe=replace(params.recipe, code_digest=NEW_CODE), **changes), world.clock())
+
+
+def test_a_box_that_differs_from_the_pins_judges_a_stored_result_and_then_opens_no_round(fixed_box):
+    world = fixed_box
+    for uid in range(1, 9):
+        world.register(uid, 0.0 if uid <= 4 else 0.1)
+    store_a_result(world)
+    trainings = world.trainer.closed
+    for _ in range(4):  # without the stop, 3 such starts hold every seat of the next round
+        with pytest.raises(ConfigError, match=r"differs from recipe\.code_digest\), so no round was opened" + NOTHING_COUNTED + "the digest block, then set-params"):
+            world.round()
+    state = world.controller.state
+    assert state.round is None and [record.outcome for record in state.rounds] == ["null"], "the result that the old digests made is judged"
+    assert kinds(world).count(ROUND_OPENED) == 1 and world.trainer.closed == trainings, "no round opened and no training started"
+    assert sorted(uid for uid, _ in state.queue) == [5, 6, 7, 8] and all(seat.infra_attempts == 0 and not seat.held for seat in state.queue.values())
+    pin_the_new_code(world, n_tasks=32)  # the round is closed: every parameter can change
+    record = world.round()
+    assert seats(record) == [5, 6, 7, 8] and record.decision is not None and record.n_tasks == 32
+
+
+def test_a_box_that_differs_from_the_pins_starts_no_fold_and_folds_when_the_new_digests_are_pinned(fixed_box):
+    world = fixed_box
+    world.register(1, 0.3)
+    store_a_result(world)
+    folds, fold = [], world.folder.fold
+    world.folder.fold = lambda *args: folds.append(args) or fold(*args)
+    for _ in range(2):
+        with pytest.raises(ConfigError, match="so the fold was not started" + NOTHING_COUNTED + "the digest block"):
+            world.round()
+    state = world.controller.state
+    assert state.round.decision.winner.uid == 1 and state.round.applied and not state.head.folded, "judged and promoted; the fold is left"
+    assert not folds and [king.uid for king in state.kings] == [1]
+    with pytest.raises(V2Error, match="a decided round takes new digests only"):
+        pin_the_new_code(world, n_tasks=32)
+    pin_the_new_code(world)
+    assert world.round() is None and len(folds) == 1, "the same start finishes the fold; no seat waits, so no round opens"
+    state = world.controller.state
+    assert state.round is None and state.head.folded and state.rounds[-1].outcome == "applied"
+
+
+def test_a_box_that_differs_from_the_pins_does_not_run_an_open_round_again(fixed_box):
+    world = fixed_box
+    world.register(1, 0.3)
+    (ticket,) = world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+    before = kinds(world)
+    with pytest.raises(ConfigError, match="so the open round was not run" + NOTHING_COUNTED + r"end-round \(the round pins the old digests\), the digest block"):
+        world.round()
+    state = world.controller.state
+    assert kinds(world) == before and world.trainer.closed == 0 and state.round.leases[0].status == "open", "nothing started, nothing written"
+    with pytest.raises(V2Error, match="a round is open"):
+        pin_the_new_code(world)
+    world.controller.fail_lease(ticket.lease_id, "ended by the operator", world.clock())  # what end-round does
+    pin_the_new_code(world)
+    seat = world.controller.state.queue[(1, 1001)]
+    assert seat.front and seat.infra_attempts == 0 and not seat.held
+    world.now += world.params.apply_retry_s
+    assert world.round().outcome == "applied"
 
 
 def test_the_command_line_runs_the_cpu_simulation(tmp_path, capsys):

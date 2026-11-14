@@ -108,9 +108,24 @@ def test_the_run_command_gets_the_gpu_parts_and_needs_the_box_settings(tmp_path,
     runner = stack.runner
     assert isinstance(runner, LocalRunner) and isinstance(runner.trainer, LoraTrainer) and isinstance(runner.evaluator, VllmEvaluator)
     assert isinstance(stack.folder, LoraFolder) and runner.image_digest == IMAGE and runner.evaluator.grader == "grade-pool"
+    assert stack.pins is not None and assembly.stack(StackContext(tmp_path / "state", Params(), "end-round")).pins is None
     monkeypatch.delenv("SN120_IMAGE_DIGEST")
     with pytest.raises(ConfigError):
         assembly.stack(StackContext(tmp_path / "state", Params(), "run"))
+
+
+def test_run_on_a_box_that_differs_from_the_pinned_digests_is_refused_before_any_round(tmp_path, box, monkeypatch, capsys):
+    common = start(tmp_path, box)
+    run = ["run", *common, "--max-idle", "1", "--idle-sleep", "0"]
+    assert main(run) == 0, "the box has the pinned image: run waits for a file"
+    records = len(box.list(layout.JOURNAL))
+    monkeypatch.setenv("SN120_IMAGE_DIGEST", "sha256:" + "cd" * 32)  # as after a package change with no set-params
+    capsys.readouterr()
+    assert main(run) == 2, "exit code 2: the restart loop does not start run again"
+    refused = "refused: ConfigError: this box differs from the pinned digests (worker image sha256:cdcdcdcdc is not in the pinned set), so no round was opened."
+    assert refused in capsys.readouterr().err
+    assert len(box.list(layout.JOURNAL)) == records + 1, "only the record of the start; nothing else was written"
+    assert main(["end-round", *common]) == 2 and "no round is open" in capsys.readouterr().err, "the commands that need no GPU part are not refused for the pins"
 
 
 def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head(tmp_path, box):

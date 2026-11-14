@@ -20,6 +20,7 @@ The box holds no wallet. It only reads the chain.
 
 from __future__ import annotations
 
+import functools
 import os
 import time
 from pathlib import Path
@@ -37,7 +38,7 @@ from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
 from .gpu.evaluator import VllmEvaluator
 from .gpu.folder import LoraFolder
-from .gpu.plan import BoxConfig
+from .gpu.plan import BoxConfig, check_pins
 from .gpu.trainer import LoraTrainer
 from .irt import IRTSampler
 from .params import Params, require_env
@@ -128,11 +129,12 @@ def stack(context: StackContext) -> Stack:
     feed = None if network == NONE else ChainFeed(params.netuid, network)
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None
     entropy: Callable[[], str] = feed.entropy if feed else lambda: os.urandom(16).hex()
-    runner = folder = None
+    runner = folder = pins = None
     if context.command == "run":
         box = BoxConfig.from_env()
         trainer = LoraTrainer(store, box, _read_groups)
         evaluator = VllmEvaluator(store, box, pool, GradePool())
         runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         folder = LoraFolder(store, box)
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, mirror=True)
+        pins = functools.partial(check_pins, box.image_digest)  # the check of the trainer, made before any work starts
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True)
