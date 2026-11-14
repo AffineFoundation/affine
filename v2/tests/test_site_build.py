@@ -9,6 +9,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tomllib
 import urllib.error
 from pathlib import Path
 
@@ -216,6 +217,18 @@ def test_a_head_links_its_manifest_when_it_is_current_or_when_the_file_is_on_the
     exists.__globals__["fetch"] = fetch
     assert [exists(f"{URL}/", name) for name in "abcd" * 2] == [True, False, False, False] * 2
     assert asked == [f"{URL}/{name}" for name in "abcdcd"]
+
+
+def test_the_presence_penalty_of_a_profile_on_the_page_is_the_one_of_the_benchmark_settings():
+    """The benchmark file gives only the name of a settings profile. The page has one list with the presence penalty of each name;
+    a name of that list that the settings file of the benchmark service has carries the same value there."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    assert script.count("const PP = ") == 1
+    listed = {name: float(value) for name, value in re.findall(r"'([^']+)': ([\d.]+)", re.search(r"^  const PP = \{(.*)\};$", script, re.M)[1])}
+    profiles = tomllib.loads((BUILD.parents[1] / "bench" / "config" / "model_settings.toml").read_text())["profiles"]
+    assert set(listed) & set(profiles)
+    for name in set(listed) & set(profiles):
+        assert profiles[name]["presence_penalty"] == listed[name], name
 
 
 def test_a_cell_with_no_value_says_why_in_words(tmp_path):

@@ -23,6 +23,8 @@
   const link = (u, s, t) => `<a href="${esc(u)}"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</a>`;
   const pill = (s, c, t) => `<span class="pill ${c}"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</span>`;
   const score = (x, d, t, gap = mute('—')) => x == null ? gap : `<span class="${x > 0 ? 'up' : x < 0 ? 'dn' : 'mute'}" title="${esc(t)}">${sgn(x, d)}</span>`;
+  // The small bar of "vs bar": its length is the distance to the bar, 22 px at 3 standard errors and more.
+  const margin = (m, t) => `<span class="bar ${m > 0 ? 'up' : m < 0 ? 'dn' : 'mute'}" title="${esc(t)}"><i style="width:${Math.round(Math.min(1, Math.abs(m) / 3) * 22)}px"></i>${sgn(m)}</span>`;
   const RESULT = {
     winner: ['WINNER', 'up', 'Beat the head M by more than the winner bar.'],
     lost: ['LOST', 'dn', 'Had a fair tournament and did not win. The registration is used up.'],
@@ -48,6 +50,11 @@
   };
   const PAGE = document.body.dataset.page || 'home', V1 = PAGE === 'v1', SUPPLY = PAGE === 'supply', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
+  let ROUND = {};  // the closed rounds of the data file, by round id: the link to the round file, and the cap-hit of M
+  // The cap-hit limit of the round of a row, as the judge has it: the larger of `cap_hit_floor` and the cap-hit of M plus `cap_hit_margin`.
+  // The page knows it only when the data file has the two settings and the cap-hit of M of that round. If not, no cell is marked.
+  const capLimit = r => D.cap_hit_floor == null || D.cap_hit_margin == null || (ROUND[r.round_id] || {}).null_cap == null ? null : Math.max(D.cap_hit_floor, ROUND[r.round_id].null_cap + D.cap_hit_margin);
+  const overCap = r => r.cap_rate != null && capLimit(r) != null && r.cap_rate > capLimit(r);
   // The word for a row that has no score: a king carried over from v1, or a batch that was not scored. The v1 page keeps its dash.
   const unscored = r => V1 ? mute('—')
     : r.imported ? no('Carried over from v1: this king has no v2 score and no v2 head. Its v1 score is on the v1 history page.')
@@ -60,11 +67,31 @@
     : pill('private', 'private', 'Only a winner is published. This batch stays private.');
   const dagger = (c, t) => c ? `<sup title="${esc(t)}">†</sup>` : '';
 
+  // Batch size and train settings. Only the batch of a winner is public, so each other row says why it has no value.
+  const closed = (r, what) => r.imported ? unscored(r)
+    : r.batch ? no(`The batch of this winner is public, but the data file of this page does not have ${what} yet. It is in batch.json.`, 'not read')
+    : r.line != null ? pill('private', 'private', 'A file in the queue stays private. Only the batch of a winner is published.')
+    : pill('private', 'private', 'Only a winner is published. This batch stays private.');
+  const batchSize = r => r.batch_prompts == null ? closed(r, 'its size')
+    : `<span title="${esc(r.batch_prompts)} prompts${r.batch_rollouts == null ? '' : ` · ${esc(r.batch_rollouts)} rollouts`}">${esc(r.batch_prompts)}${r.batch_rollouts == null || !r.batch_prompts ? '' : ' × ' + (r.batch_rollouts / r.batch_prompts).toFixed(1)}</span>`;
+  // A setting shows in the cell only when the miner set it to a value that is not the default. The tooltip has each setting.
+  const HP = { lora_lr: 'lr', sample_temperature: 'temp', target_modules: 'modules', group_size: 'group' };
+  const setting = v => Array.isArray(v) ? v.join(', ') : typeof v === 'number' && v && Math.abs(v) < 1e-3 ? v.toExponential() : String(v);
+  const HP_HELP = 'Train settings that the miner set to a value that is not the default. Each setting is in the tooltip. Public for a winner only.';
+  const hparams = r => {
+    if (r.train == null) return closed(r, 'its train settings');
+    const known = D.train_settable || [], std = Object.fromEntries(known.map(x => [x.key, x.default])), keys = [...new Set([...known.map(x => x.key), ...Object.keys(r.train)])];
+    const set = keys.filter(k => k in r.train && setting(r.train[k]) !== setting(std[k]));
+    const all = keys.map(k => `${k} ${setting(k in r.train ? r.train[k] : std[k])}${!(k in std) ? '' : set.includes(k) ? ` (default ${setting(std[k])})` : ' (default)'}`).join('\n');
+    return set.length ? `<span class="hp" title="${esc(all)}">${set.map((k, i) => `<span>${esc(HP[k] || k)} ${esc(setting(r.train[k]))}${i < set.length - 1 ? ' ·' : ''}</span>`).join(' ')}</span>`
+      : mute('defaults', 'The miner set no train setting to a value that is not the default.' + (all ? '\n' + all : ''));
+  };
+
   // h = header, w = width in px, n = numeric (right aligned), t = header tooltip, r = cell from a row
   const C = {
     rank: { h: '#', w: 36, n: 1, r: r => mute(r.rank) },
     line: { h: '#', w: 36, n: 1, r: r => mute(r.line), t: 'Place in line (1 = first).' },
-    round: { h: 'Round', w: 92, r: r => r.file_url ? link(r.file_url, r.round_id, 'round.json') : esc(r.round_id || '—') },
+    round: { h: 'Round', w: 92, r: r => r.file_url || (ROUND[r.round_id] || {}).file_url ? link(r.file_url || ROUND[r.round_id].file_url, r.round_id, 'round.json') : esc(r.round_id || '—') },
     uid: { h: 'UID', w: 52, n: 1, r: r => esc(r.uid ?? '—') },
     hot: { h: 'Hotkey', w: 104, r: r => key(r.hotkey) },
     z: { h: 'z', w: 60, n: 1, r: r => score(r.z, 2, 'z = gain / standard error', unscored(r)), t: 'Gain over the head M, in standard errors.' },
@@ -74,10 +101,13 @@
     check: { h: 'File', w: 96, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
     flags: { h: 'Status', w: 170, r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
     result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
-    gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
-    bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`, unscored(r)), t: 'z minus the winner bar. Above zero clears the bar.' },
-    capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed.' },
+    gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, r.rank && !r.imported ? no('The round of this king is no longer in the history of mining.json, so this page has no gain for it.', 'not listed') : unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
+    bar: { h: 'vs bar', w: 96, n: 1, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
+    capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => overCap(r) ? `<span class="dn" title="Above the cap-hit limit of this round, ${pct(capLimit(r))}: the larger of ${pct(D.cap_hit_floor)} and the cap-hit of M plus ${pct(D.cap_hit_margin)}. A LoRA above the limit cannot win.">${pct(r.cap_rate)}</span>` : pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed. Red: above the cap-hit limit of the round.' },
     look: { h: 'Dropped', w: 68, n: 1, r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
+    size: { h: 'Batch', w: 76, n: 1, r: batchSize, t: 'Prompts × mean rollouts for each prompt. The totals are in the tooltip. Public for a winner only.' },
+    hp: { h: 'Hparams', w: 146, r: hparams, t: HP_HELP },
+    hpWide: { h: 'Hparams', w: 210, r: hparams, t: HP_HELP },
     sha: { h: 'Batch sha256', w: 100, r: r => key(r.sha, 8, 0) },
     at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
@@ -99,9 +129,9 @@
     cand: { h: 'Candidate', w: 100, r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
   };
   const T = {
-    kings: { cols: ['rank', 'uid', 'hot', 'round', 'at', 'z', 'head', 'files'], empty: 'No king yet.' },
-    queue: { cols: ['line', 'uid', 'hot', 'reg', 'check', 'flags'], empty: 'No registration waits in the queue.' },
-    history: { cols: ['round', 'uid', 'hot', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
+    kings: { cols: ['rank', 'uid', 'hot', 'size', 'hpWide', 'round', 'at', 'z', 'gain', 'head', 'files'], empty: 'No king yet.' },
+    queue: { cols: ['line', 'uid', 'hot', 'size', 'hp', 'check', 'reg', 'flags'], empty: 'No registration waits in the queue.' },
+    history: { cols: ['round', 'uid', 'hot', 'size', 'hp', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
     rounds: { cols: ['round', 'env', 'head', 'seats', 'skipped', 'tasks', 'mPass', 'mCap', 'outcome', 'at'], empty: 'No round yet.' },
     heads: { cols: ['head', 'round', 'kind', 'manifest', 'at'], empty: 'No head yet.' },
     v1kings: { cols: ['rank', 'uid', 'hot', 'epoch', 'z', 'share'], empty: 'No king.' },
@@ -221,9 +251,14 @@
     weights: 'The weight files of this model are not in the store yet: its run starts when they are.',
     source: 'The benchmark service cannot read the source of the weights of this model yet: it rents no machine for it.',
   };
-  // The sampling of a score, from the settings profile that the benchmark file names. A profile that this page does not know is shown by its name.
-  const PP = { 'qwen3.5-family': 'presence penalty 1.5', 'qwen3.5-family-pp0': 'presence penalty 0' };
-  const pp = name => PP[name] || `profile ${name}`;
+  // The sampling of a score, from the settings profile that the benchmark file names: its presence penalty. One list for the tooltip
+  // of a score, the note under the table and the second line of a row. The benchmark file gives only the name of a profile, so the
+  // values are here; `profiles` of the data file wins when it is there. A profile that neither has is shown by its name.
+  const PP = { 'qwen3.5-family': 1.5, 'qwen3.5-family-pp0': 0 };
+  let PROFILES = {};
+  const penalty = name => (PROFILES[name] || {}).presence_penalty ?? PP[name] ?? null;
+  const pp = name => penalty(name) == null ? `profile ${name}` : `presence penalty ${penalty(name)}`;
+  const ppShort = name => penalty(name) == null ? name : penalty(name) ? `pp ${penalty(name)}` : 'pp0';
   const V1_KING = 'A king of v1, scored by the benchmark service of v2. It won no round of v2, so it has no round and no head here.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
@@ -234,11 +269,22 @@
     'llama-3.1-nemotron-nano-8b-v1': 8.03, 'openthinker3-7b': 7.62, 'phi-4-reasoning': 14.66, 'phi-4-mini-reasoning': 3.84,
     'deepscaler-1.5b-preview': 1.78, 'r1-distill-qwen-1.5b': 1.78, 'gpt-oss-20b': 20.91,
   };
-  const size = r => SIZE[String(r.label).toLowerCase()] ?? null;
+  const size = r => r.size_b ?? SIZE[String(r.label).toLowerCase()] ?? null;
+  // The short name of a reference model with a long label: the table SHORT of bench.js of the v1 site, by the label of the model.
+  const SHORT = {
+    'deepseek-r1-0528-qwen3-8b': 'R1-0528-Qwen3-8B', 'r1-distill-qwen-7b': 'R1-Qwen-7B', 'r1-distill-llama-8b': 'R1-Llama-8B', 'r1-distill-qwen-14b': 'R1-Qwen-14B',
+    'r1-distill-qwen-1.5b': 'R1-Qwen-1.5B', 'nemotron-nano-9b-v2': 'Nemotron-Nano-9B', 'glm-z1-9b-0414': 'GLM-Z1-9B', 'openreasoning-nemotron-7b': 'OR-Nemotron-7B',
+    'acereason-nemotron-1.1-7b': 'AceReason-7B', 'llama-3.1-nemotron-nano-8b-v1': 'Nemotron-Nano-8B', 'phi-4-reasoning': 'Phi-4-R-14B', 'phi-4-mini-reasoning': 'Phi-4-mini-R',
+    'deepscaler-1.5b-preview': 'DeepScaleR-1.5B',
+  };
+  // The width of the column Model. At the width of a phone it is narrow and a name takes more lines, as on the v1 site. On a wider
+  // screen it is as wide as the longest second line (`letters`, at 6 px a letter), up to the room that the box has with no sideways scroll.
+  const nameWidth = (letters, room) => innerWidth <= 640 ? Math.min(Math.round(innerWidth * .46), 168) : Math.max(200, Math.min(Math.ceil(6.05 * letters) + 18, room));
   const STAR = '<svg class="star" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
   const shade = f => { const k = Math.min(1, Math.max(0, (.9 - f) / .75)); return `hsl(${Math.round(130 * (1 - k ** .75))} 65% 45% / ${(.3 + .28 * Math.abs(.5 - k)).toFixed(2)})`; };
   let allRefs = false;
   function bench(b) {
+    PROFILES = b.profiles || {};
     if (!table('bench')) return;
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
@@ -308,16 +354,26 @@
       return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
         + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
     };
-    const name = r => {
-      const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : r.kind === 'v1-king' && r.uid != null ? [r.label, 'UID ' + r.uid] : [r.label];
-      return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>';
+    // The second line under a name, as on the v1 site: `budget 65,536 tok · cut-off 3.3% · pp 1.5`. The budget is the token budget
+    // of the run. The cut-off is the mean cap-hit of the scores of the row. The sampling is the presence penalty of the settings profile
+    // of the scores. Each part is there only when the data has it, so a row with none of them has one line.
+    const meta = r => {
+      const caps = Object.values(r.cells).map(x => x.cap_rate).filter(x => x != null), profiles = had(r).length ? had(r) : r.profile && run(r) === RUN.running ? [r.profile] : [];
+      return [r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tok`, caps.length && `cut-off ${share(caps.reduce((a, x) => a + x, 0) / caps.length)}`, ...profiles.map(ppShort)].filter(Boolean);
     };
-    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + (r.v1_epoch != null ? `v1 epoch ${r.v1_epoch} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], had(r).length ? 'Sampling: ' + list(had(r).map(pp)) : r.profile && run(r) === RUN.running && 'Sampling of its run: ' + pp(r.profile), r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
+    const name = r => {
+      const other = r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king', billions = other && size(r) != null ? size(r).toFixed(1) + 'B' : '';
+      const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : r.kind === 'v1-king' && r.uid != null ? [r.label, 'UID ' + r.uid] : [SHORT[String(r.label).toLowerCase()] || r.label, ...(billions ? [billions] : [])];
+      const model = other && r.repo ? `<a href="https://huggingface.co/${esc(r.repo)}" target="_blank" rel="noopener" title="${esc(r.repo + (billions ? ` · ${billions} params` : ''))}">${esc(first)}</a>` : esc(first);
+      return `<span class="who"><span>${model}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (run(r) ? pill(...run(r).slice(0, 3)) : '') + '</span>' + (meta(r).length ? `<span class="meta">${meta(r).map((x, i, all) => `<span>${esc(x)}${i < all.length - 1 ? ' ·' : ''}</span>`).join(' ')}</span>` : '');
+    };
+    const about = r => [r.label, r.repo && r.kind === 'reference' && `Hugging Face ${r.repo}${r.repo_rev ? ' at ' + String(r.repo_rev).slice(0, 8) : ''}`, r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tokens`, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.kind === 'v1-king' && (r.uid != null ? `UID ${r.uid} · ` : '') + (r.v1_epoch != null ? `v1 epoch ${r.v1_epoch} · ` : '') + V1_KING, r.head && 'Head ' + r.head, run(r) && run(r)[2], had(r).length ? 'Sampling: ' + list(had(r).map(pp)) : r.profile && run(r) === RUN.running && 'Sampling of its run: ' + pp(r.profile), r.pod && !(run(r) && POD[r.pod.state]) && `Machine: ${r.pod.state}.${since(r)}`, r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
-    t.insertAdjacentHTML('afterbegin', `<colgroup><col style="width:200px"><col style="width:64px">${b.columns.map(() => '<col style="width:88px">').join('')}</colgroup>`);
-    t.style.minWidth = 264 + 88 * b.columns.length + 'px';
+    const nameW = nameWidth(Math.max(0, ...[...kings, ...pinned, ...genesis, ...old].map(r => meta(r).join(' · ').length)), box.clientWidth - 64 - 88 * b.columns.length);
+    t.insertAdjacentHTML('afterbegin', `<colgroup><col style="width:${nameW}px"><col style="width:64px">${b.columns.map(() => '<col style="width:88px">').join('')}</colgroup>`);
+    t.style.minWidth = nameW + 64 + 88 * b.columns.length + 'px';
     t.tHead.innerHTML = (suites.length > 1 ? `<tr class="suites"><th></th><th class="avg"></th>${suites.map(x => `<th class="suite" colspan="${b.columns.filter(c => c.suite === x).length}">${esc(x)}</th>`).join('')}</tr>` : '')
       + `<tr><th>Model</th><th class="num avg" title="Mean of the counted benchmarks, in percent. A row has it only when it has every counted benchmark.">Avg</th>`
       + b.columns.map(c => `<th class="num" title="${esc(c.label)}: ${c.in_avg ? 'score in percent.' : 'shown only; not counted in Avg, not shaded.'}${c.full_of ? ' The score of the full run, for a model that has one.' : ''}${esc(differ(c) && ' ' + differ(c).slice(c.label.length + 2))}">${esc(c.head || c.label)}</th>`).join('') + '</tr>';
@@ -440,6 +496,7 @@
   }
   function render() {
     if (V1) return renderV1();
+    ROUND = Object.fromEntries(D.rounds.map(x => [x.round_id, x]));
     const d = D, r = d.round, q = d.queue.rows, waits = q.filter(x => !x.flags.includes('leased')), ready = waits.filter(x => x.file_valid).length;
     const live = {
       id: r.id || 'none open', state: d.phase, seats: r.seats == null ? 'no round' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
@@ -448,7 +505,10 @@
     for (const el of document.querySelectorAll('#round [data-f]')) el.textContent = live[el.dataset.f];
     const open = document.querySelector('#round .reading');
     if (open) open.innerHTML = 'env ' + esc(d.env) + (r.opened_at ? ' · opened ' + ago(r.opened_at) : '');
-    fill('kings', d.kings, `${d.kings.length} of ${d.kings_window} places`);
+    // The gain of a king is the gain of its winning entry. A data file that has no gain on the king has it on that entry in the history.
+    const won = Object.fromEntries(d.history.filter(x => x.status === 'winner').map(x => [x.round_id + ' ' + x.uid, x]));
+    const kings = d.kings.map(k => k.delta != null || k.imported || !won[k.round_id + ' ' + k.uid] ? k : { ...k, delta: won[k.round_id + ' ' + k.uid].delta, se: won[k.round_id + ' ' + k.uid].se });
+    fill('kings', kings, `${d.kings.length} of ${d.kings_window} places`);
     // every count in the summary comes from the listed rows, so it can never disagree with them
     const hidden = d.queue.total - q.length;
     fill('queue', q, `${q.length - waits.length} in the round · ${ready} waiting with a valid file · ${waits.length - ready} waiting without`,
