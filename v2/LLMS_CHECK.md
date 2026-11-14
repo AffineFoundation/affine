@@ -76,13 +76,35 @@ The exit code makes the command fit for a timer on any host with a copy of the c
 
 The command changes nothing, so there is nothing to undo. To stop a timer, remove its line.
 
+## When the code changes the text
+
+A change of a sentence in `sn120_v2/publisher.py` changes no public file by itself. The GPU box (Dublin) writes `llms.txt`, and it writes the new text from its first publish after it runs the new commit. Put a new commit on the box only between rounds, with the normal update of the box. AffineValidator needs no step: its pull copies the new file as it copies every file.
+
+Between the merge and that update, the two hosts differ. This is expected:
+
+- The check without `--values-only`, on a host with the new commit, reports `llms.txt is not the text that this code renders from mining.json`. It says the truth: the public file is the older text.
+- The check with `--values-only` stays `ok`. The numbers of the older text are still those of the params.
+
+What the operator sees when the new text is public (the text since the commit that names the local tool):
+
+```
+curl -fsS <public address>/llms.txt | grep -c '^## 10. Train and score your batch at home'
+python -m sn120_v2.publisher check --url <public address>
+```
+
+The first line prints `1`. The second prints `ok` with `every line`, on a host at the commit of the box.
+
+The way back: run the commit before on the box, between rounds. The box then writes the older text again. No state changes with the text: `llms.txt` is a pure function of `mining.json`, and `mining.json` has the same fields in both commits.
+
+A note on reads of the site: it answers HTTP 403 to the default client name of Python's `urllib` on the files under `public/` and on the link files. The check command sends its own client name (`sn120-v2-publisher-check`), so this does not touch it. A script of yours that reads these files must send a client name too.
+
 ## What the two checks catch
 
 The test suite fails when:
 
 - a parameter or a recipe value changes and the text stays the same (each field is changed alone);
 - a new parameter is added and the text does not state it;
-- a sentence holds a number that no parameter gives and that is not on the list of the test. Each number on that list stands in a phrase that the test builds from the constant of the code, or it is a formula, a step number, or one of four facts of the chain and of file formats;
+- a sentence holds a number that no parameter gives and that is not on the list of the test. Each number on that list stands in a phrase that the test builds from the constant of the code, or it is a formula, a step number, or a fact of the chain, of a file format or of HTTP that the test lists by its phrase;
 - the text from a snapshot and the text from the `mining.json` that was read back differ.
 
 The command fails when a published pair has one of the faults of the table above.

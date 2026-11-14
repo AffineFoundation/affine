@@ -6,6 +6,10 @@
     python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> \
         --irt-snapshot irt.json --round-seed <seed> --backend <module>:<function> batch.json
 
+``--backend sn120_v2.replicate:backend`` is the code of the validator's box. It runs as it is only on a machine
+with the pinned install and the GPU count of the params. On any other machine use
+``python -m sn120_v2.replicate run``: see ``v2/REPLICATE.md``.
+
 Every rule and every number comes from mining.json and from the validator's
 own code in ``sn120_v2``: the same batch check, the same box runner on the
 ``Trainer`` and ``Evaluator`` seams, the same judging. This file holds no
@@ -39,12 +43,14 @@ from sn120_v2.worker import LocalRunner
 
 ROUND_ID, LEASE_ID, BOX_ID = "local", "local-l0", "local-box"
 PUT_URL_ENV = "AFFINE_PUT_URL"  # the opened upload link; it is a secret, so it is not a command-line argument
+# The public site answers 403 to the default client name of urllib on its files under public/. So every request of this tool names itself.
+CLIENT = {"User-Agent": "sn120-v2-miner/1"}
 
 
 def load_contract(source: str) -> tuple[Params, HeadVersion]:
     """Params and head from mining.json: a file or an http(s) URL. There is no built-in default."""
     if source.startswith(("http://", "https://")):
-        with urllib.request.urlopen(source, timeout=30) as reply:
+        with urllib.request.urlopen(urllib.request.Request(source, headers=CLIENT), timeout=30) as reply:
             raw = reply.read()
     else:
         raw = Path(source).read_bytes()
@@ -128,7 +134,7 @@ def reproduce(
 def upload(raw: bytes, url: str) -> None:
     """PUT the file to the presigned link, with the headers the link is signed for. The URL is a secret: it is never printed."""
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, data=raw, method="PUT", headers=UPLOAD_HEADERS), timeout=300):
+        with urllib.request.urlopen(urllib.request.Request(url, data=raw, method="PUT", headers=UPLOAD_HEADERS | CLIENT), timeout=300):
             pass
     except OSError as exc:
         raise InfraError(f"the upload failed: {type(exc).__name__} {getattr(exc, 'code', '')}".strip()) from None
