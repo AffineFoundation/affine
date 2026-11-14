@@ -46,11 +46,12 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "round.html", "supply.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
-    for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
-        assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
-    assert "{{" not in (out / "v1.html").read_text() and 'href="v1.html"' in page
+    for other in ("round.html", "supply.html", "v1.html"):  # each other page gets the same stamped files, and the home page links to it
+        for name in ("site.js", "site.css", "favicon.svg"):
+            assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / other).read_text())
+        assert "{{" not in (out / other).read_text() and f'href="{other}"' in page
     assert "{{" not in page
     stamps = dict(re.findall(r"""["']([\w.-]+\.(?:js|css|svg|ttf))\?v=([0-9a-f]{8})["']""", page))
     assert set(stamps) == {"site.js", "site.css", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"}
@@ -58,6 +59,27 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_the_home_page_starts_with_the_benchmark_table_and_the_round_and_the_supply_have_their_own_pages(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    index, live, supply, v1 = ((out / name).read_text() for name in ("index.html", "round.html", "supply.html", "v1.html"))
+    sections = re.findall(r'<section id="(\w+)"', index)
+    assert sections == ["bench", "charts", "kings", "queue", "history", "rounds", "heads"]  # each id of before still names its section
+    bench = index[index.index('<section id="bench"'):index.index('<section id="charts"')]
+    assert bench.index('<div class="scroll wait"><table>') < bench.index('<div class="sparks"')  # the table first, the cards under it
+    assert re.findall(r'<section id="(\w+)"', live) == ["round"] and '<body data-page="round">' in live and len(re.findall(r"<dd data-f=", live)) == 8
+    assert re.findall(r'<section id="(\w+)"', supply) == ["supply"] and '<body data-page="supply">' in supply
+    assert "fetch('miner-supply.json?t='" in supply and "miner-supply.json" not in index + live  # only the supply page asks for the counts
+    # an old link to a section that moved leads to its page, before the first data is asked for
+    moved = "{const to={'#round':'round.html','#supply':'supply.html'}[location.hash];if(to)location.replace(to);}"
+    assert moved in index and index.index(moved) < index.index("window.SITE_DATA=fetch(")
+    nav = '<a href="round.html">Round</a><a href="supply.html">Supply</a><a href="v1.html">v1 history</a>'
+    assert all(re.sub(r' aria-current="page"', "", page).count(nav) == 1 for page in (index, live, supply, v1))
+    assert [page.count('aria-current="page"') for page in (index, live, supply, v1)] == [0, 1, 1, 1]
+    style = (out / "site.css").read_text()  # the lines of a table that waits stay in the box of a table
+    assert ".scroll.wait::before{" in style and not re.search(r"(?<![\w.])\.wait::before", style)
 
 
 def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_the_script_fills(tmp_path):
