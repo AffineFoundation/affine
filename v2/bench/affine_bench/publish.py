@@ -90,6 +90,30 @@ def _row_from_disk(r, bid, b, full):
     ) | {k: r[k] for k in DERIVED if r.get(k) is not None}
 
 
+def row_of(r, b):
+    """The table's row of one result file. It raises when the file lacks a field that the table shows."""
+    return _row_from_disk(r, r["benchmark"], b, {})
+
+
+def _disk(by_id):
+    """(the result files of this host that the table can show, the files that it cannot: path -> error). A file that
+    lacks a field is left out: it never stops the table of the other rows (daemon.py names it in the journal)."""
+    good, bad = [], {}
+    for f in sorted(glob.glob(f"{C.STATE}/results/*/*.json")):
+        r = _rj(f)
+        if not isinstance(r, dict) or "model_id" not in r or "benchmark" not in r or r["benchmark"] not in by_id:
+            continue
+        try:
+            row_of(r, by_id[r["benchmark"]]); good.append(r)
+        except Exception as e:
+            bad[f] = f"{type(e).__name__}: {str(e)[:80]}"
+    return good, bad
+
+
+def unreadable():
+    return _disk({b["id"]: b for b in R.benchmarks()})[1]
+
+
 def row_key(r):
     """Identity for merge: same model + benchmark + protocol version is one row."""
     return (r.get("model_id"), r.get("benchmark_id"), r.get("env_version") or "")
@@ -104,14 +128,10 @@ def publish(rows, S, max_fail=3):
     disk_preferred = {}  # (mid, bid) -> highest-protocol raw result (for pooling)
     disk_rows = []
     full = {}
-    for f in glob.glob(f"{C.STATE}/results/*/*.json"):
-        r = _rj(f)
-        if not r or "model_id" not in r or "benchmark" not in r:
-            continue
+    disk, _ = _disk(by_id)
+    for r in disk:
         mid, bid = r["model_id"], r["benchmark"]
-        b = by_id.get(bid)
-        if not b:
-            continue
+        b = by_id[bid]
         full[bid] = max(full.get(bid, 0), r.get("tasks_total") or r["tasks"])
         row = _row_from_disk(r, bid, b, full)
         disk_rows.append(row)
@@ -128,14 +148,8 @@ def publish(rows, S, max_fail=3):
 
     # Rebuild disk_rows with correct expected() now that full is complete
     disk_rows = []
-    for r in glob.glob(f"{C.STATE}/results/*/*.json"):
-        raw = _rj(r)
-        if not raw or "model_id" not in raw:
-            continue
-        b = by_id.get(raw["benchmark"])
-        if not b:
-            continue
-        disk_rows.append(_row_from_disk(raw, raw["benchmark"], b, full))
+    for raw in disk:
+        disk_rows.append(_row_from_disk(raw, raw["benchmark"], by_id[raw["benchmark"]], full))
 
     # --- previously published rows (merge source of truth for history) ---
     prev = _rj(OUT) or {}
@@ -163,7 +177,10 @@ def publish(rows, S, max_fail=3):
         if not b.get("pooled_from"):
             continue
         for m in rows:
-            p = pooled(m["model_id"], b, disk_preferred, full)
+            try:
+                p = pooled(m["model_id"], b, disk_preferred, full)
+            except Exception:  # a per-problem file of one row that cannot be read: no pooled value for that row
+                p = None
             if p:
                 recs.append(dict(model_id=m["model_id"], model_kind=kinds.get(m["model_id"]), benchmark_id=b["id"], suite=b["suite"], rollouts=16, **p))
 
@@ -259,6 +276,9 @@ def publish(rows, S, max_fail=3):
               "its status is queued, and waiting when that lasts more than an hour. "
               "A row with waiting_for=source has no readable source of weights yet; nothing is rented for it. "
               "A row with stopped (failed, held, rent_failed, expired) is not tried again until the operator says so. "
+              "models[].pod.state release-refused says that the row's node could not be given back yet and still costs money (since: the first refusal). "
+              "alarms lists what the operator must look at: release-refused (a node that was not given back after several tries), "
+              "kept-pod-without-row and pod-without-row (a rented node that no row runs on and that no row gives back). "
               "While a row is evaluating, its progress.checked_at is the time of the service's last look at its node, renewed "
               "about each 5 minutes, with the count of finished rollouts (output_lines) and of finished benchmarks; "
               "the top-level progress has the same fields for the newest row in work, and progress.evaluating_all names every row in work. "
@@ -287,6 +307,7 @@ def publish(rows, S, max_fail=3):
         results=recs,
         results_prior=results_prior,
         node=_node(S),
+        alarms=S.get("alarms") or [],
         progress=dict(models_total=sum(m["status"] == "scored" for m in models) + left,
                       models_scored=sum(m["status"] == "scored" for m in models), queued=left,
                       evaluating=run and run["model"]["model_id"], evaluating_all=order,

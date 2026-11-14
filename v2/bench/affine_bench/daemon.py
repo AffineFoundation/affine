@@ -21,9 +21,11 @@ At most P.MAX_PODS rows are in work at a time; the next row starts when one of t
 Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
 
 The first row: the row that ran on the one pod of the single-node service (before 2026-11-14) keeps that pod, its
-record (BENCH_STATE/pod.json) and its ssh wrapper (BENCH_NODE_SSH). No new commit is put on that pod and the run on it
-is not started again: it goes on with the settings of that pod's checkout (FIRST_ROW_PROFILE), and each of its
-results says so. A result that it makes with more samples a problem than the settings now ask for is brought to
+record (BENCH_STATE/pod.json) and its ssh wrapper (BENCH_NODE_SSH). No new commit is put on that pod, and no run is
+ever started or killed on it by this code: the run goes on with the settings of that pod's checkout
+(FIRST_ROW_PROFILE), and each of its results says so. When that run is over, dead or without progress and a result is
+missing, the row is `held`: what the node has is brought to the host, the pod goes back, and a new run is the
+operator's word (`retry`). A result that it makes with more samples a problem than the settings now ask for is brought to
 the settings' count by the fixed rule of derive.py.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
@@ -45,6 +47,9 @@ WAIT_LATE_S = 3600  # weight files still not in the store this long after the he
 BEAT_S = 300  # while a row runs, the table gets the time and the counts of the worker's look at the node this often
 CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the store before its pod is given back
 RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again this often
+ALARM_TRIES = 3  # a release that was refused this many times is an alarm in the table
+LIUM_CHECK_S = 600  # the service reads Lium's listing this often for the alarms of the table (reads only)
+KEEP_TRIES = 3  # the output of a first row's run that is not whole is asked from the node this many times before its pod goes back
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
 FIRST_ROW_PROFILE = "qwen3.5-family"  # the node of the single-node service has a checkout of before `king_profile` changed: its run is with this profile
 
@@ -57,7 +62,7 @@ def rj(p, d=None):
 def wj(p, o, mode=0o644):
     t = p + ".tmp"; json.dump(o, open(t, "w"), indent=1); os.chmod(t, mode); os.replace(t, p)
 def log(**k):
-    k["at_cr"] = cr(now()); print(json.dumps(k), flush=True)
+    k["at_cr"] = cr(now()); print(P.mask(json.dumps(k)), flush=True)  # the journal gets no address, whatever text an error carries
 
 
 S = rj(SF, {}) or {}  # the state of the service. `running`, `fail` and `history` in it are of the single-node service
@@ -175,8 +180,15 @@ class Row:
     def save(self): wj(self.sf, self.S)
     def log(self, **k): log(row=self.mid, **k)
 
+    def tried(self, what, f, *a):
+        """Call f; a fault of the node or of a file is one log line and None. For the steps that must not stop what comes after them."""
+        try:
+            return f(*a)
+        except Exception as e:
+            self.log(event="error", during=what, error=type(e).__name__ + ": " + P.mask(str(e))[-200:])
+
     def tell(self, state):
-        """The row's state for the table: renting, setup, running, released, rent-failed."""
+        """The row's state for the table: renting, setup, running, released, rent-failed, held, release-refused."""
         if (self.S.get("phase") or {}).get("state") != state:
             self.S["phase"] = dict(state=state, since=now()); self.save()
 
@@ -219,8 +231,8 @@ class Row:
     def abort(self, run):
         """Exact PIDs only: the node-run process group (setsid) -> its vf-eval children. The model server is left up."""
         pid = run.get("pid")
-        if pid and pid.isdigit():
-            self.node.run(f"C=$(pgrep -P {pid}); kill -TERM {pid} $C 2>/dev/null; sleep 15; kill -KILL {pid} $C 2>/dev/null; true", timeout=60)
+        if pid and str(pid).isdigit():
+            self.tried("abort", self.node.run, f"C=$(pgrep -P {pid}); kill -TERM {pid} $C 2>/dev/null; sleep 15; kill -KILL {pid} $C 2>/dev/null; true", None, 60)
         self.log(event="aborted", pid=pid)
 
     def collect(self, run, whole=True):
@@ -234,21 +246,27 @@ class Row:
             pt = self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/{bid}/per_task.jsonl 2>/dev/null", timeout=120)
             if not pt.strip():
                 self.log(event="collect-incomplete", bench=bid, why="the per-problem lines could not be read"); continue
-            r = json.loads(s)
-            r.update(model_id=m["model_id"], model_kind=m["kind"], node=dict(pod=rec.get("name"), lium_id=rec.get("id"), gpu=rec.get("gpu")),
-                     collected_at=now(), serve_s=None)
-            os.makedirs(f"{PRIV}/{rk}", exist_ok=True)
-            with open(f"{PRIV}/{rk}/{bid}.per_task.jsonl", "w") as f: f.write(pt)
-            os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
-            b = R.benchmark(bid); want = R.bench_version(b)
-            if r.get("bench_version") != want and int(r.get("rollouts") or 0) > int(b["rollouts"]):
-                # a run with more samples a problem than the settings ask for now (the first row): its value at the settings' count
-                wj(f"{PRIV}/{rk}/{bid}.full.json", r, 0o600)
-                r, why = derive.from_full(r, pt, int(b["rollouts"]), want, b.get("problems"))
-                if r is None:
-                    no_value[bid] = why; self.log(event="no-value", bench=bid, why=why); continue
-                self.log(event="derived", bench=bid, rule=derive.RULE, score=round(r["score"], 4), score_full=r["score_full"], samples_full=r["samples_full"])
+            try:  # a result file that is cut, or that lacks a field, is not stored: it never stops the other results or the table
+                r = json.loads(s)
+                r.update(model_id=m["model_id"], model_kind=m["kind"], node=dict(pod=rec.get("name"), lium_id=rec.get("id"), gpu=rec.get("gpu")),
+                         collected_at=now(), serve_s=None)
+                os.makedirs(f"{PRIV}/{rk}", exist_ok=True)
+                with open(f"{PRIV}/{rk}/{bid}.per_task.jsonl", "w") as f: f.write(pt)
+                os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
+                b = R.benchmark(bid); want = R.bench_version(b)
+                if r.get("bench_version") != want and int(r.get("rollouts") or 0) > int(b["rollouts"]):
+                    # a run with more samples a problem than the settings ask for now (the first row): its value at the settings' count
+                    wj(f"{PRIV}/{rk}/{bid}.full.json", r, 0o600)
+                    r, why = derive.from_full(r, pt, int(b["rollouts"]), want, b.get("problems"))
+                    if r is None:
+                        no_value[bid] = why; self.log(event="no-value", bench=bid, why=why); continue
+                    self.log(event="derived", bench=bid, rule=derive.RULE, score=round(r["score"], 4), score_full=r["score_full"], samples_full=r["samples_full"])
+                publish.row_of(r, b)  # raises when the table could not show this result
+            except Exception as e:
+                self.log(event="collect-incomplete", bench=bid, why=f"the result of the node cannot be read ({type(e).__name__}: {str(e)[:80]})"); continue
             os.makedirs(f"{RES}/{m['model_id']}", exist_ok=True); wj(result_path(m["model_id"], bid), r)
+            if r.get("bench_version") != want:  # the node's checkout is of another benchmark version: kept, and not what this row misses
+                self.log(event="version-differs", bench=bid, got=r.get("bench_version"), want=want); continue
             got[bid] = round(r["score"], 4) if r.get("score") is not None else None
         done = self.node_done(rk)
         self.S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
@@ -293,14 +311,17 @@ class Row:
         """True when the row's pod is set up. A rent blocks this worker for some minutes, and this worker only."""
         if self.rec and (self.rec.get("bootstrapped") or self.first):
             return True
-        if self.first:  # the single-node service's pod is not there any more
-            self.not_first(); return False
+        if self.first:  # the record of the single-node service's pod cannot be read: no rent beside that pod, the operator decides
+            self.S["held"] = dict(at=now(), why="the record of the pod of the single-node service cannot be read: no rent, and no run")
+            self.log(event="first-row-held", why=self.S["held"]["why"]); self.tell("held"); self.save(); return False
         self.tell("renting")
         rec = self.pod.rent(self.S, self.log, self.tell); self.save()
         if rec:
             self.rec = rec
         elif self.S.get("rent_failed"):
             self.tell("rent-failed")
+        elif self.S.get("held"):
+            self.tell("held")
         else:
             self.rec = self.pod.load()
         return bool(rec)
@@ -333,11 +354,33 @@ class Row:
                 S["release_waits"] = now(); self.log(event="release-waits", why="the table in the store does not have these results yet", benchmarks=left)
             self.save(); return False
         why = "row done" if whole and not stopped(self.mid, S) else stopped(self.mid, S)
-        if self.pod.release(self.log, why=why, row_done=whole and not left):
+        if self.first and S.get("held") and not self.keep_output(missing(m, bs)):
+            S["release_tried"] = now(); self.save(); return False
+        said = []
+        if self.pod.release(lambda **k: (said.append(k), self.log(**k)), why=why, row_done=whole and not left):
             self.rec = {}; self.not_first()
-            for k in ("idle_since", "release_waits", "release_tried", "node_down"): S.pop(k, None)
+            for k in ("idle_since", "release_waits", "release_tried", "release_refused", "node_down"): S.pop(k, None)
             self.tell("released"); self.save(); return True
-        S["release_tried"] = now(); self.save(); return False
+        # the pod is still the row's, and it costs money: the table says so (state release-refused, and an alarm after ALARM_TRIES)
+        r = S.setdefault("release_refused", dict(since=now(), tries=0)); r["tries"] += 1
+        r["why"] = str((said[-1].get("why") or said[-1].get("err") or said[-1].get("event")) if said else "")[:200]
+        if r["tries"] >= ALARM_TRIES:
+            self.log(event="alarm", what="release-refused", tries=r["tries"], since_cr=cr(r["since"]), why=r["why"])
+        S["release_tried"] = now(); self.tell("release-refused"); self.save(); return False
+
+    def keep_output(self, bids):
+        """Before the pod of the single-node service goes back with a run that is not whole: what the node has of the
+        benchmarks without a result (the samples that the run made) comes to a private file on this host. True: it is
+        there, or it was asked KEEP_TRIES times (a node that does not answer keeps no pod for ever)."""
+        k = self.S.setdefault("kept", dict(tries=0))
+        if k.get("done") or k["tries"] >= KEEP_TRIES or not bids:
+            return True
+        k["tries"] += 1; os.makedirs(f"{PRIV}/{self.mid}", exist_ok=True); path = f"{PRIV}/{self.mid}/node-output.tar.gz"
+        dirs = " ".join(shlex.quote(b) for b in bids)
+        k["done"] = bool(self.tried("keep-output", self.node.save, f"cd {C.NODE_ROOT}/runs/{self.mid} && D=$(ls -d {dirs} 2>/dev/null); "
+                                    f"tar -czf - ${{D:--T /dev/null}}", path, 900))
+        self.log(event="output-kept" if k["done"] else "output-not-kept", benchmarks=bids, tries=k["tries"], of=KEEP_TRIES, file=path if k["done"] else None)
+        self.save(); return k["done"] or k["tries"] >= KEEP_TRIES
 
     # ---- one poll
     def step(self, m, bs):
@@ -350,10 +393,11 @@ class Row:
             S.pop("node_down", None); self.save()
         age = now() - (self.rec.get("rented_at") or now())
         if self.rec and not self.first and not S.get("expired") and age > P.POD_MAX_HOURS * 3600:
+            # written first: whatever the node does now (an ssh that hangs, a result file that is cut), the pod goes back
+            S["expired"] = dict(at=now(), hours=round(age / 3600, 2)); self.save()
             self.log(event="pod-expired", pod=self.rec.get("huid"), hours=round(age / 3600, 2), cap_hours=P.POD_MAX_HOURS)
             if run:
-                self.abort(run); self.collect(run, whole=False); S["running"] = run = None
-            S["expired"] = dict(at=now(), hours=round(age / 3600, 2)); self.save()
+                self.tried("abort", self.abort, run); self.tried("collect", self.collect, run, False); S["running"] = run = None; self.save()
         if run:
             st = self.node_status(run["run_key"])
             if st is None:
@@ -365,21 +409,33 @@ class Row:
                 run["progress"] = lines; run["last_progress"] = now(); self.save()
             if now() - run.get("beat", {}).get("at", 0) >= BEAT_S:  # the table says that the worker looks, and what it sees
                 run["beat"] = dict(at=now(), lines=lines, grew=run["last_progress"], finished=int(st.get("finished") or 0)); self.save()
+            dead, stalled_ = st.get("alive") != "1", now() - run["last_progress"] > STALL_S
             if st.get("done") == "1":
                 self.collect(run); S["running"] = None; self.save()
-            elif st.get("alive") != "1":
+            elif (dead or stalled_) and self.first:  # never a kill on that pod: what is finished comes to the host, then the row is held
+                self.log(event="run-died" if dead else "stalled", first_row=True); self.tried("collect", self.collect, run, False)
+                S["running"] = None; self.save()
+            elif dead:
                 S["fails"] += 1; self.log(event="run-died", fails=S["fails"]); S["running"] = None; self.save()
-            elif now() - run["last_progress"] > STALL_S:
+            elif stalled_:
                 S["fails"] += 1; self.log(event="stalled"); self.abort(run); S["running"] = None; self.save()
         if S.get("running"):
             return False
         bids = missing(m, bs)
+        if bids and self.first and not stopped(self.mid, S):  # never a second run on the pod of the single-node service
+            S["held"] = dict(at=now(), why="the run on the pod of the single-node service is over and gave no result for " + ", ".join(bids)
+                                           + ": no run is started on that pod")
+            self.log(event="first-row-held", benchmarks=bids, why=S["held"]["why"]); self.tell("held"); self.save()
         if not bids or stopped(self.mid, S):
             return self.give_back(m, bs)
         if not self.pod_ready():
-            return bool(S.get("rent_failed"))
+            return bool(stopped(self.mid, S))
         self.tell("setup")
-        if not self.ensure_weights(m):
+        try:  # a fetch that passes its hour, or an ssh that breaks, is a failed try as any other: after MAX_FAIL the pod goes back
+            ok = self.ensure_weights(m)
+        except Exception as e:
+            ok = False; self.log(event="fetch", status="raised", error=type(e).__name__)
+        if not ok:
             S["fails"] += 1; self.log(event="weights-failed", fails=S["fails"]); self.save(); return False
         self.launch(m, bids); return False
 
@@ -415,6 +471,7 @@ def row_main(mid):
 
 # ------------------------------------------------------------------------------------------------ the service
 KIDS = {}  # model_id -> the worker process that this service started
+TOLD = set()  # the result files that this process has named as unreadable in the journal
 
 
 def start_worker(mid):
@@ -461,19 +518,45 @@ def plan(rows, wait):
 def view(rows, wait):
     """What the table says of the rows in work: read from the state files of the workers."""
     v = dict(waiting=wait, queue=S.get("queue") or [], runs=[], fail={}, stopped={}, pods={}, history=list(S["history"]), max_pods=P.MAX_PODS,
-             profiles={mid: FIRST_ROW_PROFILE for mid in row_ids() if is_first(mid)})
+             profiles={mid: FIRST_ROW_PROFILE for mid in row_ids() if is_first(mid)}, alarms=list(S.get("alarms") or []))
     for mid in row_ids():
         s = row_state(mid); rec = pod_of(mid).load(); ph = s.get("phase") or {}
         if s.get("running"): v["runs"].append(s["running"])
         if is_first(mid): v["node_down"] = s.get("node_down")
         v["fail"][mid] = s.get("fails", 0); v["history"] += s.get("history") or []
         if stopped(mid): v["stopped"][mid] = stopped(mid)
+        if rec and (s.get("release_refused") or {}).get("tries", 0) >= ALARM_TRIES:
+            v["alarms"].append(dict(what="release-refused", row=mid, since=s["release_refused"]["since"], tries=s["release_refused"]["tries"]))
         if rec or ph:
             last = (rj(pod_of(mid).record) or {}).get("last") or {}
             v["pods"][mid] = dict(name=(rec or last).get("huid"), gpu=(rec or last).get("gpu"), usd_h=(rec or last).get("cost"),
                                   state=ph.get("state"), since=ph.get("since"))
     v["history"].sort(key=lambda h: h.get("finished") or 0)
     return v
+
+
+def lium_check():
+    """Each LIUM_CHECK_S, from one listing of Lium (a read): the alarms that a person must see in the table.
+    `kept-pod-without-row`: a pod of P.HELD_FOR_ROW is at Lium and its row does not run on it (nobody gives it back).
+    `pod-without-row`: a pod with a bench name that no row's record names (it costs money and no row gives it back).
+    A listing that fails leaves the alarms as they were. Nothing is deleted here."""
+    if now() - S.get("lium_checked", 0) < LIUM_CHECK_S:
+        return
+    S["lium_checked"] = now(); pods = P.listed()
+    if pods is not None:
+        mine = {r["id"] for r in (pod_of(mid).load() for mid in row_ids()) if r}
+        coming = {P.name_of(mid) for mid in row_ids() if (row_state(mid).get("phase") or {}).get("state") in ("renting", "setup")}
+        out = []
+        for p in sorted(pods, key=lambda p: str(p.get("name"))):
+            pid, name = str(p.get("id") or ""), str(p.get("name") or "")
+            row = next((r for x, r in P.HELD_FOR_ROW.items() if pid.startswith(x)), None)
+            if row and not (is_first(row) and pid in mine):
+                out.append(dict(what="kept-pod-without-row", row=row, pod=name))
+            elif not row and name.startswith(P.PREFIX) and pid not in mine and name not in coming:
+                out.append(dict(what="pod-without-row", pod=name))
+        for a in out: log(event="alarm", **a)
+        S["alarms"] = out
+    save()
 
 
 SYNCED = {}  # set once this process has read the published table
@@ -489,6 +572,8 @@ def publish_table(rows, wait=None):
     """Rebuild the local table. When a row or a result changed, write it to the store too: the published table is the base
     of that merge, so a published result is never dropped. A failed upload is tried again next step."""
     v = view(rows, S.get("waiting") or {} if wait is None else wait)
+    for f, e in publish.unreadable().items():
+        if f not in TOLD: TOLD.add(f); log(event="result-unreadable", file=f, error=e)
     publish.publish(rows, v)
     if publish.signature() != S.get("uploaded"):
         if source.sync_table(publish.OUT): publish.publish(rows, v)
@@ -504,6 +589,7 @@ def step():
     for mid in work:
         start_worker(mid)
     S["queue"] = [m["model_id"] for m in queue(rows, wait) if m["model_id"] not in work]
+    lium_check()
     publish_table(rows, wait)
     return work
 
@@ -548,7 +634,8 @@ def pods_check():
             continue
         ids.add(pid); mid = by_id.get(pid); rec = recs.get(mid) or {}
         state = (row_state(mid).get("phase") or {}).get("state") or "-" if mid else "-"
-        row = mid or "NO ROW CLAIMS THIS POD"
+        kept = next((r for x, r in P.HELD_FOR_ROW.items() if pid.startswith(x)), None)
+        row = mid or "NO ROW CLAIMS THIS POD" + (f" (IT IS KEPT FOR ROW {kept})" if kept else "")
         if mid and name != pod_of(mid).name:
             row += " (THE NAME IS NOT THE ROW'S)"
         age = "%.1f" % ((now() - rec["rented_at"]) / 3600) if rec.get("rented_at") else "?"
@@ -566,7 +653,8 @@ def cli(cmd, argv):
     if cmd == "status":
         rows = model_rows(); wait = waiting(rows); q = queue(rows, wait)
         work = {mid: dict(state=(row_state(mid).get("phase") or {}).get("state"), stopped=stopped(mid), fails=row_state(mid).get("fails", 0),
-                          running=bool(row_state(mid).get("running")), pod=(pod_of(mid).load() or {}).get("huid")) for mid in row_ids()}
+                          running=bool(row_state(mid).get("running")), pod=(pod_of(mid).load() or {}).get("huid"))
+                     | {k: row_state(mid)[k] for k in ("held", "release_refused") if row_state(mid).get(k)} for mid in row_ids()}
         print(json.dumps(dict(rows=work, queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], waiting=wait), indent=1)); return
     if cmd == "offers":  # reads only: what a rent could take now
         offs, seen = P.offers(); kinds = {}

@@ -14,8 +14,12 @@ Guard rails (owner's spending rules):
   - a pod lives POD_MAX_HOURS at most (daemon.py).
   - Pod.release() is the only place that sends a delete to Lium. It sends it for the exact Lium id in the row's record,
     only while Lium lists that id under the row's exact name, and never for a protected pod (PROTECTED_IDS,
-    PROTECTED_NAMES, HELD_FOR_ROW). No delete is ever made from a name, a prefix or a listing."""
-import fcntl, glob, json, os, subprocess, time
+    PROTECTED_NAMES, HELD_FOR_ROW). No delete is ever made from a name, a prefix or a listing.
+  - a listing that does not have a pod is no proof that the pod is gone (a listing can be empty for a moment). A record
+    is dropped, or says `released`, only after a delete that Lium took, or when Lium says of that exact id that it was
+    deleted (state()). Until then the record stays and the row asks again.
+  - the row of HELD_FOR_ROW rents nothing while its pod is at Lium or in the record of the single-node service."""
+import fcntl, glob, json, os, re, subprocess, time
 from . import config as C
 
 LIUM = C.LIUM; MAX_PRICE = C.MAX_PRICE
@@ -49,17 +53,27 @@ def lium(*args, timeout=120):
 
 
 def listed():
-    """Account pods from `lium ps` (None if Lium could not be asked)."""
+    """Account pods from `lium ps` (None if Lium could not be asked, or if its answer is not a list of pods)."""
     try:
         p = lium("ps", "--format", "json", timeout=60)
         d = json.loads(p.stdout)
-        return d if isinstance(d, list) else None
+        return d if p.returncode == 0 and isinstance(d, list) and all(isinstance(x, dict) for x in d) else None
     except Exception:
         return None
 
 
+def mask(text):
+    """A text of ssh or of Lium for the journal: no address in it."""
+    return re.sub(r"\b\d{1,3}(\.\d{1,3}){3}\b", "ADDRESS", text or "")
+
+
+GONE_WORDS = ("DELETED", "REMOVED", "TERMINATED")  # the last status of a pod that Lium has deleted, in the line of its last event
+
+
 def state(pod_id):
-    """'gone' if Lium says the pod no longer exists, 'listed' if it does, None if unknown."""
+    """'gone' only on Lium's own word for this exact id: `lium describe <id>` says that the pod is no longer listed AND
+    its events say that it was deleted. 'listed' if Lium describes a pod that is there, None if unknown. A pod that a
+    listing lacks for a moment has no such event, so it is never 'gone'."""
     if not pod_id:
         return None
     try:
@@ -67,8 +81,8 @@ def state(pod_id):
     except Exception:
         return None
     o = p.stdout + p.stderr
-    if "no longer listed" in o or "DELETED" in o:
-        return "gone"
+    if "no longer listed" in o:
+        return "gone" if any(w in o for w in GONE_WORDS) else None
     return "listed" if p.returncode == 0 else None
 
 
@@ -96,15 +110,23 @@ def offers():
     return out, seen[:20]
 
 
-def rents(add=False):
-    """The times at which a pod was made in the last 24 h, over all rows; `add` writes one more."""
+def rents(add=False, cap=None, drop=None):
+    """The times at which a pod was made in the last 24 h, over all rows. `add` writes one more and returns its time;
+    with `cap` it writes only while fewer than `cap` are there (None: the day is full), in one step under the lock, so
+    that rows that rent at the same moment cannot pass the cap together. `drop` takes a time back: no pod was made."""
     os.makedirs(C.ROWS, exist_ok=True)
     with open(C.ROWS + "/.rents.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         p = C.ROWS + "/rents.json"; ts = [t for t in (_rj(p) or []) if time.time() - t < 86400]
-        if add:
-            ts.append(time.time()); json.dump(ts, open(p + ".tmp", "w")); os.replace(p + ".tmp", p)
-        return ts
+        if not add and drop is None:
+            return ts
+        if add and cap is not None and len(ts) >= cap:
+            return None
+        t = time.time()
+        while t in ts: t += 1e-6
+        ts = ts + [t] if add else [x for x in ts if x != drop]
+        json.dump(ts, open(p + ".tmp", "w")); os.replace(p + ".tmp", p)
+        return t
 
 
 def protected(pod_id, *names):
@@ -114,13 +136,16 @@ def protected(pod_id, *names):
 
 def up(offer, name, ssh):
     """Make the pod on one offer (deploy/rent.sh: `lium up` and the ssh script). Returns (the pod as Lium gave it or None, the error text)."""
-    p = subprocess.run(["bash", RENT, "%s %s %s %s" % (offer["huid"], offer["gpus"], offer["kind"], offer["price"])], capture_output=True, text=True,
-                       timeout=1500, env=dict(os.environ, MAX_PRICE=str(MAX_PRICE), NAME=name, LIUM=LIUM, NODE_SSH=ssh))
+    try:
+        p = subprocess.run(["bash", RENT, "%s %s %s %s" % (offer["huid"], offer["gpus"], offer["kind"], offer["price"])], capture_output=True, text=True,
+                           timeout=1500, env=dict(os.environ, MAX_PRICE=str(MAX_PRICE), NAME=name, LIUM=LIUM, NODE_SSH=ssh))
+    except subprocess.TimeoutExpired:
+        return None, "`lium up` gave no answer in 25 minutes"  # the pod may be there: rent() looks for it under the row's name
     try:
         info = json.loads((p.stdout.strip().splitlines() or [""])[-1])
     except Exception:
         info = None
-    return (info, "") if isinstance(info, dict) and info.get("id") else (None, f"rc {p.returncode}: " + (p.stderr or p.stdout)[-300:])
+    return (info, "") if isinstance(info, dict) and info.get("id") else (None, f"rc {p.returncode}: " + mask(p.stderr or p.stdout)[-300:])
 
 
 def setup(ssh):
@@ -128,13 +153,20 @@ def setup(ssh):
     b = subprocess.run([ssh, f"mkdir -p {C.NODE_ROOT}/logs && cd {C.NODE_ROOT} && (test -d repo || git clone -q {C.REPO_URL} repo) && git -C repo checkout -q --detach {C.REPO_REF} "
                         f"&& bash {C.NODE_REPO}/bench/deploy/bootstrap.sh > {C.NODE_ROOT}/logs/bootstrap.log 2>&1; tail -1 {C.NODE_ROOT}/logs/bootstrap.log"],
                        capture_output=True, text=True, timeout=2400)
-    return "BOOTSTRAP_OK" in b.stdout, (b.stdout + b.stderr)[-300:]
+    return "BOOTSTRAP_OK" in b.stdout, mask(b.stdout + b.stderr)[-300:]
 
 
 def name_of(row):
     """The pod name of a row: the first NAME_MAX characters of `affine-v2-bench-<model_id>`. For a king that is
     `affine-v2-bench-king-` and the first 8 hex digits of its base hash, the 8 that the table's label shows."""
     return (PREFIX + row)[:NAME_MAX]
+
+
+def held_pod(row, pods):
+    """The id prefix of the pod that is kept for this row (HELD_FOR_ROW) while that pod is at Lium or in the record of
+    the single-node service; else None. A listing without the pod does not clear it while that record names the pod."""
+    rec = str((_rj(C.STATE + "/pod.json") or {}).get("id") or "")
+    return next((x for x, r in HELD_FOR_ROW.items() if r == row and (rec.startswith(x) or any(str(p.get("id") or "").startswith(x) for p in pods))), None)
 
 
 def claimed(pod_id):
@@ -187,7 +219,7 @@ class Pod:
             f.write(f"#!/bin/bash\n# bench pod {p.get('name')} ({p.get('huid')}, lium {p.get('id')}, {p.get('config')})\n"
                     f"exec ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=60 -o ServerAliveInterval=30 "
                     f"-o UserKnownHostsFile=$HOME/.lium/known_hosts/{p.get('id')} -p {port} root@{ip} \"$@\"\n")
-        os.chmod(self.ssh, 0o755)
+        os.chmod(self.ssh, 0o700)  # it holds the address of the pod
         return True
 
     def _failed(self, S, log, why, **more):
@@ -206,6 +238,10 @@ class Pod:
         pods = listed()
         if pods is None:
             log(event="rent-deferred", why="lium ps failed"); return None
+        kept = held_pod(self.row, pods)
+        if kept:  # never a rent for the row whose pod is still there: the operator decides
+            S["held"] = dict(at=time.time(), why=f"pod {kept} is kept for this row and is still at Lium or in the record of the single-node service: no rent")
+            log(event="rent-refused", why=S["held"]["why"]); return None
         mine = [p for p in pods if p.get("name") == self.name]
         rec = self.load()
         if len(mine) > 1:  # never one more, and no guess which of them is the row's
@@ -225,29 +261,33 @@ class Pod:
                 self.release(log, why="taken by name, and Lium lists no address for it")
                 self._failed(S, log, "a pod under the row's name had no address"); return None
         else:
-            if rec:  # the record names a pod that Lium no longer lists under the row's name
-                log(event="pod-record-dropped", lium_id=rec.get("id")); self.save(dict(gone=time.time(), last=rec))
-            n = len(rents())
-            if n >= MAX_RENTS_PER_DAY:
-                log(event="rent-refused", why=f"{n} pods were made in 24 h over all rows (cap {MAX_RENTS_PER_DAY})"); S["no_offer_at"] = time.time(); return None
+            if rec:  # the record names a pod that this listing does not have under the row's name
+                if state(rec.get("id")) != "gone":  # no proof that it is gone: never a second pod beside it
+                    self._failed(S, log, "Lium's listing does not have the pod of this row's record, and Lium did not say that it was deleted"); return None
+                log(event="pod-record-dropped", lium_id=rec.get("id"), why="Lium says that the pod was deleted"); self.save(dict(gone=time.time(), last=rec))
+            # The day's count is taken before the rent, in one step with its check; it is given back when no pod was made
+            # (2026-11-03: four "no offer" failures in two minutes filled the cap and blocked the bench for 7 h).
+            slot = rents(add=True, cap=MAX_RENTS_PER_DAY)
+            if slot is None:
+                log(event="rent-refused", why=f"{len(rents())} pods were made in 24 h over all rows (cap {MAX_RENTS_PER_DAY})"); S["no_offer_at"] = time.time(); return None
             offs, seen = offers(); pick = self.choose(offs)
             if not pick:
-                log(event="rent-no-offer", max_usd_h=MAX_PRICE, gpu_pref=GPU_PREF, fit=len(offs), seen=seen)
+                rents(drop=slot); log(event="rent-no-offer", max_usd_h=MAX_PRICE, gpu_pref=GPU_PREF, fit=len(offs), seen=seen)
                 S["no_offer_at"] = time.time(); return None
             info, err = up(pick, self.name, self.ssh)
             if not info:
                 # `lium up` may still have made the pod (a lost answer). The row writes down the one pod that Lium now lists
                 # under its exact name, so that the next try sets it up, or the row gives it back by that id.
-                made = [q for q in (listed() or []) if q.get("name") == self.name]
+                after = listed(); made = [q for q in (after or []) if q.get("name") == self.name]
                 if len(made) == 1:
-                    q = made[0]; rents(add=True)
+                    q = made[0]
                     self.save(dict(name=q.get("name"), id=q.get("id"), huid=q.get("huid"), gpu=(q.get("config") or "").replace("×", "x"),
                                    cost=q.get("price_per_hour"), rented_at=time.time(), bootstrapped=False, taken_by_name=True))
                     log(event="pod-taken-by-name", pod=q.get("huid"), lium_id=q.get("id"), usd_h=q.get("price_per_hour"))
+                elif after is not None and not made:
+                    rents(drop=slot)  # Lium answered and has no pod of this name: none was made
                 self._failed(S, log, err, pod_made=len(made)); return None
-            # Only a pod that was actually made counts toward MAX_RENTS_PER_DAY (2026-11-03: four "no offer" failures in two
-            # minutes filled the cap and blocked the bench for 7 h).
-            S.pop("no_offer_at", None); rents(add=True)
+            S.pop("no_offer_at", None)
             rec = dict(name=info.get("name"), id=info.get("id"), huid=info.get("huid"), gpu=(info.get("config") or "").replace("×", "x"),
                        cost=info.get("price_per_hour"), rented_at=time.time(), bootstrapped=False)
             self.save(rec); log(event="rented", pod=rec["huid"], lium_id=rec["id"], gpu=rec["gpu"], usd_h=rec["cost"])
@@ -286,7 +326,9 @@ class Pod:
         if hit:
             r = lium("rm", pid, "--name-only", "-y", timeout=180)
             if r.returncode != 0:
-                log(event="release-failed", pod=rec.get("huid"), err=(r.stderr or r.stdout)[-200:]); return False
+                log(event="release-failed", pod=rec.get("huid"), err=mask(r.stderr or r.stdout)[-200:]); return False
+        elif state(pid) != "gone":  # a listing without the pod is no proof: the record stays, and the release is tried again
+            log(event="release-deferred", why=f"Lium's listing does not have pod {str(pid)[:8]}, and Lium did not say that it was deleted"); return False
         self.save(dict(released=time.time(), why=why, last=rec))
         log(event="released", pod=rec.get("huid"), lium_id=pid, why=why,
             hours=round((time.time() - (rec.get("rented_at") or time.time())) / 3600, 2)); return True
