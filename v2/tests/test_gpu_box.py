@@ -17,6 +17,7 @@ from sn120_v2 import layout
 from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError
 from sn120_v2.gpu import batch, plan, procs
+from sn120_v2.gpu import evaluator as evaluator_module
 from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, read_reply, server_argv, server_env
 from sn120_v2.gpu import resident as resident_module
 from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
@@ -504,6 +505,52 @@ def test_a_chunk_that_the_round_time_limit_cut_is_not_scored(box):
     late = box.build.replace(eval_request(box), deadline=int(time.time()) - 1)
     with pytest.raises(InfraError, match="time limit"):  # never a row of E: a cut rollout is not an error of its model
         evaluator(box, Farm(lambda model, task: ("P", "stop"))).evaluate(late)
+
+
+def test_a_cut_chunk_logs_its_speeds_as_its_own_phase(box, monkeypatch):
+    now, done, lock, early = [time.time()], threading.Event(), threading.Lock(), []
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    request = box.build.replace(eval_request(box), deadline=int(now[0]) + 50)
+
+    def script(model, task):
+        if task == "t0":  # these replies end before the limit
+            with lock:
+                early.append(model)
+                if len(early) == 3:
+                    done.set()
+            return ("P", "stop")
+        assert done.wait(10)
+        now[0] = request.deadline + 1  # the limit passes while this reply is written: its request times out
+        return TimeoutError()
+
+    farm = Farm(script)
+    http = farm.http
+    farm.http = lambda url, body, timeout_s: {**http(url, body, timeout_s), "usage": {"completion_tokens": 7}}
+    with pytest.raises(InfraError, match="time limit"):
+        evaluator(box, farm).evaluate(request)
+    lines = [json.loads(line) for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()]
+    assert [line["phase"] for line in lines] == ["eval_cut"], "a cut chunk is never an `eval` line: it gives no score"
+    cut = lines[0]
+    assert (cut["round_id"], cut["look"], cut["models"], cut["tasks"], cut["rollouts"], cut["finished"], cut["n_gpus"]) == ("r000001", 0, 3, 3, 9, 3, 2)
+    assert (cut["output_tokens"], cut["most_output_tokens"], cut["longest_rollout_tokens"]) == (21, 7, 7) and cut["reply_cap"] == request.params.max_output_tokens
+    assert cut["wall_s"] >= cut["generate_s"] >= cut["longest_rollout_s"] > 0 and cut["serve_s"] >= 0
+
+
+def test_a_cut_chunk_ends_the_same_way_when_its_log_line_cannot_be_written(box, monkeypatch):
+    now = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    request = box.build.replace(eval_request(box), deadline=int(now[0]) + 50)
+
+    def script(model, task):
+        now[0] = request.deadline + 1
+        return TimeoutError()
+
+    def full_disk(work_dir, phase, **facts):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(evaluator_module, "log_phase", full_disk)
+    with pytest.raises(InfraError, match="time limit"):  # the error that the round expects at the stop, not the error of the log
+        evaluator(box, Farm(script)).evaluate(request)
 
 
 def test_a_dead_grader_worker_is_graded_again_and_never_writes_a_code(box):
