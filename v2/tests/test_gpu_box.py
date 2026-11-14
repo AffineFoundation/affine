@@ -506,6 +506,35 @@ def test_a_chunk_that_the_round_time_limit_cut_is_not_scored(box):
         evaluator(box, Farm(lambda model, task: ("P", "stop"))).evaluate(late)
 
 
+def test_a_cut_chunk_logs_its_speeds_as_its_own_phase(box, monkeypatch):
+    now, done, lock, early = [time.time()], threading.Event(), threading.Lock(), []
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    request = box.build.replace(eval_request(box), deadline=int(now[0]) + 50)
+
+    def script(model, task):
+        if task == "t0":  # these replies end before the limit
+            with lock:
+                early.append(model)
+                if len(early) == 3:
+                    done.set()
+            return ("P", "stop")
+        assert done.wait(10)
+        now[0] = request.deadline + 1  # the limit passes while this reply is written: its request times out
+        return TimeoutError()
+
+    farm = Farm(script)
+    http = farm.http
+    farm.http = lambda url, body, timeout_s: {**http(url, body, timeout_s), "usage": {"completion_tokens": 7}}
+    with pytest.raises(InfraError, match="time limit"):
+        evaluator(box, farm).evaluate(request)
+    lines = [json.loads(line) for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()]
+    assert [line["phase"] for line in lines] == ["eval_cut"], "a cut chunk is never an `eval` line: it gives no score"
+    cut = lines[0]
+    assert (cut["round_id"], cut["look"], cut["models"], cut["tasks"], cut["rollouts"], cut["finished"], cut["n_gpus"]) == ("r000001", 0, 3, 3, 9, 3, 2)
+    assert (cut["output_tokens"], cut["most_output_tokens"], cut["longest_rollout_tokens"]) == (21, 7, 7) and cut["reply_cap"] == request.params.max_output_tokens
+    assert cut["wall_s"] >= cut["generate_s"] >= cut["longest_rollout_s"] > 0 and cut["serve_s"] >= 0
+
+
 def test_a_dead_grader_worker_is_graded_again_and_never_writes_a_code(box):
     farm = Farm(lambda model, task: ("F died" if task == "t1" else "P", "stop"))
     grades = Grades(deaths=2)

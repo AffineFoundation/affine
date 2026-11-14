@@ -147,6 +147,14 @@ def read_reply(reply: dict) -> tuple[str, bool]:
     return text, reason == "length"
 
 
+def written_facts(written: Sequence[tuple[int, float]]) -> dict[str, Any]:
+    """What the log keeps of the rollouts that got a reply, from the ``(output tokens, seconds)`` of each one."""
+    # The longest rollout sets the least time of a chunk. Its time includes the wait for a free place on its server.
+    longest = max(written, key=lambda pair: pair[1], default=(0, 0.0))
+    tokens = [count for count, _ in written]
+    return {"output_tokens": sum(tokens), "longest_rollout_s": longest[1], "longest_rollout_tokens": longest[0], "most_output_tokens": max(tokens, default=0)}
+
+
 class VllmEvaluator:
     def __init__(
         self,
@@ -227,6 +235,10 @@ class VllmEvaluator:
             raise InfraError("a vLLM server died during the look; nothing of it can be scored")
         if request.deadline and time.time() >= request.deadline and any(reply is None for reply in replies):
             # A rollout that the limit cut is not an error of its model. Long outputs are cut first, so this chunk is not scored at all.
+            # Its speeds are still logged, as their own phase: no reader may count it as a chunk that was scored.
+            cut = {"serve_s": served - started, "generate_s": time.monotonic() - served, "wall_s": time.monotonic() - started}
+            cut.update(models=len(models), tasks=len(tasks), rollouts=len(jobs), finished=sum(reply is not None for reply in replies), reply_cap=params.max_output_tokens)
+            log_phase(self.config.work_dir, "eval_cut", round_id=request.round_id, look=request.look, n_gpus=len(self._urls), **cut, **written_facts(written))
             raise InfraError("the round's time limit passed during this chunk; an unfinished chunk is not scored")
         generated = time.monotonic()
         codes = self._grade(tasks, jobs, replies)
@@ -235,11 +247,8 @@ class VllmEvaluator:
             for model in models
         }
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
-        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "output_tokens": sum(tokens for tokens, _ in written), "capped": sum(code == CAP for code in codes.values())}
-        # The longest rollout sets the least time of a chunk. Its time includes the wait for a free place on its server.
-        longest = max(written, key=lambda pair: pair[1], default=(0, 0.0))
-        counts.update(n_gpus=len(self._urls), longest_rollout_s=longest[1], longest_rollout_tokens=longest[0], most_output_tokens=max((tokens for tokens, _ in written), default=0))
-        log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts)
+        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls)}
+        log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts, **written_facts(written))
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
     def close(self) -> None:
