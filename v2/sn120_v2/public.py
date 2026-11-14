@@ -4,6 +4,11 @@ Privacy rule: an entry that did not win shows only its seat, its batch
 sha256, its status, and delta, se, z and cap rate. Its file, its location,
 its train values and its per-task outcomes are never published. Only a
 winner's LoRA and outcomes are public.
+
+Score rule: delta, se and z are numbers only for an entry that was judged
+(winner or lost). An entry that the box scored and the judge did not use
+(too few rollouts resolved, null M failed, the time limit came before the
+first look) has them as null. The journal keeps the numbers.
 """
 
 from __future__ import annotations
@@ -24,10 +29,19 @@ QUEUE_PREVIEW = 50
 HISTORY_PREVIEW = 20
 
 # ``public_text``: the rule for a text that an exception made, before it goes into a public file.
-TEXT_LIMIT = 600  # characters. The longest text today has about 520: a failed round that quotes the last line of a job log.
+TEXT_LIMIT = 600  # characters
 SECRET_NAME = re.compile(r"KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|ENDPOINT|ACCOUNT", re.IGNORECASE)
 SECRET_MIN = 8  # a shorter value is a flag or a number (TOKENIZERS_PARALLELISM=false): to replace it would cut plain words
 CUT_SECRET, CUT_LOGIN, CUT_QUERY, CUT_ADDRESS = "[removed-secret]", "[removed-login]", "[removed-query]", "[removed-address]"
+CUT_PATH = "[removed-path]"
+# The tail that the trainer adds to the error of a failed job (``gpu.trainer.LoraTrainer._keep_log``): where the log
+# of the job is on the box, and the last line of that log. Neither is public. ``job_cause`` says the cause in fixed words.
+_JOB_LOG = re.compile(r"; log: .*?; last line: (.*)$")
+_OUT_OF_MEMORY = re.compile(r"out of memory|OutOfMemoryError", re.IGNORECASE)
+_ERROR_CLASS = re.compile(r"(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*(?:Error|Exception))(?::|$)")
+OUT_OF_MEMORY, IN_THE_LOG = "cause: out of memory", "the cause is in the log of the box"
+# A path of a file system with two parts or more, such as /root/work/logs or ~/x/y. The path of a URL is not one.
+_PATH = re.compile(r"(?<![\w/:.@~\]-])~?/(?:[\w.+@%~-]+/)+[\w.+@%~-]*")
 _LOGIN = re.compile(r"(?<=://)[^\s/@?#]+@")
 _URL_QUERY = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://[^\s?'\"<>]*)\?[^\s'\"<>]*")
 _QUERY = re.compile(r"\?[\w.~%\[\]-]+=[^\s'\"<>]*")
@@ -59,12 +73,18 @@ def public_text(text: object, environ: Mapping[str, str] | None = None) -> str:
     * the login of a URL (``user:password@``) and each URL query string: a
       signed link holds its signature there;
     * the value after a name such as ``token=`` or ``Signature:``;
-    * each IPv4 and IPv6 address. A port stays.
+    * each IPv4 and IPv6 address. A port stays;
+    * each path of a file on this machine (``CUT_PATH``).
+
+    The error of a failed training job ends with the place of its log and
+    the last line of that log. Both are cut, and fixed words give the cause
+    in their place (``job_cause``).
 
     Then the text is cut to ``TEXT_LIMIT`` characters. The journal and the
     sealed box result keep the text as it was: they are not public.
     """
     text = " ".join(str(text).split())
+    text = _JOB_LOG.sub(lambda match: "; " + job_cause(match.group(1)), text)
     environ = os.environ if environ is None else environ
     secrets = {value.strip() for name, value in environ.items() if SECRET_NAME.search(name)}
     for value in sorted((value for value in secrets if len(value) >= SECRET_MIN), key=len, reverse=True):
@@ -74,10 +94,19 @@ def public_text(text: object, environ: Mapping[str, str] | None = None) -> str:
     text = _QUERY.sub("?" + CUT_QUERY, text)
     text = _NAMED.sub(lambda match: match.group(1) + CUT_SECRET, text)
     text = _V4.sub(_address, _V6.sub(_address, text))
+    text = _PATH.sub(CUT_PATH, text)
     if len(text) > TEXT_LIMIT:
         tail = f" [cut: {len(text) - TEXT_LIMIT} more characters]"
         text = text[:TEXT_LIMIT] + tail
     return text
+
+
+def job_cause(last_line: str) -> str:
+    """The cause of a failed training job in fixed words, from the last line of its log. No word of the line is copied but the name of an error class."""
+    if _OUT_OF_MEMORY.search(last_line):
+        return OUT_OF_MEMORY
+    named = _ERROR_CLASS.match(last_line)
+    return f"cause: an error of the class {named.group(1)}" if named else IN_THE_LOG
 
 
 def entry_view(entry: EntryDecision) -> dict[str, Any]:
@@ -91,8 +120,9 @@ def entry_view(entry: EntryDecision) -> dict[str, Any]:
         "eliminated_at_look": entry.eliminated_at_look,
     }
     if entry.score is not None:
-        score = entry.score
-        view |= {"delta": score.delta, "se": score.se, "z": score.z, "cap_rate": score.cap_rate, "n_tasks": score.n_tasks}
+        score, judged = entry.score, entry.charged  # winner or lost: the only entries whose scores the judge used
+        view |= {"delta": score.delta if judged else None, "se": score.se if judged else None, "z": score.z if judged else None}
+        view |= {"cap_rate": score.cap_rate, "n_tasks": score.n_tasks}
     if entry.status == WINNER:
         view |= {"lora_hash": entry.lora_hash, "pass_rate": entry.score.pass_rate, "null_pass_rate": entry.score.null_pass_rate}
     return view
@@ -232,7 +262,8 @@ def round_text(report: Mapping[str, Any]) -> str:
     lines.append(f"{'pos':>3} {'uid':>4}  {'hotkey':<12} {'verdict':<11} {'delta':>8} {'z':>6} {'cap-hit':>7} {'tasks':>5} {'norm':>9}  note")
     for e in entries:
         hotkey = e["hotkey"] if len(e["hotkey"]) <= 12 else e["hotkey"][:5] + ".." + e["hotkey"][-5:]
-        numbers = f"{e['delta']:>+8.4f} {e['z']:>6.2f} {e['cap_rate']:>7.2%} {e['n_tasks']:>5}" if "z" in e else f"{'-':>8} {'-':>6} {'-':>7} {'-':>5}"
+        judged = f"{e['delta']:>+8.4f} {e['z']:>6.2f}" if e.get("z") is not None else f"{'-':>8} {'-':>6}"
+        numbers = judged + (f" {e['cap_rate']:>7.2%} {e['n_tasks']:>5}" if e.get("n_tasks") is not None else f" {'-':>7} {'-':>5}")
         before = e.get("norm_before_cap") or e.get("step_norm")  # the norm that training gave: the number that recipe.global_norm_cap is set from
         norm = f"{before:>9.4g}" if before is not None else f"{'-':>9}"
         note = e.get("reason", "")

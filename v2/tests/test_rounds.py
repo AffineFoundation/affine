@@ -16,12 +16,12 @@ from sn120_v2.gpu import plan
 from sn120_v2.journal import read_journal
 from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.payout import weights
-from sn120_v2.public import TEXT_LIMIT, public_text, snapshot
+from sn120_v2.public import CUT_PATH, IN_THE_LOG, OUT_OF_MEMORY, TEXT_LIMIT, job_cause, public_text, round_text, snapshot
 from sn120_v2.queue import waiting
 from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, STORE_DIR, SimAdmission, SimWorld, sim_params
 from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
 from sn120_v2.store import LocalStore, put_record
-from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
+from sn120_v2.types import ERROR, ChainSnapshot, HeadManifest, King, Registration, V1Import
 
 
 @pytest.fixture
@@ -206,10 +206,104 @@ def test_a_text_from_an_exception_is_made_safe_before_it_goes_into_a_public_file
     text = "wss://user:pw@node.example:9944/x?k refused; Authorization: Bearer abc.def, token=hf_0123456789abcdef; false at 12:34:56 in /work/sn120, torch 2.15.0, t.py::test"
     assert public_text(text, env) == (
         "wss://[removed-login]@node.example:9944/x?[removed-query] refused; Authorization: Bearer [removed-secret], token=[removed-secret];"
-        " false at 12:34:56 in /work/sn120, torch 2.15.0, t.py::test"
+        " false at 12:34:56 in [removed-path], torch 2.15.0, t.py::test"
     )
     assert public_text("hf_0123456789abcdef\n at ::1", env) == "[removed-secret] at [removed-address]"
     assert public_text("x" * (TEXT_LIMIT + 40), env) == "x" * TEXT_LIMIT + " [cut: 40 more characters]"
+
+
+# The reason of UID 959 in r000004, as the trainer and the round runner made it (the last line is cut at 300 characters).
+JOB_HEAD = "the training job ended with code 1 and no report"
+JOB_LOG = "/root/sn120-run/work/logs/train-r000004-002.log"
+LAST_LINE = (
+    "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.89 GiB. GPU 0 has a total capacity of 267.69 GiB of which 8.23 GiB is free."
+    " Including non-PyTorch memory, this process has 259.44 GiB memory in use. 259.69 GiB allowed; Of the allocated memory 257.62 GiB is"
+    " allocated by PyTorch, and 957"
+)
+
+
+def test_the_public_reason_of_a_failed_training_job_has_fixed_words_and_no_path_and_no_line_of_the_log(world, monkeypatch, capsys):
+    """A public file holds no path of the box and no raw last line of a job. The journal and the log of ``run`` keep the full text."""
+    crash = f"{JOB_HEAD}; log: {JOB_LOG}; last line: {LAST_LINE}"
+    fail: set[str] = set()
+
+    def train(request, real=world.trainer.train):
+        if request.entry.reg.hotkey in fail:
+            raise InfraError(crash)
+        return real(request)
+
+    monkeypatch.setattr(world.trainer, "train", train)
+    world.register(1, 0.0)
+    world.register(2, 0.0)
+    fail.add("hk1")
+    one = world.round()  # one batch of two fails: the text is the reason of that row
+    fail.add("hk3")
+    world.register(3, 0.0)
+    both = world.round()  # no training finished: the text is in the note of the round
+    assert (one.outcome, both.outcome) == ("null", "no_decision")
+    first, second = (json.loads(world.store.get(layout.round_file(record.round_id))) for record in (one, both))
+    fixed = f"training failed 3 times: {JOB_HEAD}; cause: out of memory"
+    assert [entry["reason"] for entry in first["entries"] if entry["uid"] == 1] == [fixed]
+    assert second["note"] == f"InfraError: no training finished in this round: 2 of 2 batches failed. The first: {fixed}"
+    public = [path for path in (world.root / STORE_DIR / "public").rglob("*") if path.is_file()]
+    shown = [path.read_text() for path in public] + [json.dumps(world.publisher.snapshots)]
+    private = ("/root", "sn120-run", "train-r000004", "GiB", "last line", "torch.", "CUDA")
+    assert len(public) > 2 and not [word for word in private for text in shown if word in text], "nothing public holds a part of the log"
+    journal = read_journal(world.root / JOURNAL_FILE)
+    kept = [record.data["reason"] for record in journal if record.kind in (LEASE_FAILED, ROUND_CLOSED) and record.data["reason"]]
+    assert len(kept) == 2 and all(crash in reason for reason in kept), "the journal keeps the text as it was"
+    assert one.decision.entries[0].reason == f"training failed 3 times: {crash}", "and so does the decision in the journal"
+    assert capsys.readouterr().err.count(f"The full text: training failed 3 times: {crash}") == 1, "the log of the operator has it"
+    assert main(["round", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]) == 0
+    assert f"no winner: {second['note']}" in capsys.readouterr().out
+    # The rule itself. The cause: out of memory, or the name of an error class, or nothing. No other word of the line.
+    assert job_cause(LAST_LINE) == job_cause("RuntimeError: CUDA error: out of memory") == OUT_OF_MEMORY == "cause: out of memory"
+    assert job_cause("sn120_v2.errors.InfraError: the training job sees no GPU at /dev/nvidia0") == "cause: an error of the class InfraError"
+    assert job_cause("(empty)") == job_cause("Killed") == job_cause("see /root/x.log: KeyError") == IN_THE_LOG == "the cause is in the log of the box"
+    assert public_text("the training job failed with code -9; log: logs/train x.log; last line: (empty)", {}) == f"the training job failed with code -9; {IN_THE_LOG}"
+    # A path of the machine in any other text. The path of a link, a route of one part, a fraction and a test name stay.
+    text = "no such file: '/root/sn120-run/work/cache/x.bin' and ~/logs/run.log in /tmp/a/; https://store.example/bucket/x.json, /health, 3/4, and/or, a / b, t.py::test"
+    assert public_text(text, {}) == f"no such file: '{CUT_PATH}' and {CUT_PATH} in {CUT_PATH}; https://store.example/bucket/x.json, /health, 3/4, and/or, a / b, t.py::test"
+    assert public_text("only 0.918 of this LoRA's rollouts resolved", {}) == "only 0.918 of this LoRA's rollouts resolved", "a text of the rules does not change"
+
+
+def test_an_entry_that_was_not_judged_has_no_delta_and_no_z_in_a_public_file(world, monkeypatch, capsys):
+    """r000004: three LoRAs with no reply that resolved had delta -0.724 and z -36.18 in the public files."""
+    lost = {"quality": 0.111}  # the mark of a LoRA whose every rollout ends with an infrastructure error
+
+    def evaluate(request, real=world.evaluator.evaluate):
+        chunk = real(request)
+        failed = {lora.lora_hash for lora in request.loras if json.loads(world.store.get(f"{lora.prefix}/adapter_config.json"))["quality"] == lost["quality"]}
+        return replace(chunk, outcomes={model: tuple(ERROR * len(one) for one in strings) if model in failed else strings for model, strings in chunk.outcomes.items()})
+
+    monkeypatch.setattr(world.evaluator, "evaluate", evaluate)
+    for uid, quality in ((1, 0.3), (2, 0.0), (3, lost["quality"])):
+        world.register(uid, quality)
+    record = world.round()
+    judged = {entry.uid: entry for entry in record.decision.entries}
+    assert record.outcome == "applied" and [judged[uid].status for uid in (1, 2, 3)] == ["winner", "lost", "no_decision"]
+    score, log = judged[3].score, capsys.readouterr().err
+    assert f"UID 3 was not judged. The public files show no score for it. The box measured: delta {score.delta:+.4f}, se {score.se:.4f}, z {score.z:.2f}" in log, "the log of the operator keeps the numbers"
+    assert "UID 1 was not judged" not in log and "UID 2 was not judged" not in log
+    assert judged[3].reason == "only 0.000 of this LoRA's rollouts resolved" and judged[3].score.z < -4 and judged[3].score.delta < -0.4, "the journal keeps the numbers of the box"
+    assert not judged[3].charged and world.controller.state.queue[(3, 1003)].infra_attempts == 0, "not charged, not counted: as before"
+    report = json.loads(world.store.get(layout.round_file(record.round_id)))
+    history = world.publisher.snapshots[-1]["history"][-1]
+    for entries in (report["entries"], history["entries"]):
+        shown = {entry["uid"]: entry for entry in entries}
+        assert (shown[3]["delta"], shown[3]["se"], shown[3]["z"]) == (None, None, None), "not judged: no score"
+        assert (shown[3]["status"], shown[3]["cap_rate"], shown[3]["n_tasks"], shown[3]["eliminated_at_look"]) == ("no_decision", 0.0, judged[3].score.n_tasks, 0)
+        for uid in (1, 2):  # a judged entry keeps its numbers
+            assert (shown[uid]["delta"], shown[uid]["se"], shown[uid]["z"]) == (judged[uid].score.delta, judged[uid].score.se, judged[uid].score.z)
+    assert report["entries"][2]["reason"] == judged[3].reason
+    row = next(line for line in round_text(report).splitlines() if line.split()[:2] == ["2", "3"])
+    assert row.split()[3:8] == ["no_decision", "-", "-", "0.00%", str(judged[3].score.n_tasks)], "the summary of the operator prints no delta and no z either"
+    assert main(["round", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack"]) == 0 and row in capsys.readouterr().out
+    world.register(4, lost["quality"])  # a round like r000004: no entry is judged. UID 3 is back at the front.
+    alone = world.round()
+    assert alone.outcome == "no_decision" and alone.decision.reason == "no entry was scored" and all(entry.score is not None for entry in alone.decision.entries)
+    for entries in (json.loads(world.store.get(layout.round_file(alone.round_id)))["entries"], world.publisher.snapshots[-1]["history"][-1]["entries"]):
+        assert [(entry["uid"], entry["delta"], entry["se"], entry["z"]) for entry in entries] == [(3, None, None, None), (4, None, None, None)]
 
 
 def test_release_seat_undoes_the_holds_and_the_counts_that_a_box_fault_left(world, capsys, out_of_time):
