@@ -13,7 +13,7 @@ This is the operator's runbook for the mainnet cutover. Do the smoke test first:
 Each point is a fact or a command that is not on `v2` at the commit of this file. Do not guess it. Each place below that needs one says **Not landed yet**.
 
 1. The numbers from the smoke test for `params.json`: `recipe.global_norm_cap` (it waits for the update norm that the smoke test measures), and any size that the smoke test changes.
-2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `6baf0d74` is the last of the eight. One more change is in work (a guard that cleans error text before it goes into a public file), and it can move the commit once more. So the final commit is not pinned here. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
+2. The final commit for the cutover, and with it the smallest commit whose `llms.txt` may go up. Eight changes that it must hold are on `v2` (check 1 of "Before the mainnet bootstrap"). `4e23a275` is the least commit for `llms.txt`. `f986ccb1` is the last of the eight. The text of `llms.txt` changes once more before the final commit. So the final commit is not pinned here: the coordinator names it, and it then takes the place of `4e23a275` as the least commit for `llms.txt`. The text check of the store's `llms.txt` is not written yet either ("AffineValidator", step 8.2).
 
 ## Hosts
 
@@ -99,7 +99,7 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    ```
    git fetch origin && git checkout <commit that the coordinator names>
    git rev-parse HEAD        # write this down with the cutover records
-   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 6baf0d743134fc014d55a55d753af574bc27cdd5; do
+   for commit in 505f5ddab15c325ecedcf5c763bddf61225ff6ff 9b830458d90c703497558fb1d401938b097a157a 5ce10ce7cc3ae25d87926d237f9a7e215999aea2 97a67ea4f80a241418fafb905222caa61354e55a 2b9ee5d1615b994a89a0072a8a12b3016be07ac8 4e23a27526e3eb700e274d1a3eea3f93e84e8277 e0faff2dfbcff716723d39deb7e0670e7bd4e7b0 f986ccb11c9627cf2109d71c5480f827fde78acd; do
      git merge-base --is-ancestor $commit HEAD; echo "$commit exit=$?"
    done
    cd v2 && source .venv/bin/activate
@@ -117,13 +117,13 @@ The cutover build is not the commit of the smoke test. A result of the smoke tes
    | `2b9ee5d1` (PR #154) | The loop waits when the store or the chain does not answer, without end. | The loop gives up after 5 such starts, about 2.5 minutes. Then nothing starts `run` again until you come. |
    | `4e23a275` (PR #155) | The text of `llms.txt`, corrected after a check of the whole text against the code. For example: a hotkey gets one turn, and a new entry needs a new hotkey. | `llms.txt` tells a miner things that the code does not do. `llms.txt` must not go up from such a build. |
    | `e0faff2d` (PR #157 and PR #159) | The guard of `run`: it compares the box with the pinned digests before it opens a round, before it runs an open round again and before a fold. On a difference it starts none of them and ends with exit code 2 ("The digests of the box and the pinned digests" below). | `run` does not stop on such a box. Each round closes in seconds, and every seat in it gets one counted failure. |
-   | `6baf0d74` (PR #164; it holds PR #166, `68b8abc5`, PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Five things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). From `6baf0d74`: `set-params` prints `changed`, each parameter whose value differs, with the value before and after ("The value `squat_min_wait_s`" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. `set-params` prints only the two hashes, so nothing shows a key that went back to its default. |
+   | `f986ccb1` (PR #168; it holds PR #164, `6baf0d74`, PR #166, `68b8abc5`, PR #163, `d32cd947`, PR #161, `c87b81ea`, and PR #160, `e9958463`) | Six things for the operator. From `e9958463`: a chain read of `run` ends in 90 s at most, and after a failed read the next pass opens a new connection. From `c87b81ea`: the command `release-seat`, and the keys `held_seats` and `seats_with_counted_failures` of `status` ("After a fault of the box in training" below). From `d32cd947`: the command `force-sync` ("When `run` refuses the chain sync" below). From `68b8abc5`: a round in which no training finished counts no failure for a seat ("A round in which no training finished" below). From `6baf0d74`: `set-params` prints `changed`, each parameter whose value differs, with the value before and after ("The value `squat_min_wait_s`" below). From `f986ccb1`: a text from an error is made safe before it goes into the public round file ("Error text in the public round file" below). | A chain read that gets no answer ends only when the chain library connects again by itself (after 303 s in the slowest case that was tried). No command releases a held seat. No command applies a chain sync that `run` refuses, so no round opens after such a refusal. A box on which every training fails gives every seat of each round one counted failure, and 3 hold a seat. `set-params` prints only the two hashes, so nothing shows a key that went back to its default. A text from an error goes into the public round file as it is: it can hold an address of the box or the signature of a signed link. |
 
    With `exit=1` on a line, the checkout is an earlier commit. Stop, and do not run `bootstrap`, `run` or `publish` with the production store settings. Any other number means that git does not have that commit: run `git fetch origin v2` and try again. Check 4 below reads the first fact from the code.
 
    These eight are the least, not the cutover commit. The coordinator names that one ("Not in this file yet", point 2).
 
-   Each change on `v2` from `1d7d0628` to `6baf0d74` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
+   Each change on `v2` from `1d7d0628` to `f986ccb1` is a checkout only: no install line, no digest block, no `set-params`, no new bootstrap. No file under `sn120_v2/gpu/` changed, and `pyproject.toml` did not change. So for a box that is at `1d7d0628` or later: stop the loop, check out, run the `diff` line of "The digests of the box and the pinned digests", and start the loop. `run` loads the new code only at a start.
 
    **There is no way back below `9b830458`.** After one round with a `not_scored` entry, no older commit can read the state. Never check out an older commit on a box or a host that reads this state, not even for a test.
 
@@ -649,7 +649,7 @@ The other commands of this list do not need the helper. Steps 5, 6 and 9 load th
    2. **Check that the store's `llms.txt` comes from the cutover build.** `llms.txt` must not go up from a store that an older commit published.
 
       - The commit of the GPU box holds the eight commits of check 1 of "Before the mainnet bootstrap": the loop there printed `exit=0` eight times. Three of them are the reason for this step: the round time hard stop (`9b830458`), the limit of 3 checks (`5ce10ce7`) and the corrected text of `llms.txt` (`4e23a275`).
-      - **Not landed yet:** the final commit for the cutover. One more change is in work after those eight, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
+      - **Not landed yet:** the final commit for the cutover. The text of `llms.txt` changes once more after those eight, so the coordinator names the commit; the commit of the GPU box (`git rev-parse HEAD` there) must be that commit or a later one.
       - **Not landed yet:** the text check of the store's `llms.txt`. The command comes with the commit.
 
       Do not go on before you have both.
@@ -1002,7 +1002,7 @@ A round has a time limit of 100 minutes from the lease to the promotion. It is a
 There are four kinds of cause:
 
 1. **The store did not answer** (`r2 <action> '<key>' failed: ...`). The lines stop by themselves at a later try.
-2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `chain read of the registrations did not end in 90 s: the connection is dropped`, `the chain head is N s old: the node is behind`, `partial chain read ...`). The lines stop by themselves when the chain answers again. **Do not stop the loop for a chain line: a restart does not help.** From `e9958463` (check 1 tests it with `6baf0d74`), one chain read of `run` ends in 90 s at most. A read that fails or does not end drops the connection, `run` prints `waiting:`, and the next pass opens a new connection. One pass waits for the chain 180 s at most (90 s for the registrations, 90 s for the block hash). A normal read of the registrations takes 5 to 8 s. What was tried: reads through a local relay to finney, with faults put into the relay. The chain library (bittensor 11.0.2) connected again in every case. What is not proven: a real outage on the box. If the same chain line still comes after 15 minutes, send the line to the coordinator.
+2. **The chain did not answer** (`no connection to the chain at ...`, `chain read of ... failed: ...`, `chain read of the registrations did not end in 90 s: the connection is dropped`, `the chain head is N s old: the node is behind`, `partial chain read ...`). The lines stop by themselves when the chain answers again. **Do not stop the loop for a chain line: a restart does not help.** From `e9958463` (check 1 tests it with `f986ccb1`), one chain read of `run` ends in 90 s at most. A read that fails or does not end drops the connection, `run` prints `waiting:`, and the next pass opens a new connection. One pass waits for the chain 180 s at most (90 s for the registrations, 90 s for the block hash). A normal read of the registrations takes 5 to 8 s. What was tried: reads through a local relay to finney, with faults put into the relay. The chain library (bittensor 11.0.2) connected again in every case. What is not proven: a real outage on the box. If the same chain line still comes after 15 minutes, send the line to the coordinator.
 3. **`run` refuses the chain sync** (`sync would remove N of M seats; refusing without force (possible bad chain read). If the chain is right, an operator applies it with the force-sync command`). Nothing ends it by itself, and a new start does not help. The way out is the command `force-sync`: see "When `run` refuses the chain sync" below.
 4. **Our own checker fails its known-good case**, on this machine. Then nothing ends it, and a new start does not help. These are the texts of that case:
 
@@ -1025,7 +1025,7 @@ This is not the case of one bad miner file. A file that makes the checker fail w
 
 Words used here. A **seat** is one registration (UID and registration block) that waits in the queue for a round. The **chain sync**: at each pass, `run` reads the registrations from the chain; seats that are no longer on the chain leave the queue, and new registrations enter it.
 
-The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. The queue is the seats that wait: `"queue"` of `status`. So the limit follows the queue of that moment: more than a quarter of the seats that wait then. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`).
+The rule: `run` refuses a sync when the queue has 8 or more seats and more than 25 % of them leave in one chain read. The queue is the seats that wait: `"queue"` of `status`. So the limit follows the queue of that moment: more than a quarter of the seats that wait then. Such a read can be a bad chain read, so `run` itself never forces a sync. The command `force-sync` is there from `d32cd947` (check 1 of "Before the mainnet bootstrap" tests it with `f986ccb1`).
 
 **Two numbers that are not the same.** SN120 has 1000 registrations on the chain (the chain values `SubnetworkN` and `MaxAllowedUids` were both 1000 at block 9501162). UID 0 has no seat. The import dry run of 13 Nov 2026 at 23:04 UTC gave 256 waiting seats (14 front, 47 normal, 195 back): this is the queue after the import, not the size of the subnet. With a queue of 256 seats, the refusal comes when 65 or more seats leave in one read. With a shorter queue the limit is lower.
 
@@ -1213,7 +1213,7 @@ This part is for a fault of the box that is not a digest difference: a GPU fault
 
 ### A round in which no training finished
 
-The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap" tests it with `6baf0d74`): when no batch of a round trained, and at least one batch ended as `no_decision`, `run` takes the fault as a fault of the box. The round ends as a failed lease. There is no decision, nobody is charged, and no failure is counted for a seat. The seats are first again, and the next round opens `apply_retry_s` (5 minutes) later. `run` goes on, and the loop does not stop.
+The rule, from `68b8abc5` (check 1 of "Before the mainnet bootstrap" tests it with `f986ccb1`): when no batch of a round trained, and at least one batch ended as `no_decision`, `run` takes the fault as a fault of the box. The round ends as a failed lease. There is no decision, nobody is charged, and no failure is counted for a seat. The seats are first again, and the next round opens `apply_retry_s` (5 minutes) later. `run` goes on, and the loop does not stop.
 
 - "Trained" means that the entry is `scored` or `not_scored`. A skipped entry or a `not_trained` entry in the same round changes nothing.
 - Both kinds of `no_decision` are in the rule: "training failed 3 times", and a batch that had the whole training time of the round and did not finish (a slow or hung box).
@@ -1227,6 +1227,8 @@ no winner: InfraError: no training finished in this round: 32 of 32 batches fail
 head: <12 characters> (unchanged)
 ```
 
+`<the cause of the first batch>` is the safe form of the error text ("Error text in the public round file" below).
+
 Between such rounds `run` prints `idle: N seats wait, phase IDLE`. `status` shows `"no_decision"` at the end of `"last_outcomes"`, and `"held_seats"` does not change.
 
 Every round that closes with no box result names its cause in the same place: `no winner: ended by the operator` after `end-round`, `no winner: the lease expired` after an expired lease, and `no winner: <error class>: <text>` after another fault of the box.
@@ -1239,8 +1241,37 @@ Every round that closes with no box result names its cause in the same place: `n
 
 What to do when you see that sign:
 
-- Read the cause in the `no winner:` line. If the box is the cause (a GPU fault, a full disk, the store), stop the loop, repair the box, and start the loop. No seat was held and nothing was counted, so `release-seat` is not needed for these rounds.
+- Read the cause in the `no winner:` line. It is the safe form; the full text is in `run.log` ("Error text in the public round file" below). If the box is the cause (a GPU fault, a full disk, the store), stop the loop, repair the box, and start the loop. No seat was held and nothing was counted, so `release-seat` is not needed for these rounds.
 - If the box is good and the files of the seats in front are the cause, there is no command for it today. At the launch values, no `set-params` lets other seats into the round. `batch_cap` cannot go above `max_loras_per_box`, and both are 32: a file with a higher `batch_cap` is refused with `refused: ConfigError: batch_cap must be between 1 and max_loras_per_box` (exit code 2, the parameters do not change). Do not raise `max_loras_per_box` to get around it: it is the number of LoRAs in one scoring server, and no test has run more than 32. Send the `no winner:` lines and the `status` output to the coordinator: the fix is a code change.
+
+### Error text in the public round file
+
+The round file `public/rounds/<id>/round.json` is public. It holds text from errors in three places: the `reason` of the round, the `reason` of each row, and the `note`. From `f986ccb1` (check 1 of "Before the mainnet bootstrap"), `run` makes each such text safe before it writes the file. The error class and the message stay. A marker stands in the place of each private part:
+
+| Marker | What it stands for |
+|---|---|
+| `[removed-secret]` | The value of an environment variable of `run` whose name holds `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `ENDPOINT` or `ACCOUNT`, when the value has 8 characters or more. Also the value after a name such as `token=` or `Authorization: Bearer`. |
+| `[removed-query]` | The query string of a URL (the part after `?`). A signed link holds its signature there. |
+| `[removed-address]` | An IPv4 or IPv6 address. The port stays. |
+| `[removed-login]` | The login of a URL (the part before `@`). |
+
+A text of more than 600 characters is cut. It then ends with ` [cut: N more characters]`.
+
+The `no winner:` line of the round summary and the `round` command read the public file. So they show the safe form:
+
+```
+no winner: InfraError: evaluation failed 3 times: http://[removed-address]:8000/v1/completions failed: ...
+```
+
+**Where the full text is.** In three places, and none of them is public:
+
+- `run.log`: a line `round <id>: the public round file holds a changed form of this text. The full text: <text>`. The line comes only when the public form differs from the full text. To find it: `grep "holds a changed form of this text" $SN120_WORK_DIR/logs/run.log | tail -n 5`.
+- The journal: the `reason` of the records `lease_failed` and `round_closed`.
+- The store: `private/rounds/<id>/<lease>/result.json`.
+
+**If a `[removed-secret]` marker stands for a real credential** (the line in `run.log` shows the value): the public file is safe. But `run.log`, the journal and the sealed result hold the value. Keep them private: do not paste such a line into a public place, and tell the coordinator which credential it is, not its value. Change that credential after the round.
+
+**The limits.** A secret that `run` read from a file, and not from an environment variable, is found only by the query rule or the name rule. Host names and paths on the box stay in the text. A round file that was written before `f986ccb1` is not written again.
 
 ### The digests of the box and the pinned digests
 
@@ -1299,7 +1330,7 @@ The mainnet `params.json` holds `"squat_min_wait_s": 31536000` (check 5 of "Befo
 
 **Each later file for `set-params` must hold the same key.** `set-params` does not add a file to the pinned parameters. It replaces them, and a key that the file does not hold goes back to its default (86400). So a file with only the two new digests switches squat-trim on. Run the check line of check 5 on each file before `set-params`: its first number must be `31536000`. In phase `APPLY`, `set-params` refuses such a file, because it differs from the pinned one in more than the two digests. In phase `IDLE` nothing refuses it.
 
-**Read `changed` after each `set-params`.** From `6baf0d74` (check 1 of "Before the mainnet bootstrap"), `set-params` prints a third key, `changed`: each parameter whose value differs from the pinned one, with the value `before` and `after`. A value of the recipe has the name `recipe.<name>`. The output is still one line of JSON, with the two hashes first. This is the output for a file that lacks `squat_min_wait_s` and has a new code digest:
+**Read `changed` after each `set-params`.** From `6baf0d74` (check 1 of "Before the mainnet bootstrap" tests it with `f986ccb1`), `set-params` prints a third key, `changed`: each parameter whose value differs from the pinned one, with the value `before` and `after`. A value of the recipe has the name `recipe.<name>`. The output is still one line of JSON, with the two hashes first. This is the output for a file that lacks `squat_min_wait_s` and has a new code digest:
 
 ```
 {"params_hash_before": "4a17...c253", "params_hash": "2658...4d49", "changed": {"squat_min_wait_s": {"before": 31536000, "after": 86400}, "recipe.code_digest": {"before": "", "after": "sha256:abab...abab"}}}
