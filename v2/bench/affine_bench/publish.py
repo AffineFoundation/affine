@@ -10,6 +10,9 @@ from . import config as C, derive, registry as R
 
 OUT = os.path.join(C.SITE, "benchmarks.json")
 OWN_KINDS = ("king", "genesis", "v1-king")  # the rows that this service makes and runs
+# sha256 of chat_template.jinja of the launch model (XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B at the revision of the launch).
+# The v1 king has the same file (source.V1_KING_FILES; a test holds the two equal). The table's text names it.
+LAUNCH_TEMPLATE = "59a64ebb4df6d1489d09a91267cf3ceb106162d4a893c4f84833cfb8c897ff63"
 
 
 def _rj(p):
@@ -311,6 +314,11 @@ def publish(rows, S, max_fail=3):
               "serving.version is a part of each env_version. serving has no sampling value: the server takes no sampling "
               "defaults from the files of a model (generation_config vllm), and a run sends the sampling values of its profile "
               "with each request. "
+              "No request names enable_thinking, and the server gets no chat template from this service: the chat_template.jinja "
+              f"of the model's files decides. The one of the launch model (sha256 {LAUNCH_TEMPLATE}; the v1 king has the same "
+              "file, and base_files of each head manifest names the one of its head) writes an empty thinking block only when "
+              "enable_thinking is false, so the model thinks. The server gives the thinking apart from the answer (reasoning "
+              "parser qwen3), and max_tokens is the limit of both together. "
               "serving.server.max_model_len is the window of a server that is started with none given; a run starts its server "
               "with the max_model_len of its profile. "
               "profiles has each profile that a row or a result of this file names, with the values that a run with it sends with "

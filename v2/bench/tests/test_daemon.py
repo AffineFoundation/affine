@@ -833,6 +833,20 @@ def test_a_run_sends_the_values_that_the_table_says_and_the_server_starts_as_the
     assert sv["engine"] in (bench / "deploy" / "requirements-vllm.txt").read_text().split()
 
 
+def test_no_request_names_the_thinking_and_the_table_says_what_decides_it(world):
+    """enable_thinking of a profile goes into the record of a run and into no request: the chat template of the model's files decides."""
+    bench = pathlib.Path(__file__).resolve().parents[1]; run = (bench / "affine_bench" / "node_run.py").read_text()
+    assert [ln.split("enable_thinking", 1)[1] for ln in run.splitlines() if "enable_thinking" in ln] == ['=st["enable_thinking"],']  # the record of the run only
+    assert "chat_template_kwargs" not in run and "enable_thinking" not in R.SENT
+    assert 'CTA=(); [ -n "$CT" ] && CTA=(--chat-template "$CT")' in (bench / "deploy" / "serve.sh").read_text()  # a template of its own only when one is given
+    green(world.v2, 1); world.steps(3)
+    launches = [c for node in world.nodes.values() for c in node.cmds if "affine-bench node-run" in c]
+    assert len(launches) == 2 and all("--reasoning-parser qwen3 " in c and "--chat-template" not in c for c in launches)  # and none is given
+    assert publish.LAUNCH_TEMPLATE == source.V1_KING_FILES["chat_template.jinja"]
+    for text in ("No request names enable_thinking", f"sha256 {publish.LAUNCH_TEMPLATE}", "writes an empty thinking block only when enable_thinking is false"):
+        assert text in table()["about"]
+
+
 def test_two_rows_whose_short_names_are_equal_never_share_a_pod(world, monkeypatch, capsys):
     monkeypatch.setattr(P, "NAME_MAX", len(P.PREFIX) + 4)  # every king has the name affine-v2-bench-king
     first, second = green(world.v2, 1), green(world.v2, 2)
