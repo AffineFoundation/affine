@@ -354,6 +354,52 @@
       tip: i => tip(rs[i], [['open to close', dur(took(rs[i]))], ['opened', utc(rs[i].opened_at)], ['closed', utc(rs[i].at)]]),
     });
   }
+
+  /* Miner supply: the counts of miner-supply.json, which supply.py writes each minute from the list of the object store. The
+     section has its own file and its own timer, so it and the rest of the page never wait for each other. A count with "≥" is
+     "at least": the record does not cover all of that window (it began later, or a run is missing). */
+  let S = null;
+  const KIND = [['uploads', 'Uploads per hour from R2 LastModified'], ['validated', 'Validated so far'], ['no_verdict', 'Uploads with no verdict yet'], ['not_valid', 'Not valid at the last check'], ['replaced', 'Replaced before a verdict']];
+  function supply() {
+    const el = document.getElementById('supply');
+    if (!el) return;
+    if (!S) { el.querySelector('.reading').textContent = 'The recorder has written no counts yet.'; return; }
+    const age = Date.now() / 1000 - S.generated_at, w = S.waiting, hs = S.hours, part = 'At least: the record does not cover all of this time.';
+    // every count but "no verdict yet" can miss a file that was replaced before the recorder saw it
+    const n = (r, k) => (r.complete || k === 'no_verdict' ? '' : '≥ ') + r[k] + (k === 'uploads' || k === 'validated' ? ` · ${r[k + '_per_hour'].toFixed(2)}/h` : '');
+    el.querySelector('.reading').innerHTML = (age > 300 ? `<span class="warn">The recorder's last run was ${dur(age)} ago: these counts are old.</span> · ` : '')
+      + `counting since ${esc(utc(S.counting_since))}` + (S.gaps.length ? ` · ${S.gaps.length} gap${S.gaps.length > 1 ? 's' : ''} with no run in 24 h` : '');
+    el.querySelector('table').innerHTML = '<thead><tr><th>Count</th>' + S.windows.map(r => `<th class="num">last ${r.hours} h</th>`).join('') + '</tr></thead><tbody>'
+      + KIND.map(([k, name]) => `<tr><td title="${esc(S.labels[k])}">${esc(name)}</td>` + S.windows.map(r => `<td class="num"${r.complete ? '' : ` title="${part}"`}>${esc(n(r, k))}</td>`).join('') + '</tr>').join('') + '</tbody>';
+    el.querySelector('[data-f=waiting]').innerHTML = `Valid files waiting now: <strong>${esc(w.valid)}</strong> `
+      + (w.whole_line ? `of ${esc(w.hotkeys)} hotkeys in the waiting line.` : `in the first ${esc(w.seats)} of ${esc(w.line)} seats of the waiting line. The files of the other seats have no published verdict.`)
+      + (w.checked_at ? ` Last file check of the validator: ${esc(utc(w.checked_at))}, ${dur(age + S.generated_at - w.checked_at)} ago.` : ' The validator has published no file check yet.')
+      + (S.phase === 'IDLE' ? '' : ' A round runs now: the next file check comes when it is over.');
+    if (S.round_time) el.querySelectorAll('[data-f=round-time]').forEach(x => { x.textContent = S.round_time.words; });
+    const day = S.windows[S.windows.length - 1];
+    el.querySelector('.tile .reading').textContent = `${n(day, 'uploads')} in ${day.hours} h`;
+    chart(el.querySelector('.chart'), {
+      n: hs.length, name: 'Miner uploads by hour', include: [0], least: 1, fmt: v => v, label: i => utc(hs[i].t).slice(11, 16) + ' UTC', empty: 'No count yet.',
+      series: [{ bar: 1, v: i => hs[i].uploads, c: i => hs[i].complete ? 'var(--performance)' : 'var(--accepted)', hollow: () => 1 },
+        { bar: 1, v: i => hs[i].validated || null, c: i => hs[i].complete ? 'var(--performance)' : 'var(--accepted)' }],
+      tip: i => tipOf(utc(hs[i].t).slice(0, 16) + ' UTC, one hour' + (hs[i].open ? ' (not over)' : ''),
+        [...KIND.map(([k, name]) => [name.toLowerCase(), hs[i][k]]), ['record', hs[i].complete ? 'covers this hour' : 'at least: not all of this hour']]),
+    });
+  }
+  async function loadSupply() {
+    try {
+      const res = await fetch('miner-supply.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('miner-supply.json ' + res.status);
+      S = await res.json();
+    } catch (e) { console.warn(e); }
+    supply();
+  }
+  if (!V1) {
+    let again = 0;
+    loadSupply();
+    setInterval(loadSupply, 60000);
+    addEventListener('resize', () => { clearTimeout(again); again = setTimeout(supply, 250); });
+  }
   const match = (rows, f) => f ? rows.filter(x => String(x.uid) === f || String(x.hotkey || '').toLowerCase().includes(f)) : rows;
   function renderV1() {
     const d = D, f = filter.trim().toLowerCase(), turns = match(d.turns, f);

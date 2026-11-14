@@ -31,6 +31,14 @@ h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 #round dt{font:10px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 #round dd{margin:8px 0 0;font:400 20px/1 Haffer,Arial,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
 
+/* miner supply: a small table of counts and one chart, both at a fixed size */
+#supply table{min-height:162px}
+#supply th.num{width:112px}
+#supply td:first-child{cursor:help}
+#supply .note.lead{max-width:none;min-height:38px}
+#supply .warn{color:var(--accepted)}
+#supply code{font:inherit}
+
 /* tables: about ten rows tall, sticky header, scroll inside the frame */
 .scroll{position:relative;height:310px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:3px;scrollbar-width:thin}
 .scroll.short{height:175px}
