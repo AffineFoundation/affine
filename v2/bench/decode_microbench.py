@@ -70,12 +70,14 @@ CONFIGS: dict[str, tuple[str, str]] = {
     "base": ("the box's own command", "b, c: today's speed with 1 and with 5 adapters loaded"),
     "a": ("no --enable-lora", "a: the cost of the LoRA support itself, even for M alone"),
     "d": ("--max-loras 8", "d: whether the size of the LoRA table (32 against 8) costs time"),
+    "i": ("--specialize-active-lora", "i: LoRA kernels sized for the adapters in use, not for --max-loras + 1; the table of 32 stays"),
     "e": ("--compilation-config cudagraph_mode FULL", "e: whether full CUDA graphs run with LoRA and what they give"),
     "f": ("--speculative-config ngram, 2 tokens", "f: speculative decoding without a draft model"),
     "g": ("--max-lora-rank = recipe rank", "g: whether the rank room (64 against the recipe's rank) costs time"),
     "h": ("--enforce-eager", "h: the speed with no CUDA graph at all, as a reference for the graph gain of today"),
     "f2": ("--speculative-config ngram_gpu, 2 tokens", "f2: the GPU form of the n-gram method"),
 }
+DEFAULT_CONFIGS = [name for name in CONFIGS if name != "f2"]  # 8 configs: one wave on a box with 8 GPUs
 
 
 def fail(line: str) -> None:
@@ -102,6 +104,8 @@ def config_argv(name: str, head: str, port: int, params: Params) -> list[str]:
         return argv
     if name == "d":
         return set_flag(base, "--max-loras", "8")
+    if name == "i":
+        return base + ["--specialize-active-lora"]
     if name == "e":
         return base + ["--compilation-config", json.dumps({"cudagraph_mode": "FULL"})]
     if name == "f":
@@ -319,14 +323,18 @@ def measure_target(port: int, models: list[str], words: int, params: Params, str
 def start_facts(log: str) -> dict[str, Any]:
     """The facts of the start that the server log gives."""
     captured: dict[str, int] = {}
+    passes: list[list[Any]] = []  # vLLM captures two times: first a sample to measure memory (2 FULL graphs), then all graphs
     for mode, total in re.findall(r"\((PIECEWISE|FULL)\)[^\r\n]*?\d+/(\d+)", log):
         captured[mode] = max(captured.get(mode, 0), int(total))
+        if not passes or passes[-1] != [mode, int(total)]:
+            passes.append([mode, int(total)])
     modes = re.findall(r"cudagraph_mode['\"]?\s*[=:]\s*<?CUDAGraphMode\.(\w+)", log)
     finished = re.search(r"Graph capturing finished in (\d+) secs, took ([-\d.]+) GiB", log)
     speculative = re.search(r"speculative_config=(None|\w+\([^)]{0,120})", log)
     return {
         "graph_mode": modes[-1] if modes else None,
         "graph_sizes_captured": captured or None,
+        "graph_capture_passes": passes[:8] or None,
         "graph_capture_s": int(finished.group(1)) if finished else None,
         "enforce_eager": (re.findall(r"enforce_eager=(\w+)", log) or [None])[-1],
         "attention_backends": sorted(set(re.findall(r"\b(FLASHINFER|FLASH_ATTN|TRITON_ATTN|FLEX_ATTENTION|XFORMERS)\b", log))) or None,
@@ -455,7 +463,7 @@ def table(results: dict[str, dict[str, Any]], compare: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--head", help="directory of the head (default: found below SN120_WORK_DIR or /root/sn120-run/work)")
-    parser.add_argument("--configs", default=",".join(CONFIGS), help="configs to run, in order of importance (default: all)")
+    parser.add_argument("--configs", default=",".join(DEFAULT_CONFIGS), help=f"configs to run, in order of importance (default: all but f2; known: {', '.join(CONFIGS)})")
     parser.add_argument("--gpus", help="GPU numbers to use, for example 0,1,2 (default: every GPU that is free)")
     parser.add_argument("--streams", type=int, default=STREAMS)
     parser.add_argument("--context-tokens", type=int, default=CONTEXT_TOKENS)
