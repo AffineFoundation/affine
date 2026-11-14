@@ -126,8 +126,10 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
             "seats": record["seats"], "skipped": record["skipped"], "tasks": record["n_tasks"],
             "null_pass": record.get("null_pass_rate"), "null_cap": record.get("null_cap_rate"),
             "outcome": record["outcome"], "winner_uid": record.get("winner_uid"), "at": record["closed_at"],
-            # for the charts: the open time, the pass rate of the applied winner, and its z (with no winner: the highest z)
+            # for the charts: the open time, the pass rate of the applied winner, its z (with no winner: the highest z), and
+            # the number of entries with a z. An entry whose training failed has none. ``reason`` is the validator's own text.
             "opened_at": record["opened_at"], "winner_pass": winner_pass, "best_z": best_z,
+            "with_z": sum(entry.get("z") is not None for entry in record["entries"]), "reason": record.get("reason") or None,
         })
 
     kings = []  # the snapshot gives the payee window, newest first; a king carried over from v1 has no v2 head and no v2 files

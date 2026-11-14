@@ -104,15 +104,26 @@ def test_only_an_applied_winner_gets_files_and_unknown_fields_never_reach_the_pa
     closed, chart = snap["history"][0], data["rounds"][0]
     assert (chart["opened_at"], chart["at"]) == (closed["opened_at"], closed["closed_at"]) and chart["opened_at"] <= chart["at"]
     assert (chart["best_z"], chart["winner_pass"]) == (winner["z"], winner["pass_rate"]) and chart["null_pass"] == closed["null_pass_rate"]
+    assert chart["with_z"] == 3 < chart["seats"] + chart["skipped"] and chart["reason"] == closed["reason"] != ""
 
     snap["history"][0]["outcome"] = "abandoned"  # a named winner whose files were not verified has no public files
     data = json.loads(build(tmp_path, snap)[2])
     assert data["history"][0]["batch"] is None
     scores = [entry["z"] for entry in closed["entries"] if entry.get("z") is not None]  # no winner: the highest z of the round
     assert data["rounds"][0]["winner_pass"] is None and data["rounds"][0]["best_z"] == max(scores) and len(scores) == 3
+    # the first live round: no decision; the training of one batch failed, so its entry has no score field at all
+    closed.update(outcome="no_decision", winner_uid=None, reason="no entry was scored")
+    failed = closed["entries"][0]
+    for name in ("delta", "se", "z", "cap_rate", "n_tasks", "pass_rate"):
+        failed.pop(name, None)
+    data = json.loads(build(tmp_path, snap)[2])
+    assert data["rounds"][0] | {"with_z": 2, "best_z": max(scores[1:]), "winner_pass": None, "reason": "no entry was scored"} == data["rounds"][0]
+    row = next(row for row in data["history"] if row["uid"] == failed["uid"])
+    assert (row["status"], row["z"], row["delta"], row["cap_rate"]) == (failed["status"], None, None, None)
     for entry in closed["entries"]:
         entry["z"] = None
-    assert json.loads(build(tmp_path, snap)[2])["rounds"][0]["best_z"] is None  # a round with no score has no bar
+    data = json.loads(build(tmp_path, snap)[2])
+    assert data["rounds"][0]["best_z"] is None and data["rounds"][0]["with_z"] == 0  # a round with no score has no bar
 
 
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):

@@ -23,14 +23,32 @@ AffineValidator only. The GPU box and the benchmark host need nothing. There is 
 
 Names as in "AffineValidator" of `v2/CUTOVER.md`: `REPO`, `SITE`, `V1FILE`, `PY`.
 
-1. **The checkout has no local change of the site.**
+1. **First: look for a local change of the site in the checkout.** On 14 Nov 2026 the live `site-data.json` was not the output of the builder in `v2`: its Kings table was empty while `mining.json` listed 10 kings, and it had 22 reference rows with no benchmark file. So expect a local change of `v2/site/build.py`.
 
    ```
-   git -C "$REPO" status --short -- v2/site
+   git -C "$REPO" rev-parse HEAD
+   git -C "$REPO" status --short
+   git -C "$REPO" diff -- v2/site/
    grep -E '^ExecStart=' /etc/systemd/system/sn120-v2-site-pull.service
    ```
 
-   Right: the first command prints nothing; the second prints one line with `v2/site/pull.py` of `$REPO`, `--site-dir`, `--public-url` and `--v1-history`. If the first command prints a line, stop and send `git -C "$REPO" diff -- v2/site` to the coordinator: a checkout would lose that change. If the line of the unit has no `--v1-history`, tell the coordinator: without it the site has reference models only while `$SITE/v1-data.json` from an earlier run is there.
+   - Right: `status` prints nothing and `diff` prints nothing. Go to step 2.
+   - `status` or `diff` prints a line: a file of the checkout was changed on the host. Save the change, and discard nothing:
+
+     ```
+     git -C "$REPO" diff > "$HOME/sn120-v1-archive/local-change-$(date -u +%Y%m%dT%H%M%SZ).diff"
+     git -C "$REPO" status --short > "$HOME/sn120-v1-archive/local-change-status.txt"
+     ```
+
+     Send both files and the commit of `rev-parse` to the coordinator, and wait for the answer. Do not run `git stash`, `git checkout -- <file>`, `git reset` or `git checkout -f` before it. The checkout of step 4 stops with `Your local changes to the following files would be overwritten by checkout` while a changed file is in its way; that is the wanted result.
+   - A file with `??` in `status` under `v2/site/` is a file that git does not know. Copy it to `$HOME/sn120-v1-archive/` and name it to the coordinator too.
+   - The line of the unit names `v2/site/pull.py` of `$REPO`, `--site-dir`, `--public-url` and `--v1-history`. If it names another script, or a second unit writes `site-data.json`, tell the coordinator. With no `--v1-history` the site has reference models only while `$SITE/v1-data.json` of an earlier run is there.
+
+   What the site shows once this commit is in force, against the site of 14 Nov 2026:
+
+   - **Kings** lists each king of `mining.json`, also a king that was carried over from v1 (10 rows on 14 Nov 2026, each with the link `v1 king`). The site of 14 Nov 2026 showed none of them. The code has no rule that hides them; if the empty table is wanted, that is a new rule for the coordinator, not a step for the host.
+   - **Benchmarks** has the same 22 reference models with the same scores, best average first, and one more row `Genesis`. The five best are in view; a link shows all.
+   - The sections **Benchmarks** (now second) and **Rounds in charts** are new. Step 5 has the details.
 
 2. **The frozen v1 history has the reference models.**
 

@@ -116,15 +116,18 @@ mkdir -p "$BDIR/state" "$BDIR/site" "$BDIR/secrets" && chmod 700 "$BDIR/secrets"
 
    The output has `"queue_len": 1`, the id `genesis-87de8304e9d33dde` with `new-genesis` under `next`, and `"pod": null`, while the head is the launch model and the table has no result. A store error here means that the token cannot read.
 
-6. **The reference rows.** On 14 Nov 2026 the site shows 22 rows of reference models (`bench.rows` in `https://affine.io/site-data.json`). The service does not make these rows. It keeps each row of that kind that is in the table before its first write. I do not know which file holds them today: `https://affine.io/public/benchmarks.json` answers 404, and the pull's index does not name that file.
+6. **The reference rows need no seed.** The service makes no row of a reference model, and none is put into its table. The site's builder (`v2/site/build.py`) takes the reference models from the frozen v1 history on AffineValidator, on each build, whatever this table holds. So start with an empty `$BDIR/site`: copy no file into it.
+
+   This holds only when AffineValidator runs the site builder that has this rule. Before the next step, on AffineValidator (`REPO` and `SITE` as in `v2/site/OPERATIONS.md`):
 
    ```
-   SITE=<the site directory>
+   grep -c '^def tried' "$REPO/v2/site/build.py"
    ls -l "$SITE/public/benchmarks.json"
    ```
 
-   - The file is there: copy it to `$BDIR/site/benchmarks.json`. Then check the kinds: `python3 -c 'import json,sys,collections; print(collections.Counter(m.get("kind") for m in json.load(open(sys.argv[1]))["models"]))' "$BDIR/site/benchmarks.json"` must print `reference` only. A row of kind `king` or `genesis` in it is a row of v1: take it out before the next step.
-   - The file is not there: stop here and ask the coordinator where the site's reference rows come from. After the next step the site reads the table of the store, and a row that is not in that table is not on the site.
+   - Right: the first command prints `1`, and the second prints `No such file or directory`.
+   - The first command prints `0`: the checkout is older. Stop here and do the steps of `v2/site/OPERATIONS.md` first. With the older builder the site shows only the rows of the store's table, so the reference models leave the site at the next step.
+   - The file is there: it is not the service's file, because the service has not written yet. Do step 6 of `v2/site/OPERATIONS.md` (it moves the file out of the site directory). While the file is there, the pull does not copy the table of the store.
 
 7. **The first write, with no rent.** `publish` writes the table and rents nothing.
 
@@ -132,11 +135,11 @@ mkdir -p "$BDIR/state" "$BDIR/site" "$BDIR/secrets" && chmod 700 "$BDIR/secrets"
    bench publish
    ```
 
-   It prints a line with `"event": "table-read"`, a line with `"event": "table-written"` whose `rows` has `"genesis-87de8304e9d33dde": "queued"` and each reference row, and then `published`. A store error here means that the token cannot write.
+   It prints a line with `"event": "table-read"`, a line with `"event": "table-written"` whose `rows` has `"genesis-87de8304e9d33dde": "queued"`, one entry for each other id that step 5 listed and no reference model, and then `published`. A store error here means that the token cannot write.
 
-   After the pull's next run (one minute): `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/public/benchmarks.json` prints `200`, and the site's table has the reference rows and one more row with the state `queued`.
+   After the pull's next run (one minute): `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/public/benchmarks.json` prints `200`. The site's table has the same reference models as before, and its row `Genesis` has the state `queued` in place of `no run yet`.
 
-   If the pull's log says `public/benchmarks.json is in the site directory and this command did not write it`, the file of step 6 is in its way: move it out of the site directory. The next run of the pull copies the table of the store.
+   If the pull's log says `public/benchmarks.json is in the site directory and this command did not write it`, a file placed by hand is in its way (step 6): move it out of the site directory. The next run of the pull copies the table of the store.
 
 ## 5. Start
 
@@ -245,7 +248,7 @@ Proven by tests on a CPU (`v2/bench/tests/`), with the store of v2's simulation,
 - A host with an empty disk reads the published table and runs no row again. If the table cannot be read, nothing is rented.
 - The only write to the store is `public/benchmarks.json`. The read links go to the node on standard input only, never into a command line or the log.
 - A reference row that is in the table before the first write stays, with its results.
-- The site builder of today (`v2/site/build.py`) reads the table as it is.
+- The site builder (`v2/site/build.py`) reads the table as it is, and adds the reference models from the frozen v1 history (`v2/tests/test_site_build.py`, `v2/tests/test_site_pull.py`).
 
 Not proven:
 
@@ -253,7 +256,7 @@ Not proven:
 - That vLLM 0.32.0 serves the launch model from the store's files with the settings of `bench/config/` is not shown by a run.
 - The time and the price of one row on v2.
 - That the Lium command and its key are on AffineValidator, and what the store token may do.
-- Which file holds the site's 22 reference rows today (section 4, step 6).
+- That AffineValidator runs the site builder of this commit (section 4, step 6). On 14 Nov 2026 its `site-data.json` was not the output of the builder in `v2`.
 - `systemd-analyze verify` passed for the unit file on the build machine. The unit has not run on a host.
 
 Shown by a run of the commands on the build machine, with the store class of production (`R2Store`) on a local S3 double: `status`, `publish` and a start of `daemon` with a Lium double that has no offer. The start logged `rent-no-offer`, made no pod and wrote the table with the row `queued`.

@@ -27,11 +27,12 @@
     not_trained: ['NOT TRAINED', 'wait', 'The training time of the round ended before this batch was trained. Not charged; the seat is first in the next round.'],
     not_scored: ['NOT SCORED', 'wait', 'The time limit of the round came before the first look of the scoring. Not charged; the seat is first in the next round.'],
   };
+  const why = r => r.reason ? ` The validator's text: "${r.reason}"` : '';
   const OUTCOME = {
     applied: r => pill('UID ' + r.winner_uid + ' applied', 'up', 'The winning LoRA is on the head now.'),
-    null: () => mute('M stays', 'No LoRA cleared the bar. The head did not change.'),
-    no_decision: () => pill('no decision', 'wait', 'No LoRA was judged: a failure on our side, or the time of the round ended first. Nobody is charged.'),
-    abandoned: () => pill('abandoned', 'wait', 'The files of the named winner could not be verified. Nobody is charged.'),
+    null: r => mute('M stays', 'No LoRA cleared the bar. The head did not change.' + why(r)),
+    no_decision: r => pill('no decision', 'wait', 'No LoRA was judged: a failure on our side, or the time of the round ended first. Nobody is charged.' + why(r)),
+    abandoned: r => pill('abandoned', 'wait', 'The files of the named winner could not be verified. Nobody is charged.' + why(r)),
   };
   const FLAG = {
     leased: ['in round', 'up', 'In the round that runs now.'],
@@ -70,7 +71,7 @@
     at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
     env: { h: 'Env', w: 60, r: r => esc(r.env) },
-    seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Batches trained and scored in the round.' },
+    seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is counted.' },
     skipped: { h: 'Skipped', w: 68, n: 1, r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
     tasks: { h: 'Tasks', w: 64, n: 1, r: r => esc(r.tasks) },
     mPass: { h: 'M pass', w: 68, n: 1, r: r => pct(r.null_pass) },
@@ -252,7 +253,7 @@
   const TONE = { applied: 'var(--performance)', null: 'var(--rejected)' };
   function tiles(d) {
     const rs = d.rounds.slice().reverse(), ended = r => (ENDED[r.outcome] || (() => r.outcome))(r), took = r => r.at - r.opened_at;
-    const tip = (r, rows) => tipOf(`${r.round_id} · ${ended(r)}`, rows);
+    const tip = (r, rows) => tipOf(`${r.round_id} · ${ended(r)}`, r.reason ? [...rows, ['validator', r.reason]] : rows);
     const tile = (id, reading, o) => {
       const el = document.getElementById(id);
       el.querySelector('.reading').textContent = reading || '—';
@@ -269,10 +270,10 @@
       series: [{ v: i => rs[i].null_pass, c: 'var(--accepted)' }, { v: i => rs[i].winner_pass, c: 'var(--performance)' }],
       tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2)], ['winner', share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
     });
-    tile('c-batch', end && `${end.round_id} ${end.seats} of ${d.round.cap}`, {
+    tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
       include: [0], least: 1, fmt: v => v,
-      series: [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)' }],
-      tip: i => tip(rs[i], [['batches', `${rs[i].seats} of at most ${d.round.cap}`], ['skipped, no valid file', rs[i].skipped], ['tasks', rs[i].tasks]]),
+      series: [{ bar: 1, v: i => rs[i].seats, c: 'var(--performance)', hollow: () => 1 }, { bar: 1, v: i => rs[i].with_z || null, c: 'var(--performance)' }],
+      tip: i => tip(rs[i], [['batches', `${rs[i].seats} of at most ${d.round.cap}`], ['with a z', rs[i].with_z], ['skipped, no valid file', rs[i].skipped], ['tasks', rs[i].tasks]]),
     });
     const five = rs.slice(-5).map(took).sort((a, b) => a - b), mid = five.length >> 1;
     const unit = Math.max(0, ...rs.map(took)) >= 7200 ? ['h', 3600] : ['m', 60];
