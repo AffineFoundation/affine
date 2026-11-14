@@ -58,6 +58,8 @@ td.empty{text-align:center;padding:28px}
 .scroll td.empty,.scroll tr.more td{position:static}
 td .bar{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px}
 td .bar i{display:inline-block;height:6px;border-radius:1px;background:currentColor;opacity:.55}
+.hp{display:block;white-space:normal;cursor:help}
+.hp span{white-space:nowrap}
 .key{all:unset;cursor:copy;color:var(--muted);font:10px var(--mono)}
 .key:hover,.key:focus-visible{color:var(--ink)}
 .key.copied::after{content:' copied';font-size:9px;color:var(--performance)}

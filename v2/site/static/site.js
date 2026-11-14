@@ -67,6 +67,26 @@
     : pill('private', 'private', 'Only a winner is published. This batch stays private.');
   const dagger = (c, t) => c ? `<sup title="${esc(t)}">†</sup>` : '';
 
+  // Batch size and train settings. Only the batch of a winner is public, so each other row says why it has no value.
+  const closed = (r, what) => r.imported ? unscored(r)
+    : r.batch ? no(`The batch of this winner is public, but the data file of this page does not have ${what} yet. It is in batch.json.`, 'not read')
+    : r.line != null ? pill('private', 'private', 'A file in the queue stays private. Only the batch of a winner is published.')
+    : pill('private', 'private', 'Only a winner is published. This batch stays private.');
+  const batchSize = r => r.batch_prompts == null ? closed(r, 'its size')
+    : `<span title="${esc(r.batch_prompts)} prompts${r.batch_rollouts == null ? '' : ` · ${esc(r.batch_rollouts)} rollouts`}">${esc(r.batch_prompts)}${r.batch_rollouts == null || !r.batch_prompts ? '' : ' × ' + (r.batch_rollouts / r.batch_prompts).toFixed(1)}</span>`;
+  // A setting shows in the cell only when the miner set it to a value that is not the default. The tooltip has each setting.
+  const HP = { lora_lr: 'lr', sample_temperature: 'temp', target_modules: 'modules', group_size: 'group' };
+  const setting = v => Array.isArray(v) ? v.join(', ') : typeof v === 'number' && v && Math.abs(v) < 1e-3 ? v.toExponential() : String(v);
+  const HP_HELP = 'Train settings that the miner set to a value that is not the default. Each setting is in the tooltip. Public for a winner only.';
+  const hparams = r => {
+    if (r.train == null) return closed(r, 'its train settings');
+    const known = D.train_settable || [], std = Object.fromEntries(known.map(x => [x.key, x.default])), keys = [...new Set([...known.map(x => x.key), ...Object.keys(r.train)])];
+    const set = keys.filter(k => k in r.train && setting(r.train[k]) !== setting(std[k]));
+    const all = keys.map(k => `${k} ${setting(k in r.train ? r.train[k] : std[k])}${!(k in std) ? '' : set.includes(k) ? ` (default ${setting(std[k])})` : ' (default)'}`).join('\n');
+    return set.length ? `<span class="hp" title="${esc(all)}">${set.map((k, i) => `<span>${esc(HP[k] || k)} ${esc(setting(r.train[k]))}${i < set.length - 1 ? ' ·' : ''}</span>`).join(' ')}</span>`
+      : mute('defaults', 'The miner set no train setting to a value that is not the default.' + (all ? '\n' + all : ''));
+  };
+
   // h = header, w = width in px, n = numeric (right aligned), t = header tooltip, r = cell from a row
   const C = {
     rank: { h: '#', w: 36, n: 1, r: r => mute(r.rank) },
@@ -85,6 +105,9 @@
     bar: { h: 'vs bar', w: 96, n: 1, r: r => r.z == null ? unscored(r) : margin(r.z - D.z_bar, `z ${r.z.toFixed(3)} against the winner bar z > ${D.z_bar}: ${r.z > D.z_bar ? 'cleared by' : 'short by'} ${Math.abs(r.z - D.z_bar).toFixed(3)}`), t: 'z minus the winner bar. Above zero clears the bar.' },
     capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => overCap(r) ? `<span class="dn" title="Above the cap-hit limit of this round, ${pct(capLimit(r))}: the larger of ${pct(D.cap_hit_floor)} and the cap-hit of M plus ${pct(D.cap_hit_margin)}. A LoRA above the limit cannot win.">${pct(r.cap_rate)}</span>` : pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed. Red: above the cap-hit limit of the round.' },
     look: { h: 'Dropped', w: 68, n: 1, r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
+    size: { h: 'Batch', w: 76, n: 1, r: batchSize, t: 'Prompts × mean rollouts for each prompt. The totals are in the tooltip. Public for a winner only.' },
+    hp: { h: 'Hparams', w: 146, r: hparams, t: HP_HELP },
+    hpWide: { h: 'Hparams', w: 210, r: hparams, t: HP_HELP },
     sha: { h: 'Batch sha256', w: 100, r: r => key(r.sha, 8, 0) },
     at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
@@ -106,9 +129,9 @@
     cand: { h: 'Candidate', w: 100, r: r => key(r.candidate, 8, 0), t: 'Hash of the trained candidate.' },
   };
   const T = {
-    kings: { cols: ['rank', 'uid', 'hot', 'round', 'at', 'z', 'gain', 'head', 'files'], empty: 'No king yet.' },
-    queue: { cols: ['line', 'uid', 'hot', 'reg', 'check', 'flags'], empty: 'No registration waits in the queue.' },
-    history: { cols: ['round', 'uid', 'hot', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
+    kings: { cols: ['rank', 'uid', 'hot', 'size', 'hpWide', 'round', 'at', 'z', 'gain', 'head', 'files'], empty: 'No king yet.' },
+    queue: { cols: ['line', 'uid', 'hot', 'size', 'hp', 'check', 'reg', 'flags'], empty: 'No registration waits in the queue.' },
+    history: { cols: ['round', 'uid', 'hot', 'size', 'hp', 'result', 'gain', 'z', 'bar', 'capHit', 'look', 'sha', 'files', 'at'], empty: 'No result yet.' },
     rounds: { cols: ['round', 'env', 'head', 'seats', 'skipped', 'tasks', 'mPass', 'mCap', 'outcome', 'at'], empty: 'No round yet.' },
     heads: { cols: ['head', 'round', 'kind', 'manifest', 'at'], empty: 'No head yet.' },
     v1kings: { cols: ['rank', 'uid', 'hot', 'epoch', 'z', 'share'], empty: 'No king.' },
@@ -228,9 +251,14 @@
     weights: 'The weight files of this model are not in the store yet: its run starts when they are.',
     source: 'The benchmark service cannot read the source of the weights of this model yet: it rents no machine for it.',
   };
-  // The sampling of a score, from the settings profile that the benchmark file names. A profile that this page does not know is shown by its name.
-  const PP = { 'qwen3.5-family': 'presence penalty 1.5', 'qwen3.5-family-pp0': 'presence penalty 0' };
-  const pp = name => PP[name] || `profile ${name}`;
+  // The sampling of a score, from the settings profile that the benchmark file names: its presence penalty. One list for the tooltip
+  // of a score, the note under the table and the second line of a row. The benchmark file gives only the name of a profile, so the
+  // values are here; `profiles` of the data file wins when it is there. A profile that neither has is shown by its name.
+  const PP = { 'qwen3.5-family': 1.5, 'qwen3.5-family-pp0': 0 };
+  let PROFILES = {};
+  const penalty = name => (PROFILES[name] || {}).presence_penalty ?? PP[name] ?? null;
+  const pp = name => penalty(name) == null ? `profile ${name}` : `presence penalty ${penalty(name)}`;
+  const ppShort = name => penalty(name) == null ? name : penalty(name) ? `pp ${penalty(name)}` : 'pp0';
   const V1_KING = 'A king of v1, scored by the benchmark service of v2. It won no round of v2, so it has no round and no head here.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
@@ -256,6 +284,7 @@
   const shade = f => { const k = Math.min(1, Math.max(0, (.9 - f) / .75)); return `hsl(${Math.round(130 * (1 - k ** .75))} 65% 45% / ${(.3 + .28 * Math.abs(.5 - k)).toFixed(2)})`; };
   let allRefs = false;
   function bench(b) {
+    PROFILES = b.profiles || {};
     if (!table('bench')) return;
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
@@ -327,12 +356,10 @@
     };
     // The second line under a name, as on the v1 site: `budget 65,536 tok · cut-off 3.3% · pp 1.5`. The budget is the token budget
     // of the run. The cut-off is the mean cap-hit of the scores of the row. The sampling is the presence penalty of the settings profile
-    // of the scores, when the data file gives the values of that profile (`profiles`); if not, it is the name of the profile, as the
-    // benchmark file has it. Each part is there only when the data has it, so a row with none of them has one line.
-    const penalty = p => (b.profiles && b.profiles[p] || {}).presence_penalty, tag = p => penalty(p) == null ? p : penalty(p) ? 'pp ' + penalty(p) : 'pp0';
+    // of the scores. Each part is there only when the data has it, so a row with none of them has one line.
     const meta = r => {
       const caps = Object.values(r.cells).map(x => x.cap_rate).filter(x => x != null), profiles = had(r).length ? had(r) : r.profile && run(r) === RUN.running ? [r.profile] : [];
-      return [r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tok`, caps.length && `cut-off ${share(caps.reduce((a, x) => a + x, 0) / caps.length)}`, ...profiles.map(tag)].filter(Boolean);
+      return [r.budget != null && `budget ${Number(r.budget).toLocaleString('en-US')} tok`, caps.length && `cut-off ${share(caps.reduce((a, x) => a + x, 0) / caps.length)}`, ...profiles.map(ppShort)].filter(Boolean);
     };
     const name = r => {
       const other = r.kind !== 'king' && r.kind !== 'genesis' && r.kind !== 'v1-king', billions = other && size(r) != null ? size(r).toFixed(1) + 'B' : '';
