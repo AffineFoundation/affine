@@ -25,10 +25,10 @@ torch = pytest.importorskip("torch")
 
 from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 
-from sn120_v2 import cli, headfold, layout  # noqa: E402
+from sn120_v2 import cli, controller, headfold, layout  # noqa: E402
 from sn120_v2.afterking import AHEAD_MAX_AGE_S, OVERLAP, PUBLISH, SERIAL, Beside, Overlap  # noqa: E402
 from sn120_v2.chain import FakeChain, Feed, Reader  # noqa: E402
-from sn120_v2.controller import Stack  # noqa: E402
+from sn120_v2.controller import PUBLISH_TRIES, Stack  # noqa: E402
 from sn120_v2.errors import HeadLost, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, check_chain, checkpoints, heads_of  # noqa: E402
@@ -37,7 +37,7 @@ from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
 from sn120_v2.sampling import make_round_seed  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.state import APPLY_DEFERRED, HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED  # noqa: E402
-from sn120_v2.types import HeadManifest, Verdict  # noqa: E402
+from sn120_v2.types import HeadManifest  # noqa: E402
 
 WAIT_S = 30  # the longest a test waits for a thread
 
@@ -441,7 +441,7 @@ def test_the_next_fold_waits_for_the_second_sha256_of_the_head_that_it_reads(wor
     assert not world.store.list("pending/never") and cache(world) == before and world.state.head == manifest.head, "the fold stopped before it changed the cache or the store"
 
 
-# ---- the look ahead: the check of the waiting files and the read of the chain, beside the fold ----
+# ---- the check of the waiting files stays at the open; the read of the chain is made beside the fold ----
 
 
 class CountedCheck:
@@ -455,95 +455,83 @@ class CountedCheck:
         return self.real(hotkeys)
 
 
-def test_the_files_of_the_seats_that_stay_are_checked_beside_the_fold_and_the_open_checks_only_the_new_seats(tmp_path, capsys):
+def test_the_open_after_a_king_checks_the_file_of_each_waiting_seat_itself(tmp_path):
     world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=OVERLAP)
     world.start(CHAIN)
     for uid, quality in ((2, 0.3), (3, 0.0), (4, 0.0), (5, 0.3), (6, None)):
         world.register(uid, quality)
     check = CountedCheck(world)
     assert world.round().outcome == "applied"
-    world.overlap.wait()
-    assert check.calls == [("MainThread", ("hk2", "hk3", "hk4", "hk5", "hk6")), ("sn120-v2-file-check-ahead", ("hk4", "hk5", "hk6"))]
     world.register(7, 0.0)
     check.calls.clear()
-    capsys.readouterr()
     opened_before = world.now
     record = world.round()
-    world.overlap.wait()
-    assert check.calls == [("MainThread", ("hk7",)), ("sn120-v2-file-check-ahead", ("hk6", "hk7"))], "the open reads the file of the new seat only; then the king of this round starts the next look"
-    assert "open: waiting seats with a file check from beside the fold: 3; waiting seats checked now: 1" in capsys.readouterr().err
+    assert check.calls == [("MainThread", ("hk4", "hk5", "hk6", "hk7"))], "one check, in the thread of run, of each seat that waits at the open"
     assert [entry.reg.uid for lease in record.leases for entry in lease.entries] == [4, 5] and record.outcome == "applied"
-    assert world.publisher.snapshots[-1]["queue"]["files_checked_at"] < opened_before, "the public files give the time of the check beside the fold, not the time of the open"
+    kept(world)
+    assert world.publisher.snapshots[-1]["queue"]["files_checked_at"] > opened_before, "the public files give the time of the check at the open"
 
 
-def test_the_verdicts_of_the_look_ahead_are_those_of_a_check_at_the_open(tmp_path):
+def during_the_fold(world: ChainWorld, act) -> None:
+    """Call ``act`` when the fold of a king starts: ``fold_ahead`` with ``overlap``, ``fold`` with ``serial``."""
+    for name in ("fold_ahead", "fold"):
+        real = getattr(world.folder, name)
+        setattr(world.folder, name, lambda *args, real=real, **more: (act(), real(*args, **more))[1])
+
+
+def test_a_file_that_a_miner_stores_while_the_fold_runs_keeps_his_old_seat_as_with_serial(tmp_path):
+    """The squat rule moves an old seat with no valid file to the back. It must see the files of the open, not those of the decision."""
+
+    def story(order):
+        world = ChainWorld(tmp_path / order, sim_params(batch_cap=2, squat_min_wait_s=1), order=order)
+        world.start(CHAIN)
+        for uid, quality in ((2, 0.3), (3, 0.0), (4, None), (5, 0.0), (6, 0.0)):
+            world.register(uid, quality)
+        during_the_fold(world, lambda: world.admission.upload("hk4", 0.0))
+        assert world.round().outcome == "applied"
+        return world, world.round()
+
+    (serial, _), (overlap, record) = story(SERIAL), story(OVERLAP)
+    assert "seats_demoted" not in kinds(overlap), "hk4 has a valid file at the open: his seat is old, and it stays"
+    assert [entry.reg.uid for lease in record.leases for entry in lease.entries] == [4, 5]
+    kept(overlap)
+    assert records(overlap) == records(serial) and stored(overlap) == stored(serial)
+
+
+def test_a_file_that_is_not_valid_at_the_open_is_not_picked_as_with_serial(tmp_path):
     def story(order):
         world = ChainWorld(tmp_path / order, sim_params(batch_cap=2), order=order)
         world.start(CHAIN)
-        for uid, quality in ((2, 0.3), (3, 0.0), (4, 0.0), (5, 0.3), (6, None)):
+        for uid, quality in ((2, 0.3), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)):
             world.register(uid, quality)
-        world.admission.upload("hk4", 0.0, valid=False)
+        during_the_fold(world, lambda: world.admission.upload("hk4", 0.0, valid=False))
         world.round()
-        world.register(7, 0.0)
-        world.round()
-        return world
+        return world, world.round()
 
-    serial, overlap = story(SERIAL), story(OVERLAP)
+    (serial, _), (overlap, record) = story(SERIAL), story(OVERLAP)
+    assert [entry.reg.uid for lease in record.leases for entry in lease.entries] == [5, 6]
     kept(overlap)
     assert records(overlap) == records(serial) and stored(overlap) == stored(serial)
-    assert overlap.controller._verdicts == serial.controller._verdicts and set(overlap.controller._verdicts) == {"hk4", "hk5", "hk7"}  # noqa: SLF001
+    assert overlap.controller._verdicts == serial.controller._verdicts  # noqa: SLF001
 
 
-def test_a_file_that_changed_after_the_look_ahead_is_read_again_at_the_freeze(tmp_path):
-    """The verdict of the look ahead picks the seats. The bytes of the round are read and checked at the open, as with ``serial``."""
-    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=OVERLAP)
-    world.start(CHAIN)
-    for uid, quality in ((2, 0.3), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)):
-        world.register(uid, quality)
-    world.round()
-    world.admission.upload("hk4", 0.0, valid=False)  # after the look ahead said valid
-    world.admission.upload("hk5", 0.25)
-    record = world.round()
-    assert [entry.reg.uid for lease in record.leases for entry in lease.entries] == [5, 6], "the changed file of hk4 is not valid at the freeze: a skip"
-    assert json.loads(world.store.get(layout.frozen_batch(record.round_id, "hk5")))["quality"] == 0.25, "and the round has the bytes of the open"
-    assert (4, 1004) in world.state.queue and not world.state.queue[(4, 1004)].leased
-
-
-def test_the_look_ahead_is_memory_of_one_run_and_a_new_run_checks_each_file_itself(tmp_path):
-    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=OVERLAP)
-    world.start(CHAIN)
-    for uid, quality in ((2, 0.3), (3, 0.0), (4, 0.0), (5, 0.3)):
-        world.register(uid, quality)
-    world.round()
-    new_run(world)
-    check = CountedCheck(world)
-    assert world.round().outcome == "applied"
-    assert check.calls[0] == ("MainThread", ("hk4", "hk5")), "the look ahead of the run that stopped is gone"
-
-
-def verdict(hotkey: str) -> Verdict:
-    return Verdict(hotkey, True, "", "0" * 64, 1)
-
-
-def test_a_look_ahead_is_used_one_time_and_an_old_or_a_failed_one_is_made_again():
+def test_a_chain_read_ahead_is_used_one_time_and_an_old_or_a_failed_one_is_made_again():
     snapshots = iter(["chain-1", "chain-2"])
     overlap = Overlap(chain=lambda: next(snapshots))
-    assert overlap.verdicts(100) is None and overlap.snapshot(100) is None, "nothing was started"
-    overlap.look_ahead(100, ["a", "b"], lambda hotkeys: {hotkey: verdict(hotkey) for hotkey in hotkeys if hotkey != "b"})
-    overlap.look_ahead(101, ["c"], lambda hotkeys: pytest.fail("a second try of the same king starts no second look"))
-    found, asked, at = overlap.verdicts(100 + AHEAD_MAX_AGE_S)
-    assert (set(found), asked, at) == ({"a"}, ("a", "b"), 100), "a hotkey with no file has no verdict; the caller knows that it was asked"
-    assert overlap.snapshot(100 + AHEAD_MAX_AGE_S) == "chain-1"
-    assert overlap.verdicts(102) is None and overlap.snapshot(102) is None, "one use"
-    overlap.look_ahead(200, ["a"], lambda hotkeys: {})
-    assert overlap.verdicts(201 + AHEAD_MAX_AGE_S) is None and overlap.snapshot(201 + AHEAD_MAX_AGE_S) is None, "older than the limit: not used"
+    assert overlap.snapshot(100) is None, "nothing was started"
+    overlap.look_ahead(100)
+    overlap.look_ahead(101)
+    assert overlap.snapshot(100 + AHEAD_MAX_AGE_S) == "chain-1", "a second try of the same king starts no second read"
+    assert overlap.snapshot(102) is None, "one use"
+    overlap.look_ahead(200)
+    assert overlap.snapshot(201 + AHEAD_MAX_AGE_S) is None, "older than the limit: not used"
 
-    def store_is_down(hotkeys):
-        raise InfraError("the store did not answer")
+    def node_is_down():
+        raise InfraError("the node did not answer")
 
-    failing = Overlap(chain=lambda: store_is_down(()))
-    failing.look_ahead(300, ["a"], store_is_down)
-    assert failing.verdicts(301) is None and failing.snapshot(301) is None, "the caller makes the step itself, and gets the error itself if it fails again"
+    failing = Overlap(chain=node_is_down)
+    failing.look_ahead(300)
+    assert failing.snapshot(301) is None, "the caller makes the read itself, and gets the error itself if it fails again"
 
 
 def test_run_takes_the_chain_read_of_the_look_ahead_and_reads_the_seed_at_the_open(world, monkeypatch, capsys):
@@ -668,6 +656,62 @@ def test_a_publish_that_fails_after_the_open_is_a_problem_in_the_log_and_the_rou
     assert world.round().outcome == "applied"
     assert "after the open: open: the public files of round r000002: RuntimeError: the site store is down" in capsys.readouterr().err
     assert world.state.head.folded and len(world.state.kings) == 2
+
+
+def a_store_that_fails(world: ChainWorld, times: int, slept: list[float], monkeypatch) -> list[bool]:
+    """The publisher of ``world`` fails ``times`` times, then it works. Returns the list of the failures so far."""
+    real, failed = world.publisher.publish, []
+
+    def publish(snapshot):
+        if len(failed) < times:
+            failed.append(True)
+            raise InfraError("the site store is down")
+        real(snapshot)
+
+    world.publisher.publish = publish
+    monkeypatch.setattr(controller, "PUBLISH_PAUSE_S", 7.0)
+    monkeypatch.setattr(controller.time, "sleep", slept.append)
+    return failed
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_publish_that_fails_two_times_is_written_by_the_third_try_with_no_word_of_a_problem(tmp_path, monkeypatch, capsys, order):
+    world, slept = a_world(tmp_path / "world", order), []
+    world.king()
+    shown = len(world.publisher.snapshots)
+    failed = a_store_that_fails(world, PUBLISH_TRIES - 1, slept, monkeypatch)
+    world.register(90, 0.0)
+    record = world.round()
+    world.controller.close_in_public(world.clock())
+    assert failed == [True] * (PUBLISH_TRIES - 1) and slept == [7.0] * (PUBLISH_TRIES - 1)
+    assert world.publisher.snapshots[shown]["round"]["round_id"] == record.round_id, "the publish at the open of the round is there"
+    assert world.controller.last_error == "" and "PUBLISH FAILED" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("order", [SERIAL, OVERLAP])
+def test_a_publish_with_no_good_try_is_one_line_in_the_log_and_the_next_good_publish_ends_the_last_problem(tmp_path, monkeypatch, capsys, order):
+    world, slept = a_world(tmp_path / "world", order), []
+    world.king()
+    world.controller.close_in_public(world.clock())
+    shown = len(world.publisher.snapshots)
+    failed = a_store_that_fails(world, PUBLISH_TRIES, slept, monkeypatch)
+    capsys.readouterr()
+    assert world.controller.publish(world.clock())
+    line = [text for text in capsys.readouterr().err.splitlines() if text.startswith("PUBLISH FAILED: ")]
+    assert line == ["PUBLISH FAILED: 3 tries, and the store took none: the site store is down. The public files (mining.json, llms.txt) still show the last good publish. run goes on, and the next publish writes them again."]
+    assert failed == [True] * 3 and slept == [7.0] * 2, "3 tries, and no pause after the last try"
+    assert world.controller.last_error == "publish failed: the site store is down" and len(world.publisher.snapshots) == shown
+    assert world.controller.publish(world.clock(), only_changes=True), "the queue did not change, but the publish before failed: the next pass writes again"
+    assert world.controller.last_error == "" and len(world.publisher.snapshots) == shown + 1
+    assert not world.controller.publish(world.clock(), only_changes=True), "nothing changed and nothing failed: no write"
+    assert "PUBLISH FAILED" not in capsys.readouterr().err
+
+
+def test_a_good_publish_keeps_a_last_problem_that_is_not_of_a_publish(world):
+    world.controller.last_error = "fold failed: the fold process died"
+    world.register(90, 0.0)
+    assert world.controller.publish(world.clock())
+    assert world.controller.last_error == "fold failed: the fold process died"
 
 
 def test_beside_gives_the_result_or_the_error_of_its_call_to_the_thread_that_asks():

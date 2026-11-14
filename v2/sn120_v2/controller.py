@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
-from .afterking import PUBLISH, Beside, Overlap
+from .afterking import PUBLISH, Beside, Overlap, say
 from .canonical import canonical_json, to_jsonable
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
@@ -96,6 +96,9 @@ from .types import (
 )
 
 Leases = list[tuple[RoundTicket, BoxResult]]
+PUBLISH_TRIES = 3  # of one publish of the public files, before the controller gives up until the next publish
+PUBLISH_PAUSE_S = 10.0  # between two of those tries. The store client has made its own tries before each one fails
+PUBLISH_PROBLEM = "publish failed: "  # the start of ``last_error`` while the public files do not show the state
 
 
 @dataclasses.dataclass
@@ -342,20 +345,8 @@ class Controller:
         It reads every waiting file from the store. So it runs before a round's
         lease starts or between rounds, never inside a round's time.
         """
-        hotkeys = [seat.reg.hotkey for seat in waiting(self.state.queue)]
-        ahead = self.overlap.verdicts(now) if self.overlap is not None else None
-        if ahead is None:
-            verdicts, at = dict(self.admission.verdicts(hotkeys)), now
-        else:
-            # ``overlap``: these files were checked beside the fold. Only a seat that was not asked for then is checked now.
-            # The public files give the time of the oldest verdict that they show.
-            seen, asked = ahead[0], set(ahead[1])
-            missing = [hotkey for hotkey in hotkeys if hotkey not in asked]
-            fresh = self.admission.verdicts(missing) if missing else {}
-            verdicts = {hotkey: found for hotkey in hotkeys if (found := (seen if hotkey in asked else fresh).get(hotkey)) is not None}
-            at = ahead[2] if len(missing) < len(hotkeys) else now
-            print(f"open: waiting seats with a file check from beside the fold: {len(hotkeys) - len(missing)}; waiting seats checked now: {len(missing)}", file=sys.stderr, flush=True)
-        self._verdicts, self._verdicts_at = verdicts, at
+        verdicts = dict(self.admission.verdicts([seat.reg.hotkey for seat in waiting(self.state.queue)]))
+        self._verdicts, self._verdicts_at = verdicts, now
         return verdicts
 
     def open_round(
@@ -488,10 +479,8 @@ class Controller:
         pairs, winner = self._leases(record, "done"), record.decision.winner
         made = None
         if winner is not None and not record.applied:
-            if self.overlap is not None:  # what the next open needs starts here, beside the fold
-                charged = {(entry.uid, entry.registration_block) for entry in record.decision.entries if entry.charged}
-                stay = [seat.reg.hotkey for seat in self.state.queue.values() if seat.reg.key not in charged]
-                self.overlap.look_ahead(now, stay, self.admission.verdicts)
+            if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
+                self.overlap.look_ahead(now)
             try:
                 made = self._apply(record, pairs, now)
             except VerifyError as exc:
@@ -649,7 +638,7 @@ class Controller:
                 with timed(f"close of {record.round_id}: the chain file"):
                     self.head.chain(self.state)
             except InfraError as exc:
-                self.last_error = f"publish failed: {exc}"
+                self.last_error = f"{PUBLISH_PROBLEM}{exc}"
         self._after(f"close of {record.round_id}: the delete of its files in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(record.round_id)), now)
         self._after(f"close of {record.round_id}: the public files", self._publish, now, PUBLISH)
 
@@ -712,21 +701,36 @@ class Controller:
         return seats, {hotkey: (verdict.valid, verdict.batch_sha256) for hotkey, verdict in self._verdicts.items()}
 
     def _publish(self, now: int) -> None:
+        """Write the public files. A store that fails gets ``PUBLISH_TRIES`` tries, each with the state of then.
+
+        With ``overlap`` there is one publish for each round, after its open. If it is lost, mining.json names the
+        old head for the whole round, and a miner with no cache cannot fetch. So one failure is not the end of it.
+        """
         if self.publisher is None:
             return
-        shown, records = self._shown(), len(self.journal.records)
-        try:
-            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+        for left in reversed(range(PUBLISH_TRIES)):
+            shown, records = self._shown(), len(self.journal.records)
+            try:
+                self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+            except InfraError as exc:
+                if left:
+                    time.sleep(PUBLISH_PAUSE_S)
+                    continue
+                self.last_error = f"{PUBLISH_PROBLEM}{exc}"
+                say(f"PUBLISH FAILED: {PUBLISH_TRIES} tries, and the store took none: {exc}. The public files (mining.json, llms.txt) still show the last good publish. run goes on, and the next publish writes them again.")
+                return
             self._published, self._published_at = shown, records
-        except InfraError as exc:
-            self.last_error = f"publish failed: {exc}"
+            if self.last_error.startswith(PUBLISH_PROBLEM):
+                self.last_error = ""  # the public files show the state again: that problem is over
+            return
 
     def publish(self, now: int, check_files: bool = False, only_changes: bool = False) -> bool:
         """Publish the public snapshot outside a round's own steps. Returns True when it published.
 
         ``check_files`` reads the file of every waiting seat first; it is
         refused while a round is open. ``only_changes`` publishes only when
-        the queue or a file verdict differs from the last published snapshot.
+        the queue or a file verdict differs from the last published snapshot,
+        or when the publish before this one failed.
         """
         if check_files:
             if self.state.round is not None:
@@ -735,7 +739,7 @@ class Controller:
                 self.check_files(now)
             except InfraError as exc:
                 self.last_error = f"file check failed: {exc}"
-        if self.publisher is None or (only_changes and self._shown() == self._published):
+        if self.publisher is None or (only_changes and self._shown() == self._published and not self.last_error.startswith(PUBLISH_PROBLEM)):
             return False
         self._publish(now)
         return True
@@ -761,12 +765,18 @@ class Controller:
                 self._kept_done(self.overlap.flush(now))
             if self.state.rounds:
                 delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
-            if self._published_at != len(self.journal.records) or self._shown() != self._published:
-                self._publish(now)  # the public files do not show the journal as it is now
+            if not self._public_is_now():
+                self._publish(now)
         except InfraError as exc:
             self.last_error = f"the store did not answer: {exc}"
+        if before.startswith(PUBLISH_PROBLEM) and self._public_is_now():
+            before = ""
         problem, self.last_error = self.last_error, self.last_error or before
         return problem
+
+    def _public_is_now(self) -> bool:
+        """True when the last good publish shows the journal and the queue as they are now."""
+        return self._published_at == len(self.journal.records) and self._shown() == self._published
 
     def local_head_proven(self) -> None:
         """``overlap``: wait for the second sha256 of the local head, and raise ``HeadLost`` when it failed. ``serial``: nothing, the fold made it in its line."""
