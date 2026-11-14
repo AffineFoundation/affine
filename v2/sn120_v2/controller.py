@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -73,7 +74,7 @@ from .state import (
     load,
     replay,
 )
-from .store import delete_pending, get_record, promote_fold, promote_lora, publish_head, put_record
+from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
 from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
     NOT_SCORED,
@@ -302,7 +303,9 @@ class Controller:
             return []
         if state.failed_leases and now < state.last_failure_at + params.apply_retry_s:
             return []
-        verdicts = self.check_files(now)
+        started = time.monotonic()
+        with timed("open: the check of the waiting files"):
+            verdicts = self.check_files(now)
         moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
@@ -326,7 +329,9 @@ class Controller:
             len(draw.task_ids), now, tuple(leases), picked.skipped,
         )
         self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
-        self._publish(now)
+        log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
+        with timed(f"open: the public files of round {round_id}"):
+            self._publish(now)
         return tickets
 
     def _ticket(self, record: RoundRecord, lease: Lease) -> RoundTicket:
@@ -425,7 +430,9 @@ class Controller:
         ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
         seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
         artifact = next(e for e in result.entries if e.queue_pos == winner.queue_pos).lora
-        promote_lora(self.store, artifact)
+        with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
+            promote_lora(self.store, artifact)
+        started = time.monotonic()
         public_batch = layout.winner_batch(record.round_id)
         try:
             self.store.copy(seat.batch.uri, public_batch)
@@ -434,6 +441,7 @@ class Controller:
         if self.store.sha256(public_batch) != seat.batch.batch_sha256:
             self.store.delete(public_batch)
             raise VerifyError("the winner's frozen batch does not match its sha256")
+        log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
         parent = self.state.manifest
         head = apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
         manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
@@ -449,15 +457,18 @@ class Controller:
             raise ConfigError("a fold is due, but no folder is configured")
         self._check_pins("the fold was not started")
         try:
-            fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
-            promote_fold(self.store, fold)
+            with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
+                fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
+            with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
+                promote_fold(self.store, fold)
             folded = fold_head(head, fold, now)
         except (InfraError, VerifyError, HeadMismatchError) as exc:
             self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
             return False
         manifest = HeadManifest(folded, fold.base_files, fold.master_files, {})
         self._log(HEAD_FOLDED, {"manifest": manifest.to_dict()}, now)
-        delete_pending(self.store, fold.prefix)
+        with timed(f"fold of {head.version_id[:12]}: the delete of its files in pending/"):
+            delete_pending(self.store, fold.prefix)
         return True
 
     def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
@@ -477,6 +488,7 @@ class Controller:
                     attempted.append(key)
                     if queue[tuple(key)].infra_attempts + 1 >= params.max_infra_attempts:
                         held.append(key)
+        started = time.monotonic()
         snapshot_id = self.state.snapshot_id
         if outcome in (APPLIED, NULL) and pairs:
             snapshot_id = self._update_sampler(pairs, outcome)
@@ -491,9 +503,13 @@ class Controller:
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
-        self._sync_pointer()
-        delete_pending(self.store, layout.pending_round_prefix(record.round_id))
-        self._publish(now)
+        log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
+        with timed(f"close of {record.round_id}: the head pointer"):
+            self._sync_pointer()
+        with timed(f"close of {record.round_id}: the delete of its files in pending/"):
+            delete_pending(self.store, layout.pending_round_prefix(record.round_id))
+        with timed(f"close of {record.round_id}: the public files"):
+            self._publish(now)
 
     def _wall(self, pairs: Leases, now: int) -> dict[str, int]:
         """Wall seconds of each phase of the open round. Box phases come from the box; the others from the journal."""
