@@ -638,6 +638,14 @@ The fix needs the digest block (a package changed, or a file under `sn120_v2/gpu
   Then do the `IDLE` line.
 - `APPLY` (the round is decided; the promotion or the fold is left): do the `IDLE` line. In this phase `set-params` takes a file that differs from the pinned one in the two digests only, so use the file of the same stage. `run` then finishes the fold with the new code. The sign that the fold is done: `run` prints `idle: N seats wait, phase IDLE`, or `status` in a second shell shows `"phase": "IDLE"`. `run` prints no round summary for it. With `--max-idle 1` added to the `run` command, `run` returns at that `idle:` line. If valid files wait, `run` does not print the line: it starts the next round at once.
 
+`run` itself stops when the box differs from the pinned digests. It makes the check before it opens a round, before it runs an open round again, and before a fold. Then it starts none of them, counts no failure for a seat, and ends with exit code 2 and one line:
+
+```
+refused: ConfigError: this box differs from the pinned digests (<which digest>), so <what did not start>. Nothing is counted for a seat. Next: the digest block, then set-params with the two digests of this box, then start again
+```
+
+The restart loop does not start a refused `run` again: it stops with exit code 2. A box result that is stored and not judged is judged first, also on a box with other digests: judging reads the digests of the round, not those of the box. So when a box result waits and the fix needs the digest block, the order is: the checkout, the digest block, start `run` (it judges the result, then it refuses), `set-params`, start `run` again. `--discard-result` is not needed for it.
+
 `end-round` is also the command for a round that cannot finish for any other cause, for example when the box is gone. Stop `run` first. It is refused when no round is open, and when the round is already decided.
 
 The cheapest restart, when the state itself is lost or wrong: the block in the next section. It keeps the genesis files (no upload of the 56 GB), the miner files and the box cache. It removes the journal and everything the rounds wrote. Then do step 4 from the `bootstrap` command on.
