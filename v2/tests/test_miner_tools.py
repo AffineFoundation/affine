@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import io
 import json
 import sys
 import types
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -207,7 +209,27 @@ def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys
     code, out = cli(capsys, *argv, HOTKEY)
     assert code == 0 and json.loads(out)["uploaded"] and "secret" not in out
     assert (sent[0].full_url, sent[0].get_method(), sent[0].data) == (link, "PUT", batch_bytes())
-    assert dict(sent[0].header_items()) == {"Content-type": "application/octet-stream"}
+    assert dict(sent[0].header_items()) == {"Content-type": "application/octet-stream", "User-agent": tool.CLIENT["User-Agent"]}
+
+
+def test_every_read_of_an_address_names_its_client(build, tmp_path, monkeypatch):
+    """The public site answers 403 to the default client name of urllib on some files. The tool never sends that name."""
+    sent, path = [], mining_json(build, tmp_path)
+    raw = Path(path).read_bytes()
+
+    def reply(request, timeout):
+        sent.append(request)
+        return contextlib.closing(io.BytesIO(raw))
+
+    monkeypatch.setattr(tool.urllib.request, "urlopen", reply)
+    params, head = tool.load_contract("https://files.example/public/mining.json")
+    tool.upload(b"{}", "https://signed.example/put?sig=secret")
+    assert (params, head) == tool.load_contract(path) and len(sent) == 2, "a file is read with no request"
+    for request in sent:
+        assert isinstance(request, urllib.request.Request), "a bare address gets the default client name of urllib"
+        assert request.get_header("User-agent") == "sn120-v2-miner/1"
+    opener = urllib.request.build_opener()
+    assert dict(opener.addheaders)["User-agent"].startswith("Python-urllib/"), "the name that the site refuses"
 
 
 def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):

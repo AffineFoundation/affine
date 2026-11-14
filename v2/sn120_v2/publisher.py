@@ -58,6 +58,8 @@ REPO = "https://github.com/AffineFoundation/affine"
 # is not a store key, and the publisher never writes it: it holds signed download links for the weight files of
 # the current head. The pull is a command outside this package, so the path is typed here; a test compares the two.
 READ_LINKS = "public/read_links.json"
+# The local train-and-score tool. The publisher names it and does not import it: the module needs the GPU install.
+REPLICATE_MODULE, REPLICATE_BACKEND, REPLICATE_DOC = "sn120_v2.replicate", "backend", "v2/REPLICATE.md"
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
@@ -330,7 +332,8 @@ def _training_lines(params: Params) -> list[str]:
         "",
         "This is everything that the trainer does with a file, in the order in which it does it. The code is in three",
         "files: `sn120_v2/gpu/trainer.py` (the checks around the job), `sn120_v2/gpu/train_job.py` (the job on the GPUs)",
-        "and `sn120_v2/gpu/batch.py` (rows, advantages and token caps).",
+        "and `sn120_v2/gpu/batch.py` (rows, advantages and token caps). Section 10 has the command that runs this code",
+        "on your machine.",
         "",
         f"- Model: the base files of head M (`base_hash`, section 1), loaded as `{params.dtype}` in the model class that",
         "  their `config.json` names. The model is in evaluation mode and all its weights are frozen. The box trains",
@@ -543,6 +546,9 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- A seat at the back still gets its turn: a round takes it when it has room after the front seats and the",
         "  normal seats that have a valid file. The seat stays at the back when a valid file arrives later.",
         "- A seat that v1 had moved to the back of its queue starts at the back here.",
+        "- The operator can send a waiting seat to the front, between rounds only. The action is for a seat that had",
+        "  a turn outside v2 that was not charged. Such a seat is then no longer at the back. Nothing is charged or",
+        "  counted for it.",
         "- In the table: `front` = yes: the seat goes before the normal seats (it had a turn that was not charged).",
         "  `demoted` = yes: the seat is at the back, unless `front` is also yes. `held` = yes: the seat takes no turn",
         "  until the operator releases it. `position` counts every seat ahead of you, also a seat with no valid file,",
@@ -671,7 +677,8 @@ def _rollout_lines(params: Params) -> list[str]:
         "### How to make rollouts",
         "",
         "A rollout is one sampled answer of a model to a prompt, with its reward. This is one way to make a file that",
-        "is valid and that trains. Each step says what the code of the validator does with your choice.",
+        "is valid and that trains. Each step says what the code of the validator does with your choice. To see what",
+        "the file does before you upload it, train and score it on your machine (section 10).",
         "",
         "- Model: sample from head M. Get its files as section 1 says. The trainer scores your tokens under head M,",
         "  and a token outside the support of head M does not train (section 2).",
@@ -810,7 +817,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
         "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
         "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
-        "rules).",
+        "rules). Section 10 has the command that runs this code on your machine.",
         "",
         f"- Servers: when all training is done, the box starts one vLLM server on each of its {params.n_gpus} GPUs. Each server",
         f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
@@ -984,14 +991,63 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- The LoRA of a winner has a download link only while it is stacked on the head (section 1). After the fold",
         "  (section 6) it is part of the new base, and there is no link for the LoRA alone.",
         "",
-        "## 10. Reproduce a round at home",
+        *_replicate_lines(doc, params),
+    ]
+
+
+def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """Section 10: the local train-and-score tool, ``python -m sn120_v2.replicate``.
+
+    The publisher does not import that module (it needs the GPU install). A test parses each command of this
+    text with the parser of the tool, and checks that the document and the backend function exist.
+    """
+    mining = f"{doc['contract']['public_url'] or '<the public address>'}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
+    tool = f"python -m {REPLICATE_MODULE}"
+    return [
+        "## 10. Train and score your batch at home",
         "",
-        "`python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> --irt-snapshot irt.json",
-        "--round-seed <seed> --backend <module>:<function> batch.json` checks your file, trains the LoRA and scores it",
-        "against null M. It uses the same check, round runner and judging code as the validator, and your `train` values.",
-        "`--backend` names a function that returns (store, trainer, evaluator, image digest). It has no default: a",
-        "backend for real GPUs is not published yet.",
-        "`python v2/miner/affine_miner.py bounds --mining-json mining.json` prints the bounds of section 2.",
+        f"`{tool}` takes your file, checks it as the validator does, trains the LoRA from head M, scores the",
+        "LoRA and null M on the tasks of a round, and judges the result with the win rule. It has no training code and",
+        "no scoring code of its own: it runs the code of the box (the procedures of section 2 and of section 6) on your GPUs. So",
+        "the GPU backend is published: it is the code under `sn120_v2/gpu/`, and this tool builds it for a machine that",
+        f"is not the box. The document of the tool is `{REPLICATE_DOC}` in the code: {REPO}/blob/v2/{REPLICATE_DOC}. It has",
+        "every argument, the fields of the report, and the complete list of what differs from the box.",
+        "",
+        "- Install, in `v2/` of a copy of the code (section 2): `uv pip install -e \".[gpu,envs,miner]\"`. The",
+        "  document has the complete steps. Run each command below in `v2/`. N is the number of your GPUs.",
+        f"- `{tool} compare --mining-json {mining} --gpus <N>` prints what differs between your machine and the box.",
+        "  It starts nothing and needs no GPU.",
+        f"- `{tool} fetch --mining-json {mining} --work <directory>` gets the base files of head M through the signed",
+        "  links of section 1 and checks each file against the head manifest.",
+        f"- `{tool} run --mining-json {mining} --hotkey <ss58> --work <directory> --gpus <N> batch.json` checks the",
+        "  file, trains, scores and judges. It prints one report. With no other argument it takes the seed and the",
+        "  draw of the open round, or of the last closed round when none is open.",
+        "- What differs from the box. The report of `run` names each difference under `differences`. Your install:",
+        "  the list of the packages of the box, with their versions, is not published, so in practice your install has",
+        "  another digest than the pinned one, and its versions of torch and vLLM can differ. The number of GPUs, when it is not",
+        f"  {params.n_gpus}. The time limits of a round: they do not apply unless you ask for them. The round has one batch, yours:",
+        "  `winner` in the report says that your LoRA beats null M by the win rule, not that it wins a real round,",
+        "  where the eligible LoRA with the highest delta wins. For such a difference the tool changes that one value",
+        "  in a local copy of the params. Each training value, each scoring value and each rule of the decision stays",
+        "  that of mining.json.",
+        "- What a run cannot repeat exactly: the text of a rollout, and so its outcome code, and so `delta` and `z`;",
+        "  and the trained values of the LoRA, and so `lora_hash`. These depend on the GPU type, on the package",
+        "  versions and on the requests that a server computes together. Expect the same pass rate within the noise",
+        "  of sampling, not the same text for the same seed. What a run repeats exactly: the draw with its order and",
+        "  its weights, each seed, the prompt and the settings of each request, the rows that train with their",
+        "  advantages and tokens, the grade of a given text, and the decision for given outcome strings.",
+        "- What is verified. The box trains and scores its rounds on GPUs with the code that `run` calls. The tool",
+        "  itself has not run on a real GPU yet. Tests run it on a CPU, with a stand-in for the training process, for",
+        "  the vLLM servers and for the grader. So it is not known which GPU is large enough, how long a run takes, or",
+        "  how close null M on your machine is to null M on the box. With `--round-file` and the round file of a closed",
+        "  round (section 9), the report compares the two, task by task.",
+        "- The miner tool can call the same code: `python v2/miner/affine_miner.py reproduce --mining-json",
+        "  mining.json --hotkey <ss58> --irt-snapshot irt.json --round-seed <seed> --work <directory> --backend",
+        f"  {REPLICATE_MODULE}:{REPLICATE_BACKEND} batch.json`. This is the code of the box with the params as they are: the same",
+        "  trainer, evaluator, round runner and judging. It runs only on a machine with the pinned install, the pinned",
+        "  code and the GPU count of the params, so in practice only on the box. It needs the base files: run `fetch`",
+        f"  with the same `--work` directory first. On any other machine use `{tool} run`.",
+        "- `python v2/miner/affine_miner.py bounds --mining-json mining.json` prints the bounds of section 2.",
     ]
 
 
@@ -1018,7 +1074,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         f"Generated {utc(doc.get('generated_at'))} from snapshot `{doc['snapshot_digest']}`.",
         "The machine-readable companion is mining.json. It has the same `snapshot_digest`. If the two digests differ,",
-        "an update is in progress: fetch both files again. These two files are the only miner documents.",
+        "an update is in progress: fetch both files again. These two files are the whole miner contract. The document",
+        "of the local tool (section 10) explains a tool; it sets no rule.",
         "",
         "You upload one JSON file per hotkey: prompts, rollouts and rewards. At round start the validator copies it,",
         "checks it, and trains one bounded LoRA from the current head M with the published recipe. Every LoRA of the",
@@ -1044,6 +1101,11 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "  You do not need the `master`: it is only for a check of a fold.",
         f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
         "  always a matching pair.",
+        "- Send a client name of your own (the HTTP header `User-Agent`) with each read of a file under",
+        f"  `{READ_LINKS.split('/')[0]}/` and of a link file (section 5). The site can answer HTTP 403 to a read with the default client",
+        "  name of Python's `urllib` (`Python-urllib/<version>`), also for a file that exists. curl, wget and the Python",
+        "  package `requests` send a name that the site accepts. HTTP 403 does not say that a file is missing: with an",
+        "  accepted name a missing file gives HTTP 404. Each command that this file names sends a name of its own.",
         "",
         *(table(("stacked LoRA", "round", "miner uid", "batch sha256"), loras) if loras else ["No LoRA is stacked on the base."]),
         "",
