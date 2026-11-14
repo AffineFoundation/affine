@@ -23,6 +23,7 @@ import torch
 from safetensors.torch import save, save_file
 
 from . import layout
+from .afterking import OVERLAP, SERIAL, Overlap
 from .canonical import canonical_json, manifest_digest, sha256_hex
 from .controller import Controller, HeadPublish, stored_irt_snapshot
 from .errors import BatchRejected, InfraError
@@ -157,10 +158,11 @@ class WatchedStore(LocalStore):
 
 @dataclass
 class ChainWorld(SimWorld):
-    """``SimWorld`` with a real tiny head. ``mode`` is ``SN120_HEAD_PUBLISH``, ``every`` is ``SN120_CHECKPOINT_EVERY``."""
+    """``SimWorld`` with a real tiny head. ``mode`` is ``SN120_HEAD_PUBLISH``, ``every`` is ``SN120_CHECKPOINT_EVERY``, ``order`` is ``SN120_AFTER_KING``."""
 
     mode: str = FULL
     every: int = 0
+    order: str = SERIAL
     settings: FoldSettings = FoldSettings()
     run: Runner = inline  # the folds in this process: a child process costs seconds, and one test has it
 
@@ -186,16 +188,19 @@ class ChainWorld(SimWorld):
         """A new controller on the same journal and the same box, with the parts that ``assembly.stack`` picks for the mode."""
         journal = Journal(self.root / JOURNAL_FILE, "sim-controller", self.clock())
         self.sampler = UniformSampler(self.pool)
-        self.writer = self.keeper = None
+        self.writer = self.keeper = self.overlap = None
         head = HeadPublish()
         if self.mode == CHAIN:
             self.writer = ChainWriter(self.store)
-            self.keeper = HeadKeeper(self.store, self.box.work_dir, self.writer, self.every, self.settings, self.run)
             self.folder = ChainFolder(self.store, self.box, self.settings, self.run)
-            head = HeadPublish(promote_fold, self.writer, self.keeper.prepare, self.keeper.after_round, self.keeper.checkpoint)
+            self.keeper = HeadKeeper(self.store, self.box.work_dir, self.writer, self.every, self.settings, self.run, self.folder.proven)
+            head = HeadPublish(promote_fold, self.writer, self.keeper.prepare, self.keeper.after_round, self.keeper.checkpoint, self.folder.proven)
         else:
             self.folder = LoraFolder(self.store, self.box)
         self.controller = Controller(journal, self.store, self.admission, self.sampler, self.params, folder=self.folder, publisher=self.publisher, head=head)
+        if self.order == OVERLAP and self.mode == CHAIN:  # as ``cli.cmd_run`` does for a stack with ``overlap``
+            self.overlap = Overlap()
+            self.controller.use_overlap(self.overlap)
         self.restored_snapshot = stored_irt_snapshot(self.store, self.controller.state)
         return self.controller
 
