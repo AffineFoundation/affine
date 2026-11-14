@@ -76,6 +76,7 @@ PHASES = ("training", "evaluation", "promote", "fold")  # the phases of a round 
 BATCH_FACTS = ("batch_prompts", "batch_rollouts", "train")
 SETTABLE = ("key", "default", "low", "high", "integer", "choices")
 MODEL_FACTS = ("repo", "repo_rev", "size_b", "budget")
+CAP_LIMIT = ("cap_hit_floor", "cap_hit_margin")
 FIELDS = "sn120-v2-site-fields-1"  # ``fields_mark`` of the data file: who made the fields of ``extend``. Change it when a field of ``extend`` gets a new meaning
 # The reference models of the frozen v1 history, by label in small letters: the Hugging Face repo with its revision, the
 # parameters in billions, and the token budget of the v1 run. No file of v2 holds these. The repo and the budget are
@@ -456,13 +457,15 @@ def extend(data: dict[str, Any], snap: dict[str, Any], bench: dict[str, Any] | N
     A closed round gets ``phases`` from its round file. A round with an applied winner, the row of that winner and its
     king get the size of the winning batch and its train settings from the published batch: only a winner's batch is
     public. A king also gets the gain of its round. ``train_settable`` is what a miner may set, from the contract of the
-    snapshot. A benchmark row gets the token budget of its run, and a reference model its repo and its size.
+    snapshot. ``cap_hit_floor`` and ``cap_hit_margin`` are the two numbers of the judge's cap-hit limit, from the
+    parameters of the snapshot. A benchmark row gets the token budget of its run, and a reference model its repo and its size.
 
     ``load`` reads one object of the store. ``have`` is ``known`` of the last data file: a closed round does not change,
     so a value that is there is not read again. A file that is not there or is bad leaves its fields None, and the next
     build reads it again. ``fields_mark`` says that this builder made the values, for ``known`` of the next build.
     """
     data["fields_mark"] = FIELDS
+    data |= {name: snap["params"][name] if number(snap["params"].get(name)) else None for name in CAP_LIMIT}
 
     def facts(round_id: str, names: Sequence[str], what: str, key: str, make: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
         old = have.get(round_id, {})

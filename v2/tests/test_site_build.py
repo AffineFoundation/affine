@@ -536,6 +536,10 @@ def test_a_closed_round_gets_its_phase_times_and_a_winner_the_size_and_the_setti
     assert all(row["phases"] is None and row | none == row for row in bare["rounds"])
     assert all(row | none == row for row in bare["history"]) and all(king | none == king for king in bare["kings"])
     assert bare["train_settable"] == [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[])]
+    assert (bare["cap_hit_floor"], bare["cap_hit_margin"]) == (snap["params"]["cap_hit_floor"], snap["params"]["cap_hit_margin"])
+    old = {name: value for name, value in snap["params"].items() if name != "cap_hit_floor"} | {"cap_hit_margin": "0.02"}
+    done, _, text = build(tmp_path, snap | {"params": old})  # a snapshot with no such number, or with a text for it
+    assert done.returncode == 0 and (json.loads(text)["cap_hit_floor"], json.loads(text)["cap_hit_margin"]) == (None, None)
     assert [(king["delta"], king["se"]) for king in bare["kings"]] == [(winner["delta"], winner["se"]), (None, None)]  # the gain needs no file
 
     report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
