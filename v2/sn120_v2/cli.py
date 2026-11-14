@@ -52,6 +52,7 @@ from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
+from .stopafter import SAID, StopRequest, say, stamp
 from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
 
@@ -173,12 +174,25 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
+def stopped_text(controller: Controller) -> str:
+    """What is true when ``run`` stops for a request, for its one line."""
+    last = controller.state.rounds[-1] if controller.state.rounds else None
+    text = f"Round {last.round_id} is closed ({last.outcome}). " if last else ""
+    text += "No round is open. All that a close writes is in the store."
+    if controller.overlap is not None:
+        text += " The second sha256 of the local head passed."
+    return text + " run ends with exit code 0."
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     controller, stack = open_controller(args, "run")
     if stack.runner is None:
         raise ConfigError("this stack has no round runner")
     for line in stack.settings:  # a setting that the shell does not hold shows here: it does not pass in silence
         print(f"setting: {line}", file=sys.stderr, flush=True)
+    stop = StopRequest.from_env()
+    if stop.path is not None:
+        say(stop.at_start())
     if stack.head.prepare is not None:
         with timed("the proof of the local head"):
             stack.head.prepare(controller.state)
@@ -186,7 +200,36 @@ def cmd_run(args: argparse.Namespace) -> int:
     if overlap is not None:
         controller.use_overlap(overlap)
     done = idle = 0
+    told = obeyed = None
+    hold = (lambda: stop.asked() is not None) if stop.path is not None else None
     while args.rounds is None or done < args.rounds:
+        # A request to stop after the round (``stopafter.py``) is read before a round opens, and nowhere else: here,
+        # and in ``run_round`` after it finished a round that it found open (``hold``).
+        asked = stop.asked()
+        if asked is not None and controller.state.round is None:
+            waits = controller.close_in_public(now())
+            if not waits:
+                try:
+                    if controller.overlap is not None:
+                        with timed("the stop after the round: the wait for the second sha256 of the local head"):
+                            controller.local_head_proven()
+                except HeadLost as exc:
+                    # As in a round: this ``run`` must not end as if these files were the head. The run loop starts ``run``
+                    # again, that start rebuilds the head from the chain, finds the request, and stops.
+                    say(f"stopped: {exc}")
+                    say(f"{SAID}not obeyed yet, the request of {stamp(asked)} stays. The next start of run rebuilds the local head and then stops for it.")
+                    return HEAD_LOST_EXIT
+                obeyed = asked
+                break
+            say(f"{SAID}asked at {stamp(asked)}. No round is open, and run opens none. Not all that a close writes is in the store yet: {waits}. The next try is in {args.idle_sleep:g} s.")
+            idle += 1
+            if args.max_idle is not None and idle >= args.max_idle:
+                break
+            time.sleep(args.idle_sleep)
+            continue
+        if asked is not None and told != (asked, controller.state.round.round_id):
+            told = (asked, controller.state.round.round_id)
+            say(f"{SAID}asked at {stamp(asked)}. Round {told[1]} is open (phase {phase(controller.state)}): run stops when it is closed.")
         record = None
         try:
             if stack.chain is not None:
@@ -198,7 +241,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 entropy = lambda: overlap.on_chain(stack.entropy_now)  # noqa: E731
             else:
                 entropy = stack.entropy() if stack.entropy else os.urandom(16).hex()
-            record = controller.run_round(stack.runner, now, entropy)
+            record = controller.run_round(stack.runner, now, entropy, hold)
         except FencedError:
             raise
         except HeadLost as exc:
@@ -211,6 +254,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"waiting: {exc}", file=sys.stderr, flush=True)
         if stack.head.after_round is not None:  # also on a pass with no new round: a fold that was put off closes its round there
             stack.head.after_round(controller.state)
+        if record is None and controller.state.round is None and hold is not None and hold():
+            continue  # no round is open and none was opened: the start of the next pass stops ``run``
         if record is None:
             idle += 1
             state = controller.state
@@ -225,7 +270,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print_round(stack, record.round_id)
     if overlap is not None:  # the steps that waited for a next open: there is none in this ``run``
         overlap.flush(now())
-    print(json.dumps(summary(controller.state, controller.params), indent=2))
+    print(json.dumps(summary(controller.state, controller.params), indent=2), flush=True)
+    if obeyed is not None:
+        stop.obeyed(obeyed, stopped_text(controller))  # the last line of this ``run``
     return 0
 
 
