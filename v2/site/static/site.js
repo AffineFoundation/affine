@@ -1,7 +1,9 @@
 /* SN120 v2 status site. One column schema and one renderer for every table, as on the v1 site (k1-tables.js).
    The benchmark table, its score cards and the chart tiles copy the structure of the v1 site (bench.js, k1.js, timing.js).
-   A page reads one file. index.html reads site-data.json, which build.py writes from the publisher's public snapshot.
-   v1.html (<body data-page="v1">) reads v1-data.json, the frozen v1 history that v1_archive.py wrote once at cutover.
+   A page reads one file, and <body data-page> names the page. index.html (the benchmark table first) and round.html (the live
+   round) read site-data.json, which build.py writes from the publisher's public snapshot. supply.html reads miner-supply.json,
+   which supply.py writes. v1.html reads v1-data.json, the frozen v1 history that v1_archive.py wrote once at cutover.
+   A part of the page is filled only where the page has it, so each page uses this one file.
    Privacy: build.py puts a batch link and a LoRA hash on an applied winner only; every other batch shows "private". */
 (() => {
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -44,7 +46,7 @@
     demoted: ['back of queue', 'wait', 'Moved to the back: no valid file for too long. A seat with a valid file is never moved back.'],
     held: ['held', 'wait', 'Parked for the operator after repeated infrastructure failures. Not charged.'],
   };
-  const V1 = document.body.dataset.page === 'v1', DATA = V1 ? 'v1-data.json' : 'site-data.json';
+  const PAGE = document.body.dataset.page || 'home', V1 = PAGE === 'v1', SUPPLY = PAGE === 'supply', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
   // The word for a row that has no score: a king carried over from v1, or a batch that was not scored. The v1 page keeps its dash.
   const unscored = r => V1 ? mute('—')
@@ -115,6 +117,7 @@
       + cols.map(c => `<th class="${c.n ? 'num' : ''}"${c.t ? ` title="${esc(c.t)}"` : ''}>${esc(c.h)}</th>`).join('') + '</tr></thead>');
   }
   function fill(n, rows, reading, more) {
+    if (!table(n)) return;
     const cols = T[n].cols, body = table(n).tBodies[0], box = body.closest('.scroll');
     body.innerHTML = (rows.length
       ? rows.map(r => '<tr>' + cols.map(k => `<td class="${C[k].n ? 'num' : ''}">${C[k].r(r)}</td>`).join('') + '</tr>').join('')
@@ -222,6 +225,7 @@
   const shade = f => { const k = Math.min(1, Math.max(0, (.9 - f) / .75)); return `hsl(${Math.round(130 * (1 - k ** .75))} 65% 45% / ${(.3 + .28 * Math.abs(.5 - k)).toFixed(2)})`; };
   let allRefs = false;
   function bench(b) {
+    if (!table('bench')) return;
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
     // The state of a row that is not scored. With no benchmark file at all, the tooltip of "no run yet" says that. A state word
@@ -323,6 +327,7 @@
   const ENDED = { applied: r => `UID ${r.winner_uid} applied`, null: () => 'M stays', no_decision: () => 'no decision', abandoned: () => 'abandoned' };
   const TONE = { applied: 'var(--performance)', null: 'var(--rejected)' };
   function tiles(d) {
+    if (!document.getElementById('charts')) return;
     const rs = d.rounds.slice().reverse(), ended = r => (ENDED[r.outcome] || (() => r.outcome))(r), took = r => r.at - r.opened_at;
     const tip = (r, rows) => tipOf(`${r.round_id} · ${ended(r)}`, r.reason ? [...rows, ['validator', r.reason]] : rows);
     const tile = (id, reading, o) => {
@@ -360,9 +365,10 @@
      "at least": the record does not cover all of that window (it began later, or a run is missing). */
   let S = null;
   const KIND = [['uploads', 'Uploads per hour from R2 LastModified'], ['validated', 'Validated so far'], ['no_verdict', 'Uploads with no verdict yet'], ['not_valid', 'Not valid at the last check'], ['replaced', 'Replaced before a verdict']];
-  function supply() {
-    const el = document.getElementById('supply');
-    if (!el) return;
+  function supply(failed) {
+    const el = document.getElementById('supply'), foot = document.getElementById('status');
+    foot.dataset.state = !S || failed ? 'unavailable' : 'live';
+    foot.textContent = !S ? 'No counts yet.' : (failed ? 'Refresh failed; these are the last good counts. ' : '') + `Counts written ${dur(Date.now() / 1000 - S.generated_at)} ago.`;
     if (!S) { el.querySelector('.reading').textContent = 'The recorder has written no counts yet.'; return; }
     const age = Date.now() / 1000 - S.generated_at, w = S.waiting, hs = S.hours, part = 'At least: the record does not cover all of this time.';
     // every count but "no verdict yet" can miss a file that was replaced before the recorder saw it
@@ -386,19 +392,14 @@
         [...KIND.map(([k, name]) => [name.toLowerCase(), hs[i][k]]), ['record', hs[i].complete ? 'covers this hour' : 'at least: not all of this hour']]),
     });
   }
-  async function loadSupply() {
+  async function loadSupply(first) {
+    let failed = false;
     try {
-      const res = await fetch('miner-supply.json?t=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) throw new Error('miner-supply.json ' + res.status);
+      const res = await (first || fetch('miner-supply.json?t=' + Date.now(), { cache: 'no-store' }));
+      if (!res || !res.ok) throw new Error('miner-supply.json ' + (res ? res.status : 'unreachable'));
       S = await res.json();
-    } catch (e) { console.warn(e); }
-    supply();
-  }
-  if (!V1) {
-    let again = 0;
-    loadSupply();
-    setInterval(loadSupply, 60000);
-    addEventListener('resize', () => { clearTimeout(again); again = setTimeout(supply, 250); });
+    } catch (e) { console.warn(e); failed = true; }
+    supply(failed);
   }
   const match = (rows, f) => f ? rows.filter(x => String(x.uid) === f || String(x.hotkey || '').toLowerCase().includes(f)) : rows;
   function renderV1() {
@@ -417,7 +418,8 @@
       head: clip(d.head, 8, 0), bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
     };
     for (const el of document.querySelectorAll('#round [data-f]')) el.textContent = live[el.dataset.f];
-    document.querySelector('#round .reading').innerHTML = 'env ' + esc(d.env) + (r.opened_at ? ' · opened ' + ago(r.opened_at) : '');
+    const open = document.querySelector('#round .reading');
+    if (open) open.innerHTML = 'env ' + esc(d.env) + (r.opened_at ? ' · opened ' + ago(r.opened_at) : '');
     fill('kings', d.kings, `${d.kings.length} of ${d.kings_window} places`);
     // every count in the summary comes from the listed rows, so it can never disagree with them
     const hidden = d.queue.total - q.length;
@@ -449,11 +451,12 @@
     const b = e.target.closest && e.target.closest('.key');
     if (b && navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(() => { b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900); }, () => { });
   });
-  document.getElementById('filter').addEventListener('input', e => { filter = e.target.value; if (D) render(); });
-  document.getElementById('refs').addEventListener('click', () => { allRefs = !allRefs; if (D) bench(D.bench); });
+  document.getElementById('filter')?.addEventListener('input', e => { filter = e.target.value; if (D) render(); });
+  document.getElementById('refs')?.addEventListener('click', () => { allRefs = !allRefs; if (D) bench(D.bench); });
   let resized = 0;  // a chart is drawn at the size of its box, so a new size draws again from the data in hand
-  addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(() => D && render(), 200); });
+  addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(() => SUPPLY ? S && supply() : D && render(), 200); });
   Object.keys(T).filter(table).forEach(shell);
-  load(window.SITE_DATA);
-  if (!V1) setInterval(load, 60000);
+  const again = SUPPLY ? loadSupply : load;
+  again(window.SITE_DATA);
+  if (!V1) setInterval(again, 60000);
 })();
