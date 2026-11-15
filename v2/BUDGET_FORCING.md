@@ -168,10 +168,12 @@ A number above 0 means that the rule is on, with that many tokens.
 ## 7. The planned steps
 
 1. **The new code is in the branch `v2`**, with this document. From then on you can update.
-2. **The box takes the new code, with the rule still off.** This step is planned. Its date is not set yet. It can come before or after step 1. It changes no score. mining.json then shows a new `params.recipe.code_digest`, so `recipe_id` and `params_hash` change. The old code still reads everything.
+2. **The box takes the new code, with the rule still off.** This step is planned. Its date is not set yet. This step does not wait for step 1: it can come before it or after it. It changes no score. mining.json then shows a new `params.recipe.code_digest`, so `recipe_id` and `params_hash` change. The old code still reads everything.
 3. **The turn-on.** It is planned, and it is not decided yet. The earliest time is the line at the top of this document. A turn-on can only be between two rounds. The rule then counts from the first round that opens after it.
 
-`python -m sn120_v2.gpu.plan` prints the code digest of your copy. While it is not `params.recipe.code_digest` of mining.json, `python -m sn120_v2.replicate compare` lists the difference `code`. That is expected in two cases: you updated, and the box did not take the new code yet; or the box took the new code, and you did not update. No command stops because of it.
+`python -m sn120_v2.gpu.plan` prints the code digest of your copy. While it is not `params.recipe.code_digest` of mining.json, `python -m sn120_v2.replicate compare` lists the difference `code`. That is expected in two cases: you updated, and the box did not take the new code yet; or the box took the new code, and you did not update.
+
+`bounds`, `check`, `upload`, `compare`, `fetch` and `run` work as before: `run` pins the digest of your copy. Two commands refuse while the two digests are not the same, as `REPLICATE.md` says: `run --strict`, and `affine_miner.py reproduce` with the backend `sn120_v2.replicate:backend`. On a machine without the pinned install or without the GPU count of the box, they refuse also when the digests are the same.
 
 ## 8. At home, with `python -m sn120_v2.replicate`
 
