@@ -328,12 +328,15 @@
   const share = (x, d = 1, gap = 'none') => x == null ? gap : (100 * x).toFixed(d) + '%';
   const whole = v => +(100 * v).toFixed(2) + '%';
 
-  /* The benchmark table and its score cards, as bench.js of the v1 site. Columns: Model, Avg, then one per benchmark. The kings
-     are the body, newest first, in a box about five rows deep. The reference models and the genesis head are a sticky footer, the
-     genesis head last. The reference models are in the order of the v1 page: the largest first, then the higher average. As
-     there, the footer holds only the ones that lead for their size; a link shows all. A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the
-     highest. A model with no score still has its row, and the name says the state of its run. The cards show, per column, the score
-     of the genesis head and of each scored king over time. */
+  /* The benchmark table and its score cards, as bench.js of the v1 site. Columns: Model, Avg, then one per benchmark.
+     The v1 page: the kings are the body, newest first, in a box about five rows deep. The reference models, the genesis head and
+     the v1 king are a sticky footer. The reference models are in the order of the v1 page: the largest first, then the higher
+     average. The footer holds only the ones that lead for their size; a link shows all.
+     The home page: the reference models of HOME_REFS and the latest king stay in view at the top, the other kings and the v1 king
+     scroll in a list about five rows deep, and the genesis head stays in view at the bottom.
+     A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the highest of the
+     rows in view. A model with no score still has its row, and the name says the state of its run. The cards show, per column,
+     the score of the genesis head and of each scored king over time. */
   // The pill of the row, its colour, the tooltip, and the word of a cell that has no score. The page shows a state only when the
   // benchmark file gives the row that state: "queued", "evaluating" (shown as "running") or "failed". A model that the file does
   // not name, or a site with no benchmark file, has "no run yet".
@@ -420,9 +423,11 @@
     const leads = (r, c) => val(r, c) != null && !rated.some(o => o !== r && size(o) <= size(r) && val(o, c) > val(r, c));
     const lead = rated.filter(r => counted.some(c => leads(r, c)));
     const pinned = V1 ? allRefs || !lead.length ? refs : lead : refs.filter(r => HOME_REFS.includes(String(r.label).toLowerCase()));
-    // The home page: the reference rows and the newest king stay in view above the list, and the genesis head stays in view under it.
-    // The list that scrolls has the older kings, newest first, and then the v1 king. The v1 page has no row above its list.
-    const above = V1 ? [] : [...pinned, ...kings.slice(0, 1)], listed = V1 ? kings : [...kings.slice(1), ...old], under = V1 ? [...pinned, ...genesis, ...old] : genesis;
+    // The home page: the reference rows and the latest king stay in view above the list, and the genesis head stays in view under it.
+    // The list that scrolls has the other kings, newest first, and then the v1 king. The v1 page has no row above its list.
+    // The latest king is the king whose head is the head of the data file. If no king row has that head, it is the first king row.
+    const latest = kings.find(r => r.head && D && r.head === D.head) || kings[0], rest = kings.filter(r => r !== latest);
+    const above = V1 ? [] : [...pinned, ...(latest ? [latest] : [])], listed = V1 ? kings : [...rest, ...old], under = V1 ? [...pinned, ...genesis, ...old] : genesis;
     const shown = [...kings, ...refs, ...genesis, ...old], inView = V1 ? shown : [...above, ...listed, ...under], span = {};  // span: the lowest and the highest score of a column, for the shading; and the highest of the rows in view, for the star
     for (const c of cols.filter(c => c.in_avg)) { const v = shown.map(r => val(r, c)).filter(x => x != null); if (v.length) span[c.id] = [Math.min(...v), Math.max(...v), Math.max(...inView.map(r => val(r, c)).filter(x => x != null))]; }
     // The samples for each problem of a benchmark, from the rows on the page: a row of a king or of the genesis head names the count of
@@ -452,7 +457,7 @@
       const who = k => part(sets, x => x === k);
       const wide = longer(c), made = [...kings, ...pinned, ...genesis, ...old].filter(r => r.cells[c.id] && r.cells[c.id].derived), many = made.length > 1;
       const how = r => from(r.cells[c.id], wide && r.cells[wide.id]), one = made.every(r => how(r) === how(made[0]));
-      const all = wide && made.every(r => r.cells[wide.id]) && made[0].cells[wide.id].rollouts;
+      const all = wide && made.length && made.every(r => r.cells[wide.id]) && made[0].cells[wide.id].rollouts;  // made can be empty: no row on the page has a computed value
       const parts = [
         counts.length > 1 ? counts.map((k, i) => `${samples(k)}${i ? '' : ' for ' + each} for ${who(k)}`).join(', ') + '.' : '',
         made.length ? `The value${many ? 's' : ''} of ${list(made.map(first))} ${many ? 'were' : 'was'} computed from ${one ? how(made[0]) : 'a part of the samples of each problem'} of ${many ? 'their full runs' : 'its full run'}`
@@ -965,6 +970,10 @@
   addEventListener('keydown', e => { if (e.key === 'Escape') expand(); });
   let resized = 0;  // a chart is drawn at the size of its box, so a new size draws again from the data in hand
   addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(() => SUPPLY ? S && supply() : D && render(), 200); });
+  // A browser can run this script before it applies the style sheet. A drawing of that moment has the sizes of a page with no
+  // style: the header height and the box height of the benchmark table, and the size of each chart. The load event comes after
+  // the style sheet, so the page draws once more there from the data in hand.
+  addEventListener('load', () => SUPPLY ? S && supply() : D && render());
   Object.keys(T).filter(table).forEach(shell);
   const again = SUPPLY ? loadSupply : load;
   again(window.SITE_DATA);

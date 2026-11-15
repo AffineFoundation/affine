@@ -47,7 +47,7 @@ Names as in "AffineValidator" of `v2/CUTOVER.md`: `REPO`, `SITE`, `V1FILE`, `PY`
    What the site shows once this commit is in force, against the site of 14 Nov 2026:
 
    - **Kings** lists each king of `mining.json`, also a king that was carried over from v1 (10 rows on 14 Nov 2026, each with the link `v1 king`). The site of 14 Nov 2026 showed none of them. The code has no rule that hides them; if the empty table is wanted, that is a new rule for the coordinator, not a step for the host.
-   - **Benchmarks** has the same 22 reference models with the same scores, and one more row `Genesis`. They are in the order of the v1 page: the largest model first. As on the v1 page, the 8 that lead for their size are in view; a link shows all 22.
+   - **Benchmarks** has one more row, `Genesis`. The data file has the same 22 reference models with the same scores. The home page shows one of them, `Qwen3.5-9B`. The page `v1.html` has all 22, in the order of the v1 page: the largest model first. There, the 8 that lead for their size are in view; a link shows all 22.
    - The sections **Benchmarks** (now second) and **Rounds in charts** are new. Step 5 has the details.
 
 2. **The frozen v1 history has the reference models.**
@@ -56,7 +56,7 @@ Names as in "AffineValidator" of `v2/CUTOVER.md`: `REPO`, `SITE`, `V1FILE`, `PY`
    "$PY" -c "import json, sys; d = json.load(open(sys.argv[1])); print(d['schema'], sum(r['kind'] == 'reference' for r in d['bench']['rows']))" "$V1FILE"
    ```
 
-   Right: `sn120-v1-archive-1 22`. Another number is the number of reference models that the site will show.
+   Right: `sn120-v1-archive-1 22`. Another number is the number of reference models that the data file of the site will have.
 
 3. **Look for a benchmark file that the pull did not write.**
 
@@ -96,7 +96,7 @@ Names as in "AffineValidator" of `v2/CUTOVER.md`: `REPO`, `SITE`, `V1FILE`, `PY`
    The page `https://affine.io` (reload once without the cache):
 
    - **Benchmarks** is the second section. Its cards say `No score yet.` until the first score.
-   - The table ends with 8 reference models, the largest first (`Qwen3.5-9B` first, `DeepScaleR-1.5B-Preview` last), and the row `Genesis`. `Genesis` carries the label `no run yet` until the benchmark service names it. The link under the table says `Show all 22 reference models`.
+   - The table starts with one reference model, `Qwen3.5-9B`, and under it the latest king. These two rows stay in view. The other kings scroll under them, newest first, and then the row `v1 king` if the data has one. The table ends with the row `Genesis`, which stays in view too. `Genesis` carries the label `no run yet` until the benchmark service names it. The home page has no link `Show all 22 reference models`: that link is on `v1.html`.
    - With no applied round, the body of the table says `No king yet: no round has applied a winner.` After an applied round there is a row `<round id> <first 8 characters of the head>` with its state.
    - **Rounds in charts** has four tiles. With no closed round each says so; with one closed round each shows one bar or point.
    - **Kings** lists the kings of `mining.json`. A king imported from v1 has the link `v1 king`.
