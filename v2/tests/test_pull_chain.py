@@ -137,6 +137,25 @@ def test_a_head_that_is_not_a_checkpoint_gets_the_links_of_the_newest_checkpoint
     assert replicate.fetch(contract, tmp_path / "miner", links_source=str(site / LINKS))["fetched"] == 0, "a second fetch finds the base"
 
 
+def test_from_the_marker_of_the_head_the_rebuild_command_works_with_the_mining_json_of_before_the_marker(world, env, tmp_path, capsys):
+    world.start(CHAIN)
+    head = world.king()
+    site = tmp_path / "site"
+    world.controller.head.checkpoint(world.state)  # the files of the head, then its marker; the box has not published again
+    sync(world, env)
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    links, mining = read(site)
+    chain = mining["head_chain"]
+    assert chain["start"]["version_id"] != head.head.version_id and chain["steps"][-1]["checkpoint"] is False, "mining.json is the one of before the marker"
+    assert [point["version_id"] for point in links["checkpoints"]] == [head.head.version_id] and links["chain_loras"] == []
+    capsys.readouterr()
+    assert headfold.main(["rebuild", "--chain", str(site / layout.MINING_JSON), "--links", str(site / LINKS), "--work", str(tmp_path / "miner")]) == 0
+    built = json.loads(capsys.readouterr().out)
+    assert built["version_id"] == built["started_from"] == head.head.version_id and built["steps"] == 0
+    assert hash_tree(Path(built["base_dir"])) == head.base_files and hash_tree(Path(built["master_dir"])) == head.master_files
+
+
 def test_after_the_marker_of_the_head_the_links_have_the_form_of_a_store_with_each_head_in_full(world, env, tmp_path):
     world.start(CHAIN)
     head = world.king()
