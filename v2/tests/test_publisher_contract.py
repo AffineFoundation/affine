@@ -92,7 +92,7 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
 def test_every_number_follows_the_pinned_params(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777)
     changes = dict(max_prompts=123, max_rollouts=4567, z_bar=1.25, kings_window=7, n_tasks=400, looks=(0.25, 1.0), recipe=recipe)
-    made = world(tmp_path, **changes)
+    made = world(tmp_path, budget_forcing_tokens=64, **changes)  # a field that is absent at its default is in the table when it is set
     doc, text, _ = published(made.publisher.snapshots[-1])
     assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text

@@ -9,6 +9,11 @@ Outcome codes: ``P`` pass and ``F`` fail come from the official grader.
 ``C`` is a reply that was cut at the token cap: it is never graded. ``E`` is
 a failure of ours (request or grader): it is not a pass and it stays in the
 count. A dead server is not an ``E``: the whole look is an ``InfraError``.
+
+Budget forcing (``Params.budget_forcing_tokens`` above 0): a reply that was
+cut at the token cap gets a forced close, the model writes a few more tokens,
+and the grader reads the whole text. A pass is ``p``. Each other result of
+it stays ``C``.
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ from ..errors import ContractError, InfraError
 from ..params import Params
 from ..sampling import rollout_seed
 from ..seams import ObjectStore
-from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
+from ..types import CAP, CAP_PASS, CAPPED, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 from .batch import END_OF_TURN
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, stop_all, wait_gpus_free
@@ -165,7 +170,7 @@ def box_fault(grade: Any) -> bool:
 
 def chat_body(model: str, messages: list[dict[str, str]], seed: int, params: Params) -> dict:
     """One rollout request. Everything but ``model`` is the same for null M and every LoRA."""
-    return {
+    body = {
         "model": model,
         "messages": messages,
         "seed": seed,
@@ -176,6 +181,9 @@ def chat_body(model: str, messages: list[dict[str, str]], seed: int, params: Par
         "skip_special_tokens": False,  # the grader needs <think> and </think> in the text
         "chat_template_kwargs": {"enable_thinking": True},
     }
+    if params.budget_forcing_tokens:  # the forced close goes on from the prompt as the server made it
+        body["return_prompt_text"] = True
+    return body
 
 
 def read_reply(reply: dict) -> tuple[str, bool]:
@@ -187,6 +195,44 @@ def read_reply(reply: dict) -> tuple[str, bool]:
     if reason == "stop" and text.endswith(END_OF_TURN):
         text = text[: -len(END_OF_TURN)]
     return text, reason == "length"
+
+
+# The forced close of a reply that stopped at the token cap. These texts are a part of the scoring, as the request is.
+END_OF_THINKING = "</think>"
+THINKING_CLOSE = "\n" + END_OF_THINKING  # only for a reply that has not ended its thinking
+ANSWER_START = "\n\nFinal answer: \\boxed{"
+
+
+def forced_close(text: str) -> str:
+    """What the box puts after a reply that stopped at the token cap: the end of its thinking, when the reply has none, and the start of the answer."""
+    return ("" if END_OF_THINKING in text else THINKING_CLOSE) + ANSWER_START
+
+
+def close_body(model: str, prompt: str, params: Params) -> dict:
+    """The second request of a rollout that stopped at the token cap: the model goes on from ``prompt`` for a few tokens.
+
+    ``prompt`` is the prompt of the first request as the server made it, then the reply, then the forced close.
+    The request is greedy: it makes no random draw, so it has no seed. It is a plain completion and not a chat
+    request: a chat template writes an earlier answer again in its own form, and the model must see its text as it
+    wrote it.
+    """
+    return {
+        "model": model,
+        "prompt": prompt,
+        "max_tokens": params.budget_forcing_tokens,
+        "temperature": 0.0,
+        "skip_special_tokens": False,
+        "add_special_tokens": False,  # the prompt holds its special tokens as text
+    }
+
+
+def read_close(reply: dict) -> str:
+    """The text of the reply to ``close_body``. It may stop at its own token limit: the grader reads what is there."""
+    choice = reply["choices"][0]
+    text, reason = choice["text"], choice["finish_reason"]
+    if not isinstance(text, str) or reason not in ("stop", "length"):
+        raise ValueError(f"unexpected reply: finish_reason {reason!r}")
+    return text[: -len(END_OF_TURN)] if reason == "stop" and text.endswith(END_OF_TURN) else text
 
 
 def written_facts(written: Sequence[tuple[int, float]]) -> dict[str, Any]:
@@ -253,11 +299,12 @@ class VllmEvaluator:
         jobs = [(model, sample, index) for model in models for sample in range(params.samples_per_task) for index in range(len(tasks))]
         served = time.monotonic()
 
-        def rollout(job: tuple[str, int, int]) -> tuple[str, bool] | None:
-            model, sample, index = job
-            messages = self.pool.task(tasks[index]).messages()
-            body = chat_body(model, messages, rollout_seed(request.round_seed, tasks[index], sample), params)
-            url = self._urls[index % len(self._urls)] + "/v1/chat/completions"
+        forced: set[tuple[str, int, int]] = set()  # the rollouts whose text ends with a forced close and what the model wrote after it
+        closes: list[float] = []  # seconds of each second request that got a reply
+        no_prompt: list[tuple[str, int, int]] = []
+
+        def ask(url: str, body: dict, read: Callable[[dict], Any]) -> tuple[Any, dict, float] | None:
+            """One request with the tries and the time limits of a rollout: what ``read`` makes of the reply, the reply, its seconds."""
             for _ in range(self.settings.retries + 1):
                 budget = float(params.eval_time_budget_s)
                 if request.deadline:  # the round's time limit: no rollout of this chunk may run past it
@@ -267,10 +314,7 @@ class VllmEvaluator:
                 try:
                     sent = time.monotonic()
                     reply = self.http(url, body, budget)
-                    result = read_reply(reply)
-                    usage = reply.get("usage")
-                    written.append((int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0, time.monotonic() - sent))
-                    return result
+                    return read(reply), reply, time.monotonic() - sent
                 except HttpError as exc:
                     if exc.status < 500:
                         return None
@@ -278,11 +322,40 @@ class VllmEvaluator:
                     pass
             return None
 
+        def rollout(job: tuple[str, int, int]) -> tuple[str, bool] | None:
+            model, sample, index = job
+            messages = self.pool.task(tasks[index]).messages()
+            body = chat_body(model, messages, rollout_seed(request.round_seed, tasks[index], sample), params)
+            server = self._urls[index % len(self._urls)]
+            first = ask(server + "/v1/chat/completions", body, read_reply)
+            if first is None:
+                return None
+            (text, capped), reply, seconds = first
+            usage = reply.get("usage")
+            written.append((int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0, seconds))
+            if not capped or not params.budget_forcing_tokens:
+                return text, capped
+            prompt = reply.get("prompt_text")
+            if not isinstance(prompt, str) or not prompt:
+                no_prompt.append(job)
+                return text, True
+            closed = text + forced_close(text)
+            second = ask(server + "/v1/completions", close_body(model, prompt + closed, params), read_close)
+            if second is None:
+                # The round's time limit cut the second request: the rollout has no reply, as one that the limit cut in its
+                # first request. Each other second request with no usable reply leaves the rollout as it was: capped.
+                return None if request.deadline and time.time() >= request.deadline else (text, True)
+            closes.append(second[2])
+            forced.add(job)
+            return closed + second[0], False
+
         with ThreadPoolExecutor(clients) as threads:
             replies = list(threads.map(rollout, jobs))
         if not all(server.alive() for server in self._servers):
             self.close()
             raise InfraError("a vLLM server died during the look; nothing of it can be scored")
+        if no_prompt:  # a server that does not say what it sent to the model cannot run the rule: no silent C in its place
+            raise InfraError(f"budget forcing is on, and the vLLM server returned no prompt text for {len(no_prompt)} capped replies; the look is not scored")
         if request.deadline and time.time() >= request.deadline and any(reply is None for reply in replies):
             # A rollout that the limit cut is not an error of its model. Long outputs are cut first, so this chunk is not scored at all.
             # Its speeds are still logged, as their own phase: no reader may count it as a chunk that was scored.
@@ -294,13 +367,15 @@ class VllmEvaluator:
                 pass
             raise InfraError("the round's time limit passed during this chunk; an unfinished chunk is not scored")
         generated = time.monotonic()
-        codes = self._grade(tasks, jobs, replies)
+        codes = self._grade(tasks, jobs, replies, forced)
         outcomes = {
             model: tuple("".join(codes[model, sample, index] for index in range(len(tasks))) for sample in range(params.samples_per_task))
             for model in models
         }
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
-        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls), "max_loras": table, "open_files_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
+        counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code in CAPPED for code in codes.values()), "n_gpus": len(self._urls), "max_loras": table, "open_files_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
+        if params.budget_forcing_tokens:  # the cost and the effect of the rule, for the operator
+            counts.update(forced=len(forced), forced_passed=sum(code == CAP_PASS for code in codes.values()), forced_s=sum(closes), longest_forced_s=max(closes, default=0.0))
         log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts, **written_facts(written))
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
@@ -311,7 +386,7 @@ class VllmEvaluator:
         if head is not None:  # LoRAs of the round leave the box; the head and its master stay
             self.resident.prune({head.base_hash, head.base_fp32_master_digest})
 
-    def _grade(self, tasks: Sequence[str], jobs: list, replies: list) -> dict[tuple[str, int, int], str]:
+    def _grade(self, tasks: Sequence[str], jobs: list, replies: list, forced: set = frozenset()) -> dict[tuple[str, int, int], str]:
         """One code per job. The grader sees only replies that ended; it never learns which model wrote one.
 
         An ``E`` of the grader itself (it cannot decide, or its own time limit)
@@ -319,6 +394,11 @@ class VllmEvaluator:
         process is a failure of this box: only those replies are graded
         again, and if a worker still dies the look is an ``InfraError``. So
         a dead worker never puts a code into an outcome string.
+
+        A job of ``forced`` hit the token cap, and its text ends with the
+        forced close and what the model wrote after it. The grader reads it as
+        a reply that ended. Only a pass changes its code, to ``p``: with
+        each other grade it stays ``C``.
         """
         codes = {job: ERROR if reply is None else CAP for job, reply in zip(jobs, replies)}
         ended = [(job, reply[0]) for job, reply in zip(jobs, replies) if reply is not None and not reply[1]]
@@ -331,6 +411,8 @@ class VllmEvaluator:
                 raise InfraError("the grader returned a wrong number of grades")
             for (job, _), grade in zip(ended, grades):
                 codes[job] = grade.code if grade.code in (PASS, FAIL, ERROR) else ERROR
+                if job in forced:
+                    codes[job] = CAP_PASS if grade.code == PASS else CAP
             ended = [item for item, grade in zip(ended, grades) if box_fault(grade)]
             if not ended:
                 return codes

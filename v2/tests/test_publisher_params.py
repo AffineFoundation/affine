@@ -24,7 +24,7 @@ import pytest
 import sn120_v2
 from sn120_v2 import admission, irt, judging, layout, public, publisher, queue, sampling, sim, worker
 from sn120_v2.errors import ConfigError
-from sn120_v2.gpu.evaluator import ServeSettings, server_argv
+from sn120_v2.gpu.evaluator import ServeSettings, close_body, server_argv
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.params import Params, Recipe
 
@@ -165,6 +165,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
         f"not usable: at most {serve.retries + 1} tries in all",
         f"graded again: at most {serve.grade_tries} grades in all",
+        f'"temperature": {json.dumps(close_body("", "", params)["temperature"])}, "skip_special_tokens": false, "add_special_tokens"',  # the body of the forced close
+        f"This request is greedy (temperature {publisher.show(close_body('', '', params)['temperature'])})",
         f"--max-num-seqs {serve.clients_per_server}",
         f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
         f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
@@ -221,7 +223,8 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     So a number that was typed into a sentence fails: either a parameter should give it (then the text diverges
     when the parameter changes), or a constant of the code gives it and the phrase is built from that constant.
     """
-    world, base = made_world(tmp_path), launch_params()
+    # The forced close is in force in both texts: at its default of 0 the text has no word and no number of it.
+    world, base = made_world(tmp_path), dataclasses.replace(launch_params(), budget_forcing_tokens=64)
     texts = [text_of(world, params) for params in (base, all_moved(base))]
     flat = [TIME.sub("<time>", ID.sub("<id>", " ".join(one.split()))) for one in texts]
     text = flat[0]

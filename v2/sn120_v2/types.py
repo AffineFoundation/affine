@@ -22,9 +22,12 @@ from .params import Params
 PASS = "P"  # resolved and correct
 FAIL = "F"  # resolved and wrong
 CAP = "C"  # hit the token cap with no end of sequence: unresolved, counts as not passed
+CAP_PASS = "p"  # hit the token cap, and correct after the forced close (``Params.budget_forcing_tokens``): passed, and still a cap hit
 ERROR = "E"  # our infrastructure failed (timeout, crash): not passed, stays in the denominator
 NOT_RUN = "-"  # not scored, because the entry was dropped at an earlier look
-OUTCOME_CODES = frozenset((PASS, FAIL, CAP, ERROR, NOT_RUN))
+OUTCOME_CODES = frozenset((PASS, FAIL, CAP, CAP_PASS, ERROR, NOT_RUN))
+PASSED = (PASS, CAP_PASS)  # the codes of a rollout that passed
+CAPPED = (CAP, CAP_PASS)  # the codes of a rollout that hit the token cap
 
 NULL_MODEL = "null"  # key of the null entry: the head M served with no adapter
 

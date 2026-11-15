@@ -23,7 +23,7 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError
 from sn120_v2.gpu import batch, plan, procs
 from sn120_v2.gpu import evaluator as evaluator_module
-from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat_body, lora_table, read_reply, server_argv, server_env, socket_room
+from sn120_v2.gpu.evaluator import ANSWER_START, THINKING_CLOSE, HttpError, ServeSettings, VllmEvaluator, chat_body, close_body, forced_close, lora_table, read_close, read_reply, server_argv, server_env, socket_room
 from sn120_v2.gpu import resident as resident_module
 from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
 from sn120_v2.gpu.trainer import LORA_FILES, LoraTrainer
@@ -380,10 +380,14 @@ def test_close_stops_a_running_training_job_and_a_late_job_is_stopped(box):
 
 
 class Farm:
-    """Fake vLLM servers. ``script(model, task) -> (text, finish_reason)`` or an ``HttpError``."""
+    """Fake vLLM servers. ``script(model, task) -> (text, finish_reason)`` or an ``HttpError``.
 
-    def __init__(self, script, boot_ok: bool = True):
-        self.script, self.boot_ok = script, boot_ok
+    ``closer(model, prompt) -> (text, finish_reason)`` or an error answers a plain completion: the second request
+    of a capped reply. A chat request that asks for its prompt text gets ``[<task>]`` as that text.
+    """
+
+    def __init__(self, script, boot_ok: bool = True, closer=None):
+        self.script, self.boot_ok, self.closer = script, boot_ok, closer
         self.servers, self.bodies, self.loads, self.freed, self.lock = [], [], [], [], threading.Lock()
         self.broken: set[tuple[int, str]] = set()  # (port, LoRA name): the next load of this name on this server fails
 
@@ -413,10 +417,16 @@ class Farm:
                 self.loads.append((port, body["lora_name"], sorted(p.name for p in Path(body["lora_path"]).iterdir())))
                 return {}
             self.bodies.append((port, body))
+        if url.endswith("/v1/completions"):
+            reply = self.closer(body["model"], body["prompt"])
+            if isinstance(reply, Exception):
+                raise reply
+            return {"choices": [{"text": reply[0], "finish_reason": reply[1]}]}
         reply = self.script(body["model"], body["messages"][-1]["content"])
         if isinstance(reply, Exception):
             raise reply
-        return {"choices": [{"message": {"content": reply[0]}, "finish_reason": reply[1]}]}
+        asked = {"prompt_text": f"[{body['messages'][-1]['content']}]"} if body.get("return_prompt_text") else {}
+        return {"choices": [{"message": {"content": reply[0]}, "finish_reason": reply[1]}]} | asked
 
 
 class Grades:
@@ -481,6 +491,104 @@ def test_outcome_codes_capped_is_never_graded_and_errors_stay_in_the_count(box):
     assert (logged["phase"], logged["look"], logged["models"], logged["rollouts"], logged["capped"]) == ("eval", 0, 2, 12, 2) and logged["wall_s"] >= logged["generate_s"]
     assert logged["generate_s"] >= logged["longest_rollout_s"] > 0 and {"output_tokens", "longest_rollout_tokens", "most_output_tokens", "n_gpus"} <= set(logged)
     assert read_reply({"choices": [{"message": {"content": "<think>x</think>a<|im_end|>"}, "finish_reason": "stop"}]}) == ("<think>x</think>a", False)
+
+
+# ---- budget forcing: the forced close of a reply that hit the token cap ----
+
+# The stand-in grader takes the first letter of a text as its grade.
+CUT_IN_THINKING, CUT_IN_ANSWER = "P<think>so far", "F<think>x</think>and so on"
+
+
+def forcing_farm(closer, cut=CUT_IN_THINKING) -> Farm:
+    """Servers where task ``t1`` hits the token cap with the text ``cut``, and every other task ends with a pass."""
+    return Farm(lambda model, task: (cut, "length") if task == "t1" else ("P", "stop"), closer=closer)
+
+
+def last_line(box) -> dict:
+    return json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+
+
+def test_with_the_rule_off_a_capped_reply_gets_no_second_request_and_the_request_is_the_one_of_before(box):
+    farm = forcing_farm(lambda model, prompt: pytest.fail("no second request with the rule off"))
+    request = eval_request(box)
+    assert request.params.budget_forcing_tokens == 0 and "budget_forcing_tokens" not in request.params.to_dict()
+    assert set(evaluator(box, farm).evaluate(request).outcomes.values()) == {("PCP",)}
+    keys = ["model", "messages", "seed", "max_tokens", "temperature", "top_p", "top_k", "skip_special_tokens", "chat_template_kwargs"]
+    assert all(list(body) == keys for _, body in farm.bodies), "the body of a rollout request has the keys of before, in their order"
+    assert not {"forced", "forced_passed", "forced_s"} & set(last_line(box)) and last_line(box)["capped"] == 3
+
+
+@pytest.mark.parametrize("cut,close", [(CUT_IN_THINKING, THINKING_CLOSE + ANSWER_START), (CUT_IN_ANSWER, ANSWER_START)])
+def test_a_capped_reply_gets_the_forced_close_and_a_pass_after_it_is_p_and_still_a_cap_hit(box, cut, close):
+    grades = Grades()
+    farm = forcing_farm(lambda model, prompt: ("42}<|im_end|>", "stop"), cut)
+    request = eval_request(box, budget_forcing_tokens=64)
+    chunk = evaluator(box, farm, grades).evaluate(request)
+    passed = cut is CUT_IN_THINKING
+    assert set(chunk.outcomes.values()) == {("PpP" if passed else "PCP",)}, "a pass after the forced close is p; a fail after it stays C"
+    assert close == forced_close(cut) and grades.seen[0].count(cut + close + "42}") == 3, "the grader reads the reply, the close and the new tokens, without the end of turn"
+    chats = [(port, body) for port, body in farm.bodies if "messages" in body]
+    seconds = [(port, body) for port, body in farm.bodies if "prompt" in body]
+    assert len(chats) == 9 and all(body["return_prompt_text"] is True for _, body in chats)
+    assert len(seconds) == 3 and {body["model"] for _, body in seconds} == {NULL_MODEL, *(lora.lora_hash for lora in request.loras)}
+    for port, body in seconds:  # the prompt as the server made it, then the reply, then the close; greedy; on the server of the first request
+        first = next(p for p, sent in chats if sent["model"] == body["model"] and sent["messages"][-1]["content"] == "t1")
+        assert port == first and body == close_body(body["model"], "[t1]" + cut + close, request.params)
+        assert (body["max_tokens"], body["temperature"], body["skip_special_tokens"], body["add_special_tokens"]) == (64, 0.0, False, False) and "seed" not in body
+    logged = last_line(box)
+    assert (logged["capped"], logged["forced"], logged["forced_passed"]) == (3, 3, 3 if passed else 0) and logged["forced_s"] >= logged["longest_forced_s"] > 0
+
+
+def test_the_new_tokens_may_stop_at_their_own_limit_and_a_reply_of_another_form_is_not_usable():
+    assert read_close({"choices": [{"text": "42}<|im_end|>", "finish_reason": "stop"}]}) == "42}"
+    assert read_close({"choices": [{"text": "\\frac{1}{2", "finish_reason": "length"}]}) == "\\frac{1}{2", "cut at its limit: the grader reads what is there"
+    for bad in ({"choices": [{"text": "x", "finish_reason": "abort"}]}, {"choices": [{"text": None, "finish_reason": "stop"}]}, {"choices": []}):
+        with pytest.raises((ValueError, IndexError)):
+            read_close(bad)
+
+
+def test_a_second_request_that_fails_leaves_the_rollout_capped_and_is_tried_again_as_a_rollout_is(box):
+    refused = forcing_farm(lambda model, prompt: HttpError(400))
+    assert set(evaluator(box, refused).evaluate(eval_request(box, budget_forcing_tokens=64)).outcomes.values()) == {("PCP",)}
+    assert sum("prompt" in body for _, body in refused.bodies) == 3, "an HTTP status below 500 is not sent again"
+    assert (last_line(box)["capped"], last_line(box)["forced"]) == (3, 0)
+    failures, lock = iter([HttpError(503), ("", "abort")]), threading.Lock()  # fewer failures than the tries of one request
+
+    def flaky(model, prompt):
+        with lock:
+            return next(failures, ("42}", "length"))
+
+    farm = forcing_farm(flaky)
+    assert set(evaluator(box, farm).evaluate(eval_request(box, budget_forcing_tokens=64)).outcomes.values()) == {("PpP",)}
+    assert sum("prompt" in body for _, body in farm.bodies) == 5
+
+
+def test_a_server_that_does_not_return_its_prompt_stops_the_look_and_no_reply_becomes_a_silent_c(box):
+    farm = forcing_farm(lambda model, prompt: pytest.fail("there is no prompt to continue"))
+    http = farm.http
+    farm.http = lambda url, body, timeout_s: {key: value for key, value in http(url, body, timeout_s).items() if key != "prompt_text"}
+    with pytest.raises(InfraError, match="returned no prompt text for 3 capped replies"):
+        evaluator(box, farm).evaluate(eval_request(box, budget_forcing_tokens=64))
+
+
+def test_a_second_request_that_the_round_time_limit_cut_makes_the_chunk_a_cut_chunk(box, monkeypatch):
+    now = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    request = box.build.replace(eval_request(box, budget_forcing_tokens=64), deadline=int(now[0]) + 50)
+
+    def closer(model, prompt):
+        now[0] = request.deadline + 1  # the limit passes while the model writes its last tokens
+        return TimeoutError()
+
+    with pytest.raises(InfraError, match="time limit"):  # not a C: the limit cut this rollout, as it cuts a first request
+        evaluator(box, forcing_farm(closer)).evaluate(request)
+    assert [json.loads(line)["phase"] for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()] == ["eval_cut"]
+
+
+def test_an_e_of_the_grader_after_the_forced_close_leaves_the_rollout_capped(box):
+    farm = Farm(lambda model, task: ("E<think>the grader cannot decide", "length"), closer=lambda model, prompt: ("", "stop"))
+    chunk = evaluator(box, farm).evaluate(eval_request(box, n_loras=0, tasks=("t0",), budget_forcing_tokens=8))
+    assert chunk.outcomes == {NULL_MODEL: ("C",)} and (last_line(box)["forced"], last_line(box)["forced_passed"]) == (1, 0)
 
 
 def test_a_server_error_is_retried_and_a_dead_server_voids_the_look(box):
