@@ -315,6 +315,48 @@ def test_write_between_the_hash_call_and_the_download_is_kept_under_the_checked_
     assert all(verdict.valid for verdict in adm.verdicts(hotkeys).values())
 
 
+def test_bad_file_that_only_the_hash_call_saw_is_checked_when_it_comes_back(build):
+    key, bad = layout.miner_object(HOTKEY), b"not json"
+    adm = admission(build, Racing())
+    adm.store.put(key, bad)
+    adm.store.then[key] = file()
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid  # the check judged the valid file that it downloaded
+    adm.store.put(key, bad)  # the miner stores the bad file again: no check has seen it
+    assert not adm.verdicts([HOTKEY])[HOTKEY].valid
+
+
+def test_write_after_the_hash_call_starts_the_count_of_equal_failures_for_the_checked_bytes(build):
+    class Fragile(Counting):
+        """Fails on a text with the word "poison" and counts each other text, so the fault is proven to be of the file."""
+
+        def output_tokens(self, text: str) -> int:
+            if "poison" in text:
+                raise ValueError
+            return super().output_tokens(text)
+
+    now, key = [1000.0], layout.miner_object(HOTKEY)
+    groups = [{"prompt": "double 3", "rollouts": [solved(3), {"output": THINK + "poison \\boxed{-1}", "reward": 0}]}]
+    adm = StoreAdmission(Racing(), build.params(), tokens=Fragile(), grader=grade, clock=lambda: now[0])
+    adm.store.put(key, file(groups))
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)")
+    now[0] += FAULT_HOLD_S  # the hold has ended: this check reads the file again, after its hash call
+    other = file(groups, train={"rank": 16})  # other bytes that fail in the same way at the same place
+    adm.store.then[key] = other
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    assert first.batch_sha256 == sha256_hex(other) and first.reason.endswith("(check 1 of 3)"), "the checked bytes got the count of the bytes before"
+    now[0] += FAULT_HOLD_S - 1  # the hold is of the bytes that were checked: inside it they are not read again
+    calls = adm.tokens.calls
+    assert adm.verdicts([HOTKEY])[HOTKEY] is first and adm.tokens.calls == calls, "the same bytes were checked again inside their hold"
+    now[0] += 1
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 2 of 3)")
+    now[0] += FAULT_HOLD_S
+    last = adm.verdicts([HOTKEY])[HOTKEY]
+    assert last.reason.endswith("(checked 3 times: this verdict stays until a new file is uploaded)")
+    now[0] += FAULT_HOLD_S
+    calls = adm.tokens.calls
+    assert adm.verdicts([HOTKEY])[HOTKEY] is last and adm.tokens.calls == calls  # final: kept like any other verdict
+
+
 def test_write_after_the_hash_call_is_kept_under_the_checked_bytes_when_a_hold_has_ended(build):
     slow, now, key = {"double 3"}, [1000.0], layout.miner_object(HOTKEY)
 

@@ -771,7 +771,7 @@ class StoreAdmission:
     ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self.streams = max(SERIAL_STREAMS, int(streams))
-        self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
+        self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((sha256 of the checked bytes or "oversized", params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
 
