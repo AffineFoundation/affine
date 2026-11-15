@@ -153,7 +153,8 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 .link{all:unset;cursor:pointer;color:var(--ink);text-decoration:underline;text-underline-offset:3px}
 .link:focus-visible{outline:1px solid var(--muted);outline-offset:2px}
 
-/* benchmark table: the kings scroll under a sticky header; the reference models and the genesis head are a sticky footer */
+/* benchmark table: the kings scroll under a sticky header and above a sticky footer. Home page: the reference rows and the newest king are
+   sticky under the header, and the footer is the genesis head. v1 page: the footer has the reference models and the genesis head */
 #bench thead th{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
 #bench thead .suites+tr th{top:27px}
 #bench th.suite{text-align:center}
@@ -167,6 +168,9 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 .who>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
 #bench tfoot{position:sticky;bottom:0;z-index:2}
 #bench tfoot td{background-color:var(--bg)}
+#bench tbody.top{position:sticky;top:var(--head,27px);z-index:2}
+#bench tbody.top td{background-color:var(--bg)}
+#bench tbody.top tr:last-child td{border-bottom:2px solid var(--axis)}
 #bench tfoot tr:first-child td{border-top:2px solid var(--axis)}
 #bench tfoot tr:last-child td{border-bottom:0}
 #bench tr.genesis td{border-top:1px solid var(--muted)}
