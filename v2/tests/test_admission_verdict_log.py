@@ -226,7 +226,7 @@ def test_freeze_that_fails_on_the_bytes_of_the_check_shows_the_same_sha256_two_t
 
 
 def test_freeze_line_shows_the_tag_of_the_memory_beside_the_sha256_of_the_verdict(build, capsys):
-    """The tag is the hash of one read of the object and the verdict is of another read: the line shows both as they are."""
+    """The line shows the tag of the memory and the sha256 of the verdict as they are. ``verdicts`` keeps them equal; this test writes another tag by hand."""
     other = file("5A", "poison")
     params, reg = build.params(), build.reg(881, hotkey="5A")
     fresh = StoreAdmission(Store({REG_KEY: other}), params, tokens=WordTokens(), grader=None)

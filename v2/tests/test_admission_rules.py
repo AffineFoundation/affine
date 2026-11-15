@@ -277,6 +277,118 @@ def test_verdicts_check_a_file_again_only_when_it_changes(build):
     assert adm.verdicts([HOTKEY]) == {}
 
 
+class Racing(Store):
+    """A miner that writes during the check: right after the next hash call on a key in ``then``, the object has the bytes given there."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.then: dict[str, bytes] = {}
+
+    def sha256(self, key: str) -> str:
+        found = super().sha256(key)
+        if key in self.then:
+            self[key] = self.then.pop(key)
+        return found
+
+
+@pytest.mark.parametrize("streams", [1, 4])
+def test_write_between_the_hash_call_and_the_download_is_kept_under_the_checked_bytes(build, streams):
+    hotkeys = [HOTKEY, "5MinerB", "5MinerC"]
+    adm = StoreAdmission(Racing(), build.params(), tokens=Counting(), grader=grade, clock=lambda: 77.9, streams=streams)
+    good = {hotkey: file(hotkey=hotkey) for hotkey in hotkeys}
+    for hotkey in hotkeys:  # a file that no check has seen, so the hash call finds no verdict in the memory
+        adm.store.put(layout.miner_object(hotkey), b"not json, " + hotkey.encode())
+    adm.store.then = {layout.miner_object(hotkey): good[hotkey] for hotkey in hotkeys}
+    first = adm.verdicts(hotkeys)  # the check judges the file that it downloads: the valid one
+    assert all(first[hotkey].valid and first[hotkey].batch_sha256 == sha256_hex(good[hotkey]) for hotkey in hotkeys)
+    calls = adm.tokens.calls
+    second = adm.verdicts(hotkeys)  # the same bytes are in the store, and no miner wrote
+    assert adm.tokens.calls == calls and all(second[hotkey] is first[hotkey] for hotkey in hotkeys), "the same bytes were checked a second time"
+    for hotkey in hotkeys:  # the other way: the hash call sees a valid file, the download gets a bad one
+        adm.store.put(layout.miner_object(hotkey), file(hotkey=hotkey, train={"rank": 16}))
+    adm.store.then = {layout.miner_object(hotkey): b"{}" for hotkey in hotkeys}
+    bad = adm.verdicts(hotkeys)
+    assert not any(bad[hotkey].valid for hotkey in hotkeys)
+    assert all(adm.verdicts(hotkeys)[hotkey] is bad[hotkey] for hotkey in hotkeys)
+    for hotkey in hotkeys:  # the valid file that the hash call saw was never checked: when it comes back, it is checked
+        adm.store.put(layout.miner_object(hotkey), file(hotkey=hotkey, train={"rank": 16}))
+    assert all(verdict.valid for verdict in adm.verdicts(hotkeys).values())
+
+
+def test_bad_file_that_only_the_hash_call_saw_is_checked_when_it_comes_back(build):
+    key, bad = layout.miner_object(HOTKEY), b"not json"
+    adm = admission(build, Racing())
+    adm.store.put(key, bad)
+    adm.store.then[key] = file()
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid  # the check judged the valid file that it downloaded
+    adm.store.put(key, bad)  # the miner stores the bad file again: no check has seen it
+    assert not adm.verdicts([HOTKEY])[HOTKEY].valid
+
+
+def test_write_after_the_hash_call_starts_the_count_of_equal_failures_for_the_checked_bytes(build):
+    class Fragile(Counting):
+        """Fails on a text with the word "poison" and counts each other text, so the fault is proven to be of the file."""
+
+        def output_tokens(self, text: str) -> int:
+            if "poison" in text:
+                raise ValueError
+            return super().output_tokens(text)
+
+    now, key = [1000.0], layout.miner_object(HOTKEY)
+    groups = [{"prompt": "double 3", "rollouts": [solved(3), {"output": THINK + "poison \\boxed{-1}", "reward": 0}]}]
+    adm = StoreAdmission(Racing(), build.params(), tokens=Fragile(), grader=grade, clock=lambda: now[0])
+    adm.store.put(key, file(groups))
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 1 of 3)")
+    now[0] += FAULT_HOLD_S  # the hold has ended: this check reads the file again, after its hash call
+    other = file(groups, train={"rank": 16})  # other bytes that fail in the same way at the same place
+    adm.store.then[key] = other
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    assert first.batch_sha256 == sha256_hex(other) and first.reason.endswith("(check 1 of 3)"), "the checked bytes got the count of the bytes before"
+    now[0] += FAULT_HOLD_S - 1  # the hold is of the bytes that were checked: inside it they are not read again
+    calls = adm.tokens.calls
+    assert adm.verdicts([HOTKEY])[HOTKEY] is first and adm.tokens.calls == calls, "the same bytes were checked again inside their hold"
+    now[0] += 1
+    assert adm.verdicts([HOTKEY])[HOTKEY].reason.endswith("(check 2 of 3)")
+    now[0] += FAULT_HOLD_S
+    last = adm.verdicts([HOTKEY])[HOTKEY]
+    assert last.reason.endswith("(checked 3 times: this verdict stays until a new file is uploaded)")
+    now[0] += FAULT_HOLD_S
+    calls = adm.tokens.calls
+    assert adm.verdicts([HOTKEY])[HOTKEY] is last and adm.tokens.calls == calls  # final: kept like any other verdict
+
+
+def test_write_after_the_hash_call_is_kept_under_the_checked_bytes_when_a_hold_has_ended(build):
+    slow, now, key = {"double 3"}, [1000.0], layout.miner_object(HOTKEY)
+
+    def timed(prompt: str, output: str, capped: bool) -> float | None:
+        if prompt in slow:
+            raise GraderTimeLimit
+        return grade(prompt, output, capped)
+
+    adm = StoreAdmission(Racing(), build.params(), tokens=Counting(), grader=timed, clock=lambda: now[0])
+    adm.store.put(key, file())
+    assert "time limit" in adm.verdicts([HOTKEY])[HOTKEY].reason  # held for 10 minutes, not kept
+    slow.clear()
+    now[0] += FAULT_HOLD_S  # the hold has ended: this check reads the file again, after its hash call
+    other = file(train={"rank": 16})
+    adm.store.then[key] = other
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    assert first.valid and first.batch_sha256 == sha256_hex(other)
+    calls = adm.tokens.calls
+    assert adm.verdicts([HOTKEY])[HOTKEY] is first and adm.tokens.calls == calls, "the same bytes were checked a second time"
+
+
+def test_file_that_grows_past_the_limit_after_the_hash_call_is_kept_as_oversized(build):
+    limit, key = len(file()), layout.miner_object(HOTKEY)
+    adm = admission(build, Racing(), max_batch_bytes=limit)
+    adm.store.put(key, file())
+    adm.store.then[key] = b"x" * (limit + 1)
+    first = adm.verdicts([HOTKEY])[HOTKEY]
+    assert first.rule == "size" and adm.verdicts([HOTKEY])[HOTKEY] is first
+    adm.store.put(key, file())  # the file that the hash call saw was never checked
+    assert adm.verdicts([HOTKEY])[HOTKEY].valid
+
+
 def test_oversized_object_is_never_downloaded(build):
     class NoDownload(Store):
         def get(self, key):
