@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
 from sn120_v2 import public, publisher, sim
+from sn120_v2.cli import changed_params, main
 from sn120_v2.errors import ConfigError, ContractError
 from sn120_v2.gpu.evaluator import ANSWER_START, END_OF_THINKING, THINKING_CLOSE, close_body, forced_close
 from sn120_v2.irt import IRTSampler
+from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.judging import check_result, decide, score_entry
 from sn120_v2.params import Params
 from sn120_v2.types import CAP, CAP_PASS, CAPPED, FAIL, OUTCOME_CODES, PASS, PASSED, WINNER, EvalChunk, NULL_MODEL, check_outcomes
@@ -28,6 +32,8 @@ math_grader = pytest.importorskip("sn120_v2.envs.math_grader", reason="install t
 # ``Params().params_hash`` at the commit before this rule (b370b360).
 PARAMS_HASH_BEFORE = "65ce6ef3bc867172eb87673bdb39461d03a8c85aac743c61e8b3d233b9f26d54"
 SITE, LINKS = "https://example.org", "https://example.org/links"
+# A state directory that commit 515d7e9f wrote: a bootstrap and one closed round, no round open.
+OLD_STATE = Path(__file__).parent / "data" / "state_515d7e9f" / "idle"
 
 
 def runs(*parts: tuple[str, int]) -> str:
@@ -50,6 +56,28 @@ def test_a_forced_close_that_cannot_be_or_that_has_no_room_in_the_context_fails_
     with pytest.raises(ConfigError):
         Params(**change)
     assert Params(max_output_tokens=100, max_context_tokens=165, budget_forcing_tokens=64).budget_forcing_tokens == 64
+
+
+def test_set_params_reports_the_rule_when_it_goes_on_and_when_it_goes_off(tmp_path, capsys):
+    on = dataclasses.replace(Params(), budget_forcing_tokens=64)
+    assert changed_params(Params(), on) == {"budget_forcing_tokens": {"before": 0, "after": 64}}
+    assert changed_params(on, Params()) == {"budget_forcing_tokens": {"before": 64, "after": 0}}
+    directory = tmp_path / "state"
+    shutil.copytree(OLD_STATE, directory)
+    stack = ["--state-dir", str(directory), "--stack", "sn120_v2.sim:stack"]
+    values = {"n_tasks": 32, "min_scored_tasks": 8, "recipe": {"image_digests": [sim.SIM_IMAGE]}}
+    reports = []
+    for tokens in (64, 0):
+        file = tmp_path / f"params-{tokens}.json"
+        file.write_text(json.dumps(values | {"budget_forcing_tokens": tokens}))
+        capsys.readouterr()
+        assert main(["set-params", *stack, "--params", str(file)]) == 0
+        reports.append(json.loads(capsys.readouterr().out))
+    assert reports[0]["changed"]["budget_forcing_tokens"] == {"before": 0, "after": 64}
+    assert reports[1]["changed"] == {"budget_forcing_tokens": {"before": 64, "after": 0}}
+    assert reports[1]["params_hash"] != reports[0]["params_hash"] == reports[1]["params_hash_before"]
+    pinned = [json.loads(line)["data"]["params"] for line in (directory / JOURNAL_FILE).read_text().splitlines() if json.loads(line)["kind"] == "params_set"]
+    assert [params.get("budget_forcing_tokens") for params in pinned[-2:]] == [64, None], "a journal that had the rule on needs code that knows the field, for ever"
 
 
 # ---------------------------------------------------------------- the code p

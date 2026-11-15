@@ -30,6 +30,7 @@ Nothing here has a default path. The state directory is always an argument.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib
 import json
 import os
@@ -328,6 +329,8 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
 
     def flat(params: Params) -> dict[str, Any]:
         data = params.to_dict()
+        # A field that the JSON form does not hold at its default (``canonical.ABSENT_AT_DEFAULT``) is compared too.
+        data |= {f.name: getattr(params, f.name) for f in dataclasses.fields(params) if f.name not in data}
         return data | {f"recipe.{name}": value for name, value in data.pop("recipe").items()}
 
     old, new = flat(before), flat(after)
