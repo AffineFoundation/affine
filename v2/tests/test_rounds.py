@@ -19,7 +19,17 @@ from sn120_v2.payout import weights
 from sn120_v2.public import TEXT_LIMIT, public_text, snapshot
 from sn120_v2.queue import waiting
 from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, STORE_DIR, SimAdmission, SimWorld, sim_params
-from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
+from sn120_v2.state import (
+    HEAD_APPLIED,
+    HEAD_FOLDED,
+    LEASE_FAILED,
+    ROUND_CLOSED,
+    ROUND_OPENED,
+    ROUND_SETTLED,
+    SEATS_DEMOTED,
+    SEATS_RESTORED,
+    load,
+)
 from sn120_v2.store import LocalStore, put_record
 from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
 
@@ -477,6 +487,21 @@ def test_public_data_never_shows_a_losers_file_or_train_values(world):
     assert set(loser) == {"queue_pos", "uid", "hotkey", "registration_block", "batch_sha256", "status", "eliminated_at_look", "delta", "se", "z", "cap_rate", "n_tasks"}
     assert report["winner_outcomes"] and list(report["null_outcomes"]) == ["box-0"]
     assert world.store.list("public/rounds/") == [layout.winner_batch(record.round_id), layout.round_file(record.round_id)]
+
+
+def test_a_demoted_seat_with_a_valid_file_leaves_the_back_before_selection(world):
+    """Imported or squat-trim demotion is not sticky once a valid file is present at selection."""
+    world.register(1, 0.3)
+    world.register(2, 0.0)
+    world.register(3, 0.1)
+    world.controller._log(SEATS_DEMOTED, {"keys": [[1, 1001], [3, 1003]]}, world.clock())
+    assert [seat.reg.uid for seat in waiting(world.controller.state.queue)] == [2, 1, 3], "demoted seats sit at the back"
+    tickets = world.controller.open_round(world.clock(), "entropy")
+    assert tickets and SEATS_RESTORED in kinds(world)
+    restored = next(record.data["keys"] for record in read_journal(world.root / JOURNAL_FILE) if record.kind == SEATS_RESTORED)
+    assert restored == [[1, 1001], [3, 1003]]
+    assert all(not seat.demoted for seat in world.controller.state.queue.values())
+    assert [entry.reg.uid for ticket in tickets for entry in ticket.entries] == [1, 2, 3], "restored seats rejoin normal order"
 
 
 def test_the_first_start_carries_v1_kings_and_served_seats_and_happens_once(tmp_path):

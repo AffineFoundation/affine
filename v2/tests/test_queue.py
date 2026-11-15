@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from sn120_v2.errors import InfraError
-from sn120_v2.queue import plan_sync, select_round, split_among_boxes, squat_trim, waiting
+from sn120_v2.queue import plan_sync, restore_from_back, select_round, split_among_boxes, squat_trim, waiting
+from sn120_v2.state import State, _seats_restored
 from sn120_v2.types import ChainSnapshot, Verdict
 
 DAY = 86400
@@ -88,6 +89,29 @@ def test_squat_trim_expected_wait_grows_with_the_seats_ahead(build):
     # 24 turns per day = 1 hour per turn. Age is 5 days = 120 hours.
     # A seat with k seats ahead waits max(24, k) hours, and moves when 120 > 2 * that, so k < 60.
     assert trim(build, queue, turns=24) == [(uid, uid) for uid in range(1, 61)]
+
+
+def test_restore_from_back_clears_demoted_only_when_the_file_is_valid(build):
+    queue = build.queue(
+        build.seat(1, demoted=True),
+        build.seat(2, demoted=True),
+        build.seat(3, demoted=True),
+        build.seat(4),
+        build.seat(5, demoted=True, leased=True),
+    )
+    verdicts = build.verdicts("hk1", "hk3") | {"hk2": Verdict("hk2", False, reason="bad")}
+    assert restore_from_back(queue, verdicts) == [(1, 101), (3, 103)], "turn order; invalid and leased stay"
+    assert restore_from_back(queue, {}) == [], "no verdict is not a restore"
+
+
+def test_seats_restored_replay_clears_demoted_and_import_flag(build):
+    state = State()
+    state.demote_on_arrival.add((1, 101))
+    state.queue = dict(build.queue(build.seat(1, demoted=True), build.seat(2, demoted=True)))
+    _seats_restored(state, {"keys": [[1, 101]]}, at=1)
+    assert not state.queue[(1, 101)].demoted and (1, 101) not in state.demote_on_arrival
+    assert state.queue[(2, 102)].demoted, "only the named seats leave the back"
+    assert uids(waiting(state.queue)) == [1, 2], "restored seat rejoins normal zone ahead of a still-demoted peer"
 
 
 def sync(build, queue, regs, served_regs=(), served_hotkeys=(), netuid=120, **kw):

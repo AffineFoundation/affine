@@ -46,7 +46,7 @@ from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide
 from .params import GenesisSpec, Params
 from .public import public_text, round_report, snapshot
-from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
+from .queue import SyncPlan, plan_sync, restore_from_back, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
 from .state import (
@@ -67,6 +67,7 @@ from .state import (
     SEAT_RELEASED,
     SEATS_DEMOTED,
     SEATS_FRONTED,
+    SEATS_RESTORED,
     V1_IMPORTED,
     Lease,
     RoundRecord,
@@ -382,6 +383,10 @@ class Controller:
         moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
+        # After demotions: a seat at the back with a valid file leaves the back (v1 rechecked each turn).
+        restored = restore_from_back(state.queue, verdicts)
+        if restored:
+            self._log(SEATS_RESTORED, {"keys": [list(key) for key in restored]}, now)
         round_id = f"r{state.round_seq + 1:06d}"
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
