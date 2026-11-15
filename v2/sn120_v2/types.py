@@ -61,7 +61,7 @@ class Registration(Record):
     hotkey: str
     registration_block: int
     registered_at: int = 0  # time of the registration block; 0 = unknown
-    coldkey: str = ""  # optional owner key, for the one-entry-per-miner rule
+    coldkey: str = ""  # the chain reader leaves it empty: the limit of a round is by hotkey only
 
     def __post_init__(self) -> None:
         _need(self.uid >= 0 and self.registration_block >= 0 and bool(self.hotkey), "bad registration")

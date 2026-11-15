@@ -11,10 +11,12 @@ import pytest
 from sn120_v2 import layout, links, public, publisher, r2, sim
 from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
+from sn120_v2.chain import FakeChain, Reader
 from sn120_v2.envs.math_pool import MANDATE
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
-from sn120_v2.types import HeadVersion
+from sn120_v2.queue import select_round
+from sn120_v2.types import HeadVersion, QueueEntry
 
 
 class MemStore(dict):
@@ -175,6 +177,19 @@ def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_
     assert "A seat that is in an open round stays until that round closes." in flat
     assert "the seat keeps its place. The validator then reads the file of the new hotkey" in flat
     assert "When the new hotkey already had its turn, the seat is removed." in flat
+
+
+def test_the_limit_of_a_round_is_stated_by_hotkey_and_the_chain_reader_gives_no_seat_a_coldkey(tmp_path, build):
+    flat = " ".join(published(world(tmp_path).publisher.snapshots[-1])[1].split())
+    assert "- One seat for a hotkey in a round. A second seat of the same hotkey waits for a later round." in flat
+    assert "The coldkey is not used: one coldkey can have several seats, each with its own hotkey, in the same round." in flat
+    assert flat.count("coldkey") == 2 and "each miner in a round" not in flat, "no other sentence names the coldkey"
+    # "not used" is true of the picker for the seats that the validator has: they come from the chain reader.
+    chain = FakeChain({1: "hk1", 2: "hk2", 3: "hk3", 4: "hk3"} | {0: "hk0"}, "hk0")
+    seats = Reader(chain, 120, clock=lambda: chain.now).snapshot().registrations[1:]
+    assert [seat.coldkey for seat in seats] == ["", "", "", ""]
+    picked = select_round({seat.key: QueueEntry(seat) for seat in seats}, build.verdicts("hk1", "hk2", "hk3"), build.batch, cap=4)
+    assert [entry.reg.uid for entry in picked.entries] == [1, 2, 3] and picked.skipped == (), "the second seat of hk3 waits"
 
 
 def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_round_file_shows(tmp_path, out_of_time):
