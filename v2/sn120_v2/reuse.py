@@ -16,7 +16,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Collection, Iterable, Mapping, Sequence
 
 from . import layout
 from .seams import ObjectStore
@@ -32,8 +32,9 @@ KEY_FORM = 2
 REMOVED = ("Zs", "Zl", "Zp", "Cc", "Cf", "Mn", "Me")
 TRAILING = "PS"  # first letters of the categories that ``normal`` removes from the end: punctuation and symbols
 REASON_LIMIT = 300  # characters of the reason of a winner file that was left out
+GONE = "no such object, and the round has a winner"  # the reason of a winner file that the record of the rounds names and ``read`` does not find
 
-Reader = Callable[[str], "bytes | None"]  # round id -> the bytes of the winner file of that round; None when the round has none
+Reader = Callable[[str], "bytes | None"]  # round id -> the bytes of the winner file of that round; None when there is no such object
 
 
 class _Removal(dict):
@@ -136,6 +137,12 @@ class WinnerRollouts:
     ``known`` leaves that file out and goes on, and ``left_out`` names the round and the reason. Nothing of that
     round goes to the cache, so it is never kept as a round with no winner file. Each later call of ``known``
     asks for it again, and from the call that reads it, its rollouts count.
+
+    A winner file that is gone is such a file. ``read`` says "no such object" for a round with no winner, and
+    also for a winner file that is no longer there, or is not there yet. ``known`` tells the two apart by ``won``:
+    the rounds that have a winner, from the record of the rounds. For a round of ``won``, "no such object" is a
+    read that failed, and a cache file with no byte is not believed. A file that was read keeps its keys when it
+    is gone later: what a round published never changes.
     """
 
     def __init__(self, read: Reader, cache: Path | None = None) -> None:
@@ -149,8 +156,11 @@ class WinnerRollouts:
         """(round id, reason) of each winner file that the last ``known`` call could not read, in round order."""
         return tuple((round_name(number), reason) for number, reason in sorted(self._left_out.items()))
 
-    def known(self, rounds: int, settled: int | None = None) -> Mapping[bytes, str]:
+    def known(self, rounds: int, settled: int | None = None, won: Collection[str] = ()) -> Mapping[bytes, str]:
         """The keys of rounds 1 to ``rounds``. Give only closed rounds. It never raises for a winner file: see ``left_out``.
+
+        ``won``: the ids of the rounds that have a winner. Such a round with no file is left out, and asked again.
+        A round that is not in ``won`` and has no file is a round with no winner file.
 
         ``settled``: a round above this number that has no winner file is asked again by the next process. It is
         for a reader that can be behind the record, as a public site is for its newest rounds. Not given: every
@@ -160,7 +170,7 @@ class WinnerRollouts:
         for number in (*sorted(self._left_out), *range(self._rounds + 1, rounds + 1)):
             name = round_name(number)
             try:
-                keys = self._keys(name, final=number <= settled)
+                keys = self._keys(name, final=number <= settled, won=name in won)
             except Exception as exc:  # every failure of one file, of any kind: the check of the waiting files goes on without that file
                 self._left_out[number] = " ".join(f"{type(exc).__name__}: {exc}".split())[:REASON_LIMIT]
                 continue
@@ -170,14 +180,16 @@ class WinnerRollouts:
         self._rounds = max(self._rounds, rounds)
         return self._known
 
-    def _keys(self, round_id: str, final: bool) -> list[bytes]:
+    def _keys(self, round_id: str, final: bool, won: bool) -> list[bytes]:
         path = None if self.cache is None else Path(self.cache) / f"{round_id}.form{KEY_FORM}.keys"
         if path is not None:
             with contextlib.suppress(OSError):
                 kept = path.read_bytes()
-                if len(kept) % KEY_BYTES == 0:
+                if len(kept) % KEY_BYTES == 0 and (kept or not won):
                     return [kept[at : at + KEY_BYTES] for at in range(0, len(kept), KEY_BYTES)]
         raw = self.read(round_id)
+        if raw is None and won:
+            raise LookupError(GONE)
         keys = [] if raw is None else file_keys(raw)
         if path is not None and (raw is not None or final):
             with contextlib.suppress(OSError):

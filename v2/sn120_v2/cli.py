@@ -285,7 +285,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     report["seats_with_counted_failures"] = sum(1 for seat in state.queue.values() if seat.infra_attempts and not seat.held)
     if stack is not None:
         seats = waiting(state.queue)
-        verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in seats], rounds=state.rounds_closed)
+        verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in seats], rounds=state.rounds_closed, won=state.rounds_won)
         report["queued_files"] = dict(sorted(Counter(verdict_rule(verdicts.get(seat.reg.hotkey)) for seat in seats).items()))
     print(json.dumps(report, indent=2))
     return 0
@@ -305,7 +305,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
     if stack.publisher is None:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
-    verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)], rounds=state.rounds_closed)
+    verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)], rounds=state.rounds_closed, won=state.rounds_won)
     stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))

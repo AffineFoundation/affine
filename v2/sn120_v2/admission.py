@@ -46,7 +46,7 @@ import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import AbstractSet, Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
+from typing import AbstractSet, Any, Callable, Collection, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
@@ -935,13 +935,15 @@ class StoreAdmission:
         finally:
             pool.shutdown(wait=True, cancel_futures=True)  # no read of this call goes on after the call ended
 
-    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0) -> Mapping[str, Verdict]:
+    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0, won: Collection[str] = ()) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
         ``rounds`` is the count of closed rounds: the winner files of rounds 1 to ``rounds`` are the public files
         of rule ``public_reuse``. A share of 1 turns the reuse rules off, and then no winner file is read.
         A winner file that cannot be read never stops this call: the rule runs without that file, a log line
-        names it, and ``left_out`` gives it to the caller. The next call asks for the file again.
+        names it, and ``left_out`` gives it to the caller. The next call asks for the file again. ``won`` holds
+        the ids of the rounds that have a winner: when the store has no winner file for such a round, that
+        file is one that cannot be read. Without ``won`` it would read as a round with no winner.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
         depends on this machine at this moment, so it is not kept. It holds for ``FAULT_HOLD_S``: during that
@@ -960,7 +962,7 @@ class StoreAdmission:
         """
         out: dict[str, Verdict] = {}
         compared = self.public is not None and self.params.max_reused_rollout_frac < 1
-        self._winners, self._walk = self.public.known(rounds) if compared else {}, {}
+        self._winners, self._walk = self.public.known(rounds, won=won) if compared else {}, {}
         left_out = self.public.left_out if compared else ()
         for line in left_out_log(self._left_out, left_out):
             print(line, file=sys.stderr, flush=True)

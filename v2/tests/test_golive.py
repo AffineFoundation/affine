@@ -464,10 +464,10 @@ def test_the_waiting_files_are_read_before_the_lease_starts_and_never_inside_a_r
     world.register(2, None)
     real, calls = world.admission.verdicts, []
 
-    def slow(hotkeys, rounds=0):
+    def slow(hotkeys, rounds=0, won=()):
         calls.append(world.now)
         world.now += 1000  # reading and checking every waiting file takes time
-        return real(hotkeys, rounds)
+        return real(hotkeys, rounds, won)
 
     world.admission.verdicts = slow
     record = world.round()

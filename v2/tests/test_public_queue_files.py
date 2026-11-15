@@ -186,10 +186,10 @@ def test_the_time_of_the_list_is_the_start_of_the_check(tmp_path):
     world.register(1, 0.0)
     real, started = world.admission.verdicts, []
 
-    def slow(hotkeys, rounds=0):
+    def slow(hotkeys, rounds=0, won=()):
         started.append(world.now)
         world.now += 1000  # reading every waiting file takes time
-        return real(hotkeys, rounds)
+        return real(hotkeys, rounds, won)
 
     world.admission.verdicts = slow
     assert world.controller.publish(world.clock(), check_files=True)

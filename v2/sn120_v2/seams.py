@@ -16,7 +16,7 @@ Two rules hold for every implementation:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Collection, Mapping, Protocol, Sequence, runtime_checkable
 
 from .params import Params
 from .types import (
@@ -103,16 +103,18 @@ class Presigner(Protocol):
 class Admission(Protocol):
     """Format and content checks on miner files."""
 
-    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0) -> Mapping[str, Verdict]:
+    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0, won: Collection[str] = ()) -> Mapping[str, Verdict]:
         """The latest live check of each hotkey's stored file. A hotkey with no file may be absent.
 
         ``rounds`` is the count of closed rounds: a file is compared with the winner files that those rounds
-        published. The call also starts a walk of the queue: the ``freeze`` calls that follow belong to it.
+        published. ``won`` holds the ids of the rounds that have a winner: the winner file of such a round that
+        the store does not have is a file that could not be read (``left_out``), not a round with no winner.
+        The call also starts a walk of the queue: the ``freeze`` calls that follow belong to it.
         """
         ...
 
     def left_out(self) -> Sequence[tuple[str, str]]:
-        """(round id, reason) of each published winner file that the last ``verdicts`` call could not read.
+        """(round id, reason) of each published winner file that the last ``verdicts`` call could not read or did not find.
 
         Such a file never stops a check or a round: the files are compared without it, and the round record
         names it. The next ``verdicts`` call asks for it again.

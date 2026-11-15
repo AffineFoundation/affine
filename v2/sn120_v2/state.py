@@ -126,6 +126,11 @@ class State:
         """Rounds 1 to this number are closed: what each of them published never changes."""
         return self.round_seq - (1 if self.round else 0)
 
+    @property
+    def rounds_won(self) -> frozenset[str]:
+        """The ids of the rounds that have a winner: each of them published the file of its winner. A king of v1 names no round."""
+        return frozenset(king.round_id for king in self.kings)
+
     def turns_last_day(self, now: int) -> int:
         return sum(1 for at in self.turn_times if at > now - DAY)
 

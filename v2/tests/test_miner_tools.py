@@ -21,7 +21,7 @@ from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import BatchRejected, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Recipe
-from sn120_v2.reuse import WinnerRollouts, store_reader
+from sn120_v2.reuse import GONE, WinnerRollouts, store_reader
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
 from sn120_v2.worker import LocalRunner
 
@@ -261,13 +261,15 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
 def test_check_with_the_winner_files_gives_the_verdict_of_the_validator(tmp_path, capsys, monkeypatch):
     """Rule ``public_reuse`` from the public files alone: mining.json and the winner file of each closed round."""
     world, site = sim.SimWorld(tmp_path / "world", sim.sim_params(max_reused_rollout_frac=0.1)), "https://site.example"
-    for uid in (1, 2):
-        world.register(uid, 0.3)
+    for uid, gain in ((1, 0.3), (2, 0.0), (3, 0.3)):
+        world.register(uid, gain)
         world.round()
     address = f"{site}/public/mining.json"
-    winner = batch_bytes(hotkey="5King")  # the published file of the winner of round 1; round 2 has no winner file
+    # The published file of the winner of round 1. Round 2 has no winner. Round 3 has one, and the site does not have its file.
+    winner = batch_bytes(hotkey="5King")
     pages = {address: publisher.render(world.publisher.snapshots[-1], site)[0], f"{site}/{layout.winner_batch('r000001')}": winner}
-    assert [view["round_id"] for view in json.loads(pages[address])["history"]] == ["r000001", "r000002"]
+    assert [(view["round_id"], view["outcome"]) for view in json.loads(pages[address])["history"]] == [("r000001", "applied"), ("r000002", "null"), ("r000003", "applied")]
+    files = [f"{site}/public/rounds/r00000{number}/batch.json" for number in (1, 2, 3)]
     asked, down = [], set()
 
     def reply(request, timeout):
@@ -288,36 +290,41 @@ def test_check_with_the_winner_files_gives_the_verdict_of_the_validator(tmp_path
     code, out = cli(capsys, "check", *argv, str(copy))
     reason = "2 of 2 rollouts are copies of rollouts in the published winner files, 2 of them in the file of round r000001; the limit is a share of 0.1"
     assert code == 1 and json.loads(out) == {"valid": False, "rule": "public_reuse", "reason": reason}
-    assert asked == [address, f"{site}/public/rounds/r000001/batch.json", f"{site}/public/rounds/r000002/batch.json"]
+    assert asked == [address, *files]
 
-    # The validator, from its store: the same rule code and the same reason.
-    store = world.store
+    # The validator, from its store: the same rule code and the same reason. Its store has lost the winner file of round 3.
+    store, state = world.store, world.controller.state
     store.put(layout.winner_batch("r000001"), winner)
     store.put(layout.miner_object(HOTKEY), copy.read_bytes())
-    store.delete(layout.winner_batch("r000002"))
+    store.delete(layout.winner_batch("r000003"))
     validator = StoreAdmission(store, world.params, tokens=WordTokens(), grader=None, public=WinnerRollouts(store_reader(store)))
-    verdict = validator.verdicts([HOTKEY], rounds=world.controller.state.rounds_closed)[HOTKEY]
+    verdict = validator.verdicts([HOTKEY], rounds=state.rounds_closed, won=state.rounds_won)[HOTKEY]
     assert (verdict.valid, verdict.rule, verdict.reason) == (False, "public_reuse", reason)
+    assert validator.left_out() == (("r000003", f"LookupError: {GONE}"),), "round 2 has no winner: it is no file that is left out"
 
+    # A winner file that the site does not have (HTTP 404), for a round that mining.json names as a round with a winner:
+    # the check runs without it and names it, as the validator does. Nothing of it is kept, and the next run asks again.
     code, out = cli(capsys, "check", *argv, str(own))
     report = json.loads(out)
-    assert code == 0 and report["rules_run"] == ["format", "reuse"] and report["rules_not_run"] == ["tokens", "grader"] and report["winner_files_not_read"] == []
-    assert asked[3:] == [address, f"{site}/public/rounds/r000002/batch.json"], "the keys of a read file are kept; a round of the history with no file is asked again"
+    assert code == 0 and report["rules_run"] == ["format", "reuse"] and report["rules_not_run"] == ["tokens", "grader"]
+    assert report["winner_files_not_read"] == [{"round_id": "r000003", "reason": "InfraError: HTTP 404"}]
+    assert asked[4:] == [address, *files[1:]], "the keys of a read file are kept; a round of the history with no file is asked again"
+    assert sorted(path.name for path in cache.iterdir()) == ["r000001.form2.keys"]
 
     monkeypatch.setenv(tool.PUT_URL_ENV, "https://signed.example/put")
     assert cli(capsys, "upload", *argv, str(copy))[0] == 1 and not any(url.startswith("https://signed.example") for url in asked), "a refused file is never sent"
     assert cli(capsys, "upload", *argv, str(own))[0] == 0 and asked[-1] == "https://signed.example/put"
 
-    # A winner file that cannot be read: as the validator does, the check runs without it and names it. The next run asks again.
-    down.add(f"{site}/public/rounds/r000002/batch.json")
+    # A winner file that cannot be read for another cause: the same.
+    down.add(files[2])
     code, out = cli(capsys, "check", *argv, str(own))
-    assert code == 0 and json.loads(out)["winner_files_not_read"] == [{"round_id": "r000002", "reason": "InfraError: HTTP 500"}]
+    assert code == 0 and json.loads(out)["winner_files_not_read"] == [{"round_id": "r000003", "reason": "InfraError: HTTP 500"}]
     code, out = cli(capsys, "check", *argv, str(copy))
     assert code == 1 and json.loads(out)["rule"] == "public_reuse", "the files that were read still count"
-    pages[f"{site}/public/rounds/r000002/batch.json"] = batch_bytes(hotkey="5King2").replace(b"step step", b"my step")
+    pages[files[2]] = batch_bytes(hotkey="5King3").replace(b"step step", b"my step")
     down.clear()
     code, out = cli(capsys, "check", *argv, str(own))
-    assert code == 1 and "2 of them in the file of round r000002" in json.loads(out)["reason"], "the file that was not read counts from the run that reads it"
+    assert code == 1 and "2 of them in the file of round r000003" in json.loads(out)["reason"], "the file that was not read counts from the run that reads it"
 
     # With a share of 1 the validator has no reuse rule. The tool reads no winner file and says that the rule did not run.
     off = json.loads(pages[address])

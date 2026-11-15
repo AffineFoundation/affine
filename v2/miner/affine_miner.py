@@ -41,6 +41,7 @@ from sn120_v2.params import Params
 from sn120_v2.publisher import UPLOAD_HEADERS, miner_settable
 from sn120_v2.reuse import WinnerRollouts
 from sn120_v2.seams import Evaluator, ObjectStore, RoundRunner, Trainer
+from sn120_v2.state import APPLIED
 from sn120_v2.types import Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
 from sn120_v2.worker import LocalRunner
 
@@ -78,8 +79,13 @@ def winner_rollouts(doc: Mapping[str, Any], cache: str) -> tuple[Mapping[bytes, 
 
     The second value names each winner file that could not be read, with the reason. As the validator does, the
     check runs without such a file, and the next run asks for it again. The report says which files they are.
+    A winner file that the address does not have (HTTP 404) is such a file when mining.json names its round as
+    a round with a winner: ``history`` gives the outcome of its rounds, and ``kings`` names the round of each
+    king. For an older round mining.json says nothing, so there HTTP 404 reads as a round with no winner.
     """
-    contract, rounds = doc["contract"], [int(view["round_id"][1:]) for view in doc.get("history") or []]
+    contract, history = doc["contract"], doc.get("history") or []
+    rounds = [int(view["round_id"][1:]) for view in history]
+    won = {view["round_id"] for view in history if view.get("outcome") == APPLIED} | {king["round_id"] for king in doc.get("kings") or []}
     if not contract.get("public_url"):
         raise ConfigError("this mining.json names no public address, so the published winner files cannot be read")
     address = f"{contract['public_url']}/{contract['objects']['winner_batch']}"
@@ -89,12 +95,12 @@ def winner_rollouts(doc: Mapping[str, Any], cache: str) -> tuple[Mapping[bytes, 
             with urllib.request.urlopen(urllib.request.Request(address.replace("ROUND_ID", round_id), headers=CLIENT), timeout=300) as reply:
                 return reply.read()
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
+            if exc.code == 404 and round_id not in won:
                 return None
             raise InfraError(f"HTTP {exc.code}") from None  # each other failure of the read goes to ``left_out`` as it is
 
     winners = WinnerRollouts(read, Path(cache))
-    return winners.known(max(rounds, default=0), settled=min(rounds, default=1) - 1), winners.left_out
+    return winners.known(max(rounds, default=0), settled=min(rounds, default=1) - 1, won=won), winners.left_out
 
 
 def bounds_text(params: Params) -> str:

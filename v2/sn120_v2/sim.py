@@ -16,7 +16,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 from . import layout
 from .canonical import canonical_json, manifest_digest, sha256_hex
@@ -79,7 +79,7 @@ class SimAdmission:
         raw = self.store.get(key)
         return raw, json.loads(raw)
 
-    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0) -> dict[str, Verdict]:
+    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0, won: Collection[str] = ()) -> dict[str, Verdict]:
         found = {hotkey: self._read(hotkey) for hotkey in hotkeys}
         rule = lambda body: "" if body["valid"] else "sim_invalid"
         return {h: Verdict(h, bool(f[1]["valid"]), batch_sha256=sha256_hex(f[0]), rule=rule(f[1])) for h, f in found.items() if f}

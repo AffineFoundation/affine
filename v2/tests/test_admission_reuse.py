@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import shutil
+import unicodedata
 
 import pytest
 
@@ -24,7 +25,7 @@ from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.journal import JOURNAL_FILE, read_journal
 from sn120_v2.params import Params
 from sn120_v2.public import CUT_LOGIN, CUT_QUERY, public_text
-from sn120_v2.reuse import KEY_BYTES, KEY_FORM, REASON_LIMIT, REMOVED, WinnerRollouts, file_keys, normal, rollout_key, rollout_keys, round_name, store_reader
+from sn120_v2.reuse import GONE, KEY_BYTES, KEY_FORM, REASON_LIMIT, REMOVED, WinnerRollouts, file_keys, normal, rollout_key, rollout_keys, round_name, store_reader
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.state import REUSE_LEFT_OUT, RoundRecord, load
 from sn120_v2.types import Verdict
@@ -168,9 +169,10 @@ def test_the_key_of_a_rollout_is_the_normal_form_of_its_prompt_and_of_its_output
 
 def test_the_form_has_a_stated_limit_a_character_of_another_category_that_shows_nothing():
     """Not white space, not a format character and not a mark for Unicode, so the form keeps them. A copy with one of them inside each text passes."""
-    for blank in ("\u3164", "\u115f", "\u2800"):  # Hangul filler, Hangul choseong filler, Braille blank
+    for blank in ("\u3164", "\u115f", "\u1160", "\u2800"):  # Hangul filler, Hangul choseong and jungseong filler, Braille blank
         assert normal(f"an{blank}swer") != normal("answer")
     assert normal("answer\u2800") == normal("answer"), "the Braille blank is a symbol: it goes from the end, as each symbol does"
+    assert normal("answer\u1160") != normal("answer"), "a Hangul filler is a letter for Unicode: it stays at the end too"
 
 
 def test_the_hotkey_the_version_train_the_reward_and_the_order_are_no_part_of_the_key():
@@ -334,6 +336,8 @@ def cache_files(directory) -> list[str]:
 
 
 NOT_A_FILE = "ValueError: the bytes are not a batch file (JSONDecodeError)"
+NO_OBJECT = f"LookupError: {GONE}"
+READ_NOW = "is read now: rule public_reuse counts its rollouts again"
 ASKED_AGAIN = "The check goes on without it and asks for it again at the next check"
 
 
@@ -388,8 +392,7 @@ def test_a_winner_file_that_cannot_be_read_is_left_out_and_counts_again_from_the
     store[layout.winner_batch("r000002")] = file("5King2", groups("w2"))
     calls = adm.tokens.calls
     assert valid() == {"5Copy1": False, "5Copy2": False, "5Copy3": False, "5Honest": True} and adm.left_out() == () and adm.tokens.calls == calls
-    read_now = "is read now: rule public_reuse counts its rollouts again"
-    assert reuse_lines(capsys) == [f"reuse: the winner file of round r000001 {read_now}", f"reuse: the winner file of round r000002 {read_now}"]
+    assert reuse_lines(capsys) == [f"reuse: the winner file of round r000001 {READ_NOW}", f"reuse: the winner file of round r000002 {READ_NOW}"]
     assert cache_files(cache) == [f"r00000{number}.form{KEY_FORM}.keys" for number in (1, 2, 3)]
     asked = len(reader.asked)
     assert valid()["5Honest"] and reader.asked[asked:] == [] and reuse_lines(capsys) == [], "a file that was read is not asked again"
@@ -471,6 +474,115 @@ def test_a_round_opens_without_a_winner_file_that_cannot_be_read_and_its_records
     world.now += world.params.apply_retry_s  # the wait after a failed lease
     (ticket,) = controller.open_round(world.clock(), "entropy")
     assert "hk5" not in [entry.reg.hotkey for entry in ticket.entries], "a copy of the same winner file gets no seat now"
+    assert set(opened()) == {"round"} and REUSE_LEFT_OUT not in end_round()
+
+
+# ------------------------------------------------------------ a winner file that is gone from the store
+
+
+@pytest.mark.parametrize("back_in", ["the same process", "a new process"])
+def test_a_winner_file_that_is_gone_from_the_store_is_left_out_and_counts_again_when_it_is_back(build, tmp_path, capsys, back_in):
+    """The store says "no such object" for a round that has a winner. That is a file that cannot be read, not a round with no winner."""
+    store, cache, won = Store({layout.winner_batch("r000001"): file("5King1", groups("w1"))}), tmp_path / "cache", {"r000001", "r000003"}
+    hotkeys, gone = ["5Copy1", "5Copy3", "5Honest"], layout.winner_batch("r000003")
+    for hotkey, tag in zip(hotkeys, ("w1", "w3", "mine")):
+        upload(store, hotkey, groups(tag))
+
+    def process() -> StoreAdmission:
+        """A process of the validator: its memory is new, and the cache directory is the one of the process before it."""
+        return StoreAdmission(store, rule_on(build), tokens=WordTokens(), grader=None, public=WinnerRollouts(store_reader(store), cache))
+
+    valid = lambda adm: {hotkey: verdict.valid for hotkey, verdict in adm.verdicts(hotkeys, rounds=3, won=won).items()}
+    left_out_line = f"reuse: the winner file of round r000003 is left out of rule public_reuse: {NO_OBJECT}. {ASKED_AGAIN}"
+
+    adm = process()
+    assert valid(adm) == {"5Copy1": False, "5Copy3": True, "5Honest": True}, "the check goes on; a copy of the file that is gone passes for now"
+    assert adm.left_out() == (("r000003", NO_OBJECT),), "round 2 has no winner: no file of it is left out"
+    assert reuse_lines(capsys) == [left_out_line]
+    assert cache_files(cache) == [f"r00000{number}.form{KEY_FORM}.keys" for number in (1, 2)], "nothing is kept of the file that is gone"
+    assert (cache / f"r000002.form{KEY_FORM}.keys").read_bytes() == b"", "the round with no winner is kept as a round with no winner file"
+
+    reads = len(store.reads)
+    assert valid(adm)["5Copy3"] and store.reads[reads:] == [gone] and reuse_lines(capsys) == [], "each walk asks the store again; the log names the file once"
+
+    other = process()
+    reads = len(store.reads)
+    assert valid(other)["5Copy3"] and other.left_out() == adm.left_out() and gone in store.reads[reads:], "a new process asks the store too: the cache did not keep the round as one with no winner"
+    assert reuse_lines(capsys) == [left_out_line] and cache_files(cache) == [f"r00000{number}.form{KEY_FORM}.keys" for number in (1, 2)]
+
+    # The object is back. Its rollouts count from the check that reads it, with no new check of a miner file.
+    store[gone] = file("5King3", groups("w3"))
+    adm = adm if back_in == "the same process" else process()
+    reads, calls = len(store.reads), adm.tokens.calls
+    assert valid(adm) == {"5Copy1": False, "5Copy3": False, "5Honest": True} and adm.left_out() == () and gone in store.reads[reads:]
+    if back_in == "the same process":
+        assert reuse_lines(capsys) == [f"reuse: the winner file of round r000003 {READ_NOW}"] and adm.tokens.calls == calls
+    else:
+        assert reuse_lines(capsys) == [], "this process never ran without the file"
+    assert cache_files(cache) == [f"r00000{number}.form{KEY_FORM}.keys" for number in (1, 2, 3)]
+    reads = len(store.reads)
+    assert not valid(adm)["5Copy3"] and store.reads[reads:] == [], "a file that was read is not asked again"
+
+
+def test_an_empty_cache_file_of_a_round_with_a_winner_is_not_believed_and_a_file_that_was_read_keeps_its_keys(tmp_path):
+    """A cache that kept a winner file that was gone as a round with no winner file does not hide that file."""
+    store, won = Store({layout.winner_batch("r000001"): file("5King1", groups("w1"))}), {"r000001", "r000003"}
+    for number in (1, 2, 3):
+        (tmp_path / f"r00000{number}.form{KEY_FORM}.keys").write_bytes(b"")
+    index = WinnerRollouts(store_reader(store), tmp_path)
+    assert len(index.known(3, won=won)) == 20 and index.left_out == (("r000003", NO_OBJECT),)
+    assert store.reads == [layout.winner_batch("r000001"), layout.winner_batch("r000003")], "the empty file of round 2, which has no winner, is believed"
+    assert [(tmp_path / f"r00000{number}.form{KEY_FORM}.keys").stat().st_size for number in (1, 2, 3)] == [20 * KEY_BYTES, 0, 0]
+
+    # What a round published never changes. So the keys of a file that was read stay when the object is gone later.
+    store.delete(layout.winner_batch("r000001"))
+    assert len(index.known(3, won=won)) == 20 and index.left_out == (("r000003", NO_OBJECT),)
+    later = WinnerRollouts(store_reader(store), tmp_path)
+    assert dict(later.known(3, won=won)) == dict(index.known(3, won=won)) and later.left_out == index.left_out
+
+
+def test_a_round_opens_without_a_winner_file_that_is_gone_and_the_journal_says_which_rounds_have_a_winner(tmp_path, capsys):
+    """The controller gives the check the rounds that have a winner, from its journal. The round opens, and its records name the file."""
+    world = SimWorld(tmp_path, sim_params(max_reused_rollout_frac=SHARE))
+    for uid, quality, outcome in ((1, 0.3, "applied"), (2, 0.0, "null"), (3, 0.6, "applied")):
+        world.register(uid, quality)
+        assert world.round().outcome == outcome
+    store, journal, cache = world.store, tmp_path / JOURNAL_FILE, tmp_path / "winner_rollouts"
+    store.put(layout.winner_batch("r000001"), file("hk1", groups("w1")))
+    store.delete(layout.winner_batch("r000003"))
+    world.admission = StoreAdmission(store, world.params, tokens=WordTokens(), grader=None, public=WinnerRollouts(store_reader(store), cache))
+    controller = world.reopen()
+    assert controller.state.rounds_won == {"r000001", "r000003"} == load(journal).rounds_won
+    for uid in (4, 5, 6):
+        world.register(uid, None)
+    store.put(layout.miner_object("hk4"), file("hk4", groups("w3")))  # a copy of the winner file that is gone
+    store.put(layout.miner_object("hk5"), file("hk5", groups("mine")))
+    capsys.readouterr()
+
+    def opened() -> dict:
+        return [record.data for record in read_journal(journal) if record.kind == "round_opened"][-1]
+
+    def end_round() -> dict:
+        """Close the open round with no result, as ``end-round`` does, and give its public round file."""
+        round_id = controller.state.round.round_id
+        while (record := controller.state.round) is not None and record.decision is None:
+            controller.fail_lease(next(lease for lease in record.leases if lease.status == "open").lease_id, "ended by the test", world.clock())
+        return json.loads(store.get(layout.round_file(round_id)))
+
+    (ticket,) = controller.open_round(world.clock(), "entropy")
+    assert [entry.reg.hotkey for entry in ticket.entries] == ["hk4", "hk5"], "the round opens, and the copy of the file that is gone has a seat in it"
+    assert reuse_lines(capsys) == [f"reuse: the winner file of round r000003 is left out of rule public_reuse: {NO_OBJECT}. {ASKED_AGAIN}"]
+    assert opened()[REUSE_LEFT_OUT] == [["r000003", NO_OBJECT]] and controller.state.reuse_left_out == (("r000003", NO_OBJECT),) == load(journal).reuse_left_out
+    assert end_round()[REUSE_LEFT_OUT] == [{"round_id": "r000003", "reason": NO_OBJECT}]
+    assert cache_files(cache) == [f"r00000{number}.form{KEY_FORM}.keys" for number in (1, 2)]
+
+    # The object is back. The next round reads it: a copy of it gets no seat, and the records name no file.
+    store.put(layout.winner_batch("r000003"), file("hk3", groups("w3")))
+    store.put(layout.miner_object("hk6"), file("hk6", groups("w3")))
+    world.now += world.params.apply_retry_s  # the wait after a failed lease
+    (ticket,) = controller.open_round(world.clock(), "entropy")
+    assert "hk6" not in [entry.reg.hotkey for entry in ticket.entries], "a copy of the winner file that is back gets no seat"
+    assert reuse_lines(capsys) == [f"reuse: the winner file of round r000003 {READ_NOW}"]
     assert set(opened()) == {"round"} and REUSE_LEFT_OUT not in end_round()
 
 
@@ -623,18 +735,30 @@ def test_llms_txt_states_the_rule_with_its_share_and_what_the_same_rollout_is(tm
     assert json.loads(mining)["params"]["max_reused_rollout_frac"] == SHARE and "| `max_reused_rollout_frac` | 0.1 |" in text
     assert "- Reuse: the published file of each round winner (section 9) is public, and a file that reuses its rollouts is\n  refused." in text
     assert "At most 0.1 of your rollouts may be the same as rollouts in the published winner files" in flat
-    assert "no file wins two times" in text
+    assert "no file wins two times" in flat
     # What is matched, as ``reuse.normal`` does it. The test of the form itself is above.
     assert "Unicode NFKD, then case folding (`str.casefold` of Python), then NFKD again." in flat
     assert "each character of the Unicode categories Zs, Zl, Zp, Cc, Cf, Mn, Me is removed" in flat and tuple(REMOVED) == ("Zs", "Zl", "Zp", "Cc", "Cf", "Mn", "Me")
     assert "punctuation and symbols (each category P and S) are removed from the end of the text" in flat
     assert "The function is `normal` in `v2/sn120_v2/reuse.py`" in flat and "after all white space is removed" not in flat
+    assert "Each prompt and each output is put in the form below." in flat, "the prompt is put in the form too"
+    assert "their prompts are equal in that form and their outputs are equal in that form" in flat
+    # No sentence says more than the code does: a character that shows nothing can stay, and not each accent goes.
+    assert "A character of each other category stays, also when it shows nothing." in flat and "a character with no width" not in flat
+    assert normal("an\u1160swer") != normal("answer") and unicodedata.category("\u1160") not in REMOVED
+    assert "e with an acute accent gives e; o with a stroke has no split and stays as it is" in flat and normal("\u00e9") == "e" and normal("\u00f8") == "\u00f8"
+    examples = flat.split("Examples of what does not make a rollout new: ")[1].split(". The function is")[0]
+    assert examples == "other white space, another case, e with an acute accent for e, a full-width letter for the plain letter, a zero-width space, a full stop at the end"
+    for same in ("a n\tswer\u3000", "ANSWER", "answ\u00e9r", "\uff41nswer", "an\u200bswer", "answer."):
+        assert normal(same) == normal("answer"), "each example of the text, as the code has it"
+    assert "A winner file that the validator cannot read, or that is gone from its store, does not stop a round:" in flat
     assert f"its public round file names the file and the reason under `{REUSE_LEFT_OUT}`" in flat, "a winner file that cannot be read"
+    assert text.isascii()
     assert "A sign of it, which other causes can also give:" in flat, "the sign of seat_reuse is not said to be unique"
     for code in (PUBLIC_REUSE, SEAT_REUSE):
         assert f"| `{code}` | {RULES[code]} |" in text, "the table of the rule codes has the plain meaning"
     assert list(RULES).index("pool") < list(RULES).index(PUBLIC_REUSE) < list(RULES).index(SEAT_REUSE) < list(RULES).index("check_fault")
-    edited = text.replace("At most 0.1 of your rollouts", "At most 0.5 of your rollouts")
+    edited = text.replace("most 0.1 of your rollouts", "most 0.5 of your rollouts")
     assert edited != text and publisher.check_pair(mining, edited.encode()) != [], "a text with another share is not the text of these params"
 
 

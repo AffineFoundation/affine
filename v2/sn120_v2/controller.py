@@ -351,7 +351,7 @@ class Controller:
         lease starts or between rounds, never inside a round's time.
         """
         seats = [(seat.reg.uid, seat.reg.hotkey) for seat in waiting(self.state.queue)]
-        verdicts = dict(self.admission.verdicts([hotkey for _, hotkey in seats], rounds=self.state.rounds_closed))
+        verdicts = dict(self.admission.verdicts([hotkey for _, hotkey in seats], rounds=self.state.rounds_closed, won=self.state.rounds_won))
         lines, self._file_notes = verdict_log(seats, verdicts, self._file_notes, now)
         print("\n".join(lines), file=sys.stderr, flush=True)
         self._verdicts, self._verdicts_at = verdicts, now
