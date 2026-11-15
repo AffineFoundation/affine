@@ -403,6 +403,8 @@ def test_the_round_file_of_the_box_gives_the_round_and_a_comparison_of_null_m(wo
     assert code == 0 and report["round"]["round_seed"] == "seed-7"
     assert report["box_round"] == {"round_id": "r000007", "same_head": True, "same_draw": True, "null_m": {"rollouts_compared": 7, "same_outcome": 6, "passed_here": 0, "passed_on_box": 1}}
     null = report["null_outcomes"]
+    forced = replicate.against_box(box_file | {"null_outcomes": {"dublin": ["FFFpFFF-"]}}, world.head, draw, null)
+    assert forced["null_m"]["passed_on_box"] == 1, "a pass after the forced close is a pass"
     other = replicate.against_box(box_file | {"head_version_id": h("older head")}, world.head, draw, null)
     assert other == {"round_id": "r000007", "same_head": False, "same_draw": True}  # another head: another model, nothing to compare
     moved = replicate.against_box(box_file | {"draw": draw.to_dict() | {"task_ids": list(reversed(draw.task_ids))}}, world.head, draw, null)
