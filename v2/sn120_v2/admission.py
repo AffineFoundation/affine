@@ -32,6 +32,7 @@ import itertools
 import json
 import math
 import os
+import sys
 import threading
 import time
 from collections import Counter
@@ -743,11 +744,20 @@ def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict
     return lines, {**before, **notes}
 
 
+def freeze_log(uid: int, round_id: str, checked: str, read: str) -> str:
+    """One freeze that gave the seat no batch, as the log shows it: what the check said of the file, then what the freeze read.
+
+    Both parts are made of public verdicts (``verdict_note``) and of the words of a rule, so the line never
+    holds batch content.
+    """
+    return f"freeze: UID {uid} gets no seat in round {round_id}. The check: {checked}. The freeze: {read}"
+
+
 @dataclass(frozen=True)
 class _Fetched:
     """What the store gave for one hotkey's file. Only store calls made it: no check of the bytes."""
 
-    tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash); None when there is no object
+    tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash) at the hash call; None when there is no object
     read: bool = False  # the object was also downloaded, because the memory had no verdict for this tag
     raw: bytes | Invalid | None = None  # with ``read``: the bytes; the verdict of an oversized object; None when the object is gone
     error: BaseException | None = None  # with ``read``: the download failed with this
@@ -771,7 +781,7 @@ class StoreAdmission:
     ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self.streams = max(SERIAL_STREAMS, int(streams))
-        self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((stored sha256, params hash), verdict)
+        self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((sha256 of the checked bytes or "oversized", params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
 
@@ -864,6 +874,11 @@ class StoreAdmission:
         the file again. After ``FAULT_TRIES`` such checks in a row the verdict is kept like any other
         (``_tried``). The hold is in memory only, and a clock that goes back ends it.
 
+        A file with no verdict in the memory is read two times: the hash call tells that the memory has no verdict
+        for these bytes, then the download gives the bytes that are checked. A miner can write between the two.
+        So each verdict is kept under the sha256 of the bytes that were checked, not under the hash of the first
+        read: the next call checks a file again only when its bytes differ from the bytes that were checked.
+
         The files are read from the store ``streams`` at one time (``_ahead``). The verdicts and the memory are
         made here, one hotkey after the other in the order given. So a store call that fails stops the call at
         the same hotkey, with the same error and the same memory, for each count of streams.
@@ -883,9 +898,11 @@ class StoreAdmission:
                 elif kept is None or kept[0] != tag:
                     if fetched.error is not None:
                         raise fetched.error
-                    found = self._judged(hotkey, fetched.raw) if fetched.read else self._read(hotkey, layout.miner_object(hotkey))
+                    raw = fetched.raw if fetched.read else self._raw(layout.miner_object(hotkey))
+                    found = self._judged(hotkey, raw)
                     if found is None:
                         continue
+                    tag = ("oversized" if isinstance(raw, Invalid) else sha256_hex(found[0]), tag[1])  # of the bytes that are judged
                     result, final = self._tried(hotkey, tag, found[1])
                     now = self.clock()
                     kept = (tag, _verdict(hotkey, found[0], result, int(now)))
@@ -920,6 +937,17 @@ class StoreAdmission:
         note = f"check {tries} of {FAULT_TRIES}" if tries < FAULT_TRIES else f"checked {FAULT_TRIES} times: this verdict stays until a new file is uploaded"
         return Invalid(result.rule, f"{result} ({note})"), tries >= FAULT_TRIES
 
+    def _checked_note(self, hotkey: str) -> str:
+        """What the memory of the checks holds for a hotkey, for the log: the verdict with the hash of the bytes it judged, then the tag.
+
+        The tag is the sha256 of the bytes that the verdict judged (``verdicts``), so the two are equal for a file that has a hash. A file with no hash in its verdict has its own tag: the sha256 of no bytes for an empty file, ``oversized`` for an oversized one.
+        """
+        kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+        found = kept if kept is not None else held[:2] if held is not None else None
+        if found is None:
+            return "not checked by this process"
+        return f"{verdict_note(found[1])}, memory tag {found[0][0][:SHA_SHOWN]}"
+
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
 
@@ -931,6 +959,8 @@ class StoreAdmission:
         found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
         if found is None or not isinstance(found[1], Batch):
             self.store.delete(frozen_key)
+            read = None if found is None else _verdict(reg.hotkey, found[0], found[1], 0)
+            print(freeze_log(reg.uid, round_id, self._checked_note(reg.hotkey), verdict_note(read)), file=sys.stderr, flush=True)
             return None
         raw, batch = found
         self.store.put(frozen_key, raw)
