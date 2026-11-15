@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
-from .admission import verdict_log
+from .admission import SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
 from .canonical import canonical_json, to_jsonable
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
@@ -334,9 +334,14 @@ class Controller:
             return None
         try:
             self.params.recipe.for_miner(batch.train)
-        except BatchRejected:
-            return None
-        return batch if batch.hotkey == reg.hotkey else None
+            refused = "" if batch.hotkey == reg.hotkey else "the hotkey test: the batch names another hotkey"
+        except BatchRejected as exc:
+            refused = f"the recipe step: {' '.join(str(exc).split())}"
+        if not refused:
+            return batch
+        read = f"{batch.batch_sha256[:SHA_SHOWN]} valid, then refused by {refused}"
+        print(freeze_log(reg.uid, round_id, verdict_note(self._verdicts.get(reg.hotkey)), read), file=sys.stderr, flush=True)
+        return None
 
     def check_files(self, now: int) -> Mapping[str, Verdict]:
         """Admission's verdict on the stored file of every waiting seat, kept for the public snapshot.
