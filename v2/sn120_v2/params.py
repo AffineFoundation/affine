@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .canonical import Record, is_sha256
+from .canonical import ABSENT_AT_DEFAULT, Record, is_sha256
 from .errors import BatchRejected, ConfigError
 
 # Identity of the launch model. The base hash is the manifest digest of the
@@ -176,6 +176,11 @@ class Params(Record):
     drop_alpha: float = 0.05  # PLACEHOLDER: total chance, over all early looks, to drop a LoRA that is truly on the win bar
     max_output_tokens: int = 65536
     max_context_tokens: int = 69632
+    # Budget forcing. A reply that stopped at ``max_output_tokens`` gets a forced close (the end of its thinking and
+    # the start of the answer), then at most this many more tokens, and the grader reads the whole text. 0 = no such
+    # rule: the reply is never graded, and that is the default: ``set-params`` puts the rule in force, new code alone
+    # does not. At 0 the field is no part of the JSON form or of ``params_hash``.
+    budget_forcing_tokens: int = field(default=0, metadata=ABSENT_AT_DEFAULT)
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 20
@@ -256,6 +261,8 @@ class Params(Record):
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
+        _need(self.budget_forcing_tokens >= 0, "budget_forcing_tokens must be zero or more")
+        _need(self.max_output_tokens + self.budget_forcing_tokens < self.max_context_tokens, "max_output_tokens + budget_forcing_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
         _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")
         _need(self.lease_timeout_s >= self.round_time_limit_s, "lease_timeout_s must not be below round_time_limit_s")

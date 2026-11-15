@@ -35,7 +35,7 @@ from .canonical import digest, sha256_hex
 from .errors import ContractError, VerifyError
 from .params import Params
 from .sampling import draw_rank
-from .types import CAP, FAIL, NULL_MODEL, PASS, Draw, HeadVersion, check_outcomes
+from .types import CAP, CAP_PASS, FAIL, NULL_MODEL, PASS, Draw, HeadVersion, check_outcomes
 
 SCHEMA = "affine-irt-v1"
 MODEL = "rasch: P(pass) = 1 / (1 + exp(difficulty - ability))"
@@ -242,9 +242,9 @@ class IRTSampler:
         if stamp in old["updates"]:
             return self._id
 
-        # Only resolved rollouts teach anything. A cap hit is not a pass. An infrastructure
-        # error or a rollout that was not run says nothing about the task or the model.
-        resolved = {PASS: 1.0, FAIL: 0.0, CAP: 0.0}
+        # Only resolved rollouts teach anything. A cap hit is not a pass, but for one that passed after the forced
+        # close. An infrastructure error or a rollout that was not run says nothing about the task or the model.
+        resolved = {PASS: 1.0, CAP_PASS: 1.0, FAIL: 0.0, CAP: 0.0}
         tasks = old["tasks"]
         by_model: dict[str, list[tuple[str, float]]] = {}
         by_task: dict[str, list[tuple[str, float]]] = {}

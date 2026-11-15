@@ -36,11 +36,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
 from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
-from .canonical import digest, sha256_hex, to_jsonable
+from .canonical import digest, sha256_hex, to_jsonable, written_fields
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, Task
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .gpu.batch import END_OF_TURN
-from .gpu.evaluator import ServeSettings, chat_body, server_argv
+from .gpu.evaluator import ANSWER_START, END_OF_THINKING, THINKING_CLOSE, ServeSettings, chat_body, close_body, server_argv
 from .gpu.trainer import LORA_FILES
 from .headchain import FIXED_ORDER, MATMUL
 from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
@@ -53,7 +53,7 @@ from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
-from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
+from .types import CAP, CAP_PASS, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
@@ -229,7 +229,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "private_object": layout.miner_object("HOTKEY"),
             "upload_headers": UPLOAD_HEADERS,
         },
-        "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
+        "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN} | ({"token_cap_pass": CAP_PASS} if forcing_in_force(params) else {}),
         "null_model": NULL_MODEL,
         "public_url": public_url,
         "links_url": links_url,
@@ -820,6 +820,38 @@ def _server_command(params: Params) -> list[str]:
     return [line + " \\" for line in lines[:-1]] + lines[-1:]
 
 
+def forcing_in_force(params: Params) -> bool:
+    """True when a reply that hit the token cap gets the forced close. False is the scoring of before the rule: the text and the contract then say nothing of it."""
+    return params.budget_forcing_tokens > 0
+
+
+def _forcing_lines(params: Params) -> list[str]:
+    """The forced close of a capped reply, word for word as ``gpu/evaluator.py`` does it. Nothing when the rule is not in force."""
+    if not forcing_in_force(params):
+        return []
+    body = close_body(f"<{NULL_MODEL} or the lora_hash>", "<the text to continue>", params)
+    quoted = [json.dumps(text) for text in (THINKING_CLOSE, ANSWER_START)]
+    return [
+        f"- Forced close (`budget_forcing_tokens`): a reply that hit the token cap gets one more request. The text to",
+        "  continue has these parts, in this order, with nothing between them. First, the prompt of the first request",
+        "  as the server made it (`prompt_text` of the reply; `return_prompt_text` in the body above asks for it). Then",
+        f"  the text of the reply. Then, only when that text has no `{END_OF_THINKING}`, the text {quoted[0]}. Then the text",
+        f"  {quoted[1]}. The last two are written here as JSON strings. The box sends one POST to",
+        "  `/v1/completions` on the same server, for the same `model`:",
+        "",
+        "```json",
+        json.dumps(body, indent=1, ensure_ascii=False),
+        "```",
+        "",
+        f"- This request is greedy (temperature 0): it draws no random number and it has no seed. The model writes at most",
+        f"  {params.budget_forcing_tokens} tokens. A final `{END_OF_TURN}` is removed. The grader grades one text: the reply, then the forced",
+        f"  close, then the new tokens. When the grade is `{PASS}`, the outcome is `{CAP_PASS}`. With each other grade the outcome is `{CAP}`.",
+        f"  The tries and the time limits are those of the first request. When the second request has no usable reply, the",
+        f"  outcome is `{CAP}`; when the stop time passed, the rollout has no reply, as in the item below.",
+        f"- `{CAP_PASS}` is a pass for the estimator. It is also a cap hit: the win rule counts it with `{CAP}`.",
+    ]
+
+
 def _scoring_lines(params: Params) -> list[str]:
     """The scoring of a round, step by step.
 
@@ -842,6 +874,11 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  parse the reference, math-verify raises an error, or a time limit of the grader passes. Such an `{ERROR}` is",
         "  final: the text is not graded again. The grader does not know which model wrote a text.",
     ] if params.env == ENV_ID else []
+    forcing = forcing_in_force(params)
+    capped = ["the box makes the", "  forced close of the next item."] if forcing else [f"the outcome is `{CAP}`", "  and the text is never graded."]
+    codes = f"`{PASS}`, `{FAIL}`, `{CAP}`, " + (f"`{CAP_PASS}`, " if forcing else "") + f"`{ERROR}`"
+    passed = f"`{PASS}` or `{CAP_PASS}`" if forcing else f"`{PASS}`"
+    caps = f"`{CAP}` and `{CAP_PASS}`" if forcing else f"`{CAP}`"
     return [
         "### The scoring procedure",
         "",
@@ -876,8 +913,9 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
         "  or the time that is left to the stop time of the round, when that is less.",
         f"- Reply: with `finish_reason` `stop` the model ended by itself. A final `{END_OF_TURN}` is removed from the text,",
-        f"  and the grader grades the text. With `finish_reason` `length` the model hit the token cap: the outcome is `{CAP}`",
-        "  and the text is never graded. A reply of any other form is not usable.",
+        f"  and the grader grades the text. With `finish_reason` `length` the model hit the token cap: {capped[0]}",
+        f"{capped[1]} A reply of any other form is not usable.",
+        *_forcing_lines(params),
         "- A request is sent again after a failure of the connection, a time limit, an HTTP status of 500 or above, or",
         f"  a reply that is not usable: at most {ServeSettings().retries + 1} tries in all. After an HTTP status below 500 it is not sent again. A",
         f"  request with no usable reply has the outcome `{ERROR}`. One exception: when the stop time passed during the chunk",
@@ -893,9 +931,9 @@ def _scoring_lines(params: Params) -> list[str]:
         "  error and the round has no result (section 4). A run that fails after the stop time ends the scoring, and",
         "  the chunk is not used.",
         "- Outcome strings: each model has one string for each sample. A string has one character for each task, in",
-        f"  the order of the draw: `{PASS}`, `{FAIL}`, `{CAP}`, `{ERROR}`, or `{NOT_RUN}` for a task that was not run.",
+        f"  the order of the draw: {codes}, or `{NOT_RUN}` for a task that was not run.",
         "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
-        f"  The pass rate of a model on a task is the share of its samples with `{PASS}`. The sums of the estimator above run",
+        f"  The pass rate of a model on a task is the share of its samples with {passed}. The sums of the estimator above run",
         "  over these n tasks, with the weights w_t of the draw. When se is 0, z is 0.",
         "- Drop rule, in full: after each look but the last, the box computes z of each open LoRA on the tasks so far.",
         "  Look k has scored the share t_k of the draw. a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = `drop_alpha` *",
@@ -906,7 +944,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`. z > `z_bar`. (its count of",
-        f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
+        f"  {caps}) / rollouts <= max(`cap_hit_floor`, (the count of {caps} of null M on the same n tasks) / rollouts +",
         "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
         "  decimal number that is written here: a share exactly on the limit passes.",
         f"- Cover, in full: (rollouts - the count of `{ERROR}`) / rollouts >= `min_cover`, as exact fractions, for null M on the",
@@ -956,6 +994,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  at most {params.max_output_tokens} output tokens and {params.max_context_tokens} prompt + output tokens.",
         f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
         "  infrastructure failed (not passed, stays in the count).",
+        *([
+            f"- Forced close: a reply that hit the token cap is not lost. The box ends its thinking, starts the final answer",
+            f"  for it, and lets the model write {params.budget_forcing_tokens} more tokens (`budget_forcing_tokens`). When the grader passes that text, the",
+            f"  outcome is `{CAP_PASS}`: a pass, and still a cap hit for the cap-hit rate below. The scoring procedure below has each step.",
+        ] if forcing_in_force(params) else []),
         "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
         "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
         f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
@@ -1159,7 +1202,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     """llms.txt from a mining.json document. Pure: the same document always gives the same text."""
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
-    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
+    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in written_fields(params) if f.name != "recipe"]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1266,7 +1309,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
     if found is None or found.group(1) != doc["snapshot_digest"]:
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
-    values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"}
+    values = {f.name: show(getattr(params, f.name)) for f in written_fields(params) if f.name != "recipe"}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")
