@@ -22,6 +22,12 @@ fails: the failure is ours, and ``InfraError`` is raised. Such a file is
 checked again at a later call, ``FAULT_HOLD_S`` after its last check at the
 earliest. After ``FAULT_TRIES`` failed checks in a row, each one with that
 proof and at the same place, the verdict stays.
+
+The two reuse rules compare the rollouts of a file with rollouts of other files (``reuse.rollout_key`` says
+when two rollouts are the same). ``public_reuse`` compares with the published winner files: they are an input
+of ``check_batch``, as the tokenizer is, and a miner has them too. ``seat_reuse`` compares with the files of the
+seats ahead in the same round: only ``StoreAdmission.freeze`` has those. Both rules act on a file that is
+checked or frozen from now on. Nothing here reads a file of a round that has opened.
 """
 
 from __future__ import annotations
@@ -38,13 +44,14 @@ import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
+from typing import AbstractSet, Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from . import layout
 from .canonical import sha256_hex
 from .errors import BatchRejected, ConfigError, InfraError, VerifyError
 from .gpu.batch import advantages
 from .params import Params, Recipe
+from .reuse import WinnerRollouts, rollout_keys
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
 
@@ -72,6 +79,8 @@ NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can chang
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
+PUBLIC_REUSE = "public_reuse"  # the rule code of a file that holds too many rollouts of the published winner files
+SEAT_REUSE = "seat_reuse"  # the rule code of a file that holds too many rollouts of a seat ahead in the same round
 # These verdicts depend on this machine at this moment. Each holds for FAULT_HOLD_S, then the file is checked
 # again at the next call, until FAULT_TRIES is reached.
 TRANSIENT = (TIME_LIMIT, FAULT, TOKENIZER_FAULT, CHECK_FAULT)
@@ -148,6 +157,8 @@ RULES: dict[str, str] = {
     FAULT: f"a rollout makes the official grader fail; {_AGAIN}",
     "grader": "a reward is not the official grade",
     "pool": "too small a share of the prompts are tasks of the public pool",
+    PUBLIC_REUSE: "too large a share of the rollouts are copies of rollouts in the published winner files",
+    SEAT_REUSE: "too large a share of the rollouts are copies of rollouts of a seat ahead of yours in the same round; only the validator can see it, when it takes the seats of a round",
     CHECK_FAULT: f"the file makes the checker itself fail, at any step; {_AGAIN}",
 }
 
@@ -320,7 +331,7 @@ class Batch:
     groups: tuple[Group, ...]
     dropped_groups: int  # whole groups past max_prompts / max_rollouts, dropped in file order
     train: dict[str, Any]  # the miner's "train" object as given; apply with Recipe.for_miner
-    checked: tuple[str, ...]  # rule families that ran: "format", plus "tokens" and "grader" when given
+    checked: tuple[str, ...]  # rule families that ran: "format", plus "tokens", "grader" and "reuse" when given
     train_token_steps: int = 0  # the training cost that rule train_cost compares with its cap; 0 without a tokenizer
 
     @property
@@ -614,18 +625,45 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
     _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
 
 
-def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None) -> Batch:
+def _public_reuse(keys: Sequence[bytes], share: float, public: Mapping[bytes, str]) -> None:
+    """At most ``share`` of the rollouts may be copies of rollouts in the published winner files, all rounds together.
+
+    ``public`` gives the round of the first winner file that holds a rollout (``reuse.WinnerRollouts``). All
+    rounds count together, so a file made of parts of two winner files is refused as a copy of one is.
+    """
+    rounds = Counter(round_id for round_id in map(public.get, keys) if round_id is not None)
+    copies = sum(rounds.values())
+    if copies > share * len(keys):
+        round_id, most = rounds.most_common(1)[0]
+        raise Invalid(
+            PUBLIC_REUSE,
+            f"{copies} of {len(keys)} rollouts are copies of rollouts in the published winner files, {most} of them in the file of round {round_id}; the limit is a share of {share:g}",
+        )
+
+
+def _seat_reuse(keys: Sequence[bytes], share: float, ahead: AbstractSet[bytes]) -> None:
+    """At most ``share`` of the rollouts may be copies of rollouts of the seats ahead in the same round."""
+    copies = sum(key in ahead for key in keys)
+    _need(copies <= share * len(keys), SEAT_REUSE, f"{copies} of {len(keys)} rollouts are copies of rollouts of a seat ahead in this round; the limit is a share of {share:g}")
+
+
+def check_batch(
+    raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None, public: Mapping[bytes, str] | None = None
+) -> Batch:
     """Check one file against every rule. Return the ``Batch`` or raise ``Invalid``.
 
     Without ``tokens`` the token caps and the reasoning rules do not run, and
     no output counts as capped. Without ``grader`` the grader match does not
-    run. ``Batch.checked`` says what ran. The validator always passes ``tokens``.
+    run. Without ``public``, the rollouts of the published winner files
+    (``reuse.WinnerRollouts.known``), rule ``public_reuse`` does not run.
+    ``Batch.checked`` says what ran. The validator always passes ``tokens``.
+    The trainer and a rebuild of a round pass none of the three: they read the groups of a file that a round froze.
 
     A file that makes the checker fail with an exception of any other kind is invalid with rule ``check_fault``,
     when the checker still passes a known-good file. If it does not, the failure is ours: ``InfraError``.
     """
     try:
-        return _check(raw, hotkey, params, tokens, grader)
+        return _check(raw, hotkey, params, tokens, grader, public)
     except (Invalid, InfraError, KeyboardInterrupt, SystemExit):
         raise
     except BaseException as cause:
@@ -673,7 +711,7 @@ def _still_works(params: Params, tokens: Tokens | None, grader: Grader | None, c
     raise InfraError(f"the checker fails on a file ({_where(cause)}) and does not pass its known-good file ({problem})") from cause
 
 
-def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grader: Grader | None) -> Batch:
+def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grader: Grader | None, public: Mapping[bytes, str] | None = None) -> Batch:
     value = _load(raw, params.max_batch_bytes)
     version, train = _header(value, params.recipe)
     groups = _groups(value, hotkey)
@@ -682,7 +720,9 @@ def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grade
     cost = _trains(kept, params, train, sizes)
     if grader is not None:
         _graded(kept, params, grader, capped)
-    checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
+    if public is not None:
+        _public_reuse(rollout_keys(kept), params.max_reused_rollout_frac, public)
+    checked = ("format",) + tuple(family for family, given in (("tokens", tokens), ("grader", grader), ("reuse", public)) if given is not None)
     return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost)
 
 
@@ -773,17 +813,29 @@ class StoreAdmission:
     ``streams`` is the count of files that ``verdicts`` reads from the store at one time. The store calls of
     one file, their order and the check of the bytes are the same for each count, so the verdicts are the same.
     With more than one stream the store must take calls from several threads (``R2Store`` and ``LocalStore`` do).
+
+    ``public`` reads the published winner files for rule ``public_reuse``. Without it that rule does not run.
+    The rule is not a part of the kept verdict of a file: the kept verdict is for the bytes, and the winner files
+    grow with each winner. So a valid file is compared with them at each call, by its kept rollout keys alone:
+    a new winner file makes no waiting file be graded again.
+
+    One call of ``verdicts`` and the calls of ``freeze`` that follow it are one walk of the queue. The winner
+    files are the same for the whole walk. Rule ``seat_reuse`` compares each frozen file with the files that the
+    walk froze before it for other hotkeys: the seat ahead keeps its entry.
     """
 
     def __init__(
         self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time,
-        streams: int = SERIAL_STREAMS,
+        streams: int = SERIAL_STREAMS, public: WinnerRollouts | None = None,
     ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
-        self.streams = max(SERIAL_STREAMS, int(streams))
+        self.streams, self.public = max(SERIAL_STREAMS, int(streams)), public
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((sha256 of the checked bytes or "oversized", params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
+        self._rollouts: dict[str, list[bytes]] = {}  # hotkey -> the rollout keys of its file, while ``_seen`` holds a valid verdict for it
+        self._winners: Mapping[bytes, str] = {}  # the rollouts of the published winner files, as the last ``verdicts`` call read them
+        self._walk: dict[str, list[bytes]] = {}  # hotkey -> the rollout keys of the file that this walk froze for it
 
     def _raw(self, key: str) -> bytes | Invalid | None:
         """The object's bytes; the verdict of an oversized object, which is never downloaded; None when there is no object."""
@@ -865,8 +917,11 @@ class StoreAdmission:
         finally:
             pool.shutdown(wait=True, cancel_futures=True)  # no read of this call goes on after the call ended
 
-    def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
+    def verdicts(self, hotkeys: Sequence[str], rounds: int = 0) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
+
+        ``rounds`` is the count of closed rounds: the winner files of rounds 1 to ``rounds`` are the public files
+        of rule ``public_reuse``. A share of 1 turns the reuse rules off, and then no winner file is read.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
         depends on this machine at this moment, so it is not kept. It holds for ``FAULT_HOLD_S``: during that
@@ -884,12 +939,14 @@ class StoreAdmission:
         the same hotkey, with the same error and the same memory, for each count of streams.
         """
         out: dict[str, Verdict] = {}
+        compared = self.public is not None and self.params.max_reused_rollout_frac < 1
+        self._winners, self._walk = self.public.known(rounds) if compared else {}, {}
         with contextlib.closing(self._ahead(hotkeys)) as fetches:
             for hotkey, fetch in fetches:
                 fetched = fetch()
                 tag = fetched.tag
                 if tag is None:
-                    for memory in (self._seen, self._tries, self._held):
+                    for memory in (self._seen, self._tries, self._held, self._rollouts):
                         memory.pop(hotkey, None)
                     continue
                 kept, held = self._seen.get(hotkey), self._held.get(hotkey)
@@ -906,14 +963,26 @@ class StoreAdmission:
                     result, final = self._tried(hotkey, tag, found[1])
                     now = self.clock()
                     kept = (tag, _verdict(hotkey, found[0], result, int(now)))
-                    self._seen.pop(hotkey, None)
-                    self._held.pop(hotkey, None)
+                    for memory in (self._seen, self._held, self._rollouts):
+                        memory.pop(hotkey, None)
                     if final:
                         self._seen[hotkey] = kept
                     else:
                         self._held[hotkey] = (*kept, now)
-                out[hotkey] = kept[1]
+                    if isinstance(result, Batch):
+                        self._rollouts[hotkey] = rollout_keys(result.groups)
+                out[hotkey] = self._against_winners(kept[1])
         return out
+
+    def _against_winners(self, verdict: Verdict) -> Verdict:
+        """The kept verdict of a file, or for a valid file with too many public rollouts the verdict of rule ``public_reuse``."""
+        if not verdict.valid:
+            return verdict
+        try:
+            _public_reuse(self._rollouts[verdict.hotkey], self.params.max_reused_rollout_frac, self._winners)
+        except Invalid as exc:
+            return Verdict(verdict.hotkey, False, str(exc), batch_sha256=verdict.batch_sha256, checked_at=verdict.checked_at, rule=exc.rule)
+        return verdict
 
     def _tried(self, hotkey: str, tag: tuple[str, str], result: Batch | Invalid) -> tuple[Batch | Invalid, bool]:
         """Count a failed check with a rule in ``TRANSIENT``. Returns the result to show and whether it is final.
@@ -954,17 +1023,34 @@ class StoreAdmission:
         It always reads the miner's file as it is now. A miner may replace the file until the round opens, so
         a copy from an earlier try of the same round id is replaced, or removed on a skip. Call it only for a
         round that has not opened yet: an open round's tickets name the frozen copy.
+
+        The reuse rules run here on the bytes that are copied, after every other rule: ``public_reuse`` with the
+        winner files of the last ``verdicts`` call, then ``seat_reuse`` with the files that this walk froze
+        before for other hotkeys. A file that one of them refuses is a skip like any other, and it is not
+        compared with the seats behind it.
         """
         frozen_key = layout.frozen_batch(round_id, reg.hotkey)
         found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
-        if found is None or not isinstance(found[1], Batch):
+        result = None if found is None else found[1]
+        keys: list[bytes] = []
+        if isinstance(result, Batch):
+            keys, share = rollout_keys(result.groups), self.params.max_reused_rollout_frac
+            ahead = {key for hotkey, taken in self._walk.items() if hotkey != reg.hotkey for key in taken}
+            try:
+                _public_reuse(keys, share, self._winners)
+                _seat_reuse(keys, share, ahead)
+            except Invalid as exc:
+                result = exc
+        if not isinstance(result, Batch):
             self.store.delete(frozen_key)
-            read = None if found is None else _verdict(reg.hotkey, found[0], found[1], 0)
+            self._walk.pop(reg.hotkey, None)
+            read = None if found is None else _verdict(reg.hotkey, found[0], result, 0)
             print(freeze_log(reg.uid, round_id, self._checked_note(reg.hotkey), verdict_note(read)), file=sys.stderr, flush=True)
             return None
-        raw, batch = found
+        raw, batch = found[0], result
         self.store.put(frozen_key, raw)
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
+        self._walk[reg.hotkey] = keys
         return FrozenBatch(reg.hotkey, batch.sha256, frozen_key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))

@@ -36,6 +36,10 @@ ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", 
 # changes nothing else. A later change that changes a param or the snapshot on purpose puts its new value here.
 PARAMS_HASH_BEFORE = "65ce6ef3bc867172eb87673bdb39461d03a8c85aac743c61e8b3d233b9f26d54"
 SNAPSHOT_BEFORE = "a5ffb03f2dd84bfc420f222fb685871452c21c6957546520e4b690d934909021"  # sha256 of the snapshot of ``line_world``
+# The reuse rules added one param after that commit. It changes the id of every set of params, and nothing else.
+ADDED_PARAMS = ("max_reused_rollout_frac",)
+PARAMS_HASH = "0eb089dde829bce32a3b8d4e41859f0cb8b41dc84cb9d240686d3075695d1e56"  # ``Params()`` with the added param
+SIM_PARAMS_HASH_BEFORE = "ced38677bda96736af59d465826017d2e404a13bc364f96b8c4589aa63bcc0d4"  # ``sim_params()`` at 580aee91
 
 
 def kind(uid: int) -> str:
@@ -182,10 +186,10 @@ def test_the_time_of_the_list_is_the_start_of_the_check(tmp_path):
     world.register(1, 0.0)
     real, started = world.admission.verdicts, []
 
-    def slow(hotkeys):
+    def slow(hotkeys, rounds=0):
         started.append(world.now)
         world.now += 1000  # reading every waiting file takes time
-        return real(hotkeys)
+        return real(hotkeys, rounds)
 
     world.admission.verdicts = slow
     assert world.controller.publish(world.clock(), check_files=True)
@@ -230,7 +234,11 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
     snap = json.loads(json.dumps(last(world)))
     files = snap["queue"].pop("files")
     assert list(snap["queue"]) == ["length", "files_checked_at", "next"]
-    assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "the snapshot without queue.files is the snapshot of the code before"
+    for name in ADDED_PARAMS:
+        del snap["params"][name]
+    assert snap["params_hash"] != SIM_PARAMS_HASH_BEFORE, "an added param gives the params another id"
+    snap["params_hash"] = SIM_PARAMS_HASH_BEFORE
+    assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "without queue.files and the added params, the snapshot is the snapshot of the code before"
 
     # The same for the queue alone, from the state: the rows as the code before made them.
     valid = {row["hotkey"]: row["file_verdict"] == VALID for row in files["verdicts"]}
@@ -252,7 +260,9 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
 
 
 def test_the_id_of_the_params_is_the_same(tmp_path):
-    assert Params().params_hash == PARAMS_HASH_BEFORE, "this change adds no param and changes none"
+    assert Params().params_hash == PARAMS_HASH, "no param but the added ones is new, and none has another value"
+    before = {name: value for name, value in Params().to_dict().items() if name not in ADDED_PARAMS}
+    assert sha256_hex(canonical_json(before)) == PARAMS_HASH_BEFORE, "without the added params, the id is the id of the code before"
     world = line_world(tmp_path)
     snap = last(world)
     assert snap["params_hash"] == world.params.params_hash == Params.from_dict(snap["params"]).params_hash

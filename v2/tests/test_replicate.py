@@ -382,6 +382,28 @@ def test_run_is_the_round_of_the_box_for_one_batch(world, capsys):
     assert Grades.made == [{}, {"workers": replicate.GRADE_WORKERS, "timeout_s": replicate.GRADE_TIMEOUT_S}]
 
 
+def test_a_rebuild_of_a_past_round_runs_no_reuse_rule_and_gives_the_same_result(world, capsys):
+    """The file of a past winner is public, so every rollout of it is a copy for rule ``public_reuse``. A rebuild trains and scores it as before.
+
+    The round of the box ran with the params of its time. The contract of today has one more param, so another id:
+    the rebuild says so in one note and changes nothing else.
+    """
+    fetch(world, capsys)
+    world.farm.fails = {POOL.task(task).problem for task in draw_from_snapshot(world.snapshot, "seed-7", 8).task_ids[-2:]}
+    code, before = run(world, capsys)
+    assert code == 0 and before["status"] == "winner" and before["rules_run"] == ["format", "tokens", "grader"]
+    assert world.params.max_reused_rollout_frac == 0.10
+    world.write(params=dataclasses.replace(world.params, max_reused_rollout_frac=0.0))  # another value of the param: the round's params id differs now
+    code, after = run(world, capsys)
+    assert code == 0 and after["box"]["params_hash"] != before["box"]["params_hash"] and after["box"]["recipe_id"] == before["box"]["recipe_id"]
+    same = ("status", "valid", "rules_run", "batch_sha256", "n_prompts", "n_rollouts", "score", "outcomes", "null_outcomes", "round", "train_applied")
+    assert {key: after[key] for key in same} == {key: before[key] for key in same} and after["lora"]["lora_hash"] == before["lora"]["lora_hash"]
+    notes = lambda report: [note["what"] for note in report["differences"]]
+    assert [what for what in notes(after) if what != "round-params"] == notes(before) and "round-params" in notes(after) and "round-params" not in notes(before)
+    (_, first), (_, second) = world.job.calls
+    assert (first["seed"], first["rows"], first["recipe"]) == (second["seed"], second["rows"], second["recipe"]), "the training job is the same"
+
+
 def test_run_stops_at_an_early_look_like_the_box_and_first_tasks_scores_the_start_of_the_round(world, capsys):
     fetch(world, capsys)
     code, report = run(world, capsys, "--first-tasks", "4")

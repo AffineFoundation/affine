@@ -64,6 +64,7 @@ from .irt import IRTSampler
 from .params import Params, require_env
 from .publisher import StorePublisher
 from .r2 import R2Store
+from .reuse import WinnerRollouts, store_reader
 from .seams import ObjectStore
 from .store import get_record
 from .types import ChainSnapshot, HeadManifest
@@ -164,7 +165,9 @@ def stack(context: StackContext) -> Stack:
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    # The winner files are read from the store. The directory only keeps their rollout keys, so a new process does not read them again.
+    winners = WinnerRollouts(store_reader(store), context.state_dir / "winner_rollouts")
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams, public=winners)
     order = after_king()
     if order == OVERLAP and mode() != CHAIN:
         raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")

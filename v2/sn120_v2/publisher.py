@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, PUBLIC_REUSE, RULES, SEAT_REUSE, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, Task
 from .errors import ConfigError, ContractError, InfraError, V2Error
@@ -647,6 +647,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule). A prompt that",
         "  is not a task of the pool has no official grade: its rewards are not compared with anything.",
+        *_reuse_lines(params),
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
         f"- `{NO_SIGNAL}`: your file must train something. A rollout trains when its advantage is not 0 and it has at",
@@ -683,12 +684,31 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "With such a code, before and after that, a round does not take the file: you are not charged, and the seat",
         "is skipped as with any invalid file (section 4). The validator does not publish the code or the count: you",
         "see only `file_valid`. Every other code is final for those bytes: upload a new file.",
+        f"`{SEAT_REUSE}` is the one code that no check before a round can give: see the reuse rule above.",
         "",
         *_rollout_lines(params),
         "",
         "### How to upload",
         "",
         *_upload_lines(doc["contract"]),
+    ]
+
+
+def _reuse_lines(params: Params) -> list[str]:
+    """The one item of section 5 on reused rollouts. Its words must hold with and without the part ``## Terms``."""
+    share = params.max_reused_rollout_frac
+    if share >= 1:
+        return ["- Reuse: no rule on reused rollouts is in force now (`max_reused_rollout_frac` is 1)."]
+    return [
+        "- Reuse: the published file of each round winner (section 9) is public, and a file that reuses its rollouts is",
+        "  refused. Two rollouts are the same when their prompts are equal and their outputs are equal, after all white",
+        f"  space is removed. At most {show(share)} of your rollouts may be the same as rollouts in the published winner files,",
+        f"  all rounds together: rule code `{PUBLIC_REUSE}`. The file of a winner counts for every hotkey, also for a hotkey of",
+        "  that winner: no file wins two times. `check` runs this rule with `--winner-files <directory>` and the URL of",
+        "  mining.json. The same share is the limit for rollouts of a seat ahead of yours in the same round: rule code",
+        f"  `{SEAT_REUSE}`. That seat keeps its entry. Yours is skipped for that round only: you are not charged and you keep",
+        "  your place. No check before the round can give this code, and the validator does not publish it. Its sign:",
+        "  `file_valid` is yes, you did not change the file, and the round takes a seat behind yours.",
     ]
 
 

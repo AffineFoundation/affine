@@ -116,6 +116,11 @@ class State:
             raise V2Error("the journal has no genesis yet")
         return self.heads[-1]
 
+    @property
+    def rounds_closed(self) -> int:
+        """Rounds 1 to this number are closed: what each of them published never changes."""
+        return self.round_seq - (1 if self.round else 0)
+
     def turns_last_day(self, now: int) -> int:
         return sum(1 for at in self.turn_times if at > now - DAY)
 

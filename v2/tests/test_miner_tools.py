@@ -8,6 +8,7 @@ import io
 import json
 import sys
 import types
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import BatchRejected, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Recipe
+from sn120_v2.reuse import WinnerRollouts, store_reader
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
 from sn120_v2.worker import LocalRunner
 
@@ -162,7 +164,7 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
     code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", HOTKEY, str(batch))
     report = json.loads(out)
     assert code == 0 and report["valid"] and report["train_applied"]["steps"] == 7
-    assert report["rules_not_run"] == ["tokens", "grader"]  # the tool says what it could not check
+    assert report["rules_not_run"] == ["tokens", "grader", "reuse"]  # the tool says what it could not check
     code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", "someone-else", str(batch))
     assert code == 1 and json.loads(out)["rule"] == "hotkey"
     batch.write_bytes(batch_bytes({"steps": 8}))
@@ -191,7 +193,7 @@ def test_the_reward_rule_runs_with_the_official_grader(build):
     grader, task = tool.official_grader(build.params()), load_pool().task("math:0")
     rows = lambda reward: [{"output": "step " * 40 + f"\\boxed{{{task.answer}}}", "reward": reward}, {"output": "step " * 40 + "\\boxed{no answer}", "reward": 1.0 - reward}]
     raw = lambda reward: json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [{"prompt": task.batch_prompt(), "rollouts": rows(reward)}]}).encode()
-    assert tool.check(raw(1.0), HOTKEY, build.params(), WordTokens(), grader)["rules_not_run"] == []
+    assert tool.check(raw(1.0), HOTKEY, build.params(), WordTokens(), grader)["rules_not_run"] == ["reuse"]
     with pytest.raises(Invalid) as caught:
         tool.check(raw(0.0), HOTKEY, build.params(), WordTokens(), grader)
     assert caught.value.rule == "grader"
@@ -246,7 +248,7 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
     miner_params, _ = tool.load_contract(str(tmp_path / "mining.json"))
     train = {row["key"]: row["choices"][:1] or (int(row["high"]) if row["integer"] else row["high"]) for row in doc["contract"]["miner_settable"]}
     raw = batch_bytes(train, "hk11")
-    assert tool.check(raw, "hk11", miner_params, WordTokens())["rules_not_run"] == ["grader"]
+    assert tool.check(raw, "hk11", miner_params, WordTokens())["rules_not_run"] == ["grader", "reuse"]
     key = doc["contract"]["batch_file"]["private_object"].replace("HOTKEY", "hk11")
     monkeypatch.setattr(tool.urllib.request, "urlopen", lambda request, timeout: world.store.put(key, request.data) or contextlib.nullcontext())
     tool.upload(raw, "https://signed.example/put")  # the link leads to the miner's private object
@@ -254,3 +256,62 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
     doc, text = json.loads(files()[0]), files()[1].decode()
     assert doc["queue"]["next"][0]["file_valid"] and "| 0 | 11 | hk11 | 1011 | yes |" in text and doc["snapshot_digest"] in text
     assert b"step step" not in files()[0] + files()[1]  # the batch itself stays private
+
+
+def test_check_with_the_winner_files_gives_the_verdict_of_the_validator(tmp_path, capsys, monkeypatch):
+    """Rule ``public_reuse`` from the public files alone: mining.json and the winner file of each closed round."""
+    world, site = sim.SimWorld(tmp_path / "world", sim.sim_params()), "https://site.example"
+    for uid in (1, 2):
+        world.register(uid, 0.3)
+        world.round()
+    address = f"{site}/public/mining.json"
+    winner = batch_bytes(hotkey="5King")  # the published file of the winner of round 1; round 2 has no winner file
+    pages = {address: publisher.render(world.publisher.snapshots[-1], site)[0], f"{site}/{layout.winner_batch('r000001')}": winner}
+    assert [view["round_id"] for view in json.loads(pages[address])["history"]] == ["r000001", "r000002"]
+    asked, down = [], set()
+
+    def reply(request, timeout):
+        asked.append(request.full_url)
+        assert request.get_header("User-agent") == tool.CLIENT["User-Agent"]
+        if request.get_method() == "PUT":
+            return contextlib.nullcontext()
+        if request.full_url not in pages or request.full_url in down:
+            raise urllib.error.HTTPError(request.full_url, 500 if request.full_url in down else 404, "no", None, None)
+        return contextlib.closing(io.BytesIO(pages[request.full_url]))
+
+    monkeypatch.setattr(tool.urllib.request, "urlopen", reply)
+    copy, own, cache = tmp_path / "copy.json", tmp_path / "own.json", tmp_path / "winners"
+    copy.write_bytes(batch_bytes())  # the rollouts of the winner file under the hotkey of the copier
+    own.write_bytes(batch_bytes().replace(b"step step", b"my step"))
+    argv = ["--mining-json", address, "--hotkey", HOTKEY, "--winner-files", str(cache)]
+
+    code, out = cli(capsys, "check", *argv, str(copy))
+    reason = "2 of 2 rollouts are copies of rollouts in the published winner files, 2 of them in the file of round r000001; the limit is a share of 0.1"
+    assert code == 1 and json.loads(out) == {"valid": False, "rule": "public_reuse", "reason": reason}
+    assert asked == [address, f"{site}/public/rounds/r000001/batch.json", f"{site}/public/rounds/r000002/batch.json"]
+
+    # The validator, from its store: the same rule code and the same reason.
+    store = world.store
+    store.put(layout.winner_batch("r000001"), winner)
+    store.put(layout.miner_object(HOTKEY), copy.read_bytes())
+    store.delete(layout.winner_batch("r000002"))
+    validator = StoreAdmission(store, world.params, tokens=WordTokens(), grader=None, public=WinnerRollouts(store_reader(store)))
+    verdict = validator.verdicts([HOTKEY], rounds=world.controller.state.rounds_closed)[HOTKEY]
+    assert (verdict.valid, verdict.rule, verdict.reason) == (False, "public_reuse", reason)
+
+    code, out = cli(capsys, "check", *argv, str(own))
+    report = json.loads(out)
+    assert code == 0 and report["rules_run"] == ["format", "reuse"] and report["rules_not_run"] == ["tokens", "grader"]
+    assert asked[3:] == [address, f"{site}/public/rounds/r000002/batch.json"], "the keys of a read file are kept; a round of the history with no file is asked again"
+
+    monkeypatch.setenv(tool.PUT_URL_ENV, "https://signed.example/put")
+    assert cli(capsys, "upload", *argv, str(copy))[0] == 1 and not any(url.startswith("https://signed.example") for url in asked), "a refused file is never sent"
+    assert cli(capsys, "upload", *argv, str(own))[0] == 0 and asked[-1] == "https://signed.example/put"
+
+    down.add(f"{site}/public/rounds/r000002/batch.json")
+    code, out = cli(capsys, "check", *argv, str(own))
+    assert code == 2 and json.loads(out) == {"error": "InfraError", "reason": "the winner file of round r000002 could not be read: HTTP 500"}, "no verdict from a part of the public files"
+    local = tmp_path / "mining.json"
+    local.write_bytes(publisher.render(world.publisher.snapshots[-1])[0])  # this mining.json names no public address
+    code, out = cli(capsys, "check", "--mining-json", str(local), "--hotkey", HOTKEY, "--winner-files", str(cache), str(own))
+    assert code == 2 and json.loads(out)["error"] == "ConfigError"
