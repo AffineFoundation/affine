@@ -39,7 +39,7 @@ from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.state import APPLY_DEFERRED, HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED  # noqa: E402
 from sn120_v2.types import HeadManifest  # noqa: E402
 
-WAIT_S = 30  # the longest a test waits for a thread
+WAIT_S = 600  # a guard against a hang, and nothing more: on a machine that works, slow or fast, no wait of a test runs this long
 
 
 def a_world(path: Path, order: str = OVERLAP, **settings) -> ChainWorld:
@@ -128,17 +128,48 @@ def changed_on_disk(world: ChainWorld) -> None:
     world.folder.run = faulty
 
 
-def gate_read_back(monkeypatch) -> threading.Event:
-    """The second sha256 of a new head waits for the returned event, as it does for minutes with 56 GB."""
-    gate, real = threading.Event(), headfold.file_sha256
+@pytest.fixture
+def gate_read_back(monkeypatch):
+    """A call. After ``gate_read_back(world)`` the second sha256 of each new head waits for the event that the call returns, as it does for minutes with 56 GB.
 
-    def slow(path):
-        if threading.current_thread().name.startswith(READ_BACK):
-            assert gate.wait(WAIT_S)
-        return real(path)
+    The call first waits for a read that runs already. That read is of a head from before the gate, and it must not
+    wait for the event: the next round and the next fold wait for it, so a test that opens the event after them cannot end.
 
-    monkeypatch.setattr(headfold, "file_sha256", slow)
-    return gate
+    ``until_a_wait``: the event opens when a thread starts to wait for such a read (``Beside.wait``, ``Beside.result``).
+    A read that ended is then the proof that a thread waited for it, on a slow machine and on a fast one.
+    Without it, the test opens the event.
+
+    The end of the test opens each event, so no thread of a test that failed waits on.
+    """
+    gates: list[threading.Event] = []
+
+    def close(world: ChainWorld, until_a_wait: bool = False) -> threading.Event:
+        world.folder.proven(True)
+        gate, real = threading.Event(), headfold.file_sha256
+        gates.append(gate)
+
+        def slow(path):
+            if threading.current_thread().name.startswith(READ_BACK):
+                assert gate.wait(WAIT_S), f"nothing opened the gate of the second sha256 in {WAIT_S} s"
+            return real(path)
+
+        class Waited(Beside):
+            def wait(self):
+                gate.set()
+                super().wait()
+
+            def result(self):
+                gate.set()
+                return super().result()
+
+        monkeypatch.setattr(headfold, "file_sha256", slow)
+        if until_a_wait:
+            monkeypatch.setattr(headfold, "Beside", Waited)  # ``ReadBack`` makes the only ``Beside`` of ``headfold``
+        return gate
+
+    yield close
+    for gate in gates:
+        gate.set()
 
 
 # ---- the same records and the same bytes as ``serial`` ----
@@ -321,10 +352,10 @@ def test_a_run_that_dies_in_the_fold_beside_has_recorded_no_head_and_the_next_ru
     check_chain(world.chain_file())
 
 
-def test_a_run_that_dies_before_the_second_sha256_ended_finds_a_changed_head_at_its_next_start(world, monkeypatch, capsys):
+def test_a_run_that_dies_before_the_second_sha256_ended_finds_a_changed_head_at_its_next_start(world, gate_read_back, capsys):
     """The read back is memory of one process. The proof at the start of ``run`` is the same hash, so a new ``run`` cannot miss the fault."""
     world.king()
-    gate = gate_read_back(monkeypatch)
+    gate = gate_read_back(world)
     changed_on_disk(world)
     manifest = world.king()  # HEAD_FOLDED and ROUND_CLOSED are written; the second sha256 has not ended
     assert kinds(world)[-1] == ROUND_CLOSED and not is_head(world, manifest)
@@ -341,30 +372,31 @@ def test_a_run_that_dies_before_the_second_sha256_ended_finds_a_changed_head_at_
 # ---- the second sha256 of the new head ----
 
 
-def test_a_round_opens_before_the_second_sha256_ended_and_its_result_waits_for_it(world, monkeypatch):
-    gate = gate_read_back(monkeypatch)
+def test_a_round_opens_before_the_second_sha256_ended_and_its_result_waits_for_it(world, gate_read_back):
+    gate = gate_read_back(world, until_a_wait=True)
     manifest = world.king()
-    assert world.state.head == manifest.head and kinds(world)[-1] == ROUND_CLOSED, "the king is closed while the read still waits"
-    run, seen = world.runner.run, []
+    assert world.state.head == manifest.head and kinds(world)[-1] == ROUND_CLOSED and not gate.is_set(), "the king is closed while the read still waits"
+    read, run, submit, seen = world.folder._read_back._work, world.runner.run, world.controller.submit_result, []  # noqa: SLF001
 
     def box(ticket):
-        seen.append((ticket.head.version_id, world.folder._read_back._work.done()))  # noqa: SLF001
-        result = run(ticket)
-        threading.Timer(0.2, gate.set).start()
-        return result
+        seen.append((ticket.head.version_id, read.done()))
+        return run(ticket)
 
-    world.runner.run = box
+    def store_the_result(result, now):
+        seen.append(read.done())
+        return submit(result, now)
+
+    world.runner.run, world.controller.submit_result = box, store_the_result
     world.register(90, 0.0)
-    started = time.monotonic()
     assert world.round().outcome == "null"
-    assert seen == [(manifest.head.version_id, False)], "the round ran on the new head while its files were read"
-    assert time.monotonic() - started >= 0.2 and world.folder._read_back._work.done()  # noqa: SLF001 - the result was stored after the read
+    assert seen[:1] == [(manifest.head.version_id, False)], "the round ran on the new head while its files were read"
+    assert seen[1:] == [True], "the result was stored after the read: the read ended only because the thread of run waited for it"
 
 
-def test_a_head_that_does_not_read_back_fails_the_lease_stops_run_and_the_next_start_rebuilds_it(world, monkeypatch, capsys):
+def test_a_head_that_does_not_read_back_fails_the_lease_stops_run_and_the_next_start_rebuilds_it(world, monkeypatch, gate_read_back, capsys):
     """Decision: no new way to end a round. The lease fails as a fault of the box does, ``run`` stops, and its start rebuilds the head."""
     world.king()
-    gate = gate_read_back(monkeypatch)
+    gate = gate_read_back(world)
     changed_on_disk(world)
     manifest = world.king()
     assert world.state.head == manifest.head and [king.uid for king in world.state.kings] == [2, 4]
@@ -407,16 +439,23 @@ def test_a_head_that_does_not_read_back_fails_the_lease_stops_run_and_the_next_s
     world.folder.proven(True)
 
 
-def test_a_head_that_does_not_read_back_is_never_uploaded_as_a_checkpoint(tmp_path, monkeypatch, capsys):
+def test_a_head_that_does_not_read_back_is_never_uploaded_as_a_checkpoint(tmp_path, gate_read_back, capsys):
     world = a_world(tmp_path / "world", every=1)
     world.king()
     world.wait()
-    gate = gate_read_back(monkeypatch)
+    gate_read_back(world, until_a_wait=True)
+    writes = []
+
+    def read_ended(key):
+        read = world.folder._read_back  # noqa: SLF001 - the second sha256 of the newest fold; there is none while a fold runs
+        writes.append((key, read is not None and read._work.done()))  # noqa: SLF001
+        return False
+
+    world.store.refuse = read_ended
     good = world.king()
-    time.sleep(0.2)
-    assert not any(key.startswith(layout.public_master_prefix(good.head.base_fp32_master_digest)) for key in world.store.wrote), "the upload waits for the read"
-    gate.set()
     world.wait()
+    of_the_master = [ended for key, ended in writes if key.startswith(layout.public_master_prefix(good.head.base_fp32_master_digest))]
+    assert of_the_master and all(of_the_master), "the upload waits for the read: each file of the master went to the store after the read ended"
     assert good.head.version_id in checkpoints(world.store)
     changed_on_disk(world)
     bad = world.king()
@@ -425,14 +464,14 @@ def test_a_head_that_does_not_read_back_is_never_uploaded_as_a_checkpoint(tmp_pa
     assert bad.head.version_id not in checkpoints(world.store) and not world.store.list(layout.public_master_prefix(bad.head.base_fp32_master_digest))
 
 
-def test_the_next_fold_waits_for_the_second_sha256_of_the_head_that_it_reads(world, monkeypatch):
+def test_the_next_fold_waits_for_the_second_sha256_of_the_head_that_it_reads(world, gate_read_back):
     world.king()
-    gate = gate_read_back(monkeypatch)
+    gate = gate_read_back(world, until_a_wait=True)
     changed_on_disk(world)
     manifest = world.king()
-    gate.set()
     before, stacked = cache(world), world.state.heads[-2]
     assert stacked.loras and not stacked.folded
+    assert not gate.is_set(), "the read still runs: the first fold below has to wait for it"
     for _ in range(2):  # the fault stays: each later ask gets it
         with pytest.raises(HeadLost):
             world.folder.fold(stacked, world.params, "pending/never")
