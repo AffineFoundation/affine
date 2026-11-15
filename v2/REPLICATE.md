@@ -8,6 +8,8 @@ This document says what you need, the commands, what is the same as on the box, 
 
 Nothing here touches the subnet. The tool reads public files. It writes only below the work directory you name. It uploads nothing and holds no key.
 
+**A change to the scoring is planned: budget forcing.** It is off today. [`BUDGET_FORCING.md`](BUDGET_FORCING.md) says what it is, the planned steps, and why you must update your copy of the code before it turns on.
+
 ## Words used here
 
 - **Box**: the validator's GPU machine. It trains and scores every round.
@@ -135,6 +137,8 @@ Where things are, below `--work`:
 
 `box_round.null_m` is present when the head and the draw are the same and one box scored the round. It compares null M here with null M on the box, task by task: `rollouts_compared`, `same_outcome`, `passed_here`, `passed_on_box`. This is the measurement of how close your machine is to the box. It is the only one: the box publishes the outcomes of null M and of the winner, not of a LoRA that lost.
 
+The outcome codes are `P` pass, `F` fail, `C` hit the token cap, `E` an error of the box, and `-` not run. When `budget_forcing_tokens` of mining.json is above 0, a string can also hold `p`: the reply hit the token cap, and it is right after the forced close ([`BUDGET_FORCING.md`](BUDGET_FORCING.md)). Then `pass_rate`, `null_pass_rate`, `passed_here` and `passed_on_box` count `P` and `p`, and `cap_rate` and `null_cap_rate` count `C` and `p`. That parameter is absent from mining.json today, so no string holds `p`.
+
 ## 4. What is the same as on the box, and what differs
 
 ### The same
@@ -145,7 +149,7 @@ Where things are, below `--work`:
 |---|---|
 | File check | `sn120_v2/admission.py` `check_batch`, with the tokenizer of the head, the public task pool and the official grader in worker processes: at most 8 workers and 20 seconds for one row, as on the validator. |
 | Training | `sn120_v2/gpu/trainer.py` `LoraTrainer` starts `python -m sn120_v2.gpu.train_job`. The recipe is the one of mining.json with your `train` values. The seed is `train_seed(round_seed, batch_sha256)`. |
-| Scoring | `sn120_v2/gpu/evaluator.py` `VllmEvaluator`: vLLM servers with the arguments of the box, the request body of the box, the seed `rollout_seed(round_seed, task_id, sample)` for null M and for the LoRA, and the official grader. |
+| Scoring | `sn120_v2/gpu/evaluator.py` `VllmEvaluator`: vLLM servers with the arguments of the box, the request body of the box, the seed `rollout_seed(round_seed, task_id, sample)` for null M and for the LoRA, the forced close of a reply that hit the token cap when `budget_forcing_tokens` is above 0, and the official grader. |
 | The round | `sn120_v2/worker.py` `LocalRunner`: training, then the looks in chunks of `eval_chunk_tasks` tasks, with the early drop of a LoRA that can no longer win. |
 | The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. |
 | The draw | `sn120_v2/irt.py` `draw_from_snapshot`. |
@@ -193,13 +197,14 @@ Two more facts that are not in the list, because they are about the machine and 
 - The seed of each rollout: `sha256("<round_seed>|<task_id>|<sample>")` as a 63-bit integer. Null M and every LoRA use the same seed for the same task.
 - The seed of the training job: `sha256("<round_seed>|train|<batch_sha256>")` as a 63-bit integer. The A matrices of the LoRA start from this seed, so they start the same.
 - The prompt of each task and every request setting (`temperature`, `top_p`, `top_k`, `max_output_tokens`, thinking on).
+- When `budget_forcing_tokens` is above 0: the text of the forced close and every setting of its request. That request is greedy and has no seed.
 - The rows that train, their advantages, and the tokens of each row.
 - The grade of a given reply text. The grader refuses to start unless its packages have exactly the pinned versions. One exception: a grade that takes longer than the grader's time limit is an error, and a slower CPU reaches that limit sooner.
 - The decision for given outcome strings: delta, standard error, z, the status.
 
 **Equal only in distribution:**
 
-- The text of a rollout, and so its outcome code. The seed is the same, but the sampled tokens depend on floating-point results, and these depend on the GPU type, the package versions, and which requests the server computes together in one batch. Do not expect the same text for the same seed, on your machine or on the box. Expect the same pass rate within sampling noise.
+- The text of a rollout, and so its outcome code. The seed is the same, but the sampled tokens depend on floating-point results, and these depend on the GPU type, the package versions, and which requests the server computes together in one batch. Do not expect the same text for the same seed, on your machine or on the box. Expect the same pass rate within sampling noise. This holds for the code `p` too: the request of the forced close is greedy, but it goes on from the text of the first reply.
 - The values of the trained LoRA after the first step, and so `lora_hash`. The gradient depends on floating-point results in the same way.
 - So `delta` and `z` of your LoRA differ from run to run and from the box.
 
