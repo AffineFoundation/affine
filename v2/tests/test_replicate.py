@@ -385,15 +385,15 @@ def test_run_is_the_round_of_the_box_for_one_batch(world, capsys):
 def test_a_rebuild_of_a_past_round_runs_no_reuse_rule_and_gives_the_same_result(world, capsys):
     """The file of a past winner is public, so every rollout of it is a copy for rule ``public_reuse``. A rebuild trains and scores it as before.
 
-    The round of the box ran with the params of its time. The contract of today has one more param, so another id:
-    the rebuild says so in one note and changes nothing else.
+    The round of the box ran with the params of its time, with no reuse rule. The contract of today has the rule in
+    force, so another id: the rebuild says so in one note and changes nothing else.
     """
     fetch(world, capsys)
     world.farm.fails = {POOL.task(task).problem for task in draw_from_snapshot(world.snapshot, "seed-7", 8).task_ids[-2:]}
     code, before = run(world, capsys)
     assert code == 0 and before["status"] == "winner" and before["rules_run"] == ["format", "tokens", "grader"]
-    assert world.params.max_reused_rollout_frac == 0.10
-    world.write(params=dataclasses.replace(world.params, max_reused_rollout_frac=0.0))  # another value of the param: the round's params id differs now
+    assert world.params.max_reused_rollout_frac == 1.0
+    world.write(params=dataclasses.replace(world.params, max_reused_rollout_frac=0.0))  # the strictest rule: the round's params id differs now
     code, after = run(world, capsys)
     assert code == 0 and after["box"]["params_hash"] != before["box"]["params_hash"] and after["box"]["recipe_id"] == before["box"]["recipe_id"]
     same = ("status", "valid", "rules_run", "batch_sha256", "n_prompts", "n_rollouts", "score", "outcomes", "null_outcomes", "round", "train_applied")

@@ -30,6 +30,7 @@ Nothing here has a default path. The state directory is always an argument.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib
 import json
 import os
@@ -51,7 +52,7 @@ from .payout import payees
 from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
-from .state import SEATS_FRONTED, State, load
+from .state import REUSE_LEFT_OUT, SEATS_FRONTED, State, load
 from .stopafter import SAID, StopRequest, say, stamp
 from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
@@ -77,7 +78,7 @@ def summary(state: State, params: Params) -> dict[str, Any]:
         "kings": [king.uid for king in payees(state.kings, params.kings_window)],
         "params_hash": params.params_hash,
         "journal_records": state.last_seq + 1,
-    }
+    } | ({REUSE_LEFT_OUT: [list(pair) for pair in state.reuse_left_out]} if state.reuse_left_out else {})
 
 
 def load_stack(spec: str, context: StackContext) -> Stack:
@@ -328,6 +329,8 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
 
     def flat(params: Params) -> dict[str, Any]:
         data = params.to_dict()
+        # A field that the JSON form does not hold at its default (``canonical.ABSENT_AT_DEFAULT``) is compared too.
+        data |= {f.name: getattr(params, f.name) for f in dataclasses.fields(params) if f.name not in data}
         return data | {f"recipe.{name}": value for name, value in data.pop("recipe").items()}
 
     old, new = flat(before), flat(after)

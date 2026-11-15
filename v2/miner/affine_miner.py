@@ -67,7 +67,7 @@ def load_contract(source: str) -> tuple[Params, HeadVersion]:
     return contract_of(read_document(source))
 
 
-def winner_rollouts(doc: Mapping[str, Any], cache: str) -> Mapping[bytes, str]:
+def winner_rollouts(doc: Mapping[str, Any], cache: str) -> tuple[Mapping[bytes, str], tuple[tuple[str, str], ...]]:
     """The rollouts of every published winner file, for rule ``public_reuse``: the same input as the validator's.
 
     The validator compares with the winner files of all closed rounds. ``history`` of mining.json ends with the
@@ -75,6 +75,9 @@ def winner_rollouts(doc: Mapping[str, Any], cache: str) -> Mapping[bytes, str]:
     round with no winner has no such file. ``cache`` is a directory that keeps the rollout keys of each file, so
     a file is read once. A round of ``history`` with no file is asked again at the next run: the public site can
     be behind for its newest rounds.
+
+    The second value names each winner file that could not be read, with the reason. As the validator does, the
+    check runs without such a file, and the next run asks for it again. The report says which files they are.
     """
     contract, rounds = doc["contract"], [int(view["round_id"][1:]) for view in doc.get("history") or []]
     if not contract.get("public_url"):
@@ -88,11 +91,10 @@ def winner_rollouts(doc: Mapping[str, Any], cache: str) -> Mapping[bytes, str]:
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
-            raise InfraError(f"the winner file of round {round_id} could not be read: HTTP {exc.code}") from None
-        except OSError as exc:
-            raise InfraError(f"the winner file of round {round_id} could not be read: {type(exc).__name__}") from None
+            raise InfraError(f"HTTP {exc.code}") from None  # each other failure of the read goes to ``left_out`` as it is
 
-    return WinnerRollouts(read, Path(cache)).known(max(rounds, default=0), settled=min(rounds, default=1) - 1)
+    winners = WinnerRollouts(read, Path(cache))
+    return winners.known(max(rounds, default=0), settled=min(rounds, default=1) - 1), winners.left_out
 
 
 def bounds_text(params: Params) -> str:
@@ -232,7 +234,12 @@ def main(argv: list[str] | None = None) -> int:
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer)
         grader = official_grader(params) if args.grade else None
         if args.command in ("check", "upload"):
-            report = check(raw, args.hotkey, params, tokens, grader, winner_rollouts(doc, args.winner_files) if args.winner_files else None)
+            # With a share of 1 the validator has no reuse rule, so no winner file is read and "reuse" is a rule that did not run.
+            compared = bool(args.winner_files) and params.max_reused_rollout_frac < 1
+            public, left_out = winner_rollouts(doc, args.winner_files) if compared else (None, ())
+            report = check(raw, args.hotkey, params, tokens, grader, public)
+            if compared:
+                report["winner_files_not_read"] = [{"round_id": round_id, "reason": reason} for round_id, reason in left_out]
             if args.command == "upload":  # an invalid file is never sent
                 upload(raw, os.environ[PUT_URL_ENV])
                 report["uploaded"] = True

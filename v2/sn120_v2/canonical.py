@@ -90,6 +90,17 @@ def _hints(cls: type) -> dict[str, Any]:
     return typing.get_type_hints(cls)
 
 
+# Metadata of a field that came after its record was in use. The JSON form does not hold the field while it has its
+# default value. So such a record has the bytes and the digest that it had before the field, and code of before the
+# field reads it. Code of before the field refuses the record from the moment the field has another value.
+ABSENT_AT_DEFAULT: Mapping[str, Any] = types.MappingProxyType({"absent_at_default": True})
+
+
+def written_fields(obj: Any) -> list[dataclasses.Field]:
+    """The fields of a record that its JSON form holds: every field, except an ``ABSENT_AT_DEFAULT`` field at its default."""
+    return [f for f in dataclasses.fields(obj) if not (f.metadata.get("absent_at_default") and getattr(obj, f.name) == f.default)]
+
+
 def to_jsonable(obj: Any, tp: Any = Any) -> Any:
     """Turn records, tuples and mappings into plain JSON values.
 
@@ -99,7 +110,7 @@ def to_jsonable(obj: Any, tp: Any = Any) -> Any:
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         hints = _hints(type(obj))
-        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in dataclasses.fields(obj)}
+        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in written_fields(obj)}
     if tp is float and type(obj) is int:
         return float(obj)
     origin, args = typing.get_origin(tp), typing.get_args(tp)

@@ -61,6 +61,7 @@ from .state import (
     NULL,
     PARAMS_SET,
     REGISTRATIONS_SYNCED,
+    REUSE_LEFT_OUT,
     ROUND_CLOSED,
     ROUND_OPENED,
     ROUND_SETTLED,
@@ -403,7 +404,9 @@ class Controller:
             round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
             len(draw.task_ids), now, tuple(leases), picked.skipped,
         )
-        self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
+        # The seats of this round were checked and frozen without these winner files. The key is absent when none was left out.
+        left_out = [list(pair) for pair in self.admission.left_out()]
+        self._log(ROUND_OPENED, {"round": record.to_dict()} | ({REUSE_LEFT_OUT: left_out} if left_out else {}), now)
         log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
         self._after(f"open: the public files of round {round_id}", self._publish, now, PUBLISH)
         return tickets
@@ -632,6 +635,8 @@ class Controller:
         for text in dict.fromkeys(text for text in texts if public_text(text) != text):
             print(f"round {record.round_id}: the public round file holds a changed form of this text. The full text: {text}", file=sys.stderr, flush=True)
         report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
+        if self.state.reuse_left_out:
+            report[REUSE_LEFT_OUT] = [{"round_id": round_id, "reason": public_text(why)} for round_id, why in self.state.reuse_left_out]
         self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}

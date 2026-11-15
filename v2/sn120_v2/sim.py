@@ -84,6 +84,9 @@ class SimAdmission:
         rule = lambda body: "" if body["valid"] else "sim_invalid"
         return {h: Verdict(h, bool(f[1]["valid"]), batch_sha256=sha256_hex(f[0]), rule=rule(f[1])) for h, f in found.items() if f}
 
+    def left_out(self) -> tuple[tuple[str, str], ...]:
+        return ()
+
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         found = self._read(reg.hotkey)
         if not found or not found[1]["valid"]:

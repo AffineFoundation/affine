@@ -27,7 +27,9 @@ The two reuse rules compare the rollouts of a file with rollouts of other files 
 when two rollouts are the same). ``public_reuse`` compares with the published winner files: they are an input
 of ``check_batch``, as the tokenizer is, and a miner has them too. ``seat_reuse`` compares with the files of the
 seats ahead in the same round: only ``StoreAdmission.freeze`` has those. Both rules act on a file that is
-checked or frozen from now on. Nothing here reads a file of a round that has opened.
+checked or frozen from now on. Nothing here reads a file of a round that has opened. A share of 1, the default of
+``Params``, is no reuse rule at all. A winner file that cannot be read never stops a check or a round: the check
+runs without that file and names it (``StoreAdmission.left_out``), and the next check asks for it again.
 """
 
 from __future__ import annotations
@@ -784,6 +786,17 @@ def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict
     return lines, {**before, **notes}
 
 
+def left_out_log(before: Sequence[tuple[str, str]], now: Sequence[tuple[str, str]]) -> list[str]:
+    """The log lines of the winner files that rule ``public_reuse`` runs without: one line when a file is left out or its reason changes, one when it is read again."""
+    was, reasons = dict(before), dict(now)
+    lines = [
+        f"reuse: the winner file of round {round_id} is left out of rule {PUBLIC_REUSE}: {reason}. The check goes on without it and asks for it again at the next check"
+        for round_id, reason in now
+        if was.get(round_id) != reason
+    ]
+    return lines + [f"reuse: the winner file of round {round_id} is read now: rule {PUBLIC_REUSE} counts its rollouts again" for round_id, _ in before if round_id not in reasons]
+
+
 def freeze_log(uid: int, round_id: str, checked: str, read: str) -> str:
     """One freeze that gave the seat no batch, as the log shows it: what the check said of the file, then what the freeze read.
 
@@ -836,6 +849,11 @@ class StoreAdmission:
         self._rollouts: dict[str, list[bytes]] = {}  # hotkey -> the rollout keys of its file, while ``_seen`` holds a valid verdict for it
         self._winners: Mapping[bytes, str] = {}  # the rollouts of the published winner files, as the last ``verdicts`` call read them
         self._walk: dict[str, list[bytes]] = {}  # hotkey -> the rollout keys of the file that this walk froze for it
+        self._left_out: tuple[tuple[str, str], ...] = ()  # (round id, reason) of each winner file that the last ``verdicts`` call could not read
+
+    def left_out(self) -> tuple[tuple[str, str], ...]:
+        """The published winner files that the last ``verdicts`` call left out of rule ``public_reuse``: (round id, reason)."""
+        return self._left_out
 
     def _raw(self, key: str) -> bytes | Invalid | None:
         """The object's bytes; the verdict of an oversized object, which is never downloaded; None when there is no object."""
@@ -922,6 +940,8 @@ class StoreAdmission:
 
         ``rounds`` is the count of closed rounds: the winner files of rounds 1 to ``rounds`` are the public files
         of rule ``public_reuse``. A share of 1 turns the reuse rules off, and then no winner file is read.
+        A winner file that cannot be read never stops this call: the rule runs without that file, a log line
+        names it, and ``left_out`` gives it to the caller. The next call asks for the file again.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)
         depends on this machine at this moment, so it is not kept. It holds for ``FAULT_HOLD_S``: during that
@@ -941,6 +961,10 @@ class StoreAdmission:
         out: dict[str, Verdict] = {}
         compared = self.public is not None and self.params.max_reused_rollout_frac < 1
         self._winners, self._walk = self.public.known(rounds) if compared else {}, {}
+        left_out = self.public.left_out if compared else ()
+        for line in left_out_log(self._left_out, left_out):
+            print(line, file=sys.stderr, flush=True)
+        self._left_out = left_out
         with contextlib.closing(self._ahead(hotkeys)) as fetches:
             for hotkey, fetch in fetches:
                 fetched = fetch()

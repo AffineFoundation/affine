@@ -221,7 +221,8 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     So a number that was typed into a sentence fails: either a parameter should give it (then the text diverges
     when the parameter changes), or a constant of the code gives it and the phrase is built from that constant.
     """
-    world, base = made_world(tmp_path), launch_params()
+    # The reuse rules are in force in both texts: at the default share of 1 the text has no word and no number of them.
+    world, base = made_world(tmp_path), dataclasses.replace(launch_params(), max_reused_rollout_frac=0.1)
     texts = [text_of(world, params) for params in (base, all_moved(base))]
     flat = [TIME.sub("<time>", ID.sub("<id>", " ".join(one.split()))) for one in texts]
     text = flat[0]

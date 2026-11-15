@@ -24,6 +24,7 @@ from .types import Entry, HeadManifest, HeadVersion, King, QueueEntry, Registrat
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
+REUSE_LEFT_OUT = "reuse_left_out"  # a key of the data of ``round_opened`` and of the public round file; it is there only when a file was left out
 DAY = 86400
 
 # Journal record kinds.
@@ -109,6 +110,10 @@ class State:
     front_on_arrival: set[RegKey] = field(default_factory=set)
     leader: str = ""
     last_seq: int = -1
+    # Of the open round: the published winner files that rule ``public_reuse`` ran without when the round took its
+    # seats, as (round id, reason). It is no field of ``RoundRecord``: code of before the reuse rules refuses a
+    # record with a field that it does not know, and it reads a new key in the data of ``round_opened``.
+    reuse_left_out: tuple[tuple[str, str], ...] = ()
 
     @property
     def head(self) -> HeadVersion:
@@ -209,6 +214,7 @@ def _round_opened(state: State, data: dict, at: int) -> None:
             _need(entry.reg.key in state.queue and not state.queue[entry.reg.key].leased, "a round took a seat that is not waiting")
             _edit(state, entry.reg.key, leased=True)
     state.round, state.round_seq = record, state.round_seq + 1
+    state.reuse_left_out = tuple((str(round_id), str(reason)) for round_id, reason in data.get(REUSE_LEFT_OUT, ()))
 
 
 def _open_round(state: State, data: dict) -> RoundRecord:
@@ -282,7 +288,7 @@ def _round_closed(state: State, data: dict, at: int) -> None:
         _edit(state, key, leased=False)
     _need(not any(state.queue[e.reg.key].leased for l in record.leases for e in l.entries if e.reg.key in state.queue), "a closed round left a seat leased")
     state.rounds = (state.rounds + [replace(record, outcome=outcome, closed_at=at)])[-HISTORY:]
-    state.round = None
+    state.round, state.reuse_left_out = None, ()
     state.snapshot_id = data.get("snapshot_id", state.snapshot_id)
     state.turn_times = [t for t in state.turn_times if t > at - 2 * DAY]
 

@@ -260,7 +260,7 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
 
 def test_check_with_the_winner_files_gives_the_verdict_of_the_validator(tmp_path, capsys, monkeypatch):
     """Rule ``public_reuse`` from the public files alone: mining.json and the winner file of each closed round."""
-    world, site = sim.SimWorld(tmp_path / "world", sim.sim_params()), "https://site.example"
+    world, site = sim.SimWorld(tmp_path / "world", sim.sim_params(max_reused_rollout_frac=0.1)), "https://site.example"
     for uid in (1, 2):
         world.register(uid, 0.3)
         world.round()
@@ -301,16 +301,31 @@ def test_check_with_the_winner_files_gives_the_verdict_of_the_validator(tmp_path
 
     code, out = cli(capsys, "check", *argv, str(own))
     report = json.loads(out)
-    assert code == 0 and report["rules_run"] == ["format", "reuse"] and report["rules_not_run"] == ["tokens", "grader"]
+    assert code == 0 and report["rules_run"] == ["format", "reuse"] and report["rules_not_run"] == ["tokens", "grader"] and report["winner_files_not_read"] == []
     assert asked[3:] == [address, f"{site}/public/rounds/r000002/batch.json"], "the keys of a read file are kept; a round of the history with no file is asked again"
 
     monkeypatch.setenv(tool.PUT_URL_ENV, "https://signed.example/put")
     assert cli(capsys, "upload", *argv, str(copy))[0] == 1 and not any(url.startswith("https://signed.example") for url in asked), "a refused file is never sent"
     assert cli(capsys, "upload", *argv, str(own))[0] == 0 and asked[-1] == "https://signed.example/put"
 
+    # A winner file that cannot be read: as the validator does, the check runs without it and names it. The next run asks again.
     down.add(f"{site}/public/rounds/r000002/batch.json")
     code, out = cli(capsys, "check", *argv, str(own))
-    assert code == 2 and json.loads(out) == {"error": "InfraError", "reason": "the winner file of round r000002 could not be read: HTTP 500"}, "no verdict from a part of the public files"
+    assert code == 0 and json.loads(out)["winner_files_not_read"] == [{"round_id": "r000002", "reason": "InfraError: HTTP 500"}]
+    code, out = cli(capsys, "check", *argv, str(copy))
+    assert code == 1 and json.loads(out)["rule"] == "public_reuse", "the files that were read still count"
+    pages[f"{site}/public/rounds/r000002/batch.json"] = batch_bytes(hotkey="5King2").replace(b"step step", b"my step")
+    down.clear()
+    code, out = cli(capsys, "check", *argv, str(own))
+    assert code == 1 and "2 of them in the file of round r000002" in json.loads(out)["reason"], "the file that was not read counts from the run that reads it"
+
+    # With a share of 1 the validator has no reuse rule. The tool reads no winner file and says that the rule did not run.
+    off = json.loads(pages[address])
+    assert off["params"].pop("max_reused_rollout_frac") == 0.1
+    pages[address], seen = json.dumps(off).encode(), len(asked)
+    code, out = cli(capsys, "check", *argv, str(copy))
+    report = json.loads(out)
+    assert code == 0 and report["rules_run"] == ["format"] and "reuse" in report["rules_not_run"] and "winner_files_not_read" not in report and asked[seen:] == [address]
     local = tmp_path / "mining.json"
     local.write_bytes(publisher.render(world.publisher.snapshots[-1])[0])  # this mining.json names no public address
     code, out = cli(capsys, "check", "--mining-json", str(local), "--hotkey", HOTKEY, "--winner-files", str(cache), str(own))

@@ -111,6 +111,14 @@ class Admission(Protocol):
         """
         ...
 
+    def left_out(self) -> Sequence[tuple[str, str]]:
+        """(round id, reason) of each published winner file that the last ``verdicts`` call could not read.
+
+        Such a file never stops a check or a round: the files are compared without it, and the round record
+        names it. The next ``verdicts`` call asks for it again.
+        """
+        ...
+
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the stored file for this round and check it again.
 
