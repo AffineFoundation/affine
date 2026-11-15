@@ -167,12 +167,7 @@ def _v1_imported(state: State, data: dict, at: int) -> None:
 def _registrations_synced(state: State, data: dict, at: int) -> None:
     for key in _keys(data["removed"]):
         state.queue.pop(key, None)
-    for raw in data.get("rehotkeyed", ()):
-        reg = Registration.from_dict(raw)
-        _edit(state, reg.key, reg=reg)
-    for raw in data.get("refreshed", ()):
-        # Optional from the round that first filled owner coldkeys onward. Older
-        # journal records omit it and replay with coldkey "" (the rule was inert).
+    for raw in data["rehotkeyed"]:
         reg = Registration.from_dict(raw)
         _edit(state, reg.key, reg=reg)
     for raw in data["added"]:

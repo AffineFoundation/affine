@@ -155,8 +155,6 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "The lease ends 150 minutes after it starts." in flat
     assert "When 5 failures are counted for a seat, the seat is held" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
-    assert "A second seat of the same hotkey or of the same owner coldkey waits for a later round." in flat
-    assert "SubtensorModule.Owner" in flat
     assert "older than 3 x its expected wait. Expected wait = max(7200 s, seats ahead x seconds per turn)." in flat
     assert "keeps its place for at least 21600 s after its registration, and for as long as no entry was charged in the last 24 hours" in flat
     assert "(`squat_min_wait_s`, `squat_age_factor`) are parameters (section 11)" in flat and "is announced" not in flat
@@ -173,7 +171,6 @@ def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_
     assert "When a valid file is present at the moment the validator picks the entries of a round, the seat leaves the back" in flat
     assert "A seat that v1 had moved to the back of its queue starts at the back here." in flat
     assert "a valid file at selection clears the imported back flag" in flat
-    assert "SubtensorModule.Owner" in flat
     assert "`demoted` = yes: the seat is at the back, unless `front` is also yes." in flat  # queue.zone
     assert "`position` counts every seat ahead of you, also a seat with no valid file" in flat and "`held` = yes: the seat takes no turn" in flat
     assert "A seat exists only while its registration is on chain." in flat  # queue.plan_sync
