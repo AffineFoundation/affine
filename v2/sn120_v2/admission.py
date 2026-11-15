@@ -32,6 +32,7 @@ import itertools
 import json
 import math
 import os
+import sys
 import threading
 import time
 from collections import Counter
@@ -743,6 +744,15 @@ def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict
     return lines, {**before, **notes}
 
 
+def freeze_log(uid: int, round_id: str, checked: str, read: str) -> str:
+    """One freeze that gave the seat no batch, as the log shows it: what the check said of the file, then what the freeze read.
+
+    Both parts are made of public verdicts (``verdict_note``) and of the words of a rule, so the line never
+    holds batch content.
+    """
+    return f"freeze: UID {uid} gets no seat in round {round_id}. The check: {checked}. The freeze: {read}"
+
+
 @dataclass(frozen=True)
 class _Fetched:
     """What the store gave for one hotkey's file. Only store calls made it: no check of the bytes."""
@@ -927,6 +937,17 @@ class StoreAdmission:
         note = f"check {tries} of {FAULT_TRIES}" if tries < FAULT_TRIES else f"checked {FAULT_TRIES} times: this verdict stays until a new file is uploaded"
         return Invalid(result.rule, f"{result} ({note})"), tries >= FAULT_TRIES
 
+    def _checked_note(self, hotkey: str) -> str:
+        """What the memory of the checks holds for a hotkey, for the log: the verdict with the hash of the bytes it judged, then the tag.
+
+        The tag and the hash in the verdict come from two reads of the object (``_fetch``), so they can differ.
+        """
+        kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+        found = kept if kept is not None else held[:2] if held is not None else None
+        if found is None:
+            return "not checked by this process"
+        return f"{verdict_note(found[1])}, memory tag {found[0][0][:SHA_SHOWN]}"
+
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
 
@@ -938,6 +959,8 @@ class StoreAdmission:
         found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
         if found is None or not isinstance(found[1], Batch):
             self.store.delete(frozen_key)
+            read = None if found is None else _verdict(reg.hotkey, found[0], found[1], 0)
+            print(freeze_log(reg.uid, round_id, self._checked_note(reg.hotkey), verdict_note(read)), file=sys.stderr, flush=True)
             return None
         raw, batch = found
         self.store.put(frozen_key, raw)
