@@ -22,9 +22,9 @@ When the rule is on, `https://affine.io/llms.txt` section 6 has the full procedu
 - **Head (M)**: the current model. **Null M**: the head with no LoRA, scored as the baseline.
 - **Round**: one run of the box: it trains one LoRA for each batch, scores each LoRA and null M on the same tasks, and decides the winner.
 - **Token cap**: `max_output_tokens` of the params, 65,536 tokens today. A reply that reaches it is cut there.
-- **Rollout**: one reply of one model to one task.
-- **Chunk**: a group of tasks that the box sends to the models at one time. A round has several chunks.
-- **Look**: a point in the scoring of a round at which the box judges the scores so far. A round has several looks. The last look is at the end of the tasks.
+- **Rollout**: one try of one model at one task.
+- **Chunk**: a group of tasks that the box sends to the models at one time. A full round has several chunks.
+- **Look**: a point in the scoring of a round at which the box judges the scores so far. A full round has several looks. The last look is at the end of the tasks.
 - **Stop time**: the time at which the box stops the scoring of a round, some minutes before the time limit of the round (llms.txt section 3).
 - **Outcome code**: one character for one rollout. `P` pass, `F` fail, `C` hit the token cap, `E` an error of the box, `-` not run.
 - **Forced close**: the text that the box puts after a cut reply, so that the model gives its final answer.
@@ -66,10 +66,10 @@ What happens when the second request fails:
 
 - The second request has the tries and the time limits of the first request.
 - When it has no usable reply, the outcome is `C`.
-- When the stop time of the round passes during the second request, the rollout has no reply. Then the box does not use that chunk, as today for a first request that the stop time cut. The win rule runs on the tasks that the round scored before that chunk.
-- When the server returns no `prompt_text` with a reply at the cap, the box does not score that chunk. This is an error of the box, not an outcome of a model. The box does not write `C` in place of the rule.
+- When the stop time of the round passes during the second request, the rollout has no reply. Then the box does not use that chunk, as today for a first request that the stop time cut. The round is then judged as each round that the stop time cuts (llms.txt section 3). When the first look is complete, the win rule runs on the tasks that the round scored before that chunk. When it is not, each LoRA is `not_scored`: you are not charged.
+- When the server returns no `prompt_text` with a reply at the cap, the box does not score that chunk, and it tries the chunk again. When each try fails, the round has no result: no LoRA is judged, and nobody is charged. This is an error of the box, not an outcome of a model. The box does not write `C` in place of the rule.
 
-The time: the second requests run inside the scoring time of the round. So a round with the rule on runs somewhat longer. It cannot run past its time limit: a second request gets only the time that is left to the stop time.
+The time: the second requests run inside the scoring time of the round. So the scoring of a round with the rule on can take more time. The second requests cannot run past the stop time: a second request gets only the time that is left to the stop time.
 
 A round is scored with one set of params. The validator takes no new scoring parameter while a round is open. So no round is scored partly with the rule.
 
@@ -129,10 +129,11 @@ Run this in the Python environment in which you run the miner tool:
 python -P -c "from sn120_v2.params import Params; print(hasattr(Params, 'budget_forcing_tokens'))"
 ```
 
-Keep the option `-P`. With it, Python reads the installed copy of the code, the copy that the miner tool uses. Without it, in the directory `v2/`, Python reads the files of the checkout, and the check can print `True` while the installed copy is old.
+Keep the option `-P`. With it, Python reads the installed copy of the code, the copy that `miner/affine_miner.py` uses. Without it, in the directory `v2/`, Python reads the files of the checkout, and the check can print `True` while the installed copy is old. (`python -m sn120_v2.replicate`, run in `v2/`, also reads the files of the checkout.)
 
 - `True`: you have the new code. It reads mining.json with the rule off and with the rule on.
 - `False`: you have the old code. Update it. If you pulled already, install again.
+- The error `No module named 'sn120_v2'`: no copy is installed in this environment. Install it.
 
 The miner tool has no version number. This check is the way to tell.
 
