@@ -8,7 +8,7 @@ This document says what you need, the commands, what is the same as on the box, 
 
 Nothing here touches the subnet. The tool reads public files. It writes only below the work directory you name. It uploads nothing and holds no key.
 
-**A change to the scoring is planned: budget forcing.** It is off today. [`BUDGET_FORCING.md`](BUDGET_FORCING.md) says what it is, the planned steps, and why you must update your copy of the code before it turns on.
+**A change to the scoring is planned: budget forcing.** It is off today. [`BUDGET_FORCING.md`](BUDGET_FORCING.md) says what it is, the planned steps, and why you must update your copy of the code before a turn-on.
 
 ## Words used here
 
@@ -137,7 +137,7 @@ Where things are, below `--work`:
 
 `box_round.null_m` is present when the head and the draw are the same and one box scored the round. It compares null M here with null M on the box, task by task: `rollouts_compared`, `same_outcome`, `passed_here`, `passed_on_box`. This is the measurement of how close your machine is to the box. It is the only one: the box publishes the outcomes of null M and of the winner, not of a LoRA that lost.
 
-The outcome codes are `P` pass, `F` fail, `C` hit the token cap, `E` an error of the box, and `-` not run. When `budget_forcing_tokens` of mining.json is above 0, a string can also hold `p`: the reply hit the token cap, and it is right after the forced close ([`BUDGET_FORCING.md`](BUDGET_FORCING.md)). Then `pass_rate`, `null_pass_rate`, `passed_here` and `passed_on_box` count `P` and `p`, and `cap_rate` and `null_cap_rate` count `C` and `p`. That parameter is absent from mining.json today, so no string holds `p`.
+The outcome codes are `P` pass, `F` fail, `C` hit the token cap, `E` an error of the machine that scores (the box, or your machine in a run at home), and `-` not run. When `budget_forcing_tokens` of mining.json is above 0, a string can also hold `p`: the reply hit the token cap, and it is right after the forced close ([`BUDGET_FORCING.md`](BUDGET_FORCING.md)). Then `pass_rate`, `null_pass_rate`, `passed_here` and `passed_on_box` count `P` and `p`, and `cap_rate` and `null_cap_rate` count `C` and `p`. That parameter is absent from mining.json today, so no string holds `p`.
 
 ## 4. What is the same as on the box, and what differs
 

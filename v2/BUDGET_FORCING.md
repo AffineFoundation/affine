@@ -12,8 +12,8 @@ When the rule is on, `https://affine.io/llms.txt` section 6 has the full procedu
 - **Today:** a reply that reaches the token cap gets the outcome code `C`. The grader never reads it. It counts as not passed.
 - **With the rule:** the box closes such a reply, the model writes a few more tokens, and the grader reads the whole text. A pass gets the new outcome code `p`.
 - `p` is a pass. It is also still a cap hit.
-- mining.json gets one new field, `params.budget_forcing_tokens`. The planned value is 32.
-- **Update your copy of the code before the turn-on** (section 6). The old miner tool stops on a mining.json that has the new field.
+- mining.json gets one new parameter, `params.budget_forcing_tokens` (the planned value is 32), and one new entry, `contract.outcome_codes.token_cap_pass`.
+- **Update your copy of the code before a turn-on** (section 6). The old miner tool stops on a mining.json that has the new parameter.
 - Your batch file, its rules and the upload do not change.
 
 ## Words used here
@@ -22,7 +22,11 @@ When the rule is on, `https://affine.io/llms.txt` section 6 has the full procedu
 - **Head (M)**: the current model. **Null M**: the head with no LoRA, scored as the baseline.
 - **Round**: one run of the box: it trains one LoRA for each batch, scores each LoRA and null M on the same tasks, and decides the winner.
 - **Token cap**: `max_output_tokens` of the params, 65,536 tokens today. A reply that reaches it is cut there.
-- **Outcome code**: one character for one reply of a model to one task. `P` pass, `F` fail, `C` hit the token cap, `E` an error of the box, `-` not run.
+- **Rollout**: one reply of one model to one task.
+- **Chunk**: a group of tasks that the box sends to the models at one time. A round has several chunks.
+- **Look**: a point in the scoring of a round at which the box judges the scores so far. A round has several looks. The last look is at the end of the tasks.
+- **Stop time**: the time at which the box stops the scoring of a round, some minutes before the time limit of the round (llms.txt section 3).
+- **Outcome code**: one character for one rollout. `P` pass, `F` fail, `C` hit the token cap, `E` an error of the box, `-` not run.
 - **Forced close**: the text that the box puts after a cut reply, so that the model gives its final answer.
 - **Greedy**: the model takes the most likely token at each step (temperature 0). It makes no random draw.
 
@@ -62,8 +66,10 @@ What happens when the second request fails:
 
 - The second request has the tries and the time limits of the first request.
 - When it has no usable reply, the outcome is `C`.
-- When the stop time of the round passed, the rollout has no reply, as a first request that the stop time cut.
-- When the server returns no `prompt_text`, the box does not score that look. It does not write `C` in place of the rule.
+- When the stop time of the round passes during the second request, the rollout has no reply. Then the box does not use that chunk, as today for a first request that the stop time cut. The win rule runs on the tasks that the round scored before that chunk.
+- When the server returns no `prompt_text` with a reply at the cap, the box does not score that chunk. This is an error of the box, not an outcome of a model. The box does not write `C` in place of the rule.
+
+The time: the second requests run inside the scoring time of the round. So a round with the rule on runs somewhat longer. It cannot run past its time limit: a second request gets only the time that is left to the stop time.
 
 A round is scored with one set of params. The validator takes no new scoring parameter while a round is open. So no round is scored partly with the rule.
 
@@ -73,7 +79,7 @@ A round is scored with one set of params. The validator takes no new scoring par
 |---|---|---|---|
 | `P` | The reply ended and it is right. | yes | no |
 | `F` | The reply ended and it is wrong. | no | no |
-| `C` | The reply hit the token cap. With the rule: it is also not right after the forced close. | no | yes |
+| `C` | The reply hit the token cap. With the rule: it is also not right after the forced close, or the second request had no usable reply. | no | yes |
 | `p` | The reply hit the token cap, and it is right after the forced close. | yes | yes |
 
 - **Delta and z**: the pass rate of a model on a task is the share of its samples with `P` or `p`.
@@ -83,14 +89,14 @@ A round is scored with one set of params. The validator takes no new scoring par
 
 ## 4. What changes in the public files
 
-All of this is from the first publish after the turn-on. Before it, the files have none of it.
+All of this is from the first publish after a turn-on. Before it, the files have none of it.
 
 - **mining.json**
   - `params.budget_forcing_tokens` appears, with the value in force. While the rule is off, the key is absent (it is not written as 0).
   - `contract.outcome_codes` gets the entry `"token_cap_pass": "p"`.
   - `params_hash` changes, because the params change.
 - **llms.txt**: section 6 gets the forced close and the code `p`, and section 11 gets the row `budget_forcing_tokens`. The box writes this by itself.
-- **Round files** (`public/rounds/ROUND_ID/round.json`): the outcome strings in `null_outcomes` and `winner_outcomes` can hold `p`. A round that closed before the turn-on has no `p`.
+- **Round files** (`public/rounds/ROUND_ID/round.json`): the outcome strings in `null_outcomes` and `winner_outcomes` can hold `p`. A round that closed before a turn-on has no `p`.
 
 ## 5. What does not change
 
@@ -105,7 +111,7 @@ All of this is from the first publish after the turn-on. Before it, the files ha
 
 ### Update your copy of the code
 
-Do this before the turn-on. You can do it at once: the new tool also reads the mining.json of today.
+Do this before a turn-on. You can do it at once: the new tool also reads the mining.json of today.
 
 ```
 cd affine
@@ -120,15 +126,17 @@ If your install is editable (`pip install -e` or `uv pip install -e`, as llms.tx
 Run this in the Python environment in which you run the miner tool:
 
 ```
-python -c "from sn120_v2.params import Params; print(hasattr(Params, 'budget_forcing_tokens'))"
+python -P -c "from sn120_v2.params import Params; print(hasattr(Params, 'budget_forcing_tokens'))"
 ```
 
+Keep the option `-P`. With it, Python reads the installed copy of the code, the copy that the miner tool uses. Without it, in the directory `v2/`, Python reads the files of the checkout, and the check can print `True` while the installed copy is old.
+
 - `True`: you have the new code. It reads mining.json with the rule off and with the rule on.
-- `False`: you have the old code. Update it.
+- `False`: you have the old code. Update it. If you pulled already, install again.
 
 The miner tool has no version number. This check is the way to tell.
 
-### What the old code does after the turn-on
+### What the old code does after a turn-on
 
 Every command of `v2/miner/affine_miner.py` (`bounds`, `check`, `upload`, `reproduce`) and every command of `python -m sn120_v2.replicate` (`compare`, `fetch`, `run`) reads the params of mining.json first. The old code does not know the new field. It prints this and stops with exit code 2:
 
@@ -145,7 +153,7 @@ Every command of `v2/miner/affine_miner.py` (`bounds`, `check`, `upload`, `repro
 
 ### If you have your own scripts
 
-- Accept the key `params.budget_forcing_tokens` in mining.json.
+- Accept the key `params.budget_forcing_tokens` and the entry `contract.outcome_codes.token_cap_pass` in mining.json.
 - Accept the code `p` in outcome strings. Count it as a pass, and as a cap hit.
 
 ### See if the rule is on
@@ -159,14 +167,14 @@ A number above 0 means that the rule is on, with that many tokens.
 ## 7. The planned steps
 
 1. **The new code is in the branch `v2`**, with this document. From then on you can update.
-2. **The box takes the new code, with the rule still off.** This step is agreed. Its date is not set yet. It changes no score. mining.json then shows a new `params.recipe.code_digest`, so `recipe_id` and `params_hash` change. The old code still reads everything.
-3. **The turn-on.** It is planned, and it is not decided yet. The earliest time is the line at the top of this document. The rule turns on between two rounds, and it counts from the first round that opens after it.
+2. **The box takes the new code, with the rule still off.** This step is planned. Its date is not set yet. It changes no score. mining.json then shows a new `params.recipe.code_digest`, so `recipe_id` and `params_hash` change. The old code still reads everything.
+3. **The turn-on.** It is planned, and it is not decided yet. The earliest time is the line at the top of this document. A turn-on can only be between two rounds. The rule then counts from the first round that opens after it.
 
 Between your update and step 2, `python -m sn120_v2.replicate compare` lists the difference `code`. That is expected: your copy is newer than the code of the box. After step 2, a copy that is not updated shows the difference `code`.
 
 ## 8. At home, with `python -m sn120_v2.replicate`
 
 - `run` scores with the code of the box. So with the rule on, the new code makes the forced close on your machine too, with the value of mining.json.
-- The forced close needs a vLLM server that returns `prompt_text`. The `gpu` extra pins vLLM 0.32.0. A test run of the validator on GPUs (2026-11-15) got `prompt_text` for each capped reply with that version.
+- The forced close needs a vLLM server that returns `prompt_text`. The `gpu` extra pins vLLM 0.32.0. A test run of this scoring code on a rented machine with 8 GPUs (2026-11-15; not the box) got `prompt_text` for each reply at the cap with that version.
 - The report counts `p` as section 3 says: `score.pass_rate` and `score.null_pass_rate` count `P` and `p`; `score.cap_rate` and `score.null_cap_rate` count `C` and `p`.
 - The second request is greedy, but its prompt holds the reply of the first request, and that text is not the same from run to run. So a `p` is equal to the box only in distribution, as each other outcome code (`REPLICATE.md` section 5).
