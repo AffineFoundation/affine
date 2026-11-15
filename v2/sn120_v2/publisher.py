@@ -992,8 +992,14 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
         f"- Decode: temperature {show(params.temperature)}, top_p {show(params.top_p)}, top_k {params.top_k}, {params.dtype},",
         f"  at most {params.max_output_tokens} output tokens and {params.max_context_tokens} prompt + output tokens.",
-        f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
-        "  infrastructure failed (not passed, stays in the count).",
+        *([
+            f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap and did not pass, `{CAP_PASS}` hit the",
+            f"  token cap and passed after the forced close (next item), `{ERROR}` our infrastructure failed (not passed, stays",
+            "  in the count).",
+        ] if forcing_in_force(params) else [
+            f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
+            "  infrastructure failed (not passed, stays in the count).",
+        ]),
         *([
             f"- Forced close: a reply that hit the token cap is not lost. The box ends its thinking, starts the final answer",
             f"  for it, and lets the model write {params.budget_forcing_tokens} more tokens (`budget_forcing_tokens`). When the grader passes that text, the",
