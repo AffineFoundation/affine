@@ -776,8 +776,8 @@
       back: qWait.filter(x => x.zone === 'back' || (x.flags || []).includes('demoted')).length,
     };
     queueTotals(summary);
-    document.querySelector('#queue > .section-heading .reading').textContent =
-      `${summary.in_round} in round · ${summary.waiting} waiting`;
+    const waiting = document.querySelector('#queue > .section-heading .reading');  // round.html has no queue section
+    if (waiting) waiting.textContent = `${summary.in_round} in round · ${summary.waiting} waiting`;
     fill('queueRound', qRound, `${summary.in_round}`);
     fill('queueWait', qWait, `${summary.waiting}`);
     const f = filter.trim().toLowerCase(), hist = match(d.history, f);
