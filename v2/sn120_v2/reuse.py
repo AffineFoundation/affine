@@ -10,6 +10,7 @@ from the same public files as the validator.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -52,8 +53,14 @@ def rollout_keys(groups: Iterable[tuple[str, Sequence[tuple[str, float]]]]) -> l
 
 
 def file_keys(raw: bytes) -> list[bytes]:
-    """The key of each rollout of a published winner file, in file order. All of its groups count, also the groups that the caps dropped."""
+    """The key of each rollout of a published winner file, in file order. All of its groups count, also the groups that the caps dropped.
+
+    A JSON object with no ``groups`` holds no rollout, so it gives no key. The validator publishes no such file:
+    a winner file passed the check. A simulated store does (``sim.SimAdmission``). Each other fault raises.
+    """
     value = json.loads(raw)
+    if isinstance(value, dict) and "groups" not in value:
+        return []
     return [rollout_key(group["prompt"], rollout["output"]) for group in value["groups"] for rollout in group["rollouts"]]
 
 
@@ -80,7 +87,8 @@ class WinnerRollouts:
     A closed round never changes: it has its winner file or it never gets one. So each round is read once for
     each process, by ``read``. ``cache`` is a directory that keeps what was read: one file for each round, which
     holds the 32-byte keys of its winner file one after the other, and no byte for a round with no winner file.
-    The cache only saves the reading. Without it, or without one of its files, the round is read again.
+    The cache only saves the reading. Without it, or without one of its files, the round is read again. A cache
+    file that cannot be read or written stops nothing.
     """
 
     def __init__(self, read: Reader, cache: Path | None = None) -> None:
@@ -105,18 +113,20 @@ class WinnerRollouts:
 
     def _keys(self, round_id: str, final: bool) -> list[bytes]:
         path = None if self.cache is None else Path(self.cache) / f"{round_id}.keys"
-        if path is not None and path.is_file():
-            kept = path.read_bytes()
-            if len(kept) % KEY_BYTES == 0:
-                return [kept[at : at + KEY_BYTES] for at in range(0, len(kept), KEY_BYTES)]
+        if path is not None:
+            with contextlib.suppress(OSError):
+                kept = path.read_bytes()
+                if len(kept) % KEY_BYTES == 0:
+                    return [kept[at : at + KEY_BYTES] for at in range(0, len(kept), KEY_BYTES)]
         raw = self.read(round_id)
         try:
             keys = [] if raw is None else file_keys(raw)
         except (ValueError, LookupError, TypeError, AttributeError) as exc:
             raise InfraError(f"the published winner file of round {round_id} is not a batch file: {type(exc).__name__}") from None
         if path is not None and (raw is not None or final):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            partial = path.with_name(path.name + TMP)
-            partial.write_bytes(b"".join(keys))
-            os.replace(partial, path)
+            with contextlib.suppress(OSError):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                partial = path.with_name(path.name + TMP)
+                partial.write_bytes(b"".join(keys))
+                os.replace(partial, path)
         return keys

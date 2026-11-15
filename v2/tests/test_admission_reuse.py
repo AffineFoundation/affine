@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
 
 import pytest
 
@@ -197,7 +196,8 @@ def test_a_file_at_the_caps_can_hold_this_many_copied_rollouts():
 
 def test_a_new_winner_file_makes_a_waiting_copy_not_valid_with_no_new_check(build):
     store = Store()
-    king, copy, honest = upload(store, "5King", groups("w1")), upload(store, "5Copier", groups("w1")), upload(store, "5Honest", groups("mine"))
+    king, copy = upload(store, "5King", groups("w1")), upload(store, "5Copier", groups("w1"))
+    upload(store, "5Honest", groups("mine"))
     adm = admission(build, store)
     before = adm.verdicts(["5King", "5Copier", "5Honest"], rounds=0)
     assert all(verdict.valid for verdict in before.values()), "no winner file yet: the three files are valid"
@@ -232,6 +232,20 @@ def test_a_winner_file_that_cannot_be_read_stops_the_check_as_our_failure(build)
     upload(store, "5Honest", groups("mine"))
     with pytest.raises(InfraError, match="the published winner file of round r000001 is not a batch file"):
         admission(build, store).verdicts(["5Honest"], rounds=1)
+    store.put(layout.winner_batch("r000001"), json.dumps({"format": 1, "groups": [{"prompt": "a prompt with no rollouts"}]}).encode())
+    with pytest.raises(InfraError, match="round r000001 is not a batch file: KeyError"):
+        admission(build, store).verdicts(["5Honest"], rounds=1)
+
+
+def test_a_published_json_object_with_no_groups_holds_no_rollout(build):
+    """The winner file of a simulated store (``sim.SimAdmission``) is such an object. The validator publishes none."""
+    simulated = json.dumps({"hotkey": "5King", "quality": 0.5, "cap_rate": 0.0, "train": {}, "valid": True}).encode()
+    assert file_keys(simulated) == [] and len(file_keys(file("5King", groups("w1")))) == 20
+    store = Store({layout.winner_batch("r000001"): simulated, layout.winner_batch("r000002"): file("5King", groups("w2"))})
+    upload(store, "5Honest", groups("mine"))
+    upload(store, "5Copier", groups("w2"))
+    got = admission(build, store).verdicts(["5Honest", "5Copier"], rounds=2)
+    assert got["5Honest"].valid and got["5Copier"].rule == PUBLIC_REUSE, "the round with rollouts still counts"
 
 
 # ------------------------------------------------------------ the validator: the freeze, between seats of one round
@@ -332,6 +346,8 @@ def test_the_winner_files_are_read_once_and_the_cache_only_saves_the_reading(tmp
     shutil.rmtree(tmp_path / "cache")
     assert dict(WinnerRollouts(read, tmp_path / "cache").known(3)) == got and asked[4:] == ["r000001", "r000002", "r000003"], "the store is the record: the cache is rebuilt from it"
     assert dict(WinnerRollouts(read).known(3)) == got, "with no cache"
+    (tmp_path / "no-directory").write_bytes(b"a file where the cache directory must be")
+    assert dict(WinnerRollouts(read, tmp_path / "no-directory").known(3)) == got, "a cache that cannot be written stops nothing"
 
 
 def test_a_reader_that_can_be_behind_asks_again_for_a_new_round_with_no_file(tmp_path):
