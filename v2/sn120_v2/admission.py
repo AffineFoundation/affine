@@ -940,7 +940,7 @@ class StoreAdmission:
     def _checked_note(self, hotkey: str) -> str:
         """What the memory of the checks holds for a hotkey, for the log: the verdict with the hash of the bytes it judged, then the tag.
 
-        The tag and the hash in the verdict come from two reads of the object (``_fetch``), so they can differ.
+        The tag is the sha256 of the bytes that the verdict judged (``verdicts``), so the two are equal for a file that has a hash. A file with no hash in its verdict has its own tag: the sha256 of no bytes for an empty file, ``oversized`` for an oversized one.
         """
         kept, held = self._seen.get(hotkey), self._held.get(hotkey)
         found = kept if kept is not None else held[:2] if held is not None else None
