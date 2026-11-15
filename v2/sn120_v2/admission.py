@@ -747,7 +747,7 @@ def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict
 class _Fetched:
     """What the store gave for one hotkey's file. Only store calls made it: no check of the bytes."""
 
-    tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash); None when there is no object
+    tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash) at the hash call; None when there is no object
     read: bool = False  # the object was also downloaded, because the memory had no verdict for this tag
     raw: bytes | Invalid | None = None  # with ``read``: the bytes; the verdict of an oversized object; None when the object is gone
     error: BaseException | None = None  # with ``read``: the download failed with this
@@ -864,6 +864,11 @@ class StoreAdmission:
         the file again. After ``FAULT_TRIES`` such checks in a row the verdict is kept like any other
         (``_tried``). The hold is in memory only, and a clock that goes back ends it.
 
+        A file with no verdict in the memory is read two times: the hash call tells that the memory has no verdict
+        for these bytes, then the download gives the bytes that are checked. A miner can write between the two.
+        So each verdict is kept under the sha256 of the bytes that were checked, not under the hash of the first
+        read: the next call checks a file again only when its bytes differ from the bytes that were checked.
+
         The files are read from the store ``streams`` at one time (``_ahead``). The verdicts and the memory are
         made here, one hotkey after the other in the order given. So a store call that fails stops the call at
         the same hotkey, with the same error and the same memory, for each count of streams.
@@ -883,9 +888,11 @@ class StoreAdmission:
                 elif kept is None or kept[0] != tag:
                     if fetched.error is not None:
                         raise fetched.error
-                    found = self._judged(hotkey, fetched.raw) if fetched.read else self._read(hotkey, layout.miner_object(hotkey))
+                    raw = fetched.raw if fetched.read else self._raw(layout.miner_object(hotkey))
+                    found = self._judged(hotkey, raw)
                     if found is None:
                         continue
+                    tag = ("oversized" if isinstance(raw, Invalid) else sha256_hex(found[0]), tag[1])  # of the bytes that are judged
                     result, final = self._tried(hotkey, tag, found[1])
                     now = self.clock()
                     kept = (tag, _verdict(hotkey, found[0], result, int(now)))
