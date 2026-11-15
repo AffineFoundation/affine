@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from sn120_v2 import layout, links, public, publisher, r2, sim
-from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
+from sn120_v2.admission import PUBLIC_REUSE, RULES, SEAT_REUSE, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.envs.math_pool import MANDATE
 from sn120_v2.errors import ConfigError, ContractError, InfraError
@@ -90,7 +90,7 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
 def test_every_number_follows_the_pinned_params(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777)
     changes = dict(max_prompts=123, max_rollouts=4567, z_bar=1.25, kings_window=7, n_tasks=400, looks=(0.25, 1.0), recipe=recipe)
-    made = world(tmp_path, **changes)
+    made = world(tmp_path, max_reused_rollout_frac=0.2, **changes)  # a field that is absent at its default is in the table when it is set
     doc, text, _ = published(made.publisher.snapshots[-1])
     assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text
@@ -264,15 +264,17 @@ def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_
     assert "No winner is applied yet" not in " ".join(publisher._genesis_lines(later))
 
 
-def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
-    made = world(tmp_path)
+@pytest.mark.parametrize("share", (1.0, 0.1))
+def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path, share):
+    made = world(tmp_path, max_reused_rollout_frac=share)
     doc, text, _ = published(made.publisher.snapshots[-1])
     example = json.loads(text.split("```json\n")[1].split("```")[0])
     rewards = [rollout["reward"] for rollout in example["groups"][0]["rollouts"]]
     assert len(set(rewards)) > 1  # one rollout, or equal rewards, trains nothing
     check_batch(json.dumps(example | {"hotkey": "hk1"}).encode(), "hk1", made.params)
     rows = text.split("### Rule codes")[1].split("### How to upload")[0].splitlines()
-    assert [row for row in rows if row.startswith("| `")] == [f"| `{code}` | {meaning} |" for code, meaning in RULES.items()]  # each rule, with its text, in run order
+    in_force = {code: meaning for code, meaning in RULES.items() if share < 1 or code not in (PUBLIC_REUSE, SEAT_REUSE)}  # a rule that is off is not in the text
+    assert [row for row in rows if row.startswith("| `")] == [f"| `{code}` | {meaning} |" for code, meaning in in_force.items()]  # each rule, with its text, in run order
     assert all(meaning.strip() for meaning in RULES.values()) and set(TRANSIENT) <= set(RULES)
     assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
     assert "- `no_signal`: your file must train something." in text

@@ -489,9 +489,9 @@ class CountedCheck:
         self.real = world.admission.verdicts
         world.admission.verdicts = self
 
-    def __call__(self, hotkeys):
+    def __call__(self, hotkeys, rounds=0, won=()):
         self.calls.append((threading.current_thread().name, tuple(hotkeys)))
-        return self.real(hotkeys)
+        return self.real(hotkeys, rounds, won)
 
 
 def test_the_open_after_a_king_checks_the_file_of_each_waiting_seat_itself(tmp_path):

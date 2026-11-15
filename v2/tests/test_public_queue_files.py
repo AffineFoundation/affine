@@ -14,6 +14,7 @@ What these tests hold:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -36,6 +37,9 @@ ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", 
 # changes nothing else. A later change that changes a param or the snapshot on purpose puts its new value here.
 PARAMS_HASH_BEFORE = "65ce6ef3bc867172eb87673bdb39461d03a8c85aac743c61e8b3d233b9f26d54"
 SNAPSHOT_BEFORE = "a5ffb03f2dd84bfc420f222fb685871452c21c6957546520e4b690d934909021"  # sha256 of the snapshot of ``line_world``
+# The reuse rules added one param after that commit. Its default is "no rule", and the JSON form does not hold a param
+# of this kind at its default. So the two values above stay, and code of that commit reads what this code writes.
+ADDED_PARAMS = ("max_reused_rollout_frac",)
 
 
 def kind(uid: int) -> str:
@@ -182,10 +186,10 @@ def test_the_time_of_the_list_is_the_start_of_the_check(tmp_path):
     world.register(1, 0.0)
     real, started = world.admission.verdicts, []
 
-    def slow(hotkeys):
+    def slow(hotkeys, rounds=0, won=()):
         started.append(world.now)
         world.now += 1000  # reading every waiting file takes time
-        return real(hotkeys)
+        return real(hotkeys, rounds, won)
 
     world.admission.verdicts = slow
     assert world.controller.publish(world.clock(), check_files=True)
@@ -230,6 +234,7 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
     snap = json.loads(json.dumps(last(world)))
     files = snap["queue"].pop("files")
     assert list(snap["queue"]) == ["length", "files_checked_at", "next"]
+    assert not set(ADDED_PARAMS) & set(snap["params"]), "an added param at its default is no part of the published params"
     assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "the snapshot without queue.files is the snapshot of the code before"
 
     # The same for the queue alone, from the state: the rows as the code before made them.
@@ -252,7 +257,11 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
 
 
 def test_the_id_of_the_params_is_the_same(tmp_path):
-    assert Params().params_hash == PARAMS_HASH_BEFORE, "this change adds no param and changes none"
+    assert Params().params_hash == PARAMS_HASH_BEFORE, "an added param at its default changes no id, and no other param is new or has another value"
+    assert not set(ADDED_PARAMS) & set(Params().to_dict()) and set(ADDED_PARAMS) <= {f.name for f in dataclasses.fields(Params)}
+    for name in ADDED_PARAMS:  # with another value the param is written, and the id is another one
+        moved = dataclasses.replace(Params(), **{name: 0.5})
+        assert moved.to_dict()[name] == 0.5 and moved.params_hash != PARAMS_HASH_BEFORE and Params.from_dict(moved.to_dict()) == moved
     world = line_world(tmp_path)
     snap = last(world)
     assert snap["params_hash"] == world.params.params_hash == Params.from_dict(snap["params"]).params_hash

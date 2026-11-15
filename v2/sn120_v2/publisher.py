@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
-from .canonical import digest, sha256_hex, to_jsonable
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, PUBLIC_REUSE, RULES, SEAT_REUSE, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .canonical import digest, sha256_hex, to_jsonable, written_fields
 from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, Task
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .gpu.batch import END_OF_TURN
@@ -50,9 +50,10 @@ from .links import upload_entry
 from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
 from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
 from .queue import SECONDS_PER_DAY
+from .reuse import REMOVED
 from .sampling import SEED_BITS
 from .seams import ObjectStore
-from .state import ABANDONED, load
+from .state import ABANDONED, REUSE_LEFT_OUT, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
@@ -587,7 +588,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
 
 
 def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
-    recipe = params.recipe
+    recipe, reuse = params.recipe, reuse_in_force(params)
     example = {
         "version": TRAIN_FORMATS[0],
         "hotkey": "<your hotkey ss58 address>",
@@ -647,6 +648,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule). A prompt that",
         "  is not a task of the pool has no official grade: its rewards are not compared with anything.",
+        *_reuse_lines(params),
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
         f"  reward: rule code `{TIME_LIMIT}`.",
         f"- `{NO_SIGNAL}`: your file must train something. A rollout trains when its advantage is not 0 and it has at",
@@ -673,7 +675,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "A check stops at the first rule that a file breaks. The `check` command names that rule. The validator",
         "publishes only `file_valid` (section 4), not the rule. The rules run in this order:",
         "",
-        *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items())),
+        *table(("rule code", "the file is invalid when"), ((f"`{code}`", meaning) for code, meaning in RULES.items() if reuse or code not in (PUBLIC_REUSE, SEAT_REUSE))),
         "",
         f"Not a final verdict: {', '.join(f'`{code}`' for code in TRANSIENT)}. Such a code comes from one check on our machine at one",
         f"moment, so the validator checks the file again when it tries to open a round, at most once each {FAULT_HOLD_S // 60} minutes.",
@@ -683,6 +685,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "With such a code, before and after that, a round does not take the file: you are not charged, and the seat",
         "is skipped as with any invalid file (section 4). The validator does not publish the code or the count: you",
         "see only `file_valid`. Every other code is final for those bytes: upload a new file.",
+        *([f"`{SEAT_REUSE}` is the one code that no check before a round can give: see the reuse rule above."] if reuse else []),
         "",
         *_rollout_lines(params),
         "",
@@ -690,6 +693,41 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         *_upload_lines(doc["contract"]),
     ]
+
+
+def _reuse_lines(params: Params) -> list[str]:
+    """The one item of section 5 on reused rollouts. Its words must hold with and without the part ``## Terms``."""
+    share = params.max_reused_rollout_frac
+    if not reuse_in_force(params):
+        return []
+    return [
+        "- Reuse: the published file of each round winner (section 9) is public, and a file that reuses its rollouts is",
+        "  refused. Each prompt and each output is put in the form below. Two rollouts are the same when their prompts",
+        "  are equal in that form and their outputs are equal in that form. The form of a text: first Unicode NFKD, then",
+        "  case folding (`str.casefold` of Python), then NFKD again. Then each character of the Unicode categories",
+        f"  {', '.join(REMOVED)} is removed: all white space, the control and format characters (a zero-width space",
+        "  is one), and the marks with no width. NFKD splits an accent from its letter where Unicode has that split, so",
+        "  e with an acute accent gives e; o with a stroke has no split and stays as it is. A character of each other",
+        "  category stays, also when it shows nothing. Last: punctuation and symbols (each category P and S) are removed",
+        "  from the end of the text. Examples of what does not make a rollout new: other white space, another case, e",
+        "  with an acute accent for e, a full-width letter for the plain letter, a zero-width space, a full stop at the",
+        "  end. The function is `normal` in `v2/sn120_v2/reuse.py`, with the Unicode data of the validator's Python.",
+        f"  At most {show(share)} of your rollouts may be the same as rollouts in the published winner files,",
+        f"  all rounds together: rule code `{PUBLIC_REUSE}`. The file of a winner counts for every hotkey, also for a hotkey of",
+        "  that winner: no file wins two times. `check` runs this rule with `--winner-files <directory>` and the URL of",
+        "  mining.json. A winner file that the validator cannot read, or that is gone from its store, does not stop a",
+        "  round: the round compares without that file, and its public round file names the file and the reason under",
+        f"  `{REUSE_LEFT_OUT}`. The file counts again from the check that reads it. The same share is the limit for rollouts",
+        f"  of a seat ahead of yours in the same round: rule code `{SEAT_REUSE}`. That seat keeps its entry. Yours is skipped",
+        "  for that round only: you are not charged and you keep your place. No check before the round can give this",
+        "  code, and the validator does not publish it. A sign of it, which other causes can also give: `file_valid` is",
+        "  yes, you did not change the file, and the round takes a seat behind yours.",
+    ]
+
+
+def reuse_in_force(params: Params) -> bool:
+    """The reuse rules run. With the default share of 1 they do not, and llms.txt is the text of before these rules."""
+    return params.max_reused_rollout_frac < 1
 
 
 def _rollout_lines(params: Params) -> list[str]:
@@ -1159,7 +1197,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     """llms.txt from a mining.json document. Pure: the same document always gives the same text."""
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
-    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
+    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in written_fields(params) if f.name != "recipe"]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1266,7 +1304,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
     if found is None or found.group(1) != doc["snapshot_digest"]:
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
-    values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"}
+    values = {f.name: show(getattr(params, f.name)) for f in written_fields(params) if f.name != "recipe"}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

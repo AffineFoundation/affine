@@ -558,7 +558,7 @@ def test_run_names_the_cause_at_each_try_when_our_failure_stops_the_opening_of_a
     shutil.copytree(Path(__file__).parent / "data" / "state_515d7e9f" / "idle", directory)
     SimAdmission(LocalStore(directory / STORE_DIR)).upload("hk4", 0.3)
     dead = pool_grader(Pool(), ToyGradePool(lambda task, output, capped: SimpleNamespace(reward=0.0, machine_cause="time-limit")))  # too slow for every row
-    monkeypatch.setattr(SimAdmission, "verdicts", lambda self, hotkeys: check_batch(file(), HOTKEY, build.params(), tokens=WordTokens(), grader=dead))
+    monkeypatch.setattr(SimAdmission, "verdicts", lambda self, hotkeys, rounds=0, won=(): check_batch(file(), HOTKEY, build.params(), tokens=WordTokens(), grader=dead))
     rounds = len(load(directory / JOURNAL_FILE).rounds)
     assert main(["run", "--state-dir", str(directory), "--stack", "sn120_v2.sim:stack", "--rounds", "1", "--max-idle", "3", "--idle-sleep", "0"]) == 0
     lines = capsys.readouterr().err.splitlines()

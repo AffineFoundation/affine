@@ -24,6 +24,7 @@ from .types import Entry, HeadManifest, HeadVersion, King, QueueEntry, Registrat
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
+REUSE_LEFT_OUT = "reuse_left_out"  # a key of the data of ``round_opened`` and of the public round file; it is there only when a file was left out
 DAY = 86400
 
 # Journal record kinds.
@@ -109,12 +110,26 @@ class State:
     front_on_arrival: set[RegKey] = field(default_factory=set)
     leader: str = ""
     last_seq: int = -1
+    # Of the open round: the published winner files that rule ``public_reuse`` ran without when the round took its
+    # seats, as (round id, reason). It is no field of ``RoundRecord``: code of before the reuse rules refuses a
+    # record with a field that it does not know, and it reads a new key in the data of ``round_opened``.
+    reuse_left_out: tuple[tuple[str, str], ...] = ()
 
     @property
     def head(self) -> HeadVersion:
         if not self.heads:
             raise V2Error("the journal has no genesis yet")
         return self.heads[-1]
+
+    @property
+    def rounds_closed(self) -> int:
+        """Rounds 1 to this number are closed: what each of them published never changes."""
+        return self.round_seq - (1 if self.round else 0)
+
+    @property
+    def rounds_won(self) -> frozenset[str]:
+        """The ids of the rounds that have a winner: each of them published the file of its winner. A king of v1 names no round."""
+        return frozenset(king.round_id for king in self.kings)
 
     def turns_last_day(self, now: int) -> int:
         return sum(1 for at in self.turn_times if at > now - DAY)
@@ -204,6 +219,7 @@ def _round_opened(state: State, data: dict, at: int) -> None:
             _need(entry.reg.key in state.queue and not state.queue[entry.reg.key].leased, "a round took a seat that is not waiting")
             _edit(state, entry.reg.key, leased=True)
     state.round, state.round_seq = record, state.round_seq + 1
+    state.reuse_left_out = tuple((str(round_id), str(reason)) for round_id, reason in data.get(REUSE_LEFT_OUT, ()))
 
 
 def _open_round(state: State, data: dict) -> RoundRecord:
@@ -277,7 +293,7 @@ def _round_closed(state: State, data: dict, at: int) -> None:
         _edit(state, key, leased=False)
     _need(not any(state.queue[e.reg.key].leased for l in record.leases for e in l.entries if e.reg.key in state.queue), "a closed round left a seat leased")
     state.rounds = (state.rounds + [replace(record, outcome=outcome, closed_at=at)])[-HISTORY:]
-    state.round = None
+    state.round, state.reuse_left_out = None, ()
     state.snapshot_id = data.get("snapshot_id", state.snapshot_id)
     state.turn_times = [t for t in state.turn_times if t > at - 2 * DAY]
 

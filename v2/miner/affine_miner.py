@@ -2,6 +2,7 @@
 
     python v2/miner/affine_miner.py bounds --mining-json mining.json
     python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json
+    python v2/miner/affine_miner.py check --mining-json <URL of mining.json> --hotkey <ss58> --winner-files winners batch.json
     AFFINE_PUT_URL=<link> python v2/miner/affine_miner.py upload --mining-json mining.json --hotkey <ss58> batch.json
     python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss58> \
         --irt-snapshot irt.json --round-seed <seed> --backend <module>:<function> batch.json
@@ -25,6 +26,7 @@ import os
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
@@ -37,7 +39,9 @@ from sn120_v2.errors import ConfigError, ContractError, InfraError, V2Error
 from sn120_v2.irt import draw_from_snapshot
 from sn120_v2.params import Params
 from sn120_v2.publisher import UPLOAD_HEADERS, miner_settable
+from sn120_v2.reuse import WinnerRollouts
 from sn120_v2.seams import Evaluator, ObjectStore, RoundRunner, Trainer
+from sn120_v2.state import APPLIED
 from sn120_v2.types import Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
 from sn120_v2.worker import LocalRunner
 
@@ -47,15 +51,56 @@ PUT_URL_ENV = "AFFINE_PUT_URL"  # the opened upload link; it is a secret, so it 
 CLIENT = {"User-Agent": "sn120-v2-miner/1"}
 
 
-def load_contract(source: str) -> tuple[Params, HeadVersion]:
-    """Params and head from mining.json: a file or an http(s) URL. There is no built-in default."""
+def read_document(source: str) -> dict[str, Any]:
+    """mining.json: a file or an http(s) URL. There is no built-in default."""
     if source.startswith(("http://", "https://")):
         with urllib.request.urlopen(urllib.request.Request(source, headers=CLIENT), timeout=30) as reply:
-            raw = reply.read()
-    else:
-        raw = Path(source).read_bytes()
-    doc = json.loads(raw)
+            return json.loads(reply.read())
+    return json.loads(Path(source).read_bytes())
+
+
+def contract_of(doc: Mapping[str, Any]) -> tuple[Params, HeadVersion]:
     return Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
+
+
+def load_contract(source: str) -> tuple[Params, HeadVersion]:
+    """Params and head from mining.json: a file or an http(s) URL."""
+    return contract_of(read_document(source))
+
+
+def winner_rollouts(doc: Mapping[str, Any], cache: str) -> tuple[Mapping[bytes, str], tuple[tuple[str, str], ...]]:
+    """The rollouts of every published winner file, for rule ``public_reuse``: the same input as the validator's.
+
+    The validator compares with the winner files of all closed rounds. ``history`` of mining.json ends with the
+    last closed round, so this reads the winner file of each round from 1 to that one at the public address. A
+    round with no winner has no such file. ``cache`` is a directory that keeps the rollout keys of each file, so
+    a file is read once. A round of ``history`` with no file is asked again at the next run: the public site can
+    be behind for its newest rounds.
+
+    The second value names each winner file that could not be read, with the reason. As the validator does, the
+    check runs without such a file, and the next run asks for it again. The report says which files they are.
+    A winner file that the address does not have (HTTP 404) is such a file when mining.json names its round as
+    a round with a winner: ``history`` gives the outcome of its rounds, and ``kings`` names the round of each
+    king. For an older round mining.json says nothing, so there HTTP 404 reads as a round with no winner.
+    """
+    contract, history = doc["contract"], doc.get("history") or []
+    rounds = [int(view["round_id"][1:]) for view in history]
+    won = {view["round_id"] for view in history if view.get("outcome") == APPLIED} | {king["round_id"] for king in doc.get("kings") or []}
+    if not contract.get("public_url"):
+        raise ConfigError("this mining.json names no public address, so the published winner files cannot be read")
+    address = f"{contract['public_url']}/{contract['objects']['winner_batch']}"
+
+    def read(round_id: str) -> bytes | None:
+        try:
+            with urllib.request.urlopen(urllib.request.Request(address.replace("ROUND_ID", round_id), headers=CLIENT), timeout=300) as reply:
+                return reply.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and round_id not in won:
+                return None
+            raise InfraError(f"HTTP {exc.code}") from None  # each other failure of the read goes to ``left_out`` as it is
+
+    winners = WinnerRollouts(read, Path(cache))
+    return winners.known(max(rounds, default=0), settled=min(rounds, default=1) - 1, won=won), winners.left_out
 
 
 def bounds_text(params: Params) -> str:
@@ -73,9 +118,11 @@ def applied_train(params: Params, train: Mapping[str, Any]) -> dict[str, Any]:
     return {bound.key: to_jsonable(getattr(recipe, bound.key)) for bound in params.recipe.miner_bounds}
 
 
-def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None, grader: Grader | None = None) -> dict[str, Any]:
+def check(
+    raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None, grader: Grader | None = None, public: Mapping[bytes, str] | None = None
+) -> dict[str, Any]:
     """The validator's check of one file, as a report. Raises ``Invalid`` when the file breaks a rule."""
-    return check_report(check_batch(raw, hotkey, params, tokens=tokens, grader=grader), params)
+    return check_report(check_batch(raw, hotkey, params, tokens=tokens, grader=grader, public=public), params)
 
 
 def check_report(batch: Batch, params: Params) -> dict[str, Any]:
@@ -87,7 +134,7 @@ def check_report(batch: Batch, params: Params) -> dict[str, Any]:
         "n_rollouts": batch.n_rollouts,
         "dropped_groups": batch.dropped_groups,
         "rules_run": list(batch.checked),
-        "rules_not_run": [family for family in ("tokens", "grader") if family not in batch.checked],
+        "rules_not_run": [family for family in ("tokens", "grader", "reuse") if family not in batch.checked],
         "train_applied": applied_train(params, batch.train),
     }
 
@@ -170,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--hotkey", required=True, help="the ss58 address of your hotkey")
         command.add_argument("--tokenizer", help="tokenizer of the head (directory or model id); without it the token rules do not run")
         command.add_argument("--grade", action="store_true", help="match your rewards with the official grader (needs --tokenizer and the envs extra)")
+        if name != "reproduce":
+            command.add_argument("--winner-files", help="a directory: compare your rollouts with the published winner files (rule public_reuse); it keeps what was read")
         if name == "reproduce":
             command.add_argument("--irt-snapshot", required=True, help="the published IRT snapshot of the round (a JSON file)")
             command.add_argument("--round-seed", required=True, help="the public seed of the round")
@@ -179,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--work", help="work directory (default: a temporary directory)")
     args = parser.parse_args(argv)
     try:
-        params, head = load_contract(args.mining_json)
+        doc = read_document(args.mining_json)
+        params, head = contract_of(doc)
         if args.command == "bounds":
             print(bounds_text(params))
             return 0
@@ -190,7 +240,12 @@ def main(argv: list[str] | None = None) -> int:
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer)
         grader = official_grader(params) if args.grade else None
         if args.command in ("check", "upload"):
-            report = check(raw, args.hotkey, params, tokens, grader)
+            # With a share of 1 the validator has no reuse rule, so no winner file is read and "reuse" is a rule that did not run.
+            compared = bool(args.winner_files) and params.max_reused_rollout_frac < 1
+            public, left_out = winner_rollouts(doc, args.winner_files) if compared else (None, ())
+            report = check(raw, args.hotkey, params, tokens, grader, public)
+            if compared:
+                report["winner_files_not_read"] = [{"round_id": round_id, "reason": reason} for round_id, reason in left_out]
             if args.command == "upload":  # an invalid file is never sent
                 upload(raw, os.environ[PUT_URL_ENV])
                 report["uploaded"] = True

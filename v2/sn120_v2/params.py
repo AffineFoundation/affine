@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .canonical import Record, is_sha256
+from .canonical import ABSENT_AT_DEFAULT, Record, is_sha256
 from .errors import BatchRejected, ConfigError
 
 # Identity of the launch model. The base hash is the manifest digest of the
@@ -210,6 +210,11 @@ class Params(Record):
     reward_tolerance: float = 0.0
     min_pool_prompt_frac: float = 0.0  # 0 = prompts need not come from the public pool
     max_train_token_steps: int = 8_000_000  # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit
+    # The largest share of the rollouts of a file that may be copies: of rollouts in the published winner files, and
+    # of rollouts of a seat ahead in the same round. 1 = no such rule, and that is the default: ``set-params`` puts
+    # the rule in force, new code alone does not. At 1 the field is no part of the JSON form or of ``params_hash``,
+    # so params with no rule are the params of before the field. Honest winner files shared no rollout so far.
+    max_reused_rollout_frac: float = field(default=1.0, metadata=ABSENT_AT_DEFAULT)
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
@@ -255,6 +260,7 @@ class Params(Record):
         _need(_unit(low) and _unit(high) and low < high, "irt_middle_band must be two rising shares")
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
+        _need(_unit(self.max_reused_rollout_frac), "max_reused_rollout_frac must be in [0, 1]")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
         _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")
