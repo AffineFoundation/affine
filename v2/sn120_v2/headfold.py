@@ -441,6 +441,10 @@ class Source(Protocol):
         """Put one file at ``path``, only when it has this sha256."""
         ...
 
+    def has(self, kind: str, set_id: str) -> bool:
+        """True when this source gives the file set ``set_id`` now. For a base or a master: also when the chain record does not call its head a checkpoint yet."""
+        ...
+
 
 class StoreSource:
     """The object store itself. For the box, and for a machine that has a key of the store."""
@@ -464,6 +468,9 @@ class StoreSource:
             path.unlink()
             raise VerifyError(f"{name} of the {kind} {set_id[:12]} in the store does not match its sha256")
         self.fetched += path.stat().st_size
+
+    def has(self, kind: str, set_id: str) -> bool:
+        return kind == LORA  # the store keeps each LoRA; for the weight files of a head, the chain record of the store is the word
 
 
 class LinkSource:
@@ -497,6 +504,9 @@ class LinkSource:
         say(f"fetch {name} ({row['size']} bytes)")
         download(str(row["url"]), path, sha256, int(row["size"]))
         self.fetched += int(row["size"])
+
+    def has(self, kind: str, set_id: str) -> bool:
+        return set_id in self.sets
 
 
 def fetch_set(source: Source, kind: str, set_id: str, files: Mapping[str, str], work: Path) -> Path:
@@ -590,9 +600,15 @@ def rebuild(
     """Make the folded head ``target`` (default: the last one of ``doc``) in ``<work>/cache``. Returns where it is.
 
     The start is the newest head before ``target`` that this machine holds,
-    else the newest checkpoint. Each step is one fold, and its files must
-    have the hashes of the chain record: a step that differs is deleted and
-    the rebuild stops. The head before a step is deleted after the step.
+    when the source gives the LoRA of each step after it. Else it is the
+    newest head whose full files the source gives: a checkpoint of the
+    record, or a head that became one after ``doc`` was written (the box
+    writes the marker of a checkpoint before it publishes mining.json again,
+    and the links file has the new checkpoint at once). The file lists of
+    such a head must hash to the two ids that ``doc`` has for it, as for any
+    checkpoint. Each step is one fold, and its files must have the hashes of
+    the chain record: a step that differs is deleted and the rebuild stops.
+    The head before a step is deleted after the step.
     """
     check_chain(doc)
     settings = dataclasses.replace(settings or FoldSettings(), twice=False)  # the record decides here, not a second fold
@@ -605,7 +621,12 @@ def rebuild(
             known[head["version_id"]] = all((cache / head[key]).is_dir() and manifest_digest(hash_tree(cache / head[key])) == head[key] for _, key in _IDS)
         return known[head["version_id"]]
 
+    def whole(head: Mapping[str, Any]) -> bool:
+        return head["checkpoint"] is True or all(source.has(kind, head[key]) for kind, key in _IDS)
+
     at, steps = route(doc, target, held)
+    if not (held(at) and all((cache / lora["lora_hash"]).is_dir() or source.has(LORA, lora["lora_hash"]) for step in steps for lora in step["loras"])):
+        at, steps = route(doc, target, whole)
     start = at
     if not held(start):
         say(f"start: checkpoint {start['version_id'][:12]}, then {len(steps)} step(s)")
@@ -839,6 +860,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         settings = FoldSettings.from_env({**os.environ, DEVICES_ENV: args.device} if args.device else os.environ, box=False)
         doc = read_json(args.chain, "the chain file")
+        if not doc.get("head_chain") and "contract" in doc:
+            raise ConfigError(
+                "this mining.json has no head_chain part, so there is no chain to rebuild from. The box writes that part when it keeps the weight"
+                " files of a head. Get the head with: python -m sn120_v2.replicate fetch --mining-json <this mining.json> --work <directory>"
+            )
         if args.store:
             source: Source = StoreSource(R2Store.from_env())
         else:
