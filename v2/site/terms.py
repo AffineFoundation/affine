@@ -11,6 +11,11 @@
 ``rewrite_served`` adjusts text the site copies to the public root (llms.txt).
 Technical identifiers stay: ``batch.json``, ``batch_sha256``, ``affine-batch-v*``,
 ``batch_cap``, field names, and code paths.
+
+``_SEATS`` is not a term: it states a rule. A round limits seats by hotkey only,
+and the coldkey is not used. The replacement is, byte for byte, the two lines
+that the publisher prints from the commit that states the rule (``0b800898``).
+So the rule matches nothing once the box runs that commit, and it can go then.
 """
 
 from __future__ import annotations
@@ -67,11 +72,25 @@ _SUBMISSION = (
 )
 
 
+_SEATS = (
+    (
+        re.compile(
+            r"^- One entry for each miner in a round\. A second seat of the same hotkey or coldkey waits for a later round\.$",
+            re.M,
+        ),
+        "- One seat for a hotkey in a round. A second seat of the same hotkey waits for a later round. The coldkey is not\n"
+        "  used: one coldkey can have several seats, each with its own hotkey, in the same round.",
+    ),
+)
+
+
 def rewrite_served(text: str | bytes) -> bytes:
     """Apply approved public wording to text the site serves (llms.txt)."""
     raw = text.decode() if isinstance(text, (bytes, bytearray)) else text
     for pattern, repl in _EVALUATED:
         raw = pattern.sub(repl, raw)
     for pattern, repl in _SUBMISSION:
+        raw = pattern.sub(repl, raw)
+    for pattern, repl in _SEATS:
         raw = pattern.sub(repl, raw)
     return raw.encode()
