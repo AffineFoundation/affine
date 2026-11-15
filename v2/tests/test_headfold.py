@@ -354,6 +354,42 @@ def test_a_reader_with_the_links_file_starts_at_the_newest_checkpoint_and_later_
         rebuild(tail(doc), tmp_path / "stale", LinkSource(stale))
 
 
+def test_a_head_that_the_links_file_gives_whole_is_a_start_before_the_chain_record_calls_it_a_checkpoint(world, tmp_path):
+    world.start(CHAIN)
+    world.king()
+    old = tail(world.chain_file())  # what mining.json shows from the marker of the head until the box publishes again
+    start, step = old["start"]["version_id"], old["steps"][-1]
+    before = links_of(world)  # the older checkpoint, and the LoRA of the step
+    assert old["start"]["steps_to_head"] == 1 and step["checkpoint"] is False
+    for name in ("warm", "both"):  # two readers that hold the head before
+        assert rebuild(old, tmp_path / name, LinkSource(before), start)["steps"] == 0
+    world.controller.head.checkpoint(world.state)  # the files of the head, then its marker; nothing is published
+    head, after = world.head, links_of(world)
+    assert [point["version_id"] for point in after["checkpoints"]] == [step["version_id"]] and after["chain_loras"] == []
+
+    cold = rebuild(old, tmp_path / "cold", LinkSource(after))
+    assert cold["started_from"] == step["version_id"] and cold["steps"] == 0 and is_head(world, head, tmp_path / "cold" / "cache")
+    warm = rebuild(old, tmp_path / "warm", LinkSource(after))  # the LoRA of the step has no link now, so the head that it holds is no start
+    assert warm["started_from"] == step["version_id"] and warm["steps"] == 0 and is_head(world, head, tmp_path / "warm" / "cache")
+
+    # A links file with the head whole and with the LoRA of the step: the reader that holds the head before folds, and fetches no weight file.
+    both = before | {kind: after["checkpoints"][0][kind] for kind in (BASE, MASTER)}
+    lora = sum(row["size"] for group in before["chain_loras"] for row in group["files"])
+    folded = rebuild(old, tmp_path / "both", LinkSource(both))
+    assert folded["started_from"] == start and folded["steps"] == 1 and folded["fetched_bytes"] == lora and is_head(world, head, tmp_path / "both" / "cache")
+    direct = rebuild(old, tmp_path / "direct", LinkSource(both))
+    assert direct["started_from"] == step["version_id"] and direct["steps"] == 0 and is_head(world, head, tmp_path / "direct" / "cache")
+
+    # The ids of the chain record decide: a links file with another file list for the head is refused.
+    wrong = copy.deepcopy(after)
+    wrong["checkpoints"][0][MASTER]["files"][0]["sha256"] = "0" * 64
+    with pytest.raises(VerifyError, match="does not hash to the ids of the chain record"):
+        rebuild(old, tmp_path / "wrong", LinkSource(wrong))
+    # The store: the record is the word, as before.
+    stored = rebuild(old, tmp_path / "store", StoreSource(world.store))
+    assert stored["started_from"] == start and stored["steps"] == 1 and is_head(world, head, tmp_path / "store" / "cache")
+
+
 def test_a_step_with_other_hashes_than_the_record_is_deleted_and_the_text_names_the_way_out(world, tmp_path):
     world.king()
     world.start(CHAIN)
@@ -404,6 +440,9 @@ class Dirs:
         assert file_sha256(path) == sha256
         self.fetched += path.stat().st_size
 
+    def has(self, kind, set_id):
+        return False
+
 
 @pytest.mark.parametrize("plain", [False, True])
 def test_the_base_of_a_checkpoint_is_the_cast_of_its_master_and_is_fetched_only_when_the_cast_differs(tmp_path, plain, capsys):
@@ -444,8 +483,11 @@ def test_the_rebuild_command_reads_mining_json_or_the_chain_file_and_says_refuse
     assert main(["rebuild", "--chain", str(chain), "--links", str(links), "--work", str(tmp_path / "three"), "--head", start]) == 0
     assert json.loads(capsys.readouterr().out)["steps"] == 0
 
+    full = tmp_path / "full.json"  # a mining.json of a box that uploads each head whole
+    full.write_text(json.dumps({"schema": "sn120-v2-public-1", "contract": {"public_url": tmp_path.as_uri(), "read_links": "read_links.json"}}))
     refused = (
         (["--chain", str(chain), "--work", str(tmp_path / "x")], "refused: ConfigError: the chain file names no links file; pass --links or --store"),
+        (["--chain", str(full), "--work", str(tmp_path / "x")], "refused: ConfigError: this mining.json has no head_chain part, so there is no chain to rebuild from"),
         (["--chain", str(tmp_path / "none.json"), "--work", str(tmp_path / "x")], "refused: ConfigError: cannot read"),
         (["--chain", str(links), "--links", str(links), "--work", str(tmp_path / "x")], "refused: VerifyError: the head chain is not complete"),
         (["--chain", str(chain), "--links", str(links), "--work", str(tmp_path / "x"), "--device", "gpu"], f"refused: ConfigError: {DEVICES_ENV} must be"),
