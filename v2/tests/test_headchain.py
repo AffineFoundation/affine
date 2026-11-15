@@ -291,7 +291,7 @@ def test_llms_txt_names_the_chain_the_rebuild_command_and_the_implementation_set
     flat, mining = text()
     chain = mining["head_chain"]
     assert chain["head_version_id"] == head.head.version_id and not [word for word in words if word not in flat]
-    assert f"The newest checkpoint is head `{chain['start']['version_id']}`. The base of head M is {len(chain['steps'])} fold(s) after it (kernel `{FIXED_ORDER}`)." in flat
+    assert f"At this snapshot the newest checkpoint is head `{chain['start']['version_id']}`. The base of head M is {len(chain['steps'])} fold(s) after it (kernel `{FIXED_ORDER}`)." in flat
     assert f"`python -m {publisher.REBUILD_MODULE} rebuild --chain https://site.example/mining.json --work <directory>`" in flat
     assert f"`{publisher.FOLD_IMPLEMENTATION_ENV}=blas`" in flat and "`refused: `" in flat and f"`{layout.HEAD_CHAIN}`" in flat
     assert publisher.REBUILD_COST in flat and "21 minutes on 4 CPU cores" in publisher.REBUILD_COST
@@ -303,4 +303,4 @@ def test_llms_txt_names_the_chain_the_rebuild_command_and_the_implementation_set
     world.round()
     flat, mining = text()
     assert mining["head_chain"]["start"]["version_id"] == head.head.version_id and mining["head_chain"]["steps"] == []
-    assert f"The newest checkpoint is head `{head.head.version_id}`. The base of head M is that checkpoint." in flat
+    assert f"At this snapshot the newest checkpoint is head `{head.head.version_id}`. The base of head M is that checkpoint." in flat
