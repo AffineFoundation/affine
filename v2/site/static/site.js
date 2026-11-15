@@ -396,7 +396,7 @@
   let allRefs = false;
   // The reference rows of the home page, by label in small letters. A reference model that is not in this list stays in the data
   // and has its row on the v1 page.
-  const HOME_REFS = ['qwen3-8b'];
+  const HOME_REFS = ['qwen3.5-9b'];
   function bench(b) {
     PROFILES = b.profiles || {};
     if (!table('bench')) return;
