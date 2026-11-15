@@ -42,41 +42,6 @@ def waiting(queue: Queue) -> list[QueueEntry]:
     return sorted((seat for seat in queue.values() if not seat.leased), key=turn_key)
 
 
-def coldkey_share_report(
-    queue: Queue,
-    registrations: Iterable[Registration],
-) -> dict[str, object]:
-    """How many waiting seats share an owner coldkey (read-only impact of the one-seat-per-coldkey rule).
-
-    ``registrations`` is usually a chain snapshot: each seat's coldkey is taken
-    from the matching registration when present, else from the seat itself.
-    Seats with an empty coldkey are counted under ``missing_coldkey``.
-    """
-    by_key = {reg.key: reg for reg in registrations}
-    groups: dict[str, list[int]] = {}
-    missing = 0
-    for seat in waiting(queue):
-        reg = by_key.get(seat.reg.key, seat.reg)
-        coldkey = reg.coldkey
-        if not coldkey:
-            missing += 1
-            continue
-        groups.setdefault(coldkey, []).append(seat.reg.uid)
-    shared = {coldkey: uids for coldkey, uids in groups.items() if len(uids) > 1}
-    return {
-        "waiting": len(waiting(queue)),
-        "with_coldkey": sum(len(uids) for uids in groups.values()),
-        "missing_coldkey": missing,
-        "coldkeys_with_2plus_waiting_seats": len(shared),
-        "waiting_seats_that_share_a_coldkey": sum(len(uids) for uids in shared.values()),
-        "largest_share": max((len(uids) for uids in shared.values()), default=0),
-        "shares": [
-            {"coldkey": coldkey, "uids": uids, "count": len(uids)}
-            for coldkey, uids in sorted(shared.items(), key=lambda item: (-len(item[1]), item[0]))
-        ],
-    }
-
-
 @dataclass(frozen=True)
 class Selection:
     """The result of one walk of the queue."""
@@ -93,21 +58,21 @@ def select_round(
 ) -> Selection:
     """Walk the queue and admit up to ``cap`` seats that have a valid frozen file.
 
-    A seat with no valid file is skipped. A held seat is passed over. A miner
-    gets one entry per round: a second seat of the same hotkey or coldkey
-    stays queued for a later round.
+    A seat with no valid file is skipped. A held seat is passed over. A hotkey
+    gets one entry per round: a second seat of the same hotkey stays queued
+    for a later round. The coldkey is not part of the rule: no line here
+    reads ``Registration.coldkey``.
     """
     entries: list[Entry] = []
     skipped: list[RegKey] = []
-    miners: set[str] = set()
+    hotkeys: set[str] = set()
     for seat in waiting(queue):
         if len(entries) >= cap:
             break
         reg = seat.reg
         if seat.held:
             continue
-        owners = {f"hotkey:{reg.hotkey}"} | ({f"coldkey:{reg.coldkey}"} if reg.coldkey else set())
-        if owners & miners:
+        if reg.hotkey in hotkeys:
             continue
         verdict = verdicts.get(reg.hotkey)
         batch = freeze(reg) if verdict is not None and verdict.valid else None
@@ -115,7 +80,7 @@ def select_round(
             skipped.append(reg.key)
             continue
         entries.append(Entry(queue_pos=len(entries), reg=reg, batch=batch))
-        miners |= owners
+        hotkeys.add(reg.hotkey)
     return Selection(tuple(entries), tuple(skipped))
 
 
@@ -230,11 +195,10 @@ class SyncPlan:
     added: tuple[Registration, ...]
     removed: tuple[RegKey, ...]
     rehotkeyed: tuple[Registration, ...]
-    refreshed: tuple[Registration, ...] = ()  # same hotkey; owner coldkey (or other snapshot fields) caught up
 
     @property
     def empty(self) -> bool:
-        return not (self.added or self.removed or self.rehotkeyed or self.refreshed)
+        return not (self.added or self.removed or self.rehotkeyed)
 
 
 def plan_sync(
@@ -253,11 +217,6 @@ def plan_sync(
     or a hotkey that already had its turn, never enters again. A seat whose
     registration left the chain is removed, unless it is in an open round.
 
-    The owner coldkey of each seat is the ``SubtensorModule.Owner`` value of
-    its hotkey at the snapshot block. A seat whose hotkey stayed but whose
-    coldkey in the queue is empty or stale is refreshed so the one-entry-per-
-    coldkey rule of ``select_round`` can apply.
-
     A bad chain read must not empty the paid queue. So an empty snapshot, a
     snapshot of another subnet, or a plan that removes more than
     ``max_remove_frac`` of the queue raises ``InfraError`` unless ``force``.
@@ -275,14 +234,6 @@ def plan_sync(
     rehotkeyed = [
         reg for key, reg in on_chain.items() if key in queue and not queue[key].leased and queue[key].reg.hotkey != reg.hotkey
     ]
-    refreshed = [
-        reg
-        for key, reg in on_chain.items()
-        if key in queue
-        and not queue[key].leased
-        and queue[key].reg.hotkey == reg.hotkey
-        and queue[key].reg.coldkey != reg.coldkey
-    ]
     removed = [key for key, seat in queue.items() if key not in on_chain and not seat.leased]
     if not force and len(queue) >= 8 and len(removed) > max_remove_frac * len(queue):
         raise InfraError(
@@ -290,9 +241,4 @@ def plan_sync(
             "If the chain is right, an operator applies it with the force-sync command"
         )
     by_turn = lambda reg: (reg.registration_block, reg.uid)
-    return SyncPlan(
-        tuple(sorted(added, key=by_turn)),
-        tuple(sorted(removed)),
-        tuple(sorted(rehotkeyed, key=by_turn)),
-        tuple(sorted(refreshed, key=by_turn)),
-    )
+    return SyncPlan(tuple(sorted(added, key=by_turn)), tuple(sorted(removed)), tuple(sorted(rehotkeyed, key=by_turn)))

@@ -1,10 +1,11 @@
-"""The order ``overlap`` together with the queue rules of the record ``seats_restored`` and of the owner coldkey.
+"""The order ``overlap`` together with the queue rules: the record ``seats_restored``, and one seat for a hotkey in a round.
 
 Words. The back: the last zone of the queue. The squat rule moves a seat there when it is old and has no valid
 file. ``seats_restored``: the record that ``open_round`` writes when a seat at the back has a valid file at the
 open. The seat then leaves the back. The record comes before ``round_opened``, or with no round after it when
-too few seats are ready. Owner coldkey: the account that owns a hotkey on the chain. A round takes one seat for
-each coldkey.
+too few seats are ready. Coldkey: the account that owns a hotkey on the chain. It is not used: the validator
+does not read it from the chain, and no seat waits for it. A walk: one call of ``select_round``, which goes
+through the queue in turn order one time and gives the seats of a round.
 
 Each part was tested alone. Here they run together, on a real tiny head, in the mode ``chain``:
 
@@ -12,10 +13,9 @@ Each part was tested alone. Here they run together, on a real tiny head, in the 
 * A ``run`` that dies at the record, and a request to stop after the round (``stopafter.py``) that comes
   before it, at it, or after it.
 * The chain file and its checkpoints while a round with such a seat is open.
-* One seat for each coldkey when the registrations of the open were read beside the fold, and the round opens
-  while the second sha256 of the folded head still runs.
-* Each query of a read of the chain names one block. With ``overlap`` the read of an open can be older than
-  the head of the chain at that open, and llms.txt says no more than that.
+* A round limits the seats by hotkey only. A read of the chain makes no query for an owner, and a chain that
+  answers no such query stops no sync and no open. The seats of a round come from one walk.
+* A hotkey that has a new registration on the chain while its seat is in the round that folds.
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ torch = pytest.importorskip("torch")
 
 from sn120_v2.sim_head import ChainWorld  # noqa: E402 - after the skip guard
 
-from sn120_v2 import cli, headfold, layout, publisher  # noqa: E402
+from sn120_v2 import cli, controller, headfold, layout, publisher  # noqa: E402
 from sn120_v2.afterking import OVERLAP, SERIAL  # noqa: E402
-from sn120_v2.chain import FakeChain, Reader, SubtensorClient  # noqa: E402
+from sn120_v2.chain import Reader, SubtensorClient  # noqa: E402
 from sn120_v2.controller import Stack  # noqa: E402
 from sn120_v2.headchain import CHAIN, check_chain, checkpoints, heads_of, tail  # noqa: E402
 from sn120_v2.headfold import READ_BACK  # noqa: E402
@@ -48,6 +48,7 @@ from sn120_v2.queue import waiting  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.state import HEAD_FOLDED, REGISTRATIONS_SYNCED, ROUND_CLOSED, ROUND_OPENED, SEATS_DEMOTED, SEATS_RESTORED  # noqa: E402
 from sn120_v2.stopafter import LOOP_ENV, OBEYED, STOP_FILE, WORK_ENV, stamp  # noqa: E402
+from sn120_v2.types import ChainSnapshot, Registration  # noqa: E402
 
 ORDERS = [SERIAL, OVERLAP]
 WAIT_S = 30  # the longest a test waits for a thread
@@ -461,138 +462,176 @@ def test_the_record_of_a_seat_that_leaves_the_back_changes_no_byte_of_the_chain_
     whole(world)
 
 
-# ---- one seat for each coldkey ----
+# ---- one seat for a hotkey in a round; the coldkey is not used ----
 
-
-@pytest.mark.parametrize("order", ORDERS)
-def test_a_round_that_opens_while_the_second_sha256_runs_takes_one_seat_for_each_coldkey_of_the_chain_read_beside_the_fold(tmp_path, monkeypatch, order):
-    """The journal has seats with no coldkey, as one that older code wrote. While the first round runs, the owner of hk3 gets hk4 on the chain."""
-    gate = gate_read_back(monkeypatch)
-    gate.set()
-    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=order)
-    world.start(CHAIN)
-    for uid, quality in ((1, 0.3), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0)):
-        world.register(uid, quality)
-    assert {seat.reg.coldkey for seat in world.state.queue.values()} == {""}
-    fake = FakeChain({0: "owner"} | {uid: f"hk{uid}" for uid in range(1, 6)}, "owner", block=2000)
-    reader, reads = Reader(fake, world.params.netuid, clock=lambda: fake.now), []
-
-    def chain():
-        reads.append(threading.current_thread().name)
-        return reader.snapshot()
-
-    real, boxes, opens = world.runner.run, [], []
-
-    def box(ticket):
-        boxes.append(ticket.round_id)
-        if len(boxes) == 1:
-            fake.owner[4] = fake.owner[3]  # after the read of the first pass, before the read beside the fold
-            gate.clear()  # the second sha256 of the head that this round makes waits
-        if len(boxes) == 2:
-            opens.append(read_back_ended(world))
-            threading.Timer(0.2, gate.set).start()
-        return real(ticket)
-
-    world.runner.run = box
-    assert run(world, monkeypatch, rounds=3, chain=chain) == 0
-    first, second, third = world.state.rounds
-    assert first.decision.winner.uid == 1 and seats_of(first) == [1, 2]
-    assert seats_of(second) == [3, 5], "hk3 and hk4 have one owner now: the round takes the seat of hk3, and the seat of hk4 waits"
-    assert seats_of(third) == [4], "the seat of hk4 has its turn in the next round, when the seat of hk3 has had its turn"
-    synced = [data for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED and data.get("refreshed")]
-    assert [[(reg["uid"], reg["coldkey"]) for reg in data["refreshed"]] for data in synced] == [[(uid, f"ck{uid}") for uid in range(1, 6)], [(4, "ck3")]]
-    names = kinds(world)
-    assert names.index(HEAD_FOLDED, names.index(ROUND_OPENED)) < [at for at, name in enumerate(names) if name == REGISTRATIONS_SYNCED][-1] < [at for at, name in enumerate(names) if name == ROUND_OPENED][1]
-    if order == OVERLAP:
-        assert reads == ["MainThread", READ_AHEAD, "MainThread"], "the registrations of the second open were read beside the fold; the round after a round with no king reads them in the line"
-        assert opens == [False], "the second round ran while the second sha256 of the new head ran"
-    else:
-        assert reads == ["MainThread"] * 3 and opens == [True]
-    world.wait()
-    whole(world)
-
-
-# ---- the block of each chain query, and the read that an open uses ----
-
-READ = ("SubnetworkN", "Keys", "BlockAtRegistration", "Owner")  # the storage items of one read of the registrations
-NAMES = SimpleNamespace(storage=SimpleNamespace(SubtensorModule=SimpleNamespace(**{name: name for name in READ})))
+READ = ("SubnetworkN", "Keys", "BlockAtRegistration")  # the storage items of one read of the registrations
+NAMES = SimpleNamespace(storage=SimpleNamespace(SubtensorModule=SimpleNamespace(**{name: name for name in READ})))  # the SDK of the test has no item ``Owner``
 READ_TIME = 1_800_000_000
+ONE_OWNER = "ck-of-hk3-and-hk4"
 
 
 class MovingChain:
-    """The SDK calls of ``SubtensorClient`` on a chain that moves. It keeps the thread and the block of each query.
+    """The SDK calls of ``SubtensorClient`` on a chain that moves. It keeps the thread, the item and the block of each query.
 
-    The head moves one block while a read of the registrations runs, and the test moves it more. ``owner`` has the owner
-    coldkey of a hotkey from a block on. So the answer of an Owner query shows the block that the query named.
+    It answers the three items of a read of the registrations. A query for any other item, as one for the owner of a hotkey,
+    fails. The head moves one block while a read runs, and a test moves it more. ``hotkey`` and ``born`` change what the chain
+    says of a UID: its hotkey, and the block of its registration.
     """
 
     def __init__(self, uids: range, block: int) -> None:
         self.block, self.uids, self.asked = block, uids, []
-        self.owner: dict[str, tuple[int, str]] = {}
+        self.hotkey: dict[int, str] = {}
+        self.born: dict[int, int] = {}
 
     def block_info(self, block):
         return SimpleNamespace(number=block, hash=f"0xhash{block}", timestamp=datetime.fromtimestamp(READ_TIME, timezone.utc))
 
     def query(self, item, params, *, block=None):
         self.asked.append((threading.current_thread().name, item, block))
-        if item == "SubnetworkN":
-            return len(self.uids)
-        since, coldkey = self.owner.get(params[0], (0, ""))
-        return coldkey if coldkey and block >= since else params[0].replace("hk", "ck")
+        if item != "SubnetworkN":
+            raise TimeoutError(f"the chain of the test answers no query for {item}")
+        return len(self.uids)
 
     def query_map(self, item, params, *, block=None):
         self.asked.append((threading.current_thread().name, item, block))
-        self.block += item == "BlockAtRegistration"  # the chain makes a block before the Owner queries of this read
-        return [(uid, {"Keys": f"hk{uid}", "BlockAtRegistration": 1000 + uid}[item]) for uid in self.uids]
+        self.block += item == "Keys"  # the chain makes a block in the middle of this read
+        if item == "Keys":
+            return [(uid, self.hotkey.get(uid, f"hk{uid}")) for uid in self.uids]
+        return [(uid, self.born.get(uid, 1000 + uid)) for uid in self.uids]
 
     def reads(self) -> list[tuple[str, int]]:
-        """(thread, block) of each read of the registrations. A read is one UID count, the two maps, and one Owner query for each hotkey, at one block."""
-        size = 3 + len(self.uids)
-        parts = [self.asked[at : at + size] for at in range(0, len(self.asked), size)]
+        """(thread, block) of each read of the registrations. A read is the UID count and the two maps at one block, and no other query."""
+        parts = [self.asked[at : at + 3] for at in range(0, len(self.asked), 3)]
         for part in parts:
-            assert [item for _, item, _ in part] == [*READ[:3], *["Owner"] * len(self.uids)]
+            assert [item for _, item, _ in part] == list(READ)
             assert len({(thread, block) for thread, _, block in part}) == 1, "one thread and one block for all the queries of a read"
         return [(part[0][0], part[0][2]) for part in parts]
 
 
+def seated(world: ChainWorld, seats: dict[int, tuple[str, str]], block: int = 1999) -> None:
+    """Seats of the journal: UID -> (hotkey, coldkey). The king of the first round has UID 1. A coldkey here is one that other code wrote to the journal."""
+    for hotkey in {hotkey for hotkey, _ in seats.values()}:
+        world.admission.upload(hotkey, 0.3 if hotkey == "hk1" else 0.0)
+    regs = [Registration(0, "hk0", 1, 1)] + [Registration(uid, hotkey, 1000 + uid, 1, coldkey) for uid, (hotkey, coldkey) in seats.items()]
+    world.controller.sync_registrations(ChainSnapshot(world.params.netuid, block, world.clock(), tuple(regs)), world.clock(), force=True)
+
+
+def walks_of(world: ChainWorld, monkeypatch) -> list:
+    """Each walk of the queue (its thread, its seats) and each ``round_opened`` record (its seats), in the order of the time."""
+    seen, real, journal = [], controller.select_round, world.controller.journal
+    real_append = journal.append
+
+    def walk(queue, verdicts, freeze, cap):
+        picked = real(queue, verdicts, freeze, cap)
+        seen.append(("walk", threading.current_thread().name, [entry.reg.uid for entry in picked.entries]))
+        return picked
+
+    def append(kind, data, at):
+        record = real_append(kind, data, at)
+        if kind == ROUND_OPENED:
+            seen.append((ROUND_OPENED, [entry["reg"]["uid"] for lease in data["round"]["leases"] for entry in lease["entries"]]))
+        return record
+
+    monkeypatch.setattr(controller, "select_round", walk)
+    journal.append = append
+    return seen
+
+
+def on_a_chain(world: ChainWorld, uids: int) -> tuple[MovingChain, Callable[[], ChainSnapshot]]:
+    chain = MovingChain(range(uids), block=2000)
+    return chain, Reader(SubtensorClient(world.params.netuid, chain, sdk=NAMES), world.params.netuid, clock=lambda: READ_TIME).snapshot
+
+
 @pytest.mark.parametrize("order", ORDERS)
-def test_each_owner_query_names_the_block_of_the_registration_read_and_an_open_uses_one_such_read(tmp_path, monkeypatch, order):
-    """After the first king is decided the chain moves 40 blocks, and in the new block hk3 owns hk4 and hk5 owns hk6."""
+def test_one_coldkey_with_two_hotkeys_has_two_seats_in_one_round_and_one_hotkey_with_two_seats_has_one(tmp_path, monkeypatch, order):
+    """The journal says that hk3 and hk4 have one coldkey. On the chain, UID 5 and UID 6 have the hotkey hk5."""
     world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=order)
     world.start(CHAIN)
-    for uid, quality in ((1, 0.3), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)):
-        world.register(uid, quality)
-    chain = MovingChain(range(7), block=2000)
-    reader = Reader(SubtensorClient(world.params.netuid, chain, sdk=NAMES), world.params.netuid, clock=lambda: READ_TIME)
-
-    def move():
-        for thread in threading.enumerate():
-            if thread.name == READ_AHEAD:
-                thread.join(WAIT_S)
-        chain.block = 2040
-        chain.owner = {"hk4": (2040, "ck3"), "hk6": (2040, "ck5")}
-
-    at_record(world, HEAD_FOLDED, move)
-    heads = []
-    real = world.runner.run
-    world.runner.run = lambda ticket: (heads.append(chain.block), real(ticket))[1]
-    assert run(world, monkeypatch, rounds=3, chain=reader.snapshot) == 0
+    seated(world, {1: ("hk1", ""), 2: ("hk2", ""), 3: ("hk3", ONE_OWNER), 4: ("hk4", ONE_OWNER), 5: ("hk5", ""), 6: ("hk5", "")})
+    chain, read = on_a_chain(world, 7)
+    chain.hotkey = {6: "hk5"}
+    seen = walks_of(world, monkeypatch)
+    assert run(world, monkeypatch, rounds=3, chain=read) == 0
     world.wait()
-    reads, rounds = chain.reads(), [seats_of(record) for record in world.state.rounds]
-    synced = [(data["block"], [(reg["uid"], reg["coldkey"]) for reg in data["refreshed"]]) for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED and data.get("refreshed")]
-    every = [(uid, f"ck{uid}") for uid in range(1, 7)]
+    assert [seats_of(record) for record in world.state.rounds] == [[1, 2], [3, 4], [5]]
+    assert [(seat.reg.uid, seat.reg.coldkey) for record in world.state.rounds[1:2] for lease in record.leases for seat in lease.entries] == [(3, ONE_OWNER), (4, ONE_OWNER)], "one round, two seats of one coldkey"
+    assert [(seat.reg.uid, seat.reg.hotkey) for seat in waiting(world.state.queue)] == [(6, "hk5")], "the second seat of hk5 had no place in the round of the first one, with room for it"
+    walks = [("walk", "MainThread", seats) for seats in ([1, 2], [3, 4], [5])]
+    assert seen == [step for walk in walks for step in (walk, (ROUND_OPENED, walk[2]))], "one walk in the thread of run for each round, and the round has the seats of that walk"
+    assert [data for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED][1:] == [], "the reads of run changed nothing: the coldkeys of the journal stay as they are"
+    whole(world)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_a_chain_that_answers_no_owner_query_stops_no_sync_and_no_open(tmp_path, monkeypatch, order):
+    """A read of the registrations asks for the UID count, the hotkeys and the registration blocks at one block, and for nothing more."""
+    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=order)
+    world.start(CHAIN)
+    seated(world, {1: ("hk1", ""), 2: ("hk2", "")})
+    for uid in range(3, 7):
+        world.admission.upload(f"hk{uid}")
+    chain, read = on_a_chain(world, 7)
+    with pytest.raises(TimeoutError):
+        chain.query("Owner", ["hk3"], block=2000)
+    chain.asked.clear()
+    at_record(world, HEAD_FOLDED, lambda: setattr(chain, "block", chain.block + 40))
+    assert run(world, monkeypatch, rounds=3, chain=read) == 0
+    world.wait()
+    assert [seats_of(record) for record in world.state.rounds] == [[1, 2], [3, 4], [5, 6]], "each sync added the seats of the chain and each round opened"
+    assert {item for _, item, _ in chain.asked} == set(READ)
     if order == OVERLAP:
-        assert reads == [("MainThread", 2000), (READ_AHEAD, 2001), ("MainThread", 2040)]
-        assert heads == [2001, 2040, 2041], "the head of the chain when the box got each round: the second open used a read that was 39 blocks old"
-        assert rounds == [[1, 2], [3, 4], [5]], "at block 2001 hk3 and hk4 had two owners, so the second round took the two"
-        assert synced == [(2000, every), (2040, [(6, "ck5")])], "the read beside the fold changed nothing, so it has no record"
+        assert chain.reads() == [("MainThread", 2000), (READ_AHEAD, 2001), ("MainThread", 2042)], "the read of the second open was made beside the fold"
     else:
-        assert reads == [("MainThread", 2000), ("MainThread", 2040), ("MainThread", 2041)]
-        assert heads == [2001, 2041, 2042], "each open used the read of its pass"
-        assert rounds == [[1, 2], [3, 5], [4, 6]], "at block 2040 hk3 owns hk4 and hk5 owns hk6, so the second round took one seat of each owner"
-        assert synced == [(2000, every), (2040, [(4, "ck3"), (6, "ck5")])]
+        assert chain.reads() == [("MainThread", 2000), ("MainThread", 2041), ("MainThread", 2042)]
+    synced = [(data["block"], sorted(data), [reg["uid"] for reg in data["added"]], {reg["coldkey"] for reg in data["added"]}) for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED][1:]
+    assert synced == [(2000, ["added", "block", "rehotkeyed", "removed"], [3, 4, 5, 6], {""})], "the record has the keys that it had before, and no seat gets a coldkey"
+    assert {seat.reg.coldkey for seat in world.state.queue.values()} <= {""}
     flat = " ".join(publisher.render(json.loads(json.dumps(world.publisher.snapshots[-1])), "https://site.example")[1].decode().split())
-    assert "The validator reads the chain before each round." in flat
-    assert "The owner coldkey is the chain's `SubtensorModule.Owner` of the seat's hotkey, read at the same block as the registrations, in the read of the chain before the round." in flat
-    assert "round-open" not in flat, "with ``overlap`` the read of an open is made beside the fold of the last king, not at the open"
+    assert "- One seat for a hotkey in a round. A second seat of the same hotkey waits for a later round. The coldkey is not used: one coldkey can have several seats, each with its own hotkey, in the same round." in flat
+    assert flat.lower().count("coldkey") == 2 and "SubtensorModule.Owner" not in flat, "no other sentence of llms.txt names a coldkey"
+    whole(world)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_a_hotkey_with_a_new_registration_on_the_chain_while_its_round_folds_gets_no_seat_in_the_next_round(tmp_path, monkeypatch, order):
+    """Round 1 has hk1 (the king) and hk2. While the box works on it, the chain gets a new registration of hk1 at UID 1 and one of hk2 at UID 2.
+
+    With ``overlap`` the read beside the fold sees them while the two old seats are in the round that is not closed yet.
+    """
+    gate = gate_read_back(monkeypatch)
+    gate.set()
+    world = ChainWorld(tmp_path / "world", sim_params(batch_cap=2), order=order)
+    world.start(CHAIN)
+    seated(world, {uid: (f"hk{uid}", "") for uid in range(1, 7)})
+    chain, read = on_a_chain(world, 7)
+    real, boxes, opens, journal = world.runner.run, [], [], world.controller.journal
+    real_append = journal.append
+
+    def box(ticket):
+        boxes.append(ticket.round_id)
+        if len(boxes) == 1:
+            chain.born = {1: 1998, 2: 1999}  # after the read of the first pass, before the read beside the fold
+            gate.clear()  # the second sha256 of the head that this round makes waits
+        if len(boxes) == 2:
+            threading.Timer(0.2, gate.set).start()
+        return real(ticket)
+
+    def append(kind, data, at):
+        if kind == ROUND_OPENED:
+            opens.append((world.state.round is None, read_back_ended(world), sorted(world.state.served_hotkeys), [seat.reg.key for seat in world.state.queue.values() if seat.reg.hotkey in ("hk1", "hk2")]))
+        return real_append(kind, data, at)
+
+    world.runner.run, journal.append = box, append
+    assert run(world, monkeypatch, rounds=3, chain=read) == 0
+    world.wait()
+    assert [seats_of(record) for record in world.state.rounds] == [[1, 2], [3, 4], [5, 6]]
+    names = kinds(world)
+    second = [at for at, name in enumerate(names) if name == ROUND_OPENED][1]
+    assert names.index(HEAD_FOLDED) < names.index(ROUND_CLOSED) < second, "the round that folded is closed in the journal before the next round opens"
+    assert opens[0] == (True, True, [], [(1, 1001), (2, 1002)])
+    assert opens[1] == (True, order == SERIAL, ["hk1", "hk2"], []), "at the second open the two hotkeys had their turn: no seat of them is in the queue, the old one or the new one"
+    assert [(data["added"], data["removed"]) for kind, _, data in records(world) if kind == REGISTRATIONS_SYNCED][1:] == [], "no sync added a seat for the new registrations"
+    if order == OVERLAP:
+        assert chain.reads() == [("MainThread", 2000), (READ_AHEAD, 2001), ("MainThread", 2002)], "the read beside the fold started while the seats of hk1 and hk2 were in the open round"
+    assert not any(seat.reg.hotkey in ("hk1", "hk2") for seat in world.state.queue.values())
     whole(world)

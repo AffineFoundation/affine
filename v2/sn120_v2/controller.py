@@ -314,7 +314,6 @@ class Controller:
                 "added": [reg.to_dict() for reg in plan.added],
                 "removed": [list(key) for key in plan.removed],
                 "rehotkeyed": [reg.to_dict() for reg in plan.rehotkeyed],
-                "refreshed": [reg.to_dict() for reg in plan.refreshed],
             }
             self._log(REGISTRATIONS_SYNCED, data, now)
         return plan

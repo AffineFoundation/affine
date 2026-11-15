@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from sn120_v2.errors import InfraError
-from sn120_v2.queue import coldkey_share_report, plan_sync, restore_from_back, select_round, split_among_boxes, squat_trim, waiting
-from sn120_v2.state import State, _registrations_synced, _seats_restored
+from sn120_v2.queue import plan_sync, restore_from_back, select_round, split_among_boxes, squat_trim, waiting
+from sn120_v2.state import State, _seats_restored
 from sn120_v2.types import ChainSnapshot, Verdict
 
 DAY = 86400
@@ -52,32 +52,14 @@ def test_a_seat_without_a_valid_file_is_skipped_and_keeps_its_place(build):
     assert uids(waiting(queue)) == [1, 2, 3, 4], "selection never changes the queue"
 
 
-def test_one_entry_per_miner_per_round_and_held_or_leased_seats_are_passed_over(build):
+def test_one_entry_per_hotkey_per_round_and_held_or_leased_seats_are_passed_over(build):
     same_hotkey = build.queue(build.seat(1, block=10, hotkey="same"), build.seat(2, block=20, hotkey="same"), build.seat(3, block=30))
     picked = pick(build, same_hotkey, ("same", "hk3"), cap=5)
     assert [e.reg.uid for e in picked.entries] == [1, 3] and picked.skipped == (), "the second seat waits; it is not a skip"
     same_owner = build.queue(build.seat(1, coldkey="owner"), build.seat(2, coldkey="owner"), build.seat(3), build.seat(4))
-    assert [e.reg.uid for e in pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).entries] == [1, 3, 4]
+    assert [e.reg.uid for e in pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).entries] == [1, 2, 3, 4], "the coldkey is not used"
     parked = build.queue(build.seat(1, held=True), build.seat(2, leased=True), build.seat(3), build.seat(9, front=True))
     assert [e.reg.uid for e in pick(build, parked, ("hk1", "hk2", "hk3", "hk9"), cap=5).entries] == [9, 3]
-
-
-def test_coldkey_share_report_counts_waiting_seats_that_share_an_owner(build):
-    queue = build.queue(
-        build.seat(1, coldkey=""),
-        build.seat(2, coldkey="owner"),
-        build.seat(3, coldkey="owner"),
-        build.seat(4, coldkey="solo"),
-        build.seat(5, coldkey="owner", leased=True),
-    )
-    # Snapshot fills the empty coldkey of UID 1 from the chain read.
-    regs = [build.reg(1, coldkey="owner"), build.reg(2, coldkey="owner"), build.reg(3, coldkey="owner"), build.reg(4, coldkey="solo")]
-    report = coldkey_share_report(queue, regs)
-    assert report["waiting"] == 4 and report["missing_coldkey"] == 0
-    assert report["coldkeys_with_2plus_waiting_seats"] == 1
-    assert report["waiting_seats_that_share_a_coldkey"] == 3
-    assert report["largest_share"] == 3
-    assert report["shares"] == [{"coldkey": "owner", "uids": [1, 2, 3], "count": 3}]
 
 
 @pytest.mark.parametrize("n,boxes,sizes", [(5, 1, [5]), (5, 2, [3, 2]), (6, 3, [2, 2, 2]), (2, 4, [1, 1])])
@@ -152,18 +134,6 @@ def test_sync_removes_a_seat_that_left_the_chain_and_follows_a_hotkey_swap(build
     assert sync(build, build.queue(build.seat(1)), [build.reg(1)]).empty
 
 
-def test_sync_refreshes_a_missing_or_stale_owner_coldkey_without_moving_the_seat(build):
-    queue = build.queue(build.seat(1, coldkey=""), build.seat(2, coldkey="old"), build.seat(3, coldkey="ck3", leased=True))
-    plan = sync(build, queue, [build.reg(1, coldkey="ck1"), build.reg(2, coldkey="ck2"), build.reg(3, coldkey="ck3")])
-    assert [reg.uid for reg in plan.refreshed] == [1, 2]
-    assert [reg.coldkey for reg in plan.refreshed] == ["ck1", "ck2"]
-    assert plan.empty is False and not plan.added and not plan.removed and not plan.rehotkeyed
-    assert sync(build, build.queue(build.seat(1, coldkey="ck1")), [build.reg(1, coldkey="ck1")]).empty
-    # Once coldkeys are filled, one owner still gets only one seat in a round.
-    filled = build.queue(build.seat(1, coldkey="owner"), build.seat(2, coldkey="owner"), build.seat(3, coldkey="other"))
-    assert [e.reg.uid for e in pick(build, filled, ("hk1", "hk2", "hk3"), cap=5).entries] == [1, 3]
-
-
 def test_sync_refuses_a_bad_chain_read_so_it_cannot_drop_the_paid_queue(build):
     queue = build.queue(*(build.seat(uid) for uid in range(1, 21)))
     half = [build.reg(uid) for uid in range(1, 11)]
@@ -171,28 +141,3 @@ def test_sync_refuses_a_bad_chain_read_so_it_cannot_drop_the_paid_queue(build):
         with pytest.raises(InfraError):
             sync(build, queue, **bad)
     assert len(sync(build, queue, half, force=True).removed) == 10
-
-
-def test_registrations_synced_replays_old_records_without_refreshed_and_applies_new_coldkeys(build):
-    """Old journals omit ``refreshed``; new ones fill owner coldkeys from the stated sync onward."""
-    state = State()
-    state.queue = dict(build.queue(build.seat(1, coldkey=""), build.seat(2, coldkey="")))
-    _registrations_synced(
-        state,
-        {"removed": [], "rehotkeyed": [], "added": []},  # pre-coldkey journal shape
-        at=1,
-    )
-    assert state.queue[(1, 101)].reg.coldkey == "" and state.queue[(2, 102)].reg.coldkey == ""
-    _registrations_synced(
-        state,
-        {
-            "removed": [],
-            "rehotkeyed": [],
-            "refreshed": [build.reg(1, coldkey="owner-a").to_dict(), build.reg(2, coldkey="owner-a").to_dict()],
-            "added": [],
-        },
-        at=2,
-    )
-    assert state.queue[(1, 101)].reg.coldkey == "owner-a" and state.queue[(2, 102)].reg.coldkey == "owner-a"
-    picked = pick(build, state.queue, ("hk1", "hk2"), cap=5)
-    assert [e.reg.uid for e in picked.entries] == [1], "one coldkey, one seat per round from the refresh onward"
