@@ -72,7 +72,8 @@ class MinerBound(Record):
 
 
 # What a miner may set: learning rate; steps and minibatches; GRPO group size
-# and sampling temperature; LoRA rank and alpha; target modules.
+# and sampling temperature; LoRA rank and alpha; target modules; the cap on
+# the norm of the whole update.
 # PLACEHOLDER marks a bound the spec does not give. It is not a decision.
 DEFAULT_MINER_BOUNDS = (
     MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
@@ -83,6 +84,7 @@ DEFAULT_MINER_BOUNDS = (
     MinerBound("rank", 8, 64, integer=True, decided=True),  # spec: "suggested 8-64"
     MinerBound("alpha", 8.0, 128.0),  # PLACEHOLDER
     MinerBound("target_modules", choices=ATTENTION_AND_MLP_PROJECTIONS, decided=True),  # spec: these 7 projections
+    MinerBound("global_norm_cap", 0.01, 6.0, decided=True),  # the high end is the ceiling for every miner
 )
 
 
@@ -105,7 +107,7 @@ class Recipe(Record):
     minibatches: int = 1  # optimizer updates in one pass; 1 = one update on the whole file
     lora_lr: float = 1e-5
     max_grad_norm: float = 1.0
-    global_norm_cap: float | None = None  # optional cap on the norm of the whole adapter update
+    global_norm_cap: float | None = 6.0  # cap on the norm of the whole adapter update; None = no cap
     group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
     sample_temperature: float = 1.0  # temperature the batch's rollouts were sampled at
     rank: int = 16
@@ -132,12 +134,17 @@ class Recipe(Record):
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
+        cap = self.global_norm_cap
+        _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
         _need(bool(self.target_modules), "recipe.target_modules must not be empty")
         settable = {f.name for f in dataclasses.fields(self)} - {"miner_bounds", "code_digest", "image_digests", "method"}
         keys = [bound.key for bound in self.miner_bounds]
         _need(len(set(keys)) == len(keys) and set(keys) <= settable, "miner_bounds must name distinct recipe fields")
         for bound in self.miner_bounds:
             _need(bool(bound.choices) or bound.low <= bound.high, f"bad miner bound for {bound.key!r}")
+        # The high end of the miner bound is the ceiling for every file: the value of a file that sets none may not be above it.
+        ceiling = self.bound("global_norm_cap")
+        _need(ceiling is None or (cap is not None and cap <= ceiling.high), "recipe.global_norm_cap must not be above the high end of its miner bound")
 
     @property
     def recipe_id(self) -> str:
