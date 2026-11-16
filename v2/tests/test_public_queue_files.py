@@ -20,7 +20,7 @@ from pathlib import Path
 from sn120_v2 import layout, public, publisher
 from sn120_v2.admission import StoreAdmission
 from sn120_v2.canonical import canonical_json, sha256_hex
-from sn120_v2.params import Params
+from sn120_v2.params import Params, Recipe
 from sn120_v2.public import NOT_JUDGED, NOT_VALID, VALID, file_verdict, files_view
 from sn120_v2.queue import waiting
 from sn120_v2.sim import SimWorld, sim_params
@@ -35,6 +35,7 @@ ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", 
 # Both values are from the code of v2 at 580aee91, the commit before ``queue.files``. This change adds one key and
 # changes nothing else. A later change that changes a param or the snapshot on purpose puts its new value here.
 PARAMS_HASH_BEFORE = "65ce6ef3bc867172eb87673bdb39461d03a8c85aac743c61e8b3d233b9f26d54"
+PARAMS_BEFORE = Path(__file__).parent / "data" / "params_default_a5c2b6a6.json"
 SNAPSHOT_BEFORE = "a5ffb03f2dd84bfc420f222fb685871452c21c6957546520e4b690d934909021"  # sha256 of the snapshot of ``line_world``
 
 
@@ -43,8 +44,15 @@ def kind(uid: int) -> str:
     return (NOT_JUDGED, VALID, NOT_VALID)[uid % 3]
 
 
-def line_world(root: Path) -> SimWorld:
-    world = SimWorld(root, sim_params())
+def params_before() -> Params:
+    """The sim params with the defaults of that time: the 4 caps of a file, no cap on the update, the 7 bounds of a miner."""
+    bounds = tuple(bound for bound in Recipe().miner_bounds if bound.key not in ("minibatches", "global_norm_cap"))
+    recipe = Recipe(image_digests=sim_params().recipe.image_digests, global_norm_cap=None, miner_bounds=bounds)
+    return sim_params(max_batch_bytes=64 * 1024 * 1024, max_prompts=250, max_rollouts=2000, max_train_token_steps=8_000_000, recipe=recipe)
+
+
+def line_world(root: Path, params: Params | None = None) -> SimWorld:
+    world = SimWorld(root, params or sim_params())
     for uid in range(1, SEATS + 1):
         world.register(uid, None if kind(uid) == NOT_JUDGED else 0.0, **({"valid": False} if kind(uid) == NOT_VALID else {}))
     assert world.controller.publish(world.clock(), check_files=True)
@@ -226,7 +234,7 @@ def test_a_new_process_shows_no_verdict_before_its_first_check(tmp_path):
 
 
 def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_path):
-    world = line_world(tmp_path)
+    world = line_world(tmp_path, params_before())  # the hash below is of a snapshot with the params of that time
     snap = json.loads(json.dumps(last(world)))
     files = snap["queue"].pop("files")
     assert list(snap["queue"]) == ["length", "files_checked_at", "next"]
@@ -252,7 +260,8 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
 
 
 def test_the_id_of_the_params_is_the_same(tmp_path):
-    assert Params().params_hash == PARAMS_HASH_BEFORE, "this change adds no param and changes none"
+    # The defaults of that time (``data/params_default_a5c2b6a6.json``). Later defaults differ: other caps, a cap on the update.
+    assert Params.from_json(PARAMS_BEFORE.read_bytes()).params_hash == PARAMS_HASH_BEFORE, "this change adds no param and changes none"
     world = line_world(tmp_path)
     snap = last(world)
     assert snap["params_hash"] == world.params.params_hash == Params.from_dict(snap["params"]).params_hash

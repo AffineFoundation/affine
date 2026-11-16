@@ -11,12 +11,12 @@ from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GenesisSpec, 
 SPEC_DEFAULTS = dict(
     netuid=120, env="math", batch_cap=32, max_loras_per_box=32, n_min_start=1, n_gpus=8, samples_per_task=1,
     looks=(0.25, 0.5, 1.0), max_output_tokens=65536, max_context_tokens=69632, temperature=1.0, top_p=0.95, top_k=20,
-    dtype="bfloat16", z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=64 * 1024 * 1024,
-    max_prompts=250, max_rollouts=2000, min_reasoning_tokens=32, reasoning_token_share=0.5, max_answer_only_frac=0.05,
+    dtype="bfloat16", z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=128 * 1024 * 1024,
+    max_prompts=2000, max_rollouts=8000, min_reasoning_tokens=32, reasoning_token_share=0.5, max_answer_only_frac=0.05,
     max_answer_repeat_frac=0.10, max_answer_repeat_count=32, reward_tolerance=0.0, calibration_tol=0.003, kings_window=10,
     burn_uid=0, weights_cadence_s=3600, budget_usd_per_hour=200.0,
 )
-SPEC_RECIPE_DEFAULTS = dict(steps=1, lora_lr=1e-5, max_grad_norm=1.0, rank=16, alpha=32.0, dropout=0.0, ppo_clip=0.2, dual_clip=3.0, kl=0.0)
+SPEC_RECIPE_DEFAULTS = dict(steps=1, minibatches=1, global_norm_cap=6.0, lora_lr=1e-5, max_grad_norm=1.0, rank=16, alpha=32.0, dropout=0.0, ppo_clip=0.2, dual_clip=3.0, kl=0.0)
 
 
 def test_defaults_match_the_spec_parameter_table():
@@ -62,8 +62,8 @@ def test_an_invalid_setting_fails_closed(change):
 
 def test_all_five_miner_settable_params_are_exposed_in_one_place():
     recipe = Recipe()
-    assert {bound.key for bound in recipe.miner_bounds} == {"lora_lr", "steps", "group_size", "sample_temperature", "rank", "alpha", "target_modules"}
-    assert {b.key for b in recipe.miner_bounds if b.decided} == {"rank", "target_modules"}, "the spec gives only these two bounds"
+    assert {bound.key for bound in recipe.miner_bounds} == {"lora_lr", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"}
+    assert {b.key for b in recipe.miner_bounds if b.decided} == {"rank", "target_modules", "minibatches", "global_norm_cap"}, "the spec gives only these bounds"
     assert (recipe.bound("rank").low, recipe.bound("rank").high) == (8, 64)
     assert recipe.bound("target_modules").choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
     assert recipe.bound("dropout") is None

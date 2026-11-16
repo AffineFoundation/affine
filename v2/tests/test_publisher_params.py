@@ -160,6 +160,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
+        f"a fixed cost of its own, about {publisher.show(publisher.UPDATE_COST_S)} s.",
+        f"updates add about {publisher.show(publisher.UPDATE_COST_S)} s x steps x minibatches",
         f"later than {worker.AT_THE_LEASE_S} s after the start of the lease",
         f"at most {worker.AT_THE_LEASE_S} s after the start of the lease",
         f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
@@ -181,6 +183,11 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "(1) pin head M", "(2) copy the next valid files", "(3) train one LoRA", "(4) score every LoRA", "(5) apply at most one winner",
         "(6) publish", "(7) start again",
         "0 = the groups of your file",
+        "1 = one update from all rows of your batch",
+        "does not hold `minibatches` while the value is 1.",
+        "Minibatches, for a value N above 1.",
+        "(k from 0) goes to minibatch k modulo N",
+        "train in the order 0 to N - 1.",
         "is clipped to 1 +- this value",
         "KL term; 0 = off",
         "`group_size`: 0 means one group per prompt",

@@ -80,7 +80,8 @@ class LoraTrainer:
                 raise InfraError(f"the training job wrote {sorted(files)}, not the LoRA files")
             # tokens: output tokens that trained, counted one time. forward_tokens: prompt and output tokens of every pass, so it grows with steps.
             # Speed per GPU = forward_tokens / step_s / n_gpus.
-            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows")}
+            # updates: the Adam updates of a job with more than one minibatch (steps x minibatches). The job of one minibatch does not report it.
+            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows", "updates")}
             log_phase(self.config.work_dir, "train", round_id=request.round_id, queue_pos=entry.queue_pos, steps=recipe.steps, wall_s=time.monotonic() - started, **facts)
             return LoRAArtifact(
                 lora_hash=manifest_digest(files),

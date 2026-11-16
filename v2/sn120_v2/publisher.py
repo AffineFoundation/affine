@@ -78,6 +78,9 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
+# The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
+# the weights back to them), in seconds. An estimate for a LoRA of rank 64. No run has measured it.
+UPDATE_COST_S = 0.1
 BOX_TRIES = inspect.signature(LocalRunner.__init__).parameters["attempts"].default
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
@@ -98,10 +101,11 @@ PARAMS_HEADING = "Every parameter"  # the section whose table states each parame
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
-    "steps": "optimizer steps over your batch",
-    "lora_lr": "learning rate of each step",
-    "max_grad_norm": "gradient clip: with steps and lora_lr, this is the step-size cap",
-    "global_norm_cap": "optional cap on the norm of the whole adapter update",
+    "steps": "passes over your batch; each pass makes `minibatches` updates",
+    "minibatches": "updates in each pass; 1 = one update from all rows of your batch",
+    "lora_lr": "learning rate of each update",
+    "max_grad_norm": "gradient clip of each update; it does not cap the size of an update (the training procedure, below)",
+    "global_norm_cap": "cap on the norm of the whole adapter update, for a file that sets none; none = no cap",
     "group_size": "rollouts per GRPO group; 0 = the groups of your file",
     "sample_temperature": "temperature your rollouts were sampled at",
     "rank": "LoRA rank",
@@ -270,7 +274,13 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url
 
 def _recipe_lines(params: Params) -> list[str]:
     recipe, recipe_id = params.recipe, params.recipe_id
-    cap = recipe.global_norm_cap
+    cap, cap_bound = recipe.global_norm_cap, recipe.bound("global_norm_cap")
+    cap_now = "This recipe has none: there is no cap." if cap is None else f"It is {show(cap)} now."
+    cap_yours = (
+        f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}."
+        if cap_bound is not None
+        else "A file may not set a cap of its own now."
+    )
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
@@ -286,6 +296,7 @@ def _recipe_lines(params: Params) -> list[str]:
         "for every batch. Your batch is the only training data. A batch made against an older head is trained on the",
         "current head. `recipe_id` is the sha256 of the canonical JSON (sorted keys, no spaces) of the recipe object in",
         "mining.json (`params.recipe`). A new recipe gets a new id, and it is shown here before the next round starts.",
+        "The object does not hold `minibatches` while the value is 1.",
         "",
         *table(("field", "value", "meaning"), rows),
         "",
@@ -322,8 +333,11 @@ def _recipe_lines(params: Params) -> list[str]:
         "- `global_norm_cap`: the largest allowed Frobenius norm of the whole adapter update,",
         "  sqrt(sum over all target modules of ||(alpha / rank) * B @ A||_F^2), in the units of the model weights. If the",
         "  trained update is larger, every B matrix is multiplied by cap / norm. The train report states the norm before",
-        "  the cap and the norm after it (`step_norm` is the norm after the cap). The number is set in the params at",
-        f"  the mainnet genesis; unset means no cap. {'It is unset now: there is no cap.' if cap is None else f'The cap is now {show(cap)}.'}",
+        "  the cap and the norm after it (`step_norm` is the norm after the cap). The recipe value is the cap of a file",
+        f"  that sets none. {cap_now} {cap_yours} The cap holds for the whole",
+        "  update, however many steps and minibatches made it.",
+        "- `minibatches`: the count of updates in each pass over your rows. The training procedure, below, has the",
+        "  rule. Section 5 has what it costs.",
         f"- Train caps: a rollout above `train_max_output_tokens` ({recipe.train_max_output_tokens}) or",
         f"  `train_max_context_tokens` ({recipe.train_max_context_tokens}, prompt + output) is truncated, not rejected. The",
         "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
@@ -380,7 +394,9 @@ def _training_lines(params: Params) -> list[str]:
         "  of the token of your rollout = its logit / T - log(sum of exp(logit / T) over the support).",
         "- First pass, before any update: the trainer stores log q of every output token under head M. This is the old",
         "  policy. The mask of a row holds its tokens that are in the support of head M. A token outside the mask",
-        "  never trains.",
+        "  never trains. With more than one minibatch this is a pass of its own over all rows that train, before the",
+        "  first update, with no loss and no gradient: the old policy of every row is head M, not a model that has",
+        "  moved.",
         "- Derail rule, only for a capped row with a negative advantage. Take the plain log-probability of each output",
         "  token under head M (all logits, no temperature). The derail point is the first token at which the mean of",
         f"  the last {recipe.derail_window} such values (`derail_window`), that token included, is below {show(recipe.derail_threshold)} (`derail_threshold`).",
@@ -391,24 +407,42 @@ def _training_lines(params: Params) -> list[str]:
         f"  max(-A * ratio, -A * clip(ratio, 1 - `ppo_clip`, 1 + `ppo_clip`)), with `ppo_clip` {show(recipe.ppo_clip)}. With A below 0",
         f"  the token loss is at most -A * `dual_clip`, with `dual_clip` {show(recipe.dual_clip)}. A token counts when it is in the mask of",
         "  its row and in the support of the model now. Row loss = the sum of its token losses / the number of tokens",
-        "  in its mask. A row with an empty mask gives no loss. Step loss = the sum of the row losses / the number of",
-        "  rows. That number counts each row that was not dropped, also a row with advantage 0.",
-        f"- Steps: {recipe.steps} (`steps`). One step is one pass over all rows that train and then one update. The gradient of the",
-        f"  step loss, over all A and B together, is clipped to the norm {show(recipe.max_grad_norm)} (`max_grad_norm`). Then comes one update",
-        f"  with the learning rate {show(recipe.lora_lr)} (`lora_lr`). The optimizer: {OPTIMIZER}. The learning rate has no",
+        "  in its mask. A row with an empty mask gives no loss. With one minibatch, the loss of an update = the sum of",
+        "  the row losses / the number of rows. That number counts each row that was not dropped, also a row with",
+        "  advantage 0. With more than one minibatch, the loss of an update = the sum of the row losses of its minibatch /",
+        "  the number of rows in that minibatch.",
+        f"- Steps: {recipe.steps} (`steps`). Minibatches: {recipe.minibatches} (`minibatches`). One step is one pass over all rows that train.",
+        "  With one minibatch a pass ends with one update, from all rows. The gradient of the loss of an update, over all A",
+        f"  and B together, is clipped to the norm {show(recipe.max_grad_norm)} (`max_grad_norm`). Then comes the update, with the learning",
+        f"  rate {show(recipe.lora_lr)} (`lora_lr`). The optimizer: {OPTIMIZER}. The learning rate has no",
         f"  schedule. A gradient that is not finite stops the training: `{SKIP}`.",
+        "- The clip does not cap the size of an update. Adam divides each gradient value by its own running size. So",
+        "  the first update moves each weight that has a gradient by about `lora_lr`, whatever the norm of the gradient",
+        "  is. The size of the whole update grows with `lora_lr`, with the count of updates and with the count of",
+        "  weights. The one cap on it is `global_norm_cap`.",
+        "- Minibatches, for a value N above 1. Each pass cuts the rows that train into N minibatches and makes one",
+        "  update for each minibatch: steps x N updates in all. If fewer than N rows train, each row is a minibatch",
+        "  of its own, and a pass makes one update for each row. The order comes from one `random.Random(seed)` of",
+        "  Python for the whole training, with the seed above. Each pass takes the rows that train, the longest row",
+        "  first and rows of the same length in file order, and calls `shuffle` on a copy of that list. Row k of the",
+        "  shuffled list (k from 0) goes to minibatch k modulo N. The minibatches train in the order 0 to N - 1. So each",
+        "  pass has another order, and the same file with the same round seed gets the same orders again. The",
+        "  optimizer is made one time for your file: its state goes from each update to the next, through all passes.",
+        "  The LoRA of another file starts with a new optimizer.",
         "- GPUs: the job has the GPUs of its slot (section 3). It puts one copy of the model on each GPU, but not more",
         "  copies than rows that train. The rows that train go to the copies in turn, the longest row first. The",
-        "  gradients of the copies are added before the clip. The job never trains on a CPU: with no GPU it stops.",
+        "  gradients of the copies are added before the clip. With more than one minibatch, the rows of each minibatch",
+        "  go to the copies in turn in the same way. The job never trains on a CPU: with no GPU it stops.",
         "- After the last step: the cap `global_norm_cap` (above), then a check that each weight is finite. If one is",
         f"  not: `{SKIP}`.",
         f"- The LoRA is these files: {show([f'`{name}`' for name in LORA_FILES])}. The weight file holds A and B of each layer as",
         "  float32, with the names `base_model.model.<layer path>.lora_A.weight` and",
         "  `base_model.model.<layer path>.lora_B.weight`. The config file has the PEFT layout; its",
         "  `base_model_name_or_path` is the `base_hash`. The train report holds the optimizer, the seed, the recipe",
-        "  values that were used, the loss and the gradient norm of each step, the count of the mask tokens of the rows",
-        "  that trained, the count of the rows, of the truncated rows and of the dropped rows, `step_norm` and",
-        "  `step_norm_before_cap`. `lora_hash` is the id of this file set (section 9).",
+        "  values that were used, the loss and the gradient norm of each update, the count of the mask tokens of the",
+        "  rows that trained, the count of the rows, of the truncated rows and of the dropped rows, `step_norm` and",
+        "  `step_norm_before_cap`. With more than one minibatch it holds `minibatches` too. `lora_hash` is the id of this",
+        "  file set (section 9).",
         f"- A failure of the box in a training (not of the batch) is tried again: at most {BOX_TRIES} tries in all, inside the",
         f"  training time. Then the entry is `{NO_DECISION}` (section 4).",
         "- What a training of your own repeats: the seed gives the same A for the same file and round seed. The trained",
@@ -661,6 +695,12 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         *cost_cap,
         f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
         f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
+        "- The cost does not count `minibatches`. Two things come on top of the cost with more than one minibatch. One:",
+        "  the first pass is one more run of every row that trains through the model. Two: each update has a fixed cost",
+        f"  of its own, about {show(UPDATE_COST_S)} s. That number is an estimate and not a measured value. So steps x minibatches",
+        f"  updates add about {show(UPDATE_COST_S)} s x steps x minibatches to the training of your file, and no rule of the file check",
+        "  counts that time. A training that still runs at the end of the training time is stopped, and the batch is not",
+        "  judged in that round (section 3). Keep a margin of your own when you set `minibatches` high.",
         "- Nothing is repaired or clamped. The first rule that fails makes the whole file invalid.",
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",

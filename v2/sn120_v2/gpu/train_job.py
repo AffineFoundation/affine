@@ -15,6 +15,13 @@ The step, for each rollout (one sampled answer) with advantage A:
 Only the LoRA matrices train. They are fp32; the base stays frozen. The
 optimizer is a fresh Adam per LoRA (betas 0.9 and 0.999, eps 1e-8, no weight
 decay). One step is one pass over the whole batch and one Adam update.
+
+That is ``run``, the job of a recipe with ``minibatches`` 1. With more
+minibatches the job is ``run_minibatches``: each pass puts the rows that
+train in a new seeded order and cuts them into ``minibatches`` groups, with
+one Adam update for each group. The Adam state goes from one update to the
+next. q_old, the mask and the token count of every row come from the head
+before the first update. ``train`` picks one of the two.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import random
 import sys
 import threading
 import time
@@ -275,6 +283,48 @@ class Replica:
         return loss, trained
 
 
+def score_old(replica: Replica, rows: Sequence[dict]) -> None:
+    """The first pass of ``Replica.train_rows`` alone: q_old, the mask and the token count of each row, and no loss and no gradient.
+
+    Call it before the first update: then B is zero and the model is the
+    head. These are the statements of the first pass in ``train_rows``, in
+    their order, with the forward that ``train_rows`` runs. A row that has
+    these values keeps them: ``train_rows`` takes them again for no row.
+    """
+    head = replica.model.get_output_embeddings()
+    for row in rows:
+        targets = torch.tensor(row["tokens"], device=replica.device)
+        hidden = replica.hidden(row["prompt_ids"] + row["tokens"])[0, len(row["prompt_ids"]) - 1 : -1]
+        leaf = hidden.detach().requires_grad_(True)
+        chunks = range(0, len(targets), LOGIT_CHUNK)
+        with torch.no_grad():
+            parts = [token_scores(head(leaf[i : i + LOGIT_CHUNK]), targets[i : i + LOGIT_CHUNK], replica.recipe) for i in chunks]
+        log_p, row["old"], mask = (torch.cat(part) for part in zip(*parts))
+        if row["capped"] and row["advantage"] < 0:
+            recipe = replica.recipe
+            mask[derail_keep(log_p.tolist(), recipe.derail_window, recipe.derail_threshold, recipe.derail_tail) :] = False
+        row["mask"], row["count"] = mask, int(mask.sum())
+
+
+def bring(replica: Replica, rows: Sequence[dict]) -> Sequence[dict]:
+    """The first-pass values of these rows on the GPU of this copy: another copy may have scored them, or trained them in the pass before."""
+    for row in rows:
+        row["old"], row["mask"] = row["old"].to(replica.device), row["mask"].to(replica.device)
+    return rows
+
+
+def minibatches_of(rows: Sequence[dict], minibatches: int, order: random.Random) -> list[list[dict]]:
+    """One pass: the rows in a new order from ``order``, cut into ``minibatches`` groups, the longest row of a group first.
+
+    Row k of the new order goes to group k modulo ``minibatches``, so the
+    sizes differ by one row at most. With fewer rows than groups each row is
+    a group of its own: there is no empty group, and no update without rows.
+    """
+    mixed = list(rows)
+    order.shuffle(mixed)
+    return [sorted(mixed[i::minibatches], key=lambda row: -len(row["tokens"])) for i in range(min(minibatches, len(mixed)))]
+
+
 def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict], int]:
     """Token ids of every row that trains, and the count of dropped rows. The prompt is one user message with the generation prompt."""
     eos = tokenizer.convert_tokens_to_ids(END_OF_TURN)
@@ -345,6 +395,69 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     return result
 
 
+def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
+    """``run`` for a recipe with more than one minibatch. What differs from ``run`` has a comment."""
+    recipe, started = Recipe.from_dict(job["recipe"]), time.monotonic()
+    torch.manual_seed(job["seed"])
+    rows, dropped = encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe)
+    active = sorted((row for row in rows if row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
+    if not active:
+        raise BatchRejected("no rollout is left with an advantage other than zero: the batch gives no gradient")
+    devices = list(devices or [f"cuda:{i}" for i in range(torch.cuda.device_count())])[: len(active)]
+    if not devices:
+        raise InfraError("the training job sees no GPU")
+    one_thread_in_the_tuner()
+    replicas = [Replica(job["base_dir"], device, job["dtype"], recipe, job["seed"]) for device in devices]
+    first = replicas[0]
+    check_names(job["base_dir"], list(first.layers))
+    for replica in replicas:
+        replica.warm_up((active[0]["prompt_ids"] + active[0]["tokens"])[:WARM_UP_TOKENS])
+    optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr)  # one optimizer for the file: its state goes through every update
+    order = random.Random(job["seed"])  # the order of the rows in each pass: the same in every run of this job
+    loaded = time.monotonic()
+    losses, grad_norms, trained = [], [], 0
+    with ThreadPoolExecutor(len(replicas)) as pool:
+        # Before the first update, under the head: a row of a later minibatch would else take its old policy from a model that has moved.
+        list(pool.map(lambda pair: score_old(*pair), zip(replicas, [active[i :: len(replicas)] for i in range(len(replicas))])))
+        for _ in range(recipe.steps):
+            trained = 0
+            for group in minibatches_of(active, recipe.minibatches, order):
+                shares = [group[i :: len(replicas)] for i in range(len(replicas))]  # a copy with no row of this minibatch gives no gradient
+                # The loss of a minibatch is divided by the count of its rows. ``run`` divides by the count of all rows of the file.
+                results = list(pool.map(lambda pair: pair[0].train_rows(bring(*pair), len(group)), zip(replicas, shares)))
+                for other in replicas[1:]:
+                    for mine, theirs in zip(first.weights, other.weights):
+                        if theirs.grad is not None:
+                            mine.grad = theirs.grad.to(mine.device) if mine.grad is None else mine.grad + theirs.grad.to(mine.device)
+                        theirs.grad = None
+                norm = float(torch.nn.utils.clip_grad_norm_(first.weights, recipe.max_grad_norm))
+                if not math.isfinite(norm):
+                    raise BatchRejected("training gave a gradient that is not finite")
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                for other in replicas[1:]:
+                    for mine, theirs in zip(first.weights, other.weights):
+                        theirs.data.copy_(mine.data)
+                losses.append(sum(loss for loss, _ in results))
+                grad_norms.append(norm)
+                trained += sum(count for _, count in results)  # the tokens of the last pass, each counted one time
+    # One loss and one gradient norm for each update. ``minibatches`` is a recipe value that was used; ``save`` does not know it.
+    facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows), "minibatches": recipe.minibatches}
+    facts.update(truncated_rows=sum(row["truncated"] for row in rows), dropped_rows=dropped)
+    result = save(first, recipe, job, out_dir, facts)
+    result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(replicas), rows=len(rows), updates=len(losses))
+    # The pass for q_old is one more run of every row through the model.
+    result.update(forward_tokens=sum(len(row["prompt_ids"]) + len(row["tokens"]) for row in active) * (recipe.steps + 1))
+    return result
+
+
+def train(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
+    """One LoRA from one job. A recipe with one minibatch runs ``run``: the job as it was before there were minibatches."""
+    if Recipe.from_dict(job["recipe"]).minibatches == 1:
+        return run(job, out_dir, devices)
+    return run_minibatches(job, out_dir, devices)
+
+
 def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict) -> dict:
     """Apply the update cap, check the weights and write the LoRA in the PEFT file layout."""
     scale = recipe.alpha / recipe.rank
@@ -386,7 +499,7 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
 def main(job_dir: Path) -> None:
     job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     try:
-        report = run(job, job_dir / "lora")
+        report = train(job, job_dir / "lora")
     except BatchRejected as exc:
         report = {"status": "rejected", "reason": str(exc)}
     (job_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
