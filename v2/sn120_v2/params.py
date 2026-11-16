@@ -214,9 +214,9 @@ class Params(Record):
     fold_every_k: int = 1  # fold stacked LoRAs into a new base after this many applies; 1 = every green
 
     # Admission. The batch checker and the miner contract read these same values.
-    max_batch_bytes: int = 64 * 1024 * 1024
-    max_prompts: int = 250
-    max_rollouts: int = 2000
+    max_batch_bytes: int = 128 * 1024 * 1024
+    max_prompts: int = 2000
+    max_rollouts: int = 8000
     min_reasoning_tokens: int = 32
     reasoning_token_share: float = 0.5
     max_answer_only_frac: float = 0.05
@@ -226,7 +226,7 @@ class Params(Record):
     min_pool_prompt_frac: float = 0.0  # 0 = prompts need not come from the public pool
     # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit.
     # The cap does not count minibatches: each optimizer update has a fixed cost that no admission rule counts.
-    max_train_token_steps: int = 8_000_000
+    max_train_token_steps: int = 16_000_000
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
