@@ -24,6 +24,7 @@ from .types import Entry, HeadManifest, HeadVersion, King, QueueEntry, Registrat
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
+CHANGES_KEPT = 20  # changes of the parameters kept in memory for the public snapshot
 DAY = 86400
 
 # Journal record kinds.
@@ -87,10 +88,28 @@ class RoundRecord(Record):
         return next(lease for lease in self.leases if lease.lease_id == lease_id)
 
 
+@dataclass(frozen=True)
+class ParamsChange:
+    """A round that opened with other parameters than the round before it.
+
+    A ``params_set`` record alone is no change: the first one of a journal has nothing before it, one can pin the
+    values that are pinned already, and several can follow each other before a round opens. What a round ran with
+    is what it pinned when it opened, so the change is taken there.
+    """
+
+    round_id: str
+    opened_at: int
+    params_hash: str  # as the round record holds it; it is not computed again from ``after``
+    before: Params
+    after: Params
+
+
 @dataclass
 class State:
     genesis: GenesisSpec | None = None
     params: Params | None = None  # the pinned parameters; every process reads them from here, not from a file
+    opened_with: Params | None = None  # the parameters at the last round open
+    params_changes: list[ParamsChange] = field(default_factory=list)  # the last ``CHANGES_KEPT``, oldest first
     heads: list[HeadVersion] = field(default_factory=list)  # every head, oldest first
     manifest: HeadManifest | None = None  # file maps of the current head; the store's pointer follows it
     manifests: dict[str, HeadManifest] = field(default_factory=dict)  # file maps of every head, by version id
@@ -203,6 +222,12 @@ def _round_opened(state: State, data: dict, at: int) -> None:
         for entry in lease.entries:
             _need(entry.reg.key in state.queue and not state.queue[entry.reg.key].leased, "a round took a seat that is not waiting")
             _edit(state, entry.reg.key, leased=True)
+    before, after = state.opened_with, state.params
+    # The two recorded hashes decide: they are what the two rounds pinned, also for a record of older code.
+    if state.rounds and before is not None and after is not None and record.params_hash != state.rounds[-1].params_hash:
+        change = ParamsChange(record.round_id, record.opened_at, record.params_hash, before, after)
+        state.params_changes = [*state.params_changes, change][-CHANGES_KEPT:]
+    state.opened_with = after
     state.round, state.round_seq = record, state.round_seq + 1
 
 

@@ -46,9 +46,9 @@ from .afterking import Overlap
 from .controller import Controller, Stack, StackContext, public_snapshot
 from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
-from .params import GenesisSpec, Params, Recipe, load_params
+from .params import GenesisSpec, Params, load_params
 from .payout import payees
-from .public import phase, round_text
+from .public import changed_params, phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .state import SEATS_FRONTED, State, load
@@ -321,19 +321,6 @@ def cmd_round(args: argparse.Namespace) -> int:
     else:
         print(round_text(json.loads(stack.store.get(key))))
     return 0
-
-
-def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
-    """Each parameter whose value differs, with both values. A value of the recipe has the name ``recipe.<name>``."""
-
-    def flat(params: Params) -> dict[str, Any]:
-        data = params.to_dict()
-        # The stored form leaves out a recipe field that has its default (``Recipe.LEFT_OUT_AT_DEFAULT``). Here it is shown.
-        recipe = {name: getattr(params.recipe, name) for name in Recipe.LEFT_OUT_AT_DEFAULT} | data.pop("recipe")
-        return data | {f"recipe.{name}": value for name, value in recipe.items()}
-
-    old, new = flat(before), flat(after)
-    return {name: {"before": old[name], "after": new[name]} for name in old if old[name] != new[name]}
 
 
 def cmd_set_params(args: argparse.Namespace) -> int:

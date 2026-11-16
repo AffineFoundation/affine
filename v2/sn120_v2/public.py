@@ -14,10 +14,10 @@ import re
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
-from .params import Params
+from .params import Params, Recipe
 from .payout import payees
 from .queue import waiting
-from .state import RoundRecord, State
+from .state import ParamsChange, RoundRecord, State
 from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
@@ -176,6 +176,45 @@ def files_view(line: Sequence[QueueEntry], verdicts: Mapping[str, Verdict], chec
     }
 
 
+def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
+    """Each parameter whose value differs, with both values. A value of the recipe has the name ``recipe.<name>``."""
+
+    def flat(params: Params) -> dict[str, Any]:
+        data = params.to_dict()
+        # The stored form leaves out a recipe field that has its default (``Recipe.LEFT_OUT_AT_DEFAULT``). Here it is shown.
+        recipe = {name: getattr(params.recipe, name) for name in Recipe.LEFT_OUT_AT_DEFAULT} | data.pop("recipe")
+        return data | {f"recipe.{name}": value for name, value in recipe.items()}
+
+    old, new = flat(before), flat(after)
+    return {name: {"before": old[name], "after": new[name]} for name in old if old[name] != new[name]}
+
+
+def changed_values(before: Params, after: Params) -> list[dict[str, Any]]:
+    """``changed_params`` as rows for a reader. A bound of a miner's field is a row of its own, ``train.<key>``.
+
+    ``before`` or ``after`` of such a row is the bound, or None when the field is not one that a miner may set.
+    """
+    changed = changed_params(before, after)
+    rows = [{"name": name, **values} for name, values in changed.items() if name != "recipe.miner_bounds"]
+    old, new = ({bound.key: bound.to_dict() for bound in params.recipe.miner_bounds} for params in (before, after))
+    keys = [key for key in dict.fromkeys([*old, *new]) if old.get(key) != new.get(key)]
+    return rows + [{"name": f"train.{key}", "bound": True, "before": old.get(key), "after": new.get(key)} for key in keys]
+
+
+def changes_view(changes: Sequence[ParamsChange]) -> list[dict[str, Any]]:
+    """The changes of the parameters that the state keeps (``state.CHANGES_KEPT``), the newest first.
+
+    One row for each round that opened with other parameters than the round before it. ``opened_at`` and
+    ``params_hash`` are the ones of that round in ``history``. ``values`` is each value that differs between the
+    two rounds. New parameters that no round has opened with have no row: ``params`` shows them. A round that is
+    decided can take new digests for its fold; the row for them is the next round, which is the first that pins them.
+    """
+    return [
+        {"round_id": change.round_id, "opened_at": change.opened_at, "params_hash": change.params_hash, "values": changed_values(change.before, change.after)}
+        for change in reversed(changes)
+    ]
+
+
 def snapshot(
     state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None
 ) -> dict[str, Any]:
@@ -186,7 +225,8 @@ def snapshot(
     the old verdict until the next check.
 
     ``queue.next`` is the first ``QUEUE_PREVIEW`` seats. ``queue.files`` is
-    the verdict for the whole line (``files_view``).
+    the verdict for the whole line (``files_view``). ``changes`` is the
+    history of the parameters (``changes_view``).
     """
     verdicts = verdicts or {}
     line = waiting(state.queue)
@@ -223,6 +263,7 @@ def snapshot(
             "files": files_view(line, verdicts, files_checked_at),
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
+        "changes": changes_view(state.params_changes),
     }
 
 

@@ -61,7 +61,7 @@ from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, N
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
-from .state import ABANDONED, load
+from .state import ABANDONED, CHANGES_KEPT, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
@@ -107,6 +107,16 @@ ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pa
 QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
 KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
 PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
+# Changes of the text of llms.txt that no parameter shows, the newest first: (the day in UTC, the section, one sentence).
+# A change of a parameter is not typed here: ``public.changes_view`` takes it from the journal.
+# The order of two lines of one day is the order here.
+# A sentence holds for each set of parameters, so it names no ``train.`` key: such a key is in the text only while a miner may set it.
+TEXT_CHANGES = (
+    ("2026-11-16", 12, "This section is new."),
+    ("2026-11-16", 2, "`minibatches` is new in the recipe: the count of updates in each pass. The training procedure has the rule, and section 5 has what it costs."),
+    ("2026-11-16", 2, "`global_norm_cap` of the recipe is now the cap of a file that sets none. A file may set a cap of its own only while the table \"What you may set\" has a row for it."),
+    ("2026-11-16", 2, "The row of `max_grad_norm` in the table of the recipe was wrong. The gradient clip does not cap the size of an update: the one cap is `global_norm_cap`."),
+)
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -1282,8 +1292,65 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "  time of the scoring: the times of a round are in section 3.",
         "- `burn_uid`: the UID of the owner. It has no seat (section 4) and gets no weight: nothing is burned (section 7).",
         "",
+        *_changes_lines(doc),
     ]
     return "\n".join(reflow(lines)) + "\n"
+
+
+def _one_value(value: Any) -> str:
+    """A value of a line of section 12. A list is in brackets and a text is in backticks, so the ends of each value are seen."""
+    if isinstance(value, (list, tuple)) and value:
+        return "[" + ", ".join(_one_value(item) for item in value) + "]"
+    return f"`{value}`" if isinstance(value, str) and value else show(value)
+
+
+def _changed_value(row: Mapping[str, Any]) -> str:
+    """One changed value of a row of ``changes`` in mining.json, in words."""
+    name, before, after = f"`{row['name']}`", row.get("before"), row.get("after")
+    if not row.get("bound"):
+        return f"{name} {_one_value(before)} to {_one_value(after)}"
+    old, new = (bound and bound_text(MinerBound.from_dict(bound)) for bound in (before, after))
+    if before is None:
+        return f"{name} is new: {new}"
+    if after is None:
+        return f"{name} is no longer a field that a miner may set"
+    if old == new:  # only ``decided`` moved: the allowed values are the same
+        return f"{name} has the same allowed values; `decided` of its bound {show(before['decided'])} to {show(after['decided'])}"
+    return f"{name} was {old}, and is now {new}"
+
+
+def _changes_lines(doc: Mapping[str, Any]) -> list[str]:
+    """Section 12: each change of the parameters that mining.json holds, and each change of the text."""
+    values = []
+    for change in doc.get("changes") or []:
+        # No value to name: the two rounds pinned two hashes, and the code that writes this text reads the same values from both.
+        what = "; ".join(_changed_value(row) for row in change["values"]) or "its `params_hash` differs, and no value that this text can name"
+        values.append(f"- Round `{change['round_id']}`, opened {utc(change['opened_at'])}: {what}. `params_hash` of the round: `{change['params_hash']}`.")
+    return [
+        "## 12. Changes",
+        "",
+        "The changes of the parameters and the changes of this text, the newest first. Each time is UTC.",
+        "",
+        "### Parameters",
+        "",
+        "The validator writes these lines from its journal: nobody types them. There is one line for each round that",
+        "opened with other parameters than the round before it. The line names that round, the time when it opened",
+        "(the values hold from then), and each value that differs: the old value, then the new one. The round has the",
+        f"same `opened_at` and `params_hash` in `history` of mining.json. mining.json holds the last {CHANGES_KEPT} lines under",
+        "`changes`. New values that no round has opened with yet have no line: `params` of mining.json shows them.",
+        "`recipe.<name>` is a value of the recipe (section 2). `train.<name>` is what a miner may set for that field",
+        "(section 2).",
+        "",
+        *(values or ["No change of the parameters is recorded."]),
+        "",
+        "### This text",
+        "",
+        "Changes of a sentence that no parameter shows. The day is the day of the change in the validator's code, not",
+        "the day when the validator started to run that code.",
+        "",
+        *(f"- {day} UTC, section {section}: {sentence}" for day, section, sentence in TEXT_CHANGES),
+        "",
+    ]
 
 
 def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
@@ -1300,7 +1367,8 @@ PARAM_ROW = re.compile(r"^\| `(\w+)` \| (.*) \|$", re.MULTILINE)
 def stated_params(text: str) -> dict[str, str]:
     """Each parameter with the value that a llms.txt text states for it, from the table of the section "Every parameter"."""
     section = re.split(rf"^## \d+\. {PARAMS_HEADING}$", text, flags=re.MULTILINE)
-    return dict(PARAM_ROW.findall(section[1])) if len(section) == 2 else {}
+    # The table ends at the next section: a row of a later section is not a parameter.
+    return dict(PARAM_ROW.findall(re.split(r"^## ", section[1], maxsplit=1, flags=re.MULTILINE)[0])) if len(section) == 2 else {}
 
 
 def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_text: bool = True) -> list[str]:
