@@ -20,7 +20,7 @@ from pathlib import Path
 from sn120_v2 import layout, public, publisher
 from sn120_v2.admission import StoreAdmission
 from sn120_v2.canonical import canonical_json, sha256_hex
-from sn120_v2.params import Params, Recipe
+from sn120_v2.params import ATTENTION_AND_MLP_PROJECTIONS, MinerBound, Params, Recipe
 from sn120_v2.public import NOT_JUDGED, NOT_VALID, VALID, file_verdict, files_view
 from sn120_v2.queue import waiting
 from sn120_v2.sim import SimWorld, sim_params
@@ -45,8 +45,13 @@ def kind(uid: int) -> str:
 
 
 def params_before() -> Params:
-    """The sim params with the defaults of that time: the 4 caps of a file, no cap on the update, the 7 bounds of a miner."""
-    bounds = tuple(bound for bound in Recipe().miner_bounds if bound.key not in ("minibatches", "global_norm_cap"))
+    """The sim params with the defaults of that time: the 4 caps of a file, no cap on the update, the 7 bounds of a miner.
+
+    ``target_modules`` had the 7 names as its choices.
+    """
+    targets = MinerBound("target_modules", choices=ATTENTION_AND_MLP_PROJECTIONS, decided=True)
+    today = (bound for bound in Recipe().miner_bounds if bound.key not in ("minibatches", "global_norm_cap"))
+    bounds = tuple(targets if bound.key == "target_modules" else bound for bound in today)
     recipe = Recipe(image_digests=sim_params().recipe.image_digests, global_norm_cap=None, miner_bounds=bounds)
     return sim_params(max_batch_bytes=64 * 1024 * 1024, max_prompts=250, max_rollouts=2000, max_train_token_steps=8_000_000, recipe=recipe)
 

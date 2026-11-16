@@ -65,7 +65,8 @@ def test_all_five_miner_settable_params_are_exposed_in_one_place():
     assert {bound.key for bound in recipe.miner_bounds} == {"lora_lr", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"}
     assert {b.key for b in recipe.miner_bounds if b.decided} == {"rank", "target_modules", "minibatches", "global_norm_cap"}, "the spec gives only these bounds"
     assert (recipe.bound("rank").low, recipe.bound("rank").high) == (8, 64)
-    assert recipe.bound("target_modules").choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+    assert recipe.bound("target_modules").choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "in_proj_qkv", "in_proj_z", "out_proj")
+    assert recipe.target_modules == recipe.bound("target_modules").choices[:7], "the default list is the 7 names of before"
     assert recipe.bound("dropout") is None
 
 

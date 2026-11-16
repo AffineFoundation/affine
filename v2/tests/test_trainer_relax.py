@@ -429,7 +429,7 @@ def test_a_missing_field_gives_the_default_and_the_bounds_of_today_stay():
     new = {bound.key: bound for bound in DEFAULT_MINER_BOUNDS}
     assert new["minibatches"] == MinerBound("minibatches", 1, 8000, integer=True, decided=True) and new["global_norm_cap"] == MinerBound("global_norm_cap", 0.01, 6.0, decided=True)
     assert new["steps"] == MinerBound("steps", 1, 4, integer=True), "steps stays 1 to 4"
-    assert new["target_modules"].choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"), "no new target module here"
+    assert new["target_modules"].choices[:7] == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"), "the 7 names of today stay, in their order"
 
 
 def test_the_recipe_and_the_params_of_a5c2b6a6_still_parse_and_no_bound_of_today_gets_tighter():
@@ -450,8 +450,10 @@ def test_the_recipe_and_the_params_of_a5c2b6a6_still_parse_and_no_bound_of_today
     assert more.to_dict() == old.recipe.to_dict() | {"minibatches": 2} and Recipe.from_dict(more.to_dict()) == more and more.recipe_id != old.recipe_id
     assert Recipe.from_dict(old.recipe.to_dict() | {"minibatches": 1}) == old.recipe, "a file that writes the 1 is the same recipe"
     # Each bound of today is a bound of the new defaults, unchanged, and no cap of the new defaults is lower.
+    # ``target_modules`` is wider: its 7 choices of today are the first 7 of the new defaults.
     new = Params()
-    assert all(bound in new.recipe.miner_bounds for bound in old.recipe.miner_bounds)
+    assert all(bound in new.recipe.miner_bounds for bound in old.recipe.miner_bounds if bound.key != "target_modules")
+    assert new.recipe.bound("target_modules").choices[:7] == old.recipe.bound("target_modules").choices
     assert (new.max_train_token_steps, new.max_prompts, new.max_rollouts, new.max_batch_bytes) == (16_000_000, 2000, 8000, 128 * 2**20)
     assert Params.from_json(new.to_json()) == new and new.recipe.steps == old.recipe.steps == 1
 
