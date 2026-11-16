@@ -75,7 +75,7 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), steps=3, miner_bounds=bounds)
     doc, text, _ = published(world(tmp_path, recipe=recipe).publisher.snapshots[-1])
     rows = {row["key"]: row for row in doc["contract"]["miner_settable"]}
-    assert list(rows) == ["lora_lr", "steps", "group_size", "sample_temperature", "rank", "alpha", "target_modules"]
+    assert list(rows) == ["lora_lr", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"]
     for bound in bounds:
         row = rows[bound.key]
         assert (row["low"], row["high"], row["choices"], row["decided"]) == (bound.low, bound.high, list(bound.choices), bound.decided)
@@ -113,7 +113,16 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "A value G above 0 cuts the rollouts of each prompt, in file order, into groups of G" in flat
     assert "its reward minus the mean reward of its group. The default is 0." in flat
     assert "divides the logits of the head by T" in flat and "always samples at temperature 0.9. The default T is 0.75." in flat
-    assert "every B matrix is multiplied by cap / norm" in flat and "unset means no cap. It is unset now: there is no cap." in flat
+    assert "every B matrix is multiplied by cap / norm" in flat
+    assert "The recipe value is the cap of a file that sets none. It is 6 now. `train.global_norm_cap` sets the cap of your LoRA, from 0.01 to 6." in flat
+    assert "`max_grad_norm` | 1 | gradient clip of each update; it does not cap the size of an update" in flat and "step-size cap" not in flat
+    assert "The clip does not cap the size of an update." in flat and "The one cap on it is `global_norm_cap`." in flat
+    assert "Row k of the shuffled list (k from 0) goes to minibatch k modulo N." in flat and "steps x N updates in all" in flat
+    assert "The cost does not count `minibatches`." in flat and "each update has a fixed cost of its own, about 0.1 s" in flat
+    old = dataclasses.replace(recipe, global_norm_cap=None, miner_bounds=tuple(bound for bound in recipe.miner_bounds if bound.key not in ("minibatches", "global_norm_cap")))
+    before = " ".join(published(world(tmp_path / "before", recipe=old).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode().split())
+    assert "This recipe has none: there is no cap. A file may not set a cap of its own now." in before, "a set from before the two new bounds"
+    assert "`train.minibatches`" not in before and "`train.global_norm_cap`" not in before
     assert "states the norm before the cap and the norm after it (`step_norm` is the norm after the cap)" in flat
     assert "`train_max_output_tokens` (777) or `train_max_context_tokens` (888, prompt + output) is truncated, not rejected" in flat
     assert "A rollout with no output token left is dropped and counted." in flat
@@ -127,7 +136,7 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "The share of a king that is no longer registered is split among the other registered kings of the window." in flat
     assert "goes to UID 0." not in flat and "the writer sets nothing and the last valid weights stay on chain" in flat
     capped = Recipe(image_digests=(sim.SIM_IMAGE,), global_norm_cap=2.5)
-    assert "The cap is now 2.5." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
+    assert "It is 2.5 now." in published(world(tmp_path / "capped", recipe=capped).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode()
 
 
 def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
