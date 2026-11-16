@@ -246,7 +246,6 @@ def test_the_index_lists_the_hotkeys_that_have_a_link():
     assert index == {
         "version": "affine-ff-link-v1",
         "issued_at": NOW,
-        "issued_at_cr": "2027-01-15 02:00:00 CR (UTC-6)",  # 08:00:00 UTC
         "expires_at": NOW + 7200,
         "hotkeys": sorted([A.hotkey, B.hotkey]),
         "reissue_every_seconds": 600,
