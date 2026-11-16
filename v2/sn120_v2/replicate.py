@@ -46,7 +46,7 @@ from .irt import draw_from_snapshot
 from .params import Params
 from .seams import Evaluator, ObjectStore, Trainer
 from .store import LocalStore
-from .types import NOT_RUN, PASS, Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
+from .types import NOT_RUN, PASSED, Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
 from .worker import LocalRunner
 
 ROUND_ID, LEASE_ID, BOX_ID = "local", "local-l0", "local-box"
@@ -382,8 +382,8 @@ def against_box(box_file: Mapping[str, Any], head: HeadVersion, draw: Draw, null
         report["null_m"] = {
             "rollouts_compared": len(pairs),
             "same_outcome": sum(a == b for a, b in pairs),
-            "passed_here": sum(a == PASS for a, _ in pairs),
-            "passed_on_box": sum(b == PASS for _, b in pairs),
+            "passed_here": sum(a in PASSED for a, _ in pairs),
+            "passed_on_box": sum(b in PASSED for _, b in pairs),
         }
     return report
 

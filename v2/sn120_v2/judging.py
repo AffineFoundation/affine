@@ -52,13 +52,14 @@ from typing import Sequence
 from .errors import ContractError, HeadMismatchError
 from .params import Params
 from .types import (
-    CAP,
+    CAP_PASS,
+    CAPPED,
     ERROR,
     LOST,
     NO_DECISION,
     NOT_RUN,
     NOT_SCORED,
-    PASS,
+    PASSED,
     SCORED,
     SKIP,
     WINNER,
@@ -92,7 +93,7 @@ def scored_prefix(outcomes: Sequence[str]) -> int:
 
 def pass_rates(outcomes: Sequence[str], n: int) -> list[float]:
     samples = len(outcomes)
-    return [sum(text[t] == PASS for text in outcomes) / samples for t in range(n)]
+    return [sum(text[t] in PASSED for text in outcomes) / samples for t in range(n)]
 
 
 def code_count(outcomes: Sequence[str], code: str, n: int) -> int:
@@ -101,6 +102,15 @@ def code_count(outcomes: Sequence[str], code: str, n: int) -> int:
 
 def code_share(outcomes: Sequence[str], code: str, n: int) -> float:
     return code_count(outcomes, code, n) / (n * len(outcomes))
+
+
+def cap_count(outcomes: Sequence[str], n: int) -> int:
+    """The rollouts that hit the token cap. One that passed after the forced close is still a cap hit."""
+    return sum(code_count(outcomes, code, n) for code in CAPPED)
+
+
+def cap_share(outcomes: Sequence[str], n: int) -> float:
+    return cap_count(outcomes, n) / (n * len(outcomes))
 
 
 def _as_written(value: float) -> Fraction:
@@ -163,7 +173,7 @@ def score_entry(
     lora, null = pass_rates(lora_outcomes, n), pass_rates(null_outcomes, n)
     delta, se = estimate(w, [a - b for a, b in zip(lora, null)])
     z = delta / se if se > 0 else 0.0
-    cap_rate, null_cap_rate = code_share(lora_outcomes, CAP, n), code_share(null_outcomes, CAP, n)
+    cap_rate, null_cap_rate = cap_share(lora_outcomes, n), cap_share(null_outcomes, n)
     reasons = []
     if n_total is None or n < n_total:
         reasons.append(f"scored on {n} tasks, not on the full draw")
@@ -172,7 +182,7 @@ def score_entry(
     if not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
-    if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params):
+    if not cap_hit_ok(cap_count(lora_outcomes, n), cap_count(null_outcomes, n), rollouts, params):
         reasons.append(f"cap-hit rate {cap_rate:.4f} is above {cap_limit(null_cap_rate, params):.4f}")
     return Score(
         n_tasks=n,
@@ -242,6 +252,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         [e.queue_pos for e in result.entries] == [e.queue_pos for e in ticket.entries],
         "the result must report every ticket entry once, in queue order",
     )
+    # Only the forced close gives this code. With the rule off, a result that holds it was not scored by these params.
+    forced = params.budget_forcing_tokens > 0 or not any(CAP_PASS in text for text in (*result.null_outcomes, *(t for e in result.entries for t in e.outcomes)))
+    _need(forced, "the result has a pass after a forced close, and budget_forcing_tokens is 0")
     null_scored = 0
     if any(e.status == SCORED for e in result.entries):
         _need(len(result.null_outcomes) == samples, "null M needs one outcome string per sample")
@@ -321,7 +334,7 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
             continue
         run = scored_prefix(result.null_outcomes)  # null M stops early only when every LoRA was dropped
         null_rates.append(weighted_mean(first.draw.weights[:run], pass_rates(result.null_outcomes, run)))
-        null_caps.append(code_share(result.null_outcomes, CAP, run))
+        null_caps.append(cap_share(result.null_outcomes, run))
         if not cover_ok(result.null_outcomes, run, params):
             cover = 1.0 - code_share(result.null_outcomes, ERROR, run)
             problems.append(f"null M on {ticket.box_id}: only {cover:.3f} of rollouts resolved")
