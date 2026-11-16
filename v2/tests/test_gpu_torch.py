@@ -77,7 +77,7 @@ def run(head_dir: Path, out: Path, devices=("cpu",), dtype: str = "bfloat16", se
     """Run the training job. Returns (result, LoRA tensors, the train report file)."""
     recipe = Recipe(**({"steps": 2, "lora_lr": 1e-4} | recipe))
     job = {"base_dir": str(head_dir), "base_hash": "b" * 64, "dtype": dtype, "recipe": recipe.to_dict(), "seed": seed, "rows": rows}
-    result = train_job.run(job, out, list(devices))
+    result = train_job.train(job, out, list(devices))
     return result, load_file(str(out / "adapter_model.safetensors")), json.loads((out / "train_report.json").read_text())
 
 
@@ -256,8 +256,10 @@ def test_the_job_runs_at_both_ends_of_every_number_a_miner_may_set(head_dir, tmp
     for end in ("low", "high"):
         values = {bound.key: int(getattr(bound, end)) if bound.integer else getattr(bound, end) for bound in bounds}
         result, lora, report = run(head_dir, tmp_path / end, **values)
-        assert result["status"] == "ok" and math.isfinite(result["step_norm"]) and len(report["losses"]) == values["steps"]
-        assert {key: report["recipe_values"][key] for key in values} == values
+        updates = values["steps"] * min(values["minibatches"], len(ROWS))  # with fewer rows than minibatches, each row is one update
+        assert result["status"] == "ok" and math.isfinite(result["step_norm"]) and len(report["losses"]) == updates
+        stated = {key: report["recipe_values"][key] for key in values if key != "minibatches"} | {"minibatches": report.get("minibatches", 1)}
+        assert stated == values  # the report names ``minibatches`` when it is above 1
         assert all(a.shape[0] == values["rank"] for key, a in lora.items() if "lora_A" in key)
 
 

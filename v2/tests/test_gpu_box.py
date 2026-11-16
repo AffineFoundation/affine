@@ -311,6 +311,8 @@ def test_every_key_a_miner_may_set_trains_at_both_ends_of_its_bound(box):
         ends = [list(bound.choices), [bound.choices[-1]]] if bound.choices else [bound.low, bound.high]
         for value in ends:
             value, job = int(value) if bound.integer else value, FakeJob()
+            if bound.key == "global_norm_cap":  # the fake job states a norm: one inside the cap of this file
+                job.report = job.report | {"step_norm": value}
             trainer(box, job).train(train_request(box, train={bound.key: value}))
             assert getattr(Recipe.from_dict(job.calls[0][2]["recipe"]), bound.key) == bound.check(value)
     job = FakeJob()
