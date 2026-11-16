@@ -99,7 +99,11 @@ def to_jsonable(obj: Any, tp: Any = Any) -> Any:
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         hints = _hints(type(obj))
-        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in dataclasses.fields(obj)}
+        # A field that the class names in ``LEFT_OUT_AT_DEFAULT`` is not written while it has its default. So a record
+        # type can get a new field, and each record that does not use the field keeps its JSON form and its digest.
+        left_out = getattr(type(obj), "LEFT_OUT_AT_DEFAULT", ())
+        fields = [f for f in dataclasses.fields(obj) if not (f.name in left_out and getattr(obj, f.name) == f.default)]
+        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in fields}
     if tp is float and type(obj) is int:
         return float(obj)
     origin, args = typing.get_origin(tp), typing.get_args(tp)

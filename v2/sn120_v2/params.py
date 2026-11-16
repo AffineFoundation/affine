@@ -71,12 +71,13 @@ class MinerBound(Record):
         return value if self.integer else float(value)
 
 
-# The five things a miner may set: learning rate; steps; GRPO group size and
-# sampling temperature; LoRA rank and alpha; target modules.
+# What a miner may set: learning rate; steps and minibatches; GRPO group size
+# and sampling temperature; LoRA rank and alpha; target modules.
 # PLACEHOLDER marks a bound the spec does not give. It is not a decision.
 DEFAULT_MINER_BOUNDS = (
     MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
     MinerBound("steps", 1, 4, integer=True),  # PLACEHOLDER
+    MinerBound("minibatches", 1, 8000, integer=True, decided=True),  # at the top one minibatch is one rollout
     MinerBound("group_size", 2, 64, integer=True),  # PLACEHOLDER
     MinerBound("sample_temperature", 0.5, 1.5),  # PLACEHOLDER
     MinerBound("rank", 8, 64, integer=True, decided=True),  # spec: "suggested 8-64"
@@ -94,8 +95,14 @@ class Recipe(Record):
     place that the batch checker, the trainer and the publisher read.
     """
 
+    # ``minibatches`` came after the first rounds. While it is 1 it is not written (``canonical.to_jsonable``): a recipe
+    # with one minibatch has the JSON form and the ``recipe_id`` that it had before the field, and code from before
+    # the field can read it.
+    LEFT_OUT_AT_DEFAULT = ("minibatches",)
+
     method: str = "grpo-lora"
-    steps: int = 1
+    steps: int = 1  # passes over the whole file
+    minibatches: int = 1  # optimizer updates in one pass; 1 = one update on the whole file
     lora_lr: float = 1e-5
     max_grad_norm: float = 1.0
     global_norm_cap: float | None = None  # optional cap on the norm of the whole adapter update
@@ -121,6 +128,7 @@ class Recipe(Record):
 
     def __post_init__(self) -> None:
         _need(self.steps >= 1, "recipe.steps must be at least 1")
+        _need(self.minibatches >= 1, "recipe.minibatches must be at least 1")
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
@@ -209,7 +217,9 @@ class Params(Record):
     max_answer_repeat_count: int = 32
     reward_tolerance: float = 0.0
     min_pool_prompt_frac: float = 0.0  # 0 = prompts need not come from the public pool
-    max_train_token_steps: int = 8_000_000  # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit
+    # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit.
+    # The cap does not count minibatches: each optimizer update has a fixed cost that no admission rule counts.
+    max_train_token_steps: int = 8_000_000
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
