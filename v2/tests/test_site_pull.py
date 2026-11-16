@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 import time
@@ -15,6 +16,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import boto3
 import pytest
@@ -27,10 +29,8 @@ from sn120_v2.r2 import R2Store
 from sn120_v2.r2_names import PLAIN_NAMES, store_env
 from sn120_v2.types import HeadManifest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "site"))
-import terms  # noqa: E402  # the site package sits next to sn120_v2; pull/reset import it the same way
-
 PULL = Path(__file__).parents[1] / "site" / "pull.py"
+terms = SimpleNamespace(**runpy.run_path(str(PULL.with_name("terms.py")), run_name="terms"))  # a file of v2/site, not a module of the package
 URL = "https://site.example"
 SECRET = "fake-secret-value-never-shown"
 LINKS, INDEX = "public/read_links.json", "public/pull_index.json"
