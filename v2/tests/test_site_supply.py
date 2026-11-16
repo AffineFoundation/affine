@@ -535,19 +535,10 @@ def test_the_public_file_has_counts_only(stage):
     assert stage.doc["clock"]["now"] == "host" and stage.doc["schema"] == supply.SCHEMA
 
 
-@pytest.mark.parametrize("utc, words", [
-    ("2026-11-14 12:43:26", "6:43 AM Costa Rica time, 14 Nov"),
-    ("2026-11-14 18:00:00", "12:00 PM Costa Rica time, 14 Nov"),
-    ("2026-11-14 06:00:00", "12:00 AM Costa Rica time, 14 Nov"),
-    ("2026-11-14 05:59:59", "11:59 PM Costa Rica time, 13 Nov"),
-    ("2026-07-01 00:05:00", "6:05 PM Costa Rica time, 30 Jun"),  # no daylight saving time in Costa Rica
-    ("2027-01-01 03:00:00", "9:00 PM Costa Rica time, 31 Dec"),
-])
-def test_costa_rica_time_is_utc_minus_six_hours_all_year(utc, words):
+@pytest.mark.parametrize("utc", ["2026-11-14 12:43:26", "2026-11-14 05:59:59", "2026-07-01 00:05:00", "2027-01-01 03:00:00"])
+def test_a_time_in_words_is_in_utc(utc):
     t = datetime.strptime(utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-    assert supply.costa_rica(t) == words
     assert supply.utc_text(t) == utc + " UTC"
-    assert supply.both(t) == f"{utc} UTC ({words})"
 
 
 @pytest.fixture(scope="module")
@@ -599,7 +590,7 @@ def test_the_command_reads_the_store_with_list_calls_and_writes_the_two_files(en
     assert second.returncode == 0 and numbers(json.loads((site / "miner-supply.json").read_bytes())["windows"][-1]) == (2, 1, 0, 1, 0)
     assert "2 uploads in 24 h, 1 validated so far" in second.stdout
     shown = command("--report")
-    assert shown.returncode == 0 and "Costa Rica time" in shown.stdout and "last 24 h: uploads 2 | validated so far 1" in shown.stdout
+    assert shown.returncode == 0 and " UTC; " in shown.stdout and "last 24 h: uploads 2 | validated so far 1" in shown.stdout
     assert "hk11" not in shown.stdout + first.stdout + second.stdout
 
     env["R2_SECRET_ACCESS_KEY"] = SECRET  # a store that does not answer: nothing is written, and no address is printed

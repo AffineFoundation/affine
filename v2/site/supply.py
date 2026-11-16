@@ -10,7 +10,7 @@ uses list calls, and one read of ``public/mining.json``.
 
   --state-dir  a private directory of this command. It holds the record: hotkeys and times. Never serve it.
   --out        the public file. It holds counts only: no hotkey and no time of one file.
-  --report     no run: print the public file in words, with each time in UTC and in Costa Rica time.
+  --report     no run: print the public file in words, with each time in UTC.
 
 What one run does:
 
@@ -74,7 +74,7 @@ import statistics
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterable, Protocol
@@ -101,8 +101,6 @@ GAP_S = 180  # no run for longer than this is a gap: a file that came and went i
 KEEP_S = 8 * 24 * HOUR  # a file that is no longer the stored file leaves the record after this time
 VALID, NOT_VALID, NOT_JUDGED = "valid", "not_valid", "not_judged"
 KINDS = ("validated", "no_verdict", "not_valid", "replaced")
-COSTA_RICA = timezone(timedelta(hours=-6))  # Costa Rica has no daylight saving time
-MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 KING_ROUNDS = 3  # the extra time of a round with a new king comes from this many of the last such rounds
 AT_ROUND_WORDS = ("A file that a round took and that its miner replaced before the record saw it is counted at the time the round "
                   "took it, because the store no longer has its upload time (at_round_time in each row). A file that came into "
@@ -113,7 +111,7 @@ Proof = tuple[str, str, str, str, int | None]  # hotkey, ETag of the frozen copy
 def labels(scope: dict[str, Any], round_words: str) -> dict[str, str]:
     """What each count is, in the operator's three names, with the time of the validator's last file check."""
     checked = scope["checked_at"]
-    last = "The validator has published no file check yet." if checked is None else f"Last file check: {both(checked)}."
+    last = "The validator has published no file check yet." if checked is None else f"Last file check: {utc_text(checked)}."
     reach = ("The verdicts cover each hotkey of the waiting line." if scope["whole_line"] else
              f"Only the first {scope['seats']} of {scope['line']} seats of the waiting line have a published verdict; "
              "the files of the other seats show as no verdict yet.")
@@ -191,16 +189,6 @@ class S3Listing:
 
 def utc_text(t: float) -> str:
     return datetime.fromtimestamp(int(t), timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def costa_rica(t: float) -> str:
-    """The time in Costa Rica (UTC-6, all year), as "6:43 AM Costa Rica time, 14 Nov"."""
-    local = datetime.fromtimestamp(int(t), COSTA_RICA)
-    return f"{local.hour % 12 or 12}:{local.minute:02d} {'AM' if local.hour < 12 else 'PM'} Costa Rica time, {local.day} {MONTHS[local.month - 1]}"
-
-
-def both(t: float) -> str:
-    return f"{utc_text(t)} ({costa_rica(t)})"
 
 
 # ------------------------------------------------------------ what the store and the snapshot say
@@ -468,7 +456,7 @@ def public(state: dict[str, Any], verdicts: dict[str, str], scope: dict[str, Any
                   "That time is opened_at of the round in the public snapshot, the validator's clock. The validator "
                   "checks files when it tries to open a round and at each publish between rounds, never inside a round, so an "
                   f"upload during a round has no verdict until that round is over ({takes['words']}; see round_time). "
-                  + ("No file check is published yet. " if scope["checked_at"] is None else f"Last file check: {both(scope['checked_at'])}. ")
+                  + ("No file check is published yet. " if scope["checked_at"] is None else f"Last file check: {utc_text(scope['checked_at'])}. ")
                   + "A file of a hotkey with no seat in the waiting line gets no check. A window or an hour with complete=false "
                   "began before counting_since or meets a gap with no run: its counts are 'at least', because a file that "
                   "no round took and that was replaced in that time is not in them.",
@@ -533,15 +521,15 @@ def load_state(path: Path) -> dict[str, Any] | None:
 
 
 def report(doc: dict[str, Any]) -> list[str]:
-    """The public file in words, for the operator. Times in UTC and in Costa Rica time."""
+    """The public file in words, for the operator. Each time is in UTC."""
     if doc.get("schema") != SCHEMA:
         raise Refused(f"the file is not of schema {SCHEMA}")
     clock, waiting = doc["clock"], doc["waiting"]
     ahead = clock["host_minus_store_s"]
     lines = [
-        f"made {both(doc['generated_at'])}; 'now' is the clock of the {clock['now']}"
+        f"made {utc_text(doc['generated_at'])}; 'now' is the clock of the {clock['now']}"
         + ("" if ahead is None else f" (the host's clock is {ahead:+d} s from it)"),
-        f"counting since {both(doc['counting_since'])}; gaps with no run: {len(doc['gaps'])}",
+        f"counting since {utc_text(doc['counting_since'])}; gaps with no run: {len(doc['gaps'])}",
     ]
 
     def numbers(row: dict[str, Any]) -> str:
@@ -554,12 +542,12 @@ def report(doc: dict[str, Any]) -> list[str]:
         lines.append(f"last {row['hours']:>2} h: {numbers(row)} | per hour: uploads {row['uploads_per_hour']:.2f}, "
                      f"validated {row['validated_per_hour']:.2f} | {cover}")
     lines.append("by hour, by the upload time (LastModified, or the time of the round for a file that only a round's folder has); "
-                 "each hour in UTC, and in Costa Rica time in the brackets:")
+                 "each hour in UTC:")
     for row in doc["hours"]:
         cover = "this hour is not over" if row["open"] else "complete" if row["complete"] else "at least"
-        lines.append(f"  {utc_text(row['t'])[5:16]} UTC ({costa_rica(row['t']).split(' Costa')[0]}): uploads {row['uploads']:>3} | validated "
+        lines.append(f"  {utc_text(row['t'])[5:16]} UTC: uploads {row['uploads']:>3} | validated "
                      f"{row['validated']:>3} | no verdict {row['no_verdict']:>3} | not valid {row['not_valid']:>3} | replaced {row['replaced']:>3} | {cover}")
-    checked = "no file check yet" if waiting["checked_at"] is None else f"at the validator's file check of {both(waiting['checked_at'])}"
+    checked = "no file check yet" if waiting["checked_at"] is None else f"at the validator's file check of {utc_text(waiting['checked_at'])}"
     reach = (f"all {waiting['hotkeys']} hotkeys of the line" if waiting["whole_line"]
              else f"only the first {waiting.get('seats', waiting['hotkeys'])} of {waiting['line']} seats have a published verdict")
     lines.append(f"valid files waiting now: {waiting['valid']} ({reach}; source {waiting['source']}), {checked}; phase {doc.get('phase')}")
