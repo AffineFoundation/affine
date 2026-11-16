@@ -112,6 +112,7 @@ PARAMS_HEADING = "Every parameter"  # the section whose table states each parame
 # The order of two lines of one day is the order here.
 # A sentence holds for each set of parameters, so it names no ``train.`` key: such a key is in the text only while a miner may set it.
 TEXT_CHANGES = (
+    ("2026-11-16", 9, "New: the two norms and the training time that a round file holds for an entry. The name of the norm before the cap there is `norm_before_cap`; `step_norm_before_cap` is its name in the train report."),
     ("2026-11-16", 12, "This section is new."),
     ("2026-11-16", 2, "`minibatches` is new in the recipe: the count of updates in each pass. The training procedure has the rule, and section 5 has what it costs."),
     ("2026-11-16", 2, "`global_norm_cap` of the recipe is now the cap of a file that sets none. A file may set a cap of its own only while the table \"What you may set\" has a row for it."),
@@ -1093,7 +1094,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
         "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
-        "  shows the decision, the batch sha256 and the scores only.",
+        "  shows the decision, the batch sha256, the scores and the three values of the next line, and no more.",
+        "- In a round file each entry with a trained LoRA has `step_norm`, `norm_before_cap` and `train_wall_s`: the",
+        "  norm of its update after the cap (`global_norm_cap`, section 2), the norm before the cap, and the seconds",
+        "  that its training took. The two files have two names for the norm before the cap: `norm_before_cap` in a",
+        "  round file, `step_norm_before_cap` in the train report of a LoRA. When the cap cut nothing, the two norms",
+        "  are the same number.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
