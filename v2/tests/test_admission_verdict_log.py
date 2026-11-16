@@ -3,7 +3,8 @@
 The verdict of a file, with its rule, its reason and the count of a fault, lives only in the memory of ``run``.
 These lines put it in ``run.log``. They change no verdict.
 
-A freeze that gives a seat no batch has one line too: what the check said of the file, and what the freeze read.
+A freeze that gives a seat no batch has one line too: what the check said of the file, what the freeze read, and
+whether the two are the same bytes. The second try of a freeze has its own line (``test_admission_freeze_second_try.py``).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import shutil
 from pathlib import Path
 
 from sn120_v2 import layout
-from sn120_v2.admission import FAULT_HOLD_S, SHA_SHOWN, TOKENIZER_FAULT, GraderTimeLimit, StoreAdmission, verdict, verdict_log, verdict_note
+from sn120_v2.admission import FAULT_HOLD_S, OTHER_BYTES, SAME_BYTES, SHA_SHOWN, TOKENIZER_FAULT, GraderTimeLimit, StoreAdmission, verdict, verdict_log, verdict_note
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.cli import main
 from sn120_v2.journal import JOURNAL_FILE
@@ -179,7 +180,8 @@ REG_KEY = layout.miner_object("5A")
 
 
 def freeze_lines(capsys) -> list[str]:
-    return [line for line in capsys.readouterr().err.splitlines() if line.startswith("freeze: ")]
+    """The lines of the seats that got no batch. The line of a second try is not one of them."""
+    return [line for line in capsys.readouterr().err.splitlines() if line.startswith("freeze: ") and " gets no seat in round " in line]
 
 
 def doubles(prompt: str, output: str, capped: bool) -> float | None:
@@ -197,7 +199,7 @@ def test_freeze_with_no_batch_logs_the_bytes_of_the_check_and_the_bytes_it_read(
     store[REG_KEY] = other  # the miner wrote after the check
     assert adm.freeze(reg, "r000014") is None
     (line,) = freeze_lines(capsys)
-    assert line == head + verdict_note(verdict(other, "5A", params, tokens=WordTokens()))
+    assert line == head + verdict_note(verdict(other, "5A", params, tokens=WordTokens())) + f". The freeze read {OTHER_BYTES}"
     assert f"{start_of(other)} not valid, rule {TOKENIZER_FAULT}: " in line and start_of(other) != start_of(good)
     assert "poison" not in line and "secret" not in line, "the line never holds batch text"
 
@@ -221,7 +223,8 @@ def test_freeze_that_fails_on_the_bytes_of_the_check_shows_the_same_sha256_two_t
     assert adm.freeze(build.reg(216, hotkey="5A"), "r000014") is None
     assert freeze_lines(capsys) == [
         f"freeze: UID 216 gets no seat in round r000014. The check: {start_of(good)} valid, memory tag {start_of(good)}. "
-        f"The freeze: {start_of(good)} not valid, rule grader_time_limit: groups[0].rollouts[0]: the official grader did not finish this row inside its time limit"
+        f"The freeze: {start_of(good)} not valid, rule grader_time_limit: groups[0].rollouts[0]: the official grader did not finish this row inside its time limit. "
+        f"The freeze read {SAME_BYTES}"
     ]
 
 
@@ -236,7 +239,9 @@ def test_freeze_line_shows_the_tag_of_the_memory_beside_the_sha256_of_the_verdic
     adm = StoreAdmission(Store({REG_KEY: other}), params, tokens=WordTokens(), grader=None)
     adm._seen["5A"] = ((sha256_hex(b"the bytes before"), params.params_hash), valid("5A"))
     assert adm.freeze(reg, "r000013") is None
-    assert f"The check: {start()} valid, memory tag {sha256_hex(b'the bytes before')[:SHA_SHOWN]}. The freeze: {start_of(other)} not valid" in freeze_lines(capsys)[0]
+    (line,) = freeze_lines(capsys)
+    assert f"The check: {start()} valid, memory tag {sha256_hex(b'the bytes before')[:SHA_SHOWN]}. The freeze: {start_of(other)} not valid" in line
+    assert line.endswith(f". The freeze read {OTHER_BYTES}"), "the line compares with the tag of the memory: the bytes that the check judged"
 
 
 def test_controller_logs_a_file_that_its_recipe_step_or_its_hotkey_test_refuses(tmp_path, capsys, monkeypatch):
@@ -251,11 +256,11 @@ def test_controller_logs_a_file_that_its_recipe_step_or_its_hotkey_test_refuses(
         why = str(exc)
     capsys.readouterr()
     assert world.controller._freeze(reg, "r000001") is None
-    assert freeze_lines(capsys) == [head + f"the recipe step: {why}"] and "secret-batch-text" not in why
+    assert freeze_lines(capsys) == [head + f"the recipe step: {why}. The freeze read {SAME_BYTES}"] and "secret-batch-text" not in why
 
     monkeypatch.setattr(world.admission, "freeze", lambda reg, round_id: FrozenBatch("hk2", sha, "uri", "sim-batch", 1, 1, {}))
     assert world.controller._freeze(reg, "r000001") is None
-    assert freeze_lines(capsys) == [head + "the hotkey test: the batch names another hotkey"]
+    assert freeze_lines(capsys) == [head + f"the hotkey test: the batch names another hotkey. The freeze read {SAME_BYTES}"]
 
     monkeypatch.setattr(world.admission, "freeze", lambda reg, round_id: FrozenBatch("hk1", sha, "uri", "sim-batch", 1, 1, {}))
     assert world.controller._freeze(reg, "r000001") is not None and freeze_lines(capsys) == []
