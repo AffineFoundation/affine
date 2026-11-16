@@ -752,6 +752,8 @@ def test_server_command_line_and_refused_requests(box):
         assert flags[1] == argv[argv.index(flags[0]) + 1]
     assert argv[argv.index("--max-lora-rank") + 1] == str(int(request.params.recipe.bound("rank").high)) and "--enable-lora" in argv
     assert argv[argv.index("--limit-mm-per-prompt") + 1] == '{"image":0,"video":0}'  # v1: vLLM does not load the checkpoint without it
+    assert argv.count("--specialize-active-lora") == 1 and argv[argv.index("--specialize-active-lora") + 1].startswith("--")  # a switch without a value
+    assert "--specialize-active-lora" in server_argv("/base", 8100, request.params, 256, 5)  # the same with the table of a round
     assert server_env(3, box.config.work_dir)["HF_HUB_OFFLINE"] == "1"
     assert server_env(3, box.config.work_dir)["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] == "1"  # vLLM 0.32.0: no LoRA load route without it
     assert chat_body("m", [], 5, request.params)["chat_template_kwargs"] == {"enable_thinking": True}

@@ -248,6 +248,18 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
 
 
+def test_llms_txt_prints_each_option_of_the_server_command(tmp_path):
+    """The public text is true to the servers: every option of ``server_argv`` but the local address is a line of it."""
+    world, params = made_world(tmp_path), launch_params()
+    text, argv = text_of(world, params), server_argv("/base", 8100, params, ServeSettings().clients_per_server, 5)
+    options = [word for word in argv[argv.index("-m") + 2 :] if word.startswith("--") and word not in publisher.LOCAL_OPTIONS]
+    assert "--specialize-active-lora" in options and "--max-loras" in options
+    lines = [line.strip().removesuffix("\\").strip() for line in text.splitlines()]
+    for option in options:
+        assert sum(line == option or line.startswith(option + " ") for line in lines) == 1, f"{option}: not one line of the server command"
+    assert "--specialize-active-lora" in lines, "a switch without a value stands alone on its line"
+
+
 def assigned(path: Path, name: str) -> object:
     """The value that a module assigns to ``name`` at its top level, read from the source: the module is not imported."""
     (value,) = [
