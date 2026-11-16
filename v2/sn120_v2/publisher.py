@@ -47,7 +47,16 @@ from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
 from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
-from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Params, Recipe
+from .params import (
+    GENESIS_BASE_HASH,
+    GENESIS_MODEL_REPO,
+    GENESIS_MODEL_REVISION,
+    OPTIONAL_TARGET_MODULES,
+    TARGET_MODULE_NEEDS,
+    MinerBound,
+    Params,
+    Recipe,
+)
 from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
@@ -190,7 +199,8 @@ def reflow(lines: Iterable[str], width: int = 112) -> list[str]:
 def bound_text(bound: MinerBound) -> str:
     """The allowed values of one miner-settable field, in words."""
     if bound.choices:
-        return "a list: a non-empty subset of " + ", ".join(bound.choices)
+        needs = [f"; a list with {name} must hold {needed} too" for name, needed in TARGET_MODULE_NEEDS if name in bound.choices]
+        return "a list: a non-empty subset of " + ", ".join(bound.choices) + "".join(needs)
     kind = "a whole number" if bound.integer else "a number"
     return f"{kind} from {bound.low:g} to {bound.high:g}, both ends included"
 
@@ -284,6 +294,21 @@ def _recipe_lines(params: Params) -> list[str]:
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
+    targets = recipe.bound("target_modules")
+    offered = [name for name in OPTIONAL_TARGET_MODULES if targets is not None and name in targets.choices]
+    optional_targets = [
+        f"- `target_modules`: the default is {show(recipe.target_modules)}. You may also name {show([f'`{name}`' for name in offered])}:",
+        "  projections of the linear-attention layers of the head. The trainer handles each of them as it handles the",
+        "  other names: every linear layer with that name gets an adapter (the training procedure, below). `in_proj_a`",
+        "  and `in_proj_b` are not choices.",
+    ]
+    for name, needed in TARGET_MODULE_NEEDS:
+        if name in offered:
+            optional_targets += [
+                f"- A list with `{name}` must hold `{needed}` too. The server that scores your LoRA holds these two layers as",
+                f"  one layer, and it does not load an adapter for `{name}` alone. A list with `{name}` and no `{needed}`",
+                f"  makes the whole file invalid. `{needed}` without `{name}` is allowed.",
+            ]
     pinned = [
         "- `code_digest` is the id of the file set `sn120_v2/gpu/*.py` (section 9). The box refuses to train or score",
         "  when its own files have another id. `python -m sn120_v2.gpu.plan` prints the `code_digest` of your copy of",
@@ -327,6 +352,7 @@ def _recipe_lines(params: Params) -> list[str]:
         "  above 0 cuts the rollouts of each prompt, in file order, into groups of G; a last group with fewer than G",
         "  rollouts stays a group. The advantage of a rollout is its reward minus the mean reward of its group. The",
         f"  default is {recipe.group_size}.",
+        *(optional_targets if offered else []),
         "- `sample_temperature` T: you state the temperature at which you sampled your rollouts. The trainer divides the",
         "  logits of the head by T before it scores the tokens of a rollout. Evaluation always samples at temperature",
         f"  {show(params.temperature)}. The default T is {show(recipe.sample_temperature)}.",

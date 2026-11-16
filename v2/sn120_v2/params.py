@@ -37,6 +37,14 @@ def _unit(value: float) -> bool:
 
 
 ATTENTION_AND_MLP_PROJECTIONS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+# Projections of the linear-attention layers. A miner may name them; the default recipe does not hold them.
+# ``in_proj_a`` and ``in_proj_b`` of those layers are not choices.
+OPTIONAL_TARGET_MODULES = ("in_proj_qkv", "in_proj_z", "out_proj")
+TARGET_MODULE_CHOICES = ATTENTION_AND_MLP_PROJECTIONS + OPTIONAL_TARGET_MODULES
+# The server that scores a LoRA (vLLM 0.32.0) holds ``in_proj_qkv`` and ``in_proj_z`` as one layer. It loads an adapter
+# for both, or for ``in_proj_qkv`` alone. It refuses an adapter for ``in_proj_z`` alone, and that failure is one of
+# the box, not of the file. So a list with the first name must hold the second name too.
+TARGET_MODULE_NEEDS = (("in_proj_z", "in_proj_qkv"),)
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,9 @@ class MinerBound(Record):
             known = bool(names) and all(isinstance(name, str) and name in self.choices for name in names)
             if not known or len(set(names)) != len(names):
                 raise BatchRejected(f"train.{self.key} must be a non-empty subset of {list(self.choices)}")
+            for name, needed in TARGET_MODULE_NEEDS:
+                if name in names and needed not in names:
+                    raise BatchRejected(f"train.{self.key} with {name} must hold {needed} too")
             return tuple(name for name in self.choices if name in names)
         wanted = (int,) if self.integer else (int, float)
         # The range test comes first: it is safe for a whole number too large to be a float.
@@ -83,7 +94,8 @@ DEFAULT_MINER_BOUNDS = (
     MinerBound("sample_temperature", 0.5, 1.5),  # PLACEHOLDER
     MinerBound("rank", 8, 64, integer=True, decided=True),  # spec: "suggested 8-64"
     MinerBound("alpha", 8.0, 128.0),  # PLACEHOLDER
-    MinerBound("target_modules", choices=ATTENTION_AND_MLP_PROJECTIONS, decided=True),  # spec: these 7 projections
+    # The 7 projections of the default, and the 3 of the linear-attention layers that a miner may add.
+    MinerBound("target_modules", choices=TARGET_MODULE_CHOICES, decided=True),
     MinerBound("global_norm_cap", 0.01, 6.0, decided=True),  # the high end is the ceiling for every miner
 )
 
@@ -137,6 +149,8 @@ class Recipe(Record):
         cap = self.global_norm_cap
         _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
         _need(bool(self.target_modules), "recipe.target_modules must not be empty")
+        for name, needed in TARGET_MODULE_NEEDS:
+            _need(name not in self.target_modules or needed in self.target_modules, f"recipe.target_modules with {name} must hold {needed} too")
         settable = {f.name for f in dataclasses.fields(self)} - {"miner_bounds", "code_digest", "image_digests", "method"}
         keys = [bound.key for bound in self.miner_bounds]
         _need(len(set(keys)) == len(keys) and set(keys) <= settable, "miner_bounds must name distinct recipe fields")

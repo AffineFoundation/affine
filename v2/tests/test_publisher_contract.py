@@ -82,7 +82,8 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
         assert row["default"] == json.loads(json.dumps(getattr(recipe, bound.key)))
         assert f"| `train.{bound.key}` | " in text and row["allowed"] in text
     assert "| `train.steps` | 3 | a whole number from 2 to 7, both ends included |" in text
-    assert "a non-empty subset of q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj |" in text
+    subset = "a non-empty subset of q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj, in_proj_qkv, in_proj_z, out_proj"
+    assert subset + "; a list with in_proj_z must hold in_proj_qkv too |" in text
     assert "placeholder" not in text.lower()  # the miner's text states the launch values as they are
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
