@@ -22,6 +22,9 @@ fails: the failure is ours, and ``InfraError`` is raised. Such a file is
 checked again at a later call, ``FAULT_HOLD_S`` after its last check at the
 earliest. After ``FAULT_TRIES`` failed checks in a row, each one with that
 proof and at the same place, the verdict stays.
+
+The freeze at the open of a round has no later call. So a file that fails there with such a rule gets a
+second try at once, on the same bytes (``StoreAdmission.freeze``, ``FREEZE_RETRY_S``).
 """
 
 from __future__ import annotations
@@ -85,6 +88,10 @@ MACHINE = (MemoryError, OSError)
 # The seconds between two checks of the same bytes with the same params, after a verdict in TRANSIENT, counted or
 # not. So FAULT_TRIES counted checks need a fault that lasts (FAULT_TRIES - 1) * FAULT_HOLD_S, not one short stall.
 FAULT_HOLD_S = 600
+# The freeze gives a file that fails with a rule in TRANSIENT one second try, at once and on the same bytes.
+# A second try starts only while the second tries of this open have used less than this many seconds. A try that
+# has started is not cut. So the second tries hold an open up by this limit plus one check of one file at most.
+FREEZE_RETRY_S = 120
 _AGAIN = f"checked again at a try to open a round, at most once each {FAULT_HOLD_S // 60} minutes; after {FAULT_TRIES} failed checks in a row the verdict stays until a new file is uploaded"
 # The env's Grade.machine_cause for an expired time limit (envs.math_grader.TIME_LIMIT). This module cannot
 # import the env, which needs extra packages. If the env renames the value, a time-out becomes a grader fault.
@@ -744,13 +751,33 @@ def verdict_log(seats: Sequence[tuple[int, str]], verdicts: Mapping[str, Verdict
     return lines, {**before, **notes}
 
 
-def freeze_log(uid: int, round_id: str, checked: str, read: str) -> str:
+SAME_BYTES, OTHER_BYTES = "the same bytes as the check", "other bytes than the check"
+
+
+def freeze_log(uid: int, round_id: str, checked: str, read: str, same: bool | None = None) -> str:
     """One freeze that gave the seat no batch, as the log shows it: what the check said of the file, then what the freeze read.
 
     Both parts are made of public verdicts (``verdict_note``) and of the words of a rule, so the line never
-    holds batch content.
+    holds batch content. ``same`` says whether the whole sha256 of the bytes that the freeze read is the one of
+    the bytes that the check judged. None: one of the two has no bytes to compare, and the line says nothing.
     """
-    return f"freeze: UID {uid} gets no seat in round {round_id}. The check: {checked}. The freeze: {read}"
+    line = f"freeze: UID {uid} gets no seat in round {round_id}. The check: {checked}. The freeze: {read}"
+    return line if same is None else f"{line}. The freeze read {SAME_BYTES if same else OTHER_BYTES}"
+
+
+def second_try_log(uid: int, round_id: str, first: str, second: str | None, took: float, used: float) -> str:
+    """One second try of a freeze, as the log shows it, also when it passed: the first try, the second try and the time.
+
+    ``second`` None: no second try was made, because the second tries of this open have used ``FREEZE_RETRY_S``.
+    Both tries are public verdicts (``verdict_note``), so the line never holds batch content.
+    """
+    budget = f"{used:.1f} of {FREEZE_RETRY_S} s"
+    if second is None:
+        return f"freeze: UID {uid}, round {round_id}: no second try, the second tries of this open have used {budget}. The first try: {first}"
+    return (
+        f"freeze: UID {uid}, round {round_id}: a second try on the same bytes. The first try: {first}. "
+        f"The second try: {second}, after {took:.1f} s. The second tries of this open have used {budget}"
+    )
 
 
 @dataclass(frozen=True)
@@ -777,10 +804,12 @@ class StoreAdmission:
 
     def __init__(
         self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time,
-        streams: int = SERIAL_STREAMS,
+        streams: int = SERIAL_STREAMS, timer: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self.streams = max(SERIAL_STREAMS, int(streams))
+        self.timer = timer  # seconds that only go forward: the time that a second try of the freeze takes
+        self._second_used = 0.0  # seconds that the second tries of the freeze have used since the last call of ``verdicts``
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((sha256 of the checked bytes or "oversized", params hash), verdict)
         self._tries: dict[str, tuple[tuple[str, str], str, int]] = {}  # hotkey -> (the same tag, rule and reason, failed checks in a row)
         self._held: dict[str, tuple[tuple[str, str], Verdict, float]] = {}  # hotkey -> (the same tag, a verdict in TRANSIENT, the time of its check)
@@ -801,10 +830,6 @@ class StoreAdmission:
         if isinstance(raw, Invalid):
             return b"", raw
         return raw, _judge(raw, hotkey, self.params, self.tokens, self.grader)
-
-    def _read(self, hotkey: str, key: str) -> tuple[bytes, Batch | Invalid] | None:
-        """The object's bytes and their check, or None when there is no object."""
-        return self._judged(hotkey, self._raw(key))
 
     def _fetch(self, hotkey: str) -> _Fetched:
         """The store calls of one hotkey for ``verdicts``, in the order of always: the size, the hash, then the download.
@@ -882,7 +907,11 @@ class StoreAdmission:
         The files are read from the store ``streams`` at one time (``_ahead``). The verdicts and the memory are
         made here, one hotkey after the other in the order given. So a store call that fails stops the call at
         the same hotkey, with the same error and the same memory, for each count of streams.
+
+        Each try to open a round starts with this call. So the time that the second tries of the freeze may
+        use (``FREEZE_RETRY_S``) starts again here.
         """
+        self._second_used = 0.0
         out: dict[str, Verdict] = {}
         with contextlib.closing(self._ahead(hotkeys)) as fetches:
             for hotkey, fetch in fetches:
@@ -942,11 +971,52 @@ class StoreAdmission:
 
         The tag is the sha256 of the bytes that the verdict judged (``verdicts``), so the two are equal for a file that has a hash. A file with no hash in its verdict has its own tag: the sha256 of no bytes for an empty file, ``oversized`` for an oversized one.
         """
-        kept, held = self._seen.get(hotkey), self._held.get(hotkey)
-        found = kept if kept is not None else held[:2] if held is not None else None
+        found = self._checked(hotkey)
         if found is None:
             return "not checked by this process"
         return f"{verdict_note(found[1])}, memory tag {found[0][0][:SHA_SHOWN]}"
+
+    def _checked(self, hotkey: str) -> tuple[tuple[str, str], Verdict] | None:
+        """The tag and the verdict that the memory of the checks holds for a hotkey: the kept one, or the held one."""
+        kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+        return kept if kept is not None else held[:2] if held is not None else None
+
+    def _same_bytes(self, hotkey: str, raw: bytes | Invalid | None) -> bool | None:
+        """Whether the freeze read the bytes that the check judged, by the whole sha256. None: one of the two has no bytes to compare.
+
+        No bytes: the process made no check of this hotkey, the object is gone at the freeze, or one of the two
+        objects was oversized, so it was never read.
+        """
+        found = self._checked(hotkey)
+        if found is None or found[0][0] == "oversized" or not isinstance(raw, (bytes, bytearray)):
+            return None
+        return sha256_hex(bytes(raw)) == found[0][0]
+
+    def _second_try(self, reg: Registration, round_id: str, raw: bytes, first: Invalid) -> Batch | Invalid:
+        """The second try of the freeze, for a first try that failed with a rule in ``TRANSIENT``. Returns the result that counts.
+
+        The file check tries such a file again at a later call. The freeze has none: its result decides the
+        seat for this round. So it checks the same bytes one more time, at once: no new read of the store. The
+        result of the second try counts, whatever it is. A rule that is not in ``TRANSIENT`` is a rule break of
+        the miner and gets no second try.
+
+        The second tries of one open may use ``FREEZE_RETRY_S`` seconds: a try starts only while they have used
+        less. A try that has started is not cut. Each second try has its own line in the log, also when it
+        passes: a fault that the second try mends leaves no other trace. A second try that raises (a failure
+        of ours) has no line: the error stops the open and says why.
+        """
+        note = lambda result: verdict_note(_verdict(reg.hotkey, raw, result, 0))
+        if self._second_used >= FREEZE_RETRY_S:
+            print(second_try_log(reg.uid, round_id, note(first), None, 0.0, self._second_used), file=sys.stderr, flush=True)
+            return first
+        began = self.timer()
+        try:
+            second = _judge(raw, reg.hotkey, self.params, self.tokens, self.grader)
+        finally:
+            took = max(0.0, self.timer() - began)
+            self._second_used += took
+        print(second_try_log(reg.uid, round_id, note(first), note(second), took, self._second_used), file=sys.stderr, flush=True)
+        return second
 
     def freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         """Copy the miner's file for this round and check the copy. None = missing or invalid: a skip, not charged.
@@ -954,13 +1024,19 @@ class StoreAdmission:
         It always reads the miner's file as it is now. A miner may replace the file until the round opens, so
         a copy from an earlier try of the same round id is replaced, or removed on a skip. Call it only for a
         round that has not opened yet: an open round's tickets name the frozen copy.
+
+        A file that fails with a rule in ``TRANSIENT`` gets a second try on the same bytes (``_second_try``).
         """
         frozen_key = layout.frozen_batch(round_id, reg.hotkey)
-        found = self._read(reg.hotkey, layout.miner_object(reg.hotkey))
+        raw = self._raw(layout.miner_object(reg.hotkey))
+        found = self._judged(reg.hotkey, raw)
+        if found is not None and isinstance(found[1], Invalid) and found[1].rule in TRANSIENT:
+            found = found[0], self._second_try(reg, round_id, *found)
         if found is None or not isinstance(found[1], Batch):
             self.store.delete(frozen_key)
             read = None if found is None else _verdict(reg.hotkey, found[0], found[1], 0)
-            print(freeze_log(reg.uid, round_id, self._checked_note(reg.hotkey), verdict_note(read)), file=sys.stderr, flush=True)
+            line = freeze_log(reg.uid, round_id, self._checked_note(reg.hotkey), verdict_note(read), self._same_bytes(reg.hotkey, raw))
+            print(line, file=sys.stderr, flush=True)
             return None
         raw, batch = found
         self.store.put(frozen_key, raw)

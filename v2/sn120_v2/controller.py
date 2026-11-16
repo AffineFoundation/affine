@@ -340,7 +340,9 @@ class Controller:
         if not refused:
             return batch
         read = f"{batch.batch_sha256[:SHA_SHOWN]} valid, then refused by {refused}"
-        print(freeze_log(reg.uid, round_id, verdict_note(self._verdicts.get(reg.hotkey)), read), file=sys.stderr, flush=True)
+        checked = self._verdicts.get(reg.hotkey)
+        same = checked.batch_sha256 == batch.batch_sha256 if checked is not None and checked.batch_sha256 else None
+        print(freeze_log(reg.uid, round_id, verdict_note(checked), read, same), file=sys.stderr, flush=True)
         return None
 
     def check_files(self, now: int) -> Mapping[str, Verdict]:
