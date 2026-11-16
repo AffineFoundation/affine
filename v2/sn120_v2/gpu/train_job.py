@@ -283,22 +283,24 @@ class Replica:
         return loss, trained
 
 
+@torch.no_grad()  # on the function: the copies run it in threads of their own, and the gradient mode is a value of each thread
 def score_old(replica: Replica, rows: Sequence[dict]) -> None:
     """The first pass of ``Replica.train_rows`` alone: q_old, the mask and the token count of each row, and no loss and no gradient.
 
     Call it before the first update: then B is zero and the model is the
-    head. These are the statements of the first pass in ``train_rows``, in
-    their order, with the forward that ``train_rows`` runs. A row that has
-    these values keeps them: ``train_rows`` takes them again for no row.
+    head. The whole pass builds no graph. With the gradient off each decoder
+    layer runs its plain forward (``_replayed``) and keeps no input; the
+    forward of ``train_rows`` keeps the layer inputs of a row for its
+    backward, and here no backward comes. The values are those of the first
+    pass in ``train_rows``. A row that has these values keeps them:
+    ``train_rows`` takes them again for no row.
     """
     head = replica.model.get_output_embeddings()
     for row in rows:
         targets = torch.tensor(row["tokens"], device=replica.device)
         hidden = replica.hidden(row["prompt_ids"] + row["tokens"])[0, len(row["prompt_ids"]) - 1 : -1]
-        leaf = hidden.detach().requires_grad_(True)
         chunks = range(0, len(targets), LOGIT_CHUNK)
-        with torch.no_grad():
-            parts = [token_scores(head(leaf[i : i + LOGIT_CHUNK]), targets[i : i + LOGIT_CHUNK], replica.recipe) for i in chunks]
+        parts = [token_scores(head(hidden[i : i + LOGIT_CHUNK]), targets[i : i + LOGIT_CHUNK], replica.recipe) for i in chunks]
         log_p, row["old"], mask = (torch.cat(part) for part in zip(*parts))
         if row["capped"] and row["advantage"] < 0:
             recipe = replica.recipe
@@ -441,9 +443,13 @@ def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = No
                 losses.append(sum(loss for loss, _ in results))
                 grad_norms.append(norm)
                 trained += sum(count for _, count in results)  # the tokens of the last pass, each counted one time
-    # One loss and one gradient norm for each update. ``minibatches`` is a recipe value that was used; ``save`` does not know it.
-    facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows), "minibatches": recipe.minibatches}
+    # One loss and one gradient norm for each update.
+    facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows)}
     facts.update(truncated_rows=sum(row["truncated"] for row in rows), dropped_rows=dropped)
+    # ``minibatches`` is a recipe value that was used, and ``save`` does not know it. The report takes ``facts`` last:
+    # these recipe values, the ones that ``save`` names and ``minibatches``, stand in the report in place of ``save``'s own.
+    used = ("lora_lr", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap", "minibatches")
+    facts.update(recipe_values={key: getattr(recipe, key) for key in used})
     result = save(first, recipe, job, out_dir, facts)
     result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(replicas), rows=len(rows), updates=len(losses))
     # The pass for q_old is one more run of every row through the model.

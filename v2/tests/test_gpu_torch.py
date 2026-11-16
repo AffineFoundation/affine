@@ -258,8 +258,8 @@ def test_the_job_runs_at_both_ends_of_every_number_a_miner_may_set(head_dir, tmp
         result, lora, report = run(head_dir, tmp_path / end, **values)
         updates = values["steps"] * min(values["minibatches"], len(ROWS))  # with fewer rows than minibatches, each row is one update
         assert result["status"] == "ok" and math.isfinite(result["step_norm"]) and len(report["losses"]) == updates
-        stated = {key: report["recipe_values"][key] for key in values if key != "minibatches"} | {"minibatches": report.get("minibatches", 1)}
-        assert stated == values  # the report names ``minibatches`` when it is above 1
+        stated = {"minibatches": 1} | report["recipe_values"]  # the recipe values of the report name ``minibatches`` when it is above 1
+        assert {key: stated[key] for key in values} == values and "minibatches" not in report
         assert all(a.shape[0] == values["rank"] for key, a in lora.items() if "lora_A" in key)
 
 

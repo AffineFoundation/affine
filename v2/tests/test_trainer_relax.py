@@ -18,6 +18,7 @@ import math
 import random
 import string
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -252,7 +253,7 @@ def test_one_minibatch_scores_no_row_ahead_and_mixes_no_row(head_dir, tmp_path, 
 
 def test_steps_times_minibatches_updates_and_no_update_without_rows(head_dir, tmp_path, watch):
     result, _, report = run(head_dir, tmp_path / "a", dtype="float32", rows=ROWS, steps=2, minibatches=4)
-    assert result["updates"] == len(report["losses"]) == len(report["grad_norms"]) == 8 and report["minibatches"] == 4
+    assert result["updates"] == len(report["losses"]) == len(report["grad_norms"]) == 8 and report["recipe_values"]["minibatches"] == 4
     assert [len(groups) for groups in watch["passes"]] == [4, 4] and watch["adams"][-1].updates == 8
     assert sorted(size for size, _ in watch["train_rows"]) == [2] * 4 + [3] * 4 and all(size == n_rows for size, n_rows in watch["train_rows"]), "the loss of a minibatch is divided by its own rows"
     # More minibatches than rows that train: each row is a minibatch of its own, one update for each row in each pass.
@@ -315,6 +316,43 @@ def test_the_old_policy_the_mask_and_the_count_come_from_the_head_before_the_fir
     assert sorted(updates for _, updates in watch["first_pass"]) == [0, 0, 1, 1, 2, 2, 3, 3, 4, 4] and late != true
     moved = [i for i, (old, _, _) in under_head.items() if not torch.equal(watch["rows"][i]["old"], old)]
     assert moved and all(updates > 0 for i, updates in watch["first_pass"] if i in moved)
+
+
+@pytest.mark.parametrize("copies", [1, 2])
+def test_the_scoring_pass_builds_no_graph(copies, head_dir, tmp_path, monkeypatch):
+    """Each forward of ``score_old`` gives a hidden state with no graph behind it. The forwards of the training are the control: they have one."""
+    seen, scoring = {"scoring": [], "training": []}, set()
+    hidden, score_old = train_job.Replica.hidden, train_job.score_old
+
+    def watched_hidden(self, ids):
+        out = hidden(self, ids)
+        seen["scoring" if threading.get_ident() in scoring else "training"].append(out.requires_grad or out.grad_fn is not None)
+        return out
+
+    def watched_score_old(replica, rows):
+        scoring.add(threading.get_ident())  # each copy scores in a thread of its own
+        try:
+            return score_old(replica, rows)
+        finally:
+            scoring.discard(threading.get_ident())
+            assert torch.is_grad_enabled(), "the pass leaves the gradient mode of its thread as it found it"
+
+    monkeypatch.setattr(train_job.Replica, "hidden", watched_hidden)
+    monkeypatch.setattr(train_job, "score_old", watched_score_old)
+    train_job.train(job(head_dir, steps=2, minibatches=3), tmp_path / "lora", ["cpu"] * copies)
+    assert seen["scoring"] == [False] * N_TRAIN, "one forward for each row that trains, and none of them builds a graph"
+    assert seen["training"] == [True] * (copies + 2 * N_TRAIN), "the warm-up of each copy and each training forward build one"
+
+
+def test_the_report_holds_minibatches_among_its_recipe_values_and_only_above_one_minibatch(head_dir, tmp_path):
+    _, _, one = run(head_dir, tmp_path / "one", dtype="float32", steps=2)
+    _, _, four = run(head_dir, tmp_path / "four", dtype="float32", steps=2, minibatches=4)
+    assert "minibatches" not in one and "minibatches" not in one["recipe_values"], "one minibatch: the report of before"
+    # The job of more minibatches names the recipe values itself: they are the ones that ``save`` names, and ``minibatches``.
+    assert four["recipe_values"] == one["recipe_values"] | {"minibatches": 4} and set(four) == set(one)
+    # ``run`` called by itself does not know minibatches: it makes one update in each pass and its report names no ``minibatches``.
+    train_job.run(job(head_dir, steps=2, minibatches=4), tmp_path / "alone", ["cpu"])
+    assert json.loads((tmp_path / "alone" / "train_report.json").read_text()) == one
 
 
 def test_minibatches_on_more_copies_of_the_model_give_the_one_copy_result(head_dir, tmp_path):
