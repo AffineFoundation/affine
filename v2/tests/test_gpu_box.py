@@ -485,7 +485,77 @@ def test_outcome_codes_capped_is_never_graded_and_errors_stay_in_the_count(box):
     assert read_reply({"choices": [{"message": {"content": "<think>x</think>a<|im_end|>"}, "finish_reason": "stop"}]}) == ("<think>x</think>a", False)
 
 
-def test_a_server_error_is_retried_and_a_dead_server_voids_the_look(box):
+def test_streaming_drops_after_a_delayed_look_and_keeps_other_models_running(box):
+    from sn120_v2.judging import drop_at_look, score_entry
+    from sn120_v2.worker import LocalRunner
+
+    request = eval_request(box, n_loras=2, tasks=tuple(f"t{i}" for i in range(32)), n_tasks=32, looks=(0.25, 0.5, 1.0), eval_chunk_tasks=8, min_scored_tasks=8)
+    weak, strong = request.loras
+    gate = threading.Event()
+    seen = []
+    lock = threading.Lock()
+
+    def script(model, task):
+        if model == weak.lora_hash:
+            assert gate.wait(30)
+            return ("P ok" if int(task[1:]) % 3 == 0 else "F no", "stop")
+        with lock:
+            seen.append((model, task))
+            if model == strong.lora_hash and sum(m == model for m, _ in seen) >= 16:
+                gate.set()
+        return ("P ok", "stop")
+
+    farm = Farm(script)
+    seam = evaluator(box, farm)
+    trainer = SimpleNamespace(train=lambda req: {0: weak, 1: strong}[req.entry.queue_pos], close=lambda: None)
+    ticket = box.build.replace(box.build.ticket(n_entries=2, n_tasks=32, params=request.params), head=box.head)
+    trained = {0: weak, 1: strong}
+    runner = LocalRunner(trainer, seam, lambda: 1000, box.build.image)
+    holder = []
+    errors = []
+
+    def run():
+        try:
+            holder.append(runner._evaluate(ticket, trained, int(time.time()) + 100000))
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(10)
+    if thread.is_alive():
+        pass
+    assert not thread.is_alive(), f"stream did not drain: {len(farm.bodies)} requests, errors={errors}"
+    assert not errors, errors
+    null, scored, dropped, stopped = holder[0]
+    assert dropped == {0: 0} and not stopped, (dropped, stopped, null, scored)
+    assert len(null[0].rstrip("-")) == 32
+    assert len(scored[0][0].rstrip("-")) == 8 and len(scored[1][0].rstrip("-")) == 32
+    assert score_entry(ticket.draw.weights, null, scored[0], request.params).n_tasks == 8
+    assert any(model == strong.lora_hash and int(task[1:]) >= 8 for model, task in seen + [(m, t) for _, body in farm.bodies for m, t in [(body["model"], body["messages"][-1]["content"])]])
+    seam.close()
+
+
+def test_streaming_deadline_returns_complete_prefix_before_cut(box, monkeypatch):
+    request = eval_request(box, n_loras=1, tasks=tuple(f"t{i}" for i in range(16)), n_tasks=16, looks=(1.0,), eval_chunk_tasks=8)
+    now = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    request = box.build.replace(request, deadline=int(now[0]) + 50)
+    started = threading.Event()
+
+    def script(model, task):
+        if int(task[1:]) >= 8:
+            now[0] = request.deadline + 1
+            return TimeoutError()
+        return ("P ok", "stop")
+
+    seam = evaluator(box, Farm(script))
+    outcomes = []
+    completed = seam.stream(request, lambda model, sample, index, code: outcomes.append((model, index, code)))
+    assert completed == 0
+    assert all(index < 16 for _, index, _ in outcomes)
+
+
     failures = iter([HttpError(503), ConnectionResetError()])
     lock = threading.Lock()
 
