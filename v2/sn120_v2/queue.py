@@ -56,9 +56,10 @@ def select_round(
 ) -> Selection:
     """Walk the queue and admit up to ``cap`` seats that have a valid frozen file.
 
-    A seat with no valid file is skipped. A held seat is passed over. A miner
-    gets one entry per round: a second seat of the same hotkey or coldkey
-    stays queued for a later round.
+    A seat with no valid file is skipped. A held seat is passed over. A hotkey
+    gets one entry per round: a second seat of the same hotkey stays queued
+    for a later round. The coldkey is not part of the rule: the chain reader
+    gives no seat a coldkey, so the coldkey term below never applies.
     """
     entries: list[Entry] = []
     skipped: list[RegKey] = []
