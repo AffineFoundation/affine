@@ -190,6 +190,10 @@ class Recipe(Record):
 class Params(Record):
     """One immutable snapshot of every parameter. Its digest is the ``params_hash`` pinned at round open."""
 
+    # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
+    # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
+    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule",)
+
     netuid: int = 120
     env: str = "math"
     env_pin: str = ""  # sha256 that pins the public task pool and grader of ``env``; set by the train/eval workstream
@@ -214,8 +218,10 @@ class Params(Record):
     dtype: str = "bfloat16"
 
     # Task draw.
-    irt_middle_band: tuple[float, float] = (0.2, 0.8)  # placeholder: favoured band of the head's pass rate
-    irt_explore_frac: float = 0.1  # placeholder: share of the draw for new or barely seen tasks
+    irt_draw_rule: str = "fisher"
+    irt_middle_band: tuple[float, float] = (0.2, 0.8)  # placeholder: favoured band of the head's pass rate under "band"
+    # Under "fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
+    irt_explore_frac: float = 0.1
 
     # Judging.
     z_bar: float = 1.0  # a winner needs z strictly above this
@@ -285,6 +291,7 @@ class Params(Record):
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
         _need(self.min_scored_tasks >= 2, "min_scored_tasks must be at least 2: one task has no standard error")
+        _need(self.irt_draw_rule in ("band", "fisher"), "irt_draw_rule must be 'band' or 'fisher'")
         low, high = self.irt_middle_band
         _need(_unit(low) and _unit(high) and low < high, "irt_middle_band must be two rising shares")
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")

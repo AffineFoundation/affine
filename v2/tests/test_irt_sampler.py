@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from collections import Counter
 from fractions import Fraction
@@ -11,7 +12,18 @@ import pytest
 from sn120_v2 import layout
 from sn120_v2.canonical import canonical_json
 from sn120_v2.errors import ContractError, VerifyError
-from sn120_v2.irt import LIMIT, PRIOR_PRECISION, IRTSampler, draw_from_masses, draw_from_snapshot, predicted_pass
+from sn120_v2.irt import (
+    FISHER_MASS_RULE,
+    LIMIT,
+    MASS_SCALE,
+    PRIOR_PRECISION,
+    SAME_SEED_CORRELATION,
+    IRTSampler,
+    draw_from_masses,
+    draw_from_snapshot,
+    fisher_masses,
+    predicted_pass,
+)
 from sn120_v2.params import Params
 from sn120_v2.seams import TaskSampler
 from sn120_v2.types import HeadVersion
@@ -34,7 +46,7 @@ def play(draw, ability: float, rng: random.Random) -> str:
 
 def trained(head: HeadVersion, pool=POOL, rounds: int = 14, n_tasks: int = 40) -> IRTSampler:
     """A sampler that saw ``rounds`` simulated rounds: null M at ability 0 and three LoRAs near it."""
-    sampler, rng = IRTSampler(pool), random.Random(7)
+    sampler, rng = IRTSampler(pool, Params(irt_draw_rule="band")), random.Random(7)
     for number in range(rounds):
         draw = sampler.draw(head, f"seed-{number}", n_tasks)
         outcomes = {"null": (play(draw, 0.0, rng),)} | {f"lora-{k}": (play(draw, 0.1 * k, rng),) for k in range(3)}
@@ -129,19 +141,78 @@ def test_online_updates_learn_difficulty_and_favour_the_middle_band(build):
     assert min(r[3] for r in rows.values()) > 0, "no task is ever excluded"
 
 
+def test_fisher_masses_follow_information_and_match_the_reference_formula():
+    tasks = {"easy": [-3.0, PRIOR_PRECISION, 0], "middle": [0.0, PRIOR_PRECISION, 5], "hard": [3.0, PRIOR_PRECISION, 1]}
+    uniform, masses = 0.1, fisher_masses(tasks, 0.0, 0.1)
+    probabilities = [1.0 / (1.0 + math.exp(row[0])) for row in tasks.values()]
+    information = [p * (1.0 - p) for p in probabilities]
+    reference = [q / sum(information) for q in information]
+    reference = [(1.0 - uniform) * q + uniform / len(tasks) for q in reference]
+    assert all(type(mass) is int and mass >= 1 for mass in masses.values())
+    assert abs(sum(masses.values()) - MASS_SCALE) <= len(tasks)
+    assert all(abs(mass - share * MASS_SCALE) <= 1 for mass, share in zip(masses.values(), reference))
+    assert masses["middle"] > masses["easy"] == masses["hard"]
+    assert min(masses.values()) >= 0.95 * uniform / len(tasks) * MASS_SCALE
+    assert [masses[task] for task in tasks] == [max(1, round(share * MASS_SCALE)) for share in reference], "each mass is within rounding of the reference formula"
+    extreme = fisher_masses({"a": [8.0, PRIOR_PRECISION, 0], "b": [-8.0, PRIOR_PRECISION, 0]}, 8.0, 0.1)
+    assert all(type(mass) is int and mass >= 1 for mass in extreme.values())
+
+
+def test_fisher_draw_is_reproducible_and_carries_the_inclusion_weights(build):
+    tasks = {f"task-{i}": [float(i % 5) - 2.0, PRIOR_PRECISION, i % 4] for i in range(17)}
+    masses = fisher_masses(tasks, 0.3, 0.1)
+    total = sum(masses.values())
+    draw = draw_from_masses(masses, "snap", "seed", 7)
+    assert len(set(draw.task_ids)) == len(draw.task_ids) == 7
+    assert draw.weights == tuple(total / (7 * masses[task]) for task in draw.task_ids)
+    assert draw == draw_from_masses(masses, "snap", "seed", 7)
+    assert len(draw_from_masses(masses, "snap", "seed", 50).task_ids) == len(tasks)
+    sampler = IRTSampler(list(tasks), Params(irt_draw_rule="fisher"))
+    snapshot = published(sampler)
+    assert snapshot["mass_rule"] == FISHER_MASS_RULE
+    assert snapshot["config"] == {
+        "draw_rule": "fisher", "uniform_frac": 0.1,
+        "prior_precision": PRIOR_PRECISION, "same_seed_correlation": SAME_SEED_CORRELATION,
+    }
+    assert draw_from_snapshot(snapshot, "seed", 7) == sampler.draw(build.head(), "seed", 7)
+
+
+def test_fisher_draw_has_the_exact_inclusion_probabilities_and_an_unbiased_ht_estimate():
+    tasks = {f"task-{i}": [float(i % 5) - 2.0, PRIOR_PRECISION, 0] for i in range(12)}
+    masses = fisher_masses(tasks, 0.3, 0.1)
+    quantities = {task: float((i * 7) % 13) for i, task in enumerate(tasks)}
+    truth = math.fsum(quantities.values()) / len(tasks)
+    probabilities, slots, total = {}, 5, sum(masses.values())
+    for task in sorted(masses, key=lambda name: (-masses[name], name)):
+        if slots and slots * masses[task] >= total:
+            probabilities[task] = 1.0
+            slots -= 1
+            total -= masses[task]
+        else:
+            probabilities.update({name: slots * mass / total for name, mass in masses.items() if name not in probabilities})
+            break
+    assert math.isclose(math.fsum(probabilities.values()), 5.0, abs_tol=1e-12)
+    estimates = []
+    for seed in range(4000):
+        draw = draw_from_masses(masses, "snap", f"seed-{seed}", 5)
+        assert len(draw.task_ids) == 5 and all(weight == pytest.approx(1.0 / probabilities[task]) for task, weight in zip(draw.task_ids, draw.weights))
+        estimates.append(math.fsum(weight * quantities[task] for task, weight in zip(draw.task_ids, draw.weights)) / len(tasks))
+    assert abs(math.fsum(estimates) / len(estimates) - truth) < 0.025
+
+
 def test_new_or_barely_seen_tasks_get_the_exploration_share(build):
     old_pool, new_tasks = POOL[:50], POOL[50:]
     snapshot = published(trained(build.head(), old_pool))
     assert all(row[2] >= 3 for row in snapshot["tasks"].values())
 
     def new_share(explore_frac: float) -> float:
-        grown = IRTSampler(POOL, Params(irt_explore_frac=explore_frac), snapshot=snapshot).public_snapshot()
+        grown = IRTSampler(POOL, Params(irt_draw_rule="band", irt_explore_frac=explore_frac), snapshot=snapshot).public_snapshot()
         assert all(grown["tasks"][task][:3] == NEW_TASK for task in new_tasks)
         assert all(grown["tasks"][task][:3] == snapshot["tasks"][task][:3] for task in old_pool), "a new pool keeps what was learned"
         return sum(grown["tasks"][task][3] for task in new_tasks) / grown["mass_total"]
 
     assert new_share(0.3) > new_share(0.0) + 0.2 and new_share(0.3) > 0.3
-    smaller = IRTSampler(POOL[:40], snapshot=snapshot)
+    smaller = IRTSampler(POOL[:40], Params(irt_draw_rule="band"), snapshot=snapshot)
     assert sorted(smaller.public_snapshot()["tasks"]) == sorted(POOL[:40]) and smaller.snapshot_id() != snapshot["snapshot_id"]
 
 
@@ -228,10 +299,10 @@ def test_a_second_update_for_the_same_draw_after_a_crash_changes_nothing(build):
     # The same process closes the round again.
     assert live.update(head, draw, **call) == once and published(live) == after
     # A restart from the snapshot stored after the update: the second call is a no-op.
-    restarted = IRTSampler(POOL, snapshot=after)
+    restarted = IRTSampler(POOL, Params(irt_draw_rule="band"), snapshot=after)
     assert restarted.update(head, draw, **call) == once and published(restarted) == after
     # A restart from the snapshot stored before the update: the update runs once and gives the same table.
-    rolled_back = IRTSampler(POOL, snapshot=before)
+    rolled_back = IRTSampler(POOL, Params(irt_draw_rule="band"), snapshot=before)
     assert rolled_back.update(head, draw, **call) == once
     assert rolled_back.update(head, draw, **call) == once and published(rolled_back) == after
     # The draw alone names the round: a second call with other results or no winner is not a second lesson.
@@ -242,11 +313,38 @@ def test_a_second_update_for_the_same_draw_after_a_crash_changes_nothing(build):
     assert live.public_snapshot()["rounds"] == 5
 
 
+def test_a_stored_band_snapshot_migrates_to_fisher_without_losing_learned_state(build):
+    head, band = build.head(), Params(irt_draw_rule="band")
+    sampler = IRTSampler(POOL, band)
+    draw = sampler.draw(head, "seed-migrate", 20)
+    sampler.update(head, draw, {"null": ("PFFP" * 5,), "lora": ("PPFP" * 5,)})
+    before = published(sampler)
+    twin = IRTSampler(POOL, band, snapshot=before)
+    assert twin.snapshot_id() == before["snapshot_id"]
+    assert twin.public_snapshot()["config"] == before["config"] == {
+        "middle_band": [0.2, 0.8], "explore_frac": 0.1, "explore_below": 3, "band_floor": 0.25,
+        "prior_precision": PRIOR_PRECISION, "same_seed_correlation": SAME_SEED_CORRELATION,
+    }
+
+    migrated = IRTSampler(POOL, Params(irt_draw_rule="fisher"), snapshot=before)
+    after = migrated.public_snapshot()
+    assert after["snapshot_id"] != before["snapshot_id"]
+    assert after["config"] == {
+        "draw_rule": "fisher", "uniform_frac": 0.1,
+        "prior_precision": PRIOR_PRECISION, "same_seed_correlation": SAME_SEED_CORRELATION,
+    }
+    assert all(after["tasks"][task][:3] == before["tasks"][task][:3] for task in POOL), "difficulty, information and rounds_seen survive"
+    for key in ("heads", "loras", "rounds", "updates", "head_version_id"):
+        assert after[key] == before[key]
+    assert {task: row[3] for task, row in after["tasks"].items()} == fisher_masses(before["tasks"], before["head_ability"], 0.1)
+    assert IRTSampler(POOL, Params(), snapshot=after).snapshot_id() == after["snapshot_id"]
+
+
 def test_the_published_snapshot_is_the_whole_state(build):
     head = build.head()
     sampler = trained(head, rounds=3)
     snapshot = published(sampler)
-    twin = IRTSampler(POOL, snapshot=snapshot)
+    twin = IRTSampler(POOL, Params(irt_draw_rule="band"), snapshot=snapshot)
     assert twin.snapshot_id() == sampler.snapshot_id() == snapshot["snapshot_id"]
     draw = sampler.draw(head, "seed-next", 20)
     assert twin.draw(head, "seed-next", 20) == draw

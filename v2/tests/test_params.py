@@ -76,11 +76,21 @@ def test_look_sizes_end_with_every_task():
         {"batch_cap": 0}, {"batch_cap": 33}, {"n_min_start": 0}, {"n_tasks": 0}, {"looks": ()}, {"looks": (0.5, 0.9)},
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"lease_timeout_s": 0}, {"kings_window": 0},
+        {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
     ],
 )
 def test_an_invalid_setting_fails_closed(change):
     with pytest.raises(ConfigError):
         dataclasses.replace(Params(), **change)
+
+
+def test_the_default_irt_rule_is_fisher_and_band_remains_selectable():
+    assert Params().irt_draw_rule == "fisher"
+    assert Params(irt_draw_rule="band").irt_draw_rule == "band"
+    assert Params.from_dict({"irt_draw_rule": "fisher"}).irt_draw_rule == "fisher"
+    assert "irt_draw_rule" not in Params().to_dict(), "old stored params keep their JSON and hash with the new default"
+    assert Params(irt_draw_rule="band").to_dict()["irt_draw_rule"] == "band"
+    assert Params(irt_draw_rule="band").params_hash != Params().params_hash
 
 
 def test_all_miner_settable_params_are_exposed_in_one_place():

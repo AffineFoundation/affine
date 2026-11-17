@@ -82,7 +82,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7))
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band")
 
 
 def sentences(text: str) -> str:
@@ -92,7 +92,7 @@ def sentences(text: str) -> str:
 
 
 OTHER = {
-    "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "global_norm_cap": 1.75, "target_modules": ("q_proj",),
+    "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
 }  # fmt: skip
 
@@ -116,7 +116,7 @@ def one_changed(record, name: str):
 
 def test_each_param_alone_moves_the_text(tmp_path):
     """A changed parameter with an unchanged text fails here. So does a new parameter that the text does not state."""
-    world, base = made_world(tmp_path), launch_params()
+    world, base = made_world(tmp_path), dataclasses.replace(launch_params(), irt_draw_rule="band")
     before = text_of(world, base)
     for record, only_table in ((base, ONLY_IN_THE_TABLE), (base.recipe, ONLY_IN_THE_RECIPE_TABLE)):
         for field in dataclasses.fields(record):
@@ -124,6 +124,11 @@ def test_each_param_alone_moves_the_text(tmp_path):
             if name in ("recipe", "miner_bounds", "env"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
             value, changed = one_changed(record, name)
+            if name == "irt_draw_rule":
+                assert sentences(text_of(world, changed)) != sentences(before)
+                continue
+            if name == "irt_middle_band":
+                continue  # only stated under band; the rule switch above checks that sentence too
             params = changed if record is base else dataclasses.replace(base, recipe=changed)
             after = text_of(world, params)
             assert f"| `{name}` | {publisher.show(value)} |" in after, f"{name}: the table does not state the new value"
@@ -148,6 +153,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         # Built from the constant of the code that gives the number.
         irt.MODEL,
         irt.DRAW_RULE,
+        irt.FISHER_MASS_RULE,
         f"at most once each {admission.FAULT_HOLD_S // 60} minutes",
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
