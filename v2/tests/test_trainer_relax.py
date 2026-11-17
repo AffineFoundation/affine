@@ -3,7 +3,8 @@
 The first test holds the new training job against the job of commit
 ``a5c2b6a6``: ``tests/data/train_job_a5c2b6a6.py.txt`` is that file, byte
 for byte (``git show a5c2b6a6:v2/sn120_v2/gpu/train_job.py``). With one
-minibatch the two write the same bytes.
+minibatch and only rows that train, the two write the same bytes. Zero-advantage
+filler rows no longer shrink the loss: see the filler-row test below.
 """
 
 from __future__ import annotations
@@ -189,7 +190,7 @@ def watch(monkeypatch):
     return seen
 
 
-# ---- A, one minibatch: the job of a5c2b6a6, byte for byte ----
+# ---- A, one minibatch: the job of a5c2b6a6, byte for byte, without zero-advantage rows ----
 
 SAME_AS_BEFORE = {
     "today's default recipe, one step": dict(steps=1, lora_lr=1e-5, global_norm_cap=None),
@@ -209,7 +210,7 @@ SAME_AS_BEFORE = {
 def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job, head_dir, tmp_path, amx_off):
     settings = dict(SAME_AS_BEFORE[case])
     devices = ["cpu"] * settings.pop("n", 1)
-    made = job(head_dir, **settings)
+    made = job(head_dir, rows=[row for row in ROWS if row["advantage"] != 0], **settings)
     assert "minibatches" not in made["recipe"] and Recipe.from_dict(made["recipe"]).minibatches == 1
     before = old_job.run(json.loads(json.dumps(made)), tmp_path / "before", devices)
     now = train_job.train(json.loads(json.dumps(made)), tmp_path / "now", devices)
@@ -223,15 +224,17 @@ def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job,
 
 
 def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
-    """No GPU needed: each function and class of the old file stands in the new file as it was. Only ``main`` calls another name."""
+    """No GPU needed: the old file is unchanged apart from dispatch and the active-row loss denominator."""
     before, now = OLD_TRAINER.read_text(), Path(train_job.__file__).read_text()
     old = {node.name: ast.get_source_segment(before, node) for node in ast.parse(before).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     new = {node.name: ast.get_source_segment(now, node) for node in ast.parse(now).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     assert {"run", "save", "Replica", "token_scores", "ppo_loss", "encode", "add_lora", "Replay", "main"} <= set(old)
-    assert {name for name in old if old[name] != new.get(name)} == {"main"}
+    assert {name for name in old if old[name] != new.get(name)} == {"main", "run"}
     assert sorted(set(new) - set(old)) == ["bring", "minibatches_of", "run_minibatches", "score_old", "train"]
-    gone = [line for line in difflib.unified_diff(before.splitlines(), now.splitlines(), n=0, lineterm="") if line.startswith("-") and not line.startswith("---")]
-    assert gone == ['-        report = run(job, job_dir / "lora")'], "the new file is the old file plus new lines; one line of main changed"
+    diff = list(difflib.unified_diff(before.splitlines(), now.splitlines(), n=0, lineterm=""))
+    gone = [line for line in diff if line.startswith("-") and not line.startswith("---")]
+    assert sorted(gone) == sorted(['-        report = run(job, job_dir / "lora")', "-            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(rows)), zip(replicas, shares)))"]), "only main dispatch and the trained-row denominator changed"
+    assert "+            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(active)), zip(replicas, shares)))" in diff
     # The one place that picks the job: one minibatch is ``run``, more are ``run_minibatches``.
     called = []
     monkeypatch.setattr(train_job, "run", lambda job, out, devices=None: called.append("run"))
@@ -244,8 +247,32 @@ def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
 def test_one_minibatch_scores_no_row_ahead_and_mixes_no_row(head_dir, tmp_path, watch):
     train_job.train(job(head_dir, steps=3), tmp_path / "lora", ["cpu"])
     assert watch["passes"] == [] and [adam.updates for adam in watch["adams"]] == [3]
-    assert watch["train_rows"] == [(N_TRAIN, len(ROWS))] * 3, "the whole file in each update, and the loss divided by the count of all rows"
+    assert watch["train_rows"] == [(N_TRAIN, N_TRAIN)] * 3, "the trained rows in each update, and the loss divided by their count"
     assert sorted(watch["first_pass"]) == [(i, 0) for i, a in enumerate(ADVANTAGES) if a != 0]
+
+
+def test_zero_advantage_filler_does_not_change_loss_or_gradient_scale(head_dir, tmp_path, monkeypatch):
+    gradients, clip = [], torch.nn.utils.clip_grad_norm_
+
+    def capture(weights, *args, **kwargs):
+        gradients.append([weight.grad.detach().clone() for weight in weights if weight.grad is not None])
+        return clip(weights, *args, **kwargs)
+
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", capture)
+    _, plain_lora, plain = run(head_dir, tmp_path / "plain", dtype="float32", steps=2)
+    plain_gradients = gradients.copy()
+    gradients.clear()
+    filler = [{"prompt": f"filler {i}", "output": "zero advantage", "reward": 1.0, "advantage": 0.0} for i in range(9)]
+    _, padded_lora, padded = run(head_dir, tmp_path / "padded", dtype="float32", steps=2, rows=ROWS + filler)
+
+    assert padded["rows"] == plain["rows"] + len(filler)
+    for key in ("losses", "grad_norms", "trained_tokens", "step_norm", "step_norm_before_cap"):
+        assert padded[key] == plain[key]
+    assert gradients and len(gradients) == plain["recipe_values"]["steps"]
+    for plain_step, padded_step in zip(plain_gradients, gradients):
+        assert len(plain_step) == len(padded_step)
+        assert all(torch.equal(a, b) for a, b in zip(plain_step, padded_step))
+    assert all(torch.equal(plain_lora[key], padded_lora[key]) for key in plain_lora)
 
 
 # ---- A, more minibatches ----

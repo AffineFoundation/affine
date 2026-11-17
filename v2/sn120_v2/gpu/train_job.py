@@ -370,7 +370,7 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     with ThreadPoolExecutor(len(replicas)) as pool:
         for _ in range(recipe.steps):
             shares = [active[i :: len(replicas)] for i in range(len(replicas))]
-            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(rows)), zip(replicas, shares)))
+            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(active)), zip(replicas, shares)))
             for other in replicas[1:]:
                 for mine, theirs in zip(first.weights, other.weights):
                     if theirs.grad is not None:
@@ -425,7 +425,7 @@ def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = No
             trained = 0
             for group in minibatches_of(active, recipe.minibatches, order):
                 shares = [group[i :: len(replicas)] for i in range(len(replicas))]  # a copy with no row of this minibatch gives no gradient
-                # The loss of a minibatch is divided by the count of its rows. ``run`` divides by the count of all rows of the file.
+                # The loss of a minibatch is divided by the count of its trained rows. ``run`` divides by all trained rows of the file.
                 results = list(pool.map(lambda pair: pair[0].train_rows(bring(*pair), len(group)), zip(replicas, shares)))
                 for other in replicas[1:]:
                     for mine, theirs in zip(first.weights, other.weights):

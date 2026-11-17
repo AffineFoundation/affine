@@ -208,7 +208,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "from -1/sqrt(inputs) to +1/sqrt(inputs)",
         "clip(ratio, 1 - `ppo_clip`, 1 + `ppo_clip`)",
         "With A below 0 the token loss is at most",
-        "also a row with advantage 0.",
+        "Rows with advantage 0 do not count.",
         "1.0 for a pass and 0.0 for every other result",
         "j counts from 0.",
         "(i counts from 0)",
