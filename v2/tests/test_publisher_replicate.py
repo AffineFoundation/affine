@@ -15,8 +15,12 @@ import shlex
 import tomllib
 from pathlib import Path
 
-import sn120_v2
-from sn120_v2 import public, publisher, replicate, sim
+import pytest
+
+pytest.importorskip("transformers", reason="install the miner extra: pip install -e '.[dev,miner]'")
+
+import sn120_v2  # noqa: E402
+from sn120_v2 import public, publisher, replicate, sim  # noqa: E402
 
 PACKAGE = Path(sn120_v2.__file__).parent
 V2 = PACKAGE.parent
