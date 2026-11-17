@@ -163,14 +163,6 @@ class Recipe(Record):
         ceiling = self.bound("global_norm_cap")
         _need(ceiling is None or (cap is not None and cap <= ceiling.high), "recipe.global_norm_cap must not be above the high end of its miner bound")
 
-    def to_dict(self) -> dict[str, Any]:
-        data = super().to_dict()
-        # The default field may be omitted only with its complete bound: that pair keeps the default explicit after a
-        # JSON round trip, including when the base recipe and miner bounds are customized by the operator.
-        if self.adam_eps == 1e-8 and self.bound("adam_eps") is not None and "miner_bounds" in data:
-            data["adam_eps"] = self.adam_eps
-        return data
-
     @property
     def recipe_id(self) -> str:
         return self.digest()

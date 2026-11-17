@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from sn120_v2.canonical import digest, to_jsonable
 from sn120_v2.errors import BatchRejected, ConfigError, ContractError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GenesisSpec, MinerBound, Params, Recipe, load_params, require_env
 
@@ -42,7 +43,8 @@ def test_gpus_per_lora_is_floor_of_eight_over_batches(batches, expected):
 
 
 def test_adam_eps_is_optional_and_a_chosen_value_is_hashed():
-    assert Recipe().adam_eps == 1e-8 and Recipe().to_dict()["adam_eps"] == 1e-8
+    assert Recipe().adam_eps == 1e-8 and "adam_eps" not in Recipe().to_dict()
+    assert Recipe().recipe_id == digest(to_jsonable(Recipe())) == digest(Params().to_dict()["recipe"])
     chosen = Recipe().for_miner({"adam_eps": 1e-6})
     assert chosen.adam_eps == 1e-6 and chosen.to_dict()["adam_eps"] == 1e-6
     assert chosen.recipe_id != Recipe().recipe_id

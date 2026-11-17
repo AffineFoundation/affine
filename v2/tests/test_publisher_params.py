@@ -184,7 +184,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "(6) publish", "(7) start again",
         "0 = the groups of your file",
         "1 = one update from all rows of your batch",
-        "does not hold `minibatches` while the value is 1.",
+        "does not hold `minibatches` while the value is 1, or `adam_eps` while it is the default 1e-8.",
         "Minibatches, for a value N above 1.",
         "(k from 0) goes to minibatch k modulo N",
         "train in the order 0 to N - 1.",
