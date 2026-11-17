@@ -170,10 +170,12 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"updates add about {publisher.show(publisher.UPDATE_COST_S)} s x steps x minibatches",
         f"later than {worker.AT_THE_LEASE_S} s after the start of the lease",
         f"at most {worker.AT_THE_LEASE_S} s after the start of the lease",
-        f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
+        f"At most {serve.server_deaths} server deaths are allowed",
         f"not usable: at most {serve.retries + 1} tries in all",
         f"graded again: at most {serve.grade_tries} grades in all",
         f"--max-num-seqs {serve.clients_per_server}",
+        f"up to {serve.clients_per_server} rollouts in flight",
+        f"at most {serve.clients_per_server} requests in flight",
         f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
         f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params

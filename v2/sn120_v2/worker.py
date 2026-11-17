@@ -17,8 +17,8 @@ Rules it keeps:
     end no new training starts and every job that still runs is stopped. Such
     a batch is ``not_trained``: not charged, first in the next round, and no
     failure is counted for its seat. So the scoring always starts on time.
-  - Past the limit the box starts no new chunk of tasks, and a chunk that
-    still runs is not used. What is scored by then is the whole test.
+  - Past the limit no new rollout starts. The box uses the largest complete
+    grading-block boundary shared by null M and every open LoRA.
   - A LoRA with fewer scored tasks than the first look at the limit is
     ``not_scored``: not charged, first in the next round, and no failure is
     counted for its seat.
@@ -27,6 +27,7 @@ Rules it keeps:
 from __future__ import annotations
 
 import queue
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Callable
 
@@ -47,8 +48,9 @@ from .types import (
     BoxResult,
     Entry,
     EntryResult,
-    EvalChunk,
+    EvalBlock,
     EvalRequest,
+    eval_blocks,
     LoRAArtifact,
     RoundTicket,
     TrainRequest,
@@ -178,57 +180,125 @@ class LocalRunner:
         # A training job that failed is not counted for the seat (EntryResult.counted_for_seat): the cause can be the box.
         return EntryResult(entry.queue_pos, NO_DECISION, reason=f"training failed {self.attempts} times: {reason}", attempts=self.attempts)
 
-    def _look(self, request: EvalRequest) -> EvalChunk | None:
-        """One chunk of tasks, or None when it failed after the deadline: an unfinished chunk is never used."""
-        models = {NULL_MODEL} | {lora.lora_hash for lora in request.loras}
-        reason = ""
-        for _ in range(self.attempts):
-            try:
-                chunk = self.evaluator.evaluate(request)
-            except InfraError as exc:
-                if self.clock() >= request.deadline:
-                    return None
-                reason = str(exc)
-                continue
-            if chunk.task_ids != request.task_ids or set(chunk.outcomes) != models or chunk.image_digest != self.image_digest:
-                raise ContractError("the evaluator answered another request than the one it was given")
-            return chunk
-        raise InfraError(f"evaluation failed {self.attempts} times: {reason}")
-
     def _evaluate(self, ticket: RoundTicket, trained: dict[int, LoRAArtifact], deadline: int):
-        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit)."""
+        """Return (null outcomes, outcomes per queue position, look at which a position was dropped, stopped at the limit).
+
+        Replies may complete and blocks may arrive out of order. Only exact prefixes enter the drop rule, so speculation
+        never changes a look decision. All grading callbacks return before this generator closes.
+        """
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
-        null = [""] * samples
-        scored = {pos: [""] * samples for pos in trained}
-        dropped: dict[int, int] = {}
-        alive, start, stopped = sorted(trained), 0, False
+        looks = params.look_sizes(n)
+        valid_blocks = {(start, end) for start, end in eval_blocks(params.eval_chunk_tasks, looks)}
+        names = {NULL_MODEL: NULL_MODEL} | {trained[pos].lora_hash: pos for pos in trained}
+        texts = {model: [""] * samples for model in names}
+        arrived: dict[tuple[str, int], EvalBlock] = {}
+        ready, dropped = {model: 0 for model in names}, {}
+        alive = set(trained)
+        stopped = self.clock() >= deadline
+        stream_lock = threading.Lock()
+        stream_done = False
+        dispatch_stopped = stopped
+
+        def limit(model: str) -> int:
+            with stream_lock:
+                if dispatch_stopped or stream_done:
+                    return 0
+                if model == NULL_MODEL:
+                    # Every alive LoRA needs null M. Without one, null ends at the largest look reached by a drop.
+                    wanted = max((dropped[pos] for pos in dropped if pos not in alive), default=-1)
+                    return n if alive else looks[wanted] if wanted >= 0 else 0
+                pos = names[model]
+                return n if pos in alive else looks[dropped[pos]]
+
+        def advance(model: str) -> None:
+            while (block := arrived.pop((model, ready[model]), None)) is not None:
+                if block.model != model or block.end > wanted(model) or len(block.outcomes) != samples:
+                    raise ContractError("the evaluator answered another request than the one it was given")
+                for sample in range(samples):
+                    texts[model][sample] += block.outcomes[sample]
+                if len(texts[model][0]) != block.end:
+                    raise ContractError("the evaluator returned an overlapping or duplicate eval block")
+                ready[model] = block.end
+
+        def judge() -> None:
+            """Apply looks in order as soon as null M and this model have the whole graded prefix."""
+            for pos in sorted(alive):
+                model = trained[pos].lora_hash
+                for look, stop in enumerate(looks[:-1]):
+                    if ready[model] >= stop and ready[NULL_MODEL] >= stop:
+                        partial_null = tuple(text[:stop] for text in texts[NULL_MODEL])
+                        partial_lora = tuple(text[:stop] for text in texts[model])
+                        if drop_at_look(score_entry(draw.weights, partial_null, partial_lora, params), look, n, params):
+                            alive.remove(pos)
+                            dropped[pos] = look
+                            for sample in range(samples):
+                                texts[model][sample] = texts[model][sample][:stop]
+                            ready[model] = stop
+                            # A speculative block past this look is never an outcome.
+                            for key in [key for key in arrived if key[0] == model]:
+                                del arrived[key]
+                            break
+
+        def wanted(model: str) -> int:
+            with stream_lock:
+                if model == NULL_MODEL:
+                    return max(ready.values(), default=0) if not alive and dropped else n
+                pos = names[model]
+                return n if pos in alive else looks[dropped[pos]]
+
+        request = EvalRequest(ticket.round_id, ticket.head, tuple(trained[pos] for pos in sorted(trained)), draw.task_ids, draw.round_seed, 0, params, deadline, len(ticket.entries))
         try:
-            for look, stop in enumerate(params.look_sizes(n)):
-                while start < stop and not stopped:
-                    if self.clock() >= deadline:
-                        stopped = True
-                        break
-                    end = min(stop, start + params.eval_chunk_tasks)
-                    loras = tuple(trained[pos] for pos in alive)
-                    chunk = self._look(EvalRequest(ticket.round_id, ticket.head, loras, draw.task_ids[start:end], draw.round_seed, look, params, deadline, len(ticket.entries)))
-                    if chunk is None:
-                        stopped = True
-                        break
-                    for sample in range(samples):
-                        null[sample] += chunk.outcomes[NULL_MODEL][sample]
-                        for pos in alive:
-                            scored[pos][sample] += chunk.outcomes[trained[pos].lora_hash][sample]
-                    start = end
-                if stopped:
-                    break
-                for pos in list(alive):
-                    if drop_at_look(score_entry(draw.weights, null, scored[pos], params), look, n, params):
-                        alive.remove(pos)
-                        dropped[pos] = look
-                if not alive:
-                    break
+            for block in self.evaluator.stream(request, limit):
+                stopped = stopped or self.clock() >= deadline
+                dispatch_stopped = stopped
+                if block.model not in names or (block.start, block.end) not in valid_blocks:
+                    raise ContractError("the evaluator answered another request than the one it was given")
+                if block.start < wanted(block.model):
+                    arrived[block.model, block.start] = block
+                    advance(block.model)
+                judge()
+            # An evaluator may stop dispatching at the deadline, but must still grade every complete block with a reply.
+            for model in sorted(names):
+                advance(model)
+                judge()
+            stopped = stopped or self.clock() >= deadline
         finally:
+            stream_done = True
             self.evaluator.close()
+
+        if stopped:
+            # Exactly the old chunk ends: looks contain the earlier block boundaries, then eval_chunk_tasks steps onward.
+            boundaries = [end for _, end in eval_blocks(params.eval_chunk_tasks, looks)]
+
+            def boundary(end: int) -> int:
+                return max((stop for stop in boundaries if stop <= end), default=0)
+
+            common = min(boundary(ready[NULL_MODEL]), *(boundary(ready[trained[pos].lora_hash]) for pos in alive))
+            for pos, look in list(dropped.items()):
+                if looks[look] > common:
+                    del dropped[pos]
+                    alive.add(pos)
+            for model, pos in names.items():
+                if model != NULL_MODEL and pos not in alive:
+                    continue
+                for sample in range(samples):
+                    texts[model][sample] = texts[model][sample][:common]
+                ready[model] = common
+        elif alive:
+            # A stream that ends early without the clock or a server failure is a broken evaluator, not a short score.
+            wanted = {model: n for model, pos in names.items() if model != NULL_MODEL and pos in alive}
+            if not alive:
+                wanted[NULL_MODEL] = looks[max(dropped.values())] if dropped else 0
+            else:
+                wanted[NULL_MODEL] = n
+            if any(ready[model] < end and limit(model) >= end for model, end in wanted.items()):
+                raise InfraError("the evaluator ended before every alive model completed the draw")
+
+        null = tuple(texts[NULL_MODEL])
+        if not stopped and not alive and dropped:
+            null_stop = looks[max(dropped.values())]
+            null = tuple(text[:null_stop] for text in null)
+        scored = {pos: tuple(texts[trained[pos].lora_hash]) for pos in trained}
         pad = lambda strings: tuple(text + NOT_RUN * (n - len(text)) for text in strings)
         return pad(null), {pos: pad(strings) for pos, strings in scored.items()}, dropped, stopped

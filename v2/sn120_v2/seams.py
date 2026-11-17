@@ -16,14 +16,14 @@ Two rules hold for every implementation:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from .params import Params
 from .types import (
     BoxResult,
     ChainSnapshot,
     Draw,
-    EvalChunk,
+    EvalBlock,
     EvalRequest,
     FoldArtifact,
     FrozenBatch,
@@ -173,8 +173,8 @@ class Trainer(Protocol):
 class Evaluator(Protocol):
     """Scores null M and LoRAs on the same tasks, seeds and caps."""
 
-    def evaluate(self, request: EvalRequest) -> EvalChunk:
-        """Score one look. Null M is always scored, with the same settings as every LoRA."""
+    def stream(self, request: EvalRequest, limit: Callable[[str], int]) -> Iterator[EvalBlock]:
+        """Stream graded blocks. ``limit(model)`` says how much of the draw the runner still wants."""
         ...
 
     def close(self) -> None: ...

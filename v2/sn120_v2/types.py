@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 from .canonical import Record, digest, is_sha256, manifest_digest, sha256_hex, to_jsonable
 from .errors import ContractError, VerifyError
@@ -283,26 +283,51 @@ class TrainRequest(Record):
 
 @dataclass(frozen=True)
 class EvalRequest(Record):
-    """Score null M and the given LoRAs on one look's tasks, with the round's seeds and caps."""
+    """Stream null M and the given LoRAs over the whole draw, with the round's seeds and caps."""
 
     round_id: str
     head: HeadVersion
     loras: tuple[LoRAArtifact, ...]  # null M is always scored too
-    task_ids: tuple[str, ...]  # the tasks of this look only
+    task_ids: tuple[str, ...]  # the whole draw, in its scoring order
     round_seed: str  # rollout seeds come from sampling.rollout_seed(round_seed, task_id, j)
-    look: int
+    look: int  # kept for the request seal and the phase log; the runner decides each look
     params: Params  # pinned snapshot: decode settings and caps
-    deadline: int = 0  # Unix seconds; past it the evaluator gives up with InfraError and the chunk is not used. 0 = none
+    deadline: int = 0  # Unix seconds; past it no rollout starts and a cut rollout is not scored. 0 = none
     batches: int = 0  # entries of the box's ticket, trained or not: the size of the servers' LoRA table. 0 = not given: max_loras_per_box
 
 
 @dataclass(frozen=True)
+class EvalBlock(Record):
+    """One model's graded block of tasks. Blocks may arrive out of order."""
+
+    model: str
+    start: int
+    end: int
+    outcomes: tuple[str, ...]  # per sample: one code per task from start up to end
+
+    def __post_init__(self) -> None:
+        _need(self.start >= 0 and self.end > self.start, "an eval block must cover at least one task")
+        check_outcomes(self.outcomes, self.end - self.start, f"eval block model {self.model[:12]}")
+        _need(all(NOT_RUN not in text for text in self.outcomes), "an eval block must score every task it was given")
+
+
+def eval_blocks(eval_chunk_tasks: int, look_sizes: Sequence[int]) -> tuple[tuple[int, int], ...]:
+    """The old chunk ends, without making them dispatch barriers: each look segment, then the final whole block."""
+    blocks = []
+    previous = 0
+    for stop in look_sizes:
+        blocks.extend((start, min(start + eval_chunk_tasks, stop)) for start in range(previous, stop, eval_chunk_tasks))
+        previous = stop
+    return tuple(blocks)
+
+
+@dataclass(frozen=True)
 class EvalChunk(Record):
-    """Outcomes of one look. Keys are ``NULL_MODEL`` and each ``lora_hash``."""
+    """Compatibility result of collecting a direct evaluator stream, used by serving-seam tests and tools."""
 
     look: int
     task_ids: tuple[str, ...]
-    outcomes: dict[str, tuple[str, ...]]  # per model: one string per sample index, one code per task
+    outcomes: dict[str, tuple[str, ...]]
     image_digest: str
 
     def __post_init__(self) -> None:

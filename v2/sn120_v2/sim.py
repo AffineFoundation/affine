@@ -33,8 +33,10 @@ from .types import (
     NULL_MODEL,
     PASS,
     ChainSnapshot,
+    EvalBlock,
     EvalChunk,
     EvalRequest,
+    eval_blocks,
     FoldArtifact,
     FrozenBatch,
     HeadVersion,
@@ -145,25 +147,44 @@ class SimEvaluator:
         self.fail_looks: set[int] = set()  # every call for these looks fails
         self.closed = 0
 
-    def evaluate(self, request: EvalRequest) -> EvalChunk:
+    def stream(self, request: EvalRequest, limit):
         if request.look in self.fail_looks:
             raise InfraError("simulated evaluator crash")
         models = {NULL_MODEL: {"quality": 0.0, "cap_rate": 0.0}}
         for lora in request.loras:
             models[lora.lora_hash] = json.loads(self.store.get(f"{lora.prefix}/adapter_config.json"))
-        outcomes = {}
+        blocks = []
+        limits = {model: limit(model) for model in models}
         for model, effect in models.items():
-            strings = []
-            for sample in range(request.params.samples_per_task):
-                codes = []
-                for task_id in request.task_ids:
-                    luck = rollout_seed(request.round_seed, task_id, sample) / 2**63
-                    base = 0.25 + 0.5 * _unit("difficulty", task_id)
-                    capped = _unit("cap", model, task_id, sample) < effect["cap_rate"]
-                    codes.append(CAP if capped else PASS if luck < base + effect["quality"] else FAIL)
-                strings.append("".join(codes))
-            outcomes[model] = tuple(strings)
-        return EvalChunk(request.look, request.task_ids, outcomes, SIM_IMAGE)
+            for start, end in eval_blocks(request.params.eval_chunk_tasks, request.params.look_sizes(len(request.task_ids))):
+                if start >= limits[model]:
+                    continue
+                strings = []
+                for sample in range(request.params.samples_per_task):
+                    codes = []
+                    for task_id in request.task_ids[start:end]:
+                        luck = rollout_seed(request.round_seed, task_id, sample) / 2**63
+                        base = 0.25 + 0.5 * _unit("difficulty", task_id)
+                        capped = _unit("cap", model, task_id, sample) < effect["cap_rate"]
+                        codes.append(CAP if capped else PASS if luck < base + effect["quality"] else FAIL)
+                    strings.append("".join(codes))
+                blocks.append(EvalBlock(model, start, end, tuple(strings)))
+        # The simulation deliberately completes blocks in an order unlike dispatch order.
+        blocks.sort(key=lambda block: (_unit("stream-order", request.round_seed, block.model, block.start), block.model, block.start))
+        for block in blocks:
+            if block.start < limit(block.model):
+                yield block
+            if all(limit(model) == 0 for model in models):
+                break
+
+    def evaluate(self, request: EvalRequest):
+        """Collect a direct stream for callers that test the serving seam without a runner."""
+        outcomes = {}
+        for block in self.stream(request, lambda model: len(request.task_ids)):
+            rows = outcomes.setdefault(block.model, [""] * request.params.samples_per_task)
+            for sample, text in enumerate(block.outcomes):
+                rows[sample] += text
+        return EvalChunk(request.look, request.task_ids, {model: tuple(rows) for model, rows in outcomes.items()}, SIM_IMAGE)
 
     def close(self) -> None:
         self.closed += 1

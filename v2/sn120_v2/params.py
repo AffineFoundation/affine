@@ -257,13 +257,12 @@ class Params(Record):
     # is stopped; that batch is not charged and is first in the next round. Then the scoring starts.
     train_time_budget_s: int = 40 * 60
     promote_reserve_s: int = 600  # PLACEHOLDER: the box stops scoring this long before the limit, so judging and promotion fit
-    # PLACEHOLDER: the box scores this many tasks, then looks at the clock. One chunk lasts at least as long as its
-    # longest rollout, so fewer and larger chunks waste less time. A chunk that the limit cuts is never used, and
-    # fewer tasks than the first look decide nothing. So 500 = the first look of 2000 tasks in one chunk.
+    # Block size of the time-limit rule and grading. Streaming requests refill freely across blocks and looks; a block
+    # is not a barrier. At the limit only complete blocks shared by null M and every open LoRA are used.
     eval_chunk_tasks: int = 500
     # A box result that arrives later than this is never used. The box stops scoring at the round's time limit minus
     # promote_reserve_s, whatever this value is. The time after the limit is only a reserve for the steps between the
-    # stop and the arrival of the result (grading of the last chunk, stop of the servers), so that a round that
+    # stop and the arrival of the result (grading of the last block, stop of the servers), so that a round that
     # stopped in time never loses its result to the lease. No task is scored in it.
     lease_timeout_s: int = 2 * 3600
     max_infra_attempts: int = 3  # no_decision outcomes before an entry is held for the operator

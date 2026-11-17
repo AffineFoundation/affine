@@ -20,7 +20,7 @@ from sn120_v2.envs.math_pool import load_pool
 from sn120_v2.errors import BatchRejected, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Recipe
-from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
+from sn120_v2.types import NULL_MODEL, Draw, EvalBlock, EvalChunk, eval_blocks
 from sn120_v2.worker import LocalRunner
 
 _SPEC = importlib.util.spec_from_file_location("affine_miner_tool", Path(__file__).resolve().parents[1] / "miner" / "affine_miner.py")
@@ -62,6 +62,14 @@ class Box(dict):
         outcomes = {NULL_MODEL: (self.null[cut],), request.loras[0].lora_hash: (self.lora[cut],)}
         return EvalChunk(request.look, request.task_ids, outcomes, self.image)
 
+    def stream(self, request, limit):
+        self.events.append("stream")
+        self.requests.append(request)
+        for start, end in eval_blocks(request.params.eval_chunk_tasks, request.params.look_sizes(len(request.task_ids))):
+            for model, text in ((NULL_MODEL, self.null), (request.loras[0].lora_hash, self.lora)):
+                if start < limit(model):
+                    yield EvalBlock(model, start, end, (text[start:end],))
+
     def close(self) -> None:
         self.events.append("close")
 
@@ -88,7 +96,7 @@ def test_reproduce_is_the_validators_round_for_one_batch(build):
     box, raw = Box(build), batch_bytes()
     report = run(build, box, raw)
     assert report["status"] == "winner" and report["score"]["z"] > 1 and report["score"]["eligible"]
-    assert box.events == ["train", "close", "evaluate", "close"]  # the trainer frees the GPUs before scoring starts
+    assert box.events == ["train", "close", "stream", "close"]  # the trainer frees the GPUs before scoring starts
     train, scoring = box.requests
     assert train.seed == sampling.train_seed("seed-0", sha256_hex(raw)) and train.gpu_ids == tuple(range(8))
     assert box[train.entry.batch.uri] == raw and train.entry.batch.batch_sha256 == report["batch_sha256"]
@@ -114,7 +122,7 @@ def test_reproduce_stops_at_an_early_look_like_the_validator(build):
     box = Box(build, "PPPPPPPP" * 2, "FFFFFFFP" * 2)
     report = run(build, box, params=build.params(n_tasks=16, looks=(0.5, 1.0)), n=16)
     assert (report["status"], report["eliminated_at_look"]) == ("lost", 0) and "scored on 8 tasks" in report["reason"]
-    assert box.events == ["train", "close", "evaluate", "close"]
+    assert box.events == ["train", "close", "stream", "close"]
 
 
 def test_train_values_pass_the_validators_gate_and_are_never_clamped(build):

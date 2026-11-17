@@ -478,14 +478,14 @@ def test_outcome_codes_capped_is_never_graded_and_errors_stay_in_the_count(box):
     grades = Grades()
     chunk = evaluator(box, Farm(lambda model, task: replies[task]), grades).evaluate(eval_request(box, n_loras=1, tasks=tuple(replies)))
     assert set(chunk.outcomes.values()) == {("PFCEEE",)}
-    assert len(grades.seen) == 1 and "P cut" not in grades.seen[0] and len(grades.seen[0]) == 8  # an E of the grader is graded one time
+    assert len(grades.seen) == 2 and all("P cut" not in batch for batch in grades.seen) and [len(batch) for batch in grades.seen] == [4, 4]  # one grading batch per model/block
     logged = json.loads((box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()[-1])
-    assert (logged["phase"], logged["look"], logged["models"], logged["rollouts"], logged["capped"]) == ("eval", 0, 2, 12, 2) and logged["wall_s"] >= logged["generate_s"]
+    assert (logged["phase"], logged["look"], logged["models"], logged["rollouts"], logged["capped"]) == ("eval", 0, 2, 6, 1) and logged["wall_s"] >= logged["generate_s"]
     assert logged["generate_s"] >= logged["longest_rollout_s"] > 0 and {"output_tokens", "longest_rollout_tokens", "most_output_tokens", "n_gpus"} <= set(logged)
     assert read_reply({"choices": [{"message": {"content": "<think>x</think>a<|im_end|>"}, "finish_reason": "stop"}]}) == ("<think>x</think>a", False)
 
 
-def test_a_server_error_is_retried_and_a_dead_server_voids_the_look(box):
+def test_a_server_error_is_retried_and_a_dead_server_restarts_without_e(box):
     failures = iter([HttpError(503), ConnectionResetError()])
     lock = threading.Lock()
 
@@ -496,9 +496,9 @@ def test_a_server_error_is_retried_and_a_dead_server_voids_the_look(box):
     assert set(evaluator(box, Farm(flaky)).evaluate(eval_request(box)).outcomes.values()) == {("PPP",)}
     farm = Farm(None)
     farm.script = lambda model, task: setattr(farm.servers[0], "up", False) or ("P", "stop")
-    with pytest.raises(InfraError, match="died"):  # a dead server is not a row of E: nothing of the look is scored
-        evaluator(box, farm, retries=0).evaluate(eval_request(box))
-    assert not any(server.up for server in farm.servers)
+    chunk = evaluator(box, farm, retries=0).evaluate(eval_request(box))
+    assert all("E" not in text for strings in chunk.outcomes.values() for text in strings)
+    assert len(farm.servers) > 2  # the dead server was replaced with the same head and adapters
 
 
 def test_a_chunk_that_the_round_time_limit_cut_is_not_scored(box):
@@ -538,7 +538,7 @@ def test_a_cut_chunk_logs_its_speeds_as_its_own_phase(box, monkeypatch):
     lines = [json.loads(line) for line in (box.config.work_dir / "logs" / "phases.jsonl").read_text().splitlines()]
     assert [line["phase"] for line in lines] == ["eval_cut"], "a cut chunk is never an `eval` line: it gives no score"
     cut = lines[0]
-    assert (cut["round_id"], cut["look"], cut["models"], cut["tasks"], cut["rollouts"], cut["finished"], cut["n_gpus"]) == ("r000001", 0, 3, 3, 9, 3, 2)
+    assert (cut["round_id"], cut["look"], cut["models"], cut["tasks"], cut["finished"], cut["n_gpus"]) == ("r000001", 0, 3, 3, 3, 2) and cut["rollouts"] >= cut["finished"]
     assert (cut["output_tokens"], cut["most_output_tokens"], cut["longest_rollout_tokens"]) == (21, 7, 7) and cut["reply_cap"] == request.params.max_output_tokens
     assert cut["wall_s"] >= cut["generate_s"] >= cut["longest_rollout_s"] > 0 and cut["serve_s"] >= 0
 
@@ -564,7 +564,7 @@ def test_a_dead_grader_worker_is_graded_again_and_never_writes_a_code(box):
     farm = Farm(lambda model, task: ("F died" if task == "t1" else "P", "stop"))
     grades = Grades(deaths=2)
     chunk = evaluator(box, farm, grades).evaluate(eval_request(box, n_loras=1))
-    assert chunk.outcomes[NULL_MODEL] == ("PFP",) and [len(batch_) for batch_ in grades.seen] == [6, 2, 2]  # only the lost replies go again
+    assert chunk.outcomes[NULL_MODEL] == ("PFP",) and [len(batch_) for batch_ in grades.seen] == [3, 1, 1, 3]  # only lost replies go again, per model/block
     with pytest.raises(InfraError, match="grader worker died"):
         evaluator(box, farm, Grades(deaths=99)).evaluate(eval_request(box, n_loras=1))
 
@@ -653,7 +653,7 @@ def test_a_look_that_cannot_hold_its_sockets_fails_before_any_rollout_is_sent(bo
     # Now the look asks first. With too little room it is a failure of the box: no server starts and no rollout is sent.
     asked = []
     seam, files = limited(box, 12, 0, room=lambda sockets, spare: asked.append((sockets, spare)) or 12)
-    with pytest.raises(InfraError, match="room for 12 sockets; a look holds 24"):
+    with pytest.raises(InfraError, match="room for 12 sockets; a stream holds 24"):
         seam.evaluate(request)
     assert asked == [(24, ServeSettings().spare_files)] and not files.farm.servers and not files.farm.bodies
     seam, files = limited(box, 24, 0, room=lambda sockets, spare: 24)

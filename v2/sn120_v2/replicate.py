@@ -139,7 +139,7 @@ def local_params(params: Params, image: str, code: str, gpus: int, round_clock: 
     if recipe is not params.recipe:
         changes["recipe"] = recipe
     if gpus != params.n_gpus:
-        note("gpus", f"This run uses {gpus} GPU(s). The box has {params.n_gpus}. One vLLM server runs on each GPU, and task i of a chunk goes to server i mod the number of GPUs.")
+        note("gpus", f"This run uses {gpus} GPU(s). The box has {params.n_gpus}. One vLLM server runs on each GPU, and task i of the draw goes to server i mod the number of GPUs.")
         changes["n_gpus"] = gpus
     if not round_clock:
         stop = params.round_time_limit_s - params.promote_reserve_s
