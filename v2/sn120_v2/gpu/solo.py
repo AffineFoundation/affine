@@ -311,7 +311,7 @@ class SoloRunner(LocalRunner):
         train_lock = threading.Lock()
         failed: queue.Queue = queue.Queue()
         remaining_training = [len(entries)]
-        training_gpus: set[int] = set(range(min(params.n_gpus, len(entries))))
+        training_gpus: set[int] = set()
         warm_futures: dict[int, Future] = {}
         warm_pool = ThreadPoolExecutor(params.n_gpus)
 
@@ -338,28 +338,34 @@ class SoloRunner(LocalRunner):
 
         def gpu_worker(gpu: int):
             try:
-                # A GPU with no current training job may serve null at t=0.
-                start_idle_server(gpu)
-                while self.clock() < train_end:
-                    try:
-                        index, entry = training.get_nowait()
-                    except queue.Empty:
+                while True:
+                    # Claim the next training job before deciding to start a
+                    # server. This check is atomic with the busy-state update.
+                    with train_lock:
+                        if self.clock() >= train_end:
+                            job = None
+                        else:
+                            try:
+                                job = training.get_nowait()
+                            except queue.Empty:
+                                job = None
+                        if job is None:
+                            training_gpus.discard(gpu)
+                        else:
+                            training_gpus.add(gpu)
+                    if job is None:
                         break
+                    index, entry = job
                     report = self._train(ticket, entry, (gpu,), train_end, whole_time=started - ticket.issued_at <= AT_THE_LEASE_S and index < params.n_gpus)
                     reports[entry.queue_pos] = report
                     with train_lock:
-                        if training.empty():
-                            training_gpus.discard(gpu)
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
                     if isinstance(report, LoRAArtifact):
                         scheduler.add_lora(entry.queue_pos, report, gpu)
-                    start_idle_server(gpu)
-                with train_lock:
-                    training_gpus.discard(gpu)
-                    train_done[0] = max(train_done[0], self.clock())
+                # Only now can this GPU have no further training assignment.
                 start_idle_server(gpu)
                 finish_warm(gpu)
                 worker = self.evaluator.solo_worker(ticket, scheduler.trained, limit, gpu)

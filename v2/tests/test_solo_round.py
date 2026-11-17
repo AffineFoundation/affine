@@ -98,7 +98,17 @@ def test_no_server_starts_on_a_training_gpu_and_failed_idle_start_is_retried(bui
             return f"http://gpu{gpu}"
 
         def solo_worker(self, ticket, trained, deadline, gpu):
-            return Worker(gpu, events, {0: artifact})
+            worker = Worker(gpu, events, {0: artifact})
+            original_run = worker.run
+
+            def run(**callbacks):
+                # Match SoloWorker.run: prewarm is only an optimization; the
+                # worker always performs the normal startup/retry itself.
+                self._serve_one(ticket.head, ticket.params, len(ticket.entries), gpu)
+                return original_run(**callbacks)
+
+            worker.run = run
+            return worker
 
         def close(self):
             pass
@@ -136,11 +146,22 @@ def test_more_batches_than_gpus_never_prewarms_between_training_jobs(build):
         def _serve_one(self, head, params, table, gpu):
             with lock:
                 assert gpu not in active, "server started between training jobs"
+                # Another GPU may still be training; this GPU may never train
+                # again after its first server start (asserted below).
                 events.append(("serve", gpu))
             return f"http://gpu{gpu}"
 
         def solo_worker(self, ticket, trained, deadline, gpu):
-            return Worker(gpu, events, artifacts)
+            worker = Worker(gpu, events, artifacts)
+            original_run = worker.run
+
+            def run(**callbacks):
+                events.append(("worker", gpu))
+                self._serve_one(ticket.head, ticket.params, len(ticket.entries), gpu)
+                return original_run(**callbacks)
+
+            worker.run = run
+            return worker
 
         def close(self):
             pass
@@ -149,14 +170,24 @@ def test_more_batches_than_gpus_never_prewarms_between_training_jobs(build):
         def train(self, request):
             with lock:
                 active.add(request.gpu_ids[0])
+                events.append(("train", request.gpu_ids[0]))
             time.sleep(0.02)
             with lock:
                 active.discard(request.gpu_ids[0])
+                events.append(("train_end", request.gpu_ids[0]))
             return artifacts[request.entry.queue_pos]
 
         def close(self):
             pass
 
-    result = SoloRunner(Trainer(), Evaluator(), lambda: 1000, build.image, poll_s=0.01).run(ticket)
+    evaluator = Evaluator()
+    result = SoloRunner(Trainer(), evaluator, lambda: 1000, build.image, poll_s=0.01).run(ticket)
     assert result.null_outcomes == ("P" * 8,)
     assert all(entry.outcomes == ("P" * 8,) for entry in result.entries)
+    for gpu in (0, 1):
+        first_train = next(i for i, event in enumerate(events) if event == ("train", gpu))
+        last_train_end = max(i for i, event in enumerate(events) if event == ("train_end", gpu))
+        first_server = next((i for i, event in enumerate(events) if event == ("serve", gpu)), None)
+        assert first_server is not None, events
+        assert first_train < last_train_end < first_server
+        assert not any(event == ("train", gpu) for event in events[first_server + 1:])

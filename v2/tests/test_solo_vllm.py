@@ -52,7 +52,34 @@ class FakeServers:
         return {}
 
 
-def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path):
+def test_solo_gpu_free_check_ignores_a_busy_peer(build, tmp_path, monkeypatch):
+    store = LocalStore(tmp_path / "store")
+    base = manifest_digest({"config.json": sha256_hex(b"{}")})
+    master = manifest_digest({"model.part00.safetensors": sha256_hex(b"master")})
+    store.put(f"{layout.public_base_prefix(base)}/config.json", b"{}")
+    store.put(f"{layout.public_master_prefix(master)}/model.part00.safetensors", b"master")
+    head = HeadVersion.make(parent_version_id=None, base_hash=base, base_fp32_master_digest=master, loras=(), round_id="genesis", applied_at=1)
+    params = build.params(n_gpus=2)
+    farm = FakeServers()
+    pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: [{"role": "user", "content": task}]))
+    grader = SimpleNamespace(grade_many=lambda jobs: [SimpleNamespace(code="P", machine_cause=None) for _ in jobs])
+    evaluator = VllmEvaluator(store, plan.BoxConfig(tmp_path / "work", build.image), pool, grader, spawn=farm.spawn, http=farm.http, settings=ServeSettings(start_timeout_s=10.0), sleep=lambda _: None)
+    monkeypatch.setattr("sn120_v2.gpu.evaluator.nvidia_smi", lambda: "0, 0\n1, 50000\n")
+    calls = []
+    from sn120_v2.gpu.procs import wait_gpus_free
+
+    def check(limit, timeout, report, sleep):
+        calls.append(report())
+        assert timeout == evaluator.settings.free_timeout_s
+        return wait_gpus_free(limit, timeout, report, sleep)
+
+    monkeypatch.setattr("sn120_v2.gpu.evaluator.wait_gpus_free", check)
+    assert evaluator._serve_one(head, params, 0, 0).endswith(":8100")
+    assert calls == ["0, 0"]
+    evaluator.close()
+
+
+def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypatch):
     store = LocalStore(tmp_path / "store")
     base = manifest_digest({"config.json": sha256_hex(b"{}")})
     master = manifest_digest({"model.part00.safetensors": sha256_hex(b"master")})
@@ -74,6 +101,7 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path):
     grader = SimpleNamespace(grade_many=lambda jobs: [SimpleNamespace(code="P", machine_cause=None) for _ in jobs])
     evaluator = VllmEvaluator(store, plan.BoxConfig(tmp_path / "work", build.image), pool, grader, spawn=farm.spawn, http=farm.http, gpus_free=lambda limit, timeout: None, settings=ServeSettings(start_timeout_s=10.0, clients_per_server=8), sleep=lambda _: None, room=lambda sockets, spare: sockets)
     # Solo uses the real _serve_one path with the normal server argv.
+    monkeypatch.setattr("sn120_v2.gpu.evaluator.nvidia_smi", lambda: "0, 0\n1, 0\n")
     trainer = SimpleNamespace(train=lambda request: loras[request.entry.queue_pos], close=lambda: None)
     runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image, settings=SoloSettings(prewarm=True, steal_block_tasks=2), poll_s=0.01)
     result = runner.run(ticket)

@@ -27,7 +27,7 @@ from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 from .batch import END_OF_TURN
 from .plan import BoxConfig, check_pins, log_phase
-from .procs import Child, Process, Spawn, gpu_env, stop_all, wait_gpus_free
+from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
 
 
@@ -558,6 +558,18 @@ class VllmEvaluator:
                 break
         return prefix // block * block
 
+    def _wait_one_gpu_free(self, gpu: int) -> None:
+        """Wait for this GPU only, never for another GPU's active trainer."""
+        def report() -> str:
+            lines = [line for line in nvidia_smi().splitlines() if line.strip()]
+            for line in lines:
+                parts = [part.strip() for part in line.split(",")]
+                if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) == gpu:
+                    return line
+            return "not-readable, not-readable"  # fail closed when this GPU is absent
+
+        wait_gpus_free(self.settings.free_limit_mib, self.settings.free_timeout_s, report=report, sleep=self.sleep)
+
     def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
         """Start or reuse exactly one GPU's server, independent of its peers."""
         with self._solo_lock:
@@ -570,7 +582,7 @@ class VllmEvaluator:
                 self._solo_urls.pop(gpu, None)
                 self._solo_loaded.pop(gpu, None)
             base_dir = resident_head(self.resident, head)
-            self.gpus_free(self.settings.free_limit_mib, self.settings.free_timeout_s)
+            self._wait_one_gpu_free(gpu)
             logs = self.config.work_dir / "logs"
             logs.mkdir(parents=True, exist_ok=True)
             port = self.settings.first_port + gpu
