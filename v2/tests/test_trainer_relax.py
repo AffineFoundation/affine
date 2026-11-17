@@ -3,21 +3,23 @@
 The first test holds the new training job against the job of commit
 ``a5c2b6a6``: ``tests/data/train_job_a5c2b6a6.py.txt`` is that file, byte
 for byte (``git show a5c2b6a6:v2/sn120_v2/gpu/train_job.py``). With one
-minibatch the two write the same bytes.
+minibatch and only rows that train, the two write the same bytes. Zero-advantage
+filler rows no longer shrink the loss: see the filler-row test below.
 """
 
 from __future__ import annotations
 
 import ast
 import dataclasses
-import difflib
 import importlib.machinery
 import importlib.util
 import json
 import math
 import random
 import string
+import subprocess
 import sys
+import types
 import threading
 from pathlib import Path
 
@@ -53,7 +55,7 @@ OUTPUTS = ["abc", "ba", "ccdd", "d", "abcabcab", "zz", "qrs", "tuvwx", "mnopqrst
 ADVANTAGES = [0.5, -0.5, 1.0, -1.0, 0.25, -0.25, 0.0, 0.75, -0.75, 0.0, 0.4, -0.4]
 ROWS = [{"prompt": f"p {'abcd'[i // 3]}", "output": output, "reward": float(a > 0), "advantage": a} for i, (output, a) in enumerate(zip(OUTPUTS, ADVANTAGES))]
 N_TRAIN = sum(a != 0 for a in ADVANTAGES)
-TODAY_BOUNDS = tuple(bound for bound in DEFAULT_MINER_BOUNDS if bound.key not in ("minibatches", "global_norm_cap"))  # the 7 bounds of a5c2b6a6
+TODAY_BOUNDS = tuple(bound for bound in DEFAULT_MINER_BOUNDS if bound.key not in ("minibatches", "adam_eps", "global_norm_cap"))  # the 7 bounds of a5c2b6a6
 
 
 @pytest.fixture(autouse=True)
@@ -189,7 +191,7 @@ def watch(monkeypatch):
     return seen
 
 
-# ---- A, one minibatch: the job of a5c2b6a6, byte for byte ----
+# ---- A, one minibatch: the job of a5c2b6a6, byte for byte, without zero-advantage rows ----
 
 SAME_AS_BEFORE = {
     "today's default recipe, one step": dict(steps=1, lora_lr=1e-5, global_norm_cap=None),
@@ -209,7 +211,7 @@ SAME_AS_BEFORE = {
 def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job, head_dir, tmp_path, amx_off):
     settings = dict(SAME_AS_BEFORE[case])
     devices = ["cpu"] * settings.pop("n", 1)
-    made = job(head_dir, **settings)
+    made = job(head_dir, rows=[row for row in ROWS if row["advantage"] != 0], **settings)
     assert "minibatches" not in made["recipe"] and Recipe.from_dict(made["recipe"]).minibatches == 1
     before = old_job.run(json.loads(json.dumps(made)), tmp_path / "before", devices)
     now = train_job.train(json.loads(json.dumps(made)), tmp_path / "now", devices)
@@ -223,15 +225,13 @@ def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job,
 
 
 def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
-    """No GPU needed: each function and class of the old file stands in the new file as it was. Only ``main`` calls another name."""
+    """No GPU needed: only dispatch, the active-row denominator and configurable Adam epsilon change the old job."""
     before, now = OLD_TRAINER.read_text(), Path(train_job.__file__).read_text()
     old = {node.name: ast.get_source_segment(before, node) for node in ast.parse(before).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     new = {node.name: ast.get_source_segment(now, node) for node in ast.parse(now).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     assert {"run", "save", "Replica", "token_scores", "ppo_loss", "encode", "add_lora", "Replay", "main"} <= set(old)
-    assert {name for name in old if old[name] != new.get(name)} == {"main"}
+    assert {name for name in old if old[name] != new.get(name)} == {"main", "run", "save"}
     assert sorted(set(new) - set(old)) == ["bring", "minibatches_of", "run_minibatches", "score_old", "train"]
-    gone = [line for line in difflib.unified_diff(before.splitlines(), now.splitlines(), n=0, lineterm="") if line.startswith("-") and not line.startswith("---")]
-    assert gone == ['-        report = run(job, job_dir / "lora")'], "the new file is the old file plus new lines; one line of main changed"
     # The one place that picks the job: one minibatch is ``run``, more are ``run_minibatches``.
     called = []
     monkeypatch.setattr(train_job, "run", lambda job, out, devices=None: called.append("run"))
@@ -244,8 +244,81 @@ def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
 def test_one_minibatch_scores_no_row_ahead_and_mixes_no_row(head_dir, tmp_path, watch):
     train_job.train(job(head_dir, steps=3), tmp_path / "lora", ["cpu"])
     assert watch["passes"] == [] and [adam.updates for adam in watch["adams"]] == [3]
-    assert watch["train_rows"] == [(N_TRAIN, len(ROWS))] * 3, "the whole file in each update, and the loss divided by the count of all rows"
+    assert watch["train_rows"] == [(N_TRAIN, N_TRAIN)] * 3, "the trained rows in each update, and the loss divided by their count"
     assert sorted(watch["first_pass"]) == [(i, 0) for i, a in enumerate(ADVANTAGES) if a != 0]
+
+
+@pytest.fixture(scope="module")
+def pre_eps_job():
+    """The previous commit: trained-row normalization with the fixed 1e-8 Adam epsilon."""
+    source = subprocess.check_output(["git", "show", "f6314b04:v2/sn120_v2/gpu/train_job.py"])
+    module = types.ModuleType("sn120_v2.gpu.train_job_before_adam_eps")
+    module.__package__ = train_job.__package__
+    exec(compile(source, "train_job_before_adam_eps.py", "exec"), module.__dict__)
+    return module
+
+
+@pytest.mark.parametrize("minibatches", [1, 3])
+def test_adam_eps_reaches_both_training_paths_and_default_matches_the_old_optimizer(minibatches, head_dir, tmp_path, watch, pre_eps_job):
+    made = job(head_dir, dtype="float32", steps=1, minibatches=minibatches)
+    train_job.train(made, tmp_path / "default", ["cpu"])
+    assert [optimizer.defaults["eps"] for optimizer in watch["adams"]] == [1e-8]
+    before = pre_eps_job.train(made, tmp_path / "before", ["cpu"])
+    assert hash_tree(tmp_path / "default") == hash_tree(tmp_path / "before"), "default epsilon keeps the previous LoRA and report bytes"
+    _, _, high_report = run(head_dir, tmp_path / "high", dtype="float32", steps=1, minibatches=minibatches, adam_eps=1e-4)
+    assert watch["adams"][-1].defaults["eps"] == 1e-4 and high_report["recipe_values"]["adam_eps"] == 1e-4
+    _, _, default_report = run(head_dir, tmp_path / "default-report", dtype="float32", steps=1, minibatches=minibatches)
+    assert "adam_eps" not in default_report["recipe_values"]
+
+
+def test_larger_adam_eps_damps_the_first_update_of_a_small_gradient_weight():
+    default = torch.nn.Parameter(torch.tensor(1.0))
+    high = torch.nn.Parameter(torch.tensor(1.0))
+    for weight in (default, high):
+        weight.grad = torch.tensor(1e-4)
+    for weight, eps in ((default, 1e-8), (high, 1e-4)):
+        torch.optim.Adam([weight], lr=1e-2, eps=eps).step()
+    assert default.item() == pytest.approx(0.99, abs=2e-6)
+    assert 0.99 < high.item() < 1.0
+
+
+def test_adam_eps_report_keeps_default_optimizer_text(tmp_path, head_dir):
+    _, _, default = run(head_dir, tmp_path / "default", steps=1)
+    _, _, high = run(head_dir, tmp_path / "high", steps=1, adam_eps=1e-4)
+    assert default["optimizer"] == "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"
+    assert high["optimizer"] == train_job.OPTIMIZER and "eps from recipe" in high["optimizer"]
+
+
+def test_the_old_params_keep_their_hash_and_an_old_recipe_cannot_set_adam_eps():
+    old = Params.from_json(OLD_PARAMS.read_bytes())
+    assert old.to_json() == OLD_PARAMS.read_bytes() and old.recipe_id == "8cab33a2a1b4b459d7a42ada287823d1c062c2e2a2ed7102009c8475f0748ded"
+    assert old.recipe.adam_eps == 1e-8 and old.recipe.bound("adam_eps") is None
+    with pytest.raises(BatchRejected):
+        old.recipe.for_miner({"adam_eps": 1e-6})
+
+
+def test_zero_advantage_filler_does_not_change_loss_or_gradient_scale(head_dir, tmp_path, monkeypatch):
+    gradients, clip = [], torch.nn.utils.clip_grad_norm_
+
+    def capture(weights, *args, **kwargs):
+        gradients.append([weight.grad.detach().clone() for weight in weights if weight.grad is not None])
+        return clip(weights, *args, **kwargs)
+
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", capture)
+    _, plain_lora, plain = run(head_dir, tmp_path / "plain", dtype="float32", steps=2)
+    plain_gradients = gradients.copy()
+    gradients.clear()
+    filler = [{"prompt": f"filler {i}", "output": "zero advantage", "reward": 1.0, "advantage": 0.0} for i in range(9)]
+    _, padded_lora, padded = run(head_dir, tmp_path / "padded", dtype="float32", steps=2, rows=ROWS + filler)
+
+    assert padded["rows"] == plain["rows"] + len(filler)
+    for key in ("losses", "grad_norms", "trained_tokens", "step_norm", "step_norm_before_cap"):
+        assert padded[key] == plain[key]
+    assert gradients and len(gradients) == plain["recipe_values"]["steps"]
+    for plain_step, padded_step in zip(plain_gradients, gradients):
+        assert len(plain_step) == len(padded_step)
+        assert all(torch.equal(a, b) for a, b in zip(plain_step, padded_step))
+    assert all(torch.equal(plain_lora[key], padded_lora[key]) for key in plain_lora)
 
 
 # ---- A, more minibatches ----

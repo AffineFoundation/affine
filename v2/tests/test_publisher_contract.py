@@ -75,7 +75,7 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), steps=3, miner_bounds=bounds)
     doc, text, _ = published(world(tmp_path, recipe=recipe).publisher.snapshots[-1])
     rows = {row["key"]: row for row in doc["contract"]["miner_settable"]}
-    assert list(rows) == ["lora_lr", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"]
+    assert list(rows) == ["lora_lr", "adam_eps", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"]
     for bound in bounds:
         row = rows[bound.key]
         assert (row["low"], row["high"], row["choices"], row["decided"]) == (bound.low, bound.high, list(bound.choices), bound.decided)
