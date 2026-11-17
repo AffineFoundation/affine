@@ -192,6 +192,72 @@ def test_deadline_restores_a_drop_beyond_the_common_prefix(build):
     assert len(result.null_outcomes[0].rstrip(NOT_RUN)) == 4
 
 
+def test_look_zero_drop_does_not_cap_null_and_alive_at_the_deadline(build):
+    """A drop at 500 must not turn a shared 1,500-task prefix into 500 at a 1,600 deadline."""
+    n, block = 2000, 500
+    params = build.params(n_tasks=n, looks=(0.25, 0.5, 1.0), eval_chunk_tasks=block, drop_alpha=0.5, z_bar=0.0)
+    ticket = build.ticket(n_entries=2, n_tasks=n, params=params)
+    artifacts = trained(build, ticket)
+    seam = FakeStream(ticket, shuffle=False, build=build)
+    dropped_name = artifacts[0].lora_hash
+    seam.outcomes[dropped_name] = ("F" * block + "P" * (n - block),)
+    clock = [1000]
+
+    def stream(request, limit):
+        for start in range(0, n, block):
+            for model in (NULL_MODEL, *(lora.lora_hash for lora in request.loras)):
+                if start < limit(model):
+                    yield EvalBlock(model, start, start + block, tuple(row[start : start + block] for row in seam.outcomes[model][: params.samples_per_task]))
+            if start == 1000:
+                clock[0] = ticket.expires_at + 1  # the 1,500 block was complete before the 1,600 cutoff
+            elif clock[0] > ticket.expires_at:
+                assert all(limit(lora.lora_hash) == 0 for lora in request.loras)
+                return
+
+    seam.stream = stream
+    trainer = SimpleNamespace(train=lambda request: artifacts[request.entry.queue_pos], close=lambda: None)
+    result = LocalRunner(trainer, seam, lambda: clock[0], build.image).run(ticket)
+    check_result(ticket, result)
+    assert result.stopped_at_limit
+    assert len(result.null_outcomes[0].rstrip(NOT_RUN)) == 1500
+    assert result.entries[0].eliminated_at_look == 0
+    assert result.entries[0].outcomes == ("F" * 500 + NOT_RUN * 1500,)
+    assert result.entries[1].eliminated_at_look is None
+    assert len(result.entries[1].outcomes[0].rstrip(NOT_RUN)) == 1500
+    assert len(result.null_outcomes[0]) == len(result.entries[1].outcomes[0]) == n
+
+
+def test_a_block_graded_before_the_deadline_may_arrive_after_it(build):
+    """The delivery clock must not erase a block that was already graded before the cutoff."""
+    n, block = 16, 4
+    params = build.params(n_tasks=n, looks=(0.25, 0.5, 1.0), eval_chunk_tasks=block, samples_per_task=2, drop_alpha=0.5, z_bar=0.0)
+    ticket = build.ticket(n_entries=1, n_tasks=n, params=params)
+    artifacts = trained(build, ticket)
+    seam = FakeStream(ticket, shuffle=False, build=build)
+    seam.outcomes[artifacts[0].lora_hash] = ("P" * n, "P" * n)
+    clock = [1000]
+    delivered_after_deadline = []
+
+    def stream(request, limit):
+        models = (NULL_MODEL, *(lora.lora_hash for lora in request.loras))
+        graded = [EvalBlock(model, 0, block, tuple(row[:block] for row in seam.outcomes[model][: params.samples_per_task])) for model in models]
+        clock[0] = ticket.expires_at + 1  # both blocks were graded before the cutoff; delivery is after it
+        for block_to_deliver in graded:
+            delivered_after_deadline.append(clock[0] > ticket.expires_at)
+            yield block_to_deliver
+        assert all(limit(model) == 0 for model in models)
+
+    seam.stream = stream
+    trainer = SimpleNamespace(train=lambda request: artifacts[request.entry.queue_pos], close=lambda: None)
+    result = LocalRunner(trainer, seam, lambda: clock[0], build.image).run(ticket)
+    check_result(ticket, result)
+    assert result.stopped_at_limit
+    assert delivered_after_deadline == [True, True]
+    assert len(result.null_outcomes[0].rstrip(NOT_RUN)) == block
+    assert len(result.entries[0].outcomes[0].rstrip(NOT_RUN)) == block
+    assert result.entries[0].eliminated_at_look is None
+
+
 def test_eval_block_rejects_not_run_and_partial_samples(build):
     with pytest.raises(Exception):
         EvalBlock(NULL_MODEL, 0, 2, ("P-",))
