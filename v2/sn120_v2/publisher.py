@@ -43,7 +43,7 @@ from .gpu.batch import END_OF_TURN
 from .gpu.evaluator import ServeSettings, chat_body, server_argv
 from .gpu.trainer import LORA_FILES
 from .headchain import FIXED_ORDER, MATMUL
-from .irt import DRAW_RULE, MODEL, TASK_COLUMNS, draw_from_snapshot
+from .irt import DRAW_RULE, MODEL, MASS_RULES, TASK_COLUMNS, draw_from_snapshot
 from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
@@ -1006,6 +1006,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         for name, found in snapshots.items() if found
     ]
     looks, n = params.look_sizes(), params.n_tasks
+    mass = [
+        f"- The IRT sampler gives each task a mass in proportion to p(1 - p), where p is the head's predicted pass rate on it (the Fisher information of the task under the Rasch model), mixed with a uniform share of {show(params.irt_explore_frac)} over all tasks. Every task keeps a mass above zero; the published weights 1/pi keep the estimate unbiased.",
+    ] if params.irt_draw_rule == "fisher" else [
+        f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
+        f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
+    ]
     drops = [
         f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
         for look, size in enumerate(looks[:-1])
@@ -1019,8 +1025,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  The draw is a fixed function of the public sampler snapshot and the public round seed. Both are frozen at",
         f"  round start. Rebuild a draw with `{draw_from_snapshot.__module__}.{draw_from_snapshot.__name__}(snapshot,",
         "  round_seed, n_tasks)`.",
-        f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
-        f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
+        *mass,
         "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
         f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
         f"- Decode: temperature {show(params.temperature)}, top_p {show(params.top_p)}, top_k {params.top_k}, {params.dtype},",
@@ -1076,6 +1081,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         *(where or ["- No round has used a snapshot yet. The first round names its snapshot in section 3."]),
         f"- Model: {MODEL}. The object holds the ability of each head and LoRA, and for each task: {show(TASK_COLUMNS)}.",
+        f"- Mass rule: {MASS_RULES[params.irt_draw_rule]}.",
         f"- Draw rule: {DRAW_RULE}.",
         "- A round names its snapshot (`irt_snapshot_id`) and its seed (`round_seed`) in section 3, in `history` and in",
         "  its round file. With the snapshot object and the round seed you can rebuild the draw of the round.",

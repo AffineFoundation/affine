@@ -5,11 +5,14 @@ one logit scale (a Rasch model):
 
     P(model passes task) = 1 / (1 + exp(difficulty - ability))
 
-Draw. Each pool task has a whole-number sampling mass in the snapshot. A
-task gets more mass when the head's predicted pass rate is inside the middle
-band, and ``explore_frac`` of all mass is shared by the tasks seen in fewer
-than ``explore_below`` rounds. Every task keeps a mass above zero: there is
-no hidden or excluded task. The draw takes exactly ``n_tasks`` tasks with
+Draw. Each pool task has a whole-number sampling mass in the snapshot. With
+the Fisher rule, a task gets mass in proportion to the Fisher information
+``p * (1 - p)`` of its predicted pass rate under the Rasch model, mixed with
+a uniform share over every pool task. With the band rule, a task gets more
+mass when the head's predicted pass rate is inside the middle band, and
+``explore_frac`` of all mass is shared by the tasks seen in fewer than
+``explore_below`` rounds. Every task keeps a mass above zero: there is no
+hidden or excluded task. The draw takes exactly ``n_tasks`` tasks with
 inclusion probability in proportion to mass (systematic sampling on a
 seed-ordered pool). It uses only the published masses, SHA-256 and
 whole-number arithmetic, so anyone can rebuild it from the snapshot and the
@@ -59,6 +62,20 @@ KEEP_UPDATES = 16  # how many recent update stamps are kept to make a repeated u
 KEEP_HEADS = 64  # how many head versions keep an ability record
 DECIMALS = 6
 
+FISHER_MASS_RULE = (
+    "q(task) = p * (1 - p), p = predicted_pass(head_ability, difficulty); "
+    f"mass = max(1, round(((1 - uniform_frac) * q / sum(q) + uniform_frac / pool_size) * {MASS_SCALE})); "
+    f"the uniform share applies to every pool task, and every mass is an integer above zero; MASS_SCALE = {MASS_SCALE}"
+)
+MASS_RULES = {
+    "band": (
+        "band_preference(predicted_pass(head_ability, difficulty), middle_band, band_floor); "
+        "explore_frac of the mass is shared by tasks seen in fewer than explore_below rounds; "
+        f"every mass is an integer above zero; MASS_SCALE = {MASS_SCALE}"
+    ),
+    "fisher": FISHER_MASS_RULE,
+}
+
 
 def _need(ok: bool, message: str) -> None:
     if not ok:
@@ -85,7 +102,22 @@ def band_preference(pass_rate: float, band: Sequence[float], floor: float) -> fl
     return floor + (1.0 - floor) * inside
 
 
-def sampling_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, config: Mapping[str, Any]) -> dict[str, int]:
+def fisher_preference(pass_rate: float) -> float:
+    """Fisher information of one binary outcome under the Rasch model."""
+    return pass_rate * (1.0 - pass_rate)
+
+
+def fisher_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, uniform_frac: float) -> dict[str, int]:
+    """Whole-number masses: Fisher information mixed with a uniform share over every task."""
+    information = {task: fisher_preference(predicted_pass(head_ability, row[0])) for task, row in tasks.items()}
+    total = math.fsum(information.values())
+    return {
+        task: max(1, round(((1.0 - uniform_frac) * q / total + uniform_frac / len(tasks)) * MASS_SCALE))
+        for task, q in information.items()
+    }
+
+
+def band_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, config: Mapping[str, Any]) -> dict[str, int]:
     """Whole-number mass of each task: middle-band preference plus the exploration share."""
     prefer = {
         task: band_preference(predicted_pass(head_ability, row[0]), config["middle_band"], config["band_floor"])
@@ -101,6 +133,13 @@ def sampling_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, c
             part += share / fresh
         masses[task] = max(1, round(part * MASS_SCALE))
     return masses
+
+
+def sampling_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, config: Mapping[str, Any]) -> dict[str, int]:
+    """Whole-number masses under the configured draw rule."""
+    if config.get("draw_rule") == "fisher":
+        return fisher_masses(tasks, head_ability, config["uniform_frac"])
+    return band_masses(tasks, head_ability, config)
 
 
 def draw_from_masses(masses: Mapping[str, int], snapshot_id: str, round_seed: str, n_tasks: int) -> Draw:
@@ -177,14 +216,22 @@ class IRTSampler:
     def __init__(self, pool: Sequence[str], params: Params | None = None, snapshot: Mapping[str, Any] | None = None) -> None:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
         params = params or Params()
-        config = {
-            "middle_band": [float(edge) for edge in params.irt_middle_band],  # always decimals: one JSON form
-            "explore_frac": float(params.irt_explore_frac),
-            "explore_below": EXPLORE_BELOW,
-            "band_floor": BAND_FLOOR,
-            "prior_precision": PRIOR_PRECISION,
-            "same_seed_correlation": SAME_SEED_CORRELATION,
-        }
+        if params.irt_draw_rule == "fisher":
+            config = {
+                "draw_rule": "fisher",
+                "uniform_frac": float(params.irt_explore_frac),
+                "prior_precision": PRIOR_PRECISION,
+                "same_seed_correlation": SAME_SEED_CORRELATION,
+            }
+        else:
+            config = {
+                "middle_band": [float(edge) for edge in params.irt_middle_band],  # always decimals: one JSON form
+                "explore_frac": float(params.irt_explore_frac),
+                "explore_below": EXPLORE_BELOW,
+                "band_floor": BAND_FLOOR,
+                "prior_precision": PRIOR_PRECISION,
+                "same_seed_correlation": SAME_SEED_CORRELATION,
+            }
         self._last_draw: dict[str, Any] | None = None
         if snapshot is not None:
             verify_snapshot(snapshot)
@@ -311,6 +358,7 @@ class IRTSampler:
             "pool_size": len(body["tasks"]),
             "head_ability": head.get("ability", 0.0),
             "mass_total": sum(row[3] for row in body["tasks"].values()),
+            "mass_rule": MASS_RULES[body["config"].get("draw_rule", "band")],
             "task_columns": list(TASK_COLUMNS),
             "draw_rule": DRAW_RULE,
             "draw": copy.deepcopy(self._last_draw),  # the last draw made from this snapshot: round seed and n_tasks
