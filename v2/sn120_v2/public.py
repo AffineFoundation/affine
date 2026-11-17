@@ -24,6 +24,7 @@ SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
 HISTORY_PREVIEW = 20
 VALID, NOT_VALID, NOT_JUDGED = "valid", "not_valid", "not_judged"  # ``file_verdict`` in ``queue.files``, and the name of its count
+NOT_SHOWN = "not_shown"  # the one key of ``changes`` when a fault stops its rows (``changes_fault``)
 
 # ``public_text``: the rule for a text that an exception made, before it goes into a public file.
 TEXT_LIMIT = 600  # characters. The longest text today has about 520: a failed round that quotes the last line of a job log.
@@ -205,14 +206,37 @@ def changes_view(changes: Sequence[ParamsChange]) -> list[dict[str, Any]]:
     """The changes of the parameters that the state keeps (``state.CHANGES_KEPT``), the newest first.
 
     One row for each round that opened with other parameters than the round before it. ``opened_at`` and
-    ``params_hash`` are the ones of that round in ``history``. ``values`` is each value that differs between the
-    two rounds. New parameters that no round has opened with have no row: ``params`` shows them. A round that is
-    decided can take new digests for its fold; the row for them is the next round, which is the first that pins them.
+    ``params_hash`` are the ones of that round: ``round`` holds them while the round is open, its round file from
+    its close on, and ``history`` for the last ``HISTORY_PREVIEW`` closed rounds. A row can be older than
+    ``history``. ``values`` is each value that differs between the two rounds. New parameters that no round has
+    opened with have no row: ``params`` shows them. A round that is decided can take new digests for its fold; the
+    row for them is the next round, which is the first that pins them.
     """
     return [
         {"round_id": change.round_id, "opened_at": change.opened_at, "params_hash": change.params_hash, "values": changed_values(change.before, change.after)}
         for change in reversed(changes)
     ]
+
+
+def changes_fault(exc: Exception) -> dict[str, str]:
+    """``changes`` when a fault stops its rows: an object with the one key ``NOT_SHOWN``, and the fault as its value.
+
+    It is not a list, so a reader can tell it from "no change", which is an empty list. The text of the fault is
+    bound in length and holds no secret (``public_text``).
+    """
+    return {NOT_SHOWN: public_text(f"{type(exc).__name__}: {exc}")}
+
+
+def shown_changes(changes: Sequence[ParamsChange]) -> list[dict[str, Any]] | dict[str, str]:
+    """``changes`` of a snapshot: the rows of ``changes_view``, or ``changes_fault`` when they cannot be made.
+
+    The rows are a history for a reader. No round and no decision reads them. So a fault in them costs the rows
+    and nothing more: the snapshot keeps every other key, and the controller goes on.
+    """
+    try:
+        return changes_view(changes)
+    except Exception as exc:  # noqa: BLE001 - whatever the fault is, it may not stop the publish of a round
+        return changes_fault(exc)
 
 
 def snapshot(
@@ -226,7 +250,7 @@ def snapshot(
 
     ``queue.next`` is the first ``QUEUE_PREVIEW`` seats. ``queue.files`` is
     the verdict for the whole line (``files_view``). ``changes`` is the
-    history of the parameters (``changes_view``).
+    history of the parameters (``shown_changes``).
     """
     verdicts = verdicts or {}
     line = waiting(state.queue)
@@ -263,7 +287,7 @@ def snapshot(
             "files": files_view(line, verdicts, files_checked_at),
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
-        "changes": changes_view(state.params_changes),
+        "changes": shown_changes(state.params_changes),
     }
 
 

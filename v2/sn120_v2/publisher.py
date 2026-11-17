@@ -57,7 +57,7 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_SHOWN, NOT_VALID, TEXT_LIMIT, VALID, changes_fault
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -280,12 +280,21 @@ def refuse_private(value: Any, where: str = "snapshot") -> None:
 
 
 def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> dict[str, Any]:
-    """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block."""
+    """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block.
+
+    One key can differ from the snapshot. When this code cannot write the lines of ``changes`` for section 12 of
+    llms.txt, the document holds ``public.changes_fault`` in place of the rows. So the two files say the same
+    thing, and a fault in these lines costs the section and not the publish.
+    """
     clash = [key for key in OWN_KEYS if key in snapshot]
     if clash:
         raise ContractError(f"the snapshot may not use the publisher's keys {clash}")
     refuse_private(snapshot)
     plain = to_jsonable(snapshot)
+    try:
+        _parameter_lines(plain.get("changes"))
+    except Exception as exc:  # noqa: BLE001 - whatever the fault is, it may not stop the publish of a round
+        plain["changes"] = changes_fault(exc)
     params = Params.from_dict(plain.get("params") or {})
     if not plain.get("head"):
         raise ContractError("the snapshot has no head")
@@ -1310,28 +1319,58 @@ def _one_value(value: Any) -> str:
     return f"`{value}`" if isinstance(value, str) and value else show(value)
 
 
+def _whole(value: Any) -> str:
+    """A value as JSON holds it, with every digit. For two values that have the same short text."""
+    return f"`{json.dumps(value, ensure_ascii=False)}`"
+
+
 def _changed_value(row: Mapping[str, Any]) -> str:
     """One changed value of a row of ``changes`` in mining.json, in words."""
     name, before, after = f"`{row['name']}`", row.get("before"), row.get("after")
     if not row.get("bound"):
-        return f"{name} {_one_value(before)} to {_one_value(after)}"
+        old, new = _one_value(before), _one_value(after)
+        if old == new:  # the short text hides the difference: a number past its sixth digit, or none and an empty text
+            old, new = _whole(before), _whole(after)
+        return f"{name} {old} to {new}"
     old, new = (bound and bound_text(MinerBound.from_dict(bound)) for bound in (before, after))
     if before is None:
         return f"{name} is new: {new}"
     if after is None:
         return f"{name} is no longer a field that a miner may set"
-    if old == new:  # only ``decided`` moved: the allowed values are the same
+    if before | {"decided": after["decided"]} == after:  # only ``decided`` moved: the allowed values are the same
         return f"{name} has the same allowed values; `decided` of its bound {show(before['decided'])} to {show(after['decided'])}"
+    if old == new:
+        old, new = _whole(before), _whole(after)
     return f"{name} was {old}, and is now {new}"
+
+
+CHANGES_NOT_SHOWN = (
+    "- The validator cannot show the changes of the parameters now: a fault in its code stopped these lines. This "
+    "does not say that no change is recorded. No round and no decision depends on these lines."
+)
+
+
+def _parameter_lines(changes: Any) -> list[str]:
+    """The lines of the parameters in section 12, from ``changes`` of mining.json: its rows, the fault, or no change."""
+    if isinstance(changes, Mapping) and NOT_SHOWN in changes:
+        return [CHANGES_NOT_SHOWN]
+    lines = []
+    for change in changes or []:
+        # No value to name: the two rounds pinned two hashes, and the code that writes this text reads the same values from both.
+        what = "; ".join(_changed_value(row) for row in change["values"]) or "its `params_hash` differs, and no value that this text can name"
+        lines.append(f"- Round `{change['round_id']}`, opened {utc(change['opened_at'])}: {what}. `params_hash` of the round: `{change['params_hash']}`.")
+    return lines or ["No change of the parameters is recorded."]
+
+
+def changes_not_shown(doc: Mapping[str, Any]) -> str:
+    """The fault that ``changes`` of a mining.json names in place of its rows, or "" when it names none."""
+    changes = doc.get("changes")
+    return str(changes[NOT_SHOWN]) if isinstance(changes, Mapping) and NOT_SHOWN in changes else ""
 
 
 def _changes_lines(doc: Mapping[str, Any]) -> list[str]:
     """Section 12: each change of the parameters that mining.json holds, and each change of the text."""
-    values = []
-    for change in doc.get("changes") or []:
-        # No value to name: the two rounds pinned two hashes, and the code that writes this text reads the same values from both.
-        what = "; ".join(_changed_value(row) for row in change["values"]) or "its `params_hash` differs, and no value that this text can name"
-        values.append(f"- Round `{change['round_id']}`, opened {utc(change['opened_at'])}: {what}. `params_hash` of the round: `{change['params_hash']}`.")
+    round_file = layout.round_file("ROUND_ID")
     return [
         "## 12. Changes",
         "",
@@ -1341,13 +1380,27 @@ def _changes_lines(doc: Mapping[str, Any]) -> list[str]:
         "",
         "The validator writes these lines from its journal: nobody types them. There is one line for each round that",
         "opened with other parameters than the round before it. The line names that round, the time when it opened",
-        "(the values hold from then), and each value that differs: the old value, then the new one. The round has the",
-        f"same `opened_at` and `params_hash` in `history` of mining.json. mining.json holds the last {CHANGES_KEPT} lines under",
-        "`changes`. New values that no round has opened with yet have no line: `params` of mining.json shows them.",
-        "`recipe.<name>` is a value of the recipe (section 2). `train.<name>` is what a miner may set for that field",
-        "(section 2).",
+        "(the values hold from then), and each value that differs: the old value, then the new one. New values that no",
+        "round has opened with yet have no line: `params` of mining.json shows them. `recipe.<name>` is a value of the",
+        "recipe (section 2). `train.<name>` is what a miner may set for that field (section 2).",
         "",
-        *(values or ["No change of the parameters is recorded."]),
+        "Where to find the round of a line. While the round is open, `round` of mining.json holds the same `opened_at` and",
+        f"`params_hash`. From its close on, the round file of that round holds them (`{round_file}`,",
+        f"section 9), and `history` of mining.json holds them too, for the last {HISTORY_PREVIEW} closed rounds only. A line can be",
+        "older than `history`.",
+        "",
+        f"mining.json holds the last {CHANGES_KEPT} lines under `changes`: a list, the newest first. A row has `round_id`,",
+        "`opened_at`, `params_hash` and `values`. A row of `values` has `name`, `before` and `after`. In a row of a",
+        "`train.<name>` field, `bound` is true, and `before` and `after` are the bound of that field as",
+        "`recipe.miner_bounds` holds it (`key`, `low`, `high`, `integer`, `choices`, `decided`), or null when a miner",
+        "may not set the field. `values` is empty when the two rounds pinned two hashes and the validator's code reads",
+        "the same values from both.",
+        "",
+        "An empty list under `changes` says that no change is recorded. When a fault in the validator's code stops",
+        f"these lines, `changes` is not a list: it is an object with the one key `{NOT_SHOWN}`, and the value of that key",
+        "names the fault. This section then has one line that says so.",
+        "",
+        *_parameter_lines(doc.get("changes")),
         "",
         "### This text",
         "",
@@ -1359,11 +1412,14 @@ def _changes_lines(doc: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
-    """(mining.json bytes, llms.txt bytes) of one snapshot."""
-    doc = mining_document(snapshot, public_url, links_url)
+def _pair(doc: Mapping[str, Any]) -> tuple[bytes, bytes]:
     mining = json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
     return mining.encode("utf-8"), llms_text(doc).encode("utf-8")
+
+
+def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
+    """(mining.json bytes, llms.txt bytes) of one snapshot."""
+    return _pair(mining_document(snapshot, public_url, links_url))
 
 
 SNAPSHOT_NAMED = re.compile(r"from snapshot\s+`([0-9a-f]{64})`")
@@ -1477,6 +1533,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc = json.loads(mining)
     scope = "every stated parameter" if args.values_only else "every line"
     print(f"ok: {places[1]} is true to the params of {places[0]} ({scope}; params_hash {doc['params_hash']}; generated {utc(doc.get('generated_at'))})")
+    fault = changes_not_shown(doc)
+    if fault:
+        print(f"note: section 12 of {places[1]} does not show the changes of the parameters. `changes` of {places[0]} names a fault of the code that published: {fault}")
     return 0
 
 
@@ -1494,12 +1553,15 @@ class StorePublisher:
         if self.links_url:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
-    def publish(self, snapshot: Mapping[str, Any]) -> None:
+    def publish(self, snapshot: Mapping[str, Any]) -> str:
         """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
 
         A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
+        Returns "" when the files show the whole snapshot. When a fault stopped the lines of ``changes``, the files
+        are written with that fault in place of the lines, and the return value says so.
         """
-        mining, llms = render(snapshot, self.public_url, self.links_url)
+        doc = mining_document(snapshot, self.public_url, self.links_url)
+        mining, llms = _pair(doc)
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
@@ -1512,6 +1574,8 @@ class StorePublisher:
             raise
         except Exception as exc:  # any store failure is ours: the controller retries the same snapshot
             raise InfraError(f"cannot publish the miner contract: {exc}") from exc
+        fault = changes_not_shown(doc)
+        return f"the changes of the parameters (section 12 of llms.txt, `changes` of mining.json): {fault}" if fault else ""
 
 
 if __name__ == "__main__":

@@ -158,6 +158,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
         f"the last {CHANGES_KEPT} lines under",
+        f"for the last {public.HISTORY_PREVIEW} closed rounds only",
         *dict.fromkeys(f"- {day} UTC, section" for day, _, _ in publisher.TEXT_CHANGES),
         f"the first {sampling.SEED_BITS} bits of sha256",
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job

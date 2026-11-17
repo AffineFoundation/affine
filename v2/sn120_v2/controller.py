@@ -186,6 +186,7 @@ class Controller:
         self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
         self.last_error = ""
+        self.left_out = ""  # what the last publish left out of the files that it wrote (``Publisher.publish``); it is in ``last_error`` too
         self._retry_at = 0
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
         self._verdicts_at: int | None = None
@@ -714,10 +715,14 @@ class Controller:
             return
         shown, records = self._shown(), len(self.journal.records)
         try:
-            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+            left_out = self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
             self._published, self._published_at = shown, records
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"
+            return
+        # The files are written. A part that they leave out is a problem to show. It is not a step that is still to do.
+        self.left_out = f"the public files are written, with a part left out: {left_out}" if left_out else ""
+        self.last_error = self.left_out or self.last_error
 
     def publish(self, now: int, check_files: bool = False, only_changes: bool = False) -> bool:
         """Publish the public snapshot outside a round's own steps. Returns True when it published.
@@ -752,9 +757,10 @@ class Controller:
         """
         if self.state.round is not None:
             raise V2Error(f"round {self.state.round.round_id} is open; its close is not complete")
-        before, self.last_error = self.last_error, ""
+        before, self.last_error, pointer = self.last_error, "", ""
         try:
             self._sync_pointer()
+            pointer = self.last_error  # the publish below can put ``left_out`` over it
             if self.overlap is not None:
                 self._kept_done(self.overlap.flush(now))
             if self.state.rounds:
@@ -763,7 +769,9 @@ class Controller:
                 self._publish(now)  # the public files do not show the journal as it is now
         except InfraError as exc:
             self.last_error = f"the store did not answer: {exc}"
-        problem, self.last_error = self.last_error, self.last_error or before
+        # ``left_out`` is of files that are written: it does not hold the stop.
+        problem = pointer if self.last_error == self.left_out else self.last_error
+        self.last_error = self.last_error or before
         return problem
 
     def local_head_proven(self) -> None:

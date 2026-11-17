@@ -305,7 +305,9 @@ def cmd_publish(args: argparse.Namespace) -> int:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
-    stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
+    left_out = stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
+    if left_out:
+        print(f"the public files are written, with a part left out: {left_out}", file=sys.stderr)
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
     return 0

@@ -50,6 +50,14 @@ ok: <address>/llms.txt is true to the params of <address>/mining.json (every lin
 
 With `--values-only` the line says `every stated parameter` in place of `every line`.
 
+A second line can follow. The exit code stays 0:
+
+```
+note: section 12 of <address>/llms.txt does not show the changes of the parameters. `changes` of <address>/mining.json names a fault of the code that published: <the fault>
+```
+
+The two files are a true pair then, and each stated parameter is right. A fault in the validator's code stopped the lines of the parameters in section 12 (the history of the parameters). No round and no decision reads these lines, so the validator goes on. `changes` of `mining.json` is then an object with the one key `not_shown`, and not a list; section 12 has one line that says that the changes cannot be shown now. On the GPU box, `run` names the same fault as its last problem. Do: mend the code. The lines come again with the first publish of the mended code. The `publish` command does not bring them back while the fault is in the code.
+
 ### What is wrong, and what to do
 
 Exit code 1, and a list on the error output. Exit code 2: the check did not run (the address gave no answer, or a file is missing).

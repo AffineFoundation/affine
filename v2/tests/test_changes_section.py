@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+import os
 import re
 from dataclasses import replace
 
@@ -23,8 +24,9 @@ SITE, LINKS = "https://example.org", "https://example.org/links"
 DAY = re.compile(r"\d{4}-\d\d-\d\d")
 TIME_OR_DAY = re.compile(r"\d{4}-\d\d-\d\d(?: \d\d:\d\d:\d\d)? UTC")
 CLOCK = re.compile(r"\d\d:\d\d")
-OTHER_ZONE = re.compile(r"\b(?:GMT|Z|[A-Z]{2,4}T|local)\b|[+-]\d\d:?\d\d\b")
+OTHER_ZONE = re.compile(r"\b(?:GMT|Z|[A-Z]{2,4}T|local)\b|[+-]\d\d:?\d\d\b|UTC ?[+-] ?\d")
 WIDTH = 112
+FAULT = "a fault that the test put in"
 
 
 def with_bounds(params: Params, **changed: MinerBound | None) -> Params:
@@ -72,6 +74,21 @@ def lines(world: sim.SimWorld) -> list[str]:
 
 def opened(world: sim.SimWorld, round_id: str) -> state_module.RoundRecord:
     return next(record for record in world.controller.state.rounds if record.round_id == round_id)
+
+
+def in_round_file(world: sim.SimWorld, row: dict) -> bool:
+    """The public round file of the round of this row holds the ``opened_at`` and the ``params_hash`` of the row."""
+    report = json.loads(world.store.get(layout.round_file(row["round_id"])))
+    return (report["opened_at"], report["params_hash"]) == (row["opened_at"], row["params_hash"])
+
+
+def zone_faults(text: str) -> list[str]:
+    """What a text of section 12 holds against the rule of its times. An empty list: each time is UTC and no other zone is named."""
+    days = [found.start() for found in DAY.finditer(text)]
+    stamped = [found.span() for found in TIME_OR_DAY.finditer(text)]
+    faults = [] if days == [start for start, _ in stamped] else ["a day that UTC does not follow"]
+    faults += [f"a time of day outside a UTC stamp: {found.group()}" for found in CLOCK.finditer(text) if not any(low <= found.start() < high for low, high in stamped)]
+    return faults + [f"another zone or an offset: {found.group()}" for found in OTHER_ZONE.finditer(text)]
 
 
 def step_1(params: Params) -> Params:
@@ -126,7 +143,8 @@ def test_a_line_is_a_round_that_opened_with_other_values_and_it_has_the_time_and
     doc = json.loads(mining)
     assert doc["changes"] == [newest, older]
     shown = {view["round_id"]: (view["opened_at"], view["params_hash"]) for view in doc["history"]}
-    assert all(shown[row["round_id"]] == (row["opened_at"], row["params_hash"]) for row in doc["changes"]), "the same round in `history`"
+    # In this world each round of a line is closed and among the last rounds: `history` has it. The two tests below have the other cases.
+    assert all(shown[row["round_id"]] == (row["opened_at"], row["params_hash"]) and in_round_file(world, row) for row in doc["changes"])
     first_line, second_line = lines(world)
     assert first_line == (
         f"Round `r000004`, opened {publisher.utc(newest['opened_at'])}: `z_bar` {first.z_bar:g} to {second.z_bar:g}; "
@@ -134,6 +152,46 @@ def test_a_line_is_a_round_that_opened_with_other_values_and_it_has_the_time_and
     )
     assert second_line.startswith(f"Round `r000002`, opened {publisher.utc(older['opened_at'])}: `max_prompts` {base.max_prompts} to {first.max_prompts}.")
     assert publisher.check_pair(mining, llms, world.controller.state.params) == []
+
+
+def test_a_line_whose_round_history_no_longer_holds_is_in_the_round_file_of_that_round(tmp_path):
+    world = a_world(tmp_path)
+    rounds(world)
+    pin(world, step_1(world.params))
+    rounds(world, public.HISTORY_PREVIEW + 2)
+    mining, llms = pair(world)
+    doc = json.loads(mining)
+    (row,) = doc["changes"]
+    assert row["round_id"] == "r000002" and doc["round"] is None
+    held = [view["round_id"] for view in doc["history"]]
+    assert len(held) == public.HISTORY_PREVIEW and min(held) == "r000004", "the round of the line is older than `history`"
+    assert in_round_file(world, row)
+    text = " ".join(section(llms.decode()).split())
+    assert f"From its close on, the round file of that round holds them (`{layout.round_file('ROUND_ID')}`, section 9)" in text
+    assert f"`history` of mining.json holds them too, for the last {public.HISTORY_PREVIEW} closed rounds only. A line can be older than `history`." in text
+    assert publisher.check_pair(mining, llms, world.params) == []
+
+
+def test_a_line_whose_round_is_open_is_under_round_and_its_round_file_comes_with_the_close(tmp_path):
+    world = a_world(tmp_path)
+    rounds(world)
+    pin(world, step_1(world.params))
+    world.register(2, 0.3)
+    (ticket,) = world.controller.open_round(world.clock(), "entropy", clock=world.clock)
+    mining, llms = pair(world)
+    doc = json.loads(mining)
+    (row,) = doc["changes"]
+    assert row["round_id"] == ticket.round_id == doc["round"]["round_id"] == "r000002"
+    assert (doc["round"]["opened_at"], doc["round"]["params_hash"]) == (row["opened_at"], row["params_hash"]), "the open round is under `round`"
+    assert [view["round_id"] for view in doc["history"]] == ["r000001"] and not world.store.exists(layout.round_file("r000002"))
+    assert "While the round is open, `round` of mining.json holds the same `opened_at` and `params_hash`." in " ".join(section(llms.decode()).split())
+    assert publisher.check_pair(mining, llms, world.params) == []
+
+    put_record(world.store, layout.sealed_result(ticket.round_id, ticket.lease_id), world.runner.run(ticket))
+    world.round()
+    doc = json.loads(pair(world)[0])
+    assert doc["round"] is None and doc["changes"] == [row] and in_round_file(world, row)
+    assert [(view["round_id"], view["opened_at"], view["params_hash"]) for view in doc["history"]][-1] == (row["round_id"], row["opened_at"], row["params_hash"])
 
 
 def test_the_history_comes_back_from_the_journal(tmp_path):
@@ -262,6 +320,16 @@ def test_a_journal_that_is_not_as_the_controller_writes_it_replays_as_before(tmp
     no_params = [dataclasses.replace(record, seq=records[0].seq + index) for index, record in enumerate(kept)]
     state = replay(no_params)
     assert state.params is None and state.opened_with is None and len(state.rounds) == 2 and state.params_changes == []
+
+    def other_hash(record: JournalRecord) -> JournalRecord:
+        if record.kind != ROUND_OPENED or record.data["round"]["round_id"] != "r000002":
+            return record
+        return dataclasses.replace(record, data={"round": record.data["round"] | {"params_hash": "0" * 64}})
+
+    # Two rounds with two hashes and no parameters to compare: no change, so the publish has no row that it cannot fill.
+    state = replay([other_hash(record) for record in no_params])
+    assert [record.params_hash for record in state.rounds] == [world.params.params_hash, "0" * 64]
+    assert state.params is None and state.params_changes == [] and public.changes_view(state.params_changes) == []
     for kind, data in ((PARAMS_SET, {}), (ROUND_OPENED, {})):
         with pytest.raises(JournalCorrupt):
             replay([dataclasses.replace(record, data=data) if record.kind == kind else record for record in records])
@@ -306,6 +374,136 @@ def test_a_list_is_in_brackets_a_text_is_in_backticks_and_no_line_is_wider_than_
     assert max(len(one) for one in text.splitlines()) <= WIDTH and "c" * 64 in text, "a digest stays whole on one line"
 
 
+def test_two_values_with_the_same_short_text_are_written_whole(tmp_path):
+    world = a_world(tmp_path)
+    rounds(world)
+    alpha = world.params.recipe.alpha
+    near = replace(world.params, z_bar=world.params.z_bar + 1e-9, recipe=replace(world.params.recipe, alpha=alpha + 1e-9))
+    assert publisher.show(near.z_bar) == publisher.show(world.params.z_bar) and publisher.show(near.recipe.alpha) == publisher.show(alpha)
+    old_z, old_alpha = world.params.z_bar, alpha
+    pin(world, near)
+    rounds(world)
+    (line,) = lines(world)
+    assert f"`z_bar` `{json.dumps(old_z)}` to `{json.dumps(near.z_bar)}`; " in line
+    assert f"`recipe.alpha` `{json.dumps(old_alpha)}` to `{json.dumps(near.recipe.alpha)}`. " in line
+    assert json.dumps(old_z) != json.dumps(near.z_bar) and " to ".join([publisher.show(old_z)] * 2) not in line
+    row = {"name": "train.steps", "bound": True, "before": MinerBound("steps", 1, 9.0000000001).to_dict(), "after": MinerBound("steps", 1, 9.0000000002).to_dict()}
+    text = publisher._changed_value(row)
+    assert "9.0000000001" in text and "9.0000000002" in text and "the same allowed values" not in text
+    decided = row | {"after": row["before"] | {"decided": True}}
+    assert publisher._changed_value(decided) == "`train.steps` has the same allowed values; `decided` of its bound no to yes"
+
+
+def real_files(world: sim.SimWorld) -> sim.SimWorld:
+    """The controller of this world writes the two public files to its store, as on the box."""
+    world.publisher = world.controller.publisher = publisher.StorePublisher(world.store, SITE, LINKS)
+    return world
+
+
+def decided(world: sim.SimWorld) -> list[tuple]:
+    """Every record of the journal: what the controller did and decided, and when."""
+    return [(record.seq, record.kind, record.at, record.data) for record in read_journal(world.root / JOURNAL_FILE)]
+
+
+def a_story(world: sim.SimWorld) -> sim.SimWorld:
+    """Four rounds, with new parameters after the first and after the third."""
+    rounds(world)
+    pin(world, step_1(world.params))
+    rounds(world, 2)
+    pin(world, replace(world.params, z_bar=world.params.z_bar + 0.5))
+    rounds(world)
+    return world
+
+
+def stored_pair(world: sim.SimWorld) -> tuple[bytes, bytes]:
+    return world.store.get(layout.MINING_JSON), world.store.get(layout.LLMS_TXT)
+
+
+def broken(*_args, **_kwargs):
+    raise RuntimeError(f"{FAULT}, with the key {os.environ[SECRET_ENV]} and " + "a long tail " * 100)
+
+
+SECRET_ENV, SECRET = "SN120_R2_SECRET_ACCESS_KEY", "the-secret-of-this-test-0123456789"
+PLACES = [(public, "changed_values"), (publisher, "_changed_value")]
+
+
+@pytest.mark.parametrize("module, name", PLACES, ids=[name for _, name in PLACES])
+def test_a_fault_in_the_changes_costs_the_section_and_not_the_round(tmp_path, monkeypatch, capsys, module, name):
+    good = a_story(real_files(sim.SimWorld(tmp_path / "good", sim.sim_params())))
+    assert good.controller.last_error == "" and len(json.loads(stored_pair(good)[0])["changes"]) == 2
+    with monkeypatch.context() as patch:
+        patch.setenv(SECRET_ENV, SECRET)
+        patch.setattr(module, name, broken)
+        hurt = a_story(real_files(sim.SimWorld(tmp_path / "hurt", sim.sim_params())))
+        assert decided(hurt) == decided(good), "each round ran to its end, with the same decision at the same time"
+        assert [record.outcome for record in hurt.controller.state.rounds] == ["applied"] * 4 and hurt.controller.state.round is None
+
+        mining, llms = stored_pair(hurt)
+        doc, whole = json.loads(mining), json.loads(stored_pair(good)[0])
+        assert list(doc["changes"]) == [public.NOT_SHOWN] and whole["changes"] != doc["changes"]
+        assert {key for key in whole if whole[key] != doc.get(key)} == {"changes", "snapshot_digest"} and set(doc) == set(whole)
+        fault = doc["changes"][public.NOT_SHOWN]
+        assert fault.startswith(f"RuntimeError: {FAULT}, with the key {public.CUT_SECRET} and a long tail")
+        assert len(fault) < public.TEXT_LIMIT + 40 and "[cut: " in fault, "the length is bound"
+        text = " ".join(section(llms.decode()).split())
+        assert publisher.CHANGES_NOT_SHOWN[2:] in text and "No change of the parameters is recorded." not in text and "- Round `" not in text
+        assert max(len(one) for one in section(llms.decode()).splitlines()) <= WIDTH and zone_faults(section(llms.decode())) == []
+        assert publisher.check_pair(mining, llms, hurt.params) == [], "the pair is whole: one snapshot, the same parameters, the text of this json"
+
+        files = tmp_path / "mining.json", tmp_path / "llms.txt"
+        for path, content in zip(files, (mining, llms)):
+            path.write_bytes(content)
+        assert publisher.main(["check", "--mining-json", str(files[0]), "--llms-txt", str(files[1])]) == 0
+        ok, note = capsys.readouterr().out.splitlines()
+        assert ok.startswith("ok: ") and note.startswith("note: section 12 of ") and note.endswith(fault)
+
+        controller = hurt.controller
+        said = f"the public files are written, with a part left out: the changes of the parameters (section 12 of llms.txt, `changes` of mining.json): {fault}"
+        assert controller.last_error == controller.left_out == said
+        assert not [where for where in (mining.decode(), llms.decode(), controller.last_error, ok, note) if SECRET in where]
+
+    # The fault is out: the next publish has the lines again, and they are the lines of the world that had no fault.
+    assert hurt.controller.publish(hurt.clock()) and hurt.controller.left_out == ""
+    mining, llms = stored_pair(hurt)
+    assert json.loads(mining)["changes"] == whole["changes"] and publisher.check_pair(mining, llms, hurt.params) == []
+    parameters = lambda text: section(text).split("### This text")[0]  # noqa: E731
+    assert parameters(llms.decode()) == parameters(stored_pair(good)[1].decode()) and parameters(llms.decode()).count("- Round `") == 2
+
+
+@pytest.mark.parametrize("module, name", PLACES, ids=[name for _, name in PLACES])
+def test_a_fault_in_the_changes_does_not_hold_the_stop_after_the_round(tmp_path, monkeypatch, module, name):
+    world = real_files(a_world(tmp_path))
+    rounds(world)
+    pin(world, step_1(world.params))
+    rounds(world)
+    monkeypatch.setattr(module, name, broken)
+    monkeypatch.setenv(SECRET_ENV, SECRET)
+    controller = world.controller
+    pin(world, replace(world.params, z_bar=world.params.z_bar + 0.5))  # the public files do not show this record yet
+    assert controller.close_in_public(world.clock()) == "", "the files are written: nothing is still to do"
+    assert controller.last_error == controller.left_out and FAULT in controller.left_out
+    assert list(json.loads(stored_pair(world)[0])["changes"]) == [public.NOT_SHOWN]
+
+    def pointer_down() -> None:
+        controller.last_error = "head pointer not published yet: the store is down"
+
+    monkeypatch.setattr(controller, "_sync_pointer", pointer_down)
+    pin(world, replace(world.params, z_bar=world.params.z_bar + 0.5))
+    assert controller.close_in_public(world.clock()) == "head pointer not published yet: the store is down", "the fault hides no step that is still to do"
+
+
+def test_rows_that_this_code_cannot_read_are_the_same_fault_in_both_files(tmp_path):
+    world, *_ = moved_twice(tmp_path)
+    state = world.controller.state
+    snapshot = public.snapshot(state, state.params, world.clock())
+    for rows, cause in (([{"round_id": "r000002"}], "KeyError: "), ("a text", "TypeError: "), ([{"round_id": "r000002", "opened_at": 1, "params_hash": "0" * 64, "values": [{}]}], "KeyError: ")):
+        mining, llms = publisher.render(snapshot | {"changes": rows}, SITE, LINKS)
+        doc = json.loads(mining)
+        assert list(doc["changes"]) == [public.NOT_SHOWN] and doc["changes"][public.NOT_SHOWN].startswith(cause)
+        assert publisher.CHANGES_NOT_SHOWN[2:] in " ".join(section(llms.decode()).split()) and publisher.check_pair(mining, llms, world.params) == []
+    assert publisher.changes_not_shown(json.loads(pair(world)[0])) == "" and publisher.changes_not_shown({}) == ""
+
+
 def test_the_state_keeps_only_the_changes_that_are_published_the_newest_first(tmp_path):
     world = a_world(tmp_path)
     base = world.params
@@ -325,17 +523,30 @@ def test_the_state_keeps_only_the_changes_that_are_published_the_newest_first(tm
 def test_each_time_of_the_section_is_utc_and_no_other_zone_is_named(tmp_path):
     world, *_ = moved_twice(tmp_path)
     text = section(pair(world)[1].decode())
-    days = [found.start() for found in DAY.finditer(text)]
-    stamped = [found.span() for found in TIME_OR_DAY.finditer(text)]
-    assert len(days) >= 2 + len(publisher.TEXT_CHANGES) and days == [start for start, _ in stamped], "each day is followed by UTC"
-    assert all(any(low <= found.start() < high for low, high in stamped) for found in CLOCK.finditer(text)), "each time of day is in a UTC stamp"
-    assert not OTHER_ZONE.findall(text), "UTC is the only zone word"
+    assert len(DAY.findall(text)) >= 2 + len(publisher.TEXT_CHANGES) and zone_faults(text) == []
     assert "Each time is UTC." in text
     parameter_lines, text_lines = (part.splitlines() for part in text.split("### This text\n"))
     times = [found.group() for line in parameter_lines if line.startswith("- ") for found in TIME_OR_DAY.finditer(line)]
     assert times == sorted(times, reverse=True) and len(times) == 2, "the newest change of the parameters is the first line"
     days_of_text = [line[2:12] for line in text_lines if line.startswith("- ")]
     assert days_of_text == sorted(days_of_text, reverse=True) == [day for day, _, _ in publisher.TEXT_CHANGES]
+
+
+@pytest.mark.parametrize("sign, hours", [("+", 1), ("-", 6), ("-", 11)])
+def test_the_rule_of_the_times_fails_on_an_offset_and_on_a_time_with_no_zone(tmp_path, sign, hours):
+    world, *_ = moved_twice(tmp_path)
+    text = section(pair(world)[1].decode())
+    assert zone_faults(text) == []
+    stamp = TIME_OR_DAY.search(text).group()
+    after_utc = text.replace(stamp, f"{stamp}{sign}{hours}", 1)  # an offset in hours right after UTC
+    four_digits = text.replace(stamp, f"{stamp[:-4]}{sign}{hours:02d}00", 1)  # an offset of four digits in place of UTC
+    no_zone = text.replace(stamp, stamp[:-4], 1)  # a day and a time of day, and no zone
+    time_alone = text + f"The values hold from {stamp[11:16]} on.\n"  # a time of day that is in no UTC stamp
+    for bad, rule in ((after_utc, "another zone or an offset"), (four_digits, "another zone or an offset"), (no_zone, "a day that UTC does not follow"), (time_alone, "a time of day outside a UTC stamp")):
+        assert bad != text and [fault for fault in zone_faults(bad) if fault.startswith(rule)], (rule, zone_faults(bad))
+    day = publisher.TEXT_CHANGES[0][0]
+    typed = text.replace(f"- {day} UTC,", f"- {day} UTC{sign}{hours},", 1)
+    assert typed != text and zone_faults(typed), "a typed day with an offset"
 
 
 def test_a_typed_line_names_no_field_of_train():
