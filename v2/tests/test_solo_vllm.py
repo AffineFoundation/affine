@@ -7,7 +7,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator
+from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, server_argv
 from sn120_v2.gpu.solo import SoloRunner, SoloSettings
 from sn120_v2.gpu import plan
 from sn120_v2.sampling import rollout_seed
@@ -73,13 +73,14 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path):
     pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: [{"role": "user", "content": task}]))
     grader = SimpleNamespace(grade_many=lambda jobs: [SimpleNamespace(code="P", machine_cause=None) for _ in jobs])
     evaluator = VllmEvaluator(store, plan.BoxConfig(tmp_path / "work", build.image), pool, grader, spawn=farm.spawn, http=farm.http, gpus_free=lambda limit, timeout: None, settings=ServeSettings(start_timeout_s=10.0, clients_per_server=8), sleep=lambda _: None, room=lambda sockets, spare: sockets)
-    # Solo uses the real _serve_one path, including per-GPU free checks.
-    evaluator._gpu_report = lambda gpu: "0, 0"
+    # Solo uses the real _serve_one path with the normal server argv.
     trainer = SimpleNamespace(train=lambda request: loras[request.entry.queue_pos], close=lambda: None)
-    runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image, settings=SoloSettings(warmup=True, steal_block_tasks=2), poll_s=0.01)
+    runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image, settings=SoloSettings(prewarm=True, steal_block_tasks=2), poll_s=0.01)
     result = runner.run(ticket)
     assert result.null_outcomes == ("P" * 8,)
     assert len(farm.up) == 0  # close() tears down all solo servers
+    assert all("--gpu-memory-utilization" not in argv for argv in farm.argv.values())
+    assert all(argv == server_argv(argv[argv.index("--model") + 1], int(argv[argv.index("--port") + 1]), params, 8, len(ticket.entries)) for argv in farm.argv.values())
     by_task = {}
     for port, body in farm.bodies:
         task = body["messages"][-1]["content"]

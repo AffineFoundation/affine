@@ -27,7 +27,7 @@ from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 from .batch import END_OF_TURN
 from .plan import BoxConfig, check_pins, log_phase
-from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
+from .procs import Child, Process, Spawn, gpu_env, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
 
 
@@ -125,14 +125,6 @@ class CancellableHttp:
         finally:
             if reply is not None:
                 reply.close()
-
-
-def _gpu_report_one(gpu: int) -> str:
-    """A one-GPU report for the existing fail-closed free-GPU check."""
-    lines = nvidia_smi().splitlines()
-    if gpu >= len(lines):
-        raise InfraError(f"GPU {gpu} is absent from the driver report")
-    return lines[gpu]
 
 
 RolloutResult = tuple[str, int, int, tuple[str, bool] | None]
@@ -365,13 +357,6 @@ class VllmEvaluator:
         log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts, **written_facts(written))
         return EvalChunk(look=request.look, task_ids=tasks, outcomes=outcomes, image_digest=self.config.image_digest)
 
-    def prewarm(self, head: HeadVersion, params: Params, table: int, *, memory_fraction: float = 0.70, gpu: int | None = None) -> None:
-        """Start the same vLLM argv during training, without serving requests."""
-        if gpu is None:
-            self._serve(head, params, table, memory_fraction=memory_fraction)
-        else:
-            self._serve_one(head, params, table, gpu, memory_fraction=memory_fraction)
-
     def solo_worker(self, ticket, trained, deadline, gpu):
         from .solo import SoloWorker
 
@@ -573,7 +558,7 @@ class VllmEvaluator:
                 break
         return prefix // block * block
 
-    def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int, memory_fraction: float | None = None) -> str:
+    def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
         """Start or reuse exactly one GPU's server, independent of its peers."""
         with self._solo_lock:
             existing = self._solo_servers.get(gpu)
@@ -590,8 +575,6 @@ class VllmEvaluator:
             logs.mkdir(parents=True, exist_ok=True)
             port = self.settings.first_port + gpu
             argv = server_argv(str(base_dir), port, params, self.settings.clients_per_server, table)
-            if memory_fraction is not None:
-                argv.extend(("--gpu-memory-utilization", str(memory_fraction)))
             self._head, self._table = head, table
             self._solo_servers[gpu] = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
             url = f"http://127.0.0.1:{port}"
@@ -647,7 +630,7 @@ class VllmEvaluator:
                 return codes
         raise InfraError(f"a grader worker died on {len(ended)} replies in every one of {self.settings.grade_tries} tries; the look is not scored")
 
-    def _serve(self, head: HeadVersion, params: Params, table: int, memory_fraction: float | None = None) -> None:
+    def _serve(self, head: HeadVersion, params: Params, table: int) -> None:
         if self._head is not None and self._head.version_id == head.version_id and self._table == table:
             if all(server.alive() for server in self._servers):
                 return
@@ -660,8 +643,6 @@ class VllmEvaluator:
         for gpu in range(params.n_gpus):
             port = self.settings.first_port + gpu
             argv = server_argv(str(base_dir), port, params, self.settings.clients_per_server, table)
-            if memory_fraction is not None:
-                argv.extend(("--gpu-memory-utilization", str(memory_fraction)))
             self._servers.append(self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
             self._urls.append(f"http://127.0.0.1:{port}")
         waited = 0.0

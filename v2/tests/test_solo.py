@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from sn120_v2.gpu.solo import SoloScheduler, SoloSettings, choose_claim, lpt_train_all
 from sn120_v2.sampling import rollout_seed
-from sn120_v2.types import NULL_MODEL
+from sn120_v2.types import FAIL, NULL_MODEL, PASS
 
 
 def test_lpt_is_longest_first_and_stable(build):
@@ -47,3 +47,23 @@ def test_scheduler_buffers_out_of_order_results_and_pairs_seeds(build):
     assert all(len(text) == 8 for texts in scheduler.scored.values() for text in texts)
     for model in (NULL_MODEL, *(lora.lora_hash for lora in loras.values())):
         assert [rollout_seed(ticket.draw.round_seed, task, 0) for task in ticket.draw.task_ids] == [rollout_seed(ticket.draw.round_seed, task, 0) for task in ticket.draw.task_ids]
+
+
+def test_lora_that_finishes_a_look_before_null_is_dropped_when_null_catches_up(build):
+    ticket = build.ticket(n_entries=1, n_tasks=16, params=build.params(n_tasks=16, looks=(0.25, 1.0), eval_chunk_tasks=4, min_scored_tasks=2))
+    runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=2), clock=lambda: 1100, evaluator=SimpleNamespace(http=None))
+    scheduler = SoloScheduler(runner, ticket, 10000)
+    lora = build.artifact(ticket.head, ticket.entries[0], ticket.params)
+    scheduler.add_lora(0, lora, gpu=0)
+    # The candidate has completed the whole first look and speculated beyond
+    # it, but null has not reached the look yet: no decision is possible yet.
+    for index in range(8):
+        scheduler.result(lora.lora_hash, 0, index, FAIL if index % 3 else PASS)
+    assert scheduler.dropped == {} and scheduler.judged == set()
+    for index in range(4):
+        scheduler.result(NULL_MODEL, 0, index, PASS)
+    assert scheduler.dropped == {0: 0}
+    assert scheduler.scored[0] == ["".join(FAIL if index % 3 else PASS for index in range(4))]
+    assert len(scheduler.scored[0][0]) == 4
+    scheduler.result(lora.lora_hash, 0, 8, PASS)
+    assert len(scheduler.scored[0][0]) == 4

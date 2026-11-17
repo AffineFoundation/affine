@@ -1,10 +1,10 @@
-"""Solo GPU execution: warm during training, then serve and steal.
+"""Solo GPU execution: independent per-GPU training, serving and stealing.
 
-Every GPU has an independent worker. It prewarms vLLM while its training
-queue runs, starts decoding as soon as that queue is empty, and takes work
-from a shared, atomic claim scheduler. No rollout is submitted while the
-same GPU is training. The training call, deadline, task draw, sampling seed,
-look rule and vLLM sequence limit are unchanged.
+A GPU never runs vLLM while its training job is active. Idle GPUs may start
+the normal default-argv server immediately for null. After training exits,
+that GPU starts or reuses the same default-argv server. Workers take work
+from a shared, atomic claim scheduler. The training call, deadline, task
+draw, sampling seed, look rule and vLLM sequence limit are unchanged.
 """
 
 from __future__ import annotations
@@ -22,15 +22,13 @@ from ..judging import drop_at_look, score_entry
 from ..types import NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
 from ..worker import AT_THE_LEASE_S, LocalRunner
 from .evaluator import _Cancelled, _Deadline
-from .evaluator import _Cancelled, _Deadline
 
 
 @dataclass(frozen=True)
 class SoloSettings:
     """Execution-only settings, deliberately outside the hashed Params."""
 
-    prewarm_memory_fraction: float = 0.70
-    warmup: bool = True
+    prewarm: bool = True
     steal_block_tasks: int = 16
     poll_s: float = 0.05
 
@@ -147,10 +145,11 @@ class SoloScheduler:
                     return
                 self.scored[pos][sample] += code
             self.next_result[model, sample] += 1
-            if model != NULL_MODEL:
-                for look, stop in enumerate(self.params.look_sizes(self.n)[:-1]):
-                    if index + 1 == stop:
-                        self.judge(self._pos(model), look)
+        # Null can catch up after a LoRA has crossed a look. Re-check every
+        # unjudged early look after every accepted result, including null.
+        for pos in list(self.alive):
+            for look in range(len(self.params.look_sizes(self.n)) - 1):
+                self.judge(pos, look)
 
     def judge(self, pos: int, look: int) -> None:
         with self.changed:
@@ -312,12 +311,35 @@ class SoloRunner(LocalRunner):
         train_lock = threading.Lock()
         failed: queue.Queue = queue.Queue()
         remaining_training = [len(entries)]
-        training_lock = threading.Lock()
+        training_gpus: set[int] = set(range(min(params.n_gpus, len(entries))))
+        warm_futures: dict[int, Future] = {}
+        warm_pool = ThreadPoolExecutor(params.n_gpus)
+
+        def start_idle_server(gpu: int) -> None:
+            """Start the normal server only on a GPU with no active trainer."""
+            if not self.settings.prewarm:
+                return
+            with train_lock:
+                if gpu in training_gpus:
+                    return
+                previous = warm_futures.get(gpu)
+                if previous is not None and not previous.done():
+                    return
+                # A failed early start is retried here, not fatal to the round.
+                warm_futures[gpu] = warm_pool.submit(self.evaluator._serve_one, ticket.head, params, len(ticket.entries), gpu)
+
+        def finish_warm(gpu: int) -> None:
+            future = warm_futures.get(gpu)
+            if future is not None:
+                try:
+                    future.result()
+                except Exception:  # noqa: BLE001 - normal post-training startup retries
+                    pass
 
         def gpu_worker(gpu: int):
             try:
-                warm = ThreadPoolExecutor(1)
-                warm_future = warm.submit(self.evaluator.prewarm, ticket.head, params, len(ticket.entries), memory_fraction=self.settings.prewarm_memory_fraction, gpu=gpu)
+                # A GPU with no current training job may serve null at t=0.
+                start_idle_server(gpu)
                 while self.clock() < train_end:
                     try:
                         index, entry = training.get_nowait()
@@ -325,19 +347,21 @@ class SoloRunner(LocalRunner):
                         break
                     report = self._train(ticket, entry, (gpu,), train_end, whole_time=started - ticket.issued_at <= AT_THE_LEASE_S and index < params.n_gpus)
                     reports[entry.queue_pos] = report
-                    with training_lock:
+                    with train_lock:
+                        if training.empty():
+                            training_gpus.discard(gpu)
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
                     if isinstance(report, LoRAArtifact):
                         scheduler.add_lora(entry.queue_pos, report, gpu)
+                    start_idle_server(gpu)
                 with train_lock:
+                    training_gpus.discard(gpu)
                     train_done[0] = max(train_done[0], self.clock())
-                with train_lock:
-                    train_done[0] = max(train_done[0], self.clock())
-                warm_future.result()
-                warm.shutdown()
+                start_idle_server(gpu)
+                finish_warm(gpu)
                 worker = self.evaluator.solo_worker(ticket, scheduler.trained, limit, gpu)
                 worker.run(steal=scheduler.steal, result=scheduler.result, judge=scheduler.judge, alive=lambda: bool(scheduler.alive), deadline=limit)
             except BaseException as exc:  # noqa: BLE001
@@ -354,6 +378,7 @@ class SoloRunner(LocalRunner):
                 if self.clock() >= limit and running:
                     scheduler.deadline_cut()
             self.trainer.close()
+            warm_pool.shutdown(wait=True)
         if not failed.empty():
             self.evaluator.close()
             raise failed.get()
