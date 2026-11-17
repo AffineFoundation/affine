@@ -84,7 +84,7 @@ LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
-OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"  # gpu/train_job.py
+OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
 # The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
@@ -113,6 +113,7 @@ RECIPE_NOTES = {
     "steps": "passes over your batch; each pass makes `minibatches` updates",
     "minibatches": "updates in each pass; 1 = one update from all rows of your batch",
     "lora_lr": "learning rate of each update",
+    "adam_eps": "epsilon of each Adam update; larger values damp small-gradient weights",
     "max_grad_norm": "gradient clip of each update; it does not cap the size of an update (the training procedure, below)",
     "global_norm_cap": "cap on the norm of the whole adapter update, for a file that sets none; none = no cap",
     "group_size": "rollouts per GRPO group; 0 = the groups of your file",
@@ -321,7 +322,8 @@ def _recipe_lines(params: Params) -> list[str]:
         "for every batch. Your batch is the only training data. A batch made against an older head is trained on the",
         "current head. `recipe_id` is the sha256 of the canonical JSON (sorted keys, no spaces) of the recipe object in",
         "mining.json (`params.recipe`). A new recipe gets a new id, and it is shown here before the next round starts.",
-        "The object does not hold `minibatches` while the value is 1.",
+        "The object does not hold `minibatches` while the value is 1. An older recipe without an `adam_eps` bound",
+        "does not hold that field.",
         "",
         *table(("field", "value", "meaning"), rows),
         "",
@@ -362,6 +364,9 @@ def _recipe_lines(params: Params) -> list[str]:
         "  the cap and the norm after it (`step_norm` is the norm after the cap). The recipe value is the cap of a file",
         f"  that sets none. {cap_now} {cap_yours} The cap holds for the whole",
         "  update, however many steps and minibatches made it.",
+        "- `adam_eps`: the epsilon of each Adam update. With one Adam step, a larger epsilon damps weights with small",
+        "  gradients, so the step concentrates on high-signal weights. Use this instead of the old zero-reward filler",
+        "  trick: zero-advantage rows do not train or enter the loss denominator, so adding them has no effect.",
         "- `minibatches`: the count of updates in each pass over your rows. The training procedure, below, has the",
         "  rule. Section 5 has what it costs.",
         f"- Train caps: a rollout above `train_max_output_tokens` ({recipe.train_max_output_tokens}) or",
@@ -440,10 +445,11 @@ def _training_lines(params: Params) -> list[str]:
         f"- Steps: {recipe.steps} (`steps`). Minibatches: {recipe.minibatches} (`minibatches`). One step is one pass over all rows that train.",
         "  With one minibatch a pass ends with one update, from all rows. The gradient of the loss of an update, over all A",
         f"  and B together, is clipped to the norm {show(recipe.max_grad_norm)} (`max_grad_norm`). Then comes the update, with the learning",
-        f"  rate {show(recipe.lora_lr)} (`lora_lr`). The optimizer: {OPTIMIZER}. The learning rate has no",
+        f"  rate {show(recipe.lora_lr)} (`lora_lr`) and epsilon {show(recipe.adam_eps)} (`adam_eps`). The optimizer: {OPTIMIZER}. The learning rate has no",
         f"  schedule. A gradient that is not finite stops the training: `{SKIP}`.",
         "- The clip does not cap the size of an update. Adam divides each gradient value by its own running size. So",
-        "  the first update moves each weight that has a gradient by about `lora_lr`, whatever the norm of the gradient",
+        "  with the default epsilon the first update moves each weight that has a gradient by about `lora_lr`, whatever",
+        "  the norm of the gradient",
         "  is. The size of the whole update grows with `lora_lr`, with the count of updates and with the count of",
         "  weights. The one cap on it is `global_norm_cap`.",
         "- Minibatches, for a value N above 1. Each pass cuts the rows that train into N minibatches and makes one",

@@ -13,8 +13,9 @@ The step, for each rollout (one sampled answer) with advantage A:
   loss   PPO with the dual clip, token mean per rollout, mean over rollouts.
 
 Only the LoRA matrices train. They are fp32; the base stays frozen. The
-optimizer is a fresh Adam per LoRA (betas 0.9 and 0.999, eps 1e-8, no weight
-decay). One step is one pass over the whole batch and one Adam update.
+optimizer is a fresh Adam per LoRA (betas 0.9 and 0.999, eps from the recipe,
+1e-8 by default, no weight decay). One step is one pass over the whole batch
+and one Adam update.
 
 That is ``run``, the job of a recipe with ``minibatches`` 1. With more
 minibatches the job is ``run_minibatches``: each pass puts the rows that
@@ -53,7 +54,7 @@ from ..params import Recipe
 from .batch import END_OF_TURN, derail_keep, fit_tokens
 
 LOGIT_CHUNK = 2048  # tokens per pass through the output layer: a memory knob, with no effect on the result
-OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"
+OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"
 # GPU memory that torch never takes. Triton loads a kernel, and the CUDA libraries make their handles, with memory
 # of the CUDA driver. torch keeps every block it ever took, so after a long row the card can be full of blocks that
 # torch does not use, and such a load fails with "Triton Error [CUDA]: out of memory". With this part left free it cannot.
@@ -364,7 +365,7 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     check_names(job["base_dir"], list(first.layers))
     for replica in replicas:  # one GPU after another, before any long row: see Replica.warm_up
         replica.warm_up((active[0]["prompt_ids"] + active[0]["tokens"])[:WARM_UP_TOKENS])
-    optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr)
+    optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr, eps=recipe.adam_eps)
     loaded = time.monotonic()
     losses, grad_norms, trained = [], [], 0
     with ThreadPoolExecutor(len(replicas)) as pool:
@@ -414,7 +415,7 @@ def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = No
     check_names(job["base_dir"], list(first.layers))
     for replica in replicas:
         replica.warm_up((active[0]["prompt_ids"] + active[0]["tokens"])[:WARM_UP_TOKENS])
-    optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr)  # one optimizer for the file: its state goes through every update
+    optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr, eps=recipe.adam_eps)  # one optimizer for the file: its state goes through every update
     order = random.Random(job["seed"])  # the order of the rows in each pass: the same in every run of this job
     loaded = time.monotonic()
     losses, grad_norms, trained = [], [], 0
@@ -446,9 +447,9 @@ def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = No
     # One loss and one gradient norm for each update.
     facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": trained, "rows": len(rows)}
     facts.update(truncated_rows=sum(row["truncated"] for row in rows), dropped_rows=dropped)
-    # ``minibatches`` is a recipe value that was used, and ``save`` does not know it. The report takes ``facts`` last:
-    # these recipe values, the ones that ``save`` names and ``minibatches``, stand in the report in place of ``save``'s own.
-    used = ("lora_lr", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap", "minibatches")
+    # ``minibatches`` and a nondefault ``adam_eps`` are recipe values that ``save`` does not know. The report takes
+    # ``facts`` last: these recipe values stand in the report in place of the ones from ``save``.
+    used = tuple(key for key in ("lora_lr", "adam_eps", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap", "minibatches") if key != "adam_eps" or recipe.adam_eps != 1e-8)
     facts.update(recipe_values={key: getattr(recipe, key) for key in used})
     result = save(first, recipe, job, out_dir, facts)
     result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(replicas), rows=len(rows), updates=len(losses))
@@ -490,9 +491,11 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
         "target_modules": list(recipe.target_modules),
         "inference_mode": True,
     }
-    used = {key: getattr(recipe, key) for key in ("lora_lr", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap")}
+    used = {key: getattr(recipe, key) for key in ("lora_lr", "adam_eps", "steps", "alpha", "group_size", "sample_temperature", "rank", "max_grad_norm", "global_norm_cap")}
+    if recipe.adam_eps == 1e-8:
+        used.pop("adam_eps")  # a default-eps report keeps the old layout; a chosen epsilon is always recorded
     # step_norm_before_cap is the norm that training gave; step_norm is the norm of the stored LoRA.
-    report = {"optimizer": OPTIMIZER, "seed": job["seed"], "step_norm": norm, "step_norm_before_cap": uncapped, "recipe_values": used, **facts}
+    report = {"optimizer": OPTIMIZER if recipe.adam_eps != 1e-8 else "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0", "seed": job["seed"], "step_norm": norm, "step_norm_before_cap": uncapped, "recipe_values": used, **facts}
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "adapter_model.safetensors"))
     (out_dir / "adapter_config.json").write_bytes(canonical_json(config))

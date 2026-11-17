@@ -82,12 +82,13 @@ class MinerBound(Record):
         return value if self.integer else float(value)
 
 
-# What a miner may set: learning rate; steps and minibatches; GRPO group size
+# What a miner may set: learning rate and Adam epsilon; steps and minibatches; GRPO group size
 # and sampling temperature; LoRA rank and alpha; target modules; the cap on
 # the norm of the whole update.
 # PLACEHOLDER marks a bound the spec does not give. It is not a decision.
 DEFAULT_MINER_BOUNDS = (
     MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
+    MinerBound("adam_eps", 1e-10, 1e-4, decided=True),
     MinerBound("steps", 1, 4, integer=True),  # PLACEHOLDER
     MinerBound("minibatches", 1, 8000, integer=True, decided=True),  # at the top one minibatch is one rollout
     MinerBound("group_size", 2, 64, integer=True),  # PLACEHOLDER
@@ -109,15 +110,16 @@ class Recipe(Record):
     place that the batch checker, the trainer and the publisher read.
     """
 
-    # ``minibatches`` came after the first rounds. While it is 1 it is not written (``canonical.to_jsonable``): a recipe
-    # with one minibatch has the JSON form and the ``recipe_id`` that it had before the field, and code from before
-    # the field can read it.
-    LEFT_OUT_AT_DEFAULT = ("minibatches",)
+    # ``minibatches`` and ``adam_eps`` came after the first rounds. While at their defaults they are not written
+    # (``canonical.to_jsonable``): a stored recipe keeps its JSON form and ``recipe_id``, and code from before the
+    # fields can read it.
+    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps")
 
     method: str = "grpo-lora"
     steps: int = 1  # passes over the whole file
     minibatches: int = 1  # optimizer updates in one pass; 1 = one update on the whole file
     lora_lr: float = 1e-5
+    adam_eps: float = 1e-8
     max_grad_norm: float = 1.0
     global_norm_cap: float | None = 6.0  # cap on the norm of the whole adapter update; None = no cap
     group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
@@ -145,6 +147,7 @@ class Recipe(Record):
         _need(self.minibatches >= 1, "recipe.minibatches must be at least 1")
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
+        _need(math.isfinite(self.adam_eps) and self.adam_eps > 0, "recipe.adam_eps must be a finite positive number")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
         cap = self.global_norm_cap
         _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
@@ -159,6 +162,14 @@ class Recipe(Record):
         # The high end of the miner bound is the ceiling for every file: the value of a file that sets none may not be above it.
         ceiling = self.bound("global_norm_cap")
         _need(ceiling is None or (cap is not None and cap <= ceiling.high), "recipe.global_norm_cap must not be above the high end of its miner bound")
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        # The default field may be omitted only with its complete bound: that pair keeps the default explicit after a
+        # JSON round trip, including when the base recipe and miner bounds are customized by the operator.
+        if self.adam_eps == 1e-8 and self.bound("adam_eps") is not None and "miner_bounds" in data:
+            data["adam_eps"] = self.adam_eps
+        return data
 
     @property
     def recipe_id(self) -> str:

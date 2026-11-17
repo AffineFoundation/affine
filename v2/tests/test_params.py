@@ -16,7 +16,7 @@ SPEC_DEFAULTS = dict(
     max_answer_repeat_frac=0.10, max_answer_repeat_count=32, reward_tolerance=0.0, calibration_tol=0.003, kings_window=10,
     burn_uid=0, weights_cadence_s=3600, budget_usd_per_hour=200.0,
 )
-SPEC_RECIPE_DEFAULTS = dict(steps=1, minibatches=1, global_norm_cap=6.0, lora_lr=1e-5, max_grad_norm=1.0, rank=16, alpha=32.0, dropout=0.0, ppo_clip=0.2, dual_clip=3.0, kl=0.0)
+SPEC_RECIPE_DEFAULTS = dict(steps=1, minibatches=1, global_norm_cap=6.0, lora_lr=1e-5, adam_eps=1e-8, max_grad_norm=1.0, rank=16, alpha=32.0, dropout=0.0, ppo_clip=0.2, dual_clip=3.0, kl=0.0)
 
 
 def test_defaults_match_the_spec_parameter_table():
@@ -41,6 +41,27 @@ def test_gpus_per_lora_is_floor_of_eight_over_batches(batches, expected):
     assert Params().gpus_per_lora(batches) == expected
 
 
+def test_adam_eps_is_optional_and_a_chosen_value_is_hashed():
+    assert Recipe().adam_eps == 1e-8 and Recipe().to_dict()["adam_eps"] == 1e-8
+    chosen = Recipe().for_miner({"adam_eps": 1e-6})
+    assert chosen.adam_eps == 1e-6 and chosen.to_dict()["adam_eps"] == 1e-6
+    assert chosen.recipe_id != Recipe().recipe_id
+    assert Recipe.from_dict(chosen.to_dict()) == chosen
+    assert Recipe.from_dict(Recipe().to_dict()).to_dict() == Recipe().to_dict()
+    assert Recipe.from_dict({}).adam_eps == 1e-8  # a stored recipe without the field uses the current default
+
+
+@pytest.mark.parametrize("eps", [0, -1e-8, 1e-11, 1e-3, float("nan"), float("inf"), -float("inf"), None, True, "1e-8", [1e-8]])
+def test_adam_eps_must_be_a_finite_positive_float_inside_its_bound(eps):
+    with pytest.raises(BatchRejected):
+        Recipe().for_miner({"adam_eps": eps})
+    for value in (0, -1e-8, float("nan"), float("inf")):
+        with pytest.raises(ConfigError):
+            Recipe(adam_eps=value)
+    for value in (1e-10, 1e-4):
+        assert Recipe().for_miner({"adam_eps": value}).adam_eps == value
+
+
 def test_look_sizes_end_with_every_task():
     params = Params()
     assert (params.look_sizes(), params.look_sizes(10), params.look_sizes(2), params.look_sizes(1)) == ((500, 1000, 2000), (3, 5, 10), (1, 2), (1,))
@@ -60,10 +81,10 @@ def test_an_invalid_setting_fails_closed(change):
         dataclasses.replace(Params(), **change)
 
 
-def test_all_five_miner_settable_params_are_exposed_in_one_place():
+def test_all_miner_settable_params_are_exposed_in_one_place():
     recipe = Recipe()
-    assert {bound.key for bound in recipe.miner_bounds} == {"lora_lr", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"}
-    assert {b.key for b in recipe.miner_bounds if b.decided} == {"rank", "target_modules", "minibatches", "global_norm_cap"}, "the spec gives only these bounds"
+    assert {bound.key for bound in recipe.miner_bounds} == {"lora_lr", "adam_eps", "steps", "minibatches", "group_size", "sample_temperature", "rank", "alpha", "target_modules", "global_norm_cap"}
+    assert {b.key for b in recipe.miner_bounds if b.decided} == {"adam_eps", "rank", "target_modules", "minibatches", "global_norm_cap"}, "the spec gives only these bounds"
     assert (recipe.bound("rank").low, recipe.bound("rank").high) == (8, 64)
     assert recipe.bound("target_modules").choices == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "in_proj_qkv", "in_proj_z", "out_proj")
     assert recipe.target_modules == recipe.bound("target_modules").choices[:7], "the default list is the 7 names of before"
@@ -102,7 +123,7 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
     for bounds in ((MinerBound("no_such_field", 0, 1),), (MinerBound("rank", 9, 8, integer=True),), (MinerBound("image_digests", choices=("x",)),)):
         with pytest.raises(ConfigError):
             Recipe(miner_bounds=bounds)
-    for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"target_modules": ()}):
+    for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)
 

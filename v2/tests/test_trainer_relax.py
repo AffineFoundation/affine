@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import difflib
 import importlib.machinery
 import importlib.util
 import json
 import math
 import random
 import string
+import subprocess
 import sys
+import types
 import threading
 from pathlib import Path
 
@@ -54,7 +55,7 @@ OUTPUTS = ["abc", "ba", "ccdd", "d", "abcabcab", "zz", "qrs", "tuvwx", "mnopqrst
 ADVANTAGES = [0.5, -0.5, 1.0, -1.0, 0.25, -0.25, 0.0, 0.75, -0.75, 0.0, 0.4, -0.4]
 ROWS = [{"prompt": f"p {'abcd'[i // 3]}", "output": output, "reward": float(a > 0), "advantage": a} for i, (output, a) in enumerate(zip(OUTPUTS, ADVANTAGES))]
 N_TRAIN = sum(a != 0 for a in ADVANTAGES)
-TODAY_BOUNDS = tuple(bound for bound in DEFAULT_MINER_BOUNDS if bound.key not in ("minibatches", "global_norm_cap"))  # the 7 bounds of a5c2b6a6
+TODAY_BOUNDS = tuple(bound for bound in DEFAULT_MINER_BOUNDS if bound.key not in ("minibatches", "adam_eps", "global_norm_cap"))  # the 7 bounds of a5c2b6a6
 
 
 @pytest.fixture(autouse=True)
@@ -224,17 +225,13 @@ def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job,
 
 
 def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
-    """No GPU needed: the old file is unchanged apart from dispatch and the active-row loss denominator."""
+    """No GPU needed: only dispatch, the active-row denominator and configurable Adam epsilon change the old job."""
     before, now = OLD_TRAINER.read_text(), Path(train_job.__file__).read_text()
     old = {node.name: ast.get_source_segment(before, node) for node in ast.parse(before).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     new = {node.name: ast.get_source_segment(now, node) for node in ast.parse(now).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     assert {"run", "save", "Replica", "token_scores", "ppo_loss", "encode", "add_lora", "Replay", "main"} <= set(old)
-    assert {name for name in old if old[name] != new.get(name)} == {"main", "run"}
+    assert {name for name in old if old[name] != new.get(name)} == {"main", "run", "save"}
     assert sorted(set(new) - set(old)) == ["bring", "minibatches_of", "run_minibatches", "score_old", "train"]
-    diff = list(difflib.unified_diff(before.splitlines(), now.splitlines(), n=0, lineterm=""))
-    gone = [line for line in diff if line.startswith("-") and not line.startswith("---")]
-    assert sorted(gone) == sorted(['-        report = run(job, job_dir / "lora")', "-            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(rows)), zip(replicas, shares)))"]), "only main dispatch and the trained-row denominator changed"
-    assert "+            results = list(pool.map(lambda pair: pair[0].train_rows(pair[1], len(active)), zip(replicas, shares)))" in diff
     # The one place that picks the job: one minibatch is ``run``, more are ``run_minibatches``.
     called = []
     monkeypatch.setattr(train_job, "run", lambda job, out, devices=None: called.append("run"))
@@ -249,6 +246,55 @@ def test_one_minibatch_scores_no_row_ahead_and_mixes_no_row(head_dir, tmp_path, 
     assert watch["passes"] == [] and [adam.updates for adam in watch["adams"]] == [3]
     assert watch["train_rows"] == [(N_TRAIN, N_TRAIN)] * 3, "the trained rows in each update, and the loss divided by their count"
     assert sorted(watch["first_pass"]) == [(i, 0) for i, a in enumerate(ADVANTAGES) if a != 0]
+
+
+@pytest.fixture(scope="module")
+def pre_eps_job():
+    """The previous commit: trained-row normalization with the fixed 1e-8 Adam epsilon."""
+    source = subprocess.check_output(["git", "show", "f6314b04:v2/sn120_v2/gpu/train_job.py"])
+    module = types.ModuleType("sn120_v2.gpu.train_job_before_adam_eps")
+    module.__package__ = train_job.__package__
+    exec(compile(source, "train_job_before_adam_eps.py", "exec"), module.__dict__)
+    return module
+
+
+@pytest.mark.parametrize("minibatches", [1, 3])
+def test_adam_eps_reaches_both_training_paths_and_default_matches_the_old_optimizer(minibatches, head_dir, tmp_path, watch, pre_eps_job):
+    made = job(head_dir, dtype="float32", steps=1, minibatches=minibatches)
+    train_job.train(made, tmp_path / "default", ["cpu"])
+    assert [optimizer.defaults["eps"] for optimizer in watch["adams"]] == [1e-8]
+    before = pre_eps_job.train(made, tmp_path / "before", ["cpu"])
+    assert hash_tree(tmp_path / "default") == hash_tree(tmp_path / "before"), "default epsilon keeps the previous LoRA and report bytes"
+    _, _, high_report = run(head_dir, tmp_path / "high", dtype="float32", steps=1, minibatches=minibatches, adam_eps=1e-4)
+    assert watch["adams"][-1].defaults["eps"] == 1e-4 and high_report["recipe_values"]["adam_eps"] == 1e-4
+    _, _, default_report = run(head_dir, tmp_path / "default-report", dtype="float32", steps=1, minibatches=minibatches)
+    assert "adam_eps" not in default_report["recipe_values"]
+
+
+def test_larger_adam_eps_damps_the_first_update_of_a_small_gradient_weight():
+    default = torch.nn.Parameter(torch.tensor(1.0))
+    high = torch.nn.Parameter(torch.tensor(1.0))
+    for weight in (default, high):
+        weight.grad = torch.tensor(1e-4)
+    for weight, eps in ((default, 1e-8), (high, 1e-4)):
+        torch.optim.Adam([weight], lr=1e-2, eps=eps).step()
+    assert default.item() == pytest.approx(0.99, abs=2e-6)
+    assert 0.99 < high.item() < 1.0
+
+
+def test_adam_eps_report_keeps_default_optimizer_text(tmp_path, head_dir):
+    _, _, default = run(head_dir, tmp_path / "default", steps=1)
+    _, _, high = run(head_dir, tmp_path / "high", steps=1, adam_eps=1e-4)
+    assert default["optimizer"] == "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0"
+    assert high["optimizer"] == train_job.OPTIMIZER and "eps from recipe" in high["optimizer"]
+
+
+def test_the_old_params_keep_their_hash_and_an_old_recipe_cannot_set_adam_eps():
+    old = Params.from_json(OLD_PARAMS.read_bytes())
+    assert old.to_json() == OLD_PARAMS.read_bytes() and old.recipe_id == "8cab33a2a1b4b459d7a42ada287823d1c062c2e2a2ed7102009c8475f0748ded"
+    assert old.recipe.adam_eps == 1e-8 and old.recipe.bound("adam_eps") is None
+    with pytest.raises(BatchRejected):
+        old.recipe.for_miner({"adam_eps": 1e-6})
 
 
 def test_zero_advantage_filler_does_not_change_loss_or_gradient_scale(head_dir, tmp_path, monkeypatch):
