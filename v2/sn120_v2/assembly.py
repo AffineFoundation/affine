@@ -187,7 +187,9 @@ def stack(context: StackContext) -> Stack:
         box = BoxConfig.from_env()
         trainer = LoraTrainer(store, box, _read_groups)
         evaluator = VllmEvaluator(store, box, pool, GradePool())
-        runner = LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
+        from .gpu.solo import SoloRunner
+
+        runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         folder = LoraFolder(store, box)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
     head = HeadPublish()

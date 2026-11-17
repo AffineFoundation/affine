@@ -257,9 +257,9 @@ class Params(Record):
     # is stopped; that batch is not charged and is first in the next round. Then the scoring starts.
     train_time_budget_s: int = 40 * 60
     promote_reserve_s: int = 600  # PLACEHOLDER: the box stops scoring this long before the limit, so judging and promotion fit
-    # PLACEHOLDER: the box scores this many tasks, then looks at the clock. One chunk lasts at least as long as its
-    # longest rollout, so fewer and larger chunks waste less time. A chunk that the limit cuts is never used, and
-    # fewer tasks than the first look decide nothing. So 500 = the first look of 2000 tasks in one chunk.
+    # PLACEHOLDER: the common prefix scored at the stop time is truncated to a whole block of this many tasks.
+    # Streaming feeds each server continuously; this is no longer a generation or grading barrier. A block that
+    # the limit cuts is never used, and fewer tasks than the first look decide nothing. So 500 = the first look.
     eval_chunk_tasks: int = 500
     # A box result that arrives later than this is never used. The box stops scoring at the round's time limit minus
     # promote_reserve_s, whatever this value is. The time after the limit is only a reserve for the steps between the

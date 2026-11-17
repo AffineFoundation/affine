@@ -1,11 +1,4 @@
-"""Scoring with many LoRAs: every model gets every task on every server, from the ticket to the box result.
-
-The numbers are those of mainnet r000003: null M and 7 LoRAs on 8 servers,
-chunks of 500 tasks, so 4,000 rollouts in a chunk for a request pool of 2,048
-threads. The servers are stand-ins that record the ``model`` of every chat
-request, and no real socket is opened. Everything else is the code of the
-box: ``LocalRunner`` and ``VllmEvaluator``.
-"""
+"""Streaming scoring with many LoRAs and continuous per-GPU work queues."""
 
 from __future__ import annotations
 
@@ -27,6 +20,7 @@ from sn120_v2.errors import InfraError
 from sn120_v2.gpu import plan
 from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator
 from sn120_v2.judging import score_entry
+from sn120_v2.sampling import rollout_seed
 from sn120_v2.store import LocalStore
 from sn120_v2.types import NULL_MODEL, SCORED, EvalRequest, HeadVersion, LoRAArtifact
 from sn120_v2.worker import LocalRunner
@@ -46,6 +40,7 @@ class Servers:
         self.argv: dict[int, list[str]] = {}
         self.loaded: dict[int, list[str]] = {port: [] for port in PORTS}
         self.chats: dict[int, list[tuple[str, str]]] = {port: [] for port in PORTS}
+        self.bodies: list[tuple[int, dict]] = []
 
     def spawn(self, argv, env, log):
         port = int(argv[argv.index("--port") + 1])
@@ -67,6 +62,7 @@ class Servers:
             if body["model"] != NULL_MODEL and body["model"] not in self.loaded[port]:
                 raise HttpError(404)  # vLLM answers 404 for a model name that it does not hold
             self.chats[port].append((body["model"], body["messages"][-1]["content"]))
+            self.bodies.append((port, dict(body)))
         return {"choices": [{"message": {"content": "P"}, "finish_reason": "stop"}]}
 
     def got(self, model: str) -> dict[int, list[str]]:
@@ -147,17 +143,17 @@ def test_null_m_and_seven_loras_each_get_every_task_on_every_server_and_full_cov
     assert {servers.argv[port][servers.argv[port].index("--max-loras") + 1] for port in PORTS} == {str(N_LORAS)}
     for model in (NULL_MODEL, *world.names):
         got = servers.got(model)
-        # Each task one time, on the server of its place in its chunk: 250 of the 2,000 tasks on each of the 8 servers.
+        # Each task once, routed by its index in the full draw, never by a chunk-local index.
         assert sorted(task for port in PORTS for task in got[port]) == sorted(tasks), f"{model}: not every task was sent one time"
-        assert all(got[port] == sorted(tasks[index] for index in range(N_TASKS) if index % CHUNK % N_GPUS == port - FIRST_PORT) for port in PORTS), model
+        assert all(got[port] == sorted(tasks[index] for index in range(N_TASKS) if index % N_GPUS == port - FIRST_PORT) for port in PORTS), model
         # The first chunk, as the access log of a server counts it: 63 requests on each of the servers 0 to 3, 62 on each of 4 to 7.
         assert [len(set(got[port]) & set(tasks[:CHUNK])) for port in PORTS] == [63, 63, 63, 63, 62, 62, 62, 62], model
     assert Counter(name for port in PORTS for name, _ in servers.chats[port]) == {model: N_TASKS for model in (NULL_MODEL, *world.names)}
     # The box result: null M and all 7 LoRAs have an outcome for every task, and no rollout is an E.
     assert result.null_outcomes == ("P" * N_TASKS,) and not result.stopped_at_limit
-    # The log of the box: 4 chunks of 500 tasks, each with 8 models and 4,000 rollouts, at the looks 0, 1, 2 and 2.
-    chunks = [(line["look"], line["models"], line["tasks"], line["rollouts"], line["n_gpus"], line["max_loras"]) for line in world.lines() if line["phase"] == "eval"]
-    assert chunks == [(look, 1 + N_LORAS, CHUNK, 4000, N_GPUS, N_LORAS) for look in (0, 1, 2, 2)]
+    # One continuous stream replaces four generate-grade barriers.
+    chunks = [(line["models"], line["tasks"], line["rollouts"], line["n_gpus"], line["max_loras"], line["completed_prefix"]) for line in world.lines() if line["phase"] == "eval_stream"]
+    assert chunks == [(1 + N_LORAS, N_TASKS, (1 + N_LORAS) * N_TASKS, N_GPUS, N_LORAS, N_TASKS)]
     assert [(entry.queue_pos, entry.status, entry.outcomes, entry.eliminated_at_look) for entry in result.entries] == [(pos, SCORED, ("P" * N_TASKS,), None) for pos in range(N_LORAS)]
     for entry in result.entries:
         score = score_entry(ticket.draw.weights, result.null_outcomes, entry.outcomes, world.params, N_TASKS)
@@ -190,11 +186,54 @@ def test_at_1024_open_files_null_m_is_full_the_first_lora_is_short_and_the_other
     assert Counter(name for port in PORTS for name, _ in servers.chats[port]) == {NULL_MODEL: 500, first: 459}
     assert [len(servers.chats[port]) for port in PORTS] == [121, 121, 121, 120, 119, 119, 119, 119]
     assert all(sorted(servers.loaded[port]) == sorted(world.names) for port in PORTS)
-    assert (files.most, files.failed) == (limit, (rollouts - limit) * 3)  # 3,041 rollouts failed each of their 3 tries without a socket
-    # The log line of that chunk cannot tell: the job list held all 8 models, and a try without a socket wrote no line.
+    assert (files.most, files.failed) == (limit, (rollouts - limit) * 3)
     assert [(line["phase"], line["models"], line["rollouts"]) for line in world.lines()] == [("eval", 1 + N_LORAS, rollouts)]
-    # Now the look asks first. The same 959 sockets are a failure of the box before any rollout: no LoRA gets an E.
     world.seam.room = lambda sockets, spare: limit
     with pytest.raises(InfraError, match="room for 959 sockets; a look holds 2048"):
         world.seam.evaluate(request)
     assert sum(len(chats) for chats in servers.chats.values()) == limit
+
+
+def test_seed_pairing_and_server_routing(round_of_seven):
+    world = round_of_seven
+    world.runner.run(world.ticket)
+    by_task = {}
+    for port, body in world.servers.bodies:
+        task = body["messages"][-1]["content"]
+        index = world.ticket.draw.task_ids.index(task)
+        assert port == 8100 + index % 8
+        assert body["seed"] == rollout_seed(world.ticket.draw.round_seed, task, 0)
+        by_task.setdefault(task, []).append((port, body))
+    assert len(by_task) == 2000
+    for pairs in by_task.values():
+        assert len({port for port, _ in pairs}) == 1
+        assert {body["model"] for _, body in pairs} == {NULL_MODEL, *world.names}
+        assert len({str({**body, "model": ""}) for _, body in pairs}) == 1
+
+
+def test_short_rollouts_refill_slots_while_an_earlier_rollout_is_blocked(round_of_seven):
+    world = round_of_seven
+    original = world.servers.http
+    later = threading.Event()
+    lock = threading.Lock()
+    seen = set()
+    slow = world.ticket.draw.task_ids[0]
+    started = threading.Event()
+
+    def http(url, body, timeout_s):
+        if body and url.endswith("/v1/chat/completions"):
+            task = body["messages"][-1]["content"]
+            if task == slow and body["model"] == world.names[0]:
+                started.set()
+                assert later.wait(30), "a later task never reached this GPU"
+            elif url.startswith("http://127.0.0.1:8100/") and world.ticket.draw.task_ids.index(task) < 500:
+                with lock:
+                    seen.add(task)
+                    if len(seen) >= 4:
+                        later.set()
+        return original(url, body, timeout_s)
+
+    world.seam.http = http
+    result = world.runner.run(world.ticket)
+    assert started.is_set(), "the intended long rollout was never submitted"
+    assert len(seen) >= 4 and not result.stopped_at_limit

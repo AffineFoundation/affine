@@ -199,7 +199,6 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "`group_size`: 0 means one group per prompt",
         "A value G above 0 cuts",
         "||(alpha / rank) * B @ A||_F^2)",
-        f"floor({params.n_gpus} / batches) GPUs, and at least 1.",
         '"reward": 1.0',
         '"reward": 0.0',
         "Each prompt has at least 1 rollout",
@@ -278,7 +277,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The text states the tries of the round runner and the settings of the servers as the code has them by default.
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
-    assert "LocalRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
+    assert "SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
     assert "VllmEvaluator(store, box, pool, GradePool())" in stack
 
 
