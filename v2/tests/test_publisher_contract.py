@@ -154,9 +154,9 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
     no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
     assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
-    assert "Scoring runs in chunks of 40 tasks." in flat
+    assert "Scoring is streamed: each server keeps up to 256 rollouts in flight, across blocks of 40 tasks and across looks." in flat
     assert "at minute 75 (the stop time). The stop is hard." in flat and "The stop time cuts every look, the first one too." in flat
-    assert "At the stop time, with the first look (100 tasks) complete: each open LoRA is judged by the win rule of section 6 on the whole chunks that null M and every open LoRA finished" in flat
+    assert "At the stop time, with the first look (100 tasks) complete: each open LoRA is judged by the win rule of section 6 on the complete blocks that null M and every open LoRA finished" in flat
     assert "At the stop time, with fewer than 100 tasks scored: each trained LoRA is `not_scored`. You are not charged, your seat is first in the next round, and no failure is counted for the seat." in flat
     assert "always scored in full" not in flat and "longer than 80 minutes only when" not in flat, "no exemption for the first look"
     assert "`not_scored`: the time limit of the round came before the first look of the scoring (section 3)." in flat

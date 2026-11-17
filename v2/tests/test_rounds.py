@@ -295,11 +295,16 @@ def test_every_look_names_the_batches_of_the_ticket_to_the_evaluator_also_when_a
     for uid in (1, 2, 3):
         world.register(uid, 0.3)
     world.trainer.fail_hotkeys = {"hk2"}
-    seen, evaluate = [], world.evaluator.evaluate
-    world.evaluator.evaluate = lambda request: (seen.append((request.batches, len(request.loras))), evaluate(request))[1]
+    seen, stream = [], world.evaluator.stream
+
+    def observed(request, limit):
+        seen.append((request.batches, len(request.loras)))
+        yield from stream(request, limit)
+
+    world.evaluator.stream = observed
     world.round()
     # The servers' LoRA table is sized by this count: it is that of the ticket on any box, not that of the LoRAs that trained here.
-    assert len(seen) >= 2 and {batches for batches, _ in seen} == {3} and max(loras for _, loras in seen) == 2
+    assert seen == [(3, 2)]
 
 
 def test_a_result_for_another_head_or_ticket_is_refused_and_a_result_is_used_once(world):

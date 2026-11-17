@@ -86,7 +86,7 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
-# How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
+# How often the box tries a training job that fails for a reason of its own.
 # The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
 # the weights back to them), in seconds. An estimate for a LoRA of rank 64. No run has measured it.
 UPDATE_COST_S = 0.1
@@ -501,7 +501,7 @@ def _round_time_lines(params: Params) -> list[str]:
         "",
         f"- Time limit: {limit} minutes from the lease to the promotion of the winner. The box stops scoring {reserve} minutes",
         f"  before it, at minute {show(stop / 60)} (the stop time). The stop is hard. The {reserve} minutes are for the grading of the last",
-        "  chunk, the judging and the promotion.",
+        "  block, the judging and the promotion.",
         f"- Training time: the first {show(train_end / 60)} minutes. Batches train in queue order. Each batch trains on its own slot of",
         f"  GPUs, and the slots train at the same time. A slot is floor({params.n_gpus} / batches) GPUs, and at least 1. So with",
         f"  {params.n_gpus} batches or more, each batch trains on one GPU, {params.n_gpus} batches at a time, and each other batch waits for a",
@@ -516,12 +516,13 @@ def _round_time_lines(params: Params) -> list[str]:
         f"- The box can start its work on a round later than {AT_THE_LEASE_S} s after the start of the lease, for example when the",
         "  validator's program started again in the round. Then no batch had the whole training time: a batch that",
         f"  does not finish is `{NOT_TRAINED}` as above, and no failure is counted for the seat.",
-        f"- Scoring runs in chunks of {params.eval_chunk_tasks} tasks. Null M and every open LoRA answer each chunk. An open LoRA is a",
+        f"- Scoring is streamed: each server keeps up to {ServeSettings().clients_per_server} rollouts in flight, across blocks of",
+        f"  {params.eval_chunk_tasks} tasks and across looks. Null M and every open LoRA answer the same tasks. An open LoRA is a",
         "  LoRA that was not dropped at a look (section 6).",
-        "- The stop time cuts every look, the first one too. The box starts no new chunk after the stop time, and a",
-        "  chunk that is not finished at the stop time is not used. There are no further looks.",
+        "- The stop time cuts every look, the first one too. No new rollout starts after the stop time. A rollout cut by it",
+        "  is not used. The result uses the largest complete block boundary shared by null M and every open LoRA.",
         f"- At the stop time, with the first look ({first_look} tasks) complete: each open LoRA is judged by the win rule of",
-        "  section 6 on the whole chunks that null M and every open LoRA finished. Those tasks are then the whole",
+        "  section 6 on the complete blocks that null M and every open LoRA finished. Those tasks are then the whole",
         f"  test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
         f"- At the stop time, with fewer than {first_look} tasks scored: each trained LoRA is `{NOT_SCORED}`. You are not charged,",
         "  your seat is first in the next round, and no failure is counted for the seat.",
@@ -894,7 +895,7 @@ def _server_command(params: Params) -> list[str]:
 def _scoring_lines(params: Params) -> list[str]:
     """The scoring of a round, step by step.
 
-    Every word here follows ``worker.LocalRunner._evaluate`` (chunks, looks, the clock), ``gpu/evaluator.py``
+    Every word here follows ``worker.LocalRunner._evaluate`` (streamed blocks, looks, the clock), ``gpu/evaluator.py``
     (servers, requests, outcome codes), the head of ``envs/math_grader.py`` (the steps of the grader) and
     ``judging.py`` (the estimator and the rules). When one of them changes, change this function.
     """
@@ -917,7 +918,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "### The scoring procedure",
         "",
         "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
-        "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
+        "files: `sn120_v2/worker.py` (looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, streaming requests and",
         "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
         "rules). Section 10 has the command that runs this code on your machine.",
         "",
@@ -926,14 +927,14 @@ def _scoring_lines(params: Params) -> list[str]:
         "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
         "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
         "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
-        "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        "  batches of the round, trained or not: it is the same for every block of the round. The command of one server,",
         "  without its local address:",
         "",
         "```",
         *_server_command(params),
         "```",
         "",
-        "- Request: one POST to `/v1/chat/completions` for each model, each sample and each task of a chunk. The body",
+        "- Request: one POST to `/v1/chat/completions` for each model, each sample and each task. The body",
         "  is the same for null M and for a LoRA, but for `model`:",
         "",
         "```json",
@@ -941,28 +942,28 @@ def _scoring_lines(params: Params) -> list[str]:
         "```",
         "",
         f"- `model` is `{NULL_MODEL}` for null M and the `lora_hash` for a LoRA. The seed is the seed of the pairing rule above.",
-        f"  Task i of a chunk (i counts from 0) goes to server i mod {params.n_gpus}, for every model. So a LoRA and null M differ",
+        f"  Task i of the draw (i counts from 0) goes to server i mod {params.n_gpus}, for every model. So a LoRA and null M differ",
         "  by the adapter alone.",
-        "- The box sends all requests of a chunk at once. A server runs at most `--max-num-seqs` of them at a time; the",
-        f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
+        f"- Each server keeps at most {ServeSettings().clients_per_server} requests in flight and refills a slot as a reply arrives.",
+        "  Dispatch is task-major: null M first, then each open LoRA for that task. A server runs at most `--max-num-seqs`",
+        f"  of them at a time. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
         "  or the time that is left to the stop time of the round, when that is less.",
         f"- Reply: with `finish_reason` `stop` the model ended by itself. A final `{END_OF_TURN}` is removed from the text,",
         f"  and the grader grades the text. With `finish_reason` `length` the model hit the token cap: the outcome is `{CAP}`",
         "  and the text is never graded. A reply of any other form is not usable.",
         "- A request is sent again after a failure of the connection, a time limit, an HTTP status of 500 or above, or",
         f"  a reply that is not usable: at most {ServeSettings().retries + 1} tries in all. After an HTTP status below 500 it is not sent again. A",
-        f"  request with no usable reply has the outcome `{ERROR}`. One exception: when the stop time passed during the chunk",
-        "  and a request has no reply, the whole chunk is not used (section 3).",
+        f"  request with no usable reply has the outcome `{ERROR}` when its server stays alive. A rollout cut by the stop time",
+        "  is not an error and is not used (section 3).",
         *grader,
         "- A grade that is lost because a worker process of the grader died is not an outcome. The reply is graded again:",
-        f"  at most {ServeSettings().grade_tries} grades in all. When a worker still dies, the chunk failed.",
-        f"- Chunks: the tasks run in the order of the draw, in chunks of {params.eval_chunk_tasks} tasks (`eval_chunk_tasks`). A chunk also",
-        "  ends where a look ends. Null M and each open LoRA answer every task of a chunk. The box reads the clock",
-        "  before each chunk (section 3).",
-        "- A failure of the box in a chunk (a server died, a LoRA did not load, the grader failed) is not an outcome.",
-        f"  The chunk runs again: at most {BOX_TRIES} runs in all. When each of them fails before the stop time, the box stops with an",
-        "  error and the round has no result (section 4). A run that fails after the stop time ends the scoring, and",
-        "  the chunk is not used.",
+        f"  at most {ServeSettings().grade_tries} grades in all. When a worker still dies, the block failed.",
+        f"- Blocks: the draw is grouped in blocks of {params.eval_chunk_tasks} tasks (`eval_chunk_tasks`), with a new block",
+        "  at each look boundary. These are grading and deadline boundaries, not dispatch barriers. Each model is graded",
+        "  once its block has a reply for every task. The runner applies a look only to exact prefixes.",
+        "- A dead server is restarted with the same head and adapters. Its accepted replies are kept and its other jobs",
+        f"  run again; a dead server never writes `{ERROR}`. At most {ServeSettings().server_deaths} server deaths are allowed; the next stops the box with an error (section 4).",
+        "  A failure of the grader is an infrastructure error, not a miner outcome.",
         "- Outcome strings: each model has one string for each sample. A string has one character for each task, in",
         f"  the order of the draw: `{PASS}`, `{FAIL}`, `{CAP}`, `{ERROR}`, or `{NOT_RUN}` for a task that was not run.",
         "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
@@ -972,7 +973,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "  Look k has scored the share t_k of the draw. a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = `drop_alpha` *",
         "  ln(1 + (e - 1) * t), and spent = 0 before the first look. c_k is the normal quantile of 1 - a_k. The LoRA is",
         "  dropped when (z + c_k) / sqrt(t_k) <= `z_bar`. No LoRA is dropped at a look with fewer than",
-        f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
+        f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later block. When no LoRA is",
         "  open, the scoring ends.",
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",

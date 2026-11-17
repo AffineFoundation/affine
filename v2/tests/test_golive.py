@@ -18,6 +18,7 @@ from sn120_v2.public import round_text
 from sn120_v2.queue import waiting
 from sn120_v2.sim import STORE_DIR, SimWorld, sim_params
 from sn120_v2.state import load_from_store, replay
+from sn120_v2.types import NULL_MODEL
 from sn120_v2.store import LocalStore
 from sn120_v2.weights_writer import load_kings
 from sn120_v2.worker import AT_THE_LEASE_S
@@ -136,19 +137,21 @@ def test_a_waiting_seat_may_replace_its_file_until_it_is_evaluated(tmp_path):
 def limited(tmp_path, stop_after_chunks: int, fail_next: bool = False) -> SimWorld:
     """A world whose clock jumps to the round's time limit right after ``stop_after_chunks`` scored chunks."""
     world = SimWorld(tmp_path, sim_params(eval_chunk_tasks=16))  # 64 tasks, looks at 32 and 64, so 4 chunks
-    real, calls = world.evaluator.evaluate, []
+    real, calls = world.evaluator.stream, []
 
-    def evaluate(request):
-        if fail_next and len(calls) == stop_after_chunks:
-            world.now += 1
-            raise InfraError("a rollout was still running at the deadline")
-        chunk = real(request)
+    def stream(request, limit):
         calls.append(request)
-        if len(calls) == stop_after_chunks:
-            world.now += world.params.round_time_limit_s - world.params.promote_reserve_s
-        return chunk
+        all_blocks = list(real(request, lambda model: len(request.task_ids)))
+        boundaries = sorted({block.end for block in all_blocks})
+        for boundary in boundaries[:stop_after_chunks]:
+            for block in all_blocks:
+                if block.end == boundary and block.start < limit(block.model):
+                    yield block
+        world.now += world.params.round_time_limit_s - world.params.promote_reserve_s
+        if fail_next:
+            world.now += 1
 
-    world.evaluator.evaluate = evaluate
+    world.evaluator.stream = stream
     world.calls = calls
     return world
 
@@ -161,7 +164,7 @@ def test_at_the_time_limit_a_live_lora_is_judged_on_the_whole_chunks_scored_so_f
     record = world.round()
     params = world.params
     limit = record.opened_at + params.round_time_limit_s - params.promote_reserve_s
-    assert [request.deadline for request in world.calls] == [limit] * 3, "the limit cuts every look, the first one too"
+    assert [request.deadline for request in world.calls] == [limit], "the limit cuts the one streaming request, including every look"
     assert {entry.uid: entry.score.n_tasks for entry in record.decision.entries} == {1: 48, 2: 48}, "the same prefix for every LoRA and for null M"
     assert record.outcome == "applied" and record.decision.winner.uid == 1, "the final rule, z > 1, on what was scored"
     assert world.controller.state.served_hotkeys == {"hk1", "hk2"} and world.controller.state.queue == {}
