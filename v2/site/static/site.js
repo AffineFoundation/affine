@@ -13,12 +13,14 @@
   };
   const utc = t => new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
   const mute = (s, t) => `<span class="mute"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</span>`;
-  const pct = x => x == null ? mute('—') : (100 * x).toFixed(1) + '%';
+  // A value that does not exist is a word, never an empty cell: `no(why)` is the word, and its tooltip says why.
+  const no = (why, word = 'none') => mute(word, why);
+  const pct = (x, gap = mute('—')) => x == null ? gap : (100 * x).toFixed(1) + '%';
   const ago = t => t ? `<span title="${utc(t)}">${dur(Date.now() / 1000 - t)} ago</span>` : mute('—');
   const key = (v, a, b) => v ? `<button type="button" class="key" data-copy="${esc(v)}" title="${esc(v)} (click to copy)">${esc(clip(v, a, b))}</button>` : mute('—');
   const link = (u, s, t) => `<a href="${esc(u)}"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</a>`;
   const pill = (s, c, t) => `<span class="pill ${c}"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</span>`;
-  const score = (x, d, t) => x == null ? mute('—') : `<span class="${x > 0 ? 'up' : x < 0 ? 'dn' : 'mute'}" title="${esc(t)}">${sgn(x, d)}</span>`;
+  const score = (x, d, t, gap = mute('—')) => x == null ? gap : `<span class="${x > 0 ? 'up' : x < 0 ? 'dn' : 'mute'}" title="${esc(t)}">${sgn(x, d)}</span>`;
   const RESULT = {
     winner: ['WINNER', 'up', 'Beat the head M by more than the winner bar.'],
     lost: ['LOST', 'dn', 'Had a fair tournament and did not win. The registration is used up.'],
@@ -44,6 +46,11 @@
   };
   const V1 = document.body.dataset.page === 'v1', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
+  // The word for a row that has no score: a king carried over from v1, or a batch that was not scored. The v1 page keeps its dash.
+  const unscored = r => V1 ? mute('—')
+    : r.imported ? no('Carried over from v1: this king has no v2 score and no v2 head. Its v1 score is on the v1 history page.')
+    : no('Not scored. ' + (r.status == null ? NO_RESULT : RESULT[r.status] || ['', '', 'The round gave this batch no score.'])[2]);
+  const noM = r => no('The round ended before the head M was scored, so the round file has no value.' + why(r));
 
   const files = r => r.batch
     ? link(r.batch, 'batch.json', 'The winning batch, byte for byte') + (r.lora ? ' ' + key(r.lora, 6, 0) : '')
@@ -58,17 +65,17 @@
     round: { h: 'Round', w: 92, r: r => r.file_url ? link(r.file_url, r.round_id, 'round.json') : esc(r.round_id || '—') },
     uid: { h: 'UID', w: 52, n: 1, r: r => esc(r.uid ?? '—') },
     hot: { h: 'Hotkey', w: 104, r: r => key(r.hotkey) },
-    z: { h: 'z', w: 60, n: 1, r: r => score(r.z, 2, 'z = gain / standard error'), t: 'Gain over the head M, in standard errors.' },
-    head: { h: 'Head', w: 132, r: r => key(r.head, 8, 0) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
+    z: { h: 'z', w: 60, n: 1, r: r => score(r.z, 2, 'z = gain / standard error', unscored(r)), t: 'Gain over the head M, in standard errors.' },
+    head: { h: 'Head', w: 132, r: r => (r.head ? key(r.head, 8, 0) : unscored(r)) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
     files: { h: 'Files', w: 136, r: files, t: 'Published for a winner only: the batch, and the hash of the LoRA.' },
     reg: { h: 'Reg block', w: 88, n: 1, r: r => esc(r.registration_block ?? '—') },
     check: { h: 'File', w: 96, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
     flags: { h: 'Status', w: 170, r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
     result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
-    gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
-    bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`), t: 'z minus the winner bar. Above zero clears the bar.' },
-    capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => pct(r.cap_rate), t: 'Share of answers that hit the token cap. Such an answer is not passed.' },
-    look: { h: 'Dropped', w: 68, n: 1, r: r => r.look == null ? mute('—') : 'look ' + (r.look + 1), t: 'The early look at which this LoRA was dropped, if any.' },
+    gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`, unscored(r)), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
+    bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`, unscored(r)), t: 'z minus the winner bar. Above zero clears the bar.' },
+    capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => pct(r.cap_rate, unscored(r)), t: 'Share of answers that hit the token cap. Such an answer is not passed.' },
+    look: { h: 'Dropped', w: 68, n: 1, r: r => r.look != null ? 'look ' + (r.look + 1) : r.z == null ? unscored(r) : no('Not dropped at an early look.', 'no'), t: 'The early look at which this LoRA was dropped, if any.' },
     sha: { h: 'Batch sha256', w: 100, r: r => key(r.sha, 8, 0) },
     at: { h: 'When', w: 92, n: 1, r: r => ago(r.at) },
     date: { h: 'Date (UTC)', w: 124, n: 1, r: r => r.at ? esc(utc(r.at).slice(0, 16)) : mute('—') },
@@ -76,11 +83,11 @@
     seats: { h: 'Batches', w: 68, n: 1, r: r => esc(r.seats), t: 'Seats of the round: the batches with a valid file at round open. A batch whose training failed is in this number.' },
     skipped: { h: 'Skipped', w: 68, n: 1, r: r => esc(r.skipped), t: 'Seats with no valid file at round open. Not charged.' },
     tasks: { h: 'Tasks', w: 64, n: 1, r: r => esc(r.tasks) },
-    mPass: { h: 'M pass', w: 68, n: 1, r: r => pct(r.null_pass) },
-    mCap: { h: 'M cap-hit', w: 76, n: 1, r: r => pct(r.null_cap) },
+    mPass: { h: 'M pass', w: 68, n: 1, r: r => pct(r.null_pass, noM(r)) },
+    mCap: { h: 'M cap-hit', w: 76, n: 1, r: r => pct(r.null_cap, noM(r)) },
     outcome: { h: 'Outcome', w: 132, r: r => (OUTCOME[r.outcome] || (() => esc(r.outcome)))(r) },
     kind: { h: 'Kind', w: 84, r: r => r.folded ? mute('folded', 'The LoRAs are merged into the base.') : mute('stacked', 'The winning LoRA is stacked on the base.') },
-    manifest: { h: 'Manifest', w: 84, r: r => r.manifest ? link(r.manifest, 'head.json', 'File hashes of this head') : mute('—') },
+    manifest: { h: 'Manifest', w: 84, r: r => r.manifest ? link(r.manifest, 'head.json', 'File hashes of this head') : no('No manifest file of this head is on this site. The validator writes the manifest of a head only while that head is the current one.', 'no file') },
     epoch: { h: 'Epoch', w: 64, n: 1, r: r => 'E' + esc(r.epoch) },
     verdict: { h: 'Result', w: 92, r: r => pill(...({ green: ['GREEN', 'up', 'Applied to the head.'], red: ['RED', 'dn', 'Not applied.'] }[r.verdict] || [r.verdict, 'wait', 'Not decided when v1 stopped.'])) },
     share: { h: 'Weight', w: 68, n: 1, r: r => pct(r.share), t: 'Share of the miner weight when v1 stopped.' },
@@ -174,7 +181,7 @@
     });
   }
   const tipOf = (title, rows) => `<strong>${esc(title)}</strong>` + rows.map(([k, v]) => `<span>${esc(k)}</span> ${esc(v)}`).join('\n');
-  const share = (x, d = 1) => x == null ? '—' : (100 * x).toFixed(d) + '%';
+  const share = (x, d = 1, gap = 'none') => x == null ? gap : (100 * x).toFixed(d) + '%';
   const whole = v => +(100 * v).toFixed(2) + '%';
 
   /* The benchmark table and its score cards, as bench.js of the v1 site. Columns: Model, Avg, then one per benchmark. The kings
@@ -183,13 +190,17 @@
      there, the footer holds only the ones that lead for their size; a link shows all. A cell is shaded by its place between the lowest and the highest score of its column, and a star marks the
      highest. A model with no score still has its row, and the name says the state of its run. The cards show, per column, the score
      of the genesis head and of each scored king over time. */
+  // The pill of the row, its colour, the tooltip, and the word of a cell that has no score. The page shows a state only when the
+  // benchmark file gives the row that state: "queued", "evaluating" (shown as "running") or "failed". A model that the file does
+  // not name, or a site with no benchmark file, has "no run yet".
   const RUN = {
-    queued: ['queued', 'wait', 'The benchmark run of this model has not started.'],
-    running: ['running', 'wait', 'The benchmark run of this model is in progress. Its scores come one benchmark at a time.'],
-    failed: ['failed', 'dn', 'The benchmark run of this model failed.'],
-    none: ['no run yet', 'private', 'The benchmark file does not name this model yet.'],
+    queued: ['queued', 'wait', 'The benchmark file lists this model as queued: no run of it is in progress now.', 'queued'],
+    running: ['running', 'wait', 'The benchmark run of this model is in progress: the benchmark file says "evaluating".', 'running'],
+    failed: ['failed', 'dn', 'The benchmark file says that the run of this model failed.', 'failed'],
+    none: ['no run yet', 'private', 'No run yet: the benchmark file does not name this model.', 'no run yet'],
   };
-  RUN.evaluating = RUN.running;  // the word of the v1 benchmark file
+  RUN.evaluating = RUN.running;  // the word of the benchmark file, for a data file whose builder left it as it is
+  const NO_FILE = 'No run yet: no benchmark file is published.';
   const AVG = { id: '_avg', label: 'Avg', in_avg: true };
   // Parameters of each reference model, in billions: the table PARAMS of bench.js of the v1 site, by the label of the model.
   const SIZE = {
@@ -202,11 +213,12 @@
   const size = r => SIZE[String(r.label).toLowerCase()] ?? null;
   const STAR = '<svg class="star" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3-2.3-2 3-.3z"/></svg>';
   const shade = f => { const k = Math.min(1, Math.max(0, (.9 - f) / .75)); return `hsl(${Math.round(130 * (1 - k ** .75))} 65% 45% / ${(.3 + .28 * Math.abs(.5 - k)).toFixed(2)})`; };
-  const pending = r => ['queued', 'running', 'evaluating'].includes(r.status);
   let allRefs = false;
   function bench(b) {
     b = b || { columns: [], rows: [] };  // a data file that an older builder wrote may have no table
     const cols = [AVG, ...b.columns], val = (r, c) => c === AVG ? r.avg : r.cells[c.id] ? r.cells[c.id].score : null;
+    // the state of a row that is not scored. With no benchmark file at all, the tooltip of "no run yet" says that
+    const run = r => r.status === 'none' && !b.updated_at && !V1 ? [...RUN.none.slice(0, 2), NO_FILE, RUN.none[3]] : RUN[r.status];
     const every = b.rows.filter(r => r.kind === 'king'), kings = V1 ? every.filter(r => Object.keys(r.cells).length) : every;
     const genesis = b.rows.filter(r => r.kind === 'genesis');
     const refs = b.rows.filter(r => r.kind !== 'king' && r.kind !== 'genesis').sort((x, y) => (size(y) ?? -1) - (size(x) ?? -1) || (y.avg ?? -1) - (x.avg ?? -1));
@@ -219,17 +231,20 @@
     for (const c of cols.filter(c => c.in_avg)) { const v = shown.map(r => val(r, c)).filter(x => x != null); if (v.length) span[c.id] = [Math.min(...v), Math.max(...v)]; }
     const cell = (r, c) => {
       const x = val(r, c), one = r.cells[c.id], s = span[c.id], avg = c === AVG ? ' avg' : '';
-      if (x == null) return `<td class="num na${avg}">${pending(r) ? '…' : '—'}</td>`;
+      if (x == null) {  // no score: the state of the run in a word ("no run yet" is too wide for Avg); a scored row can lack one benchmark, and then it has no average
+        const [word, text] = run(r) ? [c === AVG && r.status === 'none' ? 'not run' : run(r)[3], run(r)[2]] : c === AVG ? ['none', 'No average: a row has one only when it has every counted benchmark.'] : ['no score', `This model has no score in ${c.label}.`];
+        return `<td class="num na${avg}" title="${esc(text)}">${esc(word)}</td>`;
+      }
       const f = s && s[1] > s[0] ? (x - s[0]) / (s[1] - s[0]) : 1, top = s && Math.round(1000 * x) === Math.round(1000 * s[1]);
-      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate)}` : 'Mean of the counted benchmarks.');
+      const title = (top ? 'Highest of the column. ' : '') + (one ? (one.se == null ? '' : `±${(100 * one.se).toFixed(1)} · `) + `cap-hit ${share(one.cap_rate, 1, 'not recorded')}` : 'Mean of the counted benchmarks.');
       return `<td class="num${avg}"${s ? ` style="background:linear-gradient(${shade(f)},${shade(f)}),var(--bg)"` : ''} title="${esc(title)}">${top ? STAR : ''}${(100 * x).toFixed(1)}`
         + (one ? dagger(one.partial, `Partial run: ${one.samples} of ${one.expected} samples. A lost sample counts as wrong.`) : dagger(r.avg_partial, 'At least one score of this row is from a partial run.')) + '</td>';
     };
     const name = r => {
       const [first, ...rest] = r.kind === 'king' || r.kind === 'genesis' ? String(r.label).split(' ') : [r.label];
-      return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (r.status === 'scored' || !r.status ? '' : pill(...(RUN[r.status] || [r.status, 'wait', '']))) + '</span>';
+      return `<span class="who"><span>${esc(first)}${rest.length ? ' ' + mute(rest.join(' ')) : ''}</span>` + (r.status === 'scored' || !r.status ? '' : pill(...(run(r) || [r.status, 'wait', '']).slice(0, 3))) + '</span>';
     };
-    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.head && 'Head ' + r.head, RUN[r.status] && RUN[r.status][2], r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
+    const about = r => [r.label, size(r) && r.kind === 'reference' && `${size(r)} billion parameters`, r.head && 'Head ' + r.head, run(r) && run(r)[2], r.at && 'Applied ' + utc(r.at), r.v1 && 'Scored by the benchmark service of v1; from the v1 history.'].filter(Boolean).join(' · ');
     const row = r => `<tr class="${esc(r.kind)}"><td class="name" title="${esc(about(r))}">${name(r)}</td>${cols.map(c => cell(r, c)).join('')}</tr>`;
     const suites = [...new Set(b.columns.map(c => c.suite).filter(Boolean))], t = table('bench'), box = t.closest('.scroll');
     t.querySelector('colgroup')?.remove();
@@ -248,17 +263,17 @@
     more.hidden = !lead.length || lead.length === refs.length;
     more.textContent = allRefs ? `Show the ${lead.length} reference models that lead for their size` : `Show all ${refs.length} reference models`;
     document.querySelector('#bench .reading').textContent = V1 ? `${scored} kings scored · ${every.length - scored} with no benchmark run`
-      : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark file yet');
+      : `${scored} of ${every.length} kings scored · ` + (b.updated_at ? `updated ${dur(Date.now() / 1000 - b.updated_at)} ago` : 'no benchmark run yet');
 
     const past = [...(V1 ? [] : genesis), ...every].filter(r => r.at != null).sort((x, y) => x.at - y.at), cards = document.querySelector('#bench .sparks');
     cards.hidden = !b.columns.length;
-    cards.innerHTML = cols.map(c => `<div class="spark"><div class="section-heading"><h3 title="${esc(c.label)}: the score of ${V1 ? '' : 'the genesis head and of '}each scored king, by the time it was applied">${esc(c.label)}</h3><span class="reading">—</span></div><div class="chart"></div></div>`).join('');
+    cards.innerHTML = cols.map(c => `<div class="spark"><div class="section-heading"><h3 title="${esc(c.label)}: the score of ${V1 ? '' : 'the genesis head and of '}each scored king, by the time it was applied">${esc(c.label)}</h3><span class="reading">${b.updated_at || V1 ? 'none' : 'no run yet'}</span></div><div class="chart"></div></div>`).join('');
     cols.forEach((c, n) => {
       const pts = past.filter(r => val(r, c) != null), card = cards.children[n], t0 = pts.length && pts[0].at, t1 = pts.length && pts[pts.length - 1].at;
       if (pts.length) card.querySelector('.reading').textContent = share(val(pts[pts.length - 1], c));
       chart(card.querySelector('.chart'), {
         name: c.label + ' score of each king', n: pts.length, x: i => t1 > t0 ? (pts[i].at - t0) / (t1 - t0) : .5, pad: { l: 32, r: 6, t: 6, b: 16 }, lines: 2, least: .01, bound: [0, 1], fmt: whole,
-        series: [{ v: i => val(pts[i], c), c: 'var(--performance)' }], label: i => String(pts[i].label).split(' ')[0], empty: 'No score yet.',
+        series: [{ v: i => val(pts[i], c), c: 'var(--performance)' }], label: i => String(pts[i].label).split(' ')[0], empty: b.updated_at || V1 ? 'No score yet.' : 'No run yet: no benchmark file is published.',
         tip: i => tipOf(pts[i].label, [[c.label, share(val(pts[i], c)) + (pts[i].cells[c.id] && pts[i].cells[c.id].se != null ? ' ±' + (100 * pts[i].cells[c.id].se).toFixed(1) : '')], ['applied', utc(pts[i].at)]]),
       });
     });
@@ -273,19 +288,19 @@
     const tip = (r, rows) => tipOf(`${r.round_id} · ${ended(r)}`, r.reason ? [...rows, ['validator', r.reason]] : rows);
     const tile = (id, reading, o) => {
       const el = document.getElementById(id);
-      el.querySelector('.reading').textContent = reading || '—';
+      el.querySelector('.reading').textContent = reading || 'none';
       chart(el.querySelector('.chart'), { n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', name: el.querySelector('h2').textContent, ...o });
     };
     const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null), pass = last(r => r.null_pass != null), end = rs[rs.length - 1];
     tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, {
       include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
       series: [{ bar: 1, v: i => rs[i].best_z, c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
-      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? '—' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
+      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? 'none: no batch was scored' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
     });
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
       bound: [0, 1], least: .01, fmt: whole,
       series: [{ v: i => rs[i].null_pass, c: 'var(--accepted)' }, { v: i => rs[i].winner_pass, c: 'var(--performance)' }],
-      tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2)], ['winner', share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
+      tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2, 'not scored')], ['winner', share(rs[i].winner_pass, 2, rs[i].outcome === 'applied' ? 'none' : 'no winner')], ['M cap-hit', share(rs[i].null_cap, 2, 'not scored')], ['tasks', rs[i].tasks]]),
     });
     tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
       include: [0], least: 1, fmt: v => v,
@@ -313,7 +328,7 @@
     if (V1) return renderV1();
     const d = D, r = d.round, q = d.queue.rows, waits = q.filter(x => !x.flags.includes('leased')), ready = waits.filter(x => x.file_valid).length;
     const live = {
-      id: r.id || '—', state: d.phase, seats: r.seats == null ? '—' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
+      id: r.id || 'none open', state: d.phase, seats: r.seats == null ? 'no round' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
       head: clip(d.head, 8, 0), bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
     };
     for (const el of document.querySelectorAll('#round [data-f]')) el.textContent = live[el.dataset.f];
