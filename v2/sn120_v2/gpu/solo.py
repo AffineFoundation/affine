@@ -4,12 +4,14 @@ A GPU never runs vLLM while its training job is active. Idle GPUs may start
 the normal default-argv server immediately for null. After training exits,
 that GPU starts or reuses the same default-argv server. Workers take work
 from a shared, atomic claim scheduler. The training call, deadline, task
-draw, sampling seed, look rule and vLLM sequence limit are unchanged.
+draw, sampling seed and look rule are unchanged. A resource budget may lower
+vLLM's sequence limit and the matching number of HTTP clients.
 """
 
 from __future__ import annotations
 
 import queue
+import resource
 import threading
 import time
 from collections import Counter
@@ -22,6 +24,7 @@ from ..judging import drop_at_look, score_entry
 from ..types import NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
 from ..worker import AT_THE_LEASE_S, LocalRunner
 from .evaluator import _Cancelled, _Deadline
+from .plan import log_phase
 
 
 @dataclass(frozen=True)
@@ -220,6 +223,7 @@ class SoloWorker:
         self.owner_by_gpu: dict[int, str] = {}
         self.params = ticket.params
         self.trained = self.trained_source
+        self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.settings.clients_per_server
         self.owner = next((lora.lora_hash for pos, lora in self.trained_source.items() if getattr(lora, "train_gpu", None) == gpu), NULL_MODEL)
 
     def run(self, *, steal, result, judge, alive, deadline):
@@ -238,10 +242,10 @@ class SoloWorker:
             future.solo_job = job
             return future
 
-        with ThreadPoolExecutor(self.evaluator.settings.clients_per_server) as clients:
+        with ThreadPoolExecutor(self.clients) as clients:
             try:
                 while pending or not stopped:
-                    while not stopped and len(pending) < self.evaluator.settings.clients_per_server:
+                    while not stopped and len(pending) < self.clients:
                         claim = steal(self.gpu, self.owner)
                         if claim is None:
                             stopped = True
@@ -322,6 +326,10 @@ class SoloRunner(LocalRunner):
 
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
+        if hasattr(self.evaluator, "solo_client_budget"):
+            self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus)
+        elif hasattr(self.evaluator, "settings"):
+            self.evaluator._solo_clients = self.evaluator.settings.clients_per_server
         limit = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
         train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
         reports: dict[int, object] = {}
@@ -414,6 +422,20 @@ class SoloRunner(LocalRunner):
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()
+        if hasattr(self.evaluator, "config"):
+            clients = getattr(self.evaluator, "_solo_clients", self.evaluator.settings.clients_per_server)
+            log_phase(
+                self.evaluator.config.work_dir,
+                "solo_eval",
+                round_id=ticket.round_id,
+                wall_s=time.monotonic() - started,
+                train_s=train_done[0] - started,
+                eval_s=time.monotonic() - train_done[0],
+                n_gpus=params.n_gpus,
+                configured_clients_per_server=self.evaluator.settings.clients_per_server,
+                clients_per_server=clients,
+                open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
+            )
         return self._solo_result(ticket, reports, *outcome, started, train_done[0])
 
     def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done):
