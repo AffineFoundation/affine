@@ -249,9 +249,11 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "public_url": public_url,
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
-        "objects": object_keys(),
+        "objects": object_keys() | ({"active_pool": layout.active_pool("ACTIVE_SHA"), "pool_rotation": layout.pool_rotation("ROUND_ID"),
+            "retired_pool": layout.RETIRED_POOL, "reserve_manifest": layout.RESERVE_MANIFEST} if params.rotation_enabled else {}),
         "read_links": READ_LINKS,
         "code": REPO + "/tree/v2/v2",
+        **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
     }
 
 
@@ -868,6 +870,18 @@ def _pool_lines(params: Params) -> list[str]:
     if dropped["from_sha256"] != POOL_V2_0_SHA256 or dropped["to_sha256"] != POOL_SHA256:
         raise ConfigError("the dropped-task list does not belong to the current pool")
     count, removed = f"{len(pool):,}", f"{len(dropped['dropped']):,}"
+    rotation = []
+    rotation_changed = any(getattr(params, f.name) != f.default for f in dataclasses.fields(params) if f.name.startswith("rotation_"))
+    if params.rotation_enabled or rotation_changed:
+        low = "off" if params.rotation_retire_low_p == 0 else f"on at empirical head p < {show(params.rotation_retire_low_p)} with {params.rotation_n_min_low} rollouts"
+        rotation = [
+            "- Task rotation is " + ("on" if params.rotation_enabled else "off") + ". Each round may retire at most the configured k high/low pass tasks and admits from the",
+            "  public FIFO reserve before the draw. Active ids, the full decision, the next-up queue and mirrored reserve",
+            "  bytes are linked from `pool` in the current round and mining.json. New tasks start at head difficulty (p=.5).",
+            f"- Retire high: rounds_seen >= {params.rotation_n_min} and IRT head p > {show(params.rotation_retire_p)}. Low retirement is {low}.",
+            "  Withdrawn active tasks leave outside k. `python -m sn120_v2.replicate rotation --mining-json <mining.json>",
+            "  --round rNNNNNN` recomputes a decision from its public inputs.",
+        ]
     return [
         f"- Task pool: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
         f'  instruction as the system message and the problem as the user message: "{MANDATE}"',
@@ -879,6 +893,7 @@ def _pool_lines(params: Params) -> list[str]:
         "- A prompt of your file is a pool task when it is the problem text, with or without that instruction and one",
         "  blank line before it. The official grader is `sn120_v2.envs.math_grader.grade(task, output, capped)`. It",
         "  grades model outputs in scoring and the rewards in your file.",
+        *rotation,
     ]
 
 
@@ -1251,7 +1266,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     """llms.txt from a mining.json document. Pure: the same document always gives the same text."""
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
-    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"]
+    numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
+               if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1358,7 +1374,8 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
     if found is None or found.group(1) != doc["snapshot_digest"]:
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
-    values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params) if f.name != "recipe"}
+    values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
+              if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

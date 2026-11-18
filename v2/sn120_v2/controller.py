@@ -148,6 +148,7 @@ class Stack:
     chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
+    pool: Any = None  # optional PoolRuntime, rotation only; the ordinary sampler remains untouched when absent
     head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
     settings: tuple[str, ...] = ()  # one line for each setting that the stack chooses to show, and where its value comes from; ``run`` prints them at its start
     overlap: bool = False  # ``run`` uses the order ``overlap`` after a king (``afterking.py``)
@@ -193,10 +194,29 @@ class Controller:
         publisher: Publisher | None = None,
         pins: Callable[[Params], None] | None = None,
         head: HeadPublish | None = None,
+        pool: Any = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
         self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
+        self.pool = pool
+        self._rotation: Any = None
+        if pool is not None:
+            if self.state.round is not None and pool.active_rotation is not None:
+                self._rotation = pool.active_rotation
+                # Restart reconstructs the exact table named by the open round.
+                # It never calls pool.open and never rotates a second time.
+                from .irt import IRTSampler
+                from .pool_runtime import replay_rotation
+                stored = json.loads(self.store.get(layout.irt_snapshot(self.state.round.snapshot_id)))
+                source = stored
+                if self._rotation.source_snapshot_id:
+                    source = json.loads(self.store.get(layout.irt_snapshot(self._rotation.source_snapshot_id)))
+                expected = replay_rotation(self.store, self.state.round.round_id, source, initial_ids=pool.initial_ids)
+                if not expected["matches"]:
+                    raise VerifyError("stored rotation does not recompute from its public inputs")
+                self.sampler = IRTSampler(pool.active_rotation.active_ids, self.params, snapshot=stored,
+                                         rotation=stored.get("rotation"))
         self.last_error = ""
         self._retry_at = 0
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
@@ -405,6 +425,15 @@ class Controller:
         if clock is not None:
             now = clock()  # the lease starts here
         head = state.head
+        rotation = None
+        if self.pool is not None:
+            snapshot = stored_irt_snapshot(self.store, state)
+            if snapshot is None:
+                snapshot = self.sampler.public_snapshot()
+            self._rotation, self.sampler = self.pool.open(round_id, snapshot)
+            if snapshot.get("snapshot_id"):
+                self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
+            rotation = self.pool.publish_open(self._rotation)
         draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
         self._store_snapshot(draw.snapshot_id)
         tickets, leases = [], []
@@ -416,8 +445,12 @@ class Controller:
         record = RoundRecord(
             round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
             len(draw.task_ids), now, tuple(leases), picked.skipped,
+            rotation=rotation,
         )
-        self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
+        data = {"round": record.to_dict()}
+        if rotation is not None:
+            data["rotation"] = rotation
+        self._log(ROUND_OPENED, data, now)
         log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
         self._after(f"open: the public files of round {round_id}", self._publish, now, PUBLISH)
         return tickets
@@ -648,6 +681,13 @@ class Controller:
         report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
         self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
+        if self.pool is not None and self._rotation is not None and outcome in (APPLIED, NULL) and pairs:
+            closed_rotation = self._rotation
+            for index, (ticket, result) in enumerate(pairs):
+                closed_rotation = self.pool.close(closed_rotation, ticket.draw.task_ids, result.null_outcomes,
+                                                  publish=index == len(pairs) - 1)
+            data["rotation_state_sha"] = closed_rotation.digest()
+            self._rotation = closed_rotation
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
         log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)

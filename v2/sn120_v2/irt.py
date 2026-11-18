@@ -171,7 +171,7 @@ def draw_from_masses(masses: Mapping[str, int], snapshot_id: str, round_seed: st
 
 
 def snapshot_digest(snapshot: Mapping[str, Any]) -> str:
-    return "irt-" + digest({key: snapshot[key] for key in BODY_KEYS})
+    return "irt-" + digest({key: snapshot[key] for key in BODY_KEYS} | ({"rotation": snapshot["rotation"]} if "rotation" in snapshot else {}))
 
 
 def verify_snapshot(snapshot: Mapping[str, Any]) -> None:
@@ -213,7 +213,15 @@ def fit(sign: int, mean: float, precision: float, rows: Sequence[tuple[float, fl
 class IRTSampler:
     """``TaskSampler`` with a shared IRT table. Only the controller calls ``update``."""
 
-    def __init__(self, pool: Sequence[str], params: Params | None = None, snapshot: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        pool: Sequence[str],
+        params: Params | None = None,
+        snapshot: Mapping[str, Any] | None = None,
+        *,
+        initial: Mapping[str, float] | None = None,
+        rotation: Mapping[str, Any] | None = None,
+    ) -> None:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
         params = params or Params()
         if params.irt_draw_rule == "fisher":
@@ -233,16 +241,29 @@ class IRTSampler:
                 "same_seed_correlation": SAME_SEED_CORRELATION,
             }
         self._last_draw: dict[str, Any] | None = None
+        self._rotation = copy.deepcopy(rotation)
         if snapshot is not None:
             verify_snapshot(snapshot)
             body = copy.deepcopy({key: snapshot[key] for key in BODY_KEYS})
-            if body["config"] == config and set(body["tasks"]) == set(pool):
+            # Rotation is a body field only when enabled, so snapshot_id seals
+            # it. Old snapshots, and every off-mode snapshot, have no such key.
+            saved_rotation = body.get("rotation")
+            self._rotation = saved_rotation if saved_rotation is not None else self._rotation
+            if body["config"] == config and set(body["tasks"]) == set(pool) and (rotation is None or rotation == saved_rotation):
                 self._body, self._id = body, snapshot["snapshot_id"]
                 return
         else:
             body = {"schema": SCHEMA, "model": MODEL, "head_version_id": "", "rounds": 0, "updates": [], "heads": {}, "loras": {}, "tasks": {}}
-        # A new pool task starts at the prior. A task that left the pool is dropped.
-        body["tasks"] = {task: list(body["tasks"].get(task, (0.0, PRIOR_PRECISION, 0)))[:3] for task in sorted(pool)}
+        # A normal new pool task starts at the old prior. An admitted task may
+        # explicitly start at head ability, giving p=.5 and maximum Fisher q.
+        body["tasks"] = {
+            task: list(body["tasks"].get(task, (round(initial[task], DECIMALS) if initial and task in initial else 0.0, PRIOR_PRECISION, 0)))[:3]
+            for task in sorted(pool)
+        }
+        if rotation is not None:
+            body["rotation"] = copy.deepcopy(rotation)
+        else:
+            body.pop("rotation", None)
         body["config"] = config
         self._commit(body)
 

@@ -160,13 +160,17 @@ def stack(context: StackContext) -> Stack:
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
     params = context.params
     pool = load_pool()
+    pool_runtime = None
+    if params.rotation_enabled and context.command != "set-params":
+        from .pool_runtime import PoolRuntime
+        pool_runtime = PoolRuntime(store, params, state)
     if context.command != "set-params":
         check_env_pin(params)
     tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime.catalog if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
     order = after_king()
     if order == OVERLAP and mode() != CHAIN:
         raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")
@@ -175,7 +179,7 @@ def stack(context: StackContext) -> Stack:
         setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
         setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
     )
-    sampler = IRTSampler(pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
+    sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
     publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
@@ -187,8 +191,9 @@ def stack(context: StackContext) -> Stack:
     runner = folder = pins = None
     if context.command == "run":
         box = BoxConfig.from_env()
+        evaluator_pool = pool_runtime.catalog if pool_runtime else pool
         trainer = LoraTrainer(store, box, _read_groups)
-        evaluator = VllmEvaluator(store, box, pool, LazyPool(GradePool))
+        evaluator = VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))
         from .gpu.solo import SoloRunner
 
         runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
@@ -206,4 +211,4 @@ def stack(context: StackContext) -> Stack:
             keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
     overlap = order == OVERLAP and context.command == "run"
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, settings=shown, overlap=overlap, entropy_now=entropy_now)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)

@@ -110,7 +110,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in " ".join(text.split())  # what the presigner signs
     assert f"rule code `{TIME_LIMIT}`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
-        assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds")
+        assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds") or (field.name.startswith("rotation_") and field.name in made.params.LEFT_OUT_AT_DEFAULT and getattr(made.params, field.name) == field.default)
     for key in doc["contract"]["objects"].values():
         assert key.startswith("public/") and key in text
 

@@ -149,6 +149,28 @@ def irt_snapshot(snapshot_id: str) -> str:
     return f"public/irt/{_part(snapshot_id)}.json"
 
 
+def active_pool(sha256: str) -> str:
+    return f"public/pool/active/{_part(sha256)}.json"
+
+
+def pool_rotation(round_id: str) -> str:
+    return f"public/pool/rotation/{_part(round_id)}.json"
+
+
+def pool_rotation_state(sha256: str) -> str:
+    return f"public/pool/state/{_part(sha256)}.json"
+
+
+RETIRED_POOL = "public/pool/retired.json"
+RESERVE_MANIFEST = "public/pool/reserve/MANIFEST.jsonl"
+RESERVE_WITHDRAWN = "public/pool/reserve/withdrawn.jsonl"
+RETIRED_TASKS = "public/pool/retired_tasks.json"
+
+
+def reserve_shard(name: str, sha256: str) -> str:
+    return f"public/pool/reserve/shards/{_part(name)}.{_part(sha256)}.jsonl"
+
+
 JOURNAL = "private/journal"
 
 
