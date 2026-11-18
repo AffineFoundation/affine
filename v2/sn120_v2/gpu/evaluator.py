@@ -259,6 +259,34 @@ class VllmEvaluator:
         self._solo_urls: dict[int, str] = {}
         self._solo_loaded: dict[int, set[str]] = {}
         self._solo_lock = threading.RLock()
+        self._grader_lock = threading.Lock()
+        self._grader_failure = False
+
+    def _reset_grader(self) -> None:
+        """Discard every worker after a failure; the next round starts clean."""
+        reset = getattr(self.grader, "reset", None)
+        if reset is not None:
+            reset()
+        else:
+            closer = getattr(self.grader, "close", None)
+            if closer is not None:
+                closer()
+        self._grader_failure = False
+
+    def _grade_batch(self, jobs: Sequence[tuple[Any, str, bool]]) -> list[Any]:
+        """One pool caller at a time, even with independent solo GPU workers."""
+        with self._grader_lock:
+            if self._grader_failure:
+                self._reset_grader()
+            try:
+                grades = self.grader.grade_many(jobs)
+            except BaseException:
+                self._grader_failure = True
+                raise
+            if len(grades) != len(jobs):
+                self._grader_failure = True
+                raise InfraError("the grader returned a wrong number of grades")
+            return grades
 
     def _prepare(self, request: EvalRequest) -> tuple[list[str], int, int]:
         params = request.params
@@ -618,19 +646,32 @@ class VllmEvaluator:
     def close(self) -> None:
         servers, self._servers, self._urls, self._loaded = self._servers, [], [], set()
         head, self._head = self._head, None
-        stop_all(servers)
-        solo_servers, self._solo_servers = list(self._solo_servers.values()), {}
-        self._solo_urls, self._solo_loaded = {}, {}
-        stop_all(solo_servers)
+        errors = []
+        for group in (servers, list(self._solo_servers.values())):
+            try:
+                stop_all(group)
+            except Exception as exc:  # noqa: BLE001 - release the other resources too
+                errors.append(exc)
+        self._solo_servers, self._solo_urls, self._solo_loaded = {}, {}, {}
+        self._solo_scheduler = None
+        try:
+            self._reset_grader()
+        except Exception as exc:  # noqa: BLE001 - a cache cleanup failure cannot mask this one
+            errors.append(exc)
         if head is not None:
-            self.resident.prune({head.base_hash, head.base_fp32_master_digest})
+            try:
+                self.resident.prune({head.base_hash, head.base_fp32_master_digest})
+            except Exception as exc:  # noqa: BLE001 - every close path is attempted
+                errors.append(exc)
+        if errors:
+            raise InfraError(f"evaluator cleanup failed: {errors[0]}") from errors[0]
 
     def _grade(self, tasks: Sequence[str], jobs: list, replies: list) -> dict[tuple[str, int, int], str]:
         codes = {job: ERROR if reply is None else CAP for job, reply in zip(jobs, replies)}
         ended = [(job, reply[0]) for job, reply in zip(jobs, replies) if reply is not None and not reply[1]]
         for _ in range(self.settings.grade_tries):
             try:
-                grades = self.grader.grade_many([(self.pool.task(tasks[job[2]]), text, False) for job, text in ended])
+                grades = self._grade_batch([(self.pool.task(tasks[job[2]]), text, False) for job, text in ended])
             except Exception as exc:  # noqa: BLE001
                 raise InfraError(f"the grader failed: {exc}") from exc
             if len(grades) != len(ended):

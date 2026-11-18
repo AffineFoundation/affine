@@ -186,7 +186,7 @@ def stack(context: StackContext) -> Stack:
     if context.command == "run":
         box = BoxConfig.from_env()
         trainer = LoraTrainer(store, box, _read_groups)
-        evaluator = VllmEvaluator(store, box, pool, GradePool())
+        evaluator = VllmEvaluator(store, box, pool, LazyPool(GradePool))
         from .gpu.solo import SoloRunner
 
         runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)

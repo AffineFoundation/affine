@@ -177,6 +177,11 @@ class SoloScheduler:
         with self.changed:
             if self.failure is None:
                 self.failure = error
+            cancel = getattr(self.runner.evaluator.http, "cancel", None)
+            if cancel is not None:
+                cancel(NULL_MODEL)
+                for lora in self.trained.values():
+                    cancel(lora.lora_hash)
             self.changed.notify_all()
 
     def finish(self):
@@ -275,6 +280,11 @@ class SoloWorker:
                         raise InfraError(f"the vLLM server on GPU {self.gpu} died during solo scoring")
             finally:
                 if stopped and self.deadline and time.time() >= self.deadline:
+                    cancel = getattr(self.evaluator.http, "cancel", None)
+                    if cancel is not None:
+                        cancel(NULL_MODEL)
+                        for lora in self.trained_source.values():
+                            cancel(lora.lora_hash)
                     for future in pending:
                         future.cancel()
                 wait(pending)
@@ -291,9 +301,23 @@ class SoloRunner(LocalRunner):
         super().__init__(trainer, evaluator, clock, image_digest, attempts=attempts, poll_s=poll_s)
         self.settings = settings
 
+    def _close_resources(self) -> None:
+        """Every round releases the GPU processes and the grader's worker pipes."""
+        errors = []
+        for resource in (self.trainer, self.evaluator):
+            try:
+                resource.close()
+            except Exception as exc:  # noqa: BLE001 - both owners must be torn down
+                errors.append(exc)
+        if errors:
+            raise InfraError(f"round cleanup failed: {errors[0]}") from errors[0]
+
     def run(self, ticket: RoundTicket):
         if hasattr(self.evaluator, "solo_worker"):
-            return self._solo_run_round(ticket)
+            try:
+                return self._solo_run_round(ticket)
+            finally:
+                self._close_resources()
         return super().run(ticket)
 
     def _solo_run_round(self, ticket: RoundTicket):
@@ -374,22 +398,22 @@ class SoloRunner(LocalRunner):
                 failed.put(exc)
                 scheduler.fail(exc)
 
-        with ThreadPoolExecutor(params.n_gpus) as pool:
-            futures = [pool.submit(gpu_worker, gpu) for gpu in range(params.n_gpus)]
-            running = set(futures)
-            while running:
-                _, running = wait(running, timeout=self.poll_s)
-                if self.clock() >= train_end and running:
-                    self.trainer.close()
-                if self.clock() >= limit and running:
-                    scheduler.deadline_cut()
-            self.trainer.close()
-            warm_pool.shutdown(wait=True)
+        try:
+            with ThreadPoolExecutor(params.n_gpus) as pool:
+                futures = [pool.submit(gpu_worker, gpu) for gpu in range(params.n_gpus)]
+                running = set(futures)
+                while running:
+                    _, running = wait(running, timeout=self.poll_s)
+                    if self.clock() >= train_end and running:
+                        self.trainer.close()
+                    if self.clock() >= limit and running:
+                        scheduler.deadline_cut()
+                self.trainer.close()
+        finally:
+            warm_pool.shutdown(wait=True, cancel_futures=True)
         if not failed.empty():
-            self.evaluator.close()
             raise failed.get()
         outcome = scheduler.finish()
-        self.evaluator.close()
         return self._solo_result(ticket, reports, *outcome, started, train_done[0])
 
     def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done):
