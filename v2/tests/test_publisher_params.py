@@ -23,6 +23,7 @@ import pytest
 
 import sn120_v2
 from sn120_v2 import admission, irt, judging, layout, public, publisher, queue, sampling, sim, worker
+from sn120_v2.envs import math_pool
 from sn120_v2.errors import ConfigError
 from sn120_v2.gpu.evaluator import ServeSettings, server_argv
 from sn120_v2.journal import JOURNAL_FILE
@@ -166,6 +167,10 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
+        f"Task pool: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Task pool: ')} tasks",
+        f"{len(json.loads((math_pool.POOL_FILE.with_suffix('.dropped.json')).read_bytes())['dropped']):,} tasks of the earlier pool",
+        f"sha256 `{math_pool.POOL_V2_0_SHA256[:8]}…`",
+
         f"a fixed cost of its own, about {publisher.show(publisher.UPDATE_COST_S)} s.",
         f"updates add about {publisher.show(publisher.UPDATE_COST_S)} s x steps x minibatches",
         f"later than {worker.AT_THE_LEASE_S} s after the start of the lease",

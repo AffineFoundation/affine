@@ -37,7 +37,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from . import layout
 from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
-from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, Task
+from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .gpu.batch import END_OF_TURN
 from .gpu.evaluator import ServeSettings, chat_body, server_argv
@@ -862,9 +862,20 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
 def _pool_lines(params: Params) -> list[str]:
     if params.env != ENV_ID:
         return []
+    pool = load_pool()
+    dropped_file = POOL_FILE.with_suffix(".dropped.json")
+    dropped = json.loads(dropped_file.read_bytes())
+    if dropped["from_sha256"] != POOL_V2_0_SHA256 or dropped["to_sha256"] != POOL_SHA256:
+        raise ConfigError("the dropped-task list does not belong to the current pool")
+    count, removed = f"{len(pool):,}", f"{len(dropped['dropped']):,}"
     return [
-        f"- Task pool: `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
+        f"- Task pool: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
         f'  instruction as the system message and the problem as the user message: "{MANDATE}"',
+        f"- {removed} tasks of the earlier pool (sha256 `{POOL_V2_0_SHA256[:8]}…`) were removed because their key is wrong, the problem",
+        "  is ambiguous or broken. The list is",
+        f"  `sn120_v2/envs/{dropped_file.name}` in the code: {REPO}/blob/v2/v2/sn120_v2/envs/{dropped_file.name}.",
+        "  A prompt that is one of the removed tasks is no longer a pool task. It has no official grade, and its reward is not compared,",
+        "  same as any non-pool prompt (see the `min_pool_prompt_frac` line).",
         "- A prompt of your file is a pool task when it is the problem text, with or without that instruction and one",
         "  blank line before it. The official grader is `sn120_v2.envs.math_grader.grade(task, output, capped)`. It",
         "  grades model outputs in scoring and the rewards in your file.",

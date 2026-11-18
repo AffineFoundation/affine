@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 from . import layout
 from .afterking import Overlap
-from .controller import Controller, Stack, StackContext, public_snapshot
+from .controller import Controller, Stack, StackContext, check_env_pin, public_snapshot
 from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, Recipe, load_params
@@ -341,7 +341,9 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
 def cmd_set_params(args: argparse.Namespace) -> int:
     controller, _ = open_controller(args, "set-params")
     before = controller.params
-    controller.set_params(load_params(args.params), now())
+    proposed = load_params(args.params)
+    check_env_pin(proposed)
+    controller.set_params(proposed, now())
     after = controller.params
     # A key that the file does not hold is back at its default, so the operator must see every value that moved.
     print(json.dumps({"params_hash_before": before.params_hash, "params_hash": after.params_hash, "changed": changed_params(before, after)}))

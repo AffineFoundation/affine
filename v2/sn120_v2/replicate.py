@@ -33,7 +33,7 @@ from . import judging, layout
 from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, pool_grader
 from .canonical import file_sha256, manifest_digest, to_jsonable
 from .envs.math_grader import GradePool
-from .envs.math_pool import ENV_ID, load_pool
+from .envs.math_pool import ENV_ID, POOL_SHA256, MathPool, load_pool, pool_for_draw
 from .errors import ConfigError, InfraError, V2Error, VerifyError
 from .gpu.evaluator import VllmEvaluator
 from .gpu.plan import BoxConfig, code_digest, install_digest
@@ -188,17 +188,19 @@ def parts(
     grades: Any = None,
     train_spawn: Spawn = Child,
     serve: Mapping[str, Any] | None = None,
+    pool: MathPool | None = None,
 ) -> Parts:
     """The box's trainer and evaluator, built as ``assembly.stack`` builds them, over a store in ``<work>/store``.
 
     ``gpus`` limits the free-GPU check to the first GPUs; None keeps the check of the box. ``grades`` is the
     evaluator's grade pool (default: the box's ``GradePool()``). ``serve`` holds more arguments of ``VllmEvaluator``.
+    ``pool`` is the current pool unless a past round supplies the archived v2.0 pool.
     """
     work = Path(work).resolve()
     store, box = LocalStore(work / "store"), BoxConfig(work, install_digest())
     free = wait_gpus_free if gpus is None else functools.partial(wait_gpus_free, report=functools.partial(gpu_report, gpus))
     trainer = LoraTrainer(store, box, _read_groups, spawn=train_spawn)
-    evaluator = VllmEvaluator(store, box, load_pool(), grades or GradePool(), **{"gpus_free": free, **(serve or {})})
+    evaluator = VllmEvaluator(store, box, pool or load_pool(), grades or GradePool(), **{"gpus_free": free, **(serve or {})})
     resident = BaseOnly(store, work)
     trainer.resident = evaluator.resident = resident
     return Parts(store, trainer, evaluator, box.image_digest, resident)
@@ -473,10 +475,13 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
         raise ConfigError("--strict: this machine does not equal the box. " + " ".join(refused))
     the = the_round(contract, round_id=args.round, round_file=args.round_file, round_seed=args.round_seed, irt_snapshot=args.irt_snapshot, first_tasks=args.first_tasks)
     notes += round_notes(contract, the)
+    pool = pool_for_draw(the.draw.task_ids, args.pool)
+    if pool.sha256 != POOL_SHA256:
+        notes.append({"what": "pool", "text": f"This draw needs the archived v2.0 task pool (sha256 {pool.sha256}). Its task ids and answer keys are used unchanged."})
     for note in notes:
         say(f"differs from the box [{note['what']}]: {note['text']}")
     raw = read(args.batch)
-    built = parts(Path(args.work), gpus)
+    built = parts(Path(args.work), gpus, pool=pool)
     admission = LazyPool(lambda: GradePool(workers=GRADE_WORKERS, timeout_s=GRADE_TIMEOUT_S))
     try:
         tokens = head_tokens(base_dir(built.resident, head))
@@ -521,6 +526,7 @@ def parser() -> argparse.ArgumentParser:
     which.add_argument("--round-file", help="the public round file of a closed round (a file or an address): its seed and snapshot, and a comparison with it")
     which.add_argument("--round-seed", help="a round seed of your choice; needs --irt-snapshot")
     runner.add_argument("--irt-snapshot", help="the IRT snapshot: a file or an address (default: the public object of the round's snapshot id)")
+    runner.add_argument("--pool", choices=("auto", "current", "v2.0"), default="auto", help="task pool for the draw (default: archived v2.0 when a task left the current pool)")
     runner.add_argument("--first-tasks", type=int, help="score only the first N tasks of the draw")
     runner.add_argument("--strict", action="store_true", help="refuse unless this machine has the pinned install, the pinned code and the GPU count of the box")
     runner.add_argument("--out", help="also write the report to this file")
