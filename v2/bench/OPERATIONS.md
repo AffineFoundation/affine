@@ -37,6 +37,45 @@ No row and no pod id has a name in the code.
 
 **ArXivMath.** The settings ask for 2 samples for each of the 103 problems. A row that the service of before scored has a result at 16 samples for each problem. Such a row is not run again. At its first step the service computes the row's ArXivMath value on this host, from the per-problem lines that the host has (`BENCH_STATE/private/<model_id>/arxivmath.per_task.jsonl`), by the fixed rule `pick-of-full/1` (`affine_bench/derive.py`): 2 of the 16 samples of each problem, picked by a hash of a constant and the problem's number. The log says `derived`. The result row then has `derived_from`, `derived_by`, `score_full`, `se_full` and `samples_full`, and the full run's result is kept in `BENCH_STATE/private/<model_id>/arxivmath.full.json`. The rule gives a value only when the full run is whole (16 samples for each of the 103 problems, none with an error). When it gives none, or the per-problem lines are not on this host, the log has one line `no-value` with the reason and the row is `held`: nothing is rented for it. The same holds when the published table has the row's result at 16 samples and the result file is not on this host or cannot be read there: `no-value`, `held`, no rent. `bench retry <model_id>` then runs ArXivMath alone on a new node; the service does not do it by itself. The other results of such a row stay as they are, with the profile that they ran with.
 
+### GSM8K-Platinum (18 Nov 2026)
+
+The original GSM8K test set has approximately 110 flawed or ambiguous questions and 10 wrong answer keys. The benchmark now
+uses **GSM8K-Platinum** (`madrylab/gsm8k-platinum`, revision
+`e762492455a1cf7967de89f05b6bef72fc713b66`, `main/test`): the cleaned 1,209-question set, rather than the original 1,319
+questions. Its prompt, one-rollout scoring and verifier are the same as the old local GSM8K environment. The dataset revision
+is pinned, its file order is preserved, and the task indices are 0 through 1208.
+
+`gsm8k_platinum` is enabled but initially has `in_avg = false`. The operator flips it to `true` once every shown row has a
+`gsm8k_platinum` result. Until the backfill finishes, counting it would leave rows without an Avg or make their averages
+incomparable. The original `gsm8k` benchmark is disabled and display-only; its published scores and the column remain as
+history. The root-level v1 `bench/` is unchanged. This deploy branch contains no `v2/site` change: only the enabled columns
+are displayed by the site's current builder; the published old `gsm8k` results stay in `benchmarks.json` as history.
+
+For past kings, expect scores of approximately **0.92–0.96 on original GSM8K to become 0.96–0.98 on Platinum**. This is an
+expected range, not a guarantee for every model.
+
+**Deploying this change queues a backfill: every existing launch-model and king row, including the v1 king (approximately
+24 rows as of 18 Nov 2026), needs a `gsm8k_platinum` run.** By operator policy, every king is benched on its own Lium pod.
+This ref runs up to 8 row pods side by side (`BENCH_MAX_PODS`), each with a node of its own; it does not serialize the rows
+or reuse one node across rows. Budget each row for
+its node's installation, weight download and verification, vLLM startup and the missing Platinum benchmark. The other
+benchmarks are not rerun. A pod is given back when its row is done. New rents still obey `BENCH_MAX_RENTS_PER_DAY` (24 with
+the deployment settings), and each pod lives at most `BENCH_POD_MAX_HOURS` (10 with the deployment settings). No backfill
+is billed until this code is deployed and the queue is processed.
+
+The operator must decide between **letting that backfill run** and **holding it**. To hold it, leave this change undeployed
+and the service on its current revision. Deploying the new registry and starting the daemon opts into the queued work.
+Before choosing, an offline estimate can be made from the saved private per-task files:
+
+```
+python -m affine_bench.backfill_gsm8k_platinum "$BDIR/state/private" --out gsm8k-platinum-estimates.json
+```
+
+This reads each `<row>/gsm8k.per_task.jsonl`, maps questions by exact text, and reports the old score, the score over the
+1,199 unchanged questions, and lower/upper bounds over all 1,209 with the 10 revised answers counted wrong/right. It fetches
+the two datasets from Hugging Face by default; `--original-jsonl` and `--platinum-jsonl` accept local dataset exports instead.
+It prints or writes JSON only. It never writes to the store or substitutes an estimate for a real benchmark result.
+
 ## 2. Which host
 
 | Host | What this change needs there |

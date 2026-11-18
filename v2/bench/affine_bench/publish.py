@@ -321,6 +321,12 @@ def publish(rows, S, max_fail=3):
                       checked_at=beat.get("at"), output_lines=beat.get("lines"), output_grew_at=beat.get("grew"),
                       benchmarks_finished=beat.get("finished")),
     )
+    # A disabled benchmark stays display-only when it has published history (for example original GSM8K).
+    # An empty display-only column does not hide the other columns or force every row to have a score.
+    result_bids = {r.get("benchmark_id") for r in recs + results_prior}
+    published_bs = [b for b in bs if b.get("enabled") or (b.get("enabled") is False and b["id"] in result_bids)]
+    out["benchmarks"] = [{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime")}
+                         | dict(in_avg=b.get("in_avg", True)) for b in published_bs]
     t = OUT + ".tmp"; json.dump(out, open(t, "w"), separators=(",", ":")); os.chmod(t, 0o644); os.replace(t, OUT)
 
 

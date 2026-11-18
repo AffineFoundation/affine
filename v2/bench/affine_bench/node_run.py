@@ -156,7 +156,7 @@ def main(argv=None):
     t0 = time.time(); how = ensure_server(a.model_dir, a.reasoning_parser, ml, a.chat_template, ho); t_serve = time.time() - t0
     total_c = S["client"]["max_concurrent_total"]
     todo = [b for b in bs if not finished(b, f"{out}/{b['id']}")]
-    weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319}.get(b["id"], 40) for b in todo}
+    weights = {b["id"]: max(1, b["rollouts"]) * {"math": 5000, "math500": 500, "gsm8k": 1319, "gsm8k_platinum": 1209}.get(b["id"], 40) for b in todo}
     W = sum(weights.values()) or 1
     procs = {}
     env = dict(os.environ, BENCH_API_KEY="local")

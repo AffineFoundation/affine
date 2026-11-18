@@ -499,13 +499,13 @@ def test_a_run_that_ends_without_a_result_is_a_failed_try_and_a_result_without_i
     gen = ids(world.genesis)
     world.steps()
     node = world.nodes[gen]
-    node.results["gsm8k"] = {True: json.dumps(dict(benchmark="gsm8k", score=0.5, se=0.1, tasks=2, tasks_total=2, samples=2, rollouts=1, cap_rate=0.0,
-                                                   bench_version=R.bench_version(R.benchmark("gsm8k")), finished_at=1)), False: ""}
+    node.results["gsm8k_platinum"] = {True: json.dumps(dict(benchmark="gsm8k_platinum", score=0.5, se=0.1, tasks=2, tasks_total=2, samples=2, rollouts=1, cap_rate=0.0,
+                                                   bench_version=R.bench_version(R.benchmark("gsm8k_platinum")), finished_at=1)), False: ""}
     world.steps()
-    assert not os.path.exists(D.result_path(gen, "gsm8k")) and D.row_state(gen)["fails"] == 1 and model(gen)["benchmarks_done"] == len(RUNNABLE) - 1
-    assert [e["benchmarks"] for e in events(capsys) if e["event"] == "run-incomplete"] == [["gsm8k"]]
-    assert node.launches == 2 and "--benchmarks gsm8k " in node.cmds[-1]  # only the missing benchmark is run again
-    del node.results["gsm8k"]
+    assert not os.path.exists(D.result_path(gen, "gsm8k_platinum")) and D.row_state(gen)["fails"] == 1 and model(gen)["benchmarks_done"] == len(RUNNABLE) - 1
+    assert [e["benchmarks"] for e in events(capsys) if e["event"] == "run-incomplete"] == [["gsm8k_platinum"]]
+    assert node.launches == 2 and "--benchmarks gsm8k_platinum " in node.cmds[-1]  # only the missing benchmark is run again
+    del node.results["gsm8k_platinum"]
     world.steps(2)
     assert states() == {gen: "scored"}
 
@@ -727,6 +727,48 @@ def test_a_scored_row_whose_full_run_gives_no_value_is_held_and_rents_nothing_un
     D.cli("retry", [mid])  # the operator's word: a run of ArXivMath alone, at the settings' count, on a pod of the row's own
     world.steps()
     assert lium.ups[-1][1] == P.name_of(mid) and "--benchmarks arxivmath " in world.nodes[mid].cmds[-1]
+
+
+def test_disabled_gsm8k_keeps_its_published_history_as_display_only_data(world):
+    gen = ids(world.genesis)
+    D.sync_table(); D.publish_table(D.model_rows())
+    saved = json.loads(pathlib.Path(TABLE).read_text())
+    saved["results"].append(dict(model_id=gen, benchmark_id="gsm8k", env_version="gsm8k/v1/bench-v2", score=0.91))
+    pathlib.Path(TABLE).write_text(json.dumps(saved))
+    publish.publish(source.models(), dict(D.S))
+    source.upload_table(TABLE)
+    world.steps(3)
+    published = table()
+    old = next(r for r in published["results"] if r["model_id"] == gen and r["benchmark_id"] == "gsm8k")
+    assert old["score"] == 0.91 and any(r["model_id"] == gen and r["benchmark_id"] == "gsm8k_platinum" for r in published["results"])
+    by_id = {b["id"]: b for b in published["benchmarks"]}
+    assert by_id["gsm8k"]["enabled"] is False and by_id["gsm8k"]["in_avg"] is False
+    assert by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"] is False
+    view = BENCH_VIEW(published)
+    assert "gsm8k" not in {c["id"] for c in view["columns"]}  # this deploy has no v2/site change: history stays in the file
+    assert next(r for r in view["rows"] if r["kind"] == "genesis")["cells"]["gsm8k"]["score"] == 0.91
+
+
+def test_a_scored_row_backfills_only_platinum_and_keeps_old_gsm8k(world):
+    gen = ids(world.genesis)
+    scored_by_the_single_node_service(gen)
+    pathlib.Path(D.result_path(gen, "gsm8k_platinum")).unlink()  # the helper's result represents the new run, not the old table
+    gsm = next(b for b in R.benchmarks() if b["id"] == "gsm8k")
+    result = dict(benchmark="gsm8k", score=0.5, se=0.03, tasks=10, tasks_total=10, samples=10, rollouts=1, cap_rate=0.0,
+                  bench_version=R.bench_version(gsm), finished_at=1, wall_seconds=600, mean_out_tokens=9, errors=0, complete=True,
+                  model_id=gen, model_kind="king", profile=PP15)
+    D.wj(D.result_path(gen, "gsm8k"), result)
+    D.sync_table(); D.derive_stored(); D.publish_table(D.model_rows())
+    source.upload_table(TABLE)
+    m = next(m for m in D.model_rows() if m["model_id"] == gen)
+    assert D.missing(m, RUNNABLE) == ["gsm8k_platinum"]
+    world.steps()
+    assert [name for _, name in world.lium.ups] == [P.name_of(gen)]
+    assert "--benchmarks gsm8k_platinum " in world.nodes[gen].cmds[-1]
+    world.steps(2)
+    assert world.nodes[gen].launches == 1 and D.queue() == []
+    old = next(r for r in table()["results"] if r["model_id"] == gen and r["benchmark_id"] == "gsm8k")
+    assert old["env_version"] == R.bench_version(gsm) and old["score"] == 0.5
 
 
 @pytest.mark.parametrize("fault", ["the result file is cut", "the result file is not there and the lines are", "no result file of the row is on the host",
@@ -1321,24 +1363,24 @@ def test_one_result_file_that_lacks_a_field_stops_neither_the_table_nor_the_othe
     v2, lium = world.v2, world.lium
     king = green(v2, 1); mid, gen = ids(king), ids(world.genesis)
     os.makedirs(f"{D.RES}/{gen}")  # a file of before on the host, without `se`
-    D.wj(D.result_path(gen, "gsm8k"), dict(model_id=gen, benchmark="gsm8k", score=0.5, tasks=2, samples=2, rollouts=1, cap_rate=0.0, bench_version="gsm8k/v0"))
+    D.wj(D.result_path(gen, "gsm8k_platinum"), dict(model_id=gen, benchmark="gsm8k_platinum", score=0.5, tasks=2, samples=2, rollouts=1, cap_rate=0.0, bench_version="gsm8k_platinum/v0"))
     world.steps(3)
     assert states()[mid] == "scored" and not world.pod_of(mid)  # the other row is scored and its pod is given back
     told = [e for e in events(capsys) if e["event"] == "result-unreadable"]
-    assert len(told) == 1 and told[0]["file"].endswith(f"{gen}/gsm8k.json") and "se" in told[0]["error"]
+    assert len(told) == 1 and told[0]["file"].endswith(f"{gen}/gsm8k_platinum.json") and "se" in told[0]["error"]
     # and a result of a node that lacks a field is not stored: a failed try, as a result that is missing
     king2 = green(v2, 2); mid2 = ids(king2)
-    world.node(mid2).results["gsm8k"] = {True: json.dumps(dict(benchmark="gsm8k", score=0.5, tasks=2, samples=2, rollouts=1, cap_rate=0.0,
-                                                               bench_version=R.bench_version(R.benchmark("gsm8k")))), False: '{"idx":0,"correct":1.0}\n'}
+    world.node(mid2).results["gsm8k_platinum"] = {True: json.dumps(dict(benchmark="gsm8k_platinum", score=0.5, tasks=2, samples=2, rollouts=1, cap_rate=0.0,
+                                                               bench_version=R.bench_version(R.benchmark("gsm8k_platinum")))), False: '{"idx":0,"correct":1.0}\n'}
     world.steps(2)
-    assert not os.path.exists(D.result_path(mid2, "gsm8k")) and D.row_state(mid2)["fails"] >= 1 and model(mid2)["benchmarks_done"] == len(RUNNABLE) - 1
+    assert not os.path.exists(D.result_path(mid2, "gsm8k_platinum")) and D.row_state(mid2)["fails"] >= 1 and model(mid2)["benchmarks_done"] == len(RUNNABLE) - 1
 
 
 def test_a_result_of_another_benchmark_version_is_a_failed_try_and_not_a_run_with_no_end(world, capsys):
     gen = ids(world.genesis); world.steps()
     node = world.nodes[gen]
-    node.results["gsm8k"] = {True: json.dumps(dict(benchmark="gsm8k", score=0.5, se=0.1, tasks=2, tasks_total=2, samples=2, rollouts=1, cap_rate=0.0,
-                                                   bench_version="gsm8k/v0/of-another-commit", finished_at=1)), False: '{"idx":0,"correct":1.0}\n'}
+    node.results["gsm8k_platinum"] = {True: json.dumps(dict(benchmark="gsm8k_platinum", score=0.5, se=0.1, tasks=2, tasks_total=2, samples=2, rollouts=1, cap_rate=0.0,
+                                                   bench_version="gsm8k_platinum/v0/of-another-commit", finished_at=1)), False: '{"idx":0,"correct":1.0}\n'}
     pod = dict(world.lium.pods[0])
     world.steps(D.MAX_FAIL + 1)
     assert node.launches == D.MAX_FAIL and D.stopped(gen) == "failed" and world.lium.removed == [rm(pod)]
