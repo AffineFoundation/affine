@@ -9,6 +9,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 from sn120_v2 import layout, sim
@@ -45,11 +46,12 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "round.html", "supply.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
-    for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
-        assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
-    assert "{{" not in (out / "v1.html").read_text() and 'href="v1.html"' in page
+    for other in ("round.html", "supply.html", "v1.html"):  # each other page gets the same stamped files, and the home page links to it
+        for name in ("site.js", "site.css", "favicon.svg"):
+            assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / other).read_text())
+        assert "{{" not in (out / other).read_text() and f'href="{other}"' in page
     assert "{{" not in page
     stamps = dict(re.findall(r"""["']([\w.-]+\.(?:js|css|svg|ttf))\?v=([0-9a-f]{8})["']""", page))
     assert set(stamps) == {"site.js", "site.css", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"}
@@ -57,6 +59,27 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_the_home_page_starts_with_the_benchmark_table_and_the_round_and_the_supply_have_their_own_pages(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    index, live, supply, v1 = ((out / name).read_text() for name in ("index.html", "round.html", "supply.html", "v1.html"))
+    sections = re.findall(r'<section id="(\w+)"', index)
+    assert sections == ["bench", "charts", "kings", "queue", "history", "rounds", "heads"]  # each id of before still names its section
+    bench = index[index.index('<section id="bench"'):index.index('<section id="charts"')]
+    assert bench.index('<div class="scroll wait"><table>') < bench.index('<div class="sparks"')  # the table first, the cards under it
+    assert re.findall(r'<section id="(\w+)"', live) == ["round"] and '<body data-page="round">' in live and len(re.findall(r"<dd data-f=", live)) == 8
+    assert re.findall(r'<section id="(\w+)"', supply) == ["supply"] and '<body data-page="supply">' in supply
+    assert "fetch('miner-supply.json?t='" in supply and "miner-supply.json" not in index + live  # only the supply page asks for the counts
+    # an old link to a section that moved leads to its page, before the first data is asked for
+    moved = "{const to={'#round':'round.html','#supply':'supply.html'}[location.hash];if(to)location.replace(to);}"
+    assert moved in index and index.index(moved) < index.index("window.SITE_DATA=fetch(")
+    nav = '<a href="round.html">Round</a><a href="supply.html">Supply</a><a href="v1.html">v1 history</a>'
+    assert all(re.sub(r' aria-current="page"', "", page).count(nav) == 1 for page in (index, live, supply, v1))
+    assert [page.count('aria-current="page"') for page in (index, live, supply, v1)] == [0, 1, 1, 1]
+    style = (out / "site.css").read_text()  # the lines of a table that waits stay in the box of a table
+    assert ".scroll.wait::before{" in style and not re.search(r"(?<![\w.])\.wait::before", style)
 
 
 def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_the_script_fills(tmp_path):
@@ -161,6 +184,81 @@ def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_pat
     assert (charts["r000003"]["outcome"], charts["r000003"]["with_z"]) == ("null", 1) and charts["r000003"]["null_pass"] is not None
     script = (out / "site.js").read_text()  # the page names such an entry; it does not print the missing status
     assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
+
+
+def test_a_head_links_its_manifest_when_it_is_current_or_when_the_file_is_on_the_site(tmp_path):
+    """The validator writes the manifest of a head only while that head is current. An older head has its file, or it has none."""
+    snap = snapshot(tmp_path)
+    current, stacked, genesis = (line["version_id"] for line in snap["heads"][::-1])
+    assert snap["head"]["head"]["version_id"] == current and snap["heads"][0]["round_id"] == "genesis"
+    links = lambda text: [line["manifest"] for line in json.loads(text)["heads"]]  # noqa: E731
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, None]  # no file but the snapshot
+    path = tmp_path / "store" / layout.head_manifest(genesis)
+    path.parent.mkdir(parents=True)
+    path.write_text("{}")
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, f"{URL}/{layout.head_manifest(genesis)}"]
+    assert stacked not in json.dumps(links(build(tmp_path, snap)[2]))
+
+    # over http(s): a yes and a 404 are kept for the process; a read that failed in another way gives no link and is asked again
+    exists, asked = runpy.run_path(str(BUILD))["exists"], []
+    answers = {"a": b"{}", "b": urllib.error.HTTPError(URL, 404, "Not Found", None, None),
+               "c": urllib.error.HTTPError(URL, 503, "Busy", None, None), "d": TimeoutError("slow")}
+
+    def fetch(location: str) -> bytes:
+        asked.append(location)
+        answer = answers[location.removeprefix(f"{URL}/")]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    exists.__globals__["fetch"] = fetch
+    assert [exists(f"{URL}/", name) for name in "abcd" * 2] == [True, False, False, False] * 2
+    assert asked == [f"{URL}/{name}" for name in "abcdcd"]
+
+
+def test_a_cell_with_no_value_says_why_in_words(tmp_path):
+    """On the v2 page a cell with no value is a short word, and its tooltip says why. No dash and no dots stand for a value."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    column = dict(re.findall(r"^    (\w+): (\{ h: .*)$", script, re.M))
+    tables = {name: re.findall(r"'(\w+)'", cols) for name, cols in re.findall(r"^    (\w+): \{ cols: \[([^\]]+)\]", script, re.M)}
+    for name in ("z", "gain", "bar", "capHit", "look", "head"):  # a batch with no score, and a king that came from v1
+        assert "unscored(r)" in column[name] and "—" not in column[name], name
+    assert "noM(r)" in column["mPass"] and "noM(r)" in column["mCap"] and "'no file')" in column["manifest"]
+    unscored = script[script.index("const unscored = "):script.index("const noM = ")]
+    assert "V1 ? mute('—')" in unscored and "Carried over from v1" in unscored and "'Not scored. '" in unscored  # the v1 page keeps its dash
+    # each other column of a v2 table that can print a dash prints it only for a field that the builder always sets
+    always = {"round": "round_id", "uid": "uid", "reg": "registration_block"}
+    for name in {name for table in ("kings", "queue", "history", "rounds", "heads") for name in tables[table]}:
+        assert "—" not in column[name] or name in always, name
+    snap = snapshot(tmp_path)
+    data = json.loads(build(tmp_path, snap)[2])
+    rows = {"round": data["kings"] + data["history"] + data["rounds"] + data["heads"], "uid": data["kings"] + data["queue"]["rows"] + data["history"],
+            "reg": data["queue"]["rows"]}
+    for name, field in always.items():
+        assert rows[name] and all(row[field] is not None for row in rows[name]), name
+    assert all(row[field] for field, part in (("hotkey", "kings"), ("hotkey", "history"), ("sha", "history"), ("at", "kings"), ("at", "history"),
+                                               ("at", "rounds"), ("at", "heads"), ("head", "rounds"), ("head", "heads")) for row in data[part])
+
+    # the benchmark table: a cell with no score says the state of the run of its row. "queued", "running" and "failed" are words of
+    # the benchmark service's table; a model that no table names has "no run yet" ("not run" in the narrow column of the average)
+    states = re.findall(r"^    (\w+): \['([^']+)', '\w+', '[^']+', '([^']+)'\],$", script[script.index("const RUN = {"):script.index("RUN.evaluating")], re.M)
+    assert states == [("queued", "queued", "queued"), ("running", "running", "running"), ("failed", "failed", "failed"), ("none", "no run yet", "no run yet")]
+    table = script[script.index("  function bench(b) {"):script.index("  /* The chart tiles")]
+    assert "—" not in table and "…" not in table and "pending" not in script
+    assert "'No run yet: no benchmark file is published.'" in script and "!b.updated_at && !V1" in table
+    assert 'the benchmark file says "evaluating"' in script and "The benchmark file lists this model as queued" in script
+    assert "'No run yet: the benchmark file does not name this model.'" in script
+    assert "c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
+    assert "'no benchmark run yet'" in table and "'No run yet: no benchmark file is published.'" in table
+    assert not re.search(r"'(queued|running|failed)'", table)  # the page gives a row no state of its own
+    assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: a row has one only when it has every counted benchmark.'" in table
+    bare = data["bench"]  # what the page reads to say "no benchmark has run": no time of a table, and the state of each row
+    assert bare["updated_at"] is None and [(row["status"], row["cells"], row["avg"]) for row in bare["rows"]] == [("none", {}, None)] * 2
+    # the live round and the tooltips of the charts
+    live = script[script.index("  function render() {"):script.index("  function status(")]
+    tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
+    assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
+    assert "'none: no batch was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
 
 
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
@@ -314,6 +412,79 @@ def test_the_reference_models_come_from_the_frozen_v1_history_whatever_the_bench
         ("r000001 f1f1f1f1", "scored", 0.75, None), ("Ref-C", "scored", 1.0, True), ("Ref-A", "scored", 0.25, None),
         ("Ref-B", "failed", None, True), ("Genesis", "none", None, None)]
     assert bench_view(table, heads)["rows"] == [row for row in both["rows"] if not row.get("v1")]
+
+
+def test_a_cell_has_its_samples_for_each_problem_and_a_kept_cell_gets_the_count_from_its_sample_count():
+    columns = [dict(id="ax", label="AX", suite="math", order=1, enabled=True, in_avg=False), dict(id="b1", label="B1", suite="math", order=2, enabled=True)]
+
+    def sampled(model: str, bench: str, rollouts: object, expected: object) -> dict:
+        return result(model, bench, 0.5) | {"rollouts": rollouts, "samples": expected, "samples_expected": expected}
+
+    def cells(expected: dict) -> dict:  # a reference row as the v1 history holds it: a sample count and no ``rollouts``
+        return {name: {"score": 0.5, "se": None, "partial": False, "samples": count, "expected": count, "cap_rate": None} for name, count in expected.items()}
+
+    kept = {"updated_at": 1, "columns": columns, "rows": [
+        dict(label="Ref-A", kind="reference", status="scored", cells=cells({"ax": 1648, "b1": 500})),
+        dict(label="Ref-B", kind="reference", status="scored", cells=cells({"ax": 1000}))]}
+    frozen = json.dumps(kept)
+    heads = [head("g" * 64, "genesis", 10, True), head("f1" * 32, "r000001", 21, True)]
+    models = [king("king-1", 21, "r000001", "f1" * 32), dict(model_id="g", label="genesis M", kind="genesis", status="scored")]
+
+    def counts(results: list) -> dict:
+        view = bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads, kept)
+        return {row["label"]: {name: cell["rollouts"] for name, cell in row["cells"].items()} for row in view["rows"]}
+
+    # 103 problems with 2 samples each for the king and the genesis head: the reference row has 1648 / 103 = 16
+    cut = [sampled("king-1", "ax", 2, 206), sampled("g", "ax", 2, 206), sampled("king-1", "b1", 1, 500)]
+    assert counts(cut) == {"r000001 f1f1f1f1": {"ax": 2, "b1": 1}, "Ref-A": {"ax": 16, "b1": 1}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 2}}
+    # two results of one benchmark with different problem counts, or a result with no count: no number is made for a kept cell
+    assert counts(cut + [sampled("g", "b1", 1, 100)])["Ref-A"] == {"ax": 16, "b1": None}
+    for no_count in (None, 0, True, "2", 2.0):
+        assert counts([sampled("king-1", "ax", no_count, 206)])["Ref-A"] == {"ax": None, "b1": None}
+    assert counts([sampled("king-1", "ax", 4, 206)])["Ref-A"]["ax"] is None  # 206 / 4 leaves a rest
+    # a model whose run with the count of before is the shown one keeps that count; when its new run is in the file (the newest
+    # of one model and benchmark is last), the cell has the count of the new run
+    before = [sampled("g", "ax", 16, 1648), sampled("king-1", "ax", 2, 206)]
+    assert counts(before) == {"r000001 f1f1f1f1": {"ax": 2}, "Ref-A": {"ax": 16, "b1": None}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 16}}
+    assert counts(before + [sampled("g", "ax", 2, 206)])["Genesis M"] == {"ax": 2}
+    assert counts([])["Ref-A"] == {"ax": None, "b1": None} and json.dumps(kept) == frozen  # the kept table is not changed
+
+
+def test_a_full_run_has_its_own_column_and_a_row_has_its_machine_and_the_v1_king_has_no_round():
+    heads = [dict(version_id="g" * 64, round_id="genesis", folded=True, applied_at=10.0), dict(version_id="f1" * 32, round_id="r000001", folded=True, applied_at=20.0)]
+    columns = [dict(id="ax", label="ArXivMath", suite="math", enabled=True, in_avg=False, order=1), dict(id="b1", label="B1", suite="math", enabled=True, order=2)]
+    pod = dict(name="affine-v2-bench-king-1", gpu="8xH100", usd_h=23.2, state="renting", since=30)
+    models = [
+        dict(model_id="king-1", label="one", kind="king", round_id="r000001", head_version_id="f1" * 32, crowned_at=20.0, status="evaluating", pod=pod, profile="q"),
+        dict(model_id="old", label="v1 king E1211", kind="v1-king", round_id=None, uid=920, v1_epoch=1211, status="waiting", waiting_for="source", pod="none"),
+        dict(model_id="g", label="genesis M", kind="genesis", status="failed", stopped="held", v1_epoch=7, pod=pod | {"state": "released", "since": "then"}),
+    ]
+    short = result("king-1", "ax", 0.5) | {"rollouts": 2, "samples": 206, "samples_expected": 206, "n": 103}
+
+    def made(results: list) -> dict:
+        return bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads)
+
+    plain = made([short, result("old", "b1", 0.4)])
+    assert [(column["id"], column["problems"]) for column in plain["columns"]] == [("ax", 103), ("b1", None)]
+    king, old, genesis = plain["rows"]
+    assert king["pod"] == {"state": "renting", "since": 30} and genesis["pod"] == {"state": "released", "since": None} and "uid" not in king
+    assert (old["label"], old["kind"], old["uid"], old["round_id"], old["head"], old["at"]) == ("v1 king", "v1-king", 920, None, None, None) and "pod" not in old
+    assert (old["status"], old["waiting_for"], old["v1_epoch"]) == ("waiting", "source", 1211) and "stopped" not in old and "waiting_for" not in king and king["profile"] == "q" and "profile" not in old
+    assert (genesis["status"], genesis["stopped"]) == ("failed", "held") and "v1_epoch" not in genesis and king["cells"]["ax"]["profile"] is None
+    assert king["cells"]["ax"]["derived"] is False and list(king["cells"]) == ["ax"]
+
+    # the value of the king was computed from its run of 16 samples for each problem, and that run has its own score
+    full = made([short | {"derived_from": "ax/v1", "score_full": 0.25, "se_full": 0.04, "samples_full": 1648, "cap_rate": 0.2, "profile": "p"}])
+    assert [(column["id"], column["label"], column.get("head"), column["in_avg"], column.get("full_of")) for column in full["columns"]] == [
+        ("ax", "ArXivMath", None, False, None), ("ax:full", "ArXivMath, full run", "full run", False, "ax"), ("b1", "B1", None, True, None)]
+    cells = full["rows"][0]["cells"]
+    assert cells["ax"]["derived"] is True and (cells["ax"]["score"], cells["ax"]["rollouts"]) == (0.5, 2)
+    assert (cells["ax:full"]["score"], cells["ax:full"]["samples"], cells["ax:full"]["rollouts"]) == (0.25, 1648, 16)
+    assert (cells["ax:full"]["se"], cells["ax:full"]["cap_rate"], cells["ax:full"]["profile"], cells["ax"]["profile"]) == (0.04, 0.2, "p", "p")
+    # a derived value with no score of the full run, and a later result of the same model with none: no column
+    for results in ([short | {"derived_from": "ax/v1"}], [short | {"score_full": 0.25, "samples_full": 1648}, short]):
+        assert [column["id"] for column in made(results)["columns"]] == ["ax", "b1"]
+
 
 
 def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_file(tmp_path):

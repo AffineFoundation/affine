@@ -1,0 +1,31 @@
+# SN120 v2 miner supply record: one run lists the miner files of the store, counts the new files, writes the
+# public counts into the website directory, then exits. It never writes to the store and downloads no miner file.
+#
+# Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
+#   SN120_USER        the Linux user that owns the website directory
+#   SN120_ENV_FILE    the file of the public pull (sn120-v2-site-pull.service): mode 600, a read-only store token.
+#                     Use the file as it is: no copy and no second file.
+#   SN120_PYTHON      the python of the virtual environment where sn120_v2 is installed, as a full path
+#   SN120_V2_DIR      the directory v2/ of the checkout on this host, as a full path
+#   SN120_STATE_DIR   a private directory for the record (hotkeys and upload times), outside the website directory.
+#                     The run makes it with mode 700.
+#   SN120_SITE_DIR    the directory that the web server serves; it must exist
+#
+# The token stays on the host. This file holds no secret. The journal gets one line of counts for each run.
+
+[Unit]
+Description=SN120 v2 miner supply record (one run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=SN120_USER
+EnvironmentFile=SN120_ENV_FILE
+ExecStart=SN120_PYTHON SN120_V2_DIR/site/supply.py --state-dir SN120_STATE_DIR --out SN120_SITE_DIR/miner-supply.json
+# A run that fails keeps the last good files. The next run is the timer's next minute. Do not add Restart= here.
+Restart=no
+TimeoutStartSec=120
+# The web server reads the public file as another user. The run sets the mode of each file itself.
+UMask=0022
+NoNewPrivileges=true

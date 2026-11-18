@@ -15,9 +15,8 @@ header{height:96px;display:flex;align-items:center;justify-content:space-between
 .wordmark svg{width:25px;height:29px;fill:currentColor}
 nav{display:flex;flex-wrap:wrap;gap:6px 22px;font:12px var(--mono)}
 nav a{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:4px}
-nav a:hover{text-decoration-color:currentColor}
+nav a:hover,nav a[aria-current]{text-decoration-color:currentColor}
 section{min-width:0;padding:28px 0}
-section+section{border-top:1px solid var(--line)}
 .section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
 h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 .reading{font:12px var(--mono);color:var(--muted);text-align:right}
@@ -30,6 +29,14 @@ h2{margin:0;font:400 22px/1.2 Haffer,Arial,sans-serif;letter-spacing:-.035em}
 #round dl div{background:var(--bg);padding:12px 14px;height:68px;overflow:hidden}
 #round dt{font:10px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 #round dd{margin:8px 0 0;font:400 20px/1 Haffer,Arial,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* miner supply: a small table of counts and one chart, both at a fixed size */
+#supply table{min-height:162px}
+#supply th.num{width:112px}
+#supply td:first-child{cursor:help}
+#supply .note.lead{max-width:none;min-height:38px}
+#supply .warn{color:var(--accepted)}
+#supply code{font:inherit}
 
 /* tables: about ten rows tall, sticky header, scroll inside the frame */
 .scroll{position:relative;height:310px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:3px;scrollbar-width:thin}
@@ -78,6 +85,7 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 
 /* score cards and chart tiles: a fixed box per chart, so a chart that arrives later does not move the page */
 .sparks{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 10px}
+.scroll+.sparks{margin:10px 0 0}
 .spark,.tile{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:3px}
 .spark .section-heading{gap:8px;margin:0 0 6px;white-space:nowrap}
 .spark h3,.spark .reading{margin:0;font:400 14px/20px Haffer,Arial,sans-serif;letter-spacing:-.015em;color:var(--ink)}
@@ -104,8 +112,9 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 @media(max-width:760px){.sparks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #filter{width:190px;padding:4px 8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:3px;font:11px var(--mono)}
 
-/* shapes first, data second: faint row lines until the first data arrives, then one 200 ms fade */
-.wait::before{content:'';position:absolute;inset:27px 0 0;pointer-events:none;background:linear-gradient(to bottom,transparent 26px,var(--line) 26px) 0 0/100% 27px repeat-y}
+/* shapes first, data second: faint row lines until the first data arrives, then one 200 ms fade. Only the box of a table has
+   them: a pill or a legend mark of the class "wait" has no box of its own, so there the lines covered the page. */
+.scroll.wait::before{content:'';position:absolute;inset:27px 0 0;pointer-events:none;background:linear-gradient(to bottom,transparent 26px,var(--line) 26px) 0 0/100% 27px repeat-y}
 .fade{animation:fade .2s ease-out backwards}
 @keyframes fade{from{opacity:0}}
 @media(prefers-reduced-motion:reduce){.fade{animation:none}}
