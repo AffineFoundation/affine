@@ -157,7 +157,7 @@ def test_disabled_gsm8k_keeps_its_published_history_as_a_display_only_column(wor
     D.step()
     published = table()
     by_id = {b["id"]: b for b in published["benchmarks"]}
-    assert "gsm8k" not in by_id and by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"]
+    assert "gsm8k" not in by_id and by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"] is False
     old = dict(model_id=ids(v2.controller.state.head), benchmark_id="gsm8k", env_version="gsm8k/v1/bench-v2", score=0.91)
     saved = json.loads(pathlib.Path(TABLE).read_text())
     saved["results"].append(old)
