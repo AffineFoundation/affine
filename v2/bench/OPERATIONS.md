@@ -14,6 +14,7 @@ Words used here:
 - It reads three kinds of public files from the store: `public/head.json`, `public/heads/<id>.json` and `public/rounds/<round>/round.json`. It calls nothing on the GPU box.
 - From them it makes one row for the launch model and one row for each king.
 - A row with a missing result is queued. The newest row runs first. One row runs at a time.
+- A king's head can be public before its weight files are in the store. Before a row is queued, the service asks the store for each weight file that the head names (`public/bases/<base hash>/<file>`). If one is not there, the row waits: it gets no fail, no node is rented for it, and nothing is sent to the node. The service asks again at each poll, and the row is queued by the poll that finds every file. Nobody has to run a command.
 - For a queued row the service rents one node, loads the row's weights from the store with read links that expire, runs the 10 benchmarks of `bench/config/benchmarks.toml`, and copies the scores.
 - It writes one object: `public/benchmarks.json`. It writes it on each change of a row or of a result. It deletes nothing in the store.
 - The public pull on AffineValidator copies that object to the site, as it does today for the other public files. The site builder already reads it.
@@ -210,7 +211,7 @@ The log has one JSON line for each event. For the launch model, in this order:
 | `table-read` | It has read the published table. `published` is `true` when the store has one. |
 | `rented` | A node is rented. The line has `pod`, `lium_id`, `gpu` and `usd_h`. `usd_h` is not above your cap. |
 | `bootstrapped` | The software is on the node. `minutes` is the time since the rent. |
-| `fetch` | The weights are on the node and each file's sha256 is checked. `status` is `rc0`. |
+| `fetch` | A download to the node has ended. `out` has `"status": "materialized"` (or `"present"`) when the weights are on the node and each file's sha256 is right. `status` is `rc0` in both cases, also when the download failed: read `out`. |
 | `launched` | The run is started. `model` is `genesis-87de8304e9d33dde`, and `bids` names 10 benchmarks. |
 | `table-written` | The table is in the store. `rows` shows the row as `evaluating`. |
 | `collected` | The run is done. `scores` has a number for each of the 10 benchmarks. |
@@ -225,6 +226,8 @@ curl -s https://affine.io/public/benchmarks.json | python3 -c 'import json,sys; 
 
 - It prints `[('genesis-87de8304e9d33dde', 'scored', 10, 10)]` after the first run.
 - After each round that a miner wins, a row `king-<16 hex>` comes within one poll (30 seconds) of the publication of the new head. It goes from `queued` to `evaluating` to `scored`.
+- A row whose weight files are not in the store yet has `"waiting_for": "weights"` in the table. Its `status` stays `queued`. When the files are still not there more than 60 minutes after its head was applied, its `status` is `waiting`. The log has one line `waiting` when that starts, one line `waiting-late` at the 60 minutes, and one line `waiting-over` when the files are there. `bench status` lists such rows under `waiting`, with the name of a file that is not there.
+- While a row is `evaluating`, the table's `progress` says about each 5 minutes what the service saw on the node: `checked_at` (the time of the last step in which the node answered), `output_lines` (finished rollouts), `output_grew_at` (when that count last grew) and `benchmarks_finished` (benchmarks of the row that have ended on the node; `benchmarks_done` on the row counts collected results and stays 0 until the whole row is collected). So `updated_at` moves about each 5 minutes while a row runs. A `checked_at` that is older than 10 minutes while a row is `evaluating` and `node.down_since` is empty means that the service does not step, or cannot write the table.
 - The site's table shows the same rows. A state that is not `scored` is shown as a label on the row.
 - `"$LIUM" ps` has no pod with the name `affine-v2-bench-1` once the log says `released`.
 
@@ -254,8 +257,8 @@ Run one service only. A second one on the same Lium account gets no node while t
 
 | Command | What it does | While the unit runs |
 | --- | --- | --- |
-| `bench status` | Prints the row in work, the queue, the fail counts, the pod. Reads only. | Yes |
-| `bench once` | Runs every waiting row, gives the node back, ends. | No |
+| `bench status` | Prints the row in work, the queue, the rows that wait for weight files, the fail counts, the pod. Reads only. | Yes |
+| `bench once` | Runs every queued row, gives the node back, ends. A row that waits for weight files is left for a later run. | No |
 | `bench publish` | Builds the table again and writes it to the store when it changed. Rents nothing. | No |
 | `bench retry <model_id>...` | Puts a `failed` row back into the queue. | No |
 | `bench release` | Gives the rented node back now. | No |
@@ -273,6 +276,9 @@ A command of the last four stops with `another affine-bench daemon holds ...` wh
 | `run-died`, `stalled` | The run ended with no result, or made no progress for 2400 seconds. The row's fail count goes up. After 3 fails the row is `failed` and is not tried again. | `bench retry <model_id>` after the cause is known. |
 | `node-unreachable`, then `node-gone` | The node does not answer. After 10 minutes the service asks Lium. If the pod is gone, the row is queued again with no fail. | Nothing. |
 | `release-deferred`, `release-failed`, `release-refused` | The node was not given back. It still costs money. | Check `"$LIUM" ps`. The service tries again at each step while it runs. |
+| `waiting`, then `waiting-late` | A row's weight files are not in the store. The row waits with no fail and no node. `waiting-late`: they are still not there more than 60 minutes after its head was applied, and the table shows the row as `waiting`. | Nothing for `waiting`. For `waiting-late`: find out why the GPU box has not sent the files (`file` in the line names one). The row starts by itself when they are there. `bench retry` does not help. |
+| `fetch` whose `out` has no `materialized`, and the row's fail count goes up | The files are in the store and the download to the node failed: a sha256 that is not the head's, a link that the store refuses, a full disk. After 3 fails the row is `failed`. | Read `out`. `bench retry <model_id>` after the cause is known. |
+| `store-check-failed` | The store did not answer the question whether a row's weight files are there (a token that may not ask, the network). The row is not held back: the download on the node decides, and a failure there counts as a fail. | Check the token if it stays. |
 | `error` with `InfraError` in `tb` | The store did not answer. The step is done again after 30 seconds. Before the first read of the table nothing is rented. | Check the token and the network if it stays. |
 
 ## 10. v1's benchmark service
@@ -290,6 +296,7 @@ Proven by tests on a CPU (`v2/bench/tests/`), with the store of v2's simulation,
 - A host with an empty disk reads the published table and runs no row again. If the table cannot be read, nothing is rented.
 - The only write to the store is `public/benchmarks.json`. The read links go to the node on standard input only, never into a command line or the log.
 - A reference row that is in the table before the first write stays, with its results.
+- A king whose weight files are not in the store gets no fail, no rent and no command on the node, and starts by itself when they are there. A download that fails on the node while the files are in the store still counts as a fail. A restart of the service in a run starts no second run and rents no second node.
 - The site builder (`v2/site/build.py`) reads the table as it is, and adds the reference models from the frozen v1 history (`v2/tests/test_site_build.py`, `v2/tests/test_site_pull.py`).
 
 Not proven:

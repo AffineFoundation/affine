@@ -14,7 +14,15 @@ BENCH_VIEW = runpy.run_path(str(pathlib.Path(__file__).resolve().parents[2] / "s
 
 class Store:
     """No copy and no delete, and a put to one key only: any other write by the service fails the test."""
-    def __init__(self, inner): self.inner, self.signed, self.hidden, self.down, self.tables, self.read = inner, [], set(), False, [], []
+    def __init__(self, inner):
+        self.inner, self.signed, self.hidden, self.down, self.tables, self.read = inner, [], set(), False, [], []
+        self.gone, self.refused, self.asked = set(), False, []  # objects that are not uploaded yet; a key that may not ask; the questions
+
+    def exists(self, key):
+        assert key.startswith("public/bases/"); self.asked.append(key)
+        if self.refused: raise InfraError("r2 head failed: 403")
+        return key not in self.gone and self.inner.exists(key)
+
     def put(self, key, data): assert key == layout.BENCHMARKS; self.tables.append(data); self.inner.put(key, data)
     def presign_get(self, key, ttl_s): self.signed.append(key); return f"https://signed.example/{key}?ttl={ttl_s}"
 
@@ -33,15 +41,21 @@ def green(v2, uid):
 
 
 class Node:
-    """The rented box as the daemon sees it over ssh: a fetch, one runner, and its result files."""
-    def __init__(self): self.cmds, self.stdin, self.fetched, self.dies = [], [], False, False
+    """The rented box as the daemon sees it over ssh: a fetch, one runner, and its result files.
+
+    A fetch leaves the mark `.verified` for a model only when every link answers and every sha256 is right, as
+    deploy/gate_fetch.py does. `bad(links)` says that this fetch fails; `busy` is the answer of a run that is in work."""
+    def __init__(self): self.cmds, self.stdin, self.have, self.dies, self.bad, self.busy = [], [], set(), False, lambda links: False, None
 
     def run(self, cmd, inp=None, timeout=0):
-        self.cmds.append(cmd); self.stdin.append(inp); self.fetched |= "gate_fetch.py" in cmd
+        self.cmds.append(cmd); self.stdin.append(inp)
+        if "gate_fetch.py" in cmd and not self.bad(inp):
+            self.have.add(json.loads(inp)["descriptor"]["id"])
         return types.SimpleNamespace(stdout=self.out(cmd), stderr="", returncode=0)
 
     def out(self, cmd, timeout=0):
-        if ".verified" in cmd: return "yes" if self.fetched else ""
+        if ".verified" in cmd: return "yes" if cmd.split("/.verified")[0].rsplit("/", 1)[-1] in self.have else ""
+        if "echo ok=1" in cmd and self.busy: return self.busy
         if "echo ok=1" in cmd: return "done=\nalive=\nlines=0\nok=1\n" if self.dies else "done=1\nalive=\nlines=4\nok=1\n"
         if "summary.json" in cmd:
             bid = cmd.split(" 2>")[0].split("/")[-2]  # .../runs/<model>/<benchmark>/summary.json
@@ -64,16 +78,28 @@ def empty_host(monkeypatch):
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     v2, node, removed = sim.SimWorld(tmp_path, sim.sim_params()), Node(), []
+    v2.store.put(layout.public_base_file(v2.controller.state.head.base_hash, "model.bin"), b"sim base")  # as the genesis job leaves it
     store = Store(v2.store)
     empty_host(monkeypatch)
     monkeypatch.setattr(source, "store", lambda: store)
+    node.bad = lambda links: any(key in links for key in store.gone)  # a link to an object that is not there gives 404
     monkeypatch.setattr(D, "NODE", node); monkeypatch.setattr(P, "IDLE_RELEASE_S", 0)
+    monkeypatch.setattr(D, "WAIT_LATE_S", float("inf"))  # the clock of the simulation starts in 1970: a test sets the bound when it is about it
     monkeypatch.setattr(P, "rent", lambda S, log: (S.setdefault("rents", []).append(1), P.save(POD), dict(POD))[-1])
     monkeypatch.setattr(P, "listed", lambda: [dict(id=POD["id"], name=P.NAME), dict(id="someone-elses-pod", name="other")])
     monkeypatch.setattr(P, "lium", lambda *a, **k: (removed.append(a), types.SimpleNamespace(returncode=0, stdout="", stderr=""))[-1])
     return v2, store, node, removed
 
 
+def new_process():
+    """A restart of the unit: the new process has only the files of the state directory, loaded as the module loads them."""
+    state = D.rj(D.SF, {}) or {}
+    D.S.clear(); D.S.update(state); D.S.setdefault("fail", {}); D.S.setdefault("unavailable", []); D.S.setdefault("history", [])
+    D.C_POD.clear(); D.C_POD.update(P.load()); D.SYNCED.clear()
+
+
+def base_keys(v2, head): return {layout.public_base_file(head.base_hash, name) for name in v2.controller.state.manifest.base_files}
+def events(capsys): return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
 def table(): return json.load(open(TABLE))
 def states(): return {m["model_id"]: m["status"] for m in table()["models"]}
 def ids(head): return ("king-" if head.parent_version_id else "genesis-") + head.base_hash[:16]
@@ -239,6 +265,142 @@ def test_a_row_that_fails_three_times_is_failed_until_the_operator_queues_it_aga
     assert states() == {mid: "scored"}
 
 
+def test_a_king_whose_weight_files_are_not_in_the_store_waits_and_starts_by_itself(world, capsys):
+    """The head of a king is public before its weight files (the box sends them after the next round has opened)."""
+    v2, store, node, removed = world
+    genesis = v2.controller.state.head
+    D.step(); D.step()
+    assert states() == {ids(genesis): "scored"} and not D.C_POD
+    king = green(v2, 1); mid = ids(king)
+    store.gone = base_keys(v2, king)
+    rents, cmds, signed, tables = len(D.S["rents"]), len(node.cmds), len(store.signed), len(store.tables)
+    capsys.readouterr()
+    for _ in range(D.MAX_FAIL + 2):  # more polls than the tries of a row
+        D.step()
+    row = next(m for m in table()["models"] if m["model_id"] == mid)
+    assert (row["status"], row["fails"], row["waiting_for"]) == ("queued", 0, "weights")  # the table says why the row does not run
+    assert D.S["fail"] == {} and D.S["unavailable"] == [] and D.queue() == []  # no failed try, and not marked unavailable
+    assert len(D.S["rents"]) == rents and not D.C_POD and len(node.cmds) == cmds and len(store.signed) == signed  # no rent, no ssh, no link
+    assert len(store.tables) == tables + 1 and table()["progress"]["queued"] == 1  # one write for the new row; it is still to do
+    assert [(e["event"], e["model"]) for e in events(capsys) if e["event"] != "table-written"] == [("waiting", mid)]  # one line, not one per poll
+
+    store.gone = set(sorted(store.gone)[-1:])  # every file but one is there: an object is at its name only when it is whole
+    D.step()
+    assert states()[mid] == "queued" and len(D.S["rents"]) == rents
+    store.gone = set()
+    D.step()  # the files are there: the row starts with no command of a person
+    row = next(m for m in table()["models"] if m["model_id"] == mid)
+    assert row["status"] == "evaluating" and "waiting_for" not in row and len(D.S["rents"]) == rents + 1 and "waiting" not in D.S.get("waiting", {})
+    assert "waiting-over" in [e["event"] for e in events(capsys)]
+    D.step()
+    assert states() == {ids(genesis): "scored", mid: "scored"} and D.S["fail"] == {}
+
+
+def test_a_king_that_waits_longer_than_the_bound_is_shown_as_waiting(world, monkeypatch, capsys):
+    v2, store = world[:2]
+    D.step(); D.step()
+    king = green(v2, 1); mid = ids(king)
+    store.gone = base_keys(v2, king)
+    age = D.now() - king.applied_at
+    monkeypatch.setattr(D, "WAIT_LATE_S", age + 600)
+    D.step()
+    assert states()[mid] == "queued"
+    tables = len(store.tables); capsys.readouterr()
+    monkeypatch.setattr(D, "WAIT_LATE_S", age - 600)  # the head was applied more than the bound ago
+    D.step(); D.step()
+    row = next(m for m in table()["models"] if m["model_id"] == mid)
+    assert (row["status"], row["waiting_for"], row["fails"]) == ("waiting", "weights", 0) and len(store.tables) == tables + 1  # one write
+    assert [e["event"] for e in events(capsys) if e["event"] != "table-written"] == ["waiting-late"]
+    assert [(r["kind"], r["status"]) for r in BENCH_VIEW(table())["rows"]] == [("king", "waiting"), ("genesis", "scored")]  # the site passes the word on
+    assert D.S["fail"] == {} and len(D.S["rents"]) == 1 and not D.C_POD
+    store.gone = set()
+    D.step(); D.step()
+    assert states()[mid] == "scored"  # late is not failed: it still starts by itself
+
+
+def test_a_waiting_king_gets_no_try_while_another_row_runs_and_holds_no_node(world, monkeypatch):
+    v2, store, node, removed = world
+    genesis = v2.controller.state.head
+    D.step()
+    assert states() == {ids(genesis): "evaluating"}
+    king = green(v2, 1); mid = ids(king)
+    store.gone = base_keys(v2, king)
+    cmds = len(node.cmds)
+    node.busy = "done=\nalive=1\nlines=9\nok=1\n"
+    D.step()  # the launch model is in work; the new king has no files yet
+    assert states() == {ids(genesis): "evaluating", mid: "queued"} and not any("gate_fetch.py" in c for c in node.cmds[cmds:])
+    node.busy = None
+    monkeypatch.setattr(P, "IDLE_RELEASE_S", 900)
+    D.step()  # collected; nothing to start
+    assert states() == {ids(genesis): "scored", mid: "queued"} and D.C_POD and D.S["idle_since"] and D.S["fail"] == {}
+    monkeypatch.setattr(P, "IDLE_RELEASE_S", 0)
+    D.step()  # the idle rule is the same as with an empty queue: a row that waits does not keep the node
+    assert not D.C_POD and removed == [("rm", POD["id"], "--name-only", "-y")] and states()[mid] == "queued"
+    store.gone = set()
+    D.step(); D.step()
+    assert states()[mid] == "scored" and len(D.S["rents"]) == 2
+
+
+def test_a_real_fault_of_the_download_is_still_a_failed_try(world, capsys):
+    """The files are in the store, and the download fails on the node: a wrong sha256, or a link that the store refuses."""
+    v2, store, node = world[:3]
+    D.step(); D.step()
+    king = green(v2, 1); mid = ids(king)
+    node.bad = lambda links: True
+    seen = []
+    for _ in range(D.MAX_FAIL):
+        D.step(); seen.append((states()[mid], D.S["fail"].get(mid)))
+    assert seen == [("queued", 1), ("queued", 2), ("failed", 3)] and D.queue() == [] and D.S.get("waiting", {}) == {}
+
+    # a key that may not ask the store holds no row back: the download decides, and its failure counts
+    D.cli("retry", [mid]); store.refused = True; capsys.readouterr()
+    D.step()
+    assert D.S["fail"] == {mid: 1} and "store-check-failed" in [e["event"] for e in events(capsys)]
+    node.bad = lambda links: False
+    D.step(); D.step()
+    assert states()[mid] == "scored"  # and a download that works runs the row, whatever the question to the store gave
+
+
+def test_the_table_says_each_five_minutes_that_the_service_looks_at_the_row_in_work(world, monkeypatch):
+    v2, store, node = world[:3]
+    D.step()
+    assert table()["progress"]["checked_at"] is None  # launched in this step: no look at the node yet
+    node.busy = "done=\nalive=1\nlines=7\nfinished=3\nok=1\n"
+    before = D.now(); D.step()
+    progress = table()["progress"]; tables = len(store.tables)
+    assert progress["checked_at"] >= before and (progress["output_lines"], progress["benchmarks_finished"]) == (7, 3)
+    assert before <= progress["output_grew_at"] <= progress["checked_at"] and json.loads(store.tables[-1])["progress"] == progress
+    assert table()["models"][0]["benchmarks_done"] == 0  # the row's own count is of collected results
+    node.busy = "done=\nalive=1\nlines=8\nfinished=4\nok=1\n"
+    D.step(); D.step()
+    assert len(store.tables) == tables and table()["progress"]["output_lines"] == 7  # not at each poll
+    monkeypatch.setattr(D, "BEAT_S", 0)
+    D.step()
+    assert len(store.tables) == tables + 1 and table()["progress"]["output_lines"] == 8 and table()["progress"]["checked_at"] > progress["checked_at"]
+    node.busy = None
+    D.step()
+    assert states() == {ids(v2.controller.state.head): "scored"} and table()["progress"]["checked_at"] is None
+
+
+def test_a_restart_of_the_service_leaves_the_run_and_the_wait_as_they_are(world):
+    v2, store, node, removed = world
+    genesis = v2.controller.state.head
+    D.step()
+    king = green(v2, 1); mid = ids(king)
+    store.gone = base_keys(v2, king)
+    node.busy = "done=\nalive=1\nlines=9\nfinished=2\nok=1\n"
+    D.step()
+    started, launches = D.S["running"]["started"], sum("node-run" in c for c in node.cmds)
+    new_process()
+    assert D.S["running"]["started"] == started and D.C_POD["id"] == POD["id"] and list(D.S["waiting"]) == [mid]
+    D.step()  # the new process finds the run in work
+    assert states() == {ids(genesis): "evaluating", mid: "queued"} and sum("node-run" in c for c in node.cmds) == launches
+    assert len(D.S["rents"]) == 1 and not removed and D.S["fail"] == {}
+    node.busy = None; store.gone = set()
+    D.step()  # it collects the run that the old process started, and starts the king whose files came
+    assert states() == {ids(genesis): "scored", mid: "evaluating"} and sum("node-run" in c for c in node.cmds) == launches + 1 and len(D.S["rents"]) == 1
+
+
 def test_release_gives_the_pod_back_and_the_next_start_runs_the_row_again(world):
     v2, store, node, removed = world
     D.step()
@@ -275,13 +437,16 @@ def test_the_operator_document_and_the_unit_file_are_true_to_the_code():
     for fact in (
         f"up to {P.IDLE_RELEASE_S:.0f} seconds of idle time", f"At most {P.MAX_RENTS_PER_DAY} rents in 24 hours", f"default `{P.GPU_PREF}`",
         f"the name `{P.NAME}`", f"asks again every {P.NO_OFFER_RETRY_S:.0f} seconds", f"no progress for {D.STALL_S} seconds",
-        f"After {D.MAX_FAIL} fails", f"within one poll ({D.POLL_S} seconds)", f"After {D.POD_CHECK_AFTER_S // 60} minutes the service asks Lium",
+        f"After {D.MAX_FAIL} fails", f"within one poll ({D.POLL_S} seconds)", f"more than {D.WAIT_LATE_S // 60} minutes after its head was applied",
+        f"about each {D.BEAT_S // 60} minutes", f"After {D.POD_CHECK_AFTER_S // 60} minutes the service asks Lium",
         f"runs the {len(RUNNABLE)} benchmarks", f"`bids` names {len(RUNNABLE)} benchmarks", f"`n_gpus = {defaults['n_gpus']}`",
         f"at most {defaults['round_time_limit_s'] // 60} minutes (`round_time_limit_s = {defaults['round_time_limit_s']}`)",
         f"take {R.serving()['server']['gpu_memory_utilization']:.2f} of each GPU's memory", f"vLLM {R.serving()['server']['engine'].split('==')[1]} serves",
         "holds more than 1024 MiB. It waits 120 seconds", "genesis-" + GENESIS_BASE_HASH[:16],
     ):
         assert fact in doc, fact
+    about = pathlib.Path(publish.__file__).read_text()  # the table's own text names the same two times
+    assert (D.WAIT_LATE_S, D.BEAT_S) == (3600, 300) and "lasts more than an hour" in about and "about each 5 minutes" in about
     assert "free_limit_mib: int = 1024" in evaluator and "free_timeout_s: float = 120.0" in evaluator
 
 

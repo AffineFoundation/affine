@@ -191,6 +191,7 @@ def publish(rows, S, max_fail=3):
 
     have = {r["model_id"] for r in recs}
     run = (S or {}).get("running"); running = run and run["model"]["model_id"]
+    wait = (S or {}).get("waiting") or {}  # rows whose weight files are not in the store yet (daemon.waiting)
     runnable = R.benchmarks(enabled_only=True, runnable_only=True); done = {row_key(r) for r in recs}
     models = []
     for m in rows:
@@ -201,7 +202,7 @@ def publish(rows, S, max_fail=3):
         elif n_done == len(runnable):
             status = "scored"
         else:
-            status = "failed" if mid in (S or {}).get("unavailable", []) or fails >= max_fail else "queued"
+            status = "failed" if mid in (S or {}).get("unavailable", []) or fails >= max_fail else "waiting" if wait.get(mid, {}).get("late") else "queued"
         # Model-level budget/profile = latest scored row's, else registry resolve
         scored = [r for r in recs if r["model_id"] == mid and r.get("budget") is not None]
         if scored:
@@ -211,7 +212,8 @@ def publish(rows, S, max_fail=3):
             st = R.resolve_settings(mid, m.get("kind"))
             budget, profile = st["budget"], st["profile"]
         models.append({k: m.get(k) for k in ("model_id", "label", "kind", "base_hash", "round_id", "head_version_id", "crowned_at", "uid", "hotkey")}
-                      | dict(status=status, benchmarks_done=n_done, benchmarks_total=len(runnable), fails=fails, budget=budget, profile=profile))
+                      | dict(status=status, benchmarks_done=n_done, benchmarks_total=len(runnable), fails=fails, budget=budget, profile=profile)
+                      | (dict(waiting_for="weights") if mid in wait and status in ("queued", "waiting") else {}))
 
     # A published row that is no longer listed stays while it has a result. It is not in work: only a listed row is run.
     # A row of a kind that this service does not make (a reference model that an operator put in the table) always stays.
@@ -224,7 +226,8 @@ def publish(rows, S, max_fail=3):
     hist = [h for h in (S or {}).get("history", []) if not h["model"].count(".")]
     per = sorted(h["wall_s"] for h in hist[-20:]) if hist else []
     med = per[len(per) // 2] if per else None
-    left = len(set((S or {}).get("queue") or []) | ({run["model"]["model_id"]} if run else set()))
+    left = len(set((S or {}).get("queue") or []) | set(wait) | ({run["model"]["model_id"]} if run else set()))
+    beat = (run or {}).get("beat") or {}  # the service's look at the row in work, renewed each daemon.BEAT_S
     out = dict(
         version="affine-bench-v2",
         updated_at=time.time(),
@@ -232,6 +235,10 @@ def publish(rows, S, max_fail=3):
         about="Public math benchmarks of the SN120 v2 launch model and of every king (the folded head of each applied winner). "
               "A row of another kind (a reference model) is not run by this service: it is kept as it was put in. "
               "Merge-only publish: a published result is never dropped. "
+              "A row with waiting_for=weights has its head published and its weight files not yet in the store; "
+              "its status is queued, and waiting when that lasts more than an hour. "
+              "While a row is evaluating, progress.checked_at is the time of the service's last look at the node, renewed "
+              "about each 5 minutes, with the count of finished rollouts (output_lines) and of finished benchmarks. "
               "Each result row carries env_version, budget, and cap_rate so the protocol is unambiguous. "
               "Where two protocols exist, the table shows the latest; results_prior holds superseded rows. "
               "Score = mean over problems of the per-problem mean over rollouts (an errored rollout counts as wrong); "
@@ -247,7 +254,9 @@ def publish(rows, S, max_fail=3):
         progress=dict(models_total=sum(m["status"] == "scored" for m in models) + left,
                       models_scored=sum(m["status"] == "scored" for m in models), queued=left,
                       evaluating=run and run["model"]["model_id"],
-                      median_model_wall_s=med, eta_hours=round(left * med / 3600, 1) if med else None),
+                      median_model_wall_s=med, eta_hours=round(left * med / 3600, 1) if med else None,
+                      checked_at=beat.get("at"), output_lines=beat.get("lines"), output_grew_at=beat.get("grew"),
+                      benchmarks_finished=beat.get("finished")),
     )
     # A disabled benchmark stays display-only when it has published history (for example original GSM8K).
     # An empty display-only column does not hide the other columns or force every row to have a score.
