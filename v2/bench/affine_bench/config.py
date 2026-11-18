@@ -5,7 +5,8 @@ a price cap or a store. The paths on the rented node are fixed, because the node
 
   BENCH_STATE      directory for results and daemon state
   BENCH_SITE       directory for the local copy of benchmarks.json (a cache; the record is layout.BENCHMARKS in the store)
-  BENCH_NODE_SSH   file where deploy/rent.sh writes the ssh wrapper to the node
+  BENCH_NODE_SSH   file with the ssh wrapper to the node of the single-node service (before 2026-11-14). The row that ran
+                   on that node keeps it. A new row has a wrapper of its own: BENCH_STATE/rows/<model_id>/node-ssh
   BENCH_LIUM       path of the Lium CLI (its key stays in the operator's Lium config)
   BENCH_MAX_PRICE  highest price in $/h this service may rent at
   BENCH_REPO_REF   git commit of this repository that the node checks out (the pinned runtime)
@@ -20,6 +21,7 @@ LIUM = require_env("BENCH_LIUM")
 MAX_PRICE = float(require_env("BENCH_MAX_PRICE"))
 REPO_REF = require_env("BENCH_REPO_REF")
 STORE = require_env("BENCH_STORE")
+ROWS = STATE + "/rows"  # one directory for each row: the state of its worker, the record of its pod, its ssh wrapper
 REPO_URL = "https://github.com/AffineFoundation/affine.git"
 NODE_ROOT = "/data/bench"
 NODE_CLONE = NODE_ROOT + "/repo"

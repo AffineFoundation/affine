@@ -1,12 +1,18 @@
 """affine-bench CLI.
   node-run   (node) evaluate one model on benchmarks          affine-bench node-run --help
-  daemon     (host) queue-driven scheduler + publisher        affine-bench daemon
-  once       (host) benchmark every waiting row, release the pod, exit
-  status     (host) queue / results summary; reads only
-The next three need the daemon stopped (one process per state directory):
+  daemon     (host) the service: starts a worker for each row that has work, and writes the table
+  row        (host) the worker of one row; the service starts it   affine-bench row MODEL_ID
+  once       (host) benchmark every waiting row, give every pod back, exit
+These read only:
+  status     (host) the rows in work, the queue, the rows that wait
+  offers     (host) the Lium offers that a rent could take now: kind, price, count
+  pods       (host) every bench pod at Lium with its row; a pod that no row claims; a row that has no pod
+  retry      (host) queue a stopped row again (no stop of the service)   affine-bench retry MODEL_ID...
+The next two need the service stopped (one service per state directory):
   publish    (host) rebuild benchmarks.json now and write it to the store when it changed
-  retry      (host) queue a failed row again                  affine-bench retry MODEL_ID...
-  release    (host) give the rented node back now"""
+  release    (host) give the pod of a row back now             affine-bench release MODEL_ID...
+This one rents a pod, only with --rent, and only when the operator starts it (it is no part of the service):
+  rebuild-dry-run  (host) make a checkpoint king on a pod from an older checkpoint, compare the files, print minutes and dollars"""
 import sys
 
 
@@ -17,6 +23,8 @@ def main():
     if cmd == "node-run":
         from .node_run import main as m; return m(rest)
     from . import daemon  # imported here, not at the top: the host modules need the host environment, the node has none
+    if cmd == "rebuild-dry-run":
+        from . import dryrun; raise SystemExit(dryrun.main(rest))  # here for the same reason
     return daemon.cli(cmd, rest)
 
 
