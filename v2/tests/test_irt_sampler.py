@@ -11,6 +11,7 @@ import pytest
 
 from sn120_v2 import layout
 from sn120_v2.canonical import canonical_json
+from sn120_v2.envs.math_pool import POOL_V2_0_FILE, POOL_V2_0_SHA256, load_pool
 from sn120_v2.errors import ContractError, VerifyError
 from sn120_v2.irt import (
     FISHER_MASS_RULE,
@@ -198,6 +199,30 @@ def test_fisher_draw_has_the_exact_inclusion_probabilities_and_an_unbiased_ht_es
         assert len(draw.task_ids) == 5 and all(weight == pytest.approx(1.0 / probabilities[task]) for task, weight in zip(draw.task_ids, draw.weights))
         estimates.append(math.fsum(weight * quantities[task] for task, weight in zip(draw.task_ids, draw.weights)) / len(tasks))
     assert abs(math.fsum(estimates) / len(estimates) - truth) < 0.025
+
+
+def test_pool_v2_1_removes_only_dropped_tasks_from_a_stored_irt_snapshot(build):
+    old = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    new = load_pool()
+    dropped = set(old.task_ids) - set(new.task_ids)
+    assert len(old) == 21574 and len(new) == 20120 and len(dropped) == 1454
+    sampler = IRTSampler(old.task_ids, Params(irt_draw_rule="band"))
+    rng = random.Random(17)
+    for number in range(3):
+        draw = sampler.draw(build.head(), f"old-pool-{number}", 40)
+        outcomes = {"null": ("".join(rng.choice("PF") for _ in draw.task_ids),)}
+        sampler.update(build.head(), draw, outcomes)
+    before = published(sampler)
+    sampler = IRTSampler(new.task_ids, Params(irt_draw_rule="band"), snapshot=before)
+    after = sampler.public_snapshot()
+    assert after["snapshot_id"] != before["snapshot_id"]
+    assert set(after["tasks"]) == set(new.task_ids) and not dropped & set(after["tasks"])
+    assert all(after["tasks"][task][:3] == before["tasks"][task][:3] for task in new.task_ids)
+    assert all(after["tasks"][task][3] >= 1 for task in new.task_ids)
+    for key in ("heads", "loras", "head_ability", "rounds", "updates", "head_version_id"):
+        assert after[key] == before[key]
+    draw = sampler.draw(build.head(), "pool-v2.1", 100)
+    assert not dropped & set(draw.task_ids) and set(draw.task_ids) <= set(new.task_ids)
 
 
 def test_new_or_barely_seen_tasks_get_the_exploration_share(build):

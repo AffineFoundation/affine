@@ -97,6 +97,7 @@ The IRT snapshot comes from the public address `public/irt/SNAPSHOT_ID.json`, or
 Other arguments:
 
 - `--gpus N`: use GPUs 0 to N-1. The default is `n_gpus` of the params, the count of the box. The command stops at once if `nvidia-smi` lists fewer.
+- `--pool auto|current|v2.0`: `auto` (the default) uses the archived v2.0 pool when the recorded draw names a task that is not in the current pool. `current` refuses such a draw; `v2.0` forces the archive. The archived pool is `sn120_v2/envs/archive/math_pool_v2.jsonl`, byte-for-byte the original pool. See [POOL_CHANGES.md](POOL_CHANGES.md).
 - `--first-tasks N`: score only the first N tasks of the draw. These are the tasks the box scores first, in the same order with the same weights. It is not a new draw of N tasks. The looks are shares of N. With fewer than `min_scored_tasks` tasks no LoRA can win.
 - `--round-clock`: keep the time limits of a round (section 4, `round-clock`).
 - `--strict`: stop unless your machine has the pinned install, the pinned code and the GPU count of the box.

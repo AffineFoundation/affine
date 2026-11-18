@@ -50,7 +50,7 @@ from .admission import SERIAL_STREAMS, STREAMS_ENV, HFTokens, LazyPool, StoreAdm
 from .afterking import ORDER_ENV, OVERLAP, after_king
 from .canonical import file_sha256
 from .chain import Feed, SubtensorClient
-from .controller import HeadPublish, Stack, StackContext, stored_irt_snapshot
+from .controller import HeadPublish, Stack, StackContext, check_env_pin, stored_irt_snapshot
 from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
@@ -160,6 +160,8 @@ def stack(context: StackContext) -> Stack:
     state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
     params = context.params
     pool = load_pool()
+    if context.command != "set-params":
+        check_env_pin(params)
     tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.

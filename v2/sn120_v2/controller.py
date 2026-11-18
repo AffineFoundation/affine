@@ -162,6 +162,18 @@ def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, v
     return shown
 
 
+def check_env_pin(params: Params) -> None:
+    """Refuse a stack whose non-empty environment pin names another pool or grader."""
+    if not params.env_pin:
+        return
+    # The default and the control plane stay independent of the grader packages.
+    from .envs.math_grader import env_pin
+
+    actual = env_pin()
+    if params.env_pin != actual:
+        raise ConfigError(f"params.env_pin is {params.env_pin}, but this pool and grader have env_pin {actual}")
+
+
 def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
     """The task-table snapshot of the last closed round. Give it to the sampler after a restart."""
     key = layout.irt_snapshot(state.snapshot_id) if state.snapshot_id else ""

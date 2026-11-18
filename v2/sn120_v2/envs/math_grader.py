@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import multiprocessing
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -449,3 +450,16 @@ class GradePool:
         for worker in self._workers:
             worker.stop()
         self._workers = []
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the operator's environment pin without reading any service state."""
+    if argv != ["--env-pin"]:
+        print(f"usage: python -m {__name__} --env-pin", file=sys.stderr)
+        return 2
+    print(env_pin())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

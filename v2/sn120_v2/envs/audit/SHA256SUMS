@@ -1,0 +1,6 @@
+Source: https://github.com/catoneone/sn120-k1-fixes
+Commit: 427295adc6b8f3d6a8c6cf66f3f00cb2d15b3122
+Both files are copied byte-for-byte from that commit's data/ directory.
+
+3faec92a01cb656b0f87474f0a845ee607d44dd0857a88f1ca6210db47ef61c7  pool_audit_v2new_lists.json
+3b0bd39c8a75c2f09df2e631599ec442fba5ec15fef2cbcec9b4bcd82c6bbba4  pool_audit_lists.json
