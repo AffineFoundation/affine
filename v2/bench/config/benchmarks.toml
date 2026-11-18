@@ -132,5 +132,19 @@ env = "local-gsm8k"
 source = "hub:primeintellect/gsm8k@0.1.4"
 dataset = "openai/gsm8k main/test (1,319)"
 rollouts = 1
+enabled = false
+in_avg = false
+order = 50
+
+[[benchmark]]
+id = "gsm8k_platinum"
+label = "GSM8K-Platinum"
+suite = "math"
+env = "local-gsm8k-platinum"
+source = "repo:bench/environments/local-gsm8k-platinum"
+dataset = "madrylab/gsm8k-platinum@e762492455a1cf7967de89f05b6bef72fc713b66 (main/test, 1,209)"
+rollouts = 1
 enabled = true
+# display-only until the operator confirms every shown row has a result; then flip to true so averages stay comparable
+in_avg = false
 order = 50
