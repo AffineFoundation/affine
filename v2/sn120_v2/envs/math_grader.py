@@ -383,16 +383,32 @@ def _serve(link: Connection, job: Callable[..., Grade]) -> None:
 class _Worker:
     def __init__(self, context: multiprocessing.context.BaseContext, job: Callable[..., Grade]) -> None:
         self.link, far_end = context.Pipe()
-        self.process = context.Process(target=_serve, args=(far_end, job), daemon=True)
-        self.process.start()
+        self.process: multiprocessing.Process | None = None
+        try:
+            self.process = context.Process(target=_serve, args=(far_end, job), daemon=True)
+            self.process.start()
+        except BaseException:
+            self.link.close()
+            far_end.close()
+            if self.process is not None:
+                if self.process.is_alive():
+                    self.process.kill()
+                self.process.join()
+                self.process.close()
+            raise
         far_end.close()
         self.index: int | None = None  # the job in progress
         self.deadline = 0.0
 
     def stop(self) -> None:
         self.link.close()
-        self.process.kill()  # kills exactly this process id
-        self.process.join()
+        process, self.process = self.process, None
+        if process is not None:
+            try:
+                process.kill()  # kills exactly this process id
+                process.join()
+            finally:
+                process.close()
 
 
 class GradePool:
@@ -411,10 +427,60 @@ class GradePool:
         self.timeout_s = timeout_s
         self._job = job
         self._context = multiprocessing.get_context("spawn")
-        self._workers = [_Worker(self._context, job) for _ in range(max(1, workers))]
+        self._worker_count = max(1, workers)
+        self._workers: list[_Worker] = []
+        self._lock = threading.Lock()  # solo GPU workers share one pool; their batches must not interleave
+        try:
+            self._start_workers()
+        except BaseException:
+            self._stop_workers(self._workers)
+            raise
+
+    def _start_workers(self) -> None:
+        """Start all workers, cleaning up a partial start before propagating an error."""
+        started: list[_Worker] = []
+        try:
+            for _ in range(self._worker_count):
+                started.append(_Worker(self._context, self._job))
+        except BaseException:
+            self._stop_workers(started)
+            raise
+        self._workers = started
+
+    @staticmethod
+    def _stop_workers(workers: Sequence[_Worker]) -> None:
+        """Close every pipe and reap every child, including after EMFILE or a broken wait."""
+        errors = []
+        for worker in workers:
+            try:
+                worker.stop()
+            except BaseException as exc:  # noqa: BLE001 - cleanup must reach every worker
+                errors.append(exc)
+        if errors:
+            raise InfraError(f"could not stop {len(errors)} grader worker(s): {errors[0]}") from errors[0]
+
+    def _reset(self) -> None:
+        workers, self._workers = self._workers, []
+        self._stop_workers(workers)
+        self._start_workers()
 
     def grade_many(self, jobs: Sequence[tuple[Task, str, bool]]) -> list[Grade]:
         """Grade every ``(task, output, capped)`` job. The result list has the order of ``jobs``."""
+        with self._lock:
+            try:
+                return self._grade_many(jobs)
+            except (OSError, ValueError, EOFError):
+                # EMFILE and a closed multiprocessing handle leave arbitrary
+                # workers mid-job. Never reuse that state on a later round.
+                try:
+                    self._reset()
+                except Exception as reset_error:  # noqa: BLE001 - preserve the original grader failure
+                    raise InfraError(f"the grader pool could not be restarted: {reset_error}") from reset_error
+                raise
+
+    def _grade_many(self, jobs: Sequence[tuple[Task, str, bool]]) -> list[Grade]:
+        if not self._workers:
+            raise InfraError("the grader pool is closed")
         grades: list[Grade | None] = [None] * len(jobs)
         waiting = deque(range(len(jobs)))
         while True:
@@ -447,9 +513,9 @@ class GradePool:
         return _fail(ERROR, rule, machine_cause=machine_cause)
 
     def close(self) -> None:
-        for worker in self._workers:
-            worker.stop()
-        self._workers = []
+        with self._lock:
+            workers, self._workers = self._workers, []
+            self._stop_workers(workers)
 
 
 def main(argv: list[str] | None = None) -> int:

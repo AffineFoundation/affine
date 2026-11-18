@@ -299,3 +299,4 @@ def test_run_prints_each_setting_of_its_stack_at_the_start(tmp_path, monkeypatch
     assert cli.main(["run", "--state-dir", str(tmp_path), "--stack", "sn120_v2.sim:stack", "--rounds", "1", "--max-idle", "1", "--idle-sleep", "0"]) == 0
     shown = capsys.readouterr().err.splitlines()
     assert shown[:2] == [f"setting: {line}" for line in lines], "before the first pass of the loop"
+    assert shown[2].startswith("RLIMIT_NOFILE: soft="), "the process limit is logged at start"

@@ -283,7 +283,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
     assert "SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
-    assert "VllmEvaluator(store, box, pool, GradePool())" in stack
+    assert "VllmEvaluator(store, box, pool, LazyPool(GradePool))" in stack
 
 
 def played(tmp_path: Path) -> sim.SimWorld:

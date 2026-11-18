@@ -35,6 +35,7 @@ import json
 import os
 import random
 import re
+import resource
 import sys
 import time
 from collections import Counter
@@ -190,6 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         raise ConfigError("this stack has no round runner")
     for line in stack.settings:  # a setting that the shell does not hold shows here: it does not pass in silence
         print(f"setting: {line}", file=sys.stderr, flush=True)
+    raise_nofile_limit()
     stop = StopRequest.from_env()
     if stop.path is not None:
         say(stop.at_start())
@@ -517,6 +519,22 @@ def cmd_force_sync(args: argparse.Namespace) -> int:
     print(f"applied at chain block {second.block}: the queue has {len(controller.state.queue)} seats", flush=True)
     print(json.dumps(summary(controller.state, controller.params), indent=2))
     return 0
+
+
+def raise_nofile_limit() -> None:
+    """Give the run process room for vLLM sockets and grader worker pipes."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY:
+        print("RLIMIT_NOFILE: soft=unlimited, hard=unlimited; no change needed", file=sys.stderr, flush=True)
+        return
+    wanted = min(hard, 65536) if hard != resource.RLIM_INFINITY else 65536
+    try:
+        if wanted > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+        current, maximum = resource.getrlimit(resource.RLIMIT_NOFILE)
+        print(f"RLIMIT_NOFILE: soft={current}, hard={maximum} (requested soft={wanted}, previous soft={soft})", file=sys.stderr, flush=True)
+    except (OSError, ValueError) as exc:
+        print(f"RLIMIT_NOFILE: could not raise soft={soft} to {wanted}, hard={hard}: {exc}", file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

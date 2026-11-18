@@ -264,6 +264,10 @@ class LazyPool:
         if pool is not None:
             pool.close()
 
+    def reset(self) -> None:
+        """Drop a possibly broken pool; the next grade constructs fresh workers."""
+        self.close()
+
 
 def pool_grader(pool: Any, grade_pool: Any, chunk: int = 32) -> EnvGrader:
     """The same ``Grader`` over the environment's ``GradePool``: worker processes, each grade under a hard time limit.

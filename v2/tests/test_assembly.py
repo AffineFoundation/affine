@@ -50,7 +50,7 @@ def box(tmp_path, monkeypatch):
     """The environment of a box, with a local directory in the place of the R2 bucket."""
     store = LocalStore(tmp_path / "bucket")
     monkeypatch.setattr(assembly.R2Store, "from_env", classmethod(lambda cls: store))
-    monkeypatch.setattr(assembly, "GradePool", lambda: "grade-pool")  # the real one starts 8 worker processes
+    monkeypatch.setattr(assembly, "GradePool", lambda: "grade-pool")  # the real one starts 8 worker processes at first grade
     loaded = []
     monkeypatch.setattr(assembly.AutoTokenizer, "from_pretrained", lambda path, **options: loaded.append(path) or FakeTokenizer())
     for name, value in (("SN120_PUBLIC_URL", "none"), ("SN120_V2_CHAIN_NETWORK", "none"), ("SN120_WORK_DIR", str(tmp_path / "work")), ("SN120_IMAGE_DIGEST", IMAGE)):
@@ -135,7 +135,8 @@ def test_the_run_command_gets_the_gpu_parts_and_needs_the_box_settings(tmp_path,
     stack = assembly.stack(StackContext(tmp_path / "state", Params(), "run"))
     runner = stack.runner
     assert isinstance(runner, LocalRunner) and isinstance(runner.trainer, LoraTrainer) and isinstance(runner.evaluator, VllmEvaluator)
-    assert isinstance(stack.folder, LoraFolder) and runner.image_digest == IMAGE and runner.evaluator.grader == "grade-pool"
+    assert isinstance(stack.folder, LoraFolder) and runner.image_digest == IMAGE
+    assert runner.evaluator.grader._pool is None and runner.evaluator.grader._start() == "grade-pool"
     assert stack.pins is not None and assembly.stack(StackContext(tmp_path / "state", Params(), "end-round")).pins is None
     monkeypatch.delenv("SN120_IMAGE_DIGEST")
     with pytest.raises(ConfigError):
