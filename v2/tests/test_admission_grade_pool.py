@@ -12,9 +12,9 @@ import time
 import pytest
 
 from sn120_v2 import admission, layout
-from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, TIME_LIMIT, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
+from sn120_v2.admission import CHECK_FAULT, FAULT, FAULT_HOLD_S, FAULT_TRIES, TIME_LIMIT, EnvGrader, Invalid, StoreAdmission, check_batch, env_grader, pool_grader
 from sn120_v2.canonical import sha256_hex
-from sn120_v2.envs.math_pool import load_pool
+from sn120_v2.envs.math_pool import POOL_V2_0_FILE, POOL_V2_0_SHA256, load_pool
 from sn120_v2.errors import InfraError
 
 math_grader = pytest.importorskip("sn120_v2.envs.math_grader", reason="install the envs extra: uv pip install -e '.[dev,envs]'")
@@ -112,6 +112,23 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
             assert adm._tries == {} and adm._seen == {} and adm._held == {}
         finally:
             down.close()
+
+
+def test_a_dropped_pool_prompt_is_non_pool_for_admission(build):
+    old = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    pool = load_pool()
+    removed = next(task_id for task_id in old.task_ids if task_id not in pool.task_ids)
+    task = old.task(removed)
+    official = EnvGrader(pool, lambda jobs: pytest.fail("a non-pool row must not be graded"), chunk=1)
+    assert official(task.batch_prompt(), "answer", False) is None
+    think = "<think>\n" + "step " * 40 + "\n</think>\n"
+    rows = [{"output": think + "\\boxed{123}", "reward": 0.25}, {"output": think + "\\boxed{456}", "reward": 0.75}]
+    groups = [{"prompt": task.batch_prompt(), "rollouts": rows}]
+    batch = check_batch(file(groups, "miner"), "miner", build.params(min_pool_prompt_frac=0.0), tokens=WordTokens(), grader=official)
+    assert batch.checked == ("format", "tokens", "grader")
+    with pytest.raises(Invalid, match="0 of 1 prompts") as failure:
+        check_batch(file(groups[:1], "miner"), "miner", build.params(min_pool_prompt_frac=1.0), tokens=WordTokens(), grader=official)
+    assert failure.value.rule == "pool"
 
 
 def test_known_good_file_of_the_checker_passes_with_the_real_math_env(build, monkeypatch):

@@ -96,6 +96,30 @@ def test_bootstrap_with_the_real_parts_pins_params_mirrors_the_journal_and_publi
     assert main(["publish", *common]) == 0 and len(box.list(layout.JOURNAL)) == before
 
 
+def test_stack_start_enforces_a_nonempty_env_pin_and_names_both_values(tmp_path, box, monkeypatch):
+    start(tmp_path, box)
+    from sn120_v2.envs.math_grader import env_pin
+
+    common = ["--state-dir", str(tmp_path / "state"), "--stack", "sn120_v2.assembly:stack"]
+    wrong_file = tmp_path / "wrong.json"
+    wrong_file.write_bytes(Params(env_pin="0" * 64).to_json())
+    assert main(["set-params", *common, "--params", str(wrong_file)]) == 2
+    # The context's load has the same contract as journal loading: it makes
+    # the pinned params active. No store or service is involved in this check.
+    context = StackContext(tmp_path / "wrong-pin", Params(), "status")
+    def loaded(store=None):
+        context.params = Params(env_pin="0" * 64)
+        return load(tmp_path / "state" / JOURNAL_FILE)
+    monkeypatch.setattr(context, "load", loaded)
+    with pytest.raises(ConfigError) as failure:
+        assembly.stack(context)
+    assert "0" * 64 in str(failure.value) and env_pin() in str(failure.value)
+    pinned = tmp_path / "pinned.json"
+    pinned.write_bytes(Params(env_pin=env_pin()).to_json())
+    assert main(["set-params", *common, "--params", str(pinned)]) == 0
+    assert assembly.stack(StackContext(tmp_path / "correct-pin", Params(), "status")) is not None
+
+
 def test_a_second_machine_reads_the_same_state_from_the_store_alone(tmp_path, box):
     start(tmp_path, box)
     context = StackContext(tmp_path / "another-machine", Params(), "status")

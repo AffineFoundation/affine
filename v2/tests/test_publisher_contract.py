@@ -11,7 +11,7 @@ import pytest
 from sn120_v2 import layout, links, public, publisher, r2, sim
 from sn120_v2.admission import RULES, TIME_LIMIT, TRANSIENT, check_batch
 from sn120_v2.canonical import sha256_hex, to_jsonable
-from sn120_v2.envs.math_pool import MANDATE
+from sn120_v2.envs.math_pool import MANDATE, POOL_V2_0_SHA256
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
 from sn120_v2.types import HeadVersion
@@ -86,6 +86,15 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     assert subset + "; a list with in_proj_z must hold in_proj_qkv too |" in text
     assert "placeholder" not in text.lower()  # the miner's text states the launch values as they are
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
+
+
+def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
+    _, text, _ = published(world(tmp_path).publisher.snapshots[-1])
+    flat = " ".join(text.split())
+    assert "Task pool: 20,120 tasks" in flat
+    assert "1,454 tasks of the earlier pool" in flat and POOL_V2_0_SHA256[:8] in flat
+    assert "https://github.com/AffineFoundation/affine/blob/v2/v2/sn120_v2/envs/math_pool_v2_1.dropped.json" in flat
+    assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
 
 
 def test_every_number_follows_the_pinned_params(tmp_path):

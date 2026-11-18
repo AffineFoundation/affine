@@ -12,13 +12,16 @@ from sn120_v2 import layout
 from sn120_v2.canonical import manifest_digest
 from sn120_v2.cli import main
 from sn120_v2.errors import ConfigError, ContractError, FencedError, HeadMismatchError, InfraError, LeaseError, V2Error
+from sn120_v2.irt import IRTSampler
 from sn120_v2.gpu import plan
-from sn120_v2.journal import read_journal
+from sn120_v2.journal import Journal, read_journal
 from sn120_v2.params import GenesisSpec, Params, Recipe
 from sn120_v2.payout import weights
 from sn120_v2.public import TEXT_LIMIT, public_text, snapshot
 from sn120_v2.queue import waiting
-from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, STORE_DIR, SimAdmission, SimWorld, sim_params
+from sn120_v2.sim import JOURNAL_FILE, SIM_IMAGE, STORE_DIR, Controller, SimAdmission, SimWorld, sim_params
+from sn120_v2.controller import stored_irt_snapshot
+from sn120_v2.canonical import canonical_json
 from sn120_v2.state import HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, load
 from sn120_v2.store import LocalStore, put_record
 from sn120_v2.types import ChainSnapshot, HeadManifest, King, Registration, V1Import
@@ -35,6 +38,42 @@ def kinds(world: SimWorld) -> list[str]:
 
 def seats(record) -> list[int]:
     return [entry.reg.uid for lease in record.leases for entry in lease.entries]
+
+
+def test_a_new_pool_round_opens_after_old_pool_rounds_and_journal_replay(world):
+    old_pool, dropped = world.pool[:80], set(world.pool[60:80])
+    new_pool = world.pool[:60] + world.pool[80:]
+    world.sampler = IRTSampler(old_pool, world.params)
+    world.controller.sampler = world.sampler
+    world.register(1, 0.3)
+    old_round = world.round()
+    old_draw = world.store.get(layout.ticket(old_round.round_id, old_round.leases[0].lease_id))
+    old_snapshot_id = world.controller.state.snapshot_id
+    assert set(dropped) & set(json.loads(old_draw)["draw"]["task_ids"])
+    assert world.store.exists(layout.irt_snapshot(old_snapshot_id))
+    old_state = load(world.root / JOURNAL_FILE)
+
+    world.sampler = IRTSampler(new_pool, world.params, snapshot=stored_irt_snapshot(world.store, world.controller.state))
+    world.controller = Controller(
+        Journal(world.root / JOURNAL_FILE, "sim-controller", world.clock()),
+        world.store, world.admission, world.sampler, world.params,
+        folder=world.folder, publisher=world.publisher,
+    )
+    world.register(2, 0.2)
+    new_round = world.round()
+    ticket = json.loads(world.store.get(layout.ticket(new_round.round_id, new_round.leases[0].lease_id)))
+    draw = ticket["draw"]
+    assert set(draw["task_ids"]) <= set(new_pool) and not dropped & set(draw["task_ids"])
+    assert draw["snapshot_id"] == new_round.snapshot_id != old_snapshot_id
+    snapshot = json.loads(world.store.get(layout.irt_snapshot(new_round.snapshot_id)))
+    assert snapshot["snapshot_id"] == new_round.snapshot_id and set(snapshot["tasks"]) == set(new_pool)
+    replayed = load(world.root / JOURNAL_FILE)
+    assert replayed.rounds[-2].round_id == old_round.round_id
+    assert replayed.rounds[-2].snapshot_id == old_round.snapshot_id
+    assert replayed.snapshot_id == world.controller.state.snapshot_id
+    assert json.loads(canonical_json(replayed.rounds[-2].to_dict())) == json.loads(canonical_json(old_state.rounds[-1].to_dict()))
+    world.reopen()  # state loading does not need a task table of an old draw
+    assert world.controller.state.round is None and len(world.controller.state.rounds) == 2
 
 
 def test_a_round_applies_the_winner_folds_the_head_and_names_a_king(world):

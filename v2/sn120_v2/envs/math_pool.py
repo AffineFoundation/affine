@@ -16,8 +16,12 @@ from ..canonical import sha256_hex
 from ..errors import ContractError, VerifyError
 
 ENV_ID = "math"
-POOL_FILE = Path(__file__).with_name("math_pool_v2.jsonl")
-POOL_SHA256 = "8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc"
+POOL_FILE = Path(__file__).with_name("math_pool_v2_1.jsonl")
+POOL_SHA256 = "9c3010317c403da0f013e15d9420cab2c241d388f3325f3de8f0ad2cb5282a0a"
+# v2.1 is a drop-only change: the archive keeps the exact v2.0 bytes for replay of old rounds.
+POOL_V2_0_FILE = Path(__file__).parent / "archive" / "math_pool_v2.jsonl"
+POOL_V2_0_SHA256 = "8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc"
+POOL_V2_1_FILE, POOL_V2_1_SHA256 = POOL_FILE, POOL_SHA256
 
 # The instruction every prompt carries. Scoring sends it as the system message.
 MANDATE = (
@@ -72,14 +76,39 @@ class MathPool:
         return self._by_problem.get(prompt.removeprefix(MANDATE + "\n\n"))
 
 
-def load_pool(path: Path = POOL_FILE, sha256: str = POOL_SHA256) -> MathPool:
-    """Read and verify the pool. Raises ``VerifyError`` unless the bytes of the file hash to ``sha256``."""
+def load_pool(path: Path | None = None, sha256: str | None = None) -> MathPool:
+    """Read and verify the current pool, or an explicit path and SHA for an archived pool.
+
+    ``path`` without ``sha256`` keeps the historical form: it must be a file
+    with the current pool's exact bytes.
+    """
+    path = POOL_FILE if path is None else Path(path)
+    expected = POOL_SHA256 if sha256 is None else sha256
     try:
         data = path.read_bytes()
     except OSError as error:
         raise VerifyError(f"the math pool file {path} cannot be read: {error}") from error
     found = sha256_hex(data)
-    if found != sha256:
-        raise VerifyError(f"the math pool file {path} has sha256 {found}, expected {sha256}")
+    if found != expected:
+        raise VerifyError(f"the math pool file {path} has sha256 {found}, expected {expected}")
     rows = [json.loads(line) for line in data.decode("utf-8").splitlines()]
     return MathPool(tuple(Task(row["id"], row["env"], row["problem"], row["answer"]) for row in rows), found)
+
+
+def pool_for_draw(task_ids: tuple[str, ...], pool: str = "auto") -> MathPool:
+    """The pool for a round's draw: v2.1 normally, v2.0 when its draw needs a removed task.
+
+    ``pool`` is ``auto``, ``current`` or ``v2.0``. The last two force one of
+    the two shipped, SHA-pinned files. An unknown task is refused by ``task``.
+    """
+    if pool not in ("auto", "current", "v2.0"):
+        raise ValueError(f"unknown pool {pool!r}")
+    if pool == "v2.0":
+        return load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    current = load_pool()
+    missing = set(task_ids) - set(current.task_ids)
+    if pool == "auto" and missing:
+        return load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    if missing:
+        raise ContractError(f"the draw has a task that is not in the current math pool: {sorted(missing)[0]}")
+    return current

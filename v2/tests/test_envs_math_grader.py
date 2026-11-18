@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import sys
 import threading
 import time
 import tomllib
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from sn120_v2.canonical import is_sha256
-from sn120_v2.envs.math_pool import Task, load_pool
+from sn120_v2.envs.math_pool import POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 from sn120_v2.errors import InfraError
 from sn120_v2.types import CAP, ERROR, FAIL, PASS
 
@@ -56,7 +57,7 @@ def task() -> Task:
 def recorded():
     """The header, the recorded v1 cases, and the v2 grade of each case."""
     header, *cases = [json.loads(line) for line in RECORDED.read_text().splitlines()]
-    pool = load_pool()
+    pool = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)  # recorded cases include tasks dropped by pool v2.1
     jobs = [
         (pool.task(case["task_id"]) if "task_id" in case else Task("case", "test", case["problem"], case["gold"]), case["output"], case["stop"] != "eos")
         for case in cases
@@ -190,6 +191,9 @@ def test_another_package_version_is_a_box_failure(monkeypatch):
         math_grader.GradePool(workers=1)
 
 
-def test_the_env_pin_changes_with_the_pool():
+def test_the_env_pin_changes_with_the_pool(capsys):
     pin = math_grader.env_pin()
     assert is_sha256(pin) and pin == math_grader.env_pin() and pin != math_grader.env_pin("0" * 64)
+    assert math_grader.main(["--env-pin"]) == 0
+    assert capsys.readouterr().out == pin + "\n"
+    assert math_grader.main([]) == 2

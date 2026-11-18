@@ -16,8 +16,8 @@ pytest.importorskip("sn120_v2.gpu.trainer")
 
 from sn120_v2 import assembly, layout, replicate  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
-from sn120_v2.envs.math_pool import load_pool  # noqa: E402
-from sn120_v2.errors import ConfigError, InfraError, VerifyError  # noqa: E402
+from sn120_v2.envs.math_pool import POOL_V2_0_FILE, POOL_V2_0_SHA256, load_pool, pool_for_draw  # noqa: E402
+from sn120_v2.errors import ConfigError, ContractError, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu import plan  # noqa: E402
 from sn120_v2.gpu import resident as resident_module  # noqa: E402
 from sn120_v2.gpu.evaluator import ServeSettings  # noqa: E402
@@ -132,7 +132,7 @@ def world(tmp_path, build, monkeypatch):
     farm, job = Farm(), FakeJob()
     serve = dict(spawn=farm.spawn, http=farm.http, sleep=lambda s: None, settings=ServeSettings(start_timeout_s=10.0))
     real_parts = replicate.parts
-    monkeypatch.setattr(replicate, "parts", lambda work, gpus=None: real_parts(work, gpus, train_spawn=job, serve=serve))
+    monkeypatch.setattr(replicate, "parts", lambda work, gpus=None, **kwargs: real_parts(work, gpus, train_spawn=job, serve=serve, **kwargs))
     monkeypatch.setattr(replicate, "GradePool", Grades)
     monkeypatch.setattr(replicate, "nvidia_smi", lambda: SMI)
     monkeypatch.setattr(replicate, "head_tokens", lambda directory: WordTokens)
@@ -315,6 +315,55 @@ def test_the_draw_is_the_one_of_the_round(world):
         replicate.the_round(replicate.Contract.load(world.write(round=None)))
 
 
+def test_a_draw_with_a_removed_task_uses_the_archived_pool(world, monkeypatch):
+    old = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    removed = next(task_id for task_id in old.task_ids if task_id not in POOL.task_ids)
+    selected = pool_for_draw((removed,))
+    assert selected.task(removed) == old.task(removed)
+    with pytest.raises(ContractError, match="not in the current math pool"):
+        pool_for_draw((removed,), "current")
+    # The evaluator and admission of a past round receive the same archive.
+    # No GPU is needed to check that selection at the construction seam.
+    class Evaluator:
+        def __init__(self, store, box, pool, grades, **kwargs):
+            self.pool, self.grader = pool, grades
+    class Trainer:
+        resident = None
+    monkeypatch.setattr(replicate, "VllmEvaluator", Evaluator)
+    monkeypatch.setattr(replicate, "LoraTrainer", lambda *args, **kwargs: Trainer())
+    monkeypatch.setattr(replicate, "BaseOnly", lambda *args: SimpleNamespace())
+    parts = replicate.parts(world.work, pool=selected, grades=Grades())
+    assert parts.evaluator.pool is selected
+
+
+def test_the_cli_replicates_a_draw_on_the_archived_pool(world, capsys, monkeypatch):
+    old = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    old_draw = draw_from_snapshot(IRTSampler(list(old.task_ids), world.params).public_snapshot(), world.view["round_seed"], world.view["n_tasks"])
+    snapshot = dict(IRTSampler(list(old.task_ids), world.params).public_snapshot())
+    for seed in range(1000):
+        if set(old_draw.task_ids) - set(POOL.task_ids):
+            break
+        old_draw = draw_from_snapshot(snapshot, f"old-pool-{seed}", world.view["n_tasks"])
+    removed = next(task_id for task_id in old_draw.task_ids if task_id not in POOL.task_ids)
+    assert removed in draw_from_snapshot(snapshot, old_draw.round_seed, world.view["n_tasks"]).task_ids
+    world.store = LocalStore(world.public)
+    world.store.put(layout.irt_snapshot(snapshot["snapshot_id"])[len("public/"):], json.dumps(snapshot).encode())
+    world.view = world.view | {"irt_snapshot_id": snapshot["snapshot_id"], "round_seed": old_draw.round_seed}
+    world.write()
+    fetch(world, capsys)
+    real_parts = replicate.parts
+    seen = []
+    def capture(work, gpus=None, **kwargs):
+        made = real_parts(work, gpus, **kwargs)
+        seen.append(made.evaluator.pool)
+        return made
+    monkeypatch.setattr(replicate, "parts", capture)
+    code, report = run(world, capsys)
+    assert code == 0
+    assert seen[0].sha256 == POOL_V2_0_SHA256 and removed in seen[0].task_ids
+    assert next(note for note in report["differences"] if note["what"] == "pool")["text"].find("archived v2.0") >= 0
+
+
 def test_first_tasks_is_a_prefix_of_the_round_and_a_seed_of_your_choice_needs_a_snapshot(world, tmp_path):
     contract = replicate.Contract.load(world.write())
     whole = draw_from_snapshot(world.snapshot, "seed-7", 8)
@@ -465,7 +514,7 @@ def test_the_document_names_every_command_option_and_difference(world):
     for argv in commands:
         replicate.parser().parse_args(argv)  # exits on an argument the tool does not have
     options = {option for name in ("compare", "fetch", "run") for option in long_options(name)}
-    assert len(options) == 14 and all(f"`{option}" in text for option in options)
+    assert len(options) == 15 and all(f"`{option}" in text for option in options)
     pinned = dataclasses.replace(world.params, recipe=dataclasses.replace(world.params.recipe, code_digest=h("the box's code")))
     local, notes = replicate.local_params(pinned, "another install", "another code", 1)
     view = world.view | {"head_version_id": h("another head"), "params_hash": h("other params")}
