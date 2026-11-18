@@ -854,7 +854,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     where = build.add_mutually_exclusive_group()
     where.add_argument("--links", metavar="SOURCE", help="the links file (read_links.json): a file or an address (default: the one that mining.json names)")
     where.add_argument("--store", action="store_true", help="read the object store with the SN120_R2_* variables of this machine")
-    build.add_argument("--head", metavar="VERSION_ID", help="the folded head to make (default: the last one of the chain)")
+    build.add_argument("--head", metavar="VERSION_ID", help="the folded head to make (default: the last one of the chain). The public links file has links for the newest checkpoint and the LoRAs after it only: with it, a head that is older than that checkpoint can not be made")
     build.add_argument("--device", help=f"where the product runs: cpu or cuda:N (default: {DEVICES_ENV}, else cpu)")
     args = parser.parse_args(argv)
     try:

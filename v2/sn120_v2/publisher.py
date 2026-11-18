@@ -9,8 +9,9 @@ Every number in the text comes from the ``Params`` in the snapshot. The
 miner-settable bounds come from ``Recipe.miner_bounds`` and the object keys
 from ``layout.py``. No cap, bound or key is typed here. The one exception is
 ``READ_LINKS``: the site pull job owns that file, and no module names it yet.
-``REBUILD_COST`` is measured, and it shows only when the box keeps the folded
-weight files (``head_chain`` in the snapshot).
+``REBUILD_COST`` and the three ``..._DOWNLOAD`` sizes are measured, and they
+show only when the box keeps the folded weight files (``head_chain`` in the
+snapshot).
 
 ``python -m sn120_v2.publisher check`` reads a published pair and fails when
 llms.txt is not true to the params of mining.json (``check_pair``; the
@@ -74,12 +75,18 @@ READ_LINKS = "public/read_links.json"
 REPLICATE_MODULE, REPLICATE_BACKEND, REPLICATE_DOC = "sn120_v2.replicate", "backend", "v2/REPLICATE.md"
 # The rebuild tool needs the GPU install too, so the publisher names it and does not import it. A test compares the names.
 REBUILD_MODULE, FOLD_IMPLEMENTATION_ENV = "sn120_v2.headfold", "SN120_FOLD_IMPLEMENTATION"
-# What a rebuild of the launch model costs a reader. These numbers are measured on that model, not derived from the params.
+# What a fold of the launch model costs a reader. These numbers are measured on that model, not derived from the params.
 REBUILD_COST = (
-    "the first run downloads 37.6 GB, and a fold needs about 115 GB of free disk and about 2 GB of memory. One fold of a "
-    "rank 64 LoRA with the kernel `fixed-order-v1` takes about 21 minutes on 4 CPU cores (calculated from the measured "
-    "time of one weight shape). `--device cuda:0` runs the product on a GPU; that time is not measured."
+    "a fold needs about 115 GB of free disk and about 2 GB of memory. One fold of a rank 64 LoRA with the kernel "
+    "`fixed-order-v1` takes about 21 minutes on 4 CPU cores (calculated from the measured time of one weight shape). "
+    "`--device cuda:0` runs the product on a GPU; that time is not measured."
 )
+# What the two reader commands download for a head of the launch model. Measured, not derived from the params. Each
+# download has one size and one name in the text: the fp32 master (11 files) with the small files of the base (8), the
+# same with the 3 files of one rank 64 LoRA, and the base (12 files).
+CHECKPOINT_DOWNLOAD = "19 files, 37.67 GB"
+FOLD_DOWNLOAD = "22 files, 38.14 GB"
+BASE_DOWNLOAD = "12 files, 18.85 GB"
 LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
@@ -1120,8 +1127,9 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  seat, read `outcome` and `status`, not the words of a text.",
         *(
             [
-                "- The LoRA of a winner has a download link while it is stacked on the head, and after its fold for as long",
-                "  as a rebuild of the head needs it: until a newer head is a checkpoint (section 1).",
+                "- The LoRA of a winner has a download link while it is stacked on the head, and after its fold until the",
+                "  head that the fold made, or a newer head, is a checkpoint (section 1). From then a rebuild starts at that",
+                "  checkpoint, and the LoRA has no link.",
             ]
             if doc.get("head_chain")
             else [
@@ -1205,26 +1213,50 @@ def _weight_lines(doc: Mapping[str, Any], where: str) -> list[str]:
     kernels = ", ".join(f"`{kernel}`" for kernel in sorted({str(step["kernel"]) for step in steps}))
     behind = f"The base of head M is {len(steps)} fold(s) after it (kernel {kernels})." if steps else "The base of head M is that checkpoint."
     mining = f"{where}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
+    # mining.json and this text are older than the marker of a checkpoint until the box publishes again.
+    ahead = [
+        "  The links file can be newer than this text. Once the box has stored the full files of head M, the links file",
+        "  has head M as its one checkpoint: it has no link for the checkpoint that this line names, and none for the",
+        "  LoRA of a fold. This text and mining.json stay as they are until the box writes them again: at the latest",
+        "  when the next round closes. In that time the two commands below still get the base of head M: they use the",
+        "  files of head M in the links file.",
+    ] if steps else []
     return [
         "- Weight files are not served under the public address, and the store does not hold the weight files of every",
         "  head. It holds the full files (the base and the fp32 master) of each **checkpoint** head, and the LoRA of every",
         "  winner. The launch model is a checkpoint. You make the base of a head that is not a checkpoint on your",
         "  machine: start from a checkpoint and fold each LoRA after it, in order. The result is exact: each file must",
         "  have the sha256 that the head manifest names.",
+        "- The links file (below) has links for a part of the store only: the newest checkpoint, the LoRAs of the folds",
+        "  after it, and the LoRAs that are stacked on the head. It has no link for an older checkpoint, and none for a",
+        "  LoRA whose fold is in the newest checkpoint. So from the public files you can make the newest head, and no",
+        "  head that is older than the newest checkpoint.",
         "- `head_chain` in mining.json has the newest checkpoint (`start`) and one entry in `steps` for each fold after",
         "  it: the LoRAs of the fold, its `kernel`, and the ids of the base and the fp32 master after it. The whole chain",
-        f"  from the launch model is `{chain['file']}`.",
-        f"- The newest checkpoint is head `{start['version_id']}`. {behind}",
+        f"  from the launch model is `{chain['file']}`. That file is a record of ids with no links, and the links file",
+        "  has no links for the heads in it that are older than the newest checkpoint.",
+        f"- At this snapshot the newest checkpoint is head `{start['version_id']}`. {behind}",
+        *ahead,
         f"- Signed download links are in {where}/{READ_LINKS}. Each link works until `expires_at`; fetch the file again",
         "  for new links. Check each file against its `sha256` and `size`. `head_version_id` in that file names the head",
         "  of the links. `loras` has the LoRAs that are stacked on the head. `checkpoints` has the base and the fp32",
         "  master of the newest checkpoint, and `chain_loras` has the LoRAs of each fold after it. `base` and `master`",
         "  are the files of the base of head M when it is a checkpoint, and null when it is not.",
         f"- To get the base of head M: `python -m {REPLICATE_MODULE} fetch` (section 10), or `python -m {REBUILD_MODULE}",
-        f"  rebuild --chain {mining} --work <directory>`. It downloads what the directory does not hold (the first",
-        "  time: the fp32 master of the checkpoint, which has two times the bytes of the base), does each fold again,",
-        "  checks every file, and leaves the base in `<directory>/cache/<base_hash>/`. After that, a new king costs one",
-        "  LoRA download and one fold. Keep the directory: the next fold starts from the fp32 master in it.",
+        f"  rebuild --chain {mining} --work <directory>`. Each command downloads what it needs and the directory does",
+        "  not hold, checks every file, and leaves the base in `<directory>/cache/<base_hash>/`. What it needs depends",
+        "  on the links file; the sizes below are those of the launch model. While `base` there is null, the two",
+        "  commands make the base in the same way: they start from the newest head of `head_chain` that the directory",
+        "  holds with its fp32 master, or else from the checkpoint (its fp32 master and its small files:",
+        f"  {CHECKPOINT_DOWNLOAD}), download the LoRA of each fold after that start, and do each of these folds again.",
+        f"  A start from the checkpoint with one fold of a rank 64 LoRA downloads {FOLD_DOWNLOAD}. After that, a new",
+        "  king costs one LoRA download and one fold only while the links file has that LoRA. Once the box has stored",
+        "  the full files of the new head, the links file has that head as its one checkpoint and no link for the LoRA:",
+        "  `headfold rebuild` then downloads the fp32 master and the small files of that checkpoint",
+        f"  ({CHECKPOINT_DOWNLOAD}) and does no fold, also when the directory holds the head before. `replicate fetch`",
+        f"  then downloads the base only ({BASE_DOWNLOAD}), which leaves no fp32 master of that head for a later fold",
+        "  to start from.",
+        "  Keep the directory: when the links file has the LoRA, the fold starts from the fp32 master in it.",
         f"- `kernel` names the rule for the arithmetic of the LoRA product. `{FIXED_ORDER}` gives the same bytes on each",
         f"  machine. `{MATMUL}` is the matrix product of torch on the CPU of the box, and another machine can give other",
         "  bytes: start from a checkpoint after such a fold. Stop when you do not know a kernel name.",
