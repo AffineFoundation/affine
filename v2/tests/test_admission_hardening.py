@@ -188,7 +188,7 @@ def test_the_known_good_case_is_a_pool_task_with_its_own_answer(build):
     with pytest.raises(InfraError, match="known-good"):
         official.probe()
     with pytest.raises(InfraError, match="2 grades for 3 rows"):  # a pool that loses a row is our failure
-        list(pool_grader(Pool(), SimpleNamespace(grade_many=lambda jobs: [toy_grade(*job) for job in jobs][:2])).many([("double 1", "x", False)] * 3))
+        list(pool_grader(Pool(), SimpleNamespace(grade_many=lambda jobs: [toy_grade(*job) for job in jobs][:2]), chunk=3).many([("double 1", "x", False)] * 3))
 
 
 def test_the_grade_pool_gets_the_rows_in_chunks_and_the_check_stops_at_the_first_bad_row(build):
@@ -196,11 +196,11 @@ def test_the_grade_pool_gets_the_rows_in_chunks_and_the_check_stops_at_the_first
     big = [{"prompt": "my own task", "rollouts": [row(1, 1), row(2, 0)]}, {"prompt": "double 4", "rollouts": rollouts}]
     pool = ToyGradePool()
     assert rule(file(big), build.params(), grader=pool_grader(Pool(), pool, chunk=16)) == ""
-    assert pool.calls == [14, 16, 10], "42 rows in chunks of 16; the 2 rows outside the pool are not sent"
+    assert pool.calls == [16, 14, 16, 10], "the known-good cases for the new workers; then 42 rows in chunks of 16; the 2 rows outside the pool are not sent"
     rollouts[10] = row(8, 1, THINK + "slow ")
     pool = ToyGradePool()
     assert rule(file(big), build.params(), grader=pool_grader(Pool(), pool, chunk=16)) == TIME_LIMIT
-    assert pool.calls == [14, admission.PROBE_TASKS], "the bad row is in the first chunk: the other rows are never graded; then the known-good case"
+    assert pool.calls == [16, 14, 16, admission.PROBE_TASKS], "the bad row is in the first chunk: the other rows are never graded; then the known-good cases, first for the new worker"
 
 
 # --- a text that breaks the tokenizer skips its own file only ---
@@ -491,17 +491,23 @@ def test_row_that_gets_its_grade_at_the_second_try_is_never_counted(build):
     found = reasons(adm, 3 * FAULT_TRIES)
     assert found[:3] == [f"groups[{i}].rollouts[{j}]: the official grader fails on this row" for i, j in ((0, 0), (0, 1), (1, 0))]
     assert not any("(check" in reason for reason in found) and adm._seen == {}
-    assert pool.calls[:3] == [20, admission.PROBE_TASKS, 1], "the file, the known-good cases, then the same row alone"
+    assert pool.calls[:5] == [32, 20, 32, admission.PROBE_TASKS, 1], "the new workers, the file, the new worker of the lost row, the known-good cases, then the same row alone"
 
 
 def test_known_good_case_that_gets_no_grade_means_no_failed_row_is_counted(build):
     """A pool that loses rows often: the row of the file dies twice, but one known-good case dies too."""
 
     def job(task, output, capped):
-        lost = "die" in output or (task.n == 2 and "step" not in output)  # the known-good case of task 2 is the bare answer
-        return SimpleNamespace(reward=0.0, machine_cause="worker-died") if lost else toy_grade(task, output, capped)
+        return SimpleNamespace(reward=0.0, machine_cause="worker-died") if "die" in output else toy_grade(task, output, capped)
 
-    official = pool_grader(Pool(), ToyGradePool(job))
+    class LossyPool(ToyGradePool):
+        def grade_many(self, jobs):
+            grades = super().grade_many(jobs)
+            if len(jobs) == admission.PROBE_TASKS:  # the known-good cases after a failed row; not the ones that make new workers ready
+                grades[2] = SimpleNamespace(reward=0.0, machine_cause="worker-died")
+            return grades
+
+    official = pool_grader(Pool(), LossyPool(job))
     assert official.probe() is False and graders()["pool_grader"].probe() is True
     adm = one_file(poisoned("die"), build.params(), grader=official)
     assert set(reasons(adm, 3 * FAULT_TRIES)) == {"groups[3].rollouts[1]: the official grader fails on this row"} and adm._seen == {}
@@ -511,7 +517,7 @@ def test_row_over_its_time_limit_is_not_graded_a_second_time(build):
     pool = ToyGradePool()
     adm = one_file(poisoned("slow"), build.params(), grader=pool_grader(Pool(), pool))
     assert reasons(adm, FAULT_TRIES)[-1].endswith(STAYS)
-    assert pool.calls == [20, admission.PROBE_TASKS] * FAULT_TRIES, "a file that hangs costs its time limit once for each check"
+    assert pool.calls == [32] + [20, 32, admission.PROBE_TASKS] * FAULT_TRIES, "a file that hangs costs its time limit once for each check; the known-good cases go to the new worker first"
 
 
 def test_fault_that_moves_from_row_to_row_never_reaches_the_limit(build):
@@ -562,7 +568,7 @@ def test_run_names_the_cause_at_each_try_when_our_failure_stops_the_opening_of_a
     rounds = len(load(directory / JOURNAL_FILE).rounds)
     assert main(["run", "--state-dir", str(directory), "--stack", "sn120_v2.sim:stack", "--rounds", "1", "--max-idle", "3", "--idle-sleep", "0"]) == 0
     lines = capsys.readouterr().err.splitlines()
-    assert [line for line in lines if line.startswith("waiting")] == ["waiting: the official grader gives no known-good case its reward"] * 3
+    assert [line for line in lines if line.startswith("waiting")] == [f"waiting: the workers of the official grader are not ready: a known-good case has no grade after {admission.WARM_TRIES} tries"] * 3
     assert sum(line.startswith("idle: ") for line in lines) == 3 and len(load(directory / JOURNAL_FILE).rounds) == rounds, "no round opens"
 
 
