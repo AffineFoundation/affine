@@ -1,0 +1,30 @@
+/* Slots page. Palette, type, header, footer and table frame come from site.css. */
+#king dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;margin:0;background:var(--line);border:1px solid var(--line);border-radius:3px}
+#king dl div{background:var(--bg);padding:12px 14px;height:68px;overflow:hidden}
+#king dt{font:10px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+#king dd{margin:8px 0 0;font:400 20px/1 Haffer,Arial,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+#king dd .key{font:400 16px/1 Haffer,Arial,sans-serif;color:var(--ink)}
+#slots .scroll{height:280px}
+#slots th:nth-child(1),#slots td:nth-child(1),#queue th:nth-child(1),#queue td:nth-child(1){width:48px}
+#slots th:nth-child(2),#slots td:nth-child(2){width:64px}
+#slots th:nth-child(4),#slots td:nth-child(4){width:110px}
+#slots th:nth-child(5),#slots td:nth-child(5),#slots th:nth-child(6),#slots td:nth-child(6),#slots th:nth-child(7),#slots td:nth-child(7){width:78px;text-align:right}
+#slots th:nth-child(8),#slots td:nth-child(8){width:110px}
+#slots tr.king td{font-weight:600}
+.tenure{display:flex;align-items:center;gap:8px}
+.tenure span{font-variant-numeric:tabular-nums}
+.tenure-bar{display:block;flex:1;height:4px;background:var(--line);border-radius:2px;overflow:hidden;min-width:36px}
+.tenure-bar>i{display:block;height:100%;background:var(--performance);width:0}
+#how p,#how li,.guide-body p,.guide-body li{margin:0 0 10px;font:15px/1.55 Haffer,Arial,sans-serif;max-width:72ch}
+#how ol,.guide-body ol{margin:0 0 14px;padding-left:22px}
+#how .note,.guide-body .note{color:var(--muted);font-size:13px;line-height:1.5}
+#how a,.guide-body a{text-decoration:underline;text-underline-offset:3px}
+.guide-body h2,.guide-body h3{margin:22px 0 10px;font:400 18px/1.25 Haffer,Arial,sans-serif;letter-spacing:-.02em}
+.guide-body pre,.guide-body code{font:12px/1.5 var(--mono)}
+.guide-body pre{overflow:auto;padding:12px;border:1px solid var(--line);border-radius:3px}
+.pill.king{color:var(--performance)}
+.pill.challenging{color:var(--accepted)}
+.pill.banned{color:var(--rejected)}
+.pill.active{color:var(--ink)}
+.scroll td.empty{color:var(--muted);text-align:left}
+@media(max-width:700px){#king dl{grid-template-columns:repeat(2,minmax(0,1fr))}#king dd{font-size:16px}}
