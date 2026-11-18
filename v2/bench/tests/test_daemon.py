@@ -743,7 +743,7 @@ def test_disabled_gsm8k_keeps_its_published_history_as_display_only_data(world):
     assert old["score"] == 0.91 and any(r["model_id"] == gen and r["benchmark_id"] == "gsm8k_platinum" for r in published["results"])
     by_id = {b["id"]: b for b in published["benchmarks"]}
     assert by_id["gsm8k"]["enabled"] is False and by_id["gsm8k"]["in_avg"] is False
-    assert by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"] is False
+    assert by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"] is True
     view = BENCH_VIEW(published)
     assert "gsm8k" not in {c["id"] for c in view["columns"]}  # this deploy has no v2/site change: history stays in the file
     assert next(r for r in view["rows"] if r["kind"] == "genesis")["cells"]["gsm8k"]["score"] == 0.91

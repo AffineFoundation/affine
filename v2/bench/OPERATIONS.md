@@ -45,9 +45,9 @@ uses **GSM8K-Platinum** (`madrylab/gsm8k-platinum`, revision
 questions. Its prompt, one-rollout scoring and verifier are the same as the old local GSM8K environment. The dataset revision
 is pinned, its file order is preserved, and the task indices are 0 through 1208.
 
-`gsm8k_platinum` is enabled but initially has `in_avg = false`. The operator flips it to `true` once every shown row has a
-`gsm8k_platinum` result. Until the backfill finishes, counting it would leave rows without an Avg or make their averages
-incomparable. The original `gsm8k` benchmark is disabled and display-only; its published scores and the column remain as
+`gsm8k_platinum` was flipped to `in_avg = true` on 18 Nov 2026 after every shown row, including the v1 reference rows,
+had a `gsm8k_platinum` result. It now counts in Avg, with comparable averages across rows.
+The original `gsm8k` benchmark is disabled and display-only; its published scores and the column remain as
 history. The root-level v1 `bench/` is unchanged. This deploy branch contains no `v2/site` change: only the enabled columns
 are displayed by the site's current builder; the published old `gsm8k` results stay in `benchmarks.json` as history.
 

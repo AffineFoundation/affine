@@ -74,6 +74,6 @@ def test_registry_switches_to_platinum_without_losing_old_gsm8k():
     assert new["env"] == "local-gsm8k-platinum"
     assert new["source"] == "repo:bench/environments/local-gsm8k-platinum"
     assert new["dataset"] == "madrylab/gsm8k-platinum@e762492455a1cf7967de89f05b6bef72fc713b66 (main/test, 1,209)"
-    assert (new["rollouts"], new["enabled"], new["in_avg"], new["order"]) == (1, True, False, 50)
+    assert (new["rollouts"], new["enabled"], new["in_avg"], new["order"]) == (1, True, True, 50)
     runnable = [b["id"] for b in R.benchmarks(enabled_only=True, runnable_only=True)]
     assert "gsm8k_platinum" in runnable and "gsm8k" not in runnable

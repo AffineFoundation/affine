@@ -150,6 +150,6 @@ source = "repo:bench/environments/local-gsm8k-platinum"
 dataset = "madrylab/gsm8k-platinum@e762492455a1cf7967de89f05b6bef72fc713b66 (main/test, 1,209)"
 rollouts = 1
 enabled = true
-# display-only until the operator confirms every shown row has a result; then flip to true so averages stay comparable
-in_avg = false
+# flipped 2026-11-18 after every shown row, including v1 reference rows, has a gsm8k_platinum result
+in_avg = true
 order = 50
