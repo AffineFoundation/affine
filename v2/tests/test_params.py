@@ -12,7 +12,7 @@ from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GenesisSpec, 
 SPEC_DEFAULTS = dict(
     netuid=120, env="math", batch_cap=32, max_loras_per_box=32, n_min_start=1, n_gpus=8, samples_per_task=1,
     looks=(0.25, 0.5, 1.0), max_output_tokens=65536, max_context_tokens=69632, temperature=1.0, top_p=0.95, top_k=20,
-    dtype="bfloat16", z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=128 * 1024 * 1024,
+    dtype="bfloat16", kv_cache_dtype="fp8", max_num_seqs=512, z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=128 * 1024 * 1024,
     max_prompts=2000, max_rollouts=8000, min_reasoning_tokens=32, reasoning_token_share=0.5, max_answer_only_frac=0.05,
     max_answer_repeat_frac=0.10, max_answer_repeat_count=32, reward_tolerance=0.0, calibration_tol=0.003, kings_window=10,
     burn_uid=0, weights_cadence_s=3600, budget_usd_per_hour=200.0,
@@ -75,7 +75,7 @@ def test_look_sizes_end_with_every_task():
     [
         {"batch_cap": 0}, {"batch_cap": 33}, {"n_min_start": 0}, {"n_tasks": 0}, {"looks": ()}, {"looks": (0.5, 0.9)},
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
-        {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"lease_timeout_s": 0}, {"kings_window": 0},
+        {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
     ],
 )

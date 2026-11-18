@@ -140,6 +140,15 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     assert phase["configured_clients_per_server"] == 8 and phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
 
 
+def test_default_serving_uses_hashed_fp8_and_512_sequence_params(build):
+    params = build.params()
+    argv = server_argv("/base", 8100, params)
+    assert argv[argv.index("--kv-cache-dtype") + 1] == "fp8"
+    assert argv[argv.index("--max-num-seqs") + 1] == str(params.max_num_seqs) == "512"
+    assert ServeSettings().clients_per_server == params.max_num_seqs
+    assert params.kv_cache_dtype == "fp8"
+
+
 def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
     """The solo path must not depend on cmd_run having raised NOFILE."""
     script = textwrap.dedent(
@@ -150,7 +159,7 @@ def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
         from sn120_v2.gpu.evaluator import ServeSettings, VllmEvaluator, socket_room
 
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        if hard < 2560:
+        if hard < 4736:
             raise SystemExit(77)
         resource.setrlimit(resource.RLIMIT_NOFILE, (1024, hard))
         seam = VllmEvaluator.__new__(VllmEvaluator)
@@ -177,20 +186,20 @@ def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
         pytest.skip("hard NOFILE is too low for the normal solo client budget")
     assert done.returncode == 0, done.stderr
     report = json.loads(done.stdout)
-    assert report["clients"] == 256 and report["soft"] >= 2048
-    assert report["held"] == 2048 and report["error"] is None
+    assert report["clients"] == 512 and report["soft"] >= 4096
+    assert report["held"] == 4096 and report["error"] is None
 
 
 def test_solo_budget_caps_all_servers_and_leaves_admin_and_file_room():
     seam = VllmEvaluator.__new__(VllmEvaluator)
-    seam.settings = ServeSettings(clients_per_server=256, spare_files=512, admin_sockets_per_server=8)
+    seam.settings = ServeSettings(clients_per_server=512, spare_files=512, admin_sockets_per_server=8)
     calls = []
     seam.room = lambda sockets, spare: calls.append((sockets, spare)) or 512
     assert seam.solo_client_budget(8) == 56
-    assert calls == [(2112, 576)]
+    assert calls == [(4160, 576)]
     assert 8 * (56 + 8) <= 512
-    seam.room = lambda sockets, spare: 1554
-    assert seam.solo_client_budget(3) == 256  # spare capacity does not exceed the configured client count
+    seam.room = lambda sockets, spare: 1560
+    assert seam.solo_client_budget(3) == 512  # spare capacity does not exceed the configured client count
     seam.room = lambda sockets, spare: 64
     with pytest.raises(Exception, match="open file limit"):
         seam.solo_client_budget(8)
@@ -224,5 +233,5 @@ def test_solo_round_applies_one_client_cap_to_every_server(build, tmp_path, monk
     assert {argv[argv.index("--max-num-seqs") + 1] for argv in farm.argv.values()} == {"56"}
     assert 8 * (56 + evaluator.settings.admin_sockets_per_server) <= 512
     phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
-    assert (phase["phase"], phase["n_gpus"], phase["clients_per_server"], phase["configured_clients_per_server"]) == ("solo_eval", 8, 56, 256)
+    assert (phase["phase"], phase["n_gpus"], phase["clients_per_server"], phase["configured_clients_per_server"]) == ("solo_eval", 8, 56, 512)
     assert phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]

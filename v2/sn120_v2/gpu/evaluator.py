@@ -152,7 +152,7 @@ class ServeSettings:
 
     first_port: int = 8100
     start_timeout_s: float = 1800.0
-    clients_per_server: int = 256
+    clients_per_server: int = 512
     admin_sockets_per_server: int = 8
     retries: int = 2
     spare_files: int = 512
@@ -168,14 +168,15 @@ def lora_table(params: Params, batches: int = 0) -> int:
     return batches or params.max_loras_per_box
 
 
-def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeSettings.clients_per_server, max_loras: int | None = None) -> list[str]:
+def server_argv(base_dir: str, port: int, params: Params, max_seqs: int | None = None, max_loras: int | None = None) -> list[str]:
     rank = params.recipe.bound("rank")
     max_rank = int(rank.high) if rank else params.recipe.rank
+    max_seqs = params.max_num_seqs if max_seqs is None else max_seqs
     return [
         *(sys.executable, "-m", "vllm.entrypoints.openai.api_server"),
         *("--model", base_dir, "--served-model-name", NULL_MODEL),
         *("--host", "127.0.0.1", "--port", str(port)),
-        *("--dtype", params.dtype, "--max-model-len", str(params.max_context_tokens)),
+        *("--dtype", params.dtype, "--kv-cache-dtype", params.kv_cache_dtype, "--max-model-len", str(params.max_context_tokens)),
         *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
         *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),

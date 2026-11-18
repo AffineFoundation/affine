@@ -109,7 +109,7 @@ class SoloScheduler:
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
             while True:
-                if self.failure is not None or self.cut or not self.alive:
+                if self.failure is not None or self.cut:
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
                 claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner)
@@ -195,6 +195,8 @@ class SoloScheduler:
             if stopped:
                 common = min([len(text) for text in self.null] + [len(text) for pos in self.alive for text in self.scored[pos]])
                 common = common // self.params.eval_chunk_tasks * self.params.eval_chunk_tasks
+                if not common:
+                    raise InfraError("solo scoring reached the time limit before null and every live LoRA completed a shared block")
                 self.null[:] = [text[:common] for text in self.null]
                 for pos in self.alive:
                     self.scored[pos][:] = [text[:common] for text in self.scored[pos]]
@@ -204,7 +206,7 @@ class SoloScheduler:
                 self.null[:] = [text[:keep] for text in self.null]
             else:
                 for pos in self.alive:
-                    if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) < self.n for text in self.null):
+                    if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) != self.n for text in self.null):
                         raise InfraError("solo scoring ended before null and every live LoRA completed")
             pad = lambda strings: tuple(text + NOT_RUN * (self.n - len(text)) for text in strings)
             return pad(self.null), {pos: pad(strings) for pos, strings in self.scored.items()}, self.dropped, stopped
@@ -214,7 +216,7 @@ class SoloScheduler:
 
 
 class SoloWorker:
-    """One GPU's vLLM server and its 256 continuously fed HTTP clients."""
+    """One GPU's vLLM server and its continuously fed HTTP clients."""
 
     def __init__(self, evaluator, ticket: RoundTicket, trained: dict[int, LoRAArtifact], deadline: int, gpu: int):
         self.evaluator, self.ticket, self.deadline, self.gpu = evaluator, ticket, deadline, gpu
@@ -390,13 +392,13 @@ class SoloRunner(LocalRunner):
                     index, entry = job
                     report = self._train(ticket, entry, (gpu,), train_end, whole_time=started - ticket.issued_at <= AT_THE_LEASE_S and index < params.n_gpus)
                     reports[entry.queue_pos] = report
+                    if isinstance(report, LoRAArtifact):
+                        scheduler.add_lora(entry.queue_pos, report, gpu)
                     with train_lock:
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
-                    if isinstance(report, LoRAArtifact):
-                        scheduler.add_lora(entry.queue_pos, report, gpu)
                 # Only now can this GPU have no further training assignment.
                 start_idle_server(gpu)
                 finish_warm(gpu)

@@ -6,7 +6,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from sn120_v2.gpu.solo import SoloRunner, SoloSettings
+from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings
 from sn120_v2.judging import check_result
 from sn120_v2.sampling import rollout_seed
 from sn120_v2.types import NULL_MODEL
@@ -73,6 +73,60 @@ def test_solo_round_steals_and_preserves_seed_identity(build):
     assert serve_fast < train_zero_end
     for task in ticket.draw.task_ids:
         assert rollout_seed(ticket.draw.round_seed, task, 0) == rollout_seed(ticket.draw.round_seed, task, 0)
+
+
+def test_idle_gpus_serve_null_before_slow_training_adds_loras(build):
+    ticket = build.ticket(n_entries=6, n_tasks=64, params=build.params(n_tasks=64, n_gpus=8, looks=(1.0,), eval_chunk_tasks=4))
+    artifacts = {entry.queue_pos: build.artifact(ticket.head, entry, ticket.params) for entry in ticket.entries}
+    runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=1), evaluator=SimpleNamespace(http=None))
+    scheduler = SoloScheduler(runner, ticket, 10000)
+    gate = threading.Condition()
+    null_gpus = set()
+    served = []
+    rollouts = []
+    stopped = []
+
+    def worker(gpu):
+        def steal(gpu, owner):
+            claim = scheduler.steal(gpu, owner)
+            if claim is not None and claim[0] == NULL_MODEL and gpu not in null_gpus:
+                with gate:
+                    null_gpus.add(gpu)
+                    if len(null_gpus) < 8:
+                        assert gate.wait(timeout=30), f"only GPUs {null_gpus} reached null work"
+                    else:
+                        gate.notify_all()
+            return claim
+
+        def record(model, sample, index, code):
+            rollouts.append((gpu, model))
+            scheduler.result(model, sample, index, code)
+
+        Worker(gpu, served).run(steal=steal, result=record, judge=scheduler.judge, alive=lambda: True, deadline=10000)
+        stopped.append(gpu)
+
+    threads = [threading.Thread(target=worker, args=(gpu,)) for gpu in range(8)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 30
+    with gate:
+        while len(null_gpus) < 8:
+            assert not stopped, f"idle GPUs exited before training: {stopped}"
+            assert time.monotonic() < deadline, null_gpus
+            gate.wait(timeout=0.05)
+    assert not stopped
+    for entry in ticket.entries:
+        scheduler.add_lora(entry.queue_pos, artifacts[entry.queue_pos], gpu=entry.queue_pos)
+    scheduler.training_finished()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert all(not thread.is_alive() for thread in threads)
+    assert {event[1] for event in served if event[0] == "serve"} == set(range(8))
+    assert {gpu for gpu, model in rollouts} == set(range(8))
+    assert any(gpu in (6, 7) and model != NULL_MODEL for gpu, model in rollouts)
+    null, scored, dropped, stopped_at_limit = scheduler.finish()
+    assert null == ("P" * 64,) and all(scored[pos] == ("P" * 64,) for pos in range(6))
+    assert not dropped and not stopped_at_limit
 
 
 def test_no_server_starts_on_a_training_gpu_and_failed_idle_start_is_retried(build):
