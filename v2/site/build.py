@@ -35,6 +35,7 @@ import re
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -53,11 +54,14 @@ DATA = "site-data.json"
 V1_DATA = "v1-data.json"
 V1_SCHEMA = "sn120-v1-archive-1"
 NOTED: dict[str, str] = {}  # the last note printed per topic
+ON_SITE: dict[str, bool] = {}  # per http(s) location: is the file there. A head manifest is written once and is not removed
 FLAGS = ("front", "demoted", "held")
 # The state of the benchmark run of one row. The benchmark file of v1 says "evaluating" for a run in progress.
 SCORED, QUEUED, RUNNING, FAILED, NO_RUN = "scored", "queued", "running", "failed", "none"
+FULL = ":full"  # the end of the column id of a benchmark's full run: the score of a longer run of the same model
 RUN_STATE = {"scored": SCORED, "done": SCORED, "queued": QUEUED, "running": RUNNING, "evaluating": RUNNING, "failed": FAILED}
 KING, GENESIS = "king", "genesis"
+V1_KING = "v1-king"  # a row of the benchmark file: a king of v1 that the benchmark service of v2 scores. It won no round of v2
 
 
 def fetch(location: str) -> bytes:
@@ -72,6 +76,25 @@ def fetch(location: str) -> bytes:
 def read(source: str, key: str) -> bytes:
     """One object under a root: the object store or the v1 site, as a directory or an http(s) URL."""
     return fetch(f"{source.rstrip('/')}/{key}")
+
+
+def exists(source: str, key: str) -> bool:
+    """True when the object is under the root. Over http(s), a yes or a 404 is kept for this process; a failed read is asked again."""
+    location = f"{source.rstrip('/')}/{key}"
+    if not location.startswith(("http://", "https://")):
+        return Path(location).is_file()
+    if location not in ON_SITE:
+        try:
+            fetch(location)
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                return False
+            ON_SITE[location] = False
+        except OSError:
+            return False
+        else:
+            ON_SITE[location] = True
+    return ON_SITE[location]
 
 
 def write(path: Path, data: bytes) -> None:
@@ -89,12 +112,16 @@ def write(path: Path, data: bytes) -> None:
         raise
 
 
-def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str]) -> dict[str, Any]:
+def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str],
+         on_site: Callable[[str], bool] = lambda key: False) -> dict[str, Any]:
     """The public snapshot (``sn120_v2.public.snapshot``), cut down to what the page shows.
 
     Every output field is named here, so an unknown or private snapshot field
     cannot reach the page. A batch link and a LoRA hash are set for an applied
     winner only. Caps and the winner bar come from the snapshot's ``Params``.
+    ``on_site`` says if a public object is there to link. A head gets the link
+    to its manifest when it is the current head or when its manifest is there:
+    the validator writes the manifest of a head only while that head is current.
     """
     if snap.get("schema") != SCHEMA:
         raise ValueError(f"unknown snapshot schema {snap.get('schema')!r}; this builder reads {SCHEMA!r}")
@@ -150,10 +177,14 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         "file_valid": valid, "flags": flags,
     } for line, (seat, valid, flags) in enumerate(seats, 1)]
 
+    def manifest_link(version_id: str) -> str | None:
+        key = layout.head_manifest(version_id)
+        return link(key) if version_id == head_id or on_site(key) else None
+
     heads = [{
         "head": head["version_id"], "current": head["version_id"] == head_id, "round_id": head["round_id"],
         "file_url": round_link(head["round_id"]), "folded": head["folded"], "at": head["applied_at"],
-        "manifest": link(layout.head_manifest(head["version_id"])) if head["version_id"] == head_id else None,
+        "manifest": manifest_link(head["version_id"]),
     } for head in snap["heads"][::-1]]
 
     return {
@@ -165,6 +196,16 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         "kings": kings, "queue": {"rows": queue, "total": len(live.get("entries", [])) + snap["queue"]["length"]},
         "history": history, "rounds": rounds, "heads": heads, "bench": bench,
     }
+
+
+def whole(value: Any) -> int | None:
+    """``value`` when it is a whole number above 0, or None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def number(value: Any) -> bool:
+    """True when ``value`` is a number. True and False are not numbers here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -183,6 +224,22 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     of the ``in_avg`` columns, and only a row that has all of them gets one: a mean over fewer benchmarks cannot be
     compared. ``partial`` marks a result that lost samples (``complete=false``). Aggregates only; the node record is
     not copied.
+
+    ``rollouts`` of a cell is its count of samples for each problem. A result of ``bench`` names it. A cell of ``kept``
+    has only its sample count, so its ``rollouts`` is that count divided by the problem count of the same benchmark in
+    ``bench``, and it is None when ``bench`` gives no single problem count or the division leaves a rest. A column
+    names that single problem count as ``problems``.
+
+    A result with ``derived_from`` was computed from a longer run of the same model, and its cell is ``derived``. With
+    ``score_full`` it also gives the score of that longer run: one more cell, under the id of the benchmark with
+    ``FULL`` at its end. The column of these cells stands directly after its benchmark, is never in the average, and
+    is there only when a row has such a cell; ``head`` is its short name for the head of the table. ``pod`` of a row
+    is the state of its machine and the time of that state. ``waiting_for`` says what a row waits for, and ``stopped``
+    why the benchmark service starts no run of it. ``profile`` of a cell is the settings profile of that result, and
+    ``profile`` of a row the one that the file gives the model: the sampling of a run.
+
+    A row of the kind ``V1_KING`` has the label "v1 king", its ``uid`` and its ``v1_epoch``, and no round, no head and
+    no time: these are of v2, and it won no round of v2. It is not a king here and not a reference model.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
     # Disabled, in_avg=false benchmarks keep their published history as a display-only column.
@@ -192,17 +249,39 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
                for b in enabled or (kept or {}).get("columns", ())]
     counted = [b["id"] for b in columns if b["in_avg"]]
     cells: dict[str, dict[str, Any]] = {}
+    problems: dict[str, set[int | None]] = {}  # per benchmark: the problem count of each result, None when it does not say
     for result in bench["results"]:  # the file orders the newest protocol of one (model, benchmark) last
-        cells.setdefault(result["model_id"], {})[result["benchmark_id"]] = {
+        bench_id, each, expected = result["benchmark_id"], whole(result.get("rollouts")), whole(result.get("samples_expected"))
+        count = expected // each if each and expected and expected % each == 0 else whole(result.get("n"))
+        problems.setdefault(bench_id, set()).add(count)
+        scores = cells.setdefault(result["model_id"], {})
+        scores[bench_id] = {
             "score": result["score"], "se": result.get("se"), "partial": result.get("complete") is False,
             "samples": result.get("samples"), "expected": result.get("samples_expected"), "cap_rate": result.get("cap_rate"),
+            "rollouts": each, "derived": bool(result.get("derived_from")), "profile": result.get("profile"),
         }
+        scores.pop(bench_id + FULL, None)
+        if number(result.get("score_full")):
+            total = whole(result.get("samples_full"))
+            scores[bench_id + FULL] = {
+                "score": result["score_full"], "se": result.get("se_full"), "partial": False, "samples": total, "expected": total,
+                "cap_rate": result.get("cap_rate"),  # the benchmark service keeps the cap rate of the full run in a computed result
+                "rollouts": total // count if total and count and total % count == 0 else None, "profile": result.get("profile"),
+            }
+
+    def per_problem(name: str, cell: dict[str, Any]) -> int | None:
+        if whole(cell.get("rollouts")):
+            return cell["rollouts"]
+        count, expected = next(iter(problems[name])) if len(problems.get(name, ())) == 1 else None, whole(cell.get("expected"))
+        return expected // count if count and expected and expected % count == 0 else None
 
     def row(label: str, kind: Any, status: str, round_id: Any, head: Any, at: Any, scores: dict[str, Any]) -> dict[str, Any]:
         if kind == KING and round_id and head:  # one name for a king, with or without the benchmark file
             label = f"{round_id} {head[:8]}"
         if kind == GENESIS and label.lower().startswith(GENESIS):  # the service writes "genesis <model name>"
             label = "Genesis" + label[len(GENESIS):]
+        if kind == V1_KING:
+            label, round_id, head, at = "v1 king", None, None, None
         full = bool(counted) and all(name in scores for name in counted)
         return {
             "label": label, "kind": kind, "status": status, "round_id": round_id, "head": head, "at": at,
@@ -210,10 +289,19 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             "avg_partial": any(scores[name]["partial"] for name in counted if name in scores), "cells": scores,
         }
 
+    def more(model: dict[str, Any]) -> dict[str, Any]:
+        found = {name: model[name] for name in ("waiting_for", "stopped", "profile") if isinstance(model.get(name), str)}
+        if model.get("kind") == V1_KING:
+            found |= {name: model[name] for name in ("uid", "v1_epoch") if number(model.get(name))}
+        pod = model.get("pod")
+        if isinstance(pod, dict) and isinstance(pod.get("state"), str):
+            found["pod"] = {"state": pod["state"], "since": pod["since"] if number(pod.get("since")) else None}
+        return found
+
     rows = [row(
         model.get("label") or model["model_id"], model.get("kind"), RUN_STATE.get(model.get("status"), model.get("status") or NO_RUN),
         model.get("round_id"), model.get("head_version_id"), model.get("crowned_at"), cells.get(model["model_id"], {}),
-    ) for model in bench["models"]]
+    ) | more(model) for model in bench["models"]]
 
     by_round: dict[str, dict[str, Any]] = {}  # the head that is served for a benchmark: the folded head of the round
     for head in heads:
@@ -234,8 +322,15 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     for old in (kept or {}).get("rows", ()):
         if old.get("kind") not in order and old["label"] not in have:
             state = RUN_STATE.get(old.get("status"), old.get("status") or NO_RUN)
-            rows.append(row(old["label"], old.get("kind"), state, None, None, None, old["cells"]) | {"v1": True})
+            scores = {name: cell | {"rollouts": per_problem(name, cell)} for name, cell in old["cells"].items()}
+            rows.append(row(old["label"], old.get("kind"), state, None, None, None, scores) | {"v1": True})
     rows.sort(key=lambda made: (order.get(made["kind"], 1), -(made["at"] or 0) if made["kind"] == KING else -(made["avg"] or 0)))
+    longer = {name for made in rows for name in made["cells"] if name.endswith(FULL)}
+    columns = [column | {"problems": next(iter(problems[column["id"]])) if len(problems.get(column["id"], ())) == 1 else None}
+               for column in columns]
+    columns = [column for base in columns for column in (base, {
+        "id": base["id"] + FULL, "label": f"{base['label']}, full run", "head": "full run", "in_avg": False, "suite": base["suite"], "full_of": base["id"],
+    }) if column is base or column["id"] in longer]
     return {"updated_at": bench["updated_at"], "rows": rows, "columns": columns}
 
 
@@ -288,7 +383,8 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
                   lambda error: quiet_missing and missing(error))  # no file yet is the state at launch
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
     table = bench_view(bench, heads, kept)
-    write(out / DATA, json.dumps(view(snap, table, link), separators=(",", ":"), allow_nan=False).encode())
+    data = view(snap, table, link, lambda key: exists(source, key))
+    write(out / DATA, json.dumps(data, separators=(",", ":"), allow_nan=False).encode())
 
 
 def install_v1(location: str, out: Path) -> None:
