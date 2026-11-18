@@ -236,6 +236,9 @@ def step():
     sync_table()
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
     run = S.get("running")
+    if not run and not C_POD and queue(rows):
+        # A store that refuses this write raises here: no node is rented for rows whose table cannot be published.
+        S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows)
     if not run and not pod_ready(queue(rows)):
         S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows); return
     if run and run.setdefault("pod_id", C_POD.get("id")) != C_POD.get("id"):
