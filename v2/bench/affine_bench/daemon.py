@@ -31,7 +31,9 @@ brought to the settings' count on this host by the fixed rule of derive.py (deri
 for it. When the rule gives no value, the row is `held` until the operator says `retry`.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
-Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted)."""
+A listed pod with more than 30 minutes of continuous SSH downtime is released by Pod.release and replaced the same way
+(node-unreachable-abandoned). Nothing on a pod is deleted by this service: the weights go away with the pod (results on
+the host are never deleted)."""
 import fcntl, glob, json, os, shlex, subprocess, sys, time, traceback
 from sn120_v2.errors import InfraError
 from . import config as C, derive, registry as R
@@ -52,6 +54,7 @@ RELEASE_RETRY_S = 600  # a release that Lium or a guard refused is tried again t
 ALARM_TRIES = 3  # a release that was refused this many times is an alarm in the table
 LIUM_CHECK_S = 600  # the service reads Lium's listing this often for the alarms of the table (reads only)
 POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
+POD_ABANDON_AFTER_S = 1800  # a pod still listed by Lium after this much continuous SSH downtime is released and replaced
 
 
 def now(): return time.time()
@@ -286,17 +289,25 @@ class Row:
     def node_down(self, run):
         """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
         whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
-        the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own."""
+        the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own.
+        A pod that Lium still lists after 30 minutes of continuous downtime is given back through Pod.release, then requeued the
+        same way. If that release is refused or fails, the run and the pod's record stay until a later check can release it."""
         d = self.S["node_down"] = self.S.get("node_down") or dict(since=now(), checked=0, state=None)
         if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
             self.log(event="node-unreachable"); self.save(); return
         d["checked"] = now(); st = P.state(self.rec.get("id")); d["state"] = st
+        down_min = round((now() - d["since"]) / 60)
         if st == "gone":
             self.log(event="node-gone", pod=self.rec.get("huid"), lium_id=self.rec.get("id"), down_since_cr=cr(d["since"]))
             self.pod.save(dict(gone=now(), last=dict(self.rec))); self.S["running"] = None; self.S.pop("node_down", None)
             self.attach()
+        elif st == "listed" and now() - d["since"] > POD_ABANDON_AFTER_S:
+            rec = dict(self.rec)
+            if self.pod.release(self.log, why=f"node unreachable for {down_min} minutes"):
+                self.log(event="node-unreachable-abandoned", pod=rec.get("huid"), lium_id=rec.get("id"), down_min=down_min)
+                self.S["running"] = None; self.S.pop("node_down", None); self.attach()
         else:
-            self.log(event="node-unreachable", lium=st, down_min=round((now() - d["since"]) / 60))
+            self.log(event="node-unreachable", lium=st, down_min=down_min)
         self.save()
 
     # ---- pod
@@ -712,9 +723,10 @@ def cli(cmd, argv):
     if cmd == "offers":  # reads only: what a rent could take now
         offs, seen = P.offers(); kinds = {}
         for o in offs: kinds.setdefault((o["kind"], o["price"]), []).append(o)
-        for (kind, price), group in sorted(kinds.items(), key=lambda kv: kv[0][1]):
+        for (kind, price), group in sorted(kinds.items(), key=lambda kv: (kv[1][0]["order"], kv[0][1], kv[0][0])):
             print(f"{kind}  {price} $/h  x{len(group)}")
-        print(f"{len(offs)} offers fit: a whole free node of `{P.GPU_PREF}`, secure tier, at or below {P.MAX_PRICE} $/h. The cheapest is taken first."); return
+        print(f"{len(offs)} offers fit: a whole free node of `{P.GPU_PREF}`, secure tier, at or below {P.MAX_PRICE} $/h. "
+              "Classes are tried in preference order; the cheapest fitting offer of the earliest available class is taken."); return
     if cmd == "pods":
         return pods_check()
     if cmd == "row":

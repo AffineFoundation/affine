@@ -304,29 +304,40 @@ def test_the_pod_is_given_back_only_when_the_table_in_the_store_has_the_rows_res
     assert lium.removed == [rm(pod)] and states() == {gen: "scored"}
 
 
-def test_a_rent_takes_the_cheapest_whole_secure_node_of_an_allowed_kind_at_or_below_the_cap(world, monkeypatch, capsys):
+def test_a_rent_takes_the_earliest_preferred_kind_then_the_cheapest_fitting_offer_of_that_kind(world, monkeypatch, capsys):
     lium, gen = world.lium, ids(world.genesis)
-    monkeypatch.setattr(P, "MAX_PRICE", 35.0)
+    monkeypatch.setattr(P, "MAX_PRICE", 120.0)
+    monkeypatch.setattr(P, "GPU_PREF", "B300:8 B200:8 H200:8 H100:8")
     lium.offers = [
-        Lium.offer("h200-secure", "H200", 33.6), Lium.offer("h100-dear", "H100", 23.2), Lium.offer("h100-cheap", "H100", 22.0),
+        Lium.offer("h200-secure", "H200", 35.0), Lium.offer("h100-dear", "H100", 23.2), Lium.offer("h100-cheap", "H100", 22.0),
         Lium.offer("h100-community", "H100", 9.0, tier="community"), Lium.offer("h100-part", "H100", 10.0, free=6), Lium.offer("h100-four", "H100", 8.0, n=4),
-        Lium.offer("a100", "A100", 5.0), Lium.offer("b300-over", "B300", 35.01), Lium.offer("b200-same-price", "B200", 22.0)]
+        Lium.offer("a6000", "A6000", 5.0), Lium.offer("b300-over", "B300", 120.01),
+        Lium.offer("b200-same-price", "B200", 56.0), Lium.offer("b200-dear", "B200", 57.0),
+        Lium.offer("b300-dear", "B300", 96.0), Lium.offer("b300-cheap", "B300", 95.0)]
     offers, _ = P.offers()
     assert [(o["huid"], o["kind"], o["price"]) for o in offers] == [
-        ("h100-cheap", "8xH100", 22.0), ("b200-same-price", "8xB200", 22.0), ("h100-dear", "8xH100", 23.2), ("h200-secure", "8xH200", 33.6)]
+        ("b300-cheap", "8xB300", 95.0), ("b300-dear", "8xB300", 96.0),
+        ("b200-same-price", "8xB200", 56.0), ("b200-dear", "8xB200", 57.0),
+        ("h200-secure", "8xH200", 35.0), ("h100-cheap", "8xH100", 22.0), ("h100-dear", "8xH100", 23.2)]
     D.cli("offers", [])  # the look of the operator: kind, price and count, no machine name and no address
     out = capsys.readouterr().out
-    assert "8xH100  22.0 $/h  x1" in out and "8xH200  33.6 $/h  x1" in out and "4 offers fit" in out and "h100-cheap" not in out
+    assert [line.split()[0] for line in out.splitlines()[:-1]] == ["8xB300", "8xB300", "8xB200", "8xB200", "8xH200", "8xH100", "8xH100"]
+    assert "8xB300  95.0 $/h  x1" in out and "7 offers fit" in out and "b300-cheap" not in out
+    assert "Classes are tried in preference order" in out and "cheapest fitting offer of the earliest available class" in out
     world.steps()
-    assert lium.ups == [("h100-cheap", P.name_of(gen))] and D.pod_of(gen).load()["cost"] == 22.0
+    assert lium.ups == [("b300-cheap", P.name_of(gen))] and D.pod_of(gen).load()["cost"] == 95.0
     assert all(a[0] in ("ps", "ls") for a in lium.sent)  # a rent sends no other command than its two readings
 
-    # nothing fits: no pod, no failed try, and the row says that it still looks
+    # Only a lower-priority class fits: it is used. If no preferred class fits, the row waits with no failed try.
+    monkeypatch.setattr(P, "MAX_PRICE", 120.0); P.Pod(gen).save({}); lium.pods.clear(); D.wj(D.ROWS + f"/{gen}/daemon.json", {})
+    lium.offers = [o for o in lium.offers if o["gpu_type"] != "B300"]
+    world.steps()
+    assert lium.ups[-1] == ("b200-same-price", P.name_of(gen)) and D.pod_of(gen).load()["cost"] == 56.0
     monkeypatch.setattr(P, "MAX_PRICE", 21.0); P.Pod(gen).save({}); lium.pods.clear(); D.wj(D.ROWS + f"/{gen}/daemon.json", {})
     world.steps(2)
-    assert len(lium.ups) == 1 and not D.stopped(gen) and model(gen)["pod"]["state"] == "renting"
+    assert len(lium.ups) == 2 and not D.stopped(gen) and model(gen)["pod"]["state"] == "renting"
     # a pod that came dearer than the cap is given back at once, by its exact id
-    monkeypatch.setattr(P, "offers", lambda: ([dict(huid="h200-secure", gpus=8, kind="8xH200", price=33.6, order=0)], []))
+    monkeypatch.setattr(P, "offers", lambda: ([dict(huid="h200-secure", gpus=8, kind="8xH200", price=35.0, order=0)], []))
     world.steps()
     assert lium.ups[-1][0] == "h200-secure" and len(lium.removed) == 1 and not lium.pods and D.row_state(gen)["rent_tries"] == 1
 
@@ -1293,6 +1304,82 @@ def test_an_empty_listing_in_a_rent_never_makes_a_second_pod_beside_the_rows_rec
     assert D.stopped(gen) == "rent_failed" and "did not say that it was deleted" in D.row_state(gen)["rent_failed"]["why"]
     out = capsys.readouterr().out
     assert "pod-record-dropped" not in out and "203.0.113.7" not in out and "root@ADDRESS: Permission denied" in out  # and no address in a journal line
+
+
+def test_a_deleted_pod_keeps_the_node_gone_requeue_without_a_delete_or_a_model_failure(world, capsys):
+    gen, node, pod = one_row_in_work(world, busy=None)
+    row = D.Row(gen); run = row.S["running"]
+    row.S["node_down"] = dict(since=D.now() - 601, checked=0, state=None)
+    world.lium.pods.clear()
+    row.node_down(run)
+    assert not world.lium.removed and row.S["running"] is None and "node_down" not in row.S and row.S["fails"] == 0
+    assert [e["event"] for e in events(capsys)].count("node-gone") == 1
+    assert row.S["history"] == D.row_state(gen)["history"]  # no finished results are invented for the lost run
+
+
+def test_a_listed_pod_is_abandoned_after_thirty_minutes_of_continuous_downtime_without_a_model_failure(world, capsys):
+    lium, gen = world.lium, ids(world.genesis)
+    gen, node, old = one_row_in_work(world, busy=None)
+    assert (D.POD_CHECK_AFTER_S, D.POD_CHECK_EVERY_S, D.POD_ABANDON_AFTER_S) == (600, 600, 1800)
+    row = D.Row(gen); run = row.S["running"]
+    capsys.readouterr()
+
+    def check(down_s):
+        row.S["node_down"] = dict(since=D.now() - down_s, checked=0, state=None)
+        row.node_down(run)
+        return row
+
+    check(D.POD_CHECK_AFTER_S + 1)  # a short outage waits for Lium; no pod is released or requeued
+    assert not lium.removed and D.pod_of(gen).load()["id"] == old["id"] and row.S["running"] == run
+    assert [e["lium"] for e in events(capsys) if e["event"] == "node-unreachable"] == ["listed"]
+    row.node_down(run)  # the same check is not repeated before POD_CHECK_EVERY_S
+    assert len([a for a in lium.sent if a[0] == "describe"]) == 1
+    check(D.POD_ABANDON_AFTER_S - 1)  # just before the bound: still only a Lium check
+    assert not lium.removed and row.S["running"] == run
+
+    row = check(D.POD_ABANDON_AFTER_S + 60)  # sustained downtime + Lium still lists it: the one guarded release path
+    said = events(capsys)
+    abandoned = next(e for e in said if e["event"] == "node-unreachable-abandoned")
+    assert (abandoned["pod"], abandoned["lium_id"]) == (old["huid"], old["id"]) and abandoned["down_min"] >= 30
+    assert lium.removed == [rm(old)] and old not in lium.pods and not D.pod_of(gen).load()
+    assert row.S["running"] is None and "node_down" not in row.S and row.S["fails"] == 0 and not D.stopped(gen, row.S)
+    row.S["model"] = next(m for m in D.model_rows() if m["model_id"] == gen)
+    row.step(row.S["model"], RUNNABLE); row.save()  # as node-gone: rent and run the results that are still missing
+    assert len(lium.ups) == 2 and world.pod_of(gen)["id"] != old["id"] and row.S["running"]["pod_id"] == world.pod_of(gen)["id"]
+    assert row.S["fails"] == 0
+
+
+def test_a_refused_abandon_release_keeps_the_run_and_the_exact_pod_record_until_a_later_success(world, capsys):
+    lium, gen = world.lium, ids(world.genesis)
+    gen, node, pod = one_row_in_work(world, busy=None)
+    row = D.Row(gen); run = row.S["running"]; row.S["node_down"] = dict(since=D.now() - 1801, checked=0, state=None)
+    assert D.row_state(gen)["fails"] == 0
+    rec = D.pod_of(gen).load(); rec["huid"] = pod["huid"] = "casper-h100-ask-before-delete"  # both record and listing: the guard protects it
+    D.pod_of(gen).save(rec)
+    row.node_down(run)
+    assert not lium.removed and row.S["running"] == run and D.pod_of(gen).load()["id"] == pod["id"] and row.S["fails"] == 0
+    said = events(capsys)
+    assert [e["event"] for e in said].count("release-refused") == 1 and not [e for e in said if e["event"] == "node-unreachable-abandoned"]
+    assert [a for a in lium.sent if a[0] == "rm"] == []  # protected: the guarded path refuses before sending a delete
+    pod["huid"] = "reachable-again"
+    rec = D.pod_of(gen).load(); rec["huid"] = pod["huid"]; D.pod_of(gen).save(rec)
+    row.S["node_down"]["checked"] = 0; row.node_down(run)
+    assert lium.removed == [rm(pod)] and row.S["running"] is None and "node_down" not in row.S and row.S["fails"] == 0
+    assert [e["event"] for e in events(capsys)].count("node-unreachable-abandoned") == 1
+
+
+def test_a_node_that_answers_again_resets_the_downtime_clock(world, capsys):
+    lium, gen = world.lium, ids(world.genesis)
+    gen, node, pod = one_row_in_work(world)
+    row = D.Row(gen); row.S["node_down"] = dict(since=D.now() - 7200, checked=0, state="listed"); row.save()
+    node.busy = "done=\nalive=1\nlines=9\nfinished=2\nok=1\n"
+    world.steps()  # the node answered this poll: old downtime does not cause a release
+    assert "node_down" not in D.row_state(gen) and not lium.removed and world.pod_of(gen)["id"] == pod["id"]
+    assert [e["event"] for e in events(capsys)].count("node-back") == 1
+    node.busy = "not-an-ssh-answer"  # unreachable: a fresh failure starts a fresh wait, not a continuation of the old one
+    world.steps()
+    assert D.now() - D.row_state(gen)["node_down"]["since"] < 60 and not lium.removed
+    assert not [a for a in lium.sent if a[0] == "describe"]
 
 
 def test_only_the_last_event_of_a_pod_says_that_lium_deleted_it(monkeypatch):

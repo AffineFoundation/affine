@@ -8,7 +8,8 @@ process of its own (daemon.py) that uses the Pod of its row only.
 Guard rails (owner's spending rules):
   - one pod at most for a row, always named `affine-v2-bench-<model_id>`. A pod that Lium lists under that exact name
     and that the row has no record of (an answer of Lium was lost) is taken as the row's pod: never a second one.
-  - secure tier only, a whole node of a kind in GPU_PREF, never above BENCH_MAX_PRICE $/h: the cheapest such offer.
+  - secure tier only, a whole node of a kind in GPU_PREF, never above BENCH_MAX_PRICE $/h: GPU_PREF is the class
+    priority, best first, and the cheapest fitting offer within that class.
   - a failed rent is tried RENT_TRIES times with a growing wait; then the row says `rent-failed` and its worker ends.
     A `lium up` that gave no answer is never tried again by the row: `rent-failed` at once, with an alarm.
   - at most MAX_PODS rows have a pod at a time (daemon.py), and at most MAX_RENTS_PER_DAY pods are made in 24 h, over all rows.
@@ -28,8 +29,8 @@ LIUM = C.LIUM; MAX_PRICE = C.MAX_PRICE
 PREFIX = "affine-v2-bench-"
 NAME_MAX = 29  # the longest pod name that is known to work on Lium
 NAME = os.environ.get("BENCH_POD_NAME", PREFIX + "1")  # the one pod of the service before 2026-11-14; the row that ran on it keeps it
-# Whole 8-GPU nodes that run a row in about the same time. The cheapest offer at or below the cap is taken; at one
-# price the earlier kind of this list. (Before 2026-11-14 the list was walked best-first, so a dearer kind could win.)
+# Whole 8-GPU nodes that run a row in about the same time. Left to right is the class priority: the earliest kind with
+# a fitting offer wins, then the cheapest offer of that kind. A cheaper later kind never displaces an available earlier kind.
 GPU_PREF = os.environ.get("BENCH_GPU_PREF", "H100:8 H200:8 B200:8 B300:8")
 NO_OFFER_RETRY_S = float(os.environ.get("BENCH_NO_OFFER_RETRY_S", "300"))
 RENT_TRIES = int(os.environ.get("BENCH_RENT_TRIES", "4")); RENT_WAIT_S = float(os.environ.get("BENCH_RENT_WAIT_S", "120"))
@@ -91,8 +92,8 @@ def state(pod_id):
 
 
 def offers():
-    """(the offers that a rent may take now, cheapest first; a short text of what Lium lists). An offer is a whole free
-    node of a kind in GPU_PREF, on the secure tier, at or below MAX_PRICE. Reads only."""
+    """(the offers that a rent may take now, in GPU_PREF order and cheapest within each kind; a short text of what Lium
+    lists). An offer is a whole free node of a kind in GPU_PREF, on the secure tier, at or below MAX_PRICE. Reads only."""
     kinds = [(t.partition(":")[0], int(t.partition(":")[2] or 8)) for t in GPU_PREF.split()]
     rows = []
     for g in dict(kinds):
@@ -108,7 +109,7 @@ def offers():
             if (r.get("gpu_type") == g and r.get("gpu_count") == n and (free if free is not None else n) >= n and r.get("tier") == "secure"
                     and p is not None and p <= MAX_PRICE and r.get("huid")):
                 out.append(dict(huid=r["huid"], gpus=n, kind=f"{n}x{g}", price=p, order=i))
-    out = sorted({o["huid"]: o for o in out}.values(), key=lambda o: (o["price"], o["order"], o["huid"]))
+    out = sorted({o["huid"]: o for o in out}.values(), key=lambda o: (o["order"], o["price"], o["huid"]))
     seen = sorted({"%sx%s %s/%s %s $%s" % (r.get("gpu_count"), r.get("gpu_type"), r.get("available_gpu_count"), r.get("gpu_count"), r.get("tier"),
                                            r.get("price_per_hour")) for r in rows if (r.get("gpu_count") or 0) >= 4})
     return out, seen[:20]
@@ -202,8 +203,8 @@ class Pod:
         t = self.record + ".tmp"; json.dump(r, open(t, "w"), indent=1); os.replace(t, self.record)
 
     def choose(self, offs):
-        """The cheapest offer that no other row has chosen in the last CLAIM_S seconds; this row's choice is written down.
-        The lock is held for these few file reads only: no row waits for the rent of another."""
+        """The first offer in GPU_PREF order that no other row has chosen in the last CLAIM_S seconds; this row's choice
+        is written down. The lock is held for these few file reads only: no row waits for the rent of another."""
         os.makedirs(self.dir, exist_ok=True)
         with open(C.ROWS + "/.choose.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
