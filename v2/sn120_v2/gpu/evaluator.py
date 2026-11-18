@@ -178,6 +178,9 @@ def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeS
         *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
         *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
+        # The Triton kernel for the linear-attention layers, on every GPU type. Without the flag, vLLM 0.32.0
+        # takes the FlashInfer kernel on a Blackwell GPU, which it compiles at the first request.
+        *("--gdn-prefill-backend", "triton"),
     ]
 
 
