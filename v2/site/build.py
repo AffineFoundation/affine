@@ -185,7 +185,9 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     not copied.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
-    enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled")), key=lambda b: (b["suite"], b.get("order") or 0))
+    # Disabled, in_avg=false benchmarks keep their published history as a display-only column.
+    enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled") or b.get("in_avg") is False),
+                     key=lambda b: (b["suite"], b.get("order") or 0))
     columns = [{"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
                for b in enabled or (kept or {}).get("columns", ())]
     counted = [b["id"] for b in columns if b["in_avg"]]

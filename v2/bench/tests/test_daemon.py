@@ -152,6 +152,24 @@ def test_genesis_is_benchmarked_once_and_each_new_king_once_each_on_a_pod_releas
     assert all(set(r["cells"]) >= {b["id"] for b in RUNNABLE} and r["avg"] == 0.5 for r in view["rows"])
 
 
+def test_disabled_gsm8k_keeps_its_published_history_as_a_display_only_column(world):
+    v2, store, _, _ = world
+    D.step()
+    published = table()
+    by_id = {b["id"]: b for b in published["benchmarks"]}
+    assert "gsm8k" not in by_id and by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"]
+    old = dict(model_id=ids(v2.controller.state.head), benchmark_id="gsm8k", env_version="gsm8k/v1/bench-v2", score=0.91)
+    saved = json.loads(pathlib.Path(TABLE).read_text())
+    saved["results"].append(old)
+    pathlib.Path(TABLE).write_text(json.dumps(saved))
+    publish.publish(source.models(), dict(D.S))
+    view = BENCH_VIEW(table())
+    historical = {c["id"]: c for c in view["columns"]}["gsm8k"]
+    assert historical["in_avg"] is False
+    assert not {b["id"] for b in table()["benchmarks"] if b.get("enabled")} & {"gsm8k"}
+    assert view["rows"][0]["cells"]["gsm8k"]["score"] == 0.91
+
+
 def test_a_host_with_an_empty_disk_reads_the_published_table_and_runs_no_row_again(world, monkeypatch):
     v2, store = world[:2]
     king = green(v2, 1)

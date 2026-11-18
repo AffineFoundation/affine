@@ -21,6 +21,42 @@ Words used here:
 
 A row is run once. The service reads the published table before its first step. A result that is in the table is done, also on a host with an empty disk.
 
+### GSM8K-Platinum (18 Nov 2026)
+
+The original GSM8K test set has approximately 110 flawed or ambiguous questions and 10 wrong answer keys. The benchmark now
+uses **GSM8K-Platinum** (`madrylab/gsm8k-platinum`, revision
+`e762492455a1cf7967de89f05b6bef72fc713b66`, `main/test`): the cleaned 1,209-question set, rather than the original 1,319
+questions. Its prompt, one-rollout scoring and verifier are the same as the old local GSM8K environment. The dataset revision
+is pinned, its file order is preserved, and the task indices are 0 through 1208.
+
+`gsm8k_platinum` is enabled and counted in Avg. The original `gsm8k` benchmark is disabled and display-only; its published
+scores and the column remain as history. The root-level v1 `bench/` is unchanged.
+
+For past kings, expect scores of approximately **0.92–0.96 on original GSM8K to become 0.96–0.98 on Platinum**. This is an
+expected range, not a guarantee for every model.
+
+**Deploying this change queues a backfill: every existing launch-model and king row, including the v1 king (23 rows as of
+18 Nov 2026), needs a `gsm8k_platinum` run.** Budget this as 23 separate per-row node evaluations: for each row, the node
+must obtain and verify that row's weights (downloading them when not already cached) and start vLLM for that model. Only the
+missing Platinum benchmark runs; the other benchmarks are not rerun. The service processes one row at a time on its rented
+node and normally reuses that node while rows remain queued, rather than renting 23 nodes at once. Each new rent repeats
+installation and weight download; a released/replacement node also means repeating that setup. New rents still obey
+`BENCH_MAX_RENTS_PER_DAY` (8 rents in 24 hours by default). No backfill is billed until this code is deployed and the queue
+is processed.
+
+The operator must decide between **letting that backfill run** and **holding it**. To hold it, leave this change undeployed
+and the service on its current revision. Deploying the new registry and starting the daemon opts into the queued work.
+Before choosing, an offline estimate can be made from the saved private per-task files:
+
+```
+python -m affine_bench.backfill_gsm8k_platinum "$BDIR/state/private" --out gsm8k-platinum-estimates.json
+```
+
+This reads each `<row>/gsm8k.per_task.jsonl`, maps questions by exact text, and reports the old score, the score over the
+1,199 unchanged questions, and lower/upper bounds over all 1,209 with the 10 revised answers counted wrong/right. It fetches
+the two datasets from Hugging Face by default; `--original-jsonl` and `--platinum-jsonl` accept local dataset exports instead.
+It prints or writes JSON only. It never writes to the store or substitutes an estimate for a real benchmark result.
+
 ## 2. Which host
 
 | Host | What this change needs there |
