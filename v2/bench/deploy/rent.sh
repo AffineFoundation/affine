@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rent one bench node on Lium (run on the host that holds the Lium CLI config; the key never leaves it) and write the ssh wrapper.
-# The service picks the offer (affine_bench/pod.py offers(): a whole free node of an allowed kind, secure tier, the cheapest
-# at or below the price cap) and calls this script with it. It passes LIUM, MAX_PRICE, NAME and NODE_SSH; none has a default.
+# The service picks the offer (affine_bench/pod.py offers(): a whole free node of the earliest preferred kind, secure tier,
+# the cheapest of that kind at or below the price cap) and calls this script with it. It passes LIUM, MAX_PRICE, NAME and
+# NODE_SSH; none has a default.
 # This script picks nothing and lists nothing: it rents the whole node that it is given (-c gpu_count), under the name NAME.
 #   bash rent.sh "NODE_HUID GPU_COUNT KIND PRICE"   -> prints the pod; writes the ssh wrapper to $NODE_SSH
 set -euo pipefail
