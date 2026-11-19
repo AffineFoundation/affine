@@ -92,6 +92,22 @@ test('the dashboard renders every section from the fixture directory', async t =
   ]);
 });
 
+test('the control plane publication schemas drive every dashboard section', () => {
+  const state = page.normalizeState({
+    version: 'affine-generator-state-v1', current_epoch: '20261120T0000Z',
+    window_open: '2026-11-19T20:00:00Z', window_close: '2026-11-20T00:00:00Z',
+    frozen_king_version: 'head-v1', last_epoch: '20261119T1600Z',
+  }, {
+    version: 'affine-generator-manifest-v1', epoch: '20261119T2000Z',
+    files: [{task_count: 8}, {task_count: 5}, {task_count: 0}],
+  });
+  assert.equal(state.start, Date.UTC(2026, 10, 19, 20));
+  assert.equal(state.deadline, Date.UTC(2026, 10, 20));
+  assert.equal(state.king, 'head-v1');
+  assert.equal(state.submissions, 13);
+  assert.equal(state.scoringEpoch, '20261119T1600Z');
+});
+
 test('first epoch, missing files and bad JSONL have graceful empty states', async t => {
   assert.deepEqual(page.normalizeAccepted(null), []);
   assert.deepEqual(page.normalizeAccepted(''), []);

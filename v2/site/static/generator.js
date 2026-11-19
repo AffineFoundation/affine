@@ -98,7 +98,7 @@
     }
     let found = false;
     let total = 0;
-    for (const rows of [list(manifest.submissions), list(manifest.tasks), list(manifest.hotkeys)]) {
+    for (const rows of [list(manifest.files), list(manifest.submissions), list(manifest.tasks), list(manifest.hotkeys)]) {
       if (!rows.length) continue;
       for (const row of rows) {
         const value = pick(object(row), ['submitted', 'task_count', 'n_tasks']);
@@ -132,8 +132,8 @@
   function normalizeState(raw, manifest, now) {
     const state = object(raw);
     const epoch = text(pick(state, ['epoch', 'epoch_id', 'current_epoch', 'live_epoch'])) || text(object(state.epoch).id);
-    let start = timestamp(pick(state, ['window_start', 'submission_start', 'opens_at', 'start', 'opened_at']));
-    let deadline = timestamp(pick(state, ['deadline', 'deadline_at', 'closes_at', 'submission_deadline', 'window_end']));
+    let start = timestamp(pick(state, ['window_start', 'window_open', 'submission_start', 'opens_at', 'start', 'opened_at']));
+    let deadline = timestamp(pick(state, ['deadline', 'deadline_at', 'window_close', 'closes_at', 'submission_deadline', 'window_end']));
     const epochDeadline = epochTime(epoch);
     if (start === null && deadline === null && epochDeadline !== null) {
       deadline = epochDeadline;
@@ -145,7 +145,7 @@
       epoch, start, deadline, king,
       submissions: submissionCount(manifest, state),
       links: linkCount(state, manifest),
-      scoringEpoch: text(pick(state, ['last_scored_epoch', 'scored_epoch', 'results_epoch', 'last_results_epoch', 'latest_scored_epoch']))
+      scoringEpoch: text(pick(state, ['last_scored_epoch', 'last_epoch', 'scored_epoch', 'results_epoch', 'last_results_epoch', 'latest_scored_epoch']))
         || text(object(state.last_scored).epoch) || text(object(state.results).epoch) || text(object(state.scoring).last_scored_epoch),
       manifestEpoch: text(object(manifest).epoch) || epoch,
       manifestPublished: Boolean(manifest && typeof manifest === 'object' && Object.keys(manifest).length),
