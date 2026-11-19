@@ -2,6 +2,7 @@
 import gzip
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from affine_bench import daemon as D
@@ -76,7 +77,16 @@ def test_transfer_uses_a_file_and_checks_the_node_hash(tmp_path, monkeypatch):
         Path(local).write_bytes(blob)
 
     monkeypatch.setattr(D, "node_file", fake_node_file)
-    monkeypatch.setattr(D.NODE, "out", lambda cmd, timeout=0: f"{hashlib.sha256(blob).hexdigest()} {len(blob)}\n")
+    remote = tmp_path / "rollouts.jsonl.gz"
+    remote.write_bytes(blob)
+
+    def real_coreutils_out(cmd, timeout=0):
+        if "sha256sum" not in cmd:
+            return ""
+        local = cmd.replace(str(D.C.NODE_ROOT) + "/runs/model/math/rollouts.jsonl.gz", str(remote))
+        return subprocess.run(local, shell=True, capture_output=True, text=True, timeout=timeout).stdout
+
+    monkeypatch.setattr(D.NODE, "out", real_coreutils_out)
     found = D.fetch_rollout("model", "math", str(tmp_path / "data.gz"))
     assert found["sha256"] == hashlib.sha256(blob).hexdigest() and calls
     # A different byte count is rejected; the error is caught and tried again.

@@ -199,9 +199,9 @@ def fetch_rollout(rk, bid, local):
     remote = f"{C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz"
     quoted = shlex.quote(remote)
     answer = NODE.out(f"sha256sum {quoted} && stat -c %s {quoted}", timeout=120).split()
-    if len(answer) != 2 or len(answer[0]) != 64 or not answer[1].isdigit():
+    if len(answer) < 2 or len(answer[0]) != 64 or any(c not in "0123456789abcdef" for c in answer[0]) or not answer[-1].isdigit():
         raise IOError("rollout sha256/size unavailable")
-    sha, size = answer[0], int(answer[1])
+    sha, size = answer[0], int(answer[-1])
     for attempt in range(3):
         try:
             node_file(remote, local)
