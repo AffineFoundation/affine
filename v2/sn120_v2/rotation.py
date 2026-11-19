@@ -73,7 +73,7 @@ class Reserve(Record):
     withdrawn_sha: str = ""
     withdrawn_count: int = 0
     candidate_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
-    LEFT_OUT_AT_DEFAULT = ("candidate_meta", "audit_verdicts")
+    LEFT_OUT_AT_DEFAULT = ("candidate_meta",)
     audit_verdicts: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -88,11 +88,18 @@ class Reserve(Record):
     def withdrawn_ids(self) -> frozenset[str]:
         return frozenset(str(row["id"]) for row in self.withdrawn)
 
-    def history(self) -> dict[str, Any]:
-        history = self.to_dict()
+    def to_dict(self) -> dict[str, Any]:
+        # factory defaults do not participate in Record.LEFT_OUT_AT_DEFAULT;
+        # omit empty optional maps explicitly for old-history round trips.
+        history = super().to_dict()
         if not self.candidate_meta:
             history.pop("candidate_meta", None)
+        if not self.audit_verdicts:
+            history.pop("audit_verdicts", None)
         return history
+
+    def history(self) -> dict[str, Any]:
+        return self.to_dict()
 
 
 @dataclass(frozen=True)
@@ -148,6 +155,12 @@ class Rotation(Record):
             raise VerifyError("v1 rotation cannot carry v2 ranked-pool state")
         if self.rule_version == INFO_RULE_VERSION and not self.candidate_ranking:
             raise VerifyError("v2 rotation lacks its public candidate ranking")
+
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        if self.ranking_complete:
+            result.pop("ranking_complete", None)
+        return result
 
     def journal_block(self) -> dict[str, Any]:
         block = {

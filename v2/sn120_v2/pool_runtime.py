@@ -88,7 +88,7 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
                    "rule_version": rotation.rule_version, "active_sha": rotation.active_sha,
                    "source_snapshot_id": rotation.source_snapshot_id, "reserve_manifest_sha": rotation.reserve_manifest_sha,
                    "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking),
-                   "ranking_complete": rotation.ranking_complete}
+                   **({} if rotation.ranking_complete else {"ranking_complete": False})}
         store.put(layout.pool_ranking(rotation.round_id), canonical_json(ranking))
         store.put(layout.POOL_SUMMARY, canonical_json(pool_summary(rotation, opened_at)))
         if decision_record is None:
@@ -249,7 +249,16 @@ class PoolRuntime:
             else:
                 queue.append(task)
         history["queue"] = queue
-        history["audit_verdicts"] = {task: verdict for task, verdict in self.reserve.audit_verdicts.items() if task in queue}
+        if self.params.rotation_unscreened_max > 0 or any(
+            verdict == "unscreened" for verdict in self.reserve.audit_verdicts.values()
+        ):
+            history["audit_verdicts"] = {
+                task: verdict
+                for task, verdict in self.reserve.audit_verdicts.items()
+                if task in queue
+            }
+        else:
+            history.pop("audit_verdicts", None)
         result = Reserve.from_dict(history)
         if self.params.rotation_rule != "info":
             return result
