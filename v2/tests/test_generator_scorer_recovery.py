@@ -6,6 +6,7 @@ import dataclasses
 import json
 import threading
 import time
+import urllib.request
 from collections import Counter
 from pathlib import Path
 
@@ -79,6 +80,18 @@ def test_only_literal_loopback_endpoints_are_accepted():
     ):
         with pytest.raises(ConfigError):
             loopback_url(bad)
+
+
+def test_vllm_health_accepts_empty_200_but_models_still_requires_json():
+    with FakeFarm(first_port=0) as farm:
+        url = farm.urls[0]
+        with urllib.request.urlopen(url + "/health", timeout=5) as reply:
+            assert reply.status == 200
+            assert reply.read() == b""
+        client = LocalHttp()
+        client.check(url, timeout_s=5)
+        assert client(url + "/health", None, 5) == {}
+        assert client(url + "/v1/models", None, 5)["data"] == [{"id": "null"}]
 
 
 def test_real_http_eight_fake_servers_balance_and_exact_parameters(tmp_path):
