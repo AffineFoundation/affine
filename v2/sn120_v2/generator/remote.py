@@ -33,6 +33,7 @@ SCORER_COMMAND = (
     "/root/gen/jobs/{epoch}/job.json"
 )
 DEFAULT_TIMEOUT_S = 30.0
+HEAD_PREPARE_TIMEOUT_S = 900  # ~19 GB public checkpoint plus eight-server restart
 MAX_OUTPUT_FILES = 100_000
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024 * 1024
 MAX_ARCHIVE_STREAM_BYTES = MAX_ARCHIVE_BYTES + 1024 * 1024
@@ -338,7 +339,7 @@ class ScorerRemote:
             raise InfraError(f"cannot read Generator remote state: {exc}") from exc
         if not isinstance(value, dict) or value.get("epoch") != epoch or not isinstance(value.get("state"), str):
             raise InfraError("Generator remote state has the wrong epoch or schema")
-        if value["state"] not in ("dispatched", "running", "collecting", "failed", "complete"):
+        if value["state"] not in ("preparing", "dispatched", "running", "collecting", "failed", "complete"):
             raise InfraError("Generator remote state has an unknown state")
         if type(value.get("attempts", 0)) is not int or value.get("attempts", 0) < 0:
             raise InfraError("Generator remote state has an invalid attempt count")
@@ -352,10 +353,16 @@ class ScorerRemote:
             raise ConfigError(f"cannot read Generator private job: {exc}") from exc
         if not raw.strip() or not isinstance(value, dict) or not value:
             raise ConfigError("Generator private job must be a nonempty JSON object")
+        head = value.get("head_version")
+        if not isinstance(head, str) or not head or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in head):
+            raise ConfigError("Generator private job has no safe exact head_version")
         return raw, sha256_hex(raw)
 
     def _status(self, epoch: str, record: Mapping[str, Any], detail: str = "") -> RemoteStatus:
         state = str(record.get("state", "absent"))
+        if state == "preparing":
+            state = "dispatched"
+
         out = self.work_dir / "epochs" / epoch / "out"
         complete = state == "complete" and (out / "results.json").is_file()
         return RemoteStatus(
@@ -387,13 +394,18 @@ class ScorerRemote:
                 return self._status(name, previous)
             if previous.get("state") == "complete" and local_results.is_file():
                 return self._status(name, previous)
-            # Even an scp timeout has an unknown outcome.  Never automatically
-            # upload/launch again; collect polls the pod's authoritative marker.
-            return self._status(name, previous, "remote dispatch already recorded; collect to resume")
+            if previous.get("launch_attempted") or previous.get("state") == "complete":
+                # Only this state is sticky: a second launch is never safe.
+                return self._status(name, previous, "scorer launch attempted; collect to resume")
+            # A copy timeout remains sticky, as before. A failure during the
+            # later fixed head-preparation call is safe to retry, not relaunch.
+            if previous.get("state") == "dispatched":
+                return self._status(name, previous, "copy outcome unknown; collect to resume")
+            previous = {}
 
         record: dict[str, Any] = {
             "epoch": name, "state": "dispatched",
-            "detail": "dispatch started; poll remote markers before any retry",
+            "detail": "preparing exact frozen head; scorer has not been launched", "launch_attempted": False,
             "job_sha256": job_digest, "attempts": 1, "dispatched_at": time.time(),
         }
         _write_json(state_path, record)  # Durable before the first network call.
@@ -401,6 +413,18 @@ class ScorerRemote:
         qout, qdone = remote_path(remote_out), remote_path(done)
         self.runner.ssh(f"umask 077 && mkdir -p -- {qroot}")
         self.runner.scp(job_path, f"{self.runner.destination}:{qjob}")
+        record.update(state="preparing", detail="private job copied; preparing exact frozen head")
+        _write_json(state_path, record)
+        head_version = json.loads(job_path.read_text())["head_version"]
+        ensure = (
+            f"PYTHONPATH={REMOTE_PYTHONPATH} /root/venv/bin/python -m sn120_v2.generator.ensure_head "
+            f"{shlex.quote(head_version)}"
+        )
+        self.runner.ssh(ensure, timeout=HEAD_PREPARE_TIMEOUT_S)
+        # Only an uncertain scorer launch is sticky. Before this point, head
+        # preparation can be retried without ever running two scorers.
+        record.update(state="dispatched", detail="head prepared; scorer launch attempted", launch_attempted=True)
+        _write_json(state_path, record)
 
         scorer = SCORER_COMMAND.format(epoch=name)
         failed = f"{root}/failed.json"

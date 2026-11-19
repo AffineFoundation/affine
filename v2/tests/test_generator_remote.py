@@ -86,7 +86,7 @@ def make_remote(tmp_path: Path) -> tuple[ScorerRemote, FakeRemote, Path]:
     work = tmp_path / "work"
     job = work / "jobs" / EPOCH / "job.json"
     job.parent.mkdir(parents=True)
-    job.write_text(json.dumps({"epoch": EPOCH, "tasks": ["a" * 20]}), encoding="utf-8")
+    job.write_text(json.dumps({"epoch": EPOCH, "head_version": "a" * 64, "tasks": ["a" * 20]}), encoding="utf-8")
     config = SSHConfig("scorer.internal", 2222, key, work)
     remote = FakeRemote(config)
     return ScorerRemote(config, runner=remote), remote, key
@@ -126,8 +126,9 @@ def test_dispatch_is_fixed_async_private_and_idempotent(tmp_path):
     assert fake.copies == [
         (remote.work_dir / "jobs" / EPOCH / "job.json", f"root@scorer.internal:{ROOT}/job.json")
     ]
-    prepare, launch = [command for kind, command in fake.calls if kind == "ssh"]
+    prepare, ensure, launch = [command for kind, command in fake.calls if kind == "ssh"]
     assert prepare == f"umask 077 && mkdir -p -- {ROOT}"
+    assert "sn120_v2.generator.ensure_head " + "a" * 64 in ensure
     assert "nohup /bin/sh -c " in launch and launch.endswith("&")
     assert "< /dev/null >> " in launch and "2>&1 &" in launch
     assert f"PYTHONPATH=/root/gen/src /root/venv/bin/python -m sn120_v2.generator.scorer run {ROOT}/job.json" in launch
