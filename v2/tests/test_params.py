@@ -43,6 +43,28 @@ def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     assert restored.digest() == ticket.digest() and restored.params == params
 
 
+def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
+    from pathlib import Path
+    from sn120_v2.cli import changed_params
+
+    off = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
+    on = dataclasses.replace(off, rotation_enabled=True)
+    assert off.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
+    assert Params().params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert changed_params(on, off) == {"rotation_enabled": {"before": True, "after": False}}
+    assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
+
+    default = Params()
+    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512,
+               "rotation_k": 31, "rotation_retire_p": 0.9, "rotation_n_min": 2,
+               "rotation_retire_low_p": 0.1, "rotation_n_min_low": 7, "rotation_active_size": 20000}
+    for name, value in changes.items():
+        changed = dataclasses.replace(default, **{name: value})
+        old = getattr(default, name)
+        assert changed_params(changed, default)[name] == {"before": value, "after": old}
+        assert changed_params(default, changed)[name] == {"before": old, "after": value}
+
+
 def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip():
     base = Params()
     assert base.params_hash == Params().params_hash and base.recipe_id == Recipe().recipe_id
