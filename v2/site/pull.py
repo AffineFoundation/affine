@@ -14,10 +14,12 @@ this command never writes to the store.
   --ttl-s        seconds a signed read link works (default 86400, limit 604800).
   --keep-rounds  round directories and task tables to keep on disk (default 200).
   --max-file-mb  an object under ``public/rounds/`` above this size is not copied.
+  --max-rollout-mb  a public rollout above this size is not copied (default 512).
+  --keep-rollout-rounds  newest mirrored gate rounds to keep; 0 keeps all (default 0).
 
 The prefix ``public/`` of the store can hold objects of other software. This
 command reads only keys that ``sn120_v2.layout`` names (``layout_key``). It
-lists only ``public/heads/`` and ``public/rounds/``, never ``public/``, and
+lists only ``public/heads/``, ``public/rounds/``, and the two live rollout prefixes, never ``public/``, and
 from a list it takes only a key that a function of ``layout`` builds.
 
 One run does this, in this order:
@@ -82,6 +84,9 @@ POOL_ACTIVE, POOL_ROTATION, POOL_STATE, POOL_RANKING = (make("x").partition("x")
     layout.active_pool, layout.pool_rotation, layout.pool_rotation_state, layout.pool_ranking,
 ))
 POOL_SHARDS = "public/pool/reserve/shards/"
+ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
+BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the store, never owned
+ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
 FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
          layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
@@ -92,6 +97,7 @@ PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 ROUND_ID = re.compile(r"r[0-9]{6}\Z")
 FAILURES = (V2Error, KeyError, OSError, ValueError, TypeError, AttributeError)
+SCHEMA_SOURCE = Path(__file__).parent / "static" / "rollouts" / "SCHEMA.md"
 
 
 class Refused(ValueError):
@@ -108,6 +114,26 @@ def layout_key(key: str) -> bool:
             return key == layout.irt_snapshot(part)
         if key.startswith(ROUNDS):
             return key in {make(key[len(ROUNDS):].split("/")[0]) for make in ROUND_FILES}
+        if key.startswith(layout.ROLLOUT_BENCH_PREFIX):
+            parts = key[len(layout.ROLLOUT_BENCH_PREFIX):].split("/")
+            if len(parts) != 2:
+                return False
+            model, filename = parts
+            if filename.endswith(".jsonl.gz"):
+                return key == layout.public_rollout_bench(model, filename[:-9])
+            if filename.endswith(".meta.json"):
+                return key == layout.public_rollout_bench_meta(model, filename[:-10])
+            return False
+        if key.startswith(layout.ROLLOUT_GATE_PREFIX):
+            parts = key[len(layout.ROLLOUT_GATE_PREFIX):].split("/")
+            if len(parts) != 2 or not ROUND_ID.fullmatch(parts[0]):
+                return False
+            if parts[1] == "meta.json":
+                return key == layout.public_rollout_gate_meta(parts[0])
+            for role in ("head", "winner"):
+                if parts[1] == f"{role}.jsonl.gz":
+                    return key == layout.public_rollout_gate(parts[0], role)
+            return False
         if key.startswith(POOL):
             if key in (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY):
                 return True
@@ -131,14 +157,16 @@ def layout_key(key: str) -> bool:
 
 def mine(key: str) -> bool:
     """True for a path that this command can write under public/: a key of ``layout``, or one of its own two files."""
-    return key in (LINKS, INDEX) or layout_key(key)
+    return key in (LINKS, INDEX, ROLLOUT_INDEX) or layout_key(key)
 
 
 class Pull:
     """One run. ``store`` is any ``ObjectStore`` that can also sign read links (``Presigner``)."""
 
-    def __init__(self, store: Any, site: Path, now: int, keep_rounds: int = 200, max_bytes: int = 128 << 20) -> None:
+    def __init__(self, store: Any, site: Path, now: int, keep_rounds: int = 200, max_bytes: int = 128 << 20,
+                 max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0) -> None:
         self.store, self.site, self.now, self.keep, self.max_bytes = store, site, now, keep_rounds, max_bytes
+        self.max_rollout_bytes, self.keep_rollout_rounds = max_rollout_bytes, keep_rollout_rounds
         self.owned = self._load_index()
         self.saved = set(self.owned)
         self.problems: list[str] = []
@@ -169,6 +197,21 @@ class Pull:
 
     def put(self, key: str, data: bytes) -> None:
         """Write one file at the path of its key. A file that this command did not write is never replaced."""
+        if key == ROLLOUT_INDEX:
+            self.owned.add(key)
+            self._save_index()
+            path = self.site / key
+            if path.is_symlink():
+                raise Refused(f"{key} is a symlink; leave the hand-written rollout index in place and remove the link")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            same = path.is_file() and path.read_bytes() == data
+            build.write(path, data)
+            if same:
+                self.same += 1
+            else:
+                self.copied += 1
+            return
+
         if not mine(key):
             raise Refused(f"{key!r} is not a key of the v2 layout")
         path = self.site / key
@@ -186,6 +229,33 @@ class Pull:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         build.write(path, data)
+        self.copied += 1
+
+    def put_file(self, key: str, expected_sha: str) -> None:
+        """Stream one immutable large file into the site, then check its content."""
+        if not layout_key(key) or not SHA256.fullmatch(expected_sha):
+            raise Refused(f"refusing unrecognised rollout key or sha256: {key}")
+        path = self.site / key
+        if key in self.owned and path.is_file() and not path.is_symlink():
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(8 << 20), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() == expected_sha:
+                self.same += 1
+                return
+        if path.exists() and key not in self.owned:
+            raise Refused(f"{key} is in the site directory and this command did not write it; it is left as it is")
+        if key not in self.owned:
+            self.owned.add(key)
+            self._save_index()
+        self.store.get_file(key, path)  # store writes atomically; no whole rollout in RAM
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 << 20), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_sha:
+            raise ValueError(f"{key} differs from its published sha256")
         self.copied += 1
 
     def refresh(self, key: str) -> bytes:
@@ -383,6 +453,61 @@ class Pull:
         for key in sorted(old, key=lambda key: (-age[key], key))[max(self.keep - len(named), 0):]:
             self.remove(key)
 
+    def rollouts(self) -> None:
+        """Mirror exactly the live layout, verify bytes, and write its index after every included object."""
+        bench, gate = [], []
+        found_gate = set()
+        for key in self.store.list(layout.ROLLOUT_BENCH_PREFIX):
+            if not layout_key(key) or not key.endswith(".meta.json"):
+                continue
+            meta = json.loads(self.store.get(key))
+            model, bid = key[len(layout.ROLLOUT_BENCH_PREFIX):].split("/")
+            bid = bid[:-10]
+            data_key = layout.public_rollout_bench(model, bid)
+            if meta.get("schema") != "sn120-v2-rollouts-bench-1" or meta.get("key") != data_key:
+                raise ValueError(f"{key} is not a live bench rollout meta")
+            if meta.get("bytes", self.max_rollout_bytes + 1) > self.max_rollout_bytes or self.store.size(data_key) > self.max_rollout_bytes:
+                self.notes.append(f"{data_key} is above --max-rollout-mb: not copied")
+                continue
+            self.put_file(data_key, meta["sha256"])
+            self.put(key, self.store.get(key))
+            bench.append(meta)
+        for key in self.store.list(layout.ROLLOUT_GATE_PREFIX):
+            if not layout_key(key) or not key.endswith("/meta.json"):
+                continue
+            round_id = key[len(layout.ROLLOUT_GATE_PREFIX):].split("/")[0]
+            found_gate.add(round_id)
+        newest = sorted(found_gate, reverse=True)
+        keep_gate = set(newest[:self.keep_rollout_rounds]) if self.keep_rollout_rounds else found_gate
+        for round_id in sorted(keep_gate):
+            meta_key = layout.public_rollout_gate_meta(round_id)
+            meta = json.loads(self.store.get(meta_key))
+            if meta.get("schema") != "sn120-v2-rollouts-gate-1" or meta.get("round_id") != round_id:
+                raise ValueError(f"{meta_key} is not a live gate rollout meta")
+            included = []
+            for file_meta in meta.get("files") or []:
+                role = file_meta.get("role")
+                key = layout.public_rollout_gate(round_id, role)
+                if role not in ("head", "winner") or file_meta.get("key") != key:
+                    raise ValueError(f"{meta_key} names an invalid rollout file")
+                if file_meta.get("bytes", self.max_rollout_bytes + 1) > self.max_rollout_bytes or self.store.size(key) > self.max_rollout_bytes:
+                    self.notes.append(f"{key} is above --max-rollout-mb: not copied")
+                    continue
+                self.put_file(key, file_meta["sha256"])
+                included.append(file_meta)
+            self.put(meta_key, self.store.get(meta_key))
+            gate.append(meta | {"files": included})
+        for key in sorted(self.owned):
+            if key.startswith(layout.ROLLOUT_GATE_PREFIX) and key.split("/")[3] not in keep_gate:
+                self.remove(key)
+        try:
+            backfill = json.loads((self.site / BACKFILL_INDEX).read_bytes()) if (self.site / BACKFILL_INDEX).is_file() else None
+        except ValueError:
+            backfill = None
+            self.notes.append(f"{BACKFILL_INDEX} is not valid JSON: kept unchanged; index backfill is null")
+        doc = dict(schema=ROLLOUT_INDEX_SCHEMA, backfill=backfill, bench=bench, gate=gate, schema_doc="SCHEMA.md")
+        self.put(ROLLOUT_INDEX, json.dumps(doc, indent=1, sort_keys=True).encode())
+
     def benchmarks(self) -> None:
         try:
             self.refresh(layout.BENCHMARKS)
@@ -457,7 +582,8 @@ def read_links(store: Any, manifest: HeadManifest, ttl_s: int, now: int, chain: 
     } | rebuild
 
 
-def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, max_bytes: int, v1_history: str | None, now: int) -> int:
+def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, max_bytes: int, v1_history: str | None, now: int,
+        max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0) -> int:
     def link(key: str) -> str:
         return f"{public_url.rstrip('/')}/{key}"
 
@@ -477,7 +603,7 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
         ready()
         build.build_static(site, link)
 
-    pull = Pull(store, site, now, keep_rounds, max_bytes)
+    pull = Pull(store, site, now, keep_rounds, max_bytes, max_rollout_bytes, keep_rollout_rounds)
     pull.step("clean", pull.clean)
     pull.step("llms.txt and mining.json", pull.contract)
     pull.step("head and read links", lambda: pull.head(ttl_s))
@@ -486,6 +612,12 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("task tables", pull.tables)
     pull.step("pool", pull.pool)
     pull.step("benchmarks", pull.benchmarks)
+    pull.step("rollouts", pull.rollouts)
+    if (site / ROLLOUT_INDEX).is_file():
+        # The schema lives beside the live index even with a read-only bucket.
+        # An existing hand-written SCHEMA.md is left untouched by this first pass.
+        (site / "public/rollouts").mkdir(parents=True, exist_ok=True)
+        build.write(site / "public/rollouts/SCHEMA.md", SCHEMA_SOURCE.read_bytes())
     if v1_history:
         pull.step("v1 history", v1_page_data)
     pull.step("site data", site_data)
@@ -507,11 +639,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ttl-s", type=int, default=86400, help="seconds a signed read link works")
     parser.add_argument("--keep-rounds", type=int, default=200, help="round directories and task tables to keep on disk")
     parser.add_argument("--max-file-mb", type=int, default=128, help="an object under public/rounds/ above this size is not copied")
+    parser.add_argument("--max-rollout-mb", type=int, default=512, help="one rollout object above this size is not copied")
+    parser.add_argument("--keep-rollout-rounds", type=int, default=0, help="newest mirrored gate rounds to keep; 0 keeps all")
     args = parser.parse_args(argv)
     if not args.public_url.startswith(("http://", "https://")):
         parser.error("--public-url must be an http(s) address")
     if not 0 < args.ttl_s <= MAX_PRESIGN_S:
         parser.error(f"--ttl-s must be 1..{MAX_PRESIGN_S}")
+    if args.keep_rollout_rounds < 0 or args.max_rollout_mb < 1:
+        parser.error("--max-rollout-mb must be at least 1 and --keep-rollout-rounds must be at least 0")
     if args.keep_rounds < RECHECK_ROUNDS or args.max_file_mb < 1:
         parser.error(f"--keep-rounds must be at least {RECHECK_ROUNDS} and --max-file-mb at least 1")
     site = args.site_dir
@@ -522,7 +658,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # two runs at once could each remove what the other wrote
         store = R2Store.from_env(store_env(os.environ))
-        return run(store, site, args.public_url, args.ttl_s, args.keep_rounds, args.max_file_mb << 20, args.v1_history, int(time.time()))
+        return run(store, site, args.public_url, args.ttl_s, args.keep_rounds, args.max_file_mb << 20, args.v1_history, int(time.time()),
+                   args.max_rollout_mb << 20, args.keep_rollout_rounds)
     except BlockingIOError:
         print("pull: FAILED another pull runs on this directory; nothing written", file=sys.stderr)
     except (V2Error, Refused) as error:  # the store did not open, or the index is not ours

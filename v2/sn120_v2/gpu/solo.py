@@ -290,7 +290,7 @@ class SoloWorker:
                         jobs.append(job)
                         replies.append(reply)
                     if jobs:
-                        codes = self.evaluator._grade(request.task_ids, jobs, replies)
+                        codes = self.evaluator._grade(request.task_ids, jobs, replies, request)
                         for job in jobs:
                             result(job[0], job[1], job[2], codes[job])
                     if not all(self.evaluator._solo_servers[self.gpu].alive() for _ in [0]):

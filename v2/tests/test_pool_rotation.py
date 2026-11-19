@@ -193,6 +193,25 @@ def test_rotation_recomputes_over_several_rounds(tmp_path):
         old = {task: old.get(task, [2.43, .25, 0]) for task in active}
 
 
+def test_rotation_replay_and_state_survive_code_digest_only_repin(tmp_path):
+    store = LocalStore(tmp_path)
+    old = {f"t:{i}": [-10.0, 0.25, 4] for i in range(20)}
+    snap = snapshot(old, 2.0)
+    before = params(rotation_k=3)
+    decision = rotate("r000001", sorted(old), snap, {}, reserve(20), before,
+                      source_snapshot_id=snap["snapshot_id"])
+    store.put(layout.irt_snapshot(snap["snapshot_id"]), canonical_json(snap))
+    store.put(layout.active_pool(decision.initial_active_sha), canonical_json(list(sorted(old))))
+    from sn120_v2.pool_runtime import active_file, load_rotation, replay_rotation
+    active_file(store, decision)
+    after = dataclasses.replace(before, recipe=dataclasses.replace(before.recipe, code_digest="64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9"))
+    assert after.params_hash != before.params_hash and after.recipe_id != before.recipe_id
+    assert decision.rule_params == {name: getattr(after, name) for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_")}
+    assert replay_rotation(store, decision.round_id, snap)["matches"]
+    restored = load_rotation(store, decision.digest())
+    assert restored == decision and restored.prev_state_sha == decision.prev_state_sha
+
+
 def test_low_retire_uses_empirical_null_model_counts_not_irt_p():
     old = {"a": [0.0, 0.25, 10], "b": [-10.0, 0.25, 10]}
     ledger = {"a": (10, 0), "b": (10, 9)}

@@ -142,7 +142,7 @@ def test_worker_inflight_is_capped_during_training_then_uses_full_clients(build)
     evaluator._solo_servers = {0: SimpleNamespace(alive=lambda: True)}
     evaluator._serve_one = lambda *args: "http://gpu0"
     evaluator._load_one = lambda *args: None
-    evaluator._grade = lambda tasks, jobs, replies: {job: PASS for job in jobs}
+    evaluator._grade = lambda tasks, jobs, replies, request: {job: PASS for job in jobs}
     runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=1), evaluator=evaluator)
     scheduler = SoloScheduler(runner, ticket, 10000)
     evaluator._solo_scheduler = scheduler

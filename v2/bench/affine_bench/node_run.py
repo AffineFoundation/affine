@@ -6,11 +6,148 @@
 2. runs one `vf-eval <env>` per benchmark, all at once, sharing the endpoint (concurrency split by rollout count);
    each run writes verifiers' own outputs (configs/ + traces.jsonl) under OUT/<bench>/vf/
    resumable: an unfinished run is continued with `vf-eval @ <run>/configs/resolved/eval.json --resume`
-3. reduces each traces.jsonl to OUT/<bench>/summary.json (aggregate) and OUT/<bench>/per_task.jsonl (kept on the node/host,
-   never published), then writes OUT/DONE."""
+3. reduces each traces.jsonl to OUT/<bench>/summary.json (aggregate), OUT/<bench>/per_task.jsonl (kept on the node/host,
+   never published), and the public OUT/<bench>/rollouts.jsonl.gz (model outputs and task data only), then writes OUT/DONE."""
 import argparse
-import fcntl, resource, glob, json, math, os, shlex, subprocess, sys, time
+import fcntl, resource, glob, gzip, json, math, os, shlex, subprocess, sys, time
 from . import registry as R
+
+SAMPLING_FIELDS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repetition_penalty", "max_tokens", "enable_thinking", "profile", "max_model_len")
+
+
+def last_boxed(text):
+    """The last balanced \\boxed{...} after the final </think>, or None."""
+    tail = text.rsplit("</think>", 1)[-1]
+    start = tail.rfind("\\boxed")
+    if start < 0:
+        return None
+    begin = start + len("\\boxed")
+    if begin >= len(tail) or tail[begin] != "{":
+        return None
+    depth = 0
+    for pos in range(begin, len(tail)):
+        depth += (tail[pos] == "{") - (tail[pos] == "}")
+        if depth == 0:
+            return tail[start:pos + 1]
+    return None
+
+
+def split_reasoning(text):
+    """Keep all text outside one think block in the final reply, including extra boxes."""
+    before, marker, rest = text.partition("<think>")
+    if not marker or "</think>" not in rest:
+        return None, text
+    reasoning, _, final = rest.partition("</think>")
+    return reasoning, before + final
+
+
+def completion_of(trace):
+    """The last sampled assistant message of verifiers 0.4's message graph.
+
+    ModelCall has metadata only. In particular, its endpoint is not copied into
+    public output. root_reply covers a harness that joins descendant branches.
+    """
+    root = trace.get("root_reply")
+    messages = [node.get("message") or {} for node in trace.get("nodes") or [] if node.get("sampled")]
+    if not messages:  # compact/fake traces may retain only the last call's message
+        messages = [trace.get("message") or {}]
+    if isinstance(root, str) and not messages:
+        return root, None
+    for message in reversed(messages):
+        if message.get("role") in (None, "assistant"):
+            return message.get("content") or "", message.get("reasoning_content")
+    return "", None
+
+
+def task_prompt(data):
+    """The initial chat messages sent, with task-specific system_prompt applied."""
+    prompt = data.get("prompt")
+    if isinstance(prompt, str):
+        messages = [{"role": "user", "content": prompt}]
+    else:
+        messages = [dict(role=message.get("role"), content=message.get("content")) for message in prompt or []]
+    if data.get("system_prompt"):
+        messages.insert(0, {"role": "system", "content": data["system_prompt"]})
+    return messages
+
+
+def iter_traces(path):
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                raw = json.loads(line)
+                data = raw["task"]["data"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            traces = raw.get("traces")
+            if traces is None:  # verifiers 0.4: one Trace per episode line
+                traces = [raw]
+            yield raw, data, traces
+
+
+def rollout_rows(b, traces, model_id, sampling):
+    """Yield every expected row, including explicit E rows for rollouts verifiers lost.
+
+    Per task, the first k valid attempts match summarize(); then failed attempts fill remaining expected samples.
+    A resumed successful retry replaces its earlier error; unresolved errors stay explicit.
+    A missing attempt is synthesized because it still contributes a zero to the benchmark's score.
+    """
+    k = max(1, int(b["rollouts"]))
+    grouped = {}
+    for raw, data, trace_list in iter_traces(traces):
+        # Keep one small wire-task record plus each rollout's own message graph;
+        # raw episode/tool/runtime fields never reach the public serializer.
+        kept = dict(ok=raw.get("ok", True), key=raw["task"].get("key"), traces=[
+            dict(rewards=trace.get("rewards") or {}, calls=trace.get("calls") or [],
+                 num_output_tokens=trace.get("num_output_tokens") or 0,
+                 root_reply=trace.get("root_reply"),
+                 nodes=[dict(sampled=node.get("sampled"), message=node.get("message")) for node in trace.get("nodes") or []],
+                 message=(trace.get("calls") or [{}])[-1].get("message"))
+            for trace in trace_list])
+        grouped.setdefault(data["idx"], []).append((data, kept))
+    common = dict(model_id=model_id, benchmark_id=b["id"], bench_version=R.bench_version(b), dataset=b.get("dataset"))
+    for idx in sorted(grouped):
+        attempts = grouped[idx]
+        valid = [item for item in attempts if item[1].get("ok") and item[1].get("traces")]
+        failed = [item for item in attempts if item not in valid]
+        rows = (valid[:k] + failed)[:k]
+        rows = [(data, None if not raw.get("ok") else raw) for data, raw in rows]
+        for sample in range(k):
+            data, raw = rows[sample] if sample < len(rows) else (*grouped[idx][0][:1], None)
+            trace_list = (raw or {}).get("traces") or []
+            tc = trace_list[-1] if trace_list else {}
+            calls = tc.get("calls") or []
+            text, separate = completion_of(tc)
+            reasoning, final = split_reasoning(text)
+            if separate is not None:
+                reasoning = separate
+            rewards = tc.get("rewards") or {}
+            try:
+                reward = sum(float(v["score"]) * float(v.get("weight", 1.0)) for v in rewards.values())
+            except (ValueError, TypeError, KeyError):
+                reward = 0.0
+            errored = raw is None or not raw.get("ok") or not trace_list
+            finish = next((c.get("finish_reason") for c in reversed(calls) if c.get("finish_reason") is not None), None)
+            capped = finish == "length" or any(c.get("finish_reason") == "length" for c in calls)
+            grade = "error" if errored else "cap" if capped else "pass" if reward > 0 else "fail"
+            yield common | dict(task_idx=idx, task_key=(raw or grouped[idx][0][1]).get("key"), sample_index=sample,
+                                prompt=task_prompt(data), gold_answer=data.get("answer"),
+                                reasoning_text=reasoning, completion_text=final, extracted_answer=last_boxed(text) if text else None,
+                                reward=reward, grade=grade, output_tokens=tc.get("num_output_tokens") or 0,
+                                finish_reason=finish, capped=capped, errored=errored,
+                                sampling={name: sampling.get(name) for name in SAMPLING_FIELDS})
+
+
+def write_rollouts(b, run_dir, out_dir, model_id, sampling):
+    traces = glob.glob(run_dir + "/*/traces.jsonl")
+    if not traces:
+        raise FileNotFoundError("verifiers traces.jsonl")
+    # Write through the real gzip module so mtime=0 is explicit and reproducible on every Python.
+    with open(out_dir + "/rollouts.jsonl.gz.tmp", "wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+            for row in rollout_rows(b, traces[0], model_id, sampling):
+                gz.write(json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8") + b"\n")
+    os.replace(out_dir + "/rollouts.jsonl.gz.tmp", out_dir + "/rollouts.jsonl.gz")
 
 ROOT = os.environ.get("BENCH_ROOT", "/data/bench")
 REPO = os.environ.get("BENCH_REPO", ROOT + "/repo")
@@ -186,6 +323,7 @@ def main(argv=None):
                 for p_ in sorted(per.values(), key=lambda x: x["idx"]):
                     p_ = dict(p_); p_["tokens"] = sum(p_["tokens"]); f.write(json.dumps(p_) + "\n")
             json.dump(summ, open(d + "/summary.json.tmp", "w"), indent=1); os.replace(d + "/summary.json.tmp", d + "/summary.json")
+            write_rollouts(b, d + "/vf", d, a.model_id, sp)
             status[bid] = dict(rc=0, score=summ["score"])
         time.sleep(10)
     json.dump(dict(model_id=a.model_id, serve=how, serve_seconds=t_serve, wall_seconds=time.time() - t0, status=status, finished=time.time()),

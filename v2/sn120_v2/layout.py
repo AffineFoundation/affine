@@ -145,6 +145,29 @@ def winner_batch(round_id: str) -> str:
     return f"public/rounds/{_part(round_id)}/batch.json"
 
 
+ROLLOUT_BENCH_PREFIX = "public/rollouts/bench/"
+ROLLOUT_GATE_PREFIX = "public/rollouts/gate/"
+ROLLOUT_INDEX = "public/rollouts/index.json"
+
+
+def public_rollout_bench(model_id: str, benchmark_id: str) -> str:
+    return f"{ROLLOUT_BENCH_PREFIX}{_part(model_id)}/{_part(benchmark_id)}.jsonl.gz"
+
+
+def public_rollout_bench_meta(model_id: str, benchmark_id: str) -> str:
+    return f"{ROLLOUT_BENCH_PREFIX}{_part(model_id)}/{_part(benchmark_id)}.meta.json"
+
+
+def public_rollout_gate(round_id: str, role: str = "head") -> str:
+    if role not in ("head", "winner"):
+        raise ContractError("a public gate rollout is the head or the winner")
+    return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/{role}.jsonl.gz"
+
+
+def public_rollout_gate_meta(round_id: str) -> str:
+    return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/meta.json"
+
+
 def irt_snapshot(snapshot_id: str) -> str:
     return f"public/irt/{_part(snapshot_id)}.json"
 

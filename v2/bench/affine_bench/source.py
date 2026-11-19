@@ -1,5 +1,5 @@
 """The one place where the benchmark service touches v2 state. It reads public objects of the store, with `get` and
-`presign_get`. Its only write is the result table at `layout.BENCHMARKS`.
+`presign_get`. It writes the result table at `layout.BENCHMARKS` and the public rollout artifacts named by `layout`.
 
 Rows come from the public chain of heads: the head pointer, and for each head the head it came from. A stacked head
 names that head as its parent. A folded head names its round, and the public round file names the head the round opened
