@@ -1,0 +1,10 @@
+{
+  "epoch": "20261119T2000Z",
+  "submission_count": 13,
+  "link_holders": 3,
+  "king": "20261119T1600Z:8f1e6a0c9d2b",
+  "submissions": [
+    {"hotkey": "5FixtureMinerAlpha000000000000000000000000000000", "file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "submitted": 8},
+    {"hotkey": "5FixtureMinerBeta0000000000000000000000000000000", "file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "submitted": 5}
+  ]
+}

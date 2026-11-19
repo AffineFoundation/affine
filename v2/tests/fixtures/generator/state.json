@@ -1,0 +1,10 @@
+{
+  "schema": "affine-generator-state-v1",
+  "epoch": "20261119T2000Z",
+  "window_start": 1795104000,
+  "deadline": 1795118400,
+  "king_version": "20261119T1600Z:8f1e6a0c9d2b",
+  "last_scored_epoch": "20261119T1600Z",
+  "link_holders": 2,
+  "seed_commitment": "fixture-public-sha256-commitment"
+}

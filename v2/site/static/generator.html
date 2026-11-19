@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Affine Generator: submit informative math tasks to subnet 120 mechanism 1. Live epochs, accepted tasks and trailing-24h payouts.">
+<title>Affine · Generator</title>
+<link rel="icon" href="{{asset:favicon.svg}}" type="image/svg+xml">
+<link rel="preload" href="{{asset:network-haffer.ttf}}" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="{{asset:network-mono.ttf}}" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="{{asset:site.css}}">
+<link rel="stylesheet" href="{{asset:generator.css}}">
+<script defer src="{{asset:generator.js}}"></script>
+</head>
+<body>
+<header>
+<a class="wordmark" href="./" aria-label="Affine home"><svg viewBox="0 0 500 500" aria-hidden="true" focusable="false"><path d="M250.004 1.66602C387.157 1.66625 498.341 112.851 498.341 250.004C498.341 387.156 387.156 498.341 250.004 498.341C112.851 498.341 1.66629 387.156 1.66602 250.004C1.66602 112.851 112.851 1.66619 250.004 1.66602ZM74.9541 374.866C113.948 429.435 177.821 465.007 250.004 465.007C322.186 465.007 386.06 429.435 425.054 374.866H74.9541ZM338.333 341.533H421.404L338.332 201.217L338.333 341.533ZM78.6113 341.533H160V204.057L78.6113 341.533ZM249.167 211.667C217.411 211.667 191.667 237.411 191.667 269.167C191.667 300.923 217.411 326.667 249.167 326.667C280.923 326.667 306.667 300.923 306.667 269.167C306.667 237.411 280.923 211.667 249.167 211.667ZM220.13 37.0586C115.527 51.5994 35 141.398 35 250.004C35.0001 276.856 39.9238 302.559 48.916 326.259L220.13 37.0586ZM451.094 326.251C460.084 302.553 465.007 276.854 465.007 250.004C465.007 141.4 384.485 51.6033 279.885 37.0596L451.094 326.251ZM174.242 180H325.772L250.007 52.0244L174.242 180Z"/></svg><span>FFINE</span></a>
+<nav aria-label="Site"><a href="./">Live v2 status</a><a href="generator.html" aria-current="page">Generator</a><a href="#epoch">Epoch</a><a href="#results">Results</a><a href="#accepted">Accepted tasks</a><a href="#payout">Payouts</a><a href="generator-guide.html">Miner guide</a><a href="https://github.com/AffineFoundation/affine">GitHub</a></nav>
+</header>
+<main id="main">
+<section id="epoch" aria-labelledby="epoch-t">
+<div class="section-heading"><h1 id="epoch-t">Generator</h1><span class="reading">SN120 · mechanism 1</span></div>
+<p class="note lead">Find math problems where the frozen king succeeds sometimes, but not always. Submit pool task IDs during a four-hour UTC epoch; accepted tasks earn an equal share of the trailing-24h payout.</p>
+<dl class="stats" id="epoch-stats"><div><dt>Live epoch</dt><dd data-f="epoch">—</dd></div><div><dt>Deadline countdown</dt><dd data-f="countdown" role="timer">—</dd></div><div><dt>Frozen king version</dt><dd data-f="king">—</dd></div><div><dt>Task submissions</dt><dd data-f="submissions">—</dd></div><div><dt>Link holders</dt><dd data-f="links">—</dd></div></dl>
+<div class="window"><div><h2>Submission window · UTC</h2><p id="window" class="mono">Awaiting public epoch state</p></div><div><span class="label">Deadline · UTC</span><p id="deadline" class="mono">—</p></div></div>
+<p class="note" id="epoch-note">Only public files are used. An epoch ID is its UTC deadline. Before the snapshot is published, the link-holder count does not include submissions still waiting for a link.</p>
+</section>
+<section id="pool" aria-labelledby="pool-t"><div class="section-heading"><h2 id="pool-t">The task pool</h2><span class="reading">one pinned release · original IDs verbatim</span></div><div class="pool-card"><div><a class="pool-name" href="https://github.com/AffineFoundation/affine/releases/tag/sn120-math-prior-v1">sn120-math-prior-v1</a><p class="note">GitHub release · 811,609 problems</p></div><div class="pool-count">811,609</div></div><p class="note">Submit the 20-hex <code>id</code> column unchanged. Duplicate, out-of-pool, invalid and previously accepted IDs do not qualify. Earliest valid upload wins a task; an exact upload-time tie is broken by file SHA-256.</p></section>
+<section id="results" aria-labelledby="results-t"><div class="section-heading"><h2 id="results-t">Last scored epoch · per hotkey</h2><span class="reading" id="results-epoch">—</span></div><div class="scroll wait"><table id="hotkey-results"><thead><tr><th>Hotkey / UID</th><th class="num">Submitted</th><th class="num">Eligible</th><th class="num">Scored</th><th class="num">Accepted</th></tr></thead><tbody></tbody></table></div><p class="note" id="results-note">The first epoch has not been scored yet. Results will appear after scoring and publication.</p></section>
+<section id="accepted" aria-labelledby="accepted-t"><div class="section-heading"><h2 id="accepted-t">Accepted tasks</h2><span class="reading" id="accepted-epoch">—</span></div><div class="scroll wait"><table id="accepted-tasks"><thead><tr><th>Task ID</th><th>Submitter hotkey / UID</th><th>Upload time · UTC</th><th class="num">Passes / rollouts</th><th class="num">q</th></tr></thead><tbody></tbody></table></div><p class="note">Newest uploads first. <code>q</code> is the posterior probability that the king's true pass rate is between 0.25 and 0.75. <a href="accepted-all.jsonl">Complete accepted-task history (JSONL)</a>.</p></section>
+<section id="payout" aria-labelledby="payout-t"><div class="section-heading"><h2 id="payout-t">Trailing-24h payout vector</h2><span class="reading" id="payout-updated">—</span></div><div class="scroll short wait"><table id="payout-rows"><thead><tr><th class="num">UID</th><th>Hotkey</th><th class="num">Accepted tasks</th><th class="num">Weight</th></tr></thead><tbody></tbody></table></div><p class="note">Each accepted unique task in the last six epochs contributes equally. Payment goes to the UID holding its earning hotkey at payout time. The full public record is <a href="payout.json">payout.json</a>.</p></section>
+<section id="mine" aria-labelledby="mine-t"><div class="section-heading"><h2 id="mine-t">How to mine</h2><span class="reading">four steps</span></div><ol class="steps"><li><span>01</span><div><h3>Get the miner kit and activate</h3><p>Use a registered SN120 hotkey (UID other than 0) and follow the guide to activate it.</p></div></li><li><span>02</span><div><h3>Choose tasks and test the king</h3><p>Select original IDs from the pinned pool and sample the current king. Middle-band pass rates are informative.</p></div></li><li><span>03</span><div><h3>Sign and upload before the UTC deadline</h3><p>Sign 1–32 distinct task IDs with your hotkey and submit them using the presigned link from the miner kit.</p></div></li><li><span>04</span><div><h3>Check published results</h3><p>Accepted submissions earn a share for 24 hours. Full text is published only for accepted rollouts.</p></div></li></ol><p class="note lead"><a href="generator-guide.html">Read the Generator miner guide</a> · <a href="https://github.com/AffineFoundation/affine/tree/v2/miner">Get the miner kit on GitHub</a> · <a href="state.json">Public epoch state</a></p></section>
+</main>
+<footer><span>Affine · Subnet 120 · Generator</span><span id="status" role="status">Connecting</span></footer>
+<noscript><p class="noscript">Enable JavaScript for the live epoch and tables, or read <a href="state.json">state.json</a>, <a href="payout.json">payout.json</a> and <a href="accepted-all.jsonl">accepted-all.jsonl</a>.</p></noscript>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "epoch": "20261119T1600Z",
+  "hotkeys": [
+    {"hotkey": "5FixtureMinerAlpha000000000000000000000000000000", "uid": 17, "submitted": 10, "eligible": 9, "scored": 8, "accepted": 3},
+    {"hotkey": "5FixtureMinerBeta0000000000000000000000000000000", "uid": 23, "submitted": 3, "eligible": 2, "scored": 2, "accepted": 1}
+  ],
+  "tasks": [{"task_id": "0123456789abcdef0123", "s": 4, "n": 8, "q": 0.9507, "decision": "accept"}]
+}
