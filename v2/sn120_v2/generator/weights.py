@@ -128,20 +128,20 @@ def _gates(
     now: float,
     mech0_writer_active: bool,
     last_success_at: float | None,
-    enforce_timer: bool = True,
+    ignore_window: bool = False,
 ) -> Decision | None:
-    """The one-shot runner preflight enforces the exact timer instant."""
+    """Allow scheduler jitter without weakening any non-time safety gate."""
     if type(mech0_writer_active) is not bool:
         return _skip("mechanism-0 writer activity could not be established")
     if mech0_writer_active:
         return _skip("mechanism-0 weight writer is active")
     stamp = _utc(now)
-    if stamp.minute < MIN_UTC_MINUTE:
-        return _skip("current UTC minute is before 25")
-    if enforce_timer:
+    if not ignore_window:
+        if stamp.minute < MIN_UTC_MINUTE:
+            return _skip("current UTC minute is before 25")
         elapsed = stamp.minute * 60 + stamp.second
-        if elapsed not in TIMER_SECONDS_UTC:
-            return _skip("outside the 35:20 and 50:20 UTC timer instants")
+        if not any(instant <= elapsed < instant + 240 for instant in TIMER_SECONDS_UTC):
+            return _skip("outside the four-minute windows after 35:20 and 50:20 UTC")
     if last_success_at is not None:
         try:
             last = _timestamp(last_success_at, "last successful write")
@@ -217,6 +217,7 @@ def decide(
     last_success_at: float | None = None,
     execute: bool = False,
     wallet_hotkey: str | None = None,
+    ignore_window: bool = False,
 ) -> Decision:
     """Return the sole permitted action for this invocation, without any I/O.
 
@@ -231,7 +232,7 @@ def decide(
             now=now,
             mech0_writer_active=mech0_writer_active,
             last_success_at=last_success_at,
-            enforce_timer=False,
+            ignore_window=ignore_window,
         )
     except ContractError:
         return _skip("current timestamp is invalid")
@@ -468,6 +469,7 @@ def run_once(
     wallet: Any = None,
     mech0_active: Callable[[], bool] | bool | None = None,
     successful_at: float | None = None,
+    ignore_window: bool = False,
 ) -> dict[str, Any]:
     """Run one attempt with injectable chain/SDK fakes and lazy production I/O."""
     if type(execute) is not bool:
@@ -488,7 +490,7 @@ def run_once(
             previous = last_success_at(runs_path) if successful_at is None else successful_at
             probe = _mech0_writer_active if mech0_active is None else mech0_active
             active = probe() if callable(probe) else probe
-            early = _gates(None, now=observed, mech0_writer_active=active, last_success_at=previous)
+            early = _gates(None, now=observed, mech0_writer_active=active, last_success_at=previous, ignore_window=ignore_window)
             if early is not None:
                 return record(_decision_report(early))
 
@@ -514,6 +516,7 @@ def run_once(
                 last_success_at=previous,
                 execute=execute,
                 wallet_hotkey=signer,
+                ignore_window=ignore_window,
             )
             if loaded.sha256:
                 report["payout_sha256"] = loaded.sha256
@@ -574,6 +577,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--runs", type=Path, help="atomic run journal; default: runs.jsonl beside payout.json")
     parser.add_argument("--network", default="finney", help="chain network or node address (default: finney)")
     parser.add_argument("--execute", action="store_true", help="actually plan and submit one mechid=1 timelocked commit")
+    parser.add_argument("--ignore-window", action="store_true", help="manual operator run: skip only the minute>=25 and timer-window gates")
+
     parser.add_argument("--wallet-name", default=WALLET_NAME)
     parser.add_argument("--wallet-hotkey", default=WALLET_HOTKEY)
     parser.add_argument("--wallet-path", type=Path)
@@ -582,6 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         payout_path=args.payout,
         runs_path=args.runs or args.payout.with_name("runs.jsonl"),
         execute=args.execute,
+        ignore_window=args.ignore_window,
         network=args.network,
         wallet_name=args.wallet_name,
         wallet_hotkey_name=args.wallet_hotkey,

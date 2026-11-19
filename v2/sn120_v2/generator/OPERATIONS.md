@@ -71,8 +71,10 @@ weight command and no all-zero submission. Float shares are passed to the
 Bittensor SDK for u16 normalization, and only `mechid=1, version_key=0` is used.
 Missing/invalid/stale (>6h) payout or a changed earning hotkey selects UID 0.
 The mech-0 activity, minute >=25, 240-block and 45-minute-success gates remain
-in force; a delayed activation that misses both exact instants skips rather than
-racing the next mech-0 write.
+in force. Each scheduled instant has a four-minute tolerance: `[35:20,39:20)`
+or `[50:20,54:20)` UTC, including interpreter startup delay. For a manual
+operator run, `--ignore-window` skips only the minute >=25 and timer-window
+checks; all other gates still apply.
 
 The standalone snapshot command expects a frozen king record captured at T;
 use the tick driver for normal operation. Tick commits a seed at window open,

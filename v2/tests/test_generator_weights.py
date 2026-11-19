@@ -69,17 +69,44 @@ def test_exact_deployment_timer_instants_are_accepted(minute, second):
 
 @pytest.mark.parametrize(
     "minute,second,reason",
-    [(24, 59, "before 25"), (25, 0, "timer"), (35, 19, "timer"), (35, 21, "timer"), (50, 19, "timer"), (50, 21, "timer")],
+    [(24, 59, "before 25"), (25, 0, "four-minute"), (35, 19, "four-minute"), (50, 19, "four-minute")],
 )
-def test_time_gate_rejects_early_minute_and_every_non_timer_second(minute, second, reason):
+def test_time_gate_rejects_early_minute_and_outside_windows(minute, second, reason):
     now = dt.datetime(2026, 11, 19, 13, minute, second, tzinfo=UTC).timestamp()
     result = decide(now=now, execute=True)
-    if reason == "before 25":
-        assert result.status == "skip" and reason in result.reason
-    else:
-        submitted(result)
-    gate = weights._gates(None, now=now, mech0_writer_active=False, last_success_at=None)
-    assert gate is not None and reason in gate.reason
+    assert result.status == "skip" and reason in result.reason
+    assert not result.weights
+
+
+@pytest.mark.parametrize("instant", [35 * 60 + 20, 50 * 60 + 20])
+@pytest.mark.parametrize("offset,allowed", [(0, True), (1, True), (10, True), (239, True), (240, False)])
+def test_timer_window_tolerates_startup_jitter(instant, offset, allowed):
+    base = dt.datetime(2026, 11, 19, 13, 35, 20, tzinfo=UTC)
+    now = base.replace(hour=instant // 3600, minute=(instant % 3600) // 60, second=instant % 60).timestamp() + offset
+    gate = weights._gates(chain(), now=now, mech0_writer_active=False, last_success_at=None)
+    assert (gate is None) is allowed
+
+
+def test_ignore_window_skips_only_time_gates():
+    now = dt.datetime(2026, 11, 19, 13, 10, 5, tzinfo=UTC).timestamp()
+    assert weights._gates(None, now=now, mech0_writer_active=False, last_success_at=None) is not None
+    assert weights._gates(None, now=now, mech0_writer_active=False, last_success_at=None, ignore_window=True) is None
+    assert decide(now=now, ignore_window=True, execute=True).status == "submit"
+    active = decide(now=now, ignore_window=True, execute=True, mech0_writer_active=True)
+    recent = decide(now=now, ignore_window=True, execute=True, last_success_at=now - 1)
+    blocks = decide(now=now, ignore_window=True, execute=True, state=chain(last_update=900))
+    assert active.status == recent.status == blocks.status == "skip"
+    assert not active.weights and not recent.weights and not blocks.weights
+
+
+def test_ignore_window_cli_is_forwarded(tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(weights, "run_once", lambda **options: calls.append(options) or weights._base_report(NOW, False))
+    payout = tmp_path / "payout.json"
+    write_payout(payout)
+    assert weights.main(["--payout", str(payout), "--ignore-window"]) == 0
+    assert calls[0]["ignore_window"] is True and calls[0]["execute"] is False
+    capsys.readouterr()
 
 
 def test_mech0_activity_gate_has_priority_and_never_burns():
