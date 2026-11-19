@@ -18,7 +18,7 @@ from .envs.reserve import Catalog, candidate_metadata, load_reserve, read_raw, r
 from .errors import ConfigError, VerifyError
 from .irt import IRTSampler
 from .params import Params
-from .rotation import INFO_RULE_VERSION, Reserve, Rotation, fold_ledger, rotate, rotate_info
+from .rotation import INFO_RULE_VERSION, RANKING_OUTSIDE_LIMIT, Reserve, Rotation, fold_ledger, rotate, rotate_info
 from .seams import ObjectStore
 from .state import State
 
@@ -87,7 +87,8 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
         ranking = {"schema": "affine-pool-ranking-v1", "round_id": rotation.round_id,
                    "rule_version": rotation.rule_version, "active_sha": rotation.active_sha,
                    "source_snapshot_id": rotation.source_snapshot_id, "reserve_manifest_sha": rotation.reserve_manifest_sha,
-                   "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking)}
+                   "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking),
+                   "ranking_complete": rotation.ranking_complete}
         store.put(layout.pool_ranking(rotation.round_id), canonical_json(ranking))
         store.put(layout.POOL_SUMMARY, canonical_json(pool_summary(rotation, opened_at)))
         if decision_record is None:
@@ -248,6 +249,7 @@ class PoolRuntime:
             else:
                 queue.append(task)
         history["queue"] = queue
+        history["audit_verdicts"] = {task: verdict for task, verdict in self.reserve.audit_verdicts.items() if task in queue}
         result = Reserve.from_dict(history)
         if self.params.rotation_rule != "info":
             return result
@@ -379,6 +381,13 @@ def replay_rotation(store: ObjectStore, round_id: str, snapshot: Mapping[str, An
         actual = Rotation.from_dict(actual.to_dict() | {"retired_ledger": retired_ledger})
     if params.rotation_rule == "info":
         ranking = json.loads(store.get(layout.pool_ranking(round_id)))
-        if ranking["candidates"] != list(actual.candidate_ranking) or ranking["round_id"] != round_id:
+        candidates = list(actual.candidate_ranking)
+        if not actual.ranking_complete:
+            candidates = [row for row in candidates if row["state"] in ("active", "retired") or row["retired"] or row["id"] in actual.active_ids]
+            outside = [row for row in actual.candidate_ranking if row["id"] not in {item["id"] for item in candidates}]
+            candidates.extend(outside[:RANKING_OUTSIDE_LIMIT])
+            order = {row["id"]: index for index, row in enumerate(actual.candidate_ranking)}
+            candidates.sort(key=lambda row: order[row["id"]])
+        if ranking["candidates"] != candidates or ranking["round_id"] != round_id:
             raise VerifyError("public v2 ranking does not match the recomputed decision")
     return {"round_id": round_id, "matches": actual == expected, "expected": expected.to_dict(), "actual": actual.to_dict()}

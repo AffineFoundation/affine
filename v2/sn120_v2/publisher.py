@@ -881,6 +881,9 @@ def _pool_lines(params: Params) -> list[str]:
             f"  The target is {params.rotation_active_size or 'the initial active size'}: shrink and fill have no churn cap. Steady-state swaps need a strictly higher score and are capped at",
             f"  floor(rotation_churn_frac * target) = floor({show(params.rotation_churn_frac)} * target). Ties use sha256(round_id|rank|task_id).",
             "  Retired tasks may return by score and restore their archived IRT row. The complete ranking, next-up queue and summary are public.",
+            *(["  Reserve rows with audit verdict `unscreened` are admitted directly from their public prior. Their fill plus swap admissions are capped at",
+               f"  {params.rotation_unscreened_max} per round (`rotation_unscreened_max`); skipped rows remain queued for later rounds. Retirements and withdrawals are unchanged."]
+              if params.rotation_unscreened_max else []),
             "  `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` recomputes a decision from public inputs.",
         ]
     elif params.rotation_enabled or rotation_changed:
