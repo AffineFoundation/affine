@@ -13,7 +13,7 @@ import pytest
 from sn120_v2 import layout, public, publisher
 from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.envs.math_pool import MathPool, Task, load_pool
-from sn120_v2.envs.reserve import Catalog, load_reserve, reserve_dir
+from sn120_v2.envs.reserve import Catalog, empty_manifest, load_reserve, reserve_dir
 from sn120_v2.errors import ConfigError, ContractError, VerifyError
 from sn120_v2.irt import DECIMALS, IRTSampler, fisher_masses, predicted_pass, snapshot_digest
 from sn120_v2.journal import read_journal
@@ -206,7 +206,8 @@ def test_rotation_replay_and_state_survive_code_digest_only_repin(tmp_path):
     active_file(store, decision)
     after = dataclasses.replace(before, recipe=dataclasses.replace(before.recipe, code_digest="64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9"))
     assert after.params_hash != before.params_hash and after.recipe_id != before.recipe_id
-    assert decision.rule_params == {name: getattr(after, name) for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_")}
+    from sn120_v2.rotation import rule_params
+    assert decision.rule_params == rule_params(before) == rule_params(after)
     assert replay_rotation(store, decision.round_id, snap)["matches"]
     restored = load_rotation(store, decision.digest())
     assert restored == decision and restored.prev_state_sha == decision.prev_state_sha
@@ -268,7 +269,7 @@ def test_admitted_irt_difficulty_is_rounded_head_ability_and_max_fisher_mass():
 def test_reserve_tampering_reordered_missing_shrunk_withdrawn_fail_closed(tmp_path):
     root = tmp_path / "reserve"
     (root / "shards").mkdir(parents=True)
-    (root / "MANIFEST.jsonl").write_bytes(Path(reserve_dir() / "MANIFEST.jsonl").read_bytes())
+    (root / "MANIFEST.jsonl").write_bytes(empty_manifest())
     (root / "withdrawn.jsonl").write_bytes(b"")
     assert not load_reserve(root)[0].queue
     raw = canonical_json({"id": "omni:0", "env": "affine_math", "problem": "UNIQUE-RESERVE-INTEGRITY: compute 987654321 + 123456789", "answer": "1111111110",

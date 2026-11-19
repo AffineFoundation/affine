@@ -15,6 +15,10 @@ This file is for the operator of AffineValidator. It covers one change of the si
 
 The builder and these steps place no `public/benchmarks.json` in the site directory. Only the pull writes that file, as a copy of the store's object.
 
+## Public task-pool page
+
+`build.py` also writes `pool.html` and `pool.js`. Serve `pool.html` at `/pool` with the site's normal extensionless-HTML mapping. It needs no backend: `pull.py` mirrors `public/pool/summary.json` and the exact `public/pool/ranking/rNNNNNN.json` keys, and `build.py` resolves the latest ranking into `pool-data.json` for client-side search. A store with no v2 ranking still gets the static page, with a no-ranked-pool message. `pool()` uses the open round's matching pool block in mirrored `mining.json` when `round.json` is not written yet; closed rounds continue to use `round.json`.
+
 ## Hosts
 
 AffineValidator only. The GPU box and the benchmark host need nothing. There is no new unit, no new flag, no new credential and no new Python package. The pull's unit must have `--v1-history` in its `ExecStart` (step 12.2 of "AffineValidator" in `v2/CUTOVER.md` writes it so).

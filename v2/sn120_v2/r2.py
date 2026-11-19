@@ -381,8 +381,13 @@ def self_test(store: R2Store) -> bool:
 
 def _fixed_prefix(make_key: Callable[..., str]) -> str:
     """The path segments that every key of one ``layout`` function starts with."""
-    names = inspect.signature(make_key).parameters.values()
-    one, two = (make_key(*[n if name.annotation == "int" else str(n) for name in names]).split("/") for n in (1, 2))
+    names = list(inspect.signature(make_key).parameters.values())
+    if make_key is layout.public_rollout_gate:
+        # The role is a closed set, not a free path component. Enumerate it so
+        # the generic prefix prober never passes an invalid role to layout.
+        one, two = (make_key(str(n), "head").split("/") for n in (1, 2))
+    else:
+        one, two = (make_key(*[n if name.annotation == "int" else str(n) for name in names]).split("/") for n in (1, 2))
     same = 0
     while same < min(len(one), len(two)) and one[same] == two[same]:
         same += 1

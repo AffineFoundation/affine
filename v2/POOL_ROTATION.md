@@ -27,7 +27,7 @@ python -m sn120_v2.envs.reserve status
 python -m sn120_v2.envs.reserve withdraw omni:17 --reason 'wrong answer key'
 ```
 
-Input has one `{problem, answer, source_id?}` per line. `--env` chooses the task slice (default `affine_math`). Ingest NFKC-normalises, case-folds and whitespace-collapses problems for dedupe. It checks against the v2.1 pool, v2.0 archive, all reserve shards, withdrawn ids, the retired archive and the input itself. It uses the live grader self-check `grade_answer(answer, problem, '<think>x</think> \\boxed{' + answer + '}', False) == P`, requires a nonempty single-line answer, rejects MANDATE, and enforces params-free problem/answer bounds of 16,384/2,048 characters. `--reject-mc` also applies the grader's multiple-choice heuristic. Rejected rows and counts go to `<shard>.rejected.json`, never to the reserve.
+Input has one `{problem, answer, source_id?, prior_p?}` per line. `prior_p` is an optional finite public prior pass rate in [0,1], used by the ranked v2 rule when no IRT row is available. `--env` chooses the task slice (default `affine_math`). Ingest NFKC-normalises, case-folds and whitespace-collapses problems for dedupe. It checks against the v2.1 pool, v2.0 archive, all reserve shards, withdrawn ids, the retired archive and the input itself. It uses the live grader self-check `grade_answer(answer, problem, '<think>x</think> \\boxed{' + answer + '}', False) == P`, requires a nonempty single-line answer, rejects MANDATE, and enforces params-free problem/answer bounds of 16,384/2,048 characters. `--reject-mc` also applies the grader's multiple-choice heuristic. Rejected rows and counts go to `<shard>.rejected.json`, never to the reserve.
 
 IDs continue at `<prefix>:<max existing n + 1>`. An empty re-run writes nothing. Re-running after new rows have been ingested creates no duplicate and leaves already listed shards byte-identical. Repeating the same source/input filename with different content fails closed rather than allocating a colliding source shard. Only the UTC ingest date is time-dependent; with the same date, input and reserve the output is byte-identical. Ingest never changes the active set.
 
@@ -68,6 +68,46 @@ An admitted id starts at `(round(head_ability, 6), PRIOR_PRECISION, 0)`, so p=0.
 The snapshot remains `affine-irt-v1`. A `rotation = {active_sha, reserve_manifest_sha, round_id}` **body field** is present only when rotation is enabled and is included in `snapshot_id`. Old and off-mode snapshots have no such field and keep their exact ids and verification/draw behavior.
 
 At close, null-M resolved outcomes update `(head_rollouts, head_passes)` since admission. This state is in the content-addressed rotation artifact, not a giant repeated journal record. The journal carries the active SHA and artifact hashes. Artifacts precede ROUND_OPENED. Restarting an open round reads its exact stored table and active file and performs no second rotation; replay mismatch is `VerifyError`. A crash before the journal record is idempotent because identical inputs write identical artifacts.
+
+## Ranked active pool (`affine-pool-rotation-v2`)
+
+Select this rule with `rotation_rule="info"`. The existing v1 rule and its bytes remain the default; selecting the new rule also needs `rotation_enabled: true`. The new default-omitted params are:
+
+- `rotation_rule` (`"v1"` or `"info"`),
+- `rotation_churn_frac` (default 0.10),
+- `rotation_prior_p` (default 0.5),
+- `rotation_queue_publish` (default 2000), and
+- `rotation_churn_max` (default 0, no extra cap; when positive, an additional operational ceiling on steady-state swaps).
+
+The candidates are the previous active set minus withdrawals, the unconsumed reserve queue, and the non-withdrawn retired archive. Withdrawn tasks never return. A v2 retirement is not permanent: a task can become a high-information candidate again. A returning task restores its exact archived `(difficulty, information, rounds_seen)` row and its head-ledger evidence; a brand-new task uses the same head-ability prior as v1. The IRT table keys remain exactly the active set.
+
+For each candidate, score `p * (1-p)`, the Fisher information of a Bernoulli outcome. An active or archived task with `rounds_seen >= rotation_n_min` uses `predicted_pass(head_ability, difficulty)`. Otherwise use the public reserve row's `prior_p` if present, else `rotation_prior_p`. **Saturated tasks keep their score**, even when `p > rotation_retire_p`; `high` is their retirement reason. Only a **dead** task (`head_rollouts >= rotation_n_min_low` and `head_passes == 0`) is forced to score zero. `low` is its retirement reason.
+
+With `T = rotation_active_size or the initial active size`, apply this order every round:
+
+1. Remove withdrawn active tasks, outside the churn cap.
+2. If above target, retire the lowest-scored `|A|-T` active tasks, with no cap. Reasons are `excess`, or `high`/`low` for flagged tasks.
+3. If below target, admit the highest-scored outside candidates, with no cap.
+4. While a strictly higher-scored outside candidate exists, swap it for the lowest-scored active task, at most `floor(rotation_churn_frac * T)` times (and additionally at most `rotation_churn_max` when that is positive). Reasons are `high`, `low`, or `displaced`. Thus the swap count is reserve-bounded: it never exceeds the number of outside candidates strictly better than the active task replaced, and it is zero when no such candidate exists. Shrink/fill and withdrawals are not swaps and are not capped by these settings.
+
+Retirements are ascending by score; admissions are descending. Every tie uses `sha256(f"{round_id}|rank|{task_id}")`, with task ID as the final deterministic guard. There is no random number, wall-clock time, Python `hash()`, or dependence on shard/input order. `next_up` is the top `rotation_queue_publish` remaining outside candidates in rank order, not FIFO order. Reserve metadata is read once at runtime construction; the per-round selection is `O(|C| log |C|)` and carries only IDs, priors, IRT rows and ledger counts.
+
+### Public v2 files and replay
+
+In addition to the existing active, rotation, state, reserve and retired files:
+
+- `public/pool/ranking/<round_id>.json` contains every candidate: `id`, previous `state`, `p`, `rounds_seen`, `score`, `flags`, `source_prefix`, `env`, `head_rollouts`, `head_passes`, and `admitted`/`retired`/`retire_reason` for this decision.
+- `public/pool/rotation/<round_id>.json` carries the same complete candidate ranking plus admitted IDs, retired IDs/reasons, `next_up`, `rule_params` and `retire_reason_counts`.
+- `public/pool/summary.json` aggregates the post-decision active composition and score histogram, reserve/retired counts, and the last 20 v2 rounds for the static `/pool` page (`pool.html`). The page has a top-50 upcoming queue and a client-side search over the complete latest ranking. All times are UTC.
+
+The first v1-to-v2 transition publishes the complete previous retired archive, candidate metadata and retired ledger it used. `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` fetches the public decision, ranking, source snapshot and state lineage and compares the complete recomputed `Rotation`, including the full ranking. The early live v1 `r000066` state is byte-SHA addressed; the later `r000069` state uses the canonical digest. The loader verifies the exact public key's SHA-256 and permits that legacy v1 state at the transition, while new v2 states always use the canonical digest.
+
+Strict replayer schema additions (all optional and omitted on v1/old journals):
+
+- `Params`: `rotation_rule`, `rotation_churn_frac`, `rotation_prior_p`, `rotation_queue_publish`, `rotation_churn_max`.
+- `Reserve`: `candidate_meta` (per-ID `source_prefix`, `env`, optional `prior_p`).
+- `Rotation`: `candidate_ranking`, `retire_reason_counts`, `restored_irt_rows`, `initial_retired_archive`, `initial_candidate_meta`, `initial_retired_ledger`, `retired_ledger`, `opened_at`.
+- Journal: no new record kind and no new `RoundRecord` field. The existing optional `RoundRecord.rotation` map additionally carries `retire_reason_counts` and the v2 `rule_version`; v2 artifact keys and rule params are included by the existing public view. Old journals replay without these additions.
 
 ## Recompute and replicate
 

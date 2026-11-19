@@ -520,7 +520,10 @@ def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
     assert all(root.split("/")[0] in ("public", "private", "pending") for root in roots)
     for name, value in vars(layout).items():  # every key that a layout function makes is under one listed root
         if callable(value) and getattr(value, "__module__", "") == layout.__name__ and not name.startswith("_"):
-            key = value(*["a"] * (value.__code__.co_argcount - (name in ("pending_lora_prefix", "journal_record"))), *[7] * (name in ("pending_lora_prefix", "journal_record")))
+            args = ["a"] * (value.__code__.co_argcount - (name in ("pending_lora_prefix", "journal_record")))
+            if name == "public_rollout_gate":
+                args[1] = "head"
+            key = value(*args, *[7] * (name in ("pending_lora_prefix", "journal_record")))
             assert any(key == root or key.startswith(root + "/") for root in roots), name
     assert (f"{layout.LINK_FILES}/", layout.LINK_INDEX) == (links.PUBLIC_PREFIX + links.LINKS_DIR, links.PUBLIC_PREFIX + links.INDEX)
 

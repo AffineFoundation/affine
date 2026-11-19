@@ -80,8 +80,8 @@ LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
 POOL = "public/pool/"
-POOL_ACTIVE, POOL_ROTATION, POOL_STATE = (make("x").partition("x")[0] for make in (
-    layout.active_pool, layout.pool_rotation, layout.pool_rotation_state,
+POOL_ACTIVE, POOL_ROTATION, POOL_STATE, POOL_RANKING = (make("x").partition("x")[0] for make in (
+    layout.active_pool, layout.pool_rotation, layout.pool_rotation_state, layout.pool_ranking,
 ))
 POOL_SHARDS = "public/pool/reserve/shards/"
 ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
@@ -89,7 +89,7 @@ BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the st
 ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
 FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
-         layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS)
+         layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
 STALE_TMP_S = 3600
@@ -135,7 +135,7 @@ def layout_key(key: str) -> bool:
                     return key == layout.public_rollout_gate(parts[0], role)
             return False
         if key.startswith(POOL):
-            if key in (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS):
+            if key in (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY):
                 return True
             if key.startswith(POOL_ACTIVE):
                 return bool(SHA256.fullmatch(part)) and key == layout.active_pool(part)
@@ -143,6 +143,8 @@ def layout_key(key: str) -> bool:
                 return bool(ROUND_ID.fullmatch(part)) and key == layout.pool_rotation(part)
             if key.startswith(POOL_STATE):
                 return bool(SHA256.fullmatch(part)) and key == layout.pool_rotation_state(part)
+            if key.startswith(POOL_RANKING):
+                return bool(ROUND_ID.fullmatch(part)) and key == layout.pool_ranking(part)
             if key.startswith(POOL_SHARDS):
                 stem = key[len(POOL_SHARDS):].removesuffix(".jsonl")
                 name, separator, sha = stem.rpartition(".")
@@ -391,10 +393,17 @@ class Pull:
             try:
                 view = json.loads((self.site / layout.round_file(round_id)).read_bytes())
             except (OSError, ValueError):
-                if not self.store.exists(layout.round_file(round_id)):
-                    continue
-                raw = self.store.get(layout.round_file(round_id))
-                view = json.loads(raw)
+                if self.store.exists(layout.round_file(round_id)):
+                    view = json.loads(self.store.get(layout.round_file(round_id)))
+                else:
+                    # open round: round.json is written only at close; mining.json carries its pool block now
+                    try:
+                        doc = json.loads((self.site / layout.MINING_JSON).read_bytes())
+                    except (OSError, ValueError):
+                        continue
+                    view = doc.get("round") if isinstance(doc.get("round"), dict) and str(doc["round"].get("round_id")) == round_id else None
+                    if view is None:
+                        continue
             if isinstance(view.get("pool"), dict):
                 views[round_id] = view
         keep = set(sorted(named, reverse=True)[:self.keep])
@@ -414,14 +423,22 @@ class Pull:
                 for name in ("state_sha", "prev_state_sha"):
                     if rotation.get(name) or block.get(name):
                         self.copy_once(layout.pool_rotation_state(rotation.get(name) or block[name]))
+                if rotation.get("rule_version") == "affine-pool-rotation-v2":
+                    key = layout.pool_ranking(round_id)
+                    if round_id in sorted(named, reverse=True)[:RECHECK_ROUNDS]:
+                        self.refresh(key)
+                    else:
+                        self.copy_once(key)
             except (KeyError, ValueError, TypeError, AttributeError) as error:
                 self.notes.append(f"{key} cannot be mirrored ({type(error).__name__}): not copied")
         for key in sorted(self.owned):
-            if key.startswith(POOL_ROTATION) and key[len(POOL_ROTATION):].removesuffix(".json") not in keep:
+            if key.startswith((POOL_ROTATION, POOL_RANKING)) and key.rsplit("/", 1)[-1].removesuffix(".json") not in keep:
                 self.remove(key)
         for key in (layout.RETIRED_POOL, layout.RETIRED_TASKS):
             if self.store.exists(key):
                 self.refresh(key)
+        if self.store.exists(layout.POOL_SUMMARY):
+            self.refresh(layout.POOL_SUMMARY)
 
     def tables(self) -> None:
         """Task tables: the ones that mining.json names. Older ones stay until there are more than ``--keep-rounds``."""

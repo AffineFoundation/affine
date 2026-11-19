@@ -47,9 +47,10 @@ from sn120_v2.types import WINNER
 
 STATIC = Path(__file__).parent / "static"
 # Order matters: a file is stamped with the hashes of the files before it.
-ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "site.css", "index.html", "v1.html")
+ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "site.css", "index.html", "v1.html", "pool.html")
 TEXT = (".css", ".html")
 DATA = "site-data.json"
+POOL_DATA = "pool-data.json"
 V1_DATA = "v1-data.json"
 V1_SCHEMA = "sn120-v1-archive-1"
 NOTED: dict[str, str] = {}  # the last note printed per topic
@@ -265,6 +266,11 @@ def build_static(out: Path, link: Callable[[str], str]) -> None:
             data = text.replace("{{llms}}", link(layout.LLMS_TXT)).replace("{{mining}}", link(layout.MINING_JSON)).encode()
         versions[name] = hashlib.sha256(data).hexdigest()[:8]
         write(out / name, data)
+        if name == "pool.html":
+            (out / "pool").mkdir(exist_ok=True)
+            directory = data.replace(b'href="', b'href="../').replace(b'src="', b'src="../')
+            directory = directory.replace(b"fetch('public/", b"fetch('../public/").replace(b"'pool-data.json'", b"'../pool-data.json'")
+            write(out / "pool" / "index.html", directory)
 
 
 def tried(topic: str, what: str, make: Callable[[], Any], quiet: Callable[[Exception], bool] = lambda error: False) -> Any:
@@ -281,7 +287,35 @@ def tried(topic: str, what: str, make: Callable[[], Any], quiet: Callable[[Excep
     return made
 
 
+def pool_data(source: str, out: Path) -> None:
+    """Resolve the latest summary to its mirrored full ranking. No controller or backend is read."""
+    def local_read(key: str) -> bytes:
+        try:
+            return (out / key).read_bytes()
+        except FileNotFoundError:
+            return read(source, key)
+
+    try:
+        summary = json.loads(local_read(layout.POOL_SUMMARY))
+        if summary.get("schema") != "affine-pool-summary-v1":
+            raise ValueError("not an affine-pool-summary-v1 file")
+        ranking = json.loads(local_read(str(summary["ranking"])))
+        if ranking.get("round_id") != summary["round_id"] or not isinstance(ranking.get("candidates"), list):
+            raise ValueError("summary and ranking name different rounds")
+        # Re-read the exact public key; no candidate fields are filtered here.
+        raw = local_read(str(summary["ranking"]))
+        json.dumps(json.loads(raw), allow_nan=False)
+        write(out / POOL_DATA, raw)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        note = f"site: no ranked pool data: {type(error).__name__}: {error}"
+        if note != NOTED.get("pool") and not (isinstance(error, FileNotFoundError) and NOTED.get("pool-quiet")):
+            print(note, file=sys.stderr)
+        NOTED["pool"] = note
+
+
 def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing: bool = False) -> None:
+    NOTED["pool-quiet"] = "1" if quiet_missing else ""
+    pool_data(source, out)
     """Write the data file. The benchmark file and the v1 history are informational: without one of them, or with a bad
     one, the page is still built, and the genesis head and each king still have their rows."""
     snap = json.loads(read(source, layout.MINING_JSON))

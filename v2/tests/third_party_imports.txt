@@ -9,6 +9,11 @@
 # dev
 pytest
 
+# tests: local test helpers and the site's standalone pull module
+conftest
+test_rotation_controller
+pull
+
 # gpu: train/eval workers
 huggingface_hub
 safetensors

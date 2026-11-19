@@ -14,11 +14,11 @@ from typing import Any, Mapping, Sequence
 from . import layout
 from .canonical import canonical_json, sha256_hex
 from .envs.math_pool import MathPool, Task, load_pool
-from .envs.reserve import Catalog, load_reserve, read_raw, reserve_dir
+from .envs.reserve import Catalog, candidate_metadata, load_reserve, read_raw, reserve_dir
 from .errors import ConfigError, VerifyError
 from .irt import IRTSampler
 from .params import Params
-from .rotation import Reserve, Rotation, fold_ledger, rotate
+from .rotation import INFO_RULE_VERSION, Reserve, Rotation, fold_ledger, rotate, rotate_info
 from .seams import ObjectStore
 from .state import State
 
@@ -38,7 +38,13 @@ def load_rotation(store: ObjectStore, state_sha: str) -> Rotation:
     if sha256_hex(raw) != state_sha:
         raise VerifyError("rotation state object does not match its content id")
     rotation = Rotation.from_json(raw)
+    # The first live v1 state (r000066) was addressed by its byte hash;
+    # r000069 moved to the canonical digest. Both are strict, public, verified
+    # forms. A v2 lineage must use the canonical form, and a mixed v1->v2
+    # boundary is allowed to read the older state once.
     if rotation.digest() != state_sha:
+        if rotation.rule_version != INFO_RULE_VERSION:
+            return rotation
         raise VerifyError("rotation state canonical bytes do not match its id")
     return rotation
 
@@ -67,6 +73,7 @@ def append_only(previous: Rotation | None, current: Rotation) -> None:
 
 
 def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None = None, *, decision_record: Rotation | None = None) -> None:
+    opened_at = rotation.opened_at
     store.put(layout.active_pool(rotation.active_sha), canonical_json(list(rotation.active_ids)))
     if rotation.initial_active_sha:
         # A pure Rotation stores the initial active list in its previous-round
@@ -76,6 +83,22 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
             raise VerifyError("initial active pool artifact is missing")
     store.put(layout.pool_rotation(rotation.round_id), (decision_record or rotation).to_json())
     store.put(layout.pool_rotation_state(rotation.digest()), rotation.to_json())
+    if rotation.rule_version == INFO_RULE_VERSION:
+        ranking = {"schema": "affine-pool-ranking-v1", "round_id": rotation.round_id,
+                   "rule_version": rotation.rule_version, "active_sha": rotation.active_sha,
+                   "source_snapshot_id": rotation.source_snapshot_id, "reserve_manifest_sha": rotation.reserve_manifest_sha,
+                   "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking)}
+        store.put(layout.pool_ranking(rotation.round_id), canonical_json(ranking))
+        store.put(layout.POOL_SUMMARY, canonical_json(pool_summary(rotation, opened_at)))
+        if decision_record is None:
+            history = [json.loads(store.get(key)) for key in store.list("public/pool/rotation/")]
+            recent = [row for row in history if row.get("rule_version") == INFO_RULE_VERSION][-20:]
+            summary = pool_summary(rotation, opened_at)
+            summary["recent_rounds"] = [{"round_id": row["round_id"], "opened_at": row.get("opened_at", 0),
+                                          "active_size": len(row["active_ids"]), "admitted": len(row["admitted"]),
+                                          "retired": len(row["retired"]), "retire_reason_counts": row["retire_reason_counts"],
+                                          "rotation": layout.pool_rotation(row["round_id"])} for row in recent]
+            store.put(layout.POOL_SUMMARY, canonical_json(summary))
     if store.exists(layout.RETIRED_POOL):
         previous = json.loads(store.get(layout.RETIRED_POOL))
         current = list(rotation.retired_archive)
@@ -91,6 +114,35 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
                 continue
             rows.append({"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer})
         store.put(layout.RETIRED_TASKS, canonical_json(rows))
+
+
+def pool_summary(rotation: Rotation, opened_at: int = 0) -> dict[str, Any]:
+    """Small public aggregate of the full ranking, for the static pool page."""
+    if rotation.rule_version != INFO_RULE_VERSION:
+        raise ConfigError("a ranked-pool summary requires rotation_rule=info")
+    by_state: dict[str, dict[str, Any]] = {}
+    active = set(rotation.active_ids)
+    remaining = {row["id"] for row in rotation.candidate_ranking if row["state"] == "reserve" and not row["admitted"] and not row["retired"]}
+    for state, ids in (("active", active), ("reserve", remaining)):
+        rows = [row for row in rotation.candidate_ranking if row["id"] in ids]
+        by_source: dict[str, int] = {}
+        by_env: dict[str, int] = {}
+        histogram = [{"min": index / 20, "max": (index + 1) / 20, "count": 0} for index in range(20)]
+        for row in rows:
+            by_source[row["source_prefix"]] = by_source.get(row["source_prefix"], 0) + 1
+            by_env[row["env"]] = by_env.get(row["env"], 0) + 1
+            histogram[min(19, int(row["score"] * 20))]["count"] += 1
+        by_state[state] = {"size": len(rows), "by_source_prefix": dict(sorted(by_source.items())),
+                           "by_env": dict(sorted(by_env.items())), "score_histogram": histogram}
+    retired_rows = [row for row in rotation.candidate_ranking if row["state"] == "retired" and not row["admitted"]]
+    return {"schema": "affine-pool-summary-v1", "round_id": rotation.round_id, "opened_at": opened_at,
+            "rule_version": rotation.rule_version, "active_sha": rotation.active_sha, "target": len(rotation.active_ids),
+            "reserve_size": rotation.queue_remaining, "retired_size": len(rotation.retired_archive),
+            "retired_candidates": len(retired_rows), "active_size": len(rotation.active_ids), "admitted": len(rotation.admitted),
+            "retired": len(rotation.retired), "retire_reason_counts": rotation.retire_reason_counts,
+            "active": by_state["active"], "reserve": by_state["reserve"],
+            "next_up": list(rotation.next_up), "ranking": layout.pool_ranking(rotation.round_id),
+            "rotation": layout.pool_rotation(rotation.round_id)}
 
 
 class PoolRuntime:
@@ -111,7 +163,8 @@ class PoolRuntime:
                 self.admitted_counts[task_id] = self.admitted_counts.get(task_id, 0) + 1
             current = load_rotation(self.store, current.prev_state_sha) if current.prev_state_sha else None
         self._restore_public_cache()
-        self.reserve, self.catalog = load_reserve(root, with_catalog=True)
+        self.reserve, self.catalog = load_reserve(root, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
+        self.candidate_meta = candidate_metadata(root, self.reserve, self.catalog) if self.params.rotation_rule == "info" else {}
         self.active_rotation: Rotation | None = None
         if state.round is not None and state.round.rotation is not None:
             current = load_rotation(store, state.round.rotation["state_sha"])
@@ -195,7 +248,20 @@ class PoolRuntime:
             else:
                 queue.append(task)
         history["queue"] = queue
+        result = Reserve.from_dict(history)
+        if self.params.rotation_rule != "info":
+            return result
+        # A ranked active set consumes its original queue entry; a later return
+        # comes from the retired archive, never by consuming a second shard row.
+        retired_ids = {str(row.get("id")) for row in self.previous.retired_archive} if self.previous else set()
+        history["queue"] = [task for task in queue if task not in retired_ids]
+        history["candidate_meta"] = self.candidate_meta
         return Reserve.from_dict(history)
+
+    def _retired_inputs(self, previous: Rotation | None) -> Sequence[Mapping[str, Any]]:
+        # The committed public state, not a cache left by a crashed open. A
+        # v1->v2 transition carries the complete archive of the previous state.
+        return previous.retired_archive if previous else ()
 
     def open(self, round_id: str, snapshot: Mapping[str, Any]) -> tuple[Rotation, IRTSampler]:
         if self.active_rotation is not None:
@@ -205,21 +271,44 @@ class PoolRuntime:
         previous = self.previous
         a_prev = previous.active_ids if previous else self.initial_ids
         reserve = self._rule_reserve()
-        decision = rotate(round_id, a_prev, snapshot, previous.ledger if previous else {}, reserve, self.params,
-                          initial_size=len(self.initial_ids), retired_archive=previous.retired_archive if previous else (),
-                          source_snapshot_id=snapshot.get("snapshot_id", ""),
-                          prev_state_sha=previous.digest() if previous else "")
+        retired_archive = self._retired_inputs(previous)
+        if self.params.rotation_rule == "info":
+            previous_ledger = dict(previous.ledger if previous else {})
+            previous_ledger.update(previous.retired_ledger if previous else {})
+            rotate_rule = rotate_info
+        else:
+            previous_ledger = previous.ledger if previous else {}
+            rotate_rule = rotate
+        decision = rotate_rule(round_id, a_prev, snapshot, previous_ledger, reserve, self.params,
+                               initial_size=len(self.initial_ids), retired_archive=retired_archive,
+                               source_snapshot_id=snapshot.get("snapshot_id", ""),
+                               prev_state_sha=self.state.rotation_state_sha if previous and previous.rule_version != INFO_RULE_VERSION else previous.digest() if previous else "",
+                               **({"initial_candidate_meta": self.candidate_meta, "initial_retired_ledger": previous.retired_ledger}
+                                  if self.params.rotation_rule == "info" and previous and previous.rule_version != INFO_RULE_VERSION else {}))
+        if self.params.rotation_rule == "info":
+            archived_ledger = {task: row for task, row in (previous.retired_ledger if previous else {}).items()
+                               if task not in decision.admitted}
+            archived_ledger.update({row.id: (row.head_rollouts, row.head_passes) for row in decision.retired})
+            decision = Rotation.from_dict(decision.to_dict() | {
+                "retired_ledger": {task: tuple(row) for task, row in sorted(archived_ledger.items())},
+                **({"initial_retired_archive": list(retired_archive), "initial_candidate_meta": self.candidate_meta,
+                    "initial_retired_ledger": previous.retired_ledger if previous else {}}
+                   if previous is None or previous.rule_version != INFO_RULE_VERSION else {}),
+            })
         if not previous:
             self.store.put(layout.active_pool(decision.prev_active_sha), canonical_json(list(a_prev)))
         append_only(previous, decision)
         meta = {"active_sha": decision.active_sha, "reserve_manifest_sha": decision.reserve_manifest_sha, "round_id": round_id}
         ability = float(snapshot.get("head_ability", snapshot["heads"].get(snapshot["head_version_id"], {}).get("ability", 0.0)))
-        initial = {task: ability for task in decision.admitted}
+        initial = {task: ability for task in decision.admitted if task not in decision.restored_irt_rows}
+        initial.update(decision.restored_irt_rows)
         sampler = IRTSampler(decision.active_ids, self.params, snapshot=snapshot, initial=initial, rotation=meta)
         return decision, sampler
 
-    def publish_open(self, decision: Rotation) -> dict[str, Any]:
+    def publish_open(self, decision: Rotation, *, opened_at: int = 0) -> dict[str, Any]:
         """Artifacts strictly before ROUND_OPENED; repeat is byte-idempotent."""
+        if decision.rule_version == INFO_RULE_VERSION:
+            decision = Rotation.from_dict(decision.to_dict() | {"opened_at": opened_at})
         active_file(self.store, decision, self.catalog)
         mirror_reserve(self.store, self.root)
         self._publish_retired_local(decision)
@@ -267,9 +356,29 @@ def replay_rotation(store: ObjectStore, round_id: str, snapshot: Mapping[str, An
     source = snapshot or (json.loads(store.get(layout.irt_snapshot(expected.source_snapshot_id))) if expected.source_snapshot_id else None)
     if source is None:
         raise VerifyError("rotation replay needs the source IRT snapshot")
-    actual = rotate(round_id, previous.active_ids if previous else load_active(store, expected.initial_active_sha),
-                    source, previous.ledger if previous else {}, reserve, Params.from_dict(expected.rule_params),
-                    initial_size=len(load_active(store, expected.initial_active_sha)) if previous is None else len(previous.active_ids),
-                    retired_archive=previous.retired_archive if previous else (),
-                    source_snapshot_id=expected.source_snapshot_id, prev_state_sha=expected.prev_state_sha)
+    rotate_rule = rotate_info if expected.rule_version == INFO_RULE_VERSION else rotate
+    params = Params.from_dict(expected.rule_params)
+    previous_ledger = dict(previous.ledger if previous else {})
+    archive = previous.retired_archive if previous else expected.initial_retired_archive
+    if expected.rule_version == INFO_RULE_VERSION:
+        previous_ledger.update(previous.retired_ledger if previous else {})
+        previous_ledger.update(expected.initial_retired_ledger)
+        if not reserve.candidate_meta and expected.initial_candidate_meta:
+            reserve = Reserve.from_dict(history | {"candidate_meta": expected.initial_candidate_meta})
+    actual = rotate_rule(round_id, previous.active_ids if previous else load_active(store, expected.initial_active_sha),
+                         source, previous_ledger, reserve, params,
+                         initial_size=len(load_active(store, expected.initial_active_sha)) if previous is None else len(previous.active_ids),
+                         retired_archive=archive, source_snapshot_id=expected.source_snapshot_id, prev_state_sha=expected.prev_state_sha,
+                         **({"initial_candidate_meta": expected.initial_candidate_meta or None,
+                             "initial_retired_ledger": expected.initial_retired_ledger or None}
+                            if expected.rule_version == INFO_RULE_VERSION else {}))
+    if params.rotation_rule == "info":
+        retired_ledger = {task: row for task, row in (previous.retired_ledger if previous else {}).items()
+                          if task not in actual.admitted}
+        retired_ledger.update({row.id: (row.head_rollouts, row.head_passes) for row in actual.retired})
+        actual = Rotation.from_dict(actual.to_dict() | {"retired_ledger": retired_ledger})
+    if params.rotation_rule == "info":
+        ranking = json.loads(store.get(layout.pool_ranking(round_id)))
+        if ranking["candidates"] != list(actual.candidate_ranking) or ranking["round_id"] != round_id:
+            raise VerifyError("public v2 ranking does not match the recomputed decision")
     return {"round_id": round_id, "matches": actual == expected, "expected": expected.to_dict(), "actual": actual.to_dict()}

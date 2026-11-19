@@ -45,7 +45,7 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "v1.html", "pool", "pool.html", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
     for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
         assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
@@ -57,6 +57,31 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_pool_page_builds_from_mirrored_summary_and_ranking(tmp_path):
+    snap = snapshot(tmp_path)
+    done, out, _ = build(tmp_path, snap)
+    assert done.returncode == 0
+    assert (out / "pool.html").is_file() and (out / "pool.js").is_file()
+    assert (out / "pool" / "index.html").is_file()
+    store = tmp_path / "store"
+    summary = {"schema": "affine-pool-summary-v1", "round_id": "r000070", "opened_at": 1800000000,
+               "active_size": 2, "reserve_size": 1, "retired_size": 1, "retired_candidates": 1,
+               "active": {"by_source_prefix": {"math": 2}, "by_env": {"affine_math": 2},
+                           "score_histogram": [{"min": 0.0, "max": 0.25, "count": 2}]},
+               "ranking": layout.pool_ranking("r000070"), "rotation": layout.pool_rotation("r000070"),
+               "recent_rounds": []}
+    ranking = {"round_id": "r000070", "candidates": [{"id": "math:1", "p": 0.5, "score": 0.25}]}
+    (store / layout.POOL_SUMMARY).parent.mkdir(parents=True, exist_ok=True)
+    (store / layout.POOL_SUMMARY).write_text(json.dumps(summary))
+    (store / layout.pool_ranking("r000070")).parent.mkdir(parents=True, exist_ok=True)
+    (store / layout.pool_ranking("r000070")).write_text(json.dumps(ranking))
+    done, out, _ = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    assert (out / "pool-data.json").read_text() == (store / layout.pool_ranking("r000070")).read_text()
+    assert 'href="pool.html"' in (out / "index.html").read_text()
+    assert "Task drill-down" in (out / "pool.html").read_text()
 
 
 def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_the_script_fills(tmp_path):

@@ -172,9 +172,10 @@ def test_head_change_uses_snapshot_head_not_caller_head(tmp_path):
     assert world.store.exists(layout.irt_snapshot(record.snapshot_id))
 
 
-def test_replicate_rotation_cli_recomputes_from_public_files(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("rotation_rule", ["v1", "info"])
+def test_replicate_rotation_cli_recomputes_from_public_files(tmp_path, monkeypatch, capsys, rotation_rule):
     from sn120_v2 import replicate
-    world, _ = rotated_world(tmp_path)
+    world, _ = rotated_world(tmp_path, rotation_rule=rotation_rule)
     world.round()
     world.register(2, 0.0)
     record = world.round()

@@ -219,7 +219,7 @@ class IRTSampler:
         params: Params | None = None,
         snapshot: Mapping[str, Any] | None = None,
         *,
-        initial: Mapping[str, float] | None = None,
+        initial: Mapping[str, float | Sequence[float]] | None = None,
         rotation: Mapping[str, Any] | None = None,
     ) -> None:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
@@ -256,8 +256,17 @@ class IRTSampler:
             body = {"schema": SCHEMA, "model": MODEL, "head_version_id": "", "rounds": 0, "updates": [], "heads": {}, "loras": {}, "tasks": {}}
         # A normal new pool task starts at the old prior. An admitted task may
         # explicitly start at head ability, giving p=.5 and maximum Fisher q.
+        # A returning task supplies its full archived row, not a fresh prior.
+        def start_row(task: str) -> Sequence[float]:
+            if initial and task in initial:
+                row = initial[task]
+                if isinstance(row, (int, float)):
+                    return (round(row, DECIMALS), PRIOR_PRECISION, 0)
+                return (round(float(row[0]), DECIMALS), float(row[1]), int(row[2]))
+            return (0.0, PRIOR_PRECISION, 0)
+
         body["tasks"] = {
-            task: list(body["tasks"].get(task, (round(initial[task], DECIMALS) if initial and task in initial else 0.0, PRIOR_PRECISION, 0)))[:3]
+            task: list(body["tasks"].get(task, start_row(task)))[:3]
             for task in sorted(pool)
         }
         if rotation is not None:
