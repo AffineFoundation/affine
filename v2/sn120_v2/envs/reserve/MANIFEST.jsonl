@@ -8,4 +8,9 @@
 {"added_at":"2026-11-19","count":6,"sha256":"6782eff10b4b0e3b006cfd869ee8e46e538fcf4be3be4d24ac544c93354c08bb","shard":"0008-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"}
 {"added_at":"2026-11-19","count":3,"sha256":"b1614f0643bbec661e6c84b73b5e68bc04755a73e3396d030b3072db02afb011","shard":"0009-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"}
 {"added_at":"2026-11-19","count":2,"sha256":"96b6576189d55f78805355cd0b2c1c4beaec83b6e107de7f1c541e1f7cc039b2","shard":"0010-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"}
+{"added_at":"2026-11-19","count":21,"sha256":"65f6b86135ef7856d195c6ed80d11d2ca0c428a540255f4c7dd338986fb1357b","shard":"0011-nvidia-nemotron-math-v2-8e793210.jsonl"}
+{"added_at":"2026-11-19","count":2,"sha256":"34cf413a164a59790f905aa0c1a9a8153b82eaf2c012adf0e017e191a859bfad","shard":"0012-open-r1-openr1-math-220k-e4e141ec.jsonl"}
+{"added_at":"2026-11-19","count":2,"sha256":"bb579ec960212813080c4a1b29f3c59e1118aa37a103f437df45c311694a8bc0","shard":"0013-nvidia-openmathreasoning-d3d08664.jsonl"}
+{"added_at":"2026-11-19","count":2,"sha256":"a066c2c0152b19581061cc44cc4b1838c3d1a4a3342cb2a10fb868b7ddb6e06b","shard":"0014-polaris-project-polaris-dataset-53k-296f8e34.jsonl"}
+{"added_at":"2026-11-19","count":1,"sha256":"eb2cf9684699723fb8539a7cd27ad50019aaed7957339bee028e6fcf88ba9b68","shard":"0015-ai-mo-numinamath-1-5-1b05109f.jsonl"}
 {"withdrawn":{"count":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
