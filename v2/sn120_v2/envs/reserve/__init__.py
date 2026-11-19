@@ -186,6 +186,8 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 allowed = {"method", "ref"} <= set(audit) and set(audit) <= {"verdict", "method", "ref", "readmit_of"}
             elif audit["verdict"] == "unscreened":
                 allowed = set(audit) == {"method", "verdict"} and audit["method"] == UNSCREENED_METHOD
+            elif audit["verdict"] == "screened":
+                allowed = set(audit) == {"method", "verdict"} and audit["method"] == "generator accepted, measured king pass rate"
             else:
                 allowed = False
             if not allowed:
@@ -205,7 +207,7 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
             task = Task(row["id"], row["env"], row["problem"], row["answer"])
             extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
             by_id[task.task_id] = task
-            if audit["verdict"] != "keep":
+            if audit["verdict"] == "unscreened":
                 verdicts[task.task_id] = audit["verdict"]
             ordered.append(task.task_id)
         ordered.sort(key=lambda task_id: sha256_hex(f"{shard.sha256}|reserve-order|{task_id}".encode()))

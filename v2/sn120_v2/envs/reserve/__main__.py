@@ -243,6 +243,10 @@ def parser() -> argparse.ArgumentParser:
     prior.add_argument("--max-p", type=float, default=0.85)
     prior.add_argument("--no-signal-share", type=float, default=0.10, help="maximum share of rows without prior_p (default: 0.10)")
     prior.add_argument("--added-at", help=argparse.SUPPRESS)  # deterministic tests; normal CLI uses the UTC date
+    generator = commands.add_parser("ingest-generator", help="append screened accepted generator tasks")
+    generator.add_argument("files", nargs="+", help="accepted-<epoch>.jsonl files")
+    generator.add_argument("--prior-dir", required=True, help="verified sn120-math-prior-v1 release for source and license metadata")
+    generator.add_argument("--added-at", help=argparse.SUPPRESS)
     commands.add_parser("verify")
     commands.add_parser("status")
     remove = commands.add_parser("withdraw")
@@ -259,6 +263,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "ingest-prior":
             from .prior import ingest_prior
             report = ingest_prior(args)
+        elif args.command == "ingest-generator":
+            from .generator import ingest_generator
+            report = ingest_generator(args)
         elif args.command == "withdraw":
             report = withdraw(args)
         elif args.command == "status":
