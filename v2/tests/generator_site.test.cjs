@@ -115,6 +115,22 @@ test('the control plane publication schemas drive every dashboard section', () =
   assert.equal(state.scoringEpoch, '20261119T1600Z');
 });
 
+test('void epochs advance the completion index without becoming scored results', () => {
+  const state = page.normalizeState({
+    current_epoch: '20261120T0400Z',
+    published_epochs: [
+      {epoch: '20261119T1600Z', status: 'complete'},
+      {epoch: '20261120T0000Z', status: 'void'},
+    ],
+  }, null, null);
+  assert.equal(state.scoringEpoch, '20261119T1600Z');
+  const latestVoid = page.normalizeState({
+    current_epoch: '20261120T0400Z', last_epoch: '20261120T0000Z',
+    published_epochs: [{epoch: '20261120T0000Z', status: 'void'}],
+  }, null, null);
+  assert.equal(latestVoid.scoringEpoch, null);
+});
+
 test('first epoch, missing files and bad JSONL have graceful empty states', async t => {
   assert.deepEqual(page.normalizeAccepted(null), []);
   assert.deepEqual(page.normalizeAccepted(''), []);

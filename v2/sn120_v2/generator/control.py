@@ -148,6 +148,39 @@ def issue_links(config: Config, *, now: float, client: Any, store: Any) -> dict[
     return {"status": "issued" if due else "unchanged", "epoch": epoch, "count": len(due), "active": len(hotkeys)}
 
 
+def void_missed_king(config: Config, *, epoch: str, now: float, store: Any) -> dict[str, Any]:
+    """Finalize an unscoreable epoch with no claims, payout or retry loop."""
+    sink = PublicSink(config.site_dir, store, config.public_url)
+    missed_path = config.work_dir / "king" / f"{epoch}.missed.json"
+    missed = {
+        "epoch": epoch,
+        "deadline": utc_text(epoch_deadline(epoch)),
+        "observed_at": utc_text(now),
+    }
+    atomic_json(missed_path, missed, private=True)
+    prefix = f"epochs/{epoch}"
+    digest = sha256_hex(b"")
+    sink.json(f"{prefix}/manifest.json", {
+        "version": "affine-generator-manifest-v1", "epoch": epoch,
+        "deadline": utc_text(epoch_deadline(epoch)),
+        "status": "void_missed_king_capture", "pool": POOL_ID,
+        "files": [], "unique_tasks": 0,
+    })
+    sink.put(f"{prefix}/intake.jsonl", b"")
+    sink.put(f"{prefix}/intake.sha256", f"{digest}  intake.jsonl\n".encode())
+    state = read_json(sink.path("state.json")) if sink.exists("state.json") else {}
+    published = [row for row in state.get("published_epochs", []) if row.get("epoch") != epoch]
+    published.append({
+        "epoch": epoch, "status": "void",
+        "manifest": sink.url(f"{prefix}/manifest.json"),
+        "intake": sink.url(f"{prefix}/intake.jsonl"), "intake_sha256": digest,
+    })
+    published.sort(key=lambda row: row["epoch"])
+    state["published_epochs"] = published
+    sink.json("state.json", state)
+    return {"status": "void_missed_king_capture", "epoch": epoch}
+
+
 def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store: Any, pool: Any) -> dict[str, Any]:
     sink = PublicSink(config.site_dir, store, config.public_url)
     if epoch_deadline(epoch) < epoch_deadline(config.first_epoch):
@@ -156,6 +189,8 @@ def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store
     job_path = config.work_dir / "jobs" / epoch / "evidence.json"
     if sink.exists(manifest_rel) and job_path.is_file():
         return {"status": "already_complete", "epoch": epoch}
+    if (config.work_dir / "king" / f"{epoch}.missed.json").is_file():
+        return {"status": "void_missed_king_capture", "epoch": epoch}
     if now < epoch_deadline(epoch).timestamp() + 60:
         return {"status": "not_due", "epoch": epoch}
     king = read_json(config.work_dir / "king" / f"{epoch}.json")
@@ -234,7 +269,17 @@ def tick(
 ) -> list[dict[str, Any]]:
     """Run every due phase once. A failed phase does not publish later evidence."""
     actions = steps or {}
-    run = lambda name, default, **kwargs: actions.get(name, default)(**kwargs)
+    failed_epochs = set()
+    def run(name, default, **kwargs):
+        phase = kwargs.get("epoch")
+        try:
+            return actions.get(name, default)(**kwargs)
+        except Exception as exc:
+            # A phase fault is observable but must not strand later epochs.
+            if phase is not None:
+                failed_epochs.add(phase)
+            return {"status": "error", "phase": name, "epoch": phase,
+                    "error": f"{type(exc).__name__}: {exc}" if isinstance(exc, ConfigError) else type(exc).__name__}
     current = epoch_id(now)
     events: list[dict[str, Any]] = []
     planned = max(current, config.first_epoch)
@@ -243,15 +288,15 @@ def tick(
     closed = epoch_id(int(now // 14400) * 14400 - 1)
     king_path = config.work_dir / "king" / f"{closed}.json"
     if (closed >= config.first_epoch and not king_path.is_file()
-            and (config.work_dir / "seeds" / f"{closed}.json").is_file()):
+            and not (config.work_dir / "king" / f"{closed}.missed.json").is_file()):
         elapsed = now - epoch_deadline(closed).timestamp()
-        if 0 <= elapsed <= KING_CAPTURE_GRACE_S:
+        if 0 <= elapsed <= KING_CAPTURE_GRACE_S and (config.work_dir / "seeds" / f"{closed}.json").is_file():
             fetch_head(config.head_url, king_path, now=now)
             row = read_json(king_path)
             row.update({"epoch": closed, "captured_at_epoch": now})
             atomic_json(king_path, row)
         elif elapsed > KING_CAPTURE_GRACE_S:
-            raise ConfigError(f"missed the {KING_CAPTURE_GRACE_S}s king capture grace for {closed}")
+            events.append({"phase": "king_capture", **run("void", void_missed_king, config=config, epoch=closed, now=now, store=store)})
     # The deadline snapshot and scorer phases must not wait for link issuance.
     for number in range(3):
         deadline = epoch_deadline(current).timestamp() - number * 4 * 3600
@@ -263,17 +308,35 @@ def tick(
                 or epoch < config.first_epoch
                 or not (config.work_dir / "seeds" / f"{epoch}.json").is_file()):
             continue
+        if (config.work_dir / "king" / f"{epoch}.missed.json").is_file():
+            events.append({"phase": "void", **run("void", void_missed_king, config=config, epoch=epoch, now=now, store=store)})
+            continue
         if not job_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60:
-            events.append({"phase": "snapshot", **run("snapshot", snapshot_epoch, config=config, epoch=epoch, now=now, client=client, store=store, pool=pool)})
+            result = run("snapshot", snapshot_epoch, config=config, epoch=epoch, now=now, client=client, store=store, pool=pool)
+            events.append({"phase": "snapshot", **result})
+            if result.get("status") == "error":
+                continue
+        if epoch in failed_epochs:
+            continue
         if job_path.is_file() and not results_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60:
             if remote is None:
-                raise ConfigError("Generator ssh config is required for dispatch and collect")
-            events.append({"phase": "dispatch", **run("dispatch", remote.dispatch, epoch=epoch).to_dict()})
-            result = run("collect", remote.collect, epoch=epoch)
-            events.append({"phase": "collect", **result.to_dict()})
-        if results_path.is_file():
+                failed_epochs.add(epoch)
+                events.append({"phase": "dispatch", "epoch": epoch, "status": "error", "error": "ConfigError: Generator ssh config is required for dispatch and collect"})
+                continue
+            dispatched = run("dispatch", remote.dispatch, epoch=epoch)
+            events.append({"phase": "dispatch", **(dispatched.to_dict() if not isinstance(dispatched, Mapping) else dispatched)})
+            if epoch in failed_epochs:
+                continue
+            collected = run("collect", remote.collect, epoch=epoch)
+            events.append({"phase": "collect", **(collected.to_dict() if not isinstance(collected, Mapping) else collected)})
+            if epoch in failed_epochs:
+                continue
+        if results_path.is_file() and epoch not in failed_epochs:
             if now > deadline + 3 * 3600 + 45 * 60:
-                raise ConfigError(f"scoring results for {epoch} missed the results deadline")
+                error = f"scoring results for {epoch} missed the results deadline"
+                failed_epochs.add(epoch)
+                events.append({"phase": "publish", "epoch": epoch, "status": "error", "error": f"ConfigError: {error}"})
+                continue
             events.append({"phase": "publish", **run("publish", publish_epoch, config=config, epoch=epoch, now=now, client=read_registrations(client, lambda: now)[0], store=store, pool=pool)})
     result = run("links", issue_links, config=config, now=now, client=client, store=store)
     if result.get("status") != "not_due":

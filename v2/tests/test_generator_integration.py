@@ -10,6 +10,7 @@ import pytest
 
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import ConfigError
+from sn120_v2.store import LocalStore
 from sn120_v2.generator.config import Config
 from sn120_v2.generator.control import tick, write_seed
 from sn120_v2.generator.decisions import decision
@@ -137,8 +138,8 @@ def test_tick_captures_only_just_closed_epoch_within_grace(tmp_path, monkeypatch
     }
     now = DEADLINE + offset
     if offset > 120:
-        with pytest.raises(ConfigError, match="grace"):
-            tick(config, now=now, client=None, store=None, pool=None, steps=phases)
+        events = tick(config, now=now, client=None, store=None, pool=None, steps=phases)
+        assert events[0]["status"] == "void_missed_king_capture"
     else:
         tick(config, now=now, client=None, store=None, pool=None, steps=phases)
         if offset >= 0:
@@ -167,6 +168,57 @@ def test_first_boot_does_not_process_epochs_before_launch(tmp_path, monkeypatch)
     assert not (config.work_dir / "king").exists()
 
 
+def test_missed_king_voids_epoch_and_next_epoch_proceeds(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    store = LocalStore(tmp_path / "store")
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
+    now = DEADLINE + 300
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: {"status": "unchanged"})
+    monkeypatch.setattr("sn120_v2.generator.control.fetch_head", lambda *args, **kwargs: pytest.fail("grace expired"))
+    events = tick(config, now=now, client=None, store=store, pool=None)
+    assert any(event.get("status") == "void_missed_king_capture" for event in events)
+    missed = json.loads((config.work_dir / "king" / f"{EPOCH}.missed.json").read_text())
+    assert missed["epoch"] == EPOCH and missed["observed_at"].endswith("Z")
+    public = site / "generator"
+    assert json.loads((public / "epochs" / EPOCH / "manifest.json").read_text())["status"] == "void_missed_king_capture"
+    assert (public / "epochs" / EPOCH / "intake.jsonl").read_bytes() == b""
+    assert (public / "epochs" / EPOCH / "intake.sha256").read_text() == sha256_hex(b"") + "  intake.jsonl\n"
+    state = json.loads((public / "state.json").read_text())
+    assert state["published_epochs"][-1]["status"] == "void"
+    assert not (public / "accepted-all.jsonl").exists() and not (public / "payout.json").exists()
+    # Idempotent completion: no king, snapshot, scorer or exception is needed.
+    tick(config, now=now + 60, client=None, store=store, pool=None)
+    following = "20261120T0400Z"
+    write_seed(config.work_dir, following)
+    atomic_next = config.work_dir / "king" / f"{following}.json"
+    atomic_next.parent.mkdir(parents=True, exist_ok=True)
+    atomic_next.write_text('{"version":"next-king"}')
+    calls = []
+    def next_snapshot(**kwargs):
+        calls.append(kwargs["epoch"])
+        return {"status": "snapshot", "epoch": kwargs["epoch"]}
+    monkeypatch.setattr("sn120_v2.generator.control.fetch_head", lambda url, path, now: path.parent.mkdir(parents=True, exist_ok=True) or path.write_text('{"version":"next-king"}'))
+    events = tick(config, now=epoch_deadline(following).timestamp() + 60, client=None, store=store, pool=None, steps={"snapshot": next_snapshot})
+    assert calls == [following]
+    assert any(event.get("status") == "unchanged" for event in events if event["phase"] == "links")
+
+
+def test_phase_error_is_event_and_does_not_block_links(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
+    write_seed(config.work_dir, EPOCH)
+    calls = []
+    def broken(**kwargs):
+        raise FileNotFoundError("missing input")
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: calls.append("links") or {"status": "unchanged"})
+    monkeypatch.setattr("sn120_v2.generator.control.fetch_head", lambda url, path, now: path.parent.mkdir(parents=True, exist_ok=True) or path.write_text('{"version":"test-king"}'))
+    events = tick(config, now=DEADLINE + 60, client=None, store=None, pool=None, steps={"snapshot": broken})
+    assert any(event.get("status") == "error" and event["error"] == "FileNotFoundError" for event in events)
+    assert calls == ["links"]
+
+
 def test_tick_rejects_publication_after_results_deadline(tmp_path):
     site = tmp_path / "site"
     site.mkdir()
@@ -179,5 +231,5 @@ def test_tick_rejects_publication_after_results_deadline(tmp_path):
         from sn120_v2.generator import control
         patch.setattr(control, "update_window_state", lambda *args, **kwargs: None)
         patch.setattr(control, "issue_links", lambda **kwargs: {"status": "not_due"})
-        with pytest.raises(ConfigError, match="missed"):
-            tick(config, now=DEADLINE + 3 * 3600 + 46 * 60, client=None, store=None, pool=None)
+        events = tick(config, now=DEADLINE + 3 * 3600 + 46 * 60, client=None, store=None, pool=None)
+        assert any(event.get("status") == "void_missed_king_capture" for event in events)

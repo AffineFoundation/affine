@@ -103,13 +103,14 @@
       deadline = epochDeadline;
       start = deadline - EPOCH_SECONDS * 1000;
     }
-    const published = list(state.published_epochs).map(object);
+    const published = list(state.published_epochs).map(object).filter(row => row.status !== 'void');
+    const publishedIds = new Set(list(state.published_epochs).map(object).map(row => row.epoch));
     return {
       epoch, start, deadline,
       king: text(state.frozen_king_version),
       submissions: submissionCount(manifest, state),
       links: links && typeof links === 'object' ? list(object(links).hotkeys).length : null,
-      scoringEpoch: text(state.last_epoch) || text(published.at(-1)?.epoch),
+      scoringEpoch: publishedIds.has(state.last_epoch) ? text(published.at(-1)?.epoch) : text(state.last_epoch) || text(published.at(-1)?.epoch),
       manifestEpoch: text(object(manifest).epoch),
       manifestPublished: Boolean(manifest && typeof manifest === 'object' && Object.keys(manifest).length),
       now: finite(now) === null ? Date.now() : now,
@@ -329,7 +330,7 @@
       view = normalizeState(state, null, links);
       const epochPattern = /^\d{8}T\d{4}Z$/;
       const manifestEpoch = epochPattern.test(view.epoch || '') ? view.epoch
-        : text(list(object(state).published_epochs).map(object).at(-1)?.epoch);
+        : text(list(object(state).published_epochs).map(object).filter(row => row.status !== 'void').at(-1)?.epoch);
       const manifest = manifestEpoch
         ? await fetchPublic(`epochs/${manifestEpoch}/manifest.json`, root, fetcher, false).catch(() => null) : null;
       Object.assign(view, normalizeState(state, manifest, links));
