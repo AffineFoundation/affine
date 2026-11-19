@@ -206,7 +206,8 @@ def test_rotation_replay_and_state_survive_code_digest_only_repin(tmp_path):
     active_file(store, decision)
     after = dataclasses.replace(before, recipe=dataclasses.replace(before.recipe, code_digest="64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9"))
     assert after.params_hash != before.params_hash and after.recipe_id != before.recipe_id
-    assert decision.rule_params == {name: getattr(after, name) for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_")}
+    from sn120_v2.rotation import rule_params
+    assert decision.rule_params == rule_params(before) == rule_params(after)
     assert replay_rotation(store, decision.round_id, snap)["matches"]
     restored = load_rotation(store, decision.digest())
     assert restored == decision and restored.prev_state_sha == decision.prev_state_sha

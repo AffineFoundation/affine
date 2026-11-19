@@ -10,7 +10,7 @@ import pytest
 from sn120_v2 import layout
 from sn120_v2.store import LocalStore
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "site"))
+sys.path.insert(0, str(Path(__file__).parents[1] / "site"))  # sn120-test-site-import
 import pull as site_pull
 
 

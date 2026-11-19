@@ -12,9 +12,10 @@ from sn120_v2.store import LocalStore
 
 def pull_module():
     import sys
-    sys.path.insert(0, str(Path(__file__).parents[1] / "site"))
+    sys.path.insert(0, str(Path(__file__).parents[1] / "site"))  # sn120-test-site-import
     import pull
     return pull
+
 
 
 def test_layout_key_accepts_exact_pool_keys_and_refuses_unknowns():
