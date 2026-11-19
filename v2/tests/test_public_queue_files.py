@@ -243,7 +243,8 @@ def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_pa
     snap = json.loads(json.dumps(last(world)))
     files = snap["queue"].pop("files")
     assert list(snap["queue"]) == ["length", "files_checked_at", "next"]
-    assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "the snapshot without queue.files is the snapshot of the code before"
+    assert snap.pop("changes") == [], "the one key that came after queue.files: the history of the parameters, empty in this world"
+    assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "the snapshot without the two later keys is the snapshot of the code before"
 
     # The same for the queue alone, from the state: the rows as the code before made them.
     valid = {row["hotkey"]: row["file_verdict"] == VALID for row in files["verdicts"]}

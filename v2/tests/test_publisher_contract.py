@@ -14,7 +14,7 @@ from sn120_v2.canonical import sha256_hex, to_jsonable
 from sn120_v2.envs.math_pool import MANDATE, POOL_V2_0_SHA256
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, MinerBound, Recipe
-from sn120_v2.types import HeadVersion
+from sn120_v2.types import HeadVersion, TrainReport
 
 
 class MemStore(dict):
@@ -254,6 +254,20 @@ def test_the_text_on_no_decision_says_what_the_controller_does_and_what_the_roun
     assert all(marker in long for marker in markers[1:]) and long.endswith(" more characters]") and long.startswith("InfraError: 403 for url: https://")
     assert "The same rule applies to the `reason` of a round in mining.json and in section 3." in flat
     assert "To decide what applies to your seat, read `outcome` and `status`, not the words of a text." in flat
+
+
+def test_the_text_names_the_norm_before_the_cap_as_each_file_names_it(tmp_path):
+    made = world(tmp_path, play=True)
+    record = made.controller.state.rounds[-1]
+    entries = json.loads(made.store.get(layout.round_file(record.round_id)))["entries"]
+    trained = [entry for entry in entries if "step_norm" in entry]
+    assert trained and all({"norm_before_cap", "train_wall_s"} <= set(entry) and "step_norm_before_cap" not in entry for entry in trained)
+    assert "norm_before_cap" in {field.name for field in dataclasses.fields(TrainReport)}, "the round file takes the name of this record"
+    flat = " ".join(published(made.publisher.snapshots[-1])[1].split())
+    assert "In a round file each entry with a trained LoRA has `step_norm`, `norm_before_cap` and `train_wall_s`" in flat
+    assert "`norm_before_cap` in a round file, `step_norm_before_cap` in the train report of a LoRA" in flat
+    # The train report is a file of the LoRA, and the job writes its key: ``test_gpu_torch`` reads it from a real training.
+    assert "of the dropped rows, `step_norm` and `step_norm_before_cap`." in flat
 
 
 def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):

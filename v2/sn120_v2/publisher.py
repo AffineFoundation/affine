@@ -57,11 +57,11 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_SHOWN, NOT_VALID, TEXT_LIMIT, VALID, changes_fault
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
-from .state import ABANDONED, load
+from .state import ABANDONED, CHANGES_KEPT, load
 from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
@@ -107,6 +107,17 @@ ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pa
 QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
 KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
 PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
+# Changes of the text of llms.txt that no parameter shows, the newest first: (the day in UTC, the section, one sentence).
+# A change of a parameter is not typed here: ``public.changes_view`` takes it from the journal.
+# The order of two lines of one day is the order here.
+# A sentence holds for each set of parameters, so it names no ``train.`` key: such a key is in the text only while a miner may set it.
+TEXT_CHANGES = (
+    ("2026-11-16", 9, "New: the two norms and the training time that a round file holds for an entry. The name of the norm before the cap there is `norm_before_cap`; `step_norm_before_cap` is its name in the train report."),
+    ("2026-11-16", 12, "This section is new."),
+    ("2026-11-16", 2, "`minibatches` is new in the recipe: the count of updates in each pass. The training procedure has the rule, and section 5 has what it costs."),
+    ("2026-11-16", 2, "`global_norm_cap` of the recipe is now the cap of a file that sets none. A file may set a cap of its own only while the table \"What you may set\" has a row for it."),
+    ("2026-11-16", 2, "The row of `max_grad_norm` in the table of the recipe was wrong. The gradient clip does not cap the size of an update: the one cap is `global_norm_cap`."),
+)
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -270,12 +281,21 @@ def refuse_private(value: Any, where: str = "snapshot") -> None:
 
 
 def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> dict[str, Any]:
-    """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block."""
+    """mining.json: the snapshot of ``public.snapshot`` itself, plus its digest and the contract block.
+
+    One key can differ from the snapshot. When this code cannot write the lines of ``changes`` for section 12 of
+    llms.txt, the document holds ``public.changes_fault`` in place of the rows. So the two files say the same
+    thing, and a fault in these lines costs the section and not the publish.
+    """
     clash = [key for key in OWN_KEYS if key in snapshot]
     if clash:
         raise ContractError(f"the snapshot may not use the publisher's keys {clash}")
     refuse_private(snapshot)
     plain = to_jsonable(snapshot)
+    try:
+        _parameter_lines(plain.get("changes"))
+    except Exception as exc:  # noqa: BLE001 - whatever the fault is, it may not stop the publish of a round
+        plain["changes"] = changes_fault(exc)
     params = Params.from_dict(plain.get("params") or {})
     if not plain.get("head"):
         raise ContractError("the snapshot has no head")
@@ -1110,7 +1130,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
         "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
-        "  shows the decision, the batch sha256 and the scores only.",
+        "  shows the decision, the batch sha256, the scores and the three values of the next line, and no more.",
+        "- In a round file each entry with a trained LoRA has `step_norm`, `norm_before_cap` and `train_wall_s`: the",
+        "  norm of its update after the cap (`global_norm_cap`, section 2), the norm before the cap, and the seconds",
+        "  that its training took. The two files have two names for the norm before the cap: `norm_before_cap` in a",
+        "  round file, `step_norm_before_cap` in the train report of a LoRA. When the cap cut nothing, the two norms",
+        "  are the same number.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
@@ -1309,15 +1334,119 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "  time of the scoring: the times of a round are in section 3.",
         "- `burn_uid`: the UID of the owner. It has no seat (section 4) and gets no weight: nothing is burned (section 7).",
         "",
+        *_changes_lines(doc),
     ]
     return "\n".join(reflow(lines)) + "\n"
 
 
-def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
-    """(mining.json bytes, llms.txt bytes) of one snapshot."""
-    doc = mining_document(snapshot, public_url, links_url)
+def _one_value(value: Any) -> str:
+    """A value of a line of section 12. A list is in brackets and a text is in backticks, so the ends of each value are seen."""
+    if isinstance(value, (list, tuple)) and value:
+        return "[" + ", ".join(_one_value(item) for item in value) + "]"
+    return f"`{value}`" if isinstance(value, str) and value else show(value)
+
+
+def _whole(value: Any) -> str:
+    """A value as JSON holds it, with every digit. For two values that have the same short text."""
+    return f"`{json.dumps(value, ensure_ascii=False)}`"
+
+
+def _changed_value(row: Mapping[str, Any]) -> str:
+    """One changed value of a row of ``changes`` in mining.json, in words."""
+    name, before, after = f"`{row['name']}`", row.get("before"), row.get("after")
+    if not row.get("bound"):
+        old, new = _one_value(before), _one_value(after)
+        if old == new:  # the short text hides the difference: a number past its sixth digit, or none and an empty text
+            old, new = _whole(before), _whole(after)
+        return f"{name} {old} to {new}"
+    old, new = (bound and bound_text(MinerBound.from_dict(bound)) for bound in (before, after))
+    if before is None:
+        return f"{name} is new: {new}"
+    if after is None:
+        return f"{name} is no longer a field that a miner may set"
+    if before | {"decided": after["decided"]} == after:  # only ``decided`` moved: the allowed values are the same
+        return f"{name} has the same allowed values; `decided` of its bound {show(before['decided'])} to {show(after['decided'])}"
+    if old == new:
+        old, new = _whole(before), _whole(after)
+    return f"{name} was {old}, and is now {new}"
+
+
+CHANGES_NOT_SHOWN = (
+    "- The validator cannot show the changes of the parameters now: a fault in its code stopped these lines. This "
+    "does not say that no change is recorded. No round and no decision depends on these lines."
+)
+
+
+def _parameter_lines(changes: Any) -> list[str]:
+    """The lines of the parameters in section 12, from ``changes`` of mining.json: its rows, the fault, or no change."""
+    if isinstance(changes, Mapping) and NOT_SHOWN in changes:
+        return [CHANGES_NOT_SHOWN]
+    lines = []
+    for change in changes or []:
+        # No value to name: the two rounds pinned two hashes, and the code that writes this text reads the same values from both.
+        what = "; ".join(_changed_value(row) for row in change["values"]) or "its `params_hash` differs, and no value that this text can name"
+        lines.append(f"- Round `{change['round_id']}`, opened {utc(change['opened_at'])}: {what}. `params_hash` of the round: `{change['params_hash']}`.")
+    return lines or ["No change of the parameters is recorded."]
+
+
+def changes_not_shown(doc: Mapping[str, Any]) -> str:
+    """The fault that ``changes`` of a mining.json names in place of its rows, or "" when it names none."""
+    changes = doc.get("changes")
+    return str(changes[NOT_SHOWN]) if isinstance(changes, Mapping) and NOT_SHOWN in changes else ""
+
+
+def _changes_lines(doc: Mapping[str, Any]) -> list[str]:
+    """Section 12: each change of the parameters that mining.json holds, and each change of the text."""
+    round_file = layout.round_file("ROUND_ID")
+    return [
+        "## 12. Changes",
+        "",
+        "The changes of the parameters and the changes of this text, the newest first. Each time is UTC.",
+        "",
+        "### Parameters",
+        "",
+        "The validator writes these lines from its journal: nobody types them. There is one line for each round that",
+        "opened with other parameters than the round before it. The line names that round, the time when it opened",
+        "(the values hold from then), and each value that differs: the old value, then the new one. New values that no",
+        "round has opened with yet have no line: `params` of mining.json shows them. `recipe.<name>` is a value of the",
+        "recipe (section 2). `train.<name>` is what a miner may set for that field (section 2).",
+        "",
+        "Where to find the round of a line. While the round is open, `round` of mining.json holds the same `opened_at` and",
+        f"`params_hash`. From its close on, the round file of that round holds them (`{round_file}`,",
+        f"section 9), and `history` of mining.json holds them too, for the last {HISTORY_PREVIEW} closed rounds only. A line can be",
+        "older than `history`.",
+        "",
+        f"mining.json holds the last {CHANGES_KEPT} lines under `changes`: a list, the newest first. A row has `round_id`,",
+        "`opened_at`, `params_hash` and `values`. A row of `values` has `name`, `before` and `after`. In a row of a",
+        "`train.<name>` field, `bound` is true, and `before` and `after` are the bound of that field as",
+        "`recipe.miner_bounds` holds it (`key`, `low`, `high`, `integer`, `choices`, `decided`), or null when a miner",
+        "may not set the field. `values` is empty when the two rounds pinned two hashes and the validator's code reads",
+        "the same values from both.",
+        "",
+        "An empty list under `changes` says that no change is recorded. When a fault in the validator's code stops",
+        f"these lines, `changes` is not a list: it is an object with the one key `{NOT_SHOWN}`, and the value of that key",
+        "names the fault. This section then has one line that says so.",
+        "",
+        *_parameter_lines(doc.get("changes")),
+        "",
+        "### This text",
+        "",
+        "Changes of a sentence that no parameter shows. The day is the day of the change in the validator's code, not",
+        "the day when the validator started to run that code.",
+        "",
+        *(f"- {day} UTC, section {section}: {sentence}" for day, section, sentence in TEXT_CHANGES),
+        "",
+    ]
+
+
+def _pair(doc: Mapping[str, Any]) -> tuple[bytes, bytes]:
     mining = json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
     return mining.encode("utf-8"), llms_text(doc).encode("utf-8")
+
+
+def render(snapshot: Mapping[str, Any], public_url: str = "", links_url: str = "") -> tuple[bytes, bytes]:
+    """(mining.json bytes, llms.txt bytes) of one snapshot."""
+    return _pair(mining_document(snapshot, public_url, links_url))
 
 
 SNAPSHOT_NAMED = re.compile(r"from snapshot\s+`([0-9a-f]{64})`")
@@ -1327,7 +1456,8 @@ PARAM_ROW = re.compile(r"^\| `(\w+)` \| (.*) \|$", re.MULTILINE)
 def stated_params(text: str) -> dict[str, str]:
     """Each parameter with the value that a llms.txt text states for it, from the table of the section "Every parameter"."""
     section = re.split(rf"^## \d+\. {PARAMS_HEADING}$", text, flags=re.MULTILINE)
-    return dict(PARAM_ROW.findall(section[1])) if len(section) == 2 else {}
+    # The table ends at the next section: a row of a later section is not a parameter.
+    return dict(PARAM_ROW.findall(re.split(r"^## ", section[1], maxsplit=1, flags=re.MULTILINE)[0])) if len(section) == 2 else {}
 
 
 def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_text: bool = True) -> list[str]:
@@ -1430,6 +1560,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     doc = json.loads(mining)
     scope = "every stated parameter" if args.values_only else "every line"
     print(f"ok: {places[1]} is true to the params of {places[0]} ({scope}; params_hash {doc['params_hash']}; generated {utc(doc.get('generated_at'))})")
+    fault = changes_not_shown(doc)
+    if fault:
+        print(f"note: section 12 of {places[1]} does not show the changes of the parameters. `changes` of {places[0]} names a fault of the code that published: {fault}")
     return 0
 
 
@@ -1447,12 +1580,15 @@ class StorePublisher:
         if self.links_url:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
-    def publish(self, snapshot: Mapping[str, Any]) -> None:
+    def publish(self, snapshot: Mapping[str, Any]) -> str:
         """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
 
         A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
+        Returns "" when the files show the whole snapshot. When a fault stopped the lines of ``changes``, the files
+        are written with that fault in place of the lines, and the return value says so.
         """
-        mining, llms = render(snapshot, self.public_url, self.links_url)
+        doc = mining_document(snapshot, self.public_url, self.links_url)
+        mining, llms = _pair(doc)
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
@@ -1465,6 +1601,8 @@ class StorePublisher:
             raise
         except Exception as exc:  # any store failure is ours: the controller retries the same snapshot
             raise InfraError(f"cannot publish the miner contract: {exc}") from exc
+        fault = changes_not_shown(doc)
+        return f"the changes of the parameters (section 12 of llms.txt, `changes` of mining.json): {fault}" if fault else ""
 
 
 if __name__ == "__main__":

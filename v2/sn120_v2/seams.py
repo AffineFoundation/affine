@@ -204,8 +204,12 @@ class RoundRunner(Protocol):
 class Publisher(Protocol):
     """Writes the miner contract and the website data from one snapshot."""
 
-    def publish(self, snapshot: Mapping[str, Any]) -> None:
-        """Write llms.txt and mining.json together, from this one snapshot."""
+    def publish(self, snapshot: Mapping[str, Any]) -> str | None:
+        """Write llms.txt and mining.json together, from this one snapshot.
+
+        Returns a text when the two files are written and leave out a part that they would show: what is left
+        out, and the cause. Returns nothing when they show it all.
+        """
         ...
 
 
