@@ -50,6 +50,7 @@ os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
 ROLLOUT_TRIES = 3; ROLLOUT_MAX_ATTEMPTS = 3; ROLLOUT_BACKOFF_S = 300; ROLLOUT_MAX_BACKOFF_S = 86400
+ROLLOUT_FETCH_WAIT_S = 600
 WAIT_LATE_S = 3600  # weight files still not in the store this long after the head was applied: the table says `waiting`
 BEAT_S = 300  # while a row runs, the table gets the time and the counts of the worker's look at the node this often
 CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the store before its pod is given back
@@ -198,9 +199,9 @@ def fetch_rollout(node, rk, bid, local, tell=log):
     remote = f"{C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz"
     quoted = shlex.quote(remote)
     answer = node.out(f"sha256sum {quoted} && stat -c %s {quoted}", timeout=120).split()
-    if len(answer) != 2 or len(answer[0]) != 64 or not answer[1].isdigit():
+    if len(answer) < 2 or len(answer[0]) != 64 or any(c not in "0123456789abcdef" for c in answer[0]) or not answer[-1].isdigit():
         raise IOError("rollout sha256/size unavailable")
-    sha, size = answer[0], int(answer[1])
+    sha, size = answer[0], int(answer[-1])
     for attempt in range(ROLLOUT_TRIES):
         try:
             node_file(node, remote, local)
@@ -371,9 +372,44 @@ class Row:
         return got
 
     # ---- public rollouts: a side effect of score collection, never its gate
-    def collect_rollout(self, bid, result, pending):
+    def rollout_path(self, pending):
+        return f"{PRIV}/{pending['run_key']}/{pending['bid']}.rollouts.jsonl.gz"
+
+    def rollout_pending(self, only_fetch=False):
+        """Explicitly observed identities only. Cached artifacts need no node; uncached ones need this row's node."""
+        out = []
+        for identity, pending in self.S["rollout_pending"].items():
+            if pending.get("parked_at") or (only_fetch and os.path.isfile(self.rollout_path(pending))):
+                continue
+            if not only_fetch and float(pending.get("next_at", 0)) > now():
+                continue
+            result = rj(result_path(self.mid, pending["bid"]))
+            if result:
+                out.append((identity, pending, result))
+        return out
+
+    def park_rollout(self, identity, pending, why):
+        pending["parked_at"] = now(); pending["why"] = why
+        self.save()
+        self.log(event="rollouts-lost", benchmark=pending["bid"], why=why,
+                 fetch_attempts=pending.get("fetch_attempts", 0), upload_attempts=pending.get("upload_attempts", 0))
+
+    def retry_rollouts(self):
+        """At most three explicitly pending identities per poll; only uncached files still need this row's node."""
+        ready = []
+        for identity, pending, result in self.rollout_pending():
+            cached = os.path.isfile(self.rollout_path(pending))
+            if cached and float(pending.get("next_at", 0)) > now():
+                continue
+            ready.append((float(pending.get("next_at", 0)) if cached else 0.0, pending["bid"], identity, result))
+        for _, bid, identity, result in sorted(ready)[:ROLLOUT_TRIES]:
+            self.collect_rollout(bid, result, self.S["rollout_pending"][identity])
+
+    def collect_rollout(self, bid, result, pending, force_fetch=False):
         mid, rk, identity = self.mid, pending["run_key"], f"{self.mid}/{bid}"
-        path = f"{PRIV}/{rk}/{bid}.rollouts.jsonl.gz"
+        path = self.rollout_path(pending)
+        if not os.path.isfile(path) and not self.rec:
+            return self.park_rollout(identity, pending, "node-released")
         try:
             known = self.S["rollout_uploads"].get(identity)
             stored = None
@@ -387,7 +423,20 @@ class Row:
                 self.save()
                 return
             if not os.path.isfile(path):
-                fetch_rollout(self.node, rk, bid, path, self.log)
+                if pending.get("fetch_attempts", 0) >= ROLLOUT_MAX_ATTEMPTS:
+                    return self.park_rollout(identity, pending, "fetch-failed")
+                pending["fetch_attempts"] = int(pending.get("fetch_attempts", pending.get("attempts", 0))) + 1
+                try:
+                    fetch_rollout(self.node, rk, bid, path, self.log)
+                    pending["fetched_at"] = now()
+                    pending.pop("fetch_attempts", None)
+                except Exception as exc:
+                    self.save()
+                    self.log(event="rollouts-fetch-deferred", benchmark=bid, attempts=pending["fetch_attempts"], error=type(exc).__name__)
+                    return  # give_back bounds this wait; a successful fetch is a prerequisite of release
+            if force_fetch:
+                self.save()  # the cache is durable; the R2 retry continues after release, not in this fetch-only phase
+                return
             for attempt in range(ROLLOUT_TRIES):
                 try:
                     def uploaded(data):
@@ -399,29 +448,43 @@ class Row:
                     return
                 except Exception as exc:
                     self.log(event="rollouts-upload-retry", benchmark=bid, attempt=attempt + 1, error=type(exc).__name__)
-            raise IOError("rollout upload failed after three tries")
-        except Exception as exc:  # a large public artifact never gates scores, the table or the next benchmark
-            pending["attempts"] = int(pending.get("attempts", 0)) + 1
-            if pending["attempts"] >= ROLLOUT_MAX_ATTEMPTS:
-                pending["parked_at"] = now()
-                pending["why"] = type(exc).__name__
-            else:
-                pending["next_at"] = now() + float(pending.get("delay", ROLLOUT_BACKOFF_S))
-                pending["delay"] = min(ROLLOUT_MAX_BACKOFF_S, float(pending.get("delay", ROLLOUT_BACKOFF_S)) * 2)
+            pending["upload_attempts"] = int(pending.get("upload_attempts", pending.get("attempts", 0))) + 1
+            pending["attempts"] = pending["upload_attempts"]  # compatibility with the first rollout writer's state
+            if pending["upload_attempts"] >= ROLLOUT_MAX_ATTEMPTS:
+                return self.park_rollout(identity, pending, "upload-failed")
+            pending["next_at"] = now() + float(pending.get("delay", ROLLOUT_BACKOFF_S))
+            pending["delay"] = min(ROLLOUT_MAX_BACKOFF_S, float(pending.get("delay", ROLLOUT_BACKOFF_S)) * 2)
             self.save()
-            self.log(event="rollouts-parked" if pending.get("parked_at") else "rollouts-upload-deferred", benchmark=bid,
-                     attempts=pending["attempts"], error=type(exc).__name__, detail=P.mask(traceback.format_exc(limit=3)[-600:]))
+            self.log(event="rollouts-upload-deferred", benchmark=bid, attempts=pending["upload_attempts"])
+        except Exception as exc:  # malformed data or store state never gates scores or holds a node forever
+            pending["upload_attempts"] = int(pending.get("upload_attempts", 0)) + 1
+            self.save()
+            self.log(event="rollouts-upload-deferred", benchmark=bid, error=type(exc).__name__, detail=P.mask(traceback.format_exc(limit=3)[-600:]))
+            if pending["upload_attempts"] >= ROLLOUT_MAX_ATTEMPTS:
+                self.park_rollout(identity, pending, "upload-failed")
 
-    def retry_rollouts(self):
-        """At most three explicitly pending files of this row per poll. No historical-result or released-node discovery."""
-        current = now()
-        ready = []  # only this row's explicitly pending identities, never a result-directory scan
-        for identity, pending in self.S["rollout_pending"].items():
-            result = None if pending.get("parked_at") or float(pending.get("next_at", 0)) > current else rj(result_path(self.mid, pending["bid"]))
-            if result:
-                ready.append((float(pending.get("next_at", 0)), pending["bid"], identity, result))
-        for _, bid, identity, result in sorted(ready)[:ROLLOUT_TRIES]:
-            self.collect_rollout(bid, result, self.S["rollout_pending"][identity])
+    def before_release(self):
+        """At most three fetch-only attempts per observed identity before losing its node; cached uploads need no node."""
+        started = now()
+        for _ in range(ROLLOUT_MAX_ATTEMPTS):
+            for identity, pending, _ in self.rollout_pending(only_fetch=True):
+                if pending.get("fetch_attempts", 0) >= ROLLOUT_MAX_ATTEMPTS:
+                    self.park_rollout(identity, pending, "fetch-failed")
+            left = [(identity, pending, result) for identity, pending, result in self.rollout_pending(only_fetch=True)
+                    if pending.get("fetch_attempts", 0) < ROLLOUT_MAX_ATTEMPTS]
+            if not left:
+                return
+            self.log(event="rollouts-fetch-wait", benchmarks=[pending["bid"] for _, pending, _ in left])
+            for identity, pending, result in left:
+                if now() - started >= ROLLOUT_FETCH_WAIT_S:
+                    self.park_rollout(identity, pending, "fetch-failed")
+                    continue
+                if not os.path.isfile(self.rollout_path(pending)):
+                    self.collect_rollout(pending["bid"], result, pending, True)
+            if self.rollout_pending(only_fetch=True):
+                time.sleep(POLL_S)
+        for identity, pending, _ in self.rollout_pending(only_fetch=True):
+            self.park_rollout(identity, pending, "fetch-failed")
 
     def node_done(self, rk):
         try: return json.loads(self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/DONE", timeout=30))
@@ -475,6 +538,11 @@ class Row:
         S = self.S
         if not self.rec:
             return True
+        if self.rollout_pending(only_fetch=True):
+            self.tell("fetching-rollouts")
+            self.before_release()
+            if self.rollout_pending(only_fetch=True):
+                self.save(); return False
         if now() - S.get("release_tried", 0) < RELEASE_RETRY_S:
             return False
         whole = not missing(m, bs) or bool(S.get("held"))  # held: the run is over, and what it gave is all that this pod gives
