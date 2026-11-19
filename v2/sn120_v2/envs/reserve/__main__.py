@@ -23,8 +23,8 @@ from ...canonical import canonical_json, sha256_hex
 from ...errors import V2Error
 from ..math_pool import MANDATE, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 from . import (
-    ID, MANIFEST, MIN_ANSWER_CHARS, MAX_ANSWER_CHARS, MAX_PROBLEM_CHARS, WITHDRAWN, empty_manifest, load_reserve, normalise, read_raw,
-    reserve_dir, task_row,
+    ID, MANIFEST, MIN_ANSWER_CHARS, MAX_ANSWER_CHARS, MAX_PROBLEM_CHARS, UNSCREENED_METHOD, WITHDRAWN,
+    empty_manifest, load_reserve, normalise, read_raw, reserve_dir, task_row,
 )
 
 
@@ -235,6 +235,14 @@ def parser() -> argparse.ArgumentParser:
     add.add_argument("--reject-mc", action="store_true")
     add.add_argument("--env", default="affine_math", help="task slice (default: affine_math, scored with the base pool)")
     add.add_argument("--readmit", action="append", help="retired id to readmit explicitly; repeatable")
+    prior = commands.add_parser("ingest-prior", help="append N deterministic unscreened tasks from sn120-math-prior-v1")
+    prior.add_argument("--prior-dir", required=True, help="directory containing MANIFEST.json and all published parquet shards")
+    prior.add_argument("--n", type=int, required=True)
+    prior.add_argument("--seed", required=True)
+    prior.add_argument("--min-p", type=float, default=0.15)
+    prior.add_argument("--max-p", type=float, default=0.85)
+    prior.add_argument("--no-signal-share", type=float, default=0.10, help="maximum share of rows without prior_p (default: 0.10)")
+    prior.add_argument("--added-at", help=argparse.SUPPRESS)  # deterministic tests; normal CLI uses the UTC date
     commands.add_parser("verify")
     commands.add_parser("status")
     remove = commands.add_parser("withdraw")
@@ -248,6 +256,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "ingest":
             report = ingest(args)
+        elif args.command == "ingest-prior":
+            from .prior import ingest_prior
+            report = ingest_prior(args)
         elif args.command == "withdraw":
             report = withdraw(args)
         elif args.command == "status":

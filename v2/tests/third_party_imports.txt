@@ -12,6 +12,8 @@ pytest
 # tests: local test helpers and the site's standalone pull module
 conftest
 test_rotation_controller
+test_reserve_ingest
+test_pool_rotation_v2
 pull
 
 # gpu: train/eval workers
@@ -38,6 +40,9 @@ jinja2
 math_verify
 latex2sympy2_extended
 sympy
+
+# envs: optional prior parquet tooling
+pyarrow
 
 # links: sealed upload links and activation
 nacl
