@@ -93,7 +93,7 @@ for gpu in "${gpu_ids[@]}"; do
     printf '%s\n' "$!" > "$ROOT/pids/vllm-$gpu.pid"
 done
 
-"$VENV/bin/python" - "$ROOT" <<'PY'
+"$VENV/bin/python" -I - "$ROOT" <<'PY'
 import json
 import sys
 import time

@@ -99,6 +99,12 @@ def test_restart_is_stop_then_start_with_long_timeout():
     restart_servers(command=run)
     assert [call[0][-1] for call in calls] == ["stop", "start"]
     assert all(call[1]["timeout"] >= 900 for call in calls)
+    assert all(call[1]["cwd"] == "/" for call in calls)
+
+
+def test_health_python_is_isolated_from_package_directory():
+    script = Path(__file__).parents[1] / "sn120_v2/generator/serve.sh"
+    assert '"$VENV/bin/python" -I - "$ROOT" <<\'PY\'' in script.read_text()
 
 
 def test_server_failure_is_loud():

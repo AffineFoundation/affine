@@ -197,7 +197,7 @@ def _replace_directory(source: Path, base: Path) -> None:
 
 
 def _serve(command: Callable[..., Any], action: str) -> None:
-    result = command(["bash", SERVE, action], capture_output=True, text=True, timeout=PREPARE_TIMEOUT_S, check=False)
+    result = command(["bash", SERVE, action], cwd="/", capture_output=True, text=True, timeout=PREPARE_TIMEOUT_S, check=False)
     if result.returncode != 0:
         raise InfraError(f"the eight-server {action} failed with exit code {result.returncode}; inspect pod server logs")
 
