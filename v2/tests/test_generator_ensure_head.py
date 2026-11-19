@@ -130,9 +130,14 @@ def test_dispatch_head_failure_never_starts_scorer(tmp_path):
     original = fake.ssh
     def ssh(command, *, timeout=None):
         if "ensure_head" in command:
+            fake.calls.append(("ssh", command))
             raise InfraError("unknown head")
         return original(command, timeout=timeout)
     fake.ssh = ssh
     with pytest.raises(InfraError, match="unknown head"):
         remote.dispatch(EPOCH)
     assert not any("nohup" in command for kind, command in fake.calls if kind == "ssh")
+    fake.ssh = original
+    remote.dispatch(EPOCH)
+    assert sum("ensure_head" in command for kind, command in fake.calls if kind == "ssh") == 2
+    assert any("nohup" in command for kind, command in fake.calls if kind == "ssh")

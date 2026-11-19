@@ -38,7 +38,14 @@ service user. Config example:
 The SSH key is used only to reach the scorer, with strict host-key checking and
 batch mode. The scorer has no R2 credentials and never publishes. Its job is
 `/root/gen/jobs/<epoch>/job.json`; its output is collected privately, verified
-against the deadline snapshot, and published by the validator.
+against the deadline snapshot, and published by the validator. Before launch,
+dispatch runs `ensure_head` with a 15-minute timeout. It accepts only the
+requested current published head or matching read-links checkpoint, verifies
+every base-file size and SHA-256, atomically replaces `/root/dl/base`, writes
+`.head_version`, and stops/starts all eight servers via `serve.sh`. The scorer
+command refuses any mismatch between that marker and the job. Unknown heads,
+bad hashes or unhealthy servers prevent scoring. Preparation failures may be
+retried; after a launch attempt, only collection is resumed.
 
 The pool cache must contain all eight verified `sn120-math-prior-v1` shards,
 `MANIFEST.json`, and the complete ID index. Use `PriorPool(...,

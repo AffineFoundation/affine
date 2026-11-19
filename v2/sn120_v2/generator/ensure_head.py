@@ -10,14 +10,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping
@@ -158,7 +156,9 @@ def download_base(entry: Mapping[str, Mapping[str, Any]], target: Path, *, opene
             temporary.unlink(missing_ok=True)
 
 
-def installed_version(base: Path = BASE) -> str:
+def installed_version(base: Path | None = None) -> str:
+    base = BASE if base is None else base
+
     try:
         value = (base / ".head_version").read_text().strip()
     except FileNotFoundError:
@@ -170,7 +170,7 @@ def installed_version(base: Path = BASE) -> str:
     return value
 
 
-def require_installed(version: str, base: Path = BASE) -> None:
+def require_installed(version: str, base: Path | None = None) -> None:
     """The scorer's final local guard: wrong or missing model means no scoring."""
     if installed_version(base) != version:
         raise VerifyError("installed base .head_version does not match the scoring job")
