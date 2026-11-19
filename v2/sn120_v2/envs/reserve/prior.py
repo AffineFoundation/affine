@@ -159,17 +159,22 @@ def _existing(root: Path) -> tuple[set[str], set[str], list[dict[str, Any]], dic
     return ids, problems, shards, next_numbers
 
 
+def _valid(row: dict[str, Any]) -> bool:
+    from ..math_grader import grade_answer
+    return grade_answer(row["answer"], row["problem"], "<think>x</think> \\boxed{" + row["answer"] + "}", False).code == "P"
+
+
 def _select(rows: Iterable[dict[str, Any]], n: int, seed: str, low: float, high: float,
             no_signal_share: float, ids: set[str], problems: set[str]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    selected: list[dict[str, Any]] = []
+    candidates: list[tuple[str, dict[str, Any]]] = []
     filtered: dict[str, int] = collections.Counter()
     sources: dict[str, int] = collections.Counter()
     no_signal = 0
     no_signal_cap = int(n * no_signal_share)
     seen: set[str] = set()
     for row in rows:
-        key = str(row["source"]).split("@", 1)[0]
-        prefix = PREFIXES.get(key)
+        source = str(row["source"]).split("@", 1)[0]
+        prefix = PREFIXES.get(source)
         if prefix is None:
             filtered["unknown_source"] += 1
             continue
@@ -195,9 +200,9 @@ def _select(rows: Iterable[dict[str, Any]], n: int, seed: str, low: float, high:
         elif MANDATE in row["problem"]:
             filtered["mandate"] += 1
         else:
-            selected.append((sha256_hex(f"{seed}|{original_id}".encode()), row | {"prior_p": p, "_source_key": key}))
+            candidates.append((sha256_hex(f"{seed}|{original_id}".encode()), row | {"prior_p": p, "_source_key": source}))
     kept: list[dict[str, Any]] = []
-    for _, row in sorted(selected, key=lambda pair: pair[0]):
+    for _, row in sorted(candidates, key=lambda pair: pair[0]):
         if len(kept) == n:
             break
         if row["prior_p"] is None and no_signal >= no_signal_cap:
@@ -206,6 +211,11 @@ def _select(rows: Iterable[dict[str, Any]], n: int, seed: str, low: float, high:
         source = row["_source_key"]
         if sources[source] >= n * 0.40:
             filtered["source_cap"] += 1
+            continue
+        if not _valid(row):
+            # The release self-check never bypasses this checkout's grader.
+            # A rejected row is replaced in the same deterministic order.
+            filtered["grader_self_check"] += 1
             continue
         kept.append(row)
         sources[source] += 1
