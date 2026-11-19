@@ -1,10 +1,35 @@
 {
-  "schema": "affine-generator-state-v1",
+ "counts": {
+  "accepted": 2,
+  "eligible": 3,
+  "scored": 3
+ },
+ "current_epoch": "20261119T2000Z",
+ "deadline": "2026-11-19T20:00:00Z",
+ "last_epoch": "20261119T1600Z",
+ "last_results": "https://affine.example/generator/epochs/20261119T1600Z/results.json",
+ "links": {
   "epoch": "20261119T2000Z",
-  "window_start": 1795104000,
-  "deadline": 1795118400,
-  "king_version": "20261119T1600Z:8f1e6a0c9d2b",
-  "last_scored_epoch": "20261119T1600Z",
-  "link_holders": 2,
-  "seed_commitment": "fixture-public-sha256-commitment"
+  "epochs": [
+   {
+    "epoch": "20261119T1600Z",
+    "manifest": "https://affine.example/generator/epochs/20261119T1600Z/manifest.json"
+   }
+  ],
+  "index": "https://affine.example/generator/links.json"
+ },
+ "pool": "sn120-math-prior-v1:45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115",
+ "pool_url": "https://github.com/AffineFoundation/affine/releases/tag/sn120-math-prior-v1",
+ "published_epochs": [
+  {
+   "epoch": "20261119T1600Z",
+   "intake": "https://affine.example/generator/epochs/20261119T1600Z/intake.jsonl",
+   "intake_sha256": "8c93a19d83846500e94f5d1bd47ca4fb2e84628bf9df7e2cea113b9ea188c63b",
+   "results": "https://affine.example/generator/epochs/20261119T1600Z/results.json"
+  }
+ ],
+ "seed_commitment": "f426cb2869d6e4b6cc821b50b796ca8c13384aca8d339d8e446a429bcd348e96",
+ "version": "affine-generator-state-v1",
+ "window_close": "2026-11-19T20:00:00Z",
+ "window_open": "2026-11-19T16:00:00Z"
 }

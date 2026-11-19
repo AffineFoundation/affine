@@ -47,7 +47,7 @@ from sn120_v2.types import WINNER
 
 STATIC = Path(__file__).parent / "static"
 # Order matters: a file is stamped with the hashes of the files before it.
-ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.html")
+ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.md", "generator-guide.html")
 TEXT = (".css", ".html")
 DATA = "site-data.json"
 POOL_DATA = "pool-data.json"
@@ -266,12 +266,16 @@ def build_static(out: Path, link: Callable[[str], str]) -> None:
             data = text.replace("{{llms}}", link(layout.LLMS_TXT)).replace("{{mining}}", link(layout.MINING_JSON)).encode()
         versions[name] = hashlib.sha256(data).hexdigest()[:8]
         write(out / name, data)
+        if name == "generator-guide.md":
+            # The miner-kit PR owns this document; the public guide consumes it at /generator/.
+            (out / "generator").mkdir(exist_ok=True)
+            write(out / "generator" / "generator-guide.md", data)
         if name in ("pool.html", "generator.html", "generator-guide.html"):
             directory_name = name.removesuffix(".html")
             (out / directory_name).mkdir(exist_ok=True)
             directory = data
-            directory = directory.replace(b'href="', b'href="../').replace(b'src="', b'src="../')
-            directory = directory.replace(b'href="../#', b'href="#')
+            directory = directory.replace(b'href="', b'href="../').replace(b'src="', b'src="../').replace(b'href="../"', b'href="./"')
+            directory = directory.replace(b'href="../#', b'href="#').replace(b'href="../"', b'href="./"').replace(b'href="..//', b'href="/')
             if name in ("generator.html", "generator-guide.html"):
                 directory = directory.replace(b'href="../generator.html', b'href="../generator/')
                 directory = directory.replace(b'href="../generator-guide.html', b'href="../generator-guide/')

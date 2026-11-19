@@ -1,8 +1,58 @@
 {
-  "epoch": "20261119T1600Z",
-  "hotkeys": [
-    {"hotkey": "5FixtureMinerAlpha000000000000000000000000000000", "uid": 17, "submitted": 10, "eligible": 9, "scored": 8, "accepted": 3},
-    {"hotkey": "5FixtureMinerBeta0000000000000000000000000000000", "uid": 23, "submitted": 3, "eligible": 2, "scored": 2, "accepted": 1}
-  ],
-  "tasks": [{"task_id": "0123456789abcdef0123", "s": 4, "n": 8, "q": 0.9507, "decision": "accept"}]
+ "counts": {
+  "accepted": 2,
+  "rejected": 1,
+  "tasks": 3
+ },
+ "epoch": "20261119T1600Z",
+ "hotkeys": {
+  "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF": {
+   "accepted": 1,
+   "eligible": 1,
+   "scored": 1,
+   "submitted": 1
+  },
+  "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS": {
+   "accepted": 1,
+   "eligible": 2,
+   "scored": 2,
+   "submitted": 2
+  }
+ },
+ "king": "fixture-king-version",
+ "king_frozen_at": "2026-11-19T16:00:00Z",
+ "pool": "sn120-math-prior-v1:45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115",
+ "published_at": "2026-11-19T19:20:00Z",
+ "seed_commitment": "f426cb2869d6e4b6cc821b50b796ca8c13384aca8d339d8e446a429bcd348e96",
+ "seed_secret": "fixture-redacted-before-commit",
+ "tasks": [
+  {
+   "decision": "accept",
+   "hotkey": "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF",
+   "n": 8,
+   "q": 0.9021453857421875,
+   "s": 4,
+   "task_id": "00000000000000000003",
+   "uid": 23
+  },
+  {
+   "decision": "continue",
+   "hotkey": "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS",
+   "n": 8,
+   "q": 0.30023193359375,
+   "s": 1,
+   "task_id": "00000000000000000001",
+   "uid": 17
+  },
+  {
+   "decision": "accept",
+   "hotkey": "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS",
+   "n": 16,
+   "q": 0.8922933721914887,
+   "s": 6,
+   "task_id": "00000000000000000002",
+   "uid": 17
+  }
+ ],
+ "version": "affine-generator-results-v1"
 }
