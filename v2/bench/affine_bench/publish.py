@@ -4,7 +4,9 @@ Merge-only: a row that was published once is never dropped. Each row carries env
 protocol is clear. For the same (model, benchmark), the higher-protocol row is ordered last so a last-wins indexer
 shows it as latest; superseded rows remain in the file under results (and results_prior).
 
-Never publishes per-task results. Informational only: nothing that decides a king or a weight reads this file."""
+Never publishes per-task results in benchmarks.json. Full public rollouts use the separate layout.public_rollout_bench
+objects; no aggregate table row contains a prompt or a completion. Informational only: nothing that decides a king or a
+weight reads this file."""
 import glob, hashlib, json, math, os, time
 from . import config as C, registry as R
 

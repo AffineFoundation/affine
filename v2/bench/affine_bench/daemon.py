@@ -2,8 +2,9 @@
 
 Loop (every 30 s): read the rows from v2's public files (source.py: the launch model and every folded king; no journal
 and no call into the controller), build the queue, keep exactly one row running on the node, collect finished
-benchmarks into BENCH_STATE/results/, write BENCH_SITE/benchmarks.json and, when a row or a result changed, the same
-table to the store. Nothing is published per task.
+benchmarks into BENCH_STATE/results/, stream each public rollouts.jsonl.gz to its store key, write
+BENCH_SITE/benchmarks.json and, when a row or a result changed, the same table to the store. Rollout uploads never gate
+the aggregate table. Nothing is published per task in that table.
 
 Done marker: a (row, benchmark, version) is done when the published table has its result, or a result file is on this
 host. The process reads the published table before its first step and rents nothing until it has. So a row is
@@ -16,7 +17,9 @@ Informational only: this service reads kings and writes a table. It has no path 
 Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
 empty queue; a pod Lium reclaims is detected (node-gone) and replaced the same way. Nothing on the pod is deleted by
 this service: the king's weights go away with the pod (results on the host are never deleted)."""
-import fcntl, json, os, shlex, subprocess, time, traceback
+import fcntl, gzip, hashlib, json, os, shlex, subprocess, time, traceback
+from datetime import datetime, timezone
+from sn120_v2 import layout
 from . import config as C, registry as R
 from .node import Node
 from .fetch import fetch as fetch_king
@@ -43,7 +46,7 @@ def log(**k):
 
 
 S = rj(SF, {}) or {}
-S.setdefault("fail", {}); S.setdefault("unavailable", []); S.setdefault("history", [])
+S.setdefault("fail", {}); S.setdefault("unavailable", []); S.setdefault("history", []); S.setdefault("rollout_uploads", {})
 def save(): wj(SF, S)
 
 
@@ -152,12 +155,122 @@ def collect(run):
         os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
         os.makedirs(f"{RES}/{m['model_id']}", exist_ok=True); wj(result_path(m["model_id"], bid), r)
         got[bid] = round(r["score"], 4) if r.get("score") is not None else None
+        collect_rollout(run, bid, r)
     done = rj_node_done(rk)
     S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
                              serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=C_POD.get("gpu"), usd_h=C_POD.get("cost"), pod=C_POD.get("huid")))
     S["history"] = S["history"][-400:]
     log(event="collected", model=rk, scores=got)
     return got
+
+
+def node_file(remote, local, timeout=3600):
+    """Stream a node file through ssh without putting its bytes in memory."""
+    os.makedirs(os.path.dirname(local), exist_ok=True)
+    tmp = local + ".part"
+    proc = None
+    try:
+        with open(tmp, "wb") as out:
+            proc = subprocess.Popen([C.NODE_SSH, f"cat {shlex.quote(remote)}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            while chunk := proc.stdout.read(8 << 20):
+                out.write(chunk)
+            if proc.wait(timeout=60) != 0:
+                raise IOError("node file transfer failed")
+        os.replace(tmp, local)
+    except BaseException:
+        if proc is not None:
+            proc.kill(); proc.wait()
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def fetch_rollout(rk, bid, local):
+    """Hash on the node, stream to a local cache, then verify those exact bytes."""
+    remote = f"{C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz"
+    quoted = shlex.quote(remote)
+    answer = NODE.out(f"sha256sum {quoted} && stat -c %s {quoted}", timeout=120).split()
+    if len(answer) != 2 or len(answer[0]) != 64 or not answer[1].isdigit():
+        raise IOError("rollout sha256/size unavailable")
+    sha, size = answer[0], int(answer[1])
+    for attempt in range(3):
+        try:
+            node_file(remote, local)
+            h = hashlib.sha256()
+            with open(local, "rb") as f:
+                while chunk := f.read(8 << 20):
+                    h.update(chunk)
+            if h.hexdigest() != sha or os.path.getsize(local) != size:
+                raise IOError("rollout transfer hash mismatch")
+            return dict(sha256=sha, bytes=size)
+        except Exception as exc:
+            log(event="rollout-fetch-retry", model=rk, benchmark=bid, attempt=attempt + 1, error=type(exc).__name__)
+    raise IOError("rollout transfer failed after three tries")
+
+
+def upload_rollout(mid, bid, path, result):
+    """Durable public model/task data only; the aggregate result is already safe on disk."""
+    digest = hashlib.sha256()
+    rows = 0
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("model_id") != mid or row.get("benchmark_id") != bid:
+                raise ValueError("rollout model/benchmark identity mismatch")
+            rows += 1
+    with open(path, "rb") as f:
+        while chunk := f.read(8 << 20):
+            digest.update(chunk)
+    data, size = digest.hexdigest(), os.path.getsize(path)
+    key = layout.public_rollout_bench(mid, bid)
+    store = source.store()
+    store.put_file(key, path)
+    if store.sha256(key) != data:
+        raise IOError("stored rollout sha256 mismatch")
+    finished = result.get("finished_at")
+    meta = dict(schema="sn120-v2-rollouts-bench-1", model_id=mid, benchmark_id=bid, rows=rows, bytes=size, sha256=data,
+                bench_version=result.get("bench_version"), finished_at=datetime.fromtimestamp(finished, timezone.utc).isoformat().replace("+00:00", "Z") if finished is not None else None,
+                key=key)
+    store.put(layout.public_rollout_bench_meta(mid, bid), json.dumps(meta, sort_keys=True, indent=1).encode())
+    S["rollout_uploads"][f"{mid}/{bid}"] = data
+    save()
+    log(event="rollouts-uploaded", model=mid, benchmark=bid, rows=rows, bytes=size, sha256=data)
+
+
+def collect_rollout(run, bid, result):
+    mid, rk = run["model"]["model_id"], run["run_key"]
+    identity = f"{mid}/{bid}"
+    path = f"{PRIV}/{rk}/{bid}.rollouts.jsonl.gz"
+    try:
+        known = S["rollout_uploads"].get(identity)
+        if known and source.store().sha256(layout.public_rollout_bench(mid, bid)) == known:
+            return
+        if not os.path.isfile(path):
+            fetch_rollout(rk, bid, path)
+        for attempt in range(3):
+            try:
+                upload_rollout(mid, bid, path, result)
+                os.unlink(path)  # R2 is durable; the private download is disposable.
+                break
+            except Exception as exc:
+                log(event="rollouts-upload-retry", model=mid, benchmark=bid, attempt=attempt + 1, error=type(exc).__name__, detail=traceback.format_exc(limit=2)[-500:])
+        else:
+            raise IOError("rollout upload failed after three tries")
+    except Exception as exc:  # score publication must never depend on a large public artifact
+        log(event="rollouts-upload-deferred", model=mid, benchmark=bid, error=type(exc).__name__, detail=traceback.format_exc(limit=3)[-600:])
+
+
+def retry_rollouts():
+    """One bounded attempt per cached result per loop; missing node caches are retried on their next collected run."""
+    for mid in os.listdir(RES):
+        for filename in os.listdir(f"{RES}/{mid}") if os.path.isdir(f"{RES}/{mid}") else ():
+            if not filename.endswith(".json"):
+                continue
+            result = rj(f"{RES}/{mid}/{filename}")
+            if result:
+                collect_rollout(dict(model=dict(model_id=mid), run_key=mid), filename[:-5], result)
 
 
 def rj_node_done(rk):
@@ -235,6 +348,7 @@ def publish_table(rows):
 def step():
     sync_table()
     rows = model_rows(); bs = R.benchmarks(enabled_only=True, runnable_only=True)
+    retry_rollouts()
     run = S.get("running")
     if not run and not pod_ready(queue(rows)):
         S["queue"] = [m["model_id"] for m in queue(rows)]; publish_table(rows); return

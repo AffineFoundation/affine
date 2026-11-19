@@ -56,7 +56,7 @@ def empty_host(monkeypatch):
     for path in (D.RES, D.PRIV, D.SF, P.RECORD, TABLE):
         shutil.rmtree(path, ignore_errors=True) if os.path.isdir(path) else pathlib.Path(path).unlink(missing_ok=True)
     os.makedirs(D.RES); os.makedirs(D.PRIV)
-    D.S.clear(); D.S.update(fail={}, unavailable=[], history=[]); D.C_POD.clear(); D.SYNCED.clear()
+    D.S.clear(); D.S.update(fail={}, unavailable=[], history=[], rollout_uploads={}); D.C_POD.clear(); D.SYNCED.clear()
     for cache in ("_manifests", "_rounds", "_served"):
         monkeypatch.setattr(source, cache, {})
 

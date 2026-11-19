@@ -110,6 +110,16 @@ Names as in "AffineValidator" of `v2/CUTOVER.md`: `REPO`, `SITE`, `V1FILE`, `PY`
 
    Then repeat the checks of step 5. While that file is there, the pull does not copy the store's benchmark table: its run exits 1 with the name of the file.
 
+## Public full rollouts
+
+The pull accepts only the live layout functions under `public/rollouts/bench/<model_id>/<benchmark_id>.jsonl.gz` (and `.meta.json`) and `public/rollouts/gate/<round_id>/{head,winner}.jsonl.gz` (and `meta.json`). It lists only those two new rollout prefixes, streams large objects to disk and checks the published SHA-256 before indexing them. `--max-rollout-mb` defaults to 512 independently of `--max-file-mb`; `--keep-rollout-rounds 0` keeps all gate rounds (a positive number retains that many newest rounds).
+
+It writes `public/rollouts/index.json` (`sn120-v2-rollouts-index-2`) after mirroring the metadata and files. `backfill` embeds the original `backfill_index.json` when present; `bench` and `gate` hold live metadata. Only the original `index.json` is adoptable. The pull does not overwrite or delete `backfill_index.json`, the old `bench/*.per_task.jsonl.gz`, `gate/head_outcomes.*`, or `gate/tasks.jsonl.gz`. A bad existing JSON backfill is kept unchanged and yields `backfill: null`.
+
+`v2/site/static/rollouts/SCHEMA.md` is installed beside the index on the first pull. It documents the preserved no-text backfill and both live formats; later pulls keep that file synchronized. All timestamps are UTC.
+
+**Deploy order: this site pull first, then the bench service, then the production controller/GPU evaluator between closed rounds.** The new GPU source changes the optional pinned `code_digest` when that pin is enforced. It does not change the baked image digest (`016c2b93`) or any `Params` value (`5359a448`; rotation-on `4f270223`). If `recipe.code_digest` is non-empty, compute the new digest with `python -m sn120_v2.gpu.plan`, and update only that digest through the normal reviewed `set-params` procedure between rounds before starting the evaluator. Do not change the image or parameter hash as a shortcut for a code update.
+
 ## The way back
 
 ```

@@ -9,7 +9,7 @@
 #   enabled   the daemon only schedules enabled benchmarks
 #   in_avg    false = display-only column on affine.io: left out of Avg, the reference (Pareto) filter, column stars and shading;
 #             flip to true (or delete the line) once every shown row has it (default true)
-#   publish_per_task  never true for anything drawn from the MATH test split (our private holdout comes from it)
+#   publish_per_task  removed: v2 has no hidden/held-out benchmark set. Full rollouts are public; the MATH test split is public.
 [defaults]
 harness = "null"
 runtime = "subprocess"

@@ -150,6 +150,7 @@ class Stack:
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
     pool: Any = None  # optional PoolRuntime, rotation only; the ordinary sampler remains untouched when absent
     head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+    rollout_publisher: Any = None  # optional local/public gate rollout journal, never a scoring dependency
     settings: tuple[str, ...] = ()  # one line for each setting that the stack chooses to show, and where its value comes from; ``run`` prints them at its start
     overlap: bool = False  # ``run`` uses the order ``overlap`` after a king (``afterking.py``)
     entropy_now: Callable[[], str] | None = None  # the hash of the newest block, in one read: the round's entropy with ``overlap``
@@ -195,11 +196,13 @@ class Controller:
         pins: Callable[[Params], None] | None = None,
         head: HeadPublish | None = None,
         pool: Any = None,
+        rollout_publisher: Any = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
         self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
         self.pool = pool
+        self.rollout_publisher = rollout_publisher
         self._rotation: Any = None
         if pool is not None:
             if self.state.round is not None and pool.active_rotation is not None:
@@ -690,6 +693,15 @@ class Controller:
             self._rotation = closed_rotation
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
+        if self.rollout_publisher is not None:
+            # Side effect only: enqueue after the journal commit. The publisher
+            # catches/retries all store failures and cannot delay round close.
+            try:
+                winner = decision.winner if outcome == APPLIED and decision else None
+                self.rollout_publisher.close_round(pairs, winner.uid if winner else None, record.params_hash, record.round_seed, now)
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"public rollouts queued for retry: {type(exc).__name__}: {exc}"
+                print(f"public rollouts: {self.last_error}", file=sys.stderr, flush=True)
         log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
         with timed(f"close of {record.round_id}: the head pointer"):
             self._sync_pointer()
