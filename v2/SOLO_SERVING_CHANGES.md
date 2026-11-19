@@ -35,6 +35,8 @@ With those explicit values, the default `Params` hash is `cf2da207288c978d9452fc
 
 `params.max_num_seqs` drives both the HTTP client pool and vLLM `--max-num-seqs`; the existing file-descriptor budget can reduce both together. At the default `auto` setting, `--kv-cache-dtype` is omitted and the server command remains byte-identical to before. The generated `llms.txt` server command and request-feed description read these same parameters. `ServeSettings.clients_per_server` remains an optional local override, not a separate production 512 constant.
 
+While any training job is still running, each Solo worker caps its in-flight requests at 256 via the execution-only `SoloSettings.clients_while_training`. Once `scheduler.training_finished()` is true, the worker uses its full configured client count (512 for the fp8/512 profile). This keeps the server's fp8/512 settings while reducing eval pressure on GPUs that are still training. It does not affect hashed Params, task/sample pairing, or seeds.
+
 The GPU `code_digest` changes because the scheduler and serving implementation changed. `v2/ops/compat/params_fields_compat.patch` is a compat-only patch for an older checkout: it adds only these two fields and their `LEFT_OUT_AT_DEFAULT` entries. It lets pre-PR code read journals containing explicit fp8/512 parameters and is not part of v2's scoring or serving implementation.
 
 ## Throughput evidence

@@ -5,7 +5,8 @@ the normal default-argv server immediately for null. After training exits,
 that GPU starts or reuses the same default-argv server. Workers take work
 from a shared, atomic claim scheduler. The training call, deadline, task
 draw, sampling seed and look rule are unchanged. A resource budget may lower
-vLLM's sequence limit and the matching number of HTTP clients.
+vLLM's sequence limit and the matching number of HTTP clients. While any GPU
+is still training, each worker's in-flight requests are capped separately.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class SoloSettings:
     prewarm: bool = True
     steal_block_tasks: int = 16
     poll_s: float = 0.05
+    clients_while_training: int = 256
 
 
 def lpt_train_all(entries: Sequence, prior: dict[int, float] | None = None) -> list:
@@ -228,6 +230,13 @@ class SoloWorker:
         self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.clients_for(self.params)
         self.owner = next((lora.lora_hash for pos, lora in self.trained_source.items() if getattr(lora, "train_gpu", None) == gpu), NULL_MODEL)
 
+    def _client_cap(self) -> int:
+        """In-flight requests: capped while any GPU is still training."""
+        scheduler = self.scheduler
+        if scheduler is None or scheduler.training_done:
+            return self.clients
+        return min(self.clients, scheduler.runner.settings.clients_while_training)
+
     def run(self, *, steal, result, judge, alive, deadline):
         if self.scheduler is not None:
             self.trained_source = self.scheduler.trained
@@ -247,7 +256,7 @@ class SoloWorker:
         with ThreadPoolExecutor(self.clients) as clients:
             try:
                 while pending or not stopped:
-                    while not stopped and len(pending) < self.clients:
+                    while not stopped and len(pending) < self._client_cap():
                         claim = steal(self.gpu, self.owner)
                         if claim is None:
                             stopped = True

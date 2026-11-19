@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from sn120_v2.errors import InfraError
-from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings, choose_claim, lpt_train_all
+from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings, SoloWorker, choose_claim, lpt_train_all
 from sn120_v2.judging import check_result
 from sn120_v2.public import round_text
 from sn120_v2.sampling import rollout_seed
@@ -121,6 +121,80 @@ def test_steal_waits_after_null_for_a_lora_then_exits_when_all_work_is_done(buil
     thread.join(timeout=5)
     assert not thread.is_alive() and stopped.is_set()
     assert [model for model, _, _ in claims] == [NULL_MODEL] * 4 + [lora.lora_hash] * 4
+
+
+def test_client_cap_is_execution_only_and_released_after_training(build):
+    ticket = build.ticket(n_entries=1, params=build.params(max_num_seqs=512))
+    evaluator = SimpleNamespace(_solo_clients=None, _solo_scheduler=None, clients_for=lambda params: 512, settings=SimpleNamespace(clients_per_server=None))
+    worker = SoloWorker(evaluator, ticket, {}, ticket.issued_at, 0)
+    assert worker.clients == worker._client_cap() == 512
+    scheduler = SimpleNamespace(training_done=False, runner=SimpleNamespace(settings=SoloSettings()))
+    worker.scheduler = scheduler
+    assert worker._client_cap() == 256
+    scheduler.training_done = True
+    assert worker._client_cap() == 512
+
+
+def test_worker_inflight_is_capped_during_training_then_uses_full_clients(build):
+    params = build.params(n_tasks=512, max_num_seqs=512, looks=(1.0,), eval_chunk_tasks=4)
+    ticket = build.ticket(n_entries=1, n_tasks=512, params=params)
+    evaluator = SimpleNamespace(http=None, _solo_clients=None, settings=SimpleNamespace(clients_per_server=None), clients_for=lambda params: 512)
+    evaluator._solo_servers = {0: SimpleNamespace(alive=lambda: True)}
+    evaluator._serve_one = lambda *args: "http://gpu0"
+    evaluator._load_one = lambda *args: None
+    evaluator._grade = lambda tasks, jobs, replies: {job: PASS for job in jobs}
+    runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=1), evaluator=evaluator)
+    scheduler = SoloScheduler(runner, ticket, 10000)
+    evaluator._solo_scheduler = scheduler
+    lora = build.artifact(ticket.head, ticket.entries[0], params)
+    scheduler.add_lora(0, lora, gpu=0)
+
+    def peak_with_scheduler(done):
+        if done:
+            scheduler.training_finished()
+        worker = SoloWorker(evaluator, ticket, scheduler.trained, 10000, 0)
+        lock = threading.Lock()
+        active = 0
+        peak = 0
+        release = threading.Event()
+        next_claim = 0
+
+        def rollout(request, url, job, written):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            assert release.wait(timeout=10), peak
+            with lock:
+                active -= 1
+            return "P", False
+
+        evaluator._rollout = rollout
+
+        def steal(gpu, owner):
+            nonlocal next_claim
+            if next_claim >= 512:
+                return None
+            index = next_claim
+            next_claim += 1
+            return lora.lora_hash, index, index + 1
+
+        thread = threading.Thread(target=lambda: worker.run(steal=steal, result=scheduler.result, judge=scheduler.judge, alive=lambda: True, deadline=10000))
+        thread.start()
+        target = 512 if done else 256
+        deadline = time.monotonic() + 10
+        while peak < target:
+            assert thread.is_alive() and time.monotonic() < deadline, peak
+            time.sleep(0.001)
+        assert peak <= target
+        release.set()
+        scheduler.deadline_cut()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        return peak
+
+    assert peak_with_scheduler(False) <= 256 + params.samples_per_task
+    assert peak_with_scheduler(True) > 256
 
 
 def test_lora_that_finishes_a_look_before_null_is_dropped_when_null_catches_up(build):
