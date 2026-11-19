@@ -32,8 +32,10 @@ One run does this, in this order:
    box keeps the folded weight files), the chain file is copied, and ``LINKS``
    has the links of the newest checkpoint and of the LoRAs after it.
 3. Copies ``public/heads/``, ``public/rounds/``, the task tables of
-   ``public/irt/`` that mining.json names, and ``public/benchmarks.json``.
-4. Removes its own old round files and task tables above ``--keep-rounds``.
+   ``public/irt/`` that mining.json names, the public reserve and rotation
+   artifacts, and ``public/benchmarks.json``.
+4. Removes its own old round files, rotation decisions and task tables above
+   ``--keep-rounds``. Content-addressed active sets, states and shards stay.
 5. Builds the site with ``build.py`` from the copied files: the v1 history,
    then the data file (it takes the reference models of its benchmark table
    from the v1 history), then the pages.
@@ -52,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -74,12 +77,20 @@ ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON}
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
+POOL = "public/pool/"
+POOL_ACTIVE, POOL_ROTATION, POOL_STATE = (make("x").partition("x")[0] for make in (
+    layout.active_pool, layout.pool_rotation, layout.pool_rotation_state,
+))
+POOL_SHARDS = "public/pool/reserve/shards/"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN)
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+         layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
 STALE_TMP_S = 3600
 PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+ROUND_ID = re.compile(r"r[0-9]{6}\Z")
 FAILURES = (V2Error, KeyError, OSError, ValueError, TypeError, AttributeError)
 
 
@@ -97,6 +108,20 @@ def layout_key(key: str) -> bool:
             return key == layout.irt_snapshot(part)
         if key.startswith(ROUNDS):
             return key in {make(key[len(ROUNDS):].split("/")[0]) for make in ROUND_FILES}
+        if key.startswith(POOL):
+            if key in (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS):
+                return True
+            if key.startswith(POOL_ACTIVE):
+                return bool(SHA256.fullmatch(part)) and key == layout.active_pool(part)
+            if key.startswith(POOL_ROTATION):
+                return bool(ROUND_ID.fullmatch(part)) and key == layout.pool_rotation(part)
+            if key.startswith(POOL_STATE):
+                return bool(SHA256.fullmatch(part)) and key == layout.pool_rotation_state(part)
+            if key.startswith(POOL_SHARDS):
+                stem = key[len(POOL_SHARDS):].removesuffix(".jsonl")
+                name, separator, sha = stem.rpartition(".")
+                return bool(separator and SHA256.fullmatch(sha)) and key == layout.reserve_shard(name, sha)
+            return False
     except ContractError:
         return False
     return key in FIXED
@@ -270,6 +295,64 @@ class Pull:
             if key.startswith(ROUNDS) and key.split("/")[2] not in keep:
                 self.remove(key)
 
+    def pool(self) -> None:
+        """Public reserve and the rotation artifacts named by mining.json rounds."""
+        if self.store.exists(layout.RESERVE_MANIFEST):
+            manifest = self.refresh(layout.RESERVE_MANIFEST)
+            self.refresh(layout.RESERVE_WITHDRAWN)
+            for line in manifest.splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if "shard" not in row:
+                    continue
+                key = layout.reserve_shard(row["shard"], row["sha256"])
+                data = self.store.get(key)
+                if hashlib.sha256(data).hexdigest() != row["sha256"]:
+                    self.notes.append(f"{key} does not match the reserve manifest sha256: not copied")
+                    continue
+                if len(data) <= self.max_bytes:
+                    self.put(key, data)
+                else:
+                    self.notes.append(f"{key} has {len(data)} bytes, above --max-file-mb: not copied")
+        named = self.named()[0]
+        views = {}
+        for round_id in named:
+            try:
+                view = json.loads((self.site / layout.round_file(round_id)).read_bytes())
+            except (OSError, ValueError):
+                if not self.store.exists(layout.round_file(round_id)):
+                    continue
+                raw = self.store.get(layout.round_file(round_id))
+                view = json.loads(raw)
+            if isinstance(view.get("pool"), dict):
+                views[round_id] = view
+        keep = set(sorted(named, reverse=True)[:self.keep])
+        for round_id in sorted(views.keys() & keep):
+            key = layout.pool_rotation(round_id)
+            try:
+                if round_id in sorted(named, reverse=True)[:RECHECK_ROUNDS]:
+                    raw = self.refresh(key)
+                else:
+                    self.copy_once(key)
+                    raw = self.store.get(key)
+                rotation = json.loads(raw)
+                block = views[round_id]["pool"]
+                for name in ("active_sha", "prev_active_sha", "initial_active_sha"):
+                    if rotation.get(name) or block.get(name):
+                        self.copy_once(layout.active_pool(rotation.get(name) or block[name]))
+                for name in ("state_sha", "prev_state_sha"):
+                    if rotation.get(name) or block.get(name):
+                        self.copy_once(layout.pool_rotation_state(rotation.get(name) or block[name]))
+            except (KeyError, ValueError, TypeError, AttributeError) as error:
+                self.notes.append(f"{key} cannot be mirrored ({type(error).__name__}): not copied")
+        for key in sorted(self.owned):
+            if key.startswith(POOL_ROTATION) and key[len(POOL_ROTATION):].removesuffix(".json") not in keep:
+                self.remove(key)
+        for key in (layout.RETIRED_POOL, layout.RETIRED_TASKS):
+            if self.store.exists(key):
+                self.refresh(key)
+
     def tables(self) -> None:
         """Task tables: the ones that mining.json names. Older ones stay until there are more than ``--keep-rounds``."""
         named = self.named()[1]
@@ -384,6 +467,7 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("heads", pull.heads)
     pull.step("rounds", pull.rounds)
     pull.step("task tables", pull.tables)
+    pull.step("pool", pull.pool)
     pull.step("benchmarks", pull.benchmarks)
     if v1_history:
         pull.step("v1 history", v1_page_data)
