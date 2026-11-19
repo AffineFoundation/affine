@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, server_argv
-from sn120_v2.gpu.solo import SoloRunner, SoloSettings
+from sn120_v2.gpu.solo import SoloRunner, SoloSettings, SoloWorker
 from sn120_v2.gpu import plan
 from sn120_v2.sampling import rollout_seed
 from sn120_v2.store import LocalStore
@@ -118,13 +118,13 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     budget_calls = []
     budget = evaluator.solo_client_budget
 
-    def check_budget(gpus):
-        budget_calls.append((gpus, len(farm.argv)))
-        return budget(gpus)
+    def check_budget(gpus, max_clients):
+        budget_calls.append((gpus, max_clients, len(farm.argv)))
+        return budget(gpus, max_clients)
 
     evaluator.solo_client_budget = check_budget
     result = runner.run(ticket)
-    assert budget_calls == [(2, 0)], "the solo budget is set before any prewarm server starts"
+    assert budget_calls == [(2, 8, 0)], "the solo budget is set before any prewarm server starts"
     assert result.null_outcomes == ("P" * 8,)
     assert len(farm.up) == 0  # close() tears down all solo servers
     assert all("--gpu-memory-utilization" not in argv for argv in farm.argv.values())
@@ -198,13 +198,26 @@ def test_loaded_lora_short_circuit_does_not_take_the_solo_lock(build):
     seam._load_one(0, artifact)
 
 
-def test_default_serving_uses_hashed_fp8_and_512_sequence_params(build):
-    params = build.params()
+@pytest.mark.parametrize("limit", [256, 512])
+def test_solo_params_drive_server_and_client_limits(build, limit):
+    params = build.params(max_num_seqs=limit, kv_cache_dtype="fp8")
+    seam = VllmEvaluator.__new__(VllmEvaluator)
+    seam.settings = ServeSettings()
     argv = server_argv("/base", 8100, params)
     assert argv[argv.index("--kv-cache-dtype") + 1] == "fp8"
-    assert argv[argv.index("--max-num-seqs") + 1] == str(params.max_num_seqs) == "512"
-    assert ServeSettings().clients_per_server == params.max_num_seqs
-    assert params.kv_cache_dtype == "fp8"
+    assert argv[argv.index("--max-num-seqs") + 1] == str(limit)
+    assert seam.clients_for(params) == limit
+    ticket = build.ticket(n_entries=1, params=params)
+    evaluator = SimpleNamespace(_solo_clients=None, _solo_scheduler=None, clients_for=seam.clients_for, settings=ServeSettings())
+    worker = SoloWorker(evaluator, ticket, {}, ticket.issued_at, 0)
+    assert worker.clients == limit
+
+
+def test_default_server_command_omits_kv_cache_dtype_and_preserves_256(build):
+    params = build.params()
+    argv = server_argv("/base", 8100, params)
+    assert "--kv-cache-dtype" not in argv
+    assert argv[argv.index("--max-num-seqs") + 1] == "256"
 
 
 def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
@@ -224,7 +237,7 @@ def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
         seam.settings = ServeSettings()
         seam.room = socket_room
         assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] == 1024
-        clients = seam.solo_client_budget(8)
+        clients = seam.solo_client_budget(8, 512)
         raised = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
         held = []
         try:
@@ -250,17 +263,17 @@ def test_solo_client_budget_raises_1024_before_opening_sockets(tmp_path):
 
 def test_solo_budget_caps_all_servers_and_leaves_admin_and_file_room():
     seam = VllmEvaluator.__new__(VllmEvaluator)
-    seam.settings = ServeSettings(clients_per_server=512, spare_files=512, admin_sockets_per_server=8)
+    seam.settings = ServeSettings(spare_files=512, admin_sockets_per_server=8)
     calls = []
     seam.room = lambda sockets, spare: calls.append((sockets, spare)) or 512
-    assert seam.solo_client_budget(8) == 56
+    assert seam.solo_client_budget(8, 512) == 56
     assert calls == [(4160, 576)]
     assert 8 * (56 + 8) <= 512
     seam.room = lambda sockets, spare: 1560
-    assert seam.solo_client_budget(3) == 512  # spare capacity does not exceed the configured client count
+    assert seam.solo_client_budget(3, 512) == 512  # spare capacity does not exceed the configured client count
     seam.room = lambda sockets, spare: 64
     with pytest.raises(Exception, match="open file limit"):
-        seam.solo_client_budget(8)
+        seam.solo_client_budget(8, 512)
 
 
 def test_solo_round_applies_one_client_cap_to_every_server(build, tmp_path, monkeypatch):
@@ -291,5 +304,5 @@ def test_solo_round_applies_one_client_cap_to_every_server(build, tmp_path, monk
     assert {argv[argv.index("--max-num-seqs") + 1] for argv in farm.argv.values()} == {"56"}
     assert 8 * (56 + evaluator.settings.admin_sockets_per_server) <= 512
     phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
-    assert (phase["phase"], phase["n_gpus"], phase["clients_per_server"], phase["configured_clients_per_server"]) == ("solo_eval", 8, 56, 512)
+    assert (phase["phase"], phase["n_gpus"], phase["clients_per_server"], phase["configured_clients_per_server"]) == ("solo_eval", 8, 56, 256)
     assert phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]

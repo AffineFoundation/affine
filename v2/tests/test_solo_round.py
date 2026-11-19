@@ -134,7 +134,7 @@ def test_worker_deadline_before_runner_poll_keeps_shared_cutoff_prefix(build):
     params = build.params(n_tasks=8, n_gpus=2, looks=(0.5, 1.0), eval_chunk_tasks=4, min_scored_tasks=2, promote_reserve_s=10)
     ticket = build.ticket(n_entries=2, n_tasks=8, params=params)
     artifacts = {entry.queue_pos: build.artifact(ticket.head, entry, params) for entry in ticket.entries}
-    evaluator = SimpleNamespace(http=None, _solo_clients=1, settings=SimpleNamespace(clients_per_server=1), _solo_servers={gpu: SimpleNamespace(alive=lambda: True) for gpu in range(2)})
+    evaluator = SimpleNamespace(http=None, _solo_clients=1, settings=SimpleNamespace(clients_per_server=1), clients_for=lambda params: 1, _solo_servers={gpu: SimpleNamespace(alive=lambda: True) for gpu in range(2)})
     evaluator._serve_one = lambda *args: "http://gpu"
     evaluator._load_one = lambda *args: None
     evaluator._rollout = lambda *args: (_ for _ in ()).throw(_Deadline())

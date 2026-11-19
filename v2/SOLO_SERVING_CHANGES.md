@@ -20,20 +20,22 @@ At the scoring cutoff, Solo now returns the complete `eval_chunk_tasks` block pr
 
 The tests cover a partial shared prefix with extra null results, the existing round-text wording, and the empty-prefix failure. A `_Deadline` observed by a worker marks the scheduler cut directly, and the runner also checks the deadline after the pool drains. This covers all workers returning before the runner's clock poll, the path that previously left `scheduler.cut` false and discarded completed work. A runner-level regression verifies the shared prefix and `stopped_at_limit=True` in that case. They do not change the judging rule, early looks, or seeds.
 
-## FP8 KV cache and 512 concurrent requests
+## Opt-in FP8 KV cache and 512 concurrent requests
 
-Evaluation vLLM servers use `--kv-cache-dtype fp8` and `--max-num-seqs 512`. The normal HTTP client pool matches that setting with `clients_per_server = 512`, so each server is fed 512 requests concurrently. The existing file-descriptor budget can still reduce the Solo client count together with the corresponding per-server sequence limit.
+The old behavior remains the default: `kv_cache_dtype = "auto"` and `max_num_seqs = 256`. Both fields are listed in `Params.LEFT_OUT_AT_DEFAULT`, so old `Params` JSON and tickets retain their exact JSON, `params_hash`, and ticket digest. The default `params_hash` remains `10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1`, unchanged from v2 at `7bcb24bc`.
 
-The following fields are part of `Params` and therefore `params_hash`:
+Production enables the speedup explicitly through `set-params`:
 
-| Parameter | Value |
+| Parameter | Opt-in value |
 | --- | --- |
 | `kv_cache_dtype` | `"fp8"` |
 | `max_num_seqs` | `512` |
 
-The default `params_hash`, with an empty `recipe.code_digest` and no image digests, is `cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1`. Pinning a deployment's code or image digests produces a different hash through the normal `set-params` procedure. The `dtype` remains `bfloat16`: FP8 applies to the KV cache, not the model weights.
+With those explicit values, the default `Params` hash is `cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1`. The hash changes only when the parameters are explicitly selected (or another pinned value, such as a deployment code/image digest, changes). The `dtype` remains `bfloat16`: FP8 applies to the KV cache, not the model weights.
 
-The generated `llms.txt` server command and request-feed description read these same parameters. The idle scheduling change does not add parameters. The GPU `code_digest` changes because the scheduler and serving implementation changed.
+`params.max_num_seqs` drives both the HTTP client pool and vLLM `--max-num-seqs`; the existing file-descriptor budget can reduce both together. At the default `auto` setting, `--kv-cache-dtype` is omitted and the server command remains byte-identical to before. The generated `llms.txt` server command and request-feed description read these same parameters. `ServeSettings.clients_per_server` remains an optional local override, not a separate production 512 constant.
+
+The GPU `code_digest` changes because the scheduler and serving implementation changed. `v2/ops/compat/params_fields_compat.patch` is a compat-only patch for an older checkout: it adds only these two fields and their `LEFT_OUT_AT_DEFAULT` entries. It lets pre-PR code read journals containing explicit fp8/512 parameters and is not part of v2's scoring or serving implementation.
 
 ## Throughput evidence
 

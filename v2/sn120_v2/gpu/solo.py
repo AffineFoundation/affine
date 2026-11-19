@@ -225,7 +225,7 @@ class SoloWorker:
         self.owner_by_gpu: dict[int, str] = {}
         self.params = ticket.params
         self.trained = self.trained_source
-        self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.settings.clients_per_server
+        self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.clients_for(self.params)
         self.owner = next((lora.lora_hash for pos, lora in self.trained_source.items() if getattr(lora, "train_gpu", None) == gpu), NULL_MODEL)
 
     def run(self, *, steal, result, judge, alive, deadline):
@@ -331,9 +331,9 @@ class SoloRunner(LocalRunner):
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
         if hasattr(self.evaluator, "solo_client_budget"):
-            self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus)
+            self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus, self.evaluator.clients_for(params))
         elif hasattr(self.evaluator, "settings"):
-            self.evaluator._solo_clients = self.evaluator.settings.clients_per_server
+            self.evaluator._solo_clients = self.evaluator.clients_for(params)
         limit = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
         train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
         reports: dict[int, object] = {}
@@ -429,7 +429,7 @@ class SoloRunner(LocalRunner):
             raise failed.get()
         outcome = scheduler.finish()
         if hasattr(self.evaluator, "config"):
-            clients = getattr(self.evaluator, "_solo_clients", self.evaluator.settings.clients_per_server)
+            clients = getattr(self.evaluator, "_solo_clients", self.evaluator.clients_for(params))
             log_phase(
                 self.evaluator.config.work_dir,
                 "solo_eval",
@@ -438,7 +438,7 @@ class SoloRunner(LocalRunner):
                 train_s=train_done[0] - started,
                 eval_s=time.monotonic() - train_done[0],
                 n_gpus=params.n_gpus,
-                configured_clients_per_server=self.evaluator.settings.clients_per_server,
+                configured_clients_per_server=self.evaluator.clients_for(params),
                 clients_per_server=clients,
                 open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
             )

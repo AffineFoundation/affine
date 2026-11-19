@@ -192,7 +192,7 @@ class Params(Record):
 
     # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
     # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
-    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule",)
+    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule", "kv_cache_dtype", "max_num_seqs")
 
     netuid: int = 120
     env: str = "math"
@@ -216,8 +216,8 @@ class Params(Record):
     top_p: float = 0.95
     top_k: int = 20
     dtype: str = "bfloat16"
-    kv_cache_dtype: str = "fp8"
-    max_num_seqs: int = 512
+    kv_cache_dtype: str = "auto"
+    max_num_seqs: int = 256
 
     # Task draw.
     irt_draw_rule: str = "fisher"
