@@ -42,7 +42,10 @@ class FakeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._json(200, {"ok": True})
+            # Match vLLM 0.32: successful health is HTTP 200 with no body.
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif self.path == "/v1/models":
             self._json(200, {"data": [{"id": "null"}]})
         else:

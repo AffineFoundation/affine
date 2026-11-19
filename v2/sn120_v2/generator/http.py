@@ -131,6 +131,9 @@ class LocalHttp:
                         raise
             if self._cancelled and "raw" not in locals():
                 raise OSError("Generator HTTP request cancelled")
+        if split.path == "/health":
+            # vLLM 0.32 returns HTTP 200 with an empty health response body.
+            return {}
         try:
             parsed = json.loads(raw)
         except (UnicodeDecodeError, ValueError) as exc:
