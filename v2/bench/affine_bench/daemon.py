@@ -6,8 +6,8 @@ worker for each row that has work, and write the table: BENCH_SITE/benchmarks.js
 changed, the same table to the store. Only the service writes the table. Nothing is published per task.
 
 The worker of a row (one process for each row, `row <model_id>`, class Row): rent the row's pod, set it up, download
-the row's weights, run the benchmarks, collect them into BENCH_STATE/results/, and give the pod back when the table in
-the store has the row's results. Rows run side by side (Jacob, 2026-11-14). A worker waits for its own rent, setup and
+the row's weights, run the benchmarks, collect them into BENCH_STATE/results/, stream each public rollouts.jsonl.gz to its
+store key, and give the pod back when the table in the store has the row's results. Rollout uploads never gate the aggregate table. Rows run side by side (Jacob, 2026-11-14). A worker waits for its own rent, setup and
 download only: no worker holds a lock, a pod or a file of another row. A row that fails keeps no pod.
 
 Done marker: a (row, benchmark, version) is done when the published table has its result, or a result file is on this
@@ -31,8 +31,12 @@ brought to the settings' count on this host by the fixed rule of derive.py (deri
 for it. When the rule gives no value, the row is `held` until the operator says `retry`.
 
 Pod (affine_bench/pod.py): one for each row. A pod that Lium reclaims is detected (node-gone) and the row rents again.
-Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted)."""
-import fcntl, glob, json, os, shlex, subprocess, sys, time, traceback
+Nothing on a pod is deleted by this service: the weights go away with the pod (results on the host are never deleted).
+Only rollout files explicitly observed during collection enter the row's retry list; after three failed attempts the
+identity is parked. Legacy results are never scanned to discover rollout files."""
+import fcntl, glob, gzip, hashlib, json, os, shlex, subprocess, sys, time, traceback
+from datetime import datetime, timezone
+from sn120_v2 import layout
 from sn120_v2.errors import InfraError
 from . import config as C, derive, registry as R
 from .node import Node
@@ -45,6 +49,7 @@ for d in (ST, RES, PRIV, ROWS):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
+ROLLOUT_TRIES = 3; ROLLOUT_MAX_ATTEMPTS = 3; ROLLOUT_BACKOFF_S = 300; ROLLOUT_MAX_BACKOFF_S = 86400
 WAIT_LATE_S = 3600  # weight files still not in the store this long after the head was applied: the table says `waiting`
 BEAT_S = 300  # while a row runs, the table gets the time and the counts of the worker's look at the node this often
 CONFIRM_WAIT_S = 600  # a row that failed waits this long for the table in the store before its pod is given back
@@ -164,6 +169,81 @@ def node_of(row):
     return Node(row.pod.ssh)
 
 
+# ------------------------------------------------------------------------------------------------ public rollouts of one row
+def node_file(node, remote, local):
+    """Stream one row's file through its ssh wrapper without putting its bytes in memory."""
+    os.makedirs(os.path.dirname(local), exist_ok=True)
+    tmp = local + ".part"
+    proc = None
+    try:
+        with open(tmp, "wb") as out:
+            proc = subprocess.Popen([node.ssh, f"cat {shlex.quote(remote)}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            while chunk := proc.stdout.read(8 << 20):
+                out.write(chunk)
+            if proc.wait(timeout=60) != 0:
+                raise IOError("node file transfer failed")
+        os.replace(tmp, local)
+    except BaseException:
+        if proc is not None:
+            proc.kill(); proc.wait()
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def fetch_rollout(node, rk, bid, local, tell=log):
+    """Hash on this row's node, stream to a private cache, then verify those exact bytes."""
+    remote = f"{C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz"
+    quoted = shlex.quote(remote)
+    answer = node.out(f"sha256sum {quoted} && stat -c %s {quoted}", timeout=120).split()
+    if len(answer) != 2 or len(answer[0]) != 64 or not answer[1].isdigit():
+        raise IOError("rollout sha256/size unavailable")
+    sha, size = answer[0], int(answer[1])
+    for attempt in range(ROLLOUT_TRIES):
+        try:
+            node_file(node, remote, local)
+            h = hashlib.sha256()
+            with open(local, "rb") as f:
+                while chunk := f.read(8 << 20):
+                    h.update(chunk)
+            if h.hexdigest() != sha or os.path.getsize(local) != size:
+                raise IOError("rollout transfer hash mismatch")
+            return dict(sha256=sha, bytes=size)
+        except Exception as exc:
+            tell(event="rollout-fetch-retry", model=rk, benchmark=bid, attempt=attempt + 1, error=type(exc).__name__)
+    raise IOError("rollout transfer failed after three tries")
+
+
+def upload_rollout(mid, bid, path, result, save_state, tell=log):
+    """Durable public model/task data only; no pod, host, address, path or credential is added to the metadata."""
+    digest = hashlib.sha256()
+    rows = 0
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("model_id") != mid or row.get("benchmark_id") != bid:
+                raise ValueError("rollout model/benchmark identity mismatch")
+            rows += 1
+    with open(path, "rb") as f:
+        while chunk := f.read(8 << 20):
+            digest.update(chunk)
+    data, size = digest.hexdigest(), os.path.getsize(path)
+    key = layout.public_rollout_bench(mid, bid)
+    store = source.store()
+    store.put_file(key, path)
+    if store.sha256(key) != data:
+        raise IOError("stored rollout sha256 mismatch")
+    finished = result.get("finished_at")
+    meta = dict(schema="sn120-v2-rollouts-bench-1", model_id=mid, benchmark_id=bid, rows=rows, bytes=size, sha256=data,
+                bench_version=result.get("bench_version"), finished_at=datetime.fromtimestamp(finished, timezone.utc).isoformat().replace("+00:00", "Z") if finished is not None else None,
+                key=key)
+    store.put(layout.public_rollout_bench_meta(mid, bid), json.dumps(meta, sort_keys=True, indent=1).encode())
+    save_state(data)
+    tell(event="rollouts-uploaded", model=mid, benchmark=bid, rows=rows, bytes=size, sha256=data)
+
+
 class Row:
     """One row in work: the state of its worker (BENCH_STATE/rows/<model_id>/daemon.json), its pod and its node."""
 
@@ -171,6 +251,8 @@ class Row:
         self.mid = mid; self.dir = f"{ROWS}/{mid}"; os.makedirs(self.dir, exist_ok=True)
         self.sf = self.dir + "/daemon.json"
         self.S = row_state(mid); self.S.setdefault("fails", 0); self.S.setdefault("history", [])
+        self.S.setdefault("rollout_uploads", {})
+        self.S.setdefault("rollout_pending", {})  # only files this worker saw; never discovered from legacy results
         self.attach()
 
     def attach(self):
@@ -267,6 +349,15 @@ class Row:
             if r.get("bench_version") != want:  # the node's checkout is of another benchmark version: kept, and not what this row misses
                 self.log(event="version-differs", bench=bid, got=r.get("bench_version"), want=want); continue
             got[bid] = round(r["score"], 4) if r.get("score") is not None else None
+            identity = f"{m['model_id']}/{bid}"
+            if identity not in self.S["rollout_uploads"] and identity not in self.S["rollout_pending"]:
+                exists = self.node.out(f"test -f {C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz && echo yes", timeout=15).strip() == "yes"
+                if exists:
+                    # Only a file observed by this code becomes pending; legacy results never enter retry discovery.
+                    pending = dict(model=m["model_id"], run_key=rk, bid=bid, next_at=0.0, delay=ROLLOUT_BACKOFF_S, attempts=0)
+                    self.S["rollout_pending"][identity] = pending
+                    self.save()  # the explicit pending marker survives a transfer crash; it never comes from result discovery
+                    self.collect_rollout(bid, r, pending)
         done = self.node_done(rk)
         self.S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
                                       serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=rec.get("gpu"), usd_h=rec.get("cost"), pod=rec.get("huid")))
@@ -278,6 +369,59 @@ class Row:
         elif whole and lost:
             self.S["fails"] += 1; self.log(event="run-incomplete", benchmarks=lost, fails=self.S["fails"])
         return got
+
+    # ---- public rollouts: a side effect of score collection, never its gate
+    def collect_rollout(self, bid, result, pending):
+        mid, rk, identity = self.mid, pending["run_key"], f"{self.mid}/{bid}"
+        path = f"{PRIV}/{rk}/{bid}.rollouts.jsonl.gz"
+        try:
+            known = self.S["rollout_uploads"].get(identity)
+            stored = None
+            if known:
+                try:
+                    stored = source.store().sha256(layout.public_rollout_bench(mid, bid))
+                except Exception:
+                    pass  # a stored object that cannot be checked is re-uploaded, not mistaken for a completed retry
+            if known and stored == known:
+                self.S["rollout_pending"].pop(identity, None)
+                self.save()
+                return
+            if not os.path.isfile(path):
+                fetch_rollout(self.node, rk, bid, path, self.log)
+            for attempt in range(ROLLOUT_TRIES):
+                try:
+                    def uploaded(data):
+                        self.S["rollout_uploads"][identity] = data
+                        self.S["rollout_pending"].pop(identity, None)
+                        self.save()
+                    upload_rollout(mid, bid, path, result, uploaded, self.log)
+                    os.unlink(path)  # R2 is durable; this row's private download is disposable.
+                    return
+                except Exception as exc:
+                    self.log(event="rollouts-upload-retry", benchmark=bid, attempt=attempt + 1, error=type(exc).__name__)
+            raise IOError("rollout upload failed after three tries")
+        except Exception as exc:  # a large public artifact never gates scores, the table or the next benchmark
+            pending["attempts"] = int(pending.get("attempts", 0)) + 1
+            if pending["attempts"] >= ROLLOUT_MAX_ATTEMPTS:
+                pending["parked_at"] = now()
+                pending["why"] = type(exc).__name__
+            else:
+                pending["next_at"] = now() + float(pending.get("delay", ROLLOUT_BACKOFF_S))
+                pending["delay"] = min(ROLLOUT_MAX_BACKOFF_S, float(pending.get("delay", ROLLOUT_BACKOFF_S)) * 2)
+            self.save()
+            self.log(event="rollouts-parked" if pending.get("parked_at") else "rollouts-upload-deferred", benchmark=bid,
+                     attempts=pending["attempts"], error=type(exc).__name__, detail=P.mask(traceback.format_exc(limit=3)[-600:]))
+
+    def retry_rollouts(self):
+        """At most three explicitly pending files of this row per poll. No historical-result or released-node discovery."""
+        current = now()
+        ready = []  # only this row's explicitly pending identities, never a result-directory scan
+        for identity, pending in self.S["rollout_pending"].items():
+            result = None if pending.get("parked_at") or float(pending.get("next_at", 0)) > current else rj(result_path(self.mid, pending["bid"]))
+            if result:
+                ready.append((float(pending.get("next_at", 0)), pending["bid"], identity, result))
+        for _, bid, identity, result in sorted(ready)[:ROLLOUT_TRIES]:
+            self.collect_rollout(bid, result, self.S["rollout_pending"][identity])
 
     def node_done(self, rk):
         try: return json.loads(self.node.out(f"cat {C.NODE_ROOT}/runs/{rk}/DONE", timeout=30))
@@ -360,6 +504,7 @@ class Row:
     def step(self, m, bs):
         """One poll of the row. True: the worker has nothing more to do (the row is done, or it waits for the operator)."""
         S = self.S; run = S.get("running")
+        self.retry_rollouts()
         if run and run.setdefault("pod_id", self.rec.get("id")) != self.rec.get("id"):
             # The run belonged to a pod that has since been replaced; its run dir went with that pod.
             # Requeue it from scratch on the new pod; this is not counted as a failure of the model.

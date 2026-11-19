@@ -19,7 +19,7 @@ Words used here:
 - For a queued row the service starts a worker. The worker rents one node with a name of its own (the first 29 characters of `affine-v2-bench-<model_id>`), loads the row's weights from the store with read links that expire, runs the 10 benchmarks of `bench/config/benchmarks.toml`, and copies the scores.
 - The worker gives the node back when the table in the store has the row's results. It asks the store for the table then; it does not trust the copy on the host.
 - A worker waits only for its own rent, setup and download. No row holds a lock, a node or a file of another row. A row that cannot rent, or that fails, does not hold up the other rows.
-- The service writes one object: `public/benchmarks.json`. It writes it on each change of a row or of a result. It deletes nothing in the store.
+- The service writes the aggregate table `public/benchmarks.json` on each change of a row or of a result. Each row's worker separately writes its public rollout file and metadata under `public/rollouts/bench/<model_id>/`. It deletes nothing in the store.
 - The public pull on AffineValidator copies that object to the site, as it does today for the other public files. The site builder already reads it.
 - The table is for information only. No code that picks a winner or sets weights reads it.
 
@@ -76,6 +76,16 @@ This reads each `<row>/gsm8k.per_task.jsonl`, maps questions by exact text, and 
 the two datasets from Hugging Face by default; `--original-jsonl` and `--platinum-jsonl` accept local dataset exports instead.
 It prints or writes JSON only. It never writes to the store or substitutes an estimate for a real benchmark result.
 
+## 2. Public full rollouts
+
+The node also writes `OUT/<bench>/rollouts.jsonl.gz` from the verifiers message graph. Every expected sample has a row, including an explicit `error` row for a missing/failed rollout. The public file has only initial task chat messages, reference answers, sampled assistant text, grades and token/sampling metadata. It excludes runtime state, tool output, secrets, hostnames, IPs, pod ids and paths. Gzip is deterministic (`mtime=0`).
+
+The worker of each row streams that file through the row's own ssh wrapper (50–150 MB must not be held in RAM), verifies the node-computed SHA-256, then uploads `public/rollouts/bench/<model_id>/<benchmark_id>.jsonl.gz` and its small `.meta.json` (`rows`, `bytes`, `sha256`, `bench_version`, UTC `finished_at`). A verified upload retires the disposable private download; R2 is the durable record.
+
+Transfer/store failures are logged as `rollouts-upload-deferred` and retried with exponential backoff on that row's later polls, at most three identities per poll. Only files this worker observed during collection become pending: it never scans old results or probes a released node for legacy artifacts. After three failed attempts an identity is logged as `rollouts-parked` and is not tried again automatically. These failures never prevent summary/per-task collection or aggregate table publication, and do not change a row's scoring status. The bench store token needs write permission for the additional public rollout keys.
+
+See `v2/site/static/rollouts/SCHEMA.md` on the `v2` branch for field meanings. This port adds only bench capture and publication; it does not add a site pull or display change.
+
 ## 2. Which host
 
 | Host | What this change needs there |
@@ -89,7 +99,7 @@ Why AffineValidator is the default:
 - The pull that puts the table on the site runs on this host already.
 - v1's benchmark service (`affine-bench.service`) is in the runbook's list of v1 units for this host.
 
-Cost of this choice: the host gets one more credentials file, and its token can write to the bucket. The service itself writes one key only (`public/benchmarks.json`).
+Cost of this choice: the host gets one more credentials file, and its token can write to the bucket. The service writes the aggregate table and the public rollout keys described below.
 
 Another CPU host works the same way. It needs the four things of section 4.
 

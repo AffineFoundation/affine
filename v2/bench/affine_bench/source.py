@@ -1,5 +1,5 @@
 """The one place where the benchmark service touches v2 state. It reads public objects of the store, with `get`,
-`exists` and `presign_get`. Its only write is the result table at `layout.BENCHMARKS`.
+`exists` and `presign_get`. Its only writes are the result table at `layout.BENCHMARKS` and public rollout objects made by the row's worker.
 The one row that is not of v2, the last king of v1, reads its weight files from a store prefix that the operator sets.
 
 Rows come from the public chain of heads: the head pointer, and for each head the head it came from. A stacked head

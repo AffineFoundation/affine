@@ -32,6 +32,7 @@ CURRENT = "public/head.json"
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
 BENCHMARKS = "public/benchmarks.json"  # written by the benchmark service, read by the website
+ROLLOUT_BENCH_PREFIX = "public/rollouts/bench/"
 # The upload link files, only when the link job runs with ``--to-store`` (``links.py`` builds the same two keys).
 LINK_FILES = "public/ff/links"
 LINK_INDEX = "public/ff/links.json"
@@ -124,6 +125,14 @@ def round_scores(round_id: str) -> str:
 def winner_batch(round_id: str) -> str:
     """The winning batch, byte for byte. Only a winner's batch is ever published."""
     return f"public/rounds/{_part(round_id)}/batch.json"
+
+
+def public_rollout_bench(model_id: str, benchmark_id: str) -> str:
+    return f"{ROLLOUT_BENCH_PREFIX}{_part(model_id)}/{_part(benchmark_id)}.jsonl.gz"
+
+
+def public_rollout_bench_meta(model_id: str, benchmark_id: str) -> str:
+    return f"{ROLLOUT_BENCH_PREFIX}{_part(model_id)}/{_part(benchmark_id)}.meta.json"
 
 
 def irt_snapshot(snapshot_id: str) -> str:
