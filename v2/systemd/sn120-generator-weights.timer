@@ -1,0 +1,12 @@
+[Unit]
+Description=SN120 Generator mechanism-1 weights at 35:20 and 50:20 UTC
+
+[Timer]
+OnCalendar=*-*-* *:35:20
+OnCalendar=*-*-* *:50:20
+AccuracySec=1s
+Persistent=true
+Unit=sn120-generator-weights.service
+
+[Install]
+WantedBy=timers.target

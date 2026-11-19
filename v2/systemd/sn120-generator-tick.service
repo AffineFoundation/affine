@@ -1,0 +1,18 @@
+# SN120 Generator control plane. Install only after go-live qualification.
+# Operator provides /home/const/sn120-generator/config.json and the R2 environment in a root-owned environment file.
+[Unit]
+Description=SN120 Generator epoch control plane
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=const
+Environment=PYTHONPATH=/home/const/sn120-generator/src
+EnvironmentFile=/home/const/sn120-generator/r2.env
+ExecStart=/home/const/sn120-generator/venv/bin/python -m sn120_v2.generator.tick --config /home/const/sn120-generator/config.json
+TimeoutStartSec=900
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0022
