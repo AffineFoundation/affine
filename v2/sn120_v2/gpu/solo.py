@@ -5,7 +5,8 @@ the normal default-argv server immediately for null. After training exits,
 that GPU starts or reuses the same default-argv server. Workers take work
 from a shared, atomic claim scheduler. The training call, deadline, task
 draw, sampling seed and look rule are unchanged. A resource budget may lower
-vLLM's sequence limit and the matching number of HTTP clients.
+vLLM's sequence limit and the matching number of HTTP clients. While any GPU
+is still training, each worker's in-flight requests are capped separately.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class SoloSettings:
     prewarm: bool = True
     steal_block_tasks: int = 16
     poll_s: float = 0.05
+    clients_while_training: int = 256
 
 
 def lpt_train_all(entries: Sequence, prior: dict[int, float] | None = None) -> list:
@@ -109,7 +111,7 @@ class SoloScheduler:
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
             while True:
-                if self.failure is not None or self.cut or not self.alive:
+                if self.failure is not None or self.cut or (self.training_done and not self.alive):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
                 claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner)
@@ -195,6 +197,8 @@ class SoloScheduler:
             if stopped:
                 common = min([len(text) for text in self.null] + [len(text) for pos in self.alive for text in self.scored[pos]])
                 common = common // self.params.eval_chunk_tasks * self.params.eval_chunk_tasks
+                if not common:
+                    raise InfraError("solo scoring reached the time limit before null and every live LoRA completed a shared block")
                 self.null[:] = [text[:common] for text in self.null]
                 for pos in self.alive:
                     self.scored[pos][:] = [text[:common] for text in self.scored[pos]]
@@ -204,7 +208,7 @@ class SoloScheduler:
                 self.null[:] = [text[:keep] for text in self.null]
             else:
                 for pos in self.alive:
-                    if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) < self.n for text in self.null):
+                    if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) != self.n for text in self.null):
                         raise InfraError("solo scoring ended before null and every live LoRA completed")
             pad = lambda strings: tuple(text + NOT_RUN * (self.n - len(text)) for text in strings)
             return pad(self.null), {pos: pad(strings) for pos, strings in self.scored.items()}, self.dropped, stopped
@@ -214,7 +218,7 @@ class SoloScheduler:
 
 
 class SoloWorker:
-    """One GPU's vLLM server and its 256 continuously fed HTTP clients."""
+    """One GPU's vLLM server and its continuously fed HTTP clients."""
 
     def __init__(self, evaluator, ticket: RoundTicket, trained: dict[int, LoRAArtifact], deadline: int, gpu: int):
         self.evaluator, self.ticket, self.deadline, self.gpu = evaluator, ticket, deadline, gpu
@@ -223,8 +227,15 @@ class SoloWorker:
         self.owner_by_gpu: dict[int, str] = {}
         self.params = ticket.params
         self.trained = self.trained_source
-        self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.settings.clients_per_server
+        self.clients = getattr(evaluator, "_solo_clients", None) or evaluator.clients_for(self.params)
         self.owner = next((lora.lora_hash for pos, lora in self.trained_source.items() if getattr(lora, "train_gpu", None) == gpu), NULL_MODEL)
+
+    def _client_cap(self) -> int:
+        """In-flight requests: capped while any GPU is still training."""
+        scheduler = self.scheduler
+        if scheduler is None or scheduler.training_done:
+            return self.clients
+        return min(self.clients, scheduler.runner.settings.clients_while_training)
 
     def run(self, *, steal, result, judge, alive, deadline):
         if self.scheduler is not None:
@@ -245,7 +256,7 @@ class SoloWorker:
         with ThreadPoolExecutor(self.clients) as clients:
             try:
                 while pending or not stopped:
-                    while not stopped and len(pending) < self.clients:
+                    while not stopped and len(pending) < self._client_cap():
                         claim = steal(self.gpu, self.owner)
                         if claim is None:
                             stopped = True
@@ -269,6 +280,8 @@ class SoloWorker:
                             reply = future.result()
                         except _Deadline:
                             stopped = True
+                            if self.scheduler is not None:
+                                self.scheduler.deadline_cut()
                             continue
                         except _Cancelled:
                             continue
@@ -327,9 +340,9 @@ class SoloRunner(LocalRunner):
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
         if hasattr(self.evaluator, "solo_client_budget"):
-            self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus)
+            self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus, self.evaluator.clients_for(params))
         elif hasattr(self.evaluator, "settings"):
-            self.evaluator._solo_clients = self.evaluator.settings.clients_per_server
+            self.evaluator._solo_clients = self.evaluator.clients_for(params)
         limit = min(ticket.expires_at, ticket.issued_at + params.round_time_limit_s) - params.promote_reserve_s
         train_end = min(limit, ticket.issued_at + params.train_time_budget_s)
         reports: dict[int, object] = {}
@@ -390,13 +403,13 @@ class SoloRunner(LocalRunner):
                     index, entry = job
                     report = self._train(ticket, entry, (gpu,), train_end, whole_time=started - ticket.issued_at <= AT_THE_LEASE_S and index < params.n_gpus)
                     reports[entry.queue_pos] = report
+                    if isinstance(report, LoRAArtifact):
+                        scheduler.add_lora(entry.queue_pos, report, gpu)
                     with train_lock:
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
-                    if isinstance(report, LoRAArtifact):
-                        scheduler.add_lora(entry.queue_pos, report, gpu)
                 # Only now can this GPU have no further training assignment.
                 start_idle_server(gpu)
                 finish_warm(gpu)
@@ -419,11 +432,13 @@ class SoloRunner(LocalRunner):
                 self.trainer.close()
         finally:
             warm_pool.shutdown(wait=True, cancel_futures=True)
+        if self.clock() >= limit:
+            scheduler.deadline_cut()
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()
         if hasattr(self.evaluator, "config"):
-            clients = getattr(self.evaluator, "_solo_clients", self.evaluator.settings.clients_per_server)
+            clients = getattr(self.evaluator, "_solo_clients", self.evaluator.clients_for(params))
             log_phase(
                 self.evaluator.config.work_dir,
                 "solo_eval",
@@ -432,7 +447,7 @@ class SoloRunner(LocalRunner):
                 train_s=train_done[0] - started,
                 eval_s=time.monotonic() - train_done[0],
                 n_gpus=params.n_gpus,
-                configured_clients_per_server=self.evaluator.settings.clients_per_server,
+                configured_clients_per_server=self.evaluator.clients_for(params),
                 clients_per_server=clients,
                 open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
             )

@@ -887,7 +887,7 @@ def _server_command(params: Params) -> list[str]:
 
     The address of the server is left out: it is local to the box and changes no score.
     """
-    argv = server_argv("<directory of the base files>", 0, params, ServeSettings().clients_per_server)
+    argv = server_argv("<directory of the base files>", 0, params, params.max_num_seqs)
     argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
     start = argv.index("-m")
     options: list[list[str]] = []
@@ -954,7 +954,8 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  Task i of the full draw (i counts from 0) goes to a free GPU according to the solo scheduler. A GPU may steal",
         "  another candidate's remaining block. Null M and every LoRA use the same task, sample and seed; only the adapter",
         "  and the serving GPU can differ.",
-        "- The box streams requests to each server continuously. A server runs at most `--max-num-seqs` of them at a time; the",
+        f"- The box feeds {params.max_num_seqs} concurrent requests to each server (`max_num_seqs`), subject to the local file",
+        "  descriptor limit. A server runs at most `--max-num-seqs` of them at a time; the",
         f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
         "  or the time that is left to the stop time of the round, when that is less.",
         f"- Reply: with `finish_reason` `stop` the model ended by itself. A final `{END_OF_TURN}` is removed from the text,",

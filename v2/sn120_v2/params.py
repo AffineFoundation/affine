@@ -192,7 +192,7 @@ class Params(Record):
 
     # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
     # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
-    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule",)
+    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule", "kv_cache_dtype", "max_num_seqs")
 
     netuid: int = 120
     env: str = "math"
@@ -216,6 +216,8 @@ class Params(Record):
     top_p: float = 0.95
     top_k: int = 20
     dtype: str = "bfloat16"
+    kv_cache_dtype: str = "auto"
+    max_num_seqs: int = 256
 
     # Task draw.
     irt_draw_rule: str = "fisher"
@@ -284,6 +286,7 @@ class Params(Record):
         _need(1 <= self.batch_cap <= self.max_loras_per_box, "batch_cap must be between 1 and max_loras_per_box")
         _need(1 <= self.n_min_start <= self.batch_cap, "n_min_start must be between 1 and batch_cap")
         _need(self.n_gpus >= 1 and self.n_tasks >= 1 and self.samples_per_task >= 1, "n_gpus, n_tasks, samples_per_task >= 1")
+        _need(self.max_num_seqs >= 1, "max_num_seqs must be positive")
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
