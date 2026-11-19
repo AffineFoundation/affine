@@ -4,8 +4,8 @@ Generator is **mechanism 1 of SN120** (Bittensor netuid 120), and receives **10%
 
 Public page: <https://affine.io/generator>
 
-Miner kit: [`v2/miner/generator_miner.py`](https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_miner.py)
-Reference search: [`v2/miner/generator_search.py`](https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_search.py)
+Miner kit: [`v2/miner/generator_miner.py`](https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py)
+Reference search: [`v2/miner/generator_search.py`](https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_search.py)
 Protocol: [`v2/sn120_v2/generator/`](https://github.com/AffineFoundation/affine/tree/v2/v2/sn120_v2/generator)
 
 ## 1. Install and prepare the pool
@@ -52,7 +52,7 @@ An activation made for v1 remains valid. The kit itself does not register a hotk
 
 Epochs are four hours, aligned to **UTC midnight**. Deadlines are **00, 04, 08, 12, 16, 20 UTC**. An epoch ID is its deadline, formatted `YYYYMMDDTHHMMZ`.
 
-The submission window for deadline `T` is **[T-4h, T)**, with the start inclusive and the deadline exclusive. For example, `20261120T0000Z` covers `[2026-11-19T20:00Z, 2026-11-20T00:00Z)`. A timestamp exactly at a deadline belongs to the new epoch. Use UTC only; never convert the schedule to a local time zone.
+The submission window for deadline `T` is **[T-4h, T)**, with the start inclusive and the deadline exclusive. For example, `20261120T0000Z` covers `[2026-11-19T20:00Z, 2026-11-20T00:00Z)`. A timestamp exactly at a deadline belongs to the new epoch. All times are UTC.
 
 The king freezes at the deadline. Its head version is read from <https://affine.io/public/head.json> at that boundary. Scoring uses BF16 weights and BF16 KV cache, not FP8. The seed commitment is published at window open in `state.json`; the seed is revealed in results so the sampling can be audited.
 

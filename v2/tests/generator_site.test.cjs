@@ -191,7 +191,7 @@ test('the actual PR 296 guide renders its links and code blocks', () => {
   assert.equal(container.querySelector('h1').textContent, 'Generator miner guide');
   assert.ok(container.querySelectorAll('h1,h2').length >= 10);
   assert.ok(container.querySelectorAll('pre').length >= 10);
-  assert.ok(container.querySelector('a[href="https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_miner.py"]'));
+  assert.ok(container.querySelector('a[href="https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py"]'));
   assert.ok(container.querySelector('a[href="https://affine.io/generator"]'));
   assert.equal(container.querySelectorAll('script').length, 0);
   dom.window.close();
