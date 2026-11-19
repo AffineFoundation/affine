@@ -33,6 +33,7 @@ SCORER_COMMAND = (
     "/root/gen/jobs/{epoch}/job.json"
 )
 DEFAULT_TIMEOUT_S = 30.0
+HEAD_PREPARE_TIMEOUT_S = 900  # ~19 GB public checkpoint plus eight-server restart
 MAX_OUTPUT_FILES = 100_000
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024 * 1024
 MAX_ARCHIVE_STREAM_BYTES = MAX_ARCHIVE_BYTES + 1024 * 1024
@@ -352,6 +353,9 @@ class ScorerRemote:
             raise ConfigError(f"cannot read Generator private job: {exc}") from exc
         if not raw.strip() or not isinstance(value, dict) or not value:
             raise ConfigError("Generator private job must be a nonempty JSON object")
+        head = value.get("head_version")
+        if not isinstance(head, str) or not head or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in head):
+            raise ConfigError("Generator private job has no safe exact head_version")
         return raw, sha256_hex(raw)
 
     def _status(self, epoch: str, record: Mapping[str, Any], detail: str = "") -> RemoteStatus:
@@ -401,6 +405,12 @@ class ScorerRemote:
         qout, qdone = remote_path(remote_out), remote_path(done)
         self.runner.ssh(f"umask 077 && mkdir -p -- {qroot}")
         self.runner.scp(job_path, f"{self.runner.destination}:{qjob}")
+        head_version = json.loads(job_path.read_text())["head_version"]
+        ensure = (
+            f"PYTHONPATH={REMOTE_PYTHONPATH} /root/venv/bin/python -m sn120_v2.generator.ensure_head "
+            f"{shlex.quote(head_version)}"
+        )
+        self.runner.ssh(ensure, timeout=HEAD_PREPARE_TIMEOUT_S)
 
         scorer = SCORER_COMMAND.format(epoch=name)
         failed = f"{root}/failed.json"
