@@ -260,7 +260,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--root", default="/root/gen", help="job root (default: /root/gen)")
     run.add_argument("--pool-cache", default="/root/gen/pool", help="verified prior-v1 shard cache")
     run.add_argument("--out", help="override output directory (local testing only)")
-    run.add_argument("--clients-per-server", type=int, default=32)
+    run.add_argument("--clients-per-server", type=int, default=128)
     run.add_argument("--grade-workers", type=int, default=16)
     run.add_argument("--grade-timeout", type=float, default=60.0)
     test = commands.add_parser("selftest", help="run two jobs against eight fake loopback vLLM servers")

@@ -7,7 +7,7 @@ MODEL=${MODEL:-/root/dl/base}
 VENV=${VENV:-/root/venv}
 ROOT=${ROOT:-/root/gen}
 GPUS=${GPUS:-0,1,2,3,4,5,6,7}
-MAX_NUM_SEQS=${MAX_NUM_SEQS:-32}
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
 ACTION=${1:-start}
 
 IFS=, read -r -a gpu_ids <<< "$GPUS"
