@@ -105,6 +105,22 @@ def test_dedupe_base_archive_reserve_withdrawn_retired_and_normalised_input(tmp_
         load_reserve(root)
 
 
+def test_optional_prior_p_ingest_verify_and_rerun_are_compatible(tmp_path, monkeypatch):
+    root = setup_reserve(tmp_path, monkeypatch)
+    path = input_file(tmp_path, [{"problem": "What is 2 + 2?", "answer": "4", "prior_p": 0.625}])
+    report = ingest(args(path))
+    row = json.loads((root / "shards" / report["shard"]).read_text())
+    assert row["prior_p"] == 0.625
+    assert main(["verify"]) == 0
+    assert ingest(args(path))["ingested"] == 0
+    # The existing MANIFEST schema does not change when a row carries a prior.
+    manifest = [json.loads(line) for line in (root / "MANIFEST.jsonl").read_text().splitlines()]
+    assert set(manifest[0]) == {"shard", "sha256", "count", "added_at"}
+    bad = input_file(tmp_path / "bad", [{"problem": "What is 3 + 3?", "answer": "6", "prior_p": 1.5}])
+    rejected = ingest(args(bad))
+    assert rejected["ingested"] == 0 and rejected["counts"]["prior_p"] == 1
+
+
 def test_format_grader_self_check_and_optional_mc_reject_are_sidecar_only(tmp_path, monkeypatch):
     root = setup_reserve(tmp_path, monkeypatch)
     rows = [{"problem": "UNIQUE-RESERVE-BAD: compute 101 + 202", "answer": "{"}, {"problem": "", "answer": "1"},

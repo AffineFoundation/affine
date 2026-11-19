@@ -161,6 +161,12 @@ def pool_rotation_state(sha256: str) -> str:
     return f"public/pool/state/{_part(sha256)}.json"
 
 
+def pool_ranking(round_id: str) -> str:
+    return f"public/pool/ranking/{_part(round_id)}.json"
+
+
+POOL_SUMMARY = "public/pool/summary.json"
+
 RETIRED_POOL = "public/pool/retired.json"
 RESERVE_MANIFEST = "public/pool/reserve/MANIFEST.jsonl"
 RESERVE_WITHDRAWN = "public/pool/reserve/withdrawn.jsonl"

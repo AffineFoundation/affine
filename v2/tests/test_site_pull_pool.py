@@ -19,14 +19,14 @@ def pull_module():
 
 def test_layout_key_accepts_exact_pool_keys_and_refuses_unknowns():
     pull = pull_module()
-    fixed = (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS)
+    fixed = (layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
     dynamic = (layout.reserve_shard("0001-set.jsonl", "a" * 64), layout.active_pool("b" * 64),
-               layout.pool_rotation("r000066"), layout.pool_rotation_state("c" * 64))
+               layout.pool_rotation("r000066"), layout.pool_rotation_state("c" * 64), layout.pool_ranking("r000066"))
     assert all(pull.layout_key(key) and pull.mine(key) for key in (*fixed, *dynamic))
     bad = ("public/pool/other.json", "public/pool/reserve/other.json", "public/pool/reserve/shards/deep/x.jsonl",
            "public/pool/reserve/shards/0001-set.jsonl.jsonl", "public/pool/reserve/shards/0001-set.bad.jsonl",
            "public/pool/active/not-sha/deep.json", "public/pool/rotation/r000066/extra.json",
-           "public/pool/state/bad.json", "public/pool/active/../x.json")
+           "public/pool/state/bad.json", "public/pool/active/../x.json", "public/pool/ranking/r1.json", "public/pool/ranking/other.json")
     assert not any(pull.layout_key(key) for key in bad)
 
 
@@ -62,6 +62,34 @@ def make_pool(store: LocalStore, site: Path) -> set[str]:
             layout.pool_rotation_state(state), layout.pool_rotation_state(prev_state)}
     keys |= {layout.reserve_shard(row["shard"], row["sha256"]) for row in shards}
     return keys
+
+
+def test_open_round_pool_uses_mining_view_and_mirrors_ranking_and_summary(tmp_path):
+    store = LocalStore(tmp_path / "store")
+    site = tmp_path / "site"
+    rid = "r000070"
+    active, state = "a" * 64, "b" * 64
+    store.put(layout.pool_rotation(rid), canonical_json({"round_id": rid, "active_sha": active,
+        "state_sha": state, "rule_version": "affine-pool-rotation-v2"}))
+    store.put(layout.active_pool(active), canonical_json(["new:1"]))
+    store.put(layout.pool_rotation_state(state), canonical_json({"round_id": rid}))
+    store.put(layout.pool_ranking(rid), canonical_json({"round_id": rid, "candidates": []}))
+    store.put(layout.POOL_SUMMARY, canonical_json({"round_id": rid, "active_size": 1}))
+    (site / layout.MINING_JSON).parent.mkdir(parents=True)
+    (site / layout.MINING_JSON).write_bytes(canonical_json({"history": [], "kings": [], "round": {
+        "round_id": rid, "irt_snapshot_id": "irt-one", "pool": {"active_sha": active, "state_sha": state}}}))
+    pull = pull_module().Pull(store, site, 123)
+    pull.pool()
+    assert not store.exists(layout.round_file(rid))
+    assert pull.problems == []
+    for key in (layout.pool_rotation(rid), layout.pool_ranking(rid), layout.POOL_SUMMARY,
+                layout.active_pool(active), layout.pool_rotation_state(state)):
+        assert (site / key).read_bytes() == store.get(key)
+    second = pull_module().Pull(store, tmp_path / "missing-round", 124)
+    (tmp_path / "missing-round" / layout.MINING_JSON).parent.mkdir(parents=True)
+    (tmp_path / "missing-round" / layout.MINING_JSON).write_bytes(canonical_json({"round": {"round_id": "r000071"}, "history": [], "kings": []}))
+    second.pool()
+    assert second.problems == [] and not (tmp_path / "missing-round" / layout.pool_ranking(rid)).exists()
 
 
 def test_old_rotation_decision_trims_but_content_addressed_artifacts_stay(tmp_path):

@@ -110,6 +110,23 @@ sup{color:var(--accepted);cursor:help;line-height:0}
 @keyframes fade{from{opacity:0}}
 @media(prefers-reduced-motion:reduce){.fade{animation:none}}
 
+/* public pool: one-hue histogram, with keyboard focus and an equivalent data table */
+#pool-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:1px;margin:20px 0 0;background:var(--line);border:1px solid var(--line);border-radius:3px}
+#pool-stats div{background:var(--bg);padding:12px 14px;height:76px;overflow:hidden}
+#pool-stats dt{font:10px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+#pool-stats dd{margin:10px 0 0;font:400 22px/1 Haffer,Arial,sans-serif;white-space:nowrap}
+#pool-stats div:first-child dd{font-size:42px;line-height:1}
+.bar-chart{display:flex;align-items:flex-end;gap:2px;height:218px;padding:14px 0 0;border-bottom:1px solid var(--axis)}
+.bar-slot{position:relative;display:flex;flex:1;min-width:0;height:200px;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px}
+.hist-bar{display:block;width:min(100%,24px);min-height:0;padding:0;background:var(--performance);border:0;border-radius:4px 4px 0 0;cursor:help}
+.hist-bar:hover,.hist-bar:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.bar-label{font:9px var(--mono);color:var(--muted);white-space:nowrap}
+@media(max-width:760px){.bar-chart{height:180px}.bar-slot{height:160px}.bar-label{font-size:7px;transform:rotate(-65deg);transform-origin:center;margin-bottom:5px}.bar-chart{height:195px}}
+@media(forced-colors:active){.hist-bar{background:CanvasText}}
+details{margin:10px 0;font:11px var(--mono)}summary{cursor:pointer;padding:6px 0;color:var(--muted)}
+#round-changes th:nth-child(1){width:250px}#round-changes th:last-child{width:120px}
+#task-rows th:nth-child(2){width:150px}#task-rows th:nth-child(3){width:110px}#task-rows th:nth-child(4){width:160px}#task-rows th:last-child{width:150px}
+
 footer{display:flex;justify-content:space-between;gap:24px;padding:20px 0 28px;border-top:1px solid var(--line);font:10px/1.6 var(--mono);color:var(--muted)}
 #status[data-state='unavailable']{color:var(--accepted)}
 .noscript{padding:20px 0;font:12px/1.8 var(--mono)}

@@ -140,6 +140,10 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         view["pool"] |= {"size": block["size"], "active": layout.active_pool(block["active_sha"]),
                          "rotation": layout.pool_rotation(record.round_id), "retired_archive": layout.RETIRED_POOL,
                          "reserve_manifest": layout.RESERVE_MANIFEST}
+        if block.get("rule_version") == "affine-pool-rotation-v2":
+            view["pool"] |= {"rule_version": block["rule_version"], "ranking": layout.pool_ranking(record.round_id),
+                             "summary": layout.POOL_SUMMARY, "rule_params": block.get("rule_params") or {},
+                             "retire_reason_counts": block.get("retire_reason_counts") or {}}
     return view
 
 

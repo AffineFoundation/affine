@@ -196,6 +196,7 @@ class Params(Record):
         "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
+        "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
     )
 
     netuid: int = 120
@@ -238,6 +239,11 @@ class Params(Record):
     rotation_retire_low_p: float = 0.0  # zero: no empirical low-pass retirement
     rotation_n_min_low: int = 8
     rotation_active_size: int = 0  # zero: size of the initial base-pool active set
+    rotation_rule: str = "v1"  # "info": score every candidate by p * (1 - p)
+    rotation_churn_frac: float = 0.10  # maximum steady-state swaps: floor(frac * target)
+    rotation_prior_p: float = 0.5  # when neither an IRT row nor a reserve prior is known
+    rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
+    rotation_churn_max: int = 0  # optional operational cap on swaps; 0 = no cap beyond churn_frac and better candidates
 
     # Judging.
     z_bar: float = 1.0  # a winner needs z strictly above this
@@ -314,6 +320,9 @@ class Params(Record):
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
         _need(self.rotation_k >= 0 and self.rotation_n_min >= 0 and self.rotation_n_min_low >= 0, "rotation counts must be >= 0")
         _need(self.rotation_active_size >= 0, "rotation_active_size must be >= 0")
+        _need(self.rotation_rule in ("v1", "info"), "rotation_rule must be 'v1' or 'info'")
+        _need(_unit(self.rotation_churn_frac) and _unit(self.rotation_prior_p), "rotation churn fraction and prior must be in [0, 1]")
+        _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")

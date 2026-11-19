@@ -65,7 +65,7 @@ def public_catalog(contract: Any, work: Path, view: Mapping[str, Any], base: Mat
     _mirror(contract, layout.RETIRED_TASKS, store)
     (root / 'retired.json').write_bytes(store.get(layout.RETIRED_POOL))
     (root / 'retired_tasks.json').write_bytes(store.get(layout.RETIRED_TASKS))
-    _, catalog = load_reserve(root, with_catalog=True)
+    _, catalog = load_reserve(root, with_catalog=True, allow_retired=block.get('rule_version') == 'affine-pool-rotation-v2')
     return catalog, active
 
 
@@ -75,6 +75,8 @@ def public_rotation_inputs(contract: Any, work: Path, view: Mapping[str, Any]):
     for key in (layout.pool_rotation(view['round_id']), layout.irt_snapshot(view['irt_snapshot_id'])):
         _mirror(contract, key, store)
     rotation = json.loads(store.get(layout.pool_rotation(view['round_id'])))
+    if rotation.get('rule_version') == 'affine-pool-rotation-v2':
+        _mirror(contract, layout.pool_ranking(view['round_id']), store)
     if rotation.get('prev_state_sha'):
         _mirror(contract, layout.pool_rotation_state(rotation['prev_state_sha']), store)
     if rotation.get('initial_active_sha'):

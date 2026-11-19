@@ -83,7 +83,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True)
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info")
 
 
 def sentences(text: str) -> str:
@@ -95,6 +95,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
+    "rotation_rule": "info",
 }  # fmt: skip
 
 

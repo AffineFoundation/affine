@@ -13,7 +13,7 @@ import pytest
 from sn120_v2 import layout, public, publisher
 from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.envs.math_pool import MathPool, Task, load_pool
-from sn120_v2.envs.reserve import Catalog, load_reserve, reserve_dir
+from sn120_v2.envs.reserve import Catalog, empty_manifest, load_reserve, reserve_dir
 from sn120_v2.errors import ConfigError, ContractError, VerifyError
 from sn120_v2.irt import DECIMALS, IRTSampler, fisher_masses, predicted_pass, snapshot_digest
 from sn120_v2.journal import read_journal
@@ -249,7 +249,7 @@ def test_admitted_irt_difficulty_is_rounded_head_ability_and_max_fisher_mass():
 def test_reserve_tampering_reordered_missing_shrunk_withdrawn_fail_closed(tmp_path):
     root = tmp_path / "reserve"
     (root / "shards").mkdir(parents=True)
-    (root / "MANIFEST.jsonl").write_bytes(Path(reserve_dir() / "MANIFEST.jsonl").read_bytes())
+    (root / "MANIFEST.jsonl").write_bytes(empty_manifest())
     (root / "withdrawn.jsonl").write_bytes(b"")
     assert not load_reserve(root)[0].queue
     raw = canonical_json({"id": "omni:0", "env": "affine_math", "problem": "UNIQUE-RESERVE-INTEGRITY: compute 987654321 + 123456789", "answer": "1111111110",

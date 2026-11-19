@@ -6,6 +6,7 @@ listed byte and row before anything may enter an active evaluation set.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import unicodedata
@@ -86,17 +87,17 @@ def read_raw(root: str | Path) -> tuple[bytes, bytes, list[dict[str, Any]], list
     return manifest, withdrawn, shards, withdrawals
 
 
-def load_reserve(root: str | Path | None = None, *, with_catalog: bool = False) -> tuple[Reserve, Catalog | None]:
+def load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, allow_retired: bool = False) -> tuple[Reserve, Catalog | None]:
     """Verify manifest, all shards, schema, uniqueness and canonical bytes."""
     try:
-        return _load_reserve(root, with_catalog=with_catalog)
+        return _load_reserve(root, with_catalog=with_catalog, allow_retired=allow_retired)
     except ConfigError:
         raise
     except (VerifyError, OSError, ValueError, TypeError, KeyError) as exc:
         raise ConfigError(f"reserve verification failed: {type(exc).__name__}: {exc}") from exc
 
 
-def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False) -> tuple[Reserve, Catalog | None]:
+def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, allow_retired: bool = False) -> tuple[Reserve, Catalog | None]:
     root = reserve_dir() if root is None else Path(root)
     manifest, withdrawn_raw, lines, withdrawn = read_raw(root)
     history, seen_shards = [], set()
@@ -143,6 +144,8 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False)
     retired_tasks = {row["id"]: Task(row["id"], row["env"], row["problem"], row["answer"])
                      for row in json.loads(retired_path.read_bytes())} if retired_path.exists() else {}
     for task_id in high_retired & retired_tasks.keys() - seen_withdrawn:
+        if not allow_retired:
+            continue
         by_id[task_id] = retired_tasks[task_id]
         normalised[normalise(retired_tasks[task_id].problem)] = task_id
     # Withdrawn rows never enter any task lookup. The public retired-task
@@ -150,6 +153,11 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False)
     # low-retired tasks stay excluded from admission forever.
     extra: dict[str, Task] = {}
     queue: list[str] = []
+    if allow_retired:
+        for task_id, task in retired_tasks.items():
+            if task_id not in seen_withdrawn:
+                by_id[task_id] = task
+                normalised.setdefault(normalise(task.problem), task_id)
     for shard in history:
         try:
             raw = (root / "shards" / shard.shard).read_bytes()
@@ -162,11 +170,13 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False)
             raise VerifyError(f"reserve shard {shard.shard} has the wrong line count")
         ordered = []
         for row in rows:
-            expected = {"id", "env", "problem", "answer", "source", "license", "added_at", "audit"}
+            expected = {"id", "env", "problem", "answer", "source", "license", "added_at", "audit"} | ({"prior_p"} if "prior_p" in row else set())
             if set(row) != expected or not ID.fullmatch(str(row["id"])) or row["id"].split(":")[0] in ("math", "dapo"):
                 raise VerifyError("reserve row has a bad schema or id")
-            if any(not isinstance(row[key], str) for key in expected - {"audit"}) or not DATE.fullmatch(row["added_at"]):
+            if any(not isinstance(row[key], str) for key in expected - {"audit", "prior_p"}) or not DATE.fullmatch(row["added_at"]):
                 raise VerifyError("reserve row has a mistyped field or added_at")
+            if "prior_p" in row and (type(row["prior_p"]) not in (int, float) or not math.isfinite(row["prior_p"]) or not 0.0 <= row["prior_p"] <= 1.0):
+                raise VerifyError("reserve prior_p must be a finite number in [0, 1]")
             if not isinstance(row["audit"], dict) or row["audit"].get("verdict") != "keep" or not {"method", "ref"} <= set(row["audit"]):
                 raise VerifyError("only an audited keep row may be in the reserve")
             if set(row["audit"]) - {"verdict", "method", "ref", "readmit_of"}:
@@ -193,14 +203,47 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False)
         by_id.pop(task_id, None)
         extra.pop(task_id, None)
     combined = MathPool(tuple(by_id.values()), base.sha256)
-    admitted = MathPool(tuple(task for task_id, task in by_id.items() if task_id not in low_retired), base.sha256)
-    catalog = Catalog(base, combined, admitted, frozenset(low_retired)) if with_catalog else None
+    admitted = MathPool(tuple(task for task_id, task in by_id.items() if allow_retired or task_id not in low_retired), base.sha256)
+    catalog = Catalog(base, combined, admitted, frozenset() if allow_retired else frozenset(low_retired)) if with_catalog else None
     reserve = Reserve(sha256_hex(manifest), tuple(task for task in queue if task not in seen_withdrawn),
                       tuple(history), withdrawn, sha256_hex(withdrawn_raw), len(withdrawn))
     return reserve, catalog
 
 
-def reserve_from_bytes(manifest: bytes, withdrawn: bytes, shards: dict[str, bytes]) -> Reserve:
+def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catalog | None = None) -> dict[str, dict[str, Any]]:
+    """IDs and small public ranking fields, keyed by shard bytes not task text.
+
+    This reads shards once at runtime construction, never once per round.
+    Returning retired tasks keep their source metadata in the v2 archive.
+    """
+    root = reserve_dir() if root is None else Path(root)
+    base = load_pool()
+    archive = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    meta: dict[str, dict[str, Any]] = {}
+    for pool in (archive, base):
+        for task_id in pool.task_ids:
+            task = pool.task(task_id)
+            meta[task_id] = {"source_prefix": task_id.split(":", 1)[0], "env": task.slice}
+    for shard in reserve.shards:
+        raw = (root / "shards" / shard.shard).read_bytes()
+        if sha256_hex(raw) != shard.sha256:
+            raise ConfigError(f"reserve shard {shard.shard} does not match its manifest sha256")
+        for line in raw.splitlines():
+            row = json.loads(line)
+            meta[row["id"]] = {"source_prefix": row["id"].split(":", 1)[0], "env": row["env"]}
+            if "prior_p" in row:
+                meta[row["id"]]["prior_p"] = row["prior_p"]
+    path = root / "retired_tasks.json"
+    if path.exists():
+        for row in json.loads(path.read_bytes()):
+            meta[row["id"]] = {"source_prefix": row["id"].split(":", 1)[0], "env": row["env"]}
+    if catalog is not None:
+        for task_id in catalog.task_ids:
+            task = catalog.task(task_id)
+            meta.setdefault(task_id, {"source_prefix": task_id.split(":", 1)[0], "env": task.slice})
+    return meta
+
+
     """Strict reconstruction from public mirrors, without local reserve I/O."""
     # Temporary files are confined to the caller-controlled object-store cache
     # in production; this helper is used for pure verification in tests/tools.

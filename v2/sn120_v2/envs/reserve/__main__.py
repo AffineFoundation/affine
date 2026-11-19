@@ -3,7 +3,8 @@
     python -m sn120_v2.envs.reserve ingest --source NAME@REV --license CC-BY-4.0 \
       --prefix omni --audit-method audited --audit-ref REPORT.json input.jsonl
 
-Input rows have ``problem``, ``answer`` and optional ``source_id``. No active
+Input rows have ``problem``, ``answer`` and optional ``source_id`` and
+``prior_p`` (a finite public prior pass rate in [0, 1]). No active
 pool is written. A rejected row goes to ``<shard>.rejected.json``, never to
 the reserve shard.
 """
@@ -99,7 +100,7 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
         raise V2Error(f"cannot read ingest input: {exc}") from exc
     for number, row in enumerate(source_rows):
         reason = ""
-        if not isinstance(row, dict) or not {"problem", "answer"} <= set(row) or set(row) - {"problem", "answer", "source_id"}:
+        if not isinstance(row, dict) or not {"problem", "answer"} <= set(row) or set(row) - {"problem", "answer", "source_id", "prior_p"}:
             reason = "schema"
         problem, answer = str(row.get("problem", "")), str(row.get("answer", "")) if isinstance(row, dict) else ("", "")
         old_id = str(row.get("source_id", "")) if isinstance(row, dict) else ""
@@ -117,6 +118,8 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
                 reason = "duplicate_input" if norm in {normalise(item["problem"]) for item in kept} else "duplicate_problem"
         if not reason and norm in {normalise(item["problem"]) for item in kept}:
             reason = "duplicate_input"
+        if not reason and ("prior_p" in row and (type(row["prior_p"]) not in (int, float) or not 0.0 <= row["prior_p"] <= 1.0)):
+            reason = "prior_p"
         if not reason and (not problem.strip() or len(problem) > MAX_PROBLEM_CHARS):
             reason = "problem_length"
         if not reason and (not MIN_ANSWER_CHARS <= len(answer.strip()) <= MAX_ANSWER_CHARS or any(c in answer for c in "\r\n\x00")):
@@ -139,7 +142,8 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
             if old_id in readmit:
                 audit["readmit_of"] = retired_rows[old_id]["round_id"]
             kept.append(task_row(Task(task_id, args.env, problem, answer), source=f"{args.source}:{old_id or number}",
-                                 license=args.license, added_at=utc_now(), audit=audit))
+                                 license=args.license, added_at=utc_now(), audit=audit,
+                                 **({"prior_p": row["prior_p"]} if "prior_p" in row else {})))
             ids.add(task_id)
             used[norm] = task_id
     if not kept:
@@ -154,8 +158,8 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
     for shard in listed:
         rows = [json.loads(line) for line in (root / "shards" / shard.shard).read_bytes().splitlines()]
         if rows and rows[0].get("source", "").split(":", 1)[0] == source_name:
-            same = [(row["id"], row["problem"], row["answer"], row["audit"]) for row in rows]
-            proposed = [(row["id"], row["problem"], row["answer"], row["audit"]) for row in kept]
+            same = [(row["id"], row["problem"], row["answer"], row["audit"], row.get("prior_p")) for row in rows]
+            proposed = [(row["id"], row["problem"], row["answer"], row["audit"], row.get("prior_p")) for row in kept]
             if same != proposed:
                 raise V2Error(f"source {source_name!r} already has shard {shard.shard} with different content")
             report = {"shard": shard.shard, "sha256": shard.sha256, "ingested": 0, "rejected": 0,

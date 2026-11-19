@@ -250,7 +250,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
         "objects": object_keys() | ({"active_pool": layout.active_pool("ACTIVE_SHA"), "pool_rotation": layout.pool_rotation("ROUND_ID"),
-            "retired_pool": layout.RETIRED_POOL, "reserve_manifest": layout.RESERVE_MANIFEST} if params.rotation_enabled else {}),
+            "retired_pool": layout.RETIRED_POOL, "reserve_manifest": layout.RESERVE_MANIFEST} if params.rotation_enabled else {}) | ({"pool_ranking": layout.pool_ranking("ROUND_ID"), "pool_summary": layout.POOL_SUMMARY} if params.rotation_rule == "info" else {}),
         "read_links": READ_LINKS,
         "code": REPO + "/tree/v2/v2",
         **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
@@ -872,7 +872,18 @@ def _pool_lines(params: Params) -> list[str]:
     count, removed = f"{len(pool):,}", f"{len(dropped['dropped']):,}"
     rotation = []
     rotation_changed = any(getattr(params, f.name) != f.default for f in dataclasses.fields(params) if f.name.startswith("rotation_"))
-    if params.rotation_enabled or rotation_changed:
+    if params.rotation_rule == "info":
+        rotation = [
+            "- Task rotation uses `affine-pool-rotation-v2`. Every active, reserve and non-withdrawn retired task is a public candidate.",
+            "  With enough known history, p is the IRT predicted head pass rate. A reserve row may publish `prior_p`; otherwise the configured prior is used.",
+            "  Score = p(1-p), Bernoulli Fisher information. Dead tasks (at least the configured head rollouts and zero passes) score zero.",
+            "  Saturated tasks keep their score; their retirement reason is `high`. Withdrawn active tasks leave outside the churn cap.",
+            f"  The target is {params.rotation_active_size or 'the initial active size'}: shrink and fill have no churn cap. Steady-state swaps need a strictly higher score and are capped at",
+            f"  floor(rotation_churn_frac * target) = floor({show(params.rotation_churn_frac)} * target). Ties use sha256(round_id|rank|task_id).",
+            "  Retired tasks may return by score and restore their archived IRT row. The complete ranking, next-up queue and summary are public.",
+            "  `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` recomputes a decision from public inputs.",
+        ]
+    elif params.rotation_enabled or rotation_changed:
         low = "off" if params.rotation_retire_low_p == 0 else f"on at empirical head p < {show(params.rotation_retire_low_p)} with {params.rotation_n_min_low} rollouts"
         rotation = [
             "- Task rotation is " + ("on" if params.rotation_enabled else "off") + ". Each round may retire at most the configured k high/low pass tasks and admits from the",
