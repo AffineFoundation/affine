@@ -82,6 +82,8 @@ class RoundRecord(Record):
     apply_attempts: int = 0
     outcome: str = ""  # empty while the round is open
     closed_at: int = 0
+    LEFT_OUT_AT_DEFAULT = ("rotation",)
+    rotation: dict[str, Any] | None = None
 
     def lease(self, lease_id: str) -> Lease:
         return next(lease for lease in self.leases if lease.lease_id == lease_id)
@@ -103,6 +105,7 @@ class State:
     round_seq: int = 0
     turn_times: list[int] = field(default_factory=list)  # when each charged entry was served, last day only
     snapshot_id: str = ""
+    rotation_state_sha: str = ""  # content id of the last committed rotation artifact
     failed_leases: int = 0  # lease failures in a row
     last_failure_at: int = 0
     demote_on_arrival: set[RegKey] = field(default_factory=set)  # flags carried over from v1
@@ -204,6 +207,9 @@ def _round_opened(state: State, data: dict, at: int) -> None:
             _need(entry.reg.key in state.queue and not state.queue[entry.reg.key].leased, "a round took a seat that is not waiting")
             _edit(state, entry.reg.key, leased=True)
     state.round, state.round_seq = record, state.round_seq + 1
+    if record.rotation is not None:
+        _need(bool(record.rotation.get("state_sha")) and record.rotation.get("active_sha"), "rotated round lacks pool artifact ids")
+        state.rotation_state_sha = record.rotation["state_sha"]
 
 
 def _open_round(state: State, data: dict) -> RoundRecord:
@@ -279,6 +285,7 @@ def _round_closed(state: State, data: dict, at: int) -> None:
     state.rounds = (state.rounds + [replace(record, outcome=outcome, closed_at=at)])[-HISTORY:]
     state.round = None
     state.snapshot_id = data.get("snapshot_id", state.snapshot_id)
+    state.rotation_state_sha = data.get("rotation_state_sha", state.rotation_state_sha)
     state.turn_times = [t for t in state.turn_times if t > at - 2 * DAY]
 
 

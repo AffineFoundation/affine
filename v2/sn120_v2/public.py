@@ -132,6 +132,14 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         decision = record.decision
         view["entries"] = [entry_view(entry) for entry in decision.entries]
         view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": public_text(decision.reason), "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
+    if record.rotation is not None:
+        from . import layout
+
+        block = record.rotation
+        view["pool"] = {key: block[key] for key in ("active_sha", "admitted", "retired", "reserve_manifest_sha", "queue_remaining", "next_up")}
+        view["pool"] |= {"size": block["size"], "active": layout.active_pool(block["active_sha"]),
+                         "rotation": layout.pool_rotation(record.round_id), "retired_archive": layout.RETIRED_POOL,
+                         "reserve_manifest": layout.RESERVE_MANIFEST}
     return view
 
 

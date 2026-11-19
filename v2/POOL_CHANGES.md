@@ -40,3 +40,7 @@ The new pool changes the IRT table at the next start. Rows of kept tasks retain 
 From `v2/`, use the normal command in [REPLICATE.md](REPLICATE.md). `replicate run` now defaults to `--pool auto`: if any task of the recorded draw is missing from the current pool, it uses the archived v2.0 pool and its unchanged keys. The report names this under `differences`.
 
 Use `--pool v2.0` to force the archive, or `--pool current` to refuse a draw that needs a removed task. Explicit Python callers can use `load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)` and pass that pool to `replicate.parts`. Do not use the old `math_pool_v2.jsonl` outside `archive/`; it is retained only as a source of the v2.0 archive.
+
+## Continuous public-reserve rotation (not enabled)
+
+[POOL_ROTATION.md](POOL_ROTATION.md) adds an append-only audited reserve, ingest/withdraw tools, and a deterministic `k`-capped active-set rotation at round open. It is off by default: no reserve bytes are read or written, default and prod-shaped params hashes stay unchanged, and off-mode IRT, journal, round and publisher bytes stay unchanged. Activation needs a separate normal `set-params` with `rotation_enabled: true` between rounds and Jacob's approval. Future audited additions belong in the reserve rather than another v2.1-style pool-file swap.

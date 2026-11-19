@@ -192,7 +192,11 @@ class Params(Record):
 
     # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
     # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
-    LEFT_OUT_AT_DEFAULT = ("irt_draw_rule", "kv_cache_dtype", "max_num_seqs")
+    LEFT_OUT_AT_DEFAULT = (
+        "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
+        "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
+        "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
+    )
 
     netuid: int = 120
     env: str = "math"
@@ -224,6 +228,16 @@ class Params(Record):
     irt_middle_band: tuple[float, float] = (0.2, 0.8)  # placeholder: favoured band of the head's pass rate under "band"
     # Under "fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
     irt_explore_frac: float = 0.1
+
+    # Public reserve -> active pool. Disabled by default; no reserve read or
+    # write happens while disabled. These defaults are omitted from JSON.
+    rotation_enabled: bool = False
+    rotation_k: int = 32
+    rotation_retire_p: float = 0.95
+    rotation_n_min: int = 3
+    rotation_retire_low_p: float = 0.0  # zero: no empirical low-pass retirement
+    rotation_n_min_low: int = 8
+    rotation_active_size: int = 0  # zero: size of the initial base-pool active set
 
     # Judging.
     z_bar: float = 1.0  # a winner needs z strictly above this
@@ -298,6 +312,9 @@ class Params(Record):
         low, high = self.irt_middle_band
         _need(_unit(low) and _unit(high) and low < high, "irt_middle_band must be two rising shares")
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
+        _need(self.rotation_k >= 0 and self.rotation_n_min >= 0 and self.rotation_n_min_low >= 0, "rotation counts must be >= 0")
+        _need(self.rotation_active_size >= 0, "rotation_active_size must be >= 0")
+        _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")

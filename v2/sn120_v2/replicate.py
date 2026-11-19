@@ -476,6 +476,11 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
     the = the_round(contract, round_id=args.round, round_file=args.round_file, round_seed=args.round_seed, irt_snapshot=args.irt_snapshot, first_tasks=args.first_tasks)
     notes += round_notes(contract, the)
     pool = pool_for_draw(the.draw.task_ids, args.pool)
+    if isinstance(the.view.get("pool"), Mapping):
+        from .pool_catalog import public_catalog
+        pool, active = public_catalog(contract, Path(args.work), the.view, pool)
+        if set(the.draw.task_ids) - set(active):
+            raise VerifyError("the round draw contains a task outside its rotated active set")
     if pool.sha256 != POOL_SHA256:
         notes.append({"what": "pool", "text": f"This draw needs the archived v2.0 task pool (sha256 {pool.sha256}). Its task ids and answer keys are used unchanged."})
     for note in notes:
@@ -514,6 +519,12 @@ def parser() -> argparse.ArgumentParser:
         if name != "fetch":
             command.add_argument("--gpus", type=int, help="GPUs to use, 0 to N-1 (default: n_gpus of the params, the count of the box)")
             command.add_argument("--round-clock", action="store_true", help="keep the time limits of a round (default: no time limit of the round)")
+    rotation = commands.add_parser("rotation", help="recompute a published rotation from public artifacts")
+    rotation.add_argument("--mining-json", required=True)
+    rotation.add_argument("--round", required=True, help="round id, rNNNNNN")
+    rotation.add_argument("--work", required=True)
+    for name in ("compare", "fetch", "run"):
+        command = commands.choices[name]
         if name != "compare":
             command.add_argument("--work", required=True, help="work directory on a local disk: the model cache, the local store, the logs")
     fetcher, runner = commands.choices["fetch"], commands.choices["run"]
@@ -539,6 +550,14 @@ def main(argv: list[str] | None = None) -> int:
         contract = Contract.load(args.mining_json)
         if args.command == "compare":
             report = compare(contract, args.gpus, args.round_clock)
+        elif args.command == "rotation":
+            from .pool_catalog import public_rotation_inputs
+            from .pool_runtime import replay_rotation
+            view = contract.round(args.round)
+            if not view.get("pool"):
+                raise ConfigError(f"round {args.round} has no public rotation block")
+            store, _ = public_rotation_inputs(contract, Path(args.work), view)
+            report = replay_rotation(store, args.round)
         elif args.command == "fetch":
             report = fetch(contract, Path(args.work), source_dir=Path(args.source_dir) if args.source_dir else None, links_source=args.read_links)
         else:

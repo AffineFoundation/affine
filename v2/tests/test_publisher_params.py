@@ -83,7 +83,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band")
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True)
 
 
 def sentences(text: str) -> str:
@@ -125,6 +125,10 @@ def test_each_param_alone_moves_the_text(tmp_path):
             if name in ("recipe", "miner_bounds", "env"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
             value, changed = one_changed(record, name)
+            if name == "rotation_enabled":
+                # Default-off params and llms bytes are unchanged; enabling is
+                # covered by the rotation publisher test with a real block.
+                continue
             if name == "irt_draw_rule":
                 assert sentences(text_of(world, changed)) != sentences(before)
                 continue
@@ -258,7 +262,11 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     assert not unused, f"fixed_phrases names a phrase with no fixed number: {unused}"
 
     first, second = (publisher.stated_params(one) for one in texts)
-    assert first.keys() == second.keys() == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
+    # Opt-in fields are absent at defaults, preserving old Params and llms
+    # bytes. Non-default serving and rotation values must still be stated.
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    assert set(first) == {f.name for f in dataclasses.fields(Params)} - {"recipe"} - omitted
+    assert set(second) == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
     assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype"}, "all_moved must move every number of the params"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
@@ -282,7 +290,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
     assert "SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
-    assert "VllmEvaluator(store, box, pool, LazyPool(GradePool))" in stack
+    assert "VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))" in stack
 
 
 def played(tmp_path: Path) -> sim.SimWorld:
