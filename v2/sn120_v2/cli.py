@@ -329,13 +329,13 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
     """Each parameter whose value differs, with both values. A value of the recipe has the name ``recipe.<name>``."""
 
     def flat(params: Params) -> dict[str, Any]:
-        data = params.to_dict()
+        data = {name: getattr(params, name) for name in Params.LEFT_OUT_AT_DEFAULT} | params.to_dict()
         # The stored form leaves out a recipe field that has its default (``Recipe.LEFT_OUT_AT_DEFAULT``). Here it is shown.
         recipe = {name: getattr(params.recipe, name) for name in Recipe.LEFT_OUT_AT_DEFAULT} | data.pop("recipe")
         return data | {f"recipe.{name}": value for name, value in recipe.items()}
 
     old, new = flat(before), flat(after)
-    return {name: {"before": old[name], "after": new[name]} for name in old if old[name] != new[name]}
+    return {name: {"before": old[name], "after": new[name]} for name in old.keys() | new.keys() if old[name] != new[name]}
 
 
 def cmd_set_params(args: argparse.Namespace) -> int:
