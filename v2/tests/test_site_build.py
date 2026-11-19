@@ -45,7 +45,7 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator-guide.md", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
     for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
         assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
@@ -98,7 +98,9 @@ def test_generator_pages_use_public_generator_paths_and_versioned_assets(tmp_pat
     assert 'aria-current="page">Generator</a>' in page
     assert 'href="../generator-guide/"' in page and 'href="generator-guide.html"' in (out / "generator.html").read_text()
     assert 'href="../generator/"' in guide and 'href="../state.json"' in page
-    assert 'role="timer"' in page and 'generator-guide.md' in guide
+    assert 'role="timer"' in page and 'href="/generator/generator-guide.md"' in guide
+    assert (out / "generator" / "generator-guide.md").read_bytes() == (out / "generator-guide.md").read_bytes()
+    assert 'https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py' in page + guide
     assert '811,609' in page and 'sn120-math-prior-v1' in page
     assert 'href="../generator.html"' not in page + guide
     # The new navigation entry is confined to the Generator pages.

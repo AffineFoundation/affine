@@ -1,10 +1,33 @@
 {
-  "epoch": "20261119T2000Z",
-  "submission_count": 13,
-  "link_holders": 3,
-  "king": "20261119T1600Z:8f1e6a0c9d2b",
-  "submissions": [
-    {"hotkey": "5FixtureMinerAlpha000000000000000000000000000000", "file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "submitted": 8},
-    {"hotkey": "5FixtureMinerBeta0000000000000000000000000000000", "file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "submitted": 5}
-  ]
+ "deadline": "2026-11-19T20:00:00Z",
+ "epoch": "20261119T2000Z",
+ "files": [
+  {
+   "eligible_count": 1,
+   "hotkey": "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF",
+   "reason": "",
+   "sha256": "1640c1224493d834ba6ce24d9da3dc4bde52afa5f993ea2f32daed5a6ac040d1",
+   "size": 416,
+   "task_count": 1,
+   "uploaded_at": 1795104002.0,
+   "uploaded_at_utc": "2026-11-19T16:00:02Z",
+   "valid": true
+  },
+  {
+   "eligible_count": 2,
+   "hotkey": "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS",
+   "reason": "",
+   "sha256": "027b9db9623427714df2c1084669deb249ff08daefe81727de7f2db218d51087",
+   "size": 439,
+   "task_count": 2,
+   "uploaded_at": 1795104001.0,
+   "uploaded_at_utc": "2026-11-19T16:00:01Z",
+   "valid": true
+  }
+ ],
+ "note": "Object hashes and counts only. Task IDs are private until results publication.",
+ "pool": "sn120-math-prior-v1:45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115",
+ "snapshot_at": "2026-11-19T20:01:00Z",
+ "unique_tasks": 3,
+ "version": "affine-generator-manifest-v1"
 }

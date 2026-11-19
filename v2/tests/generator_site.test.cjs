@@ -39,31 +39,36 @@ function fetchFixtures(overrides = {}) {
 }
 
 test('all public JSON and JSONL fixtures parse without errors', () => {
-  const state = page.normalizeState(json('state.json'), json('epochs/20261119T2000Z/manifest.json'), Date.UTC(2026, 10, 19, 19, 20));
+  const state = page.normalizeState(json('state.json'), json('epochs/20261119T2000Z/manifest.json'), json('links.json'), Date.UTC(2026, 10, 19, 19, 20));
   assert.equal(state.epoch, '20261119T2000Z');
   assert.equal(state.start, Date.UTC(2026, 10, 19, 16));
   assert.equal(state.deadline, Date.UTC(2026, 10, 19, 20));
-  assert.equal(state.submissions, 13);
-  assert.equal(state.links, 3);
-  assert.equal(state.king, '20261119T1600Z:8f1e6a0c9d2b');
+  assert.equal(state.submissions, 3);
+  assert.equal(state.links, 2);
+  assert.equal(state.king, null);
   assert.equal(page.utc(state.deadline), '2026-11-19 20:00:00 UTC');
   assert.equal(page.epochUtc(state.epoch), '2026-11-19 20:00:00 UTC');
   assert.equal(page.countdown(state.deadline, state.now), '00:40:00');
 
   const results = page.normalizeResults(json('epochs/20261119T1600Z/results.json'));
-  assert.deepEqual(results.map(row => [row.uid, row.submitted, row.eligible, row.scored, row.accepted]), [[17, 10, 9, 8, 3], [23, 3, 2, 2, 1]]);
+  assert.deepEqual(results.map(row => [row.uid, row.submitted, row.eligible, row.scored, row.accepted]).sort((a, b) => a[0] - b[0]), [[17, 2, 2, 2, 1], [23, 1, 1, 1, 1]]);
   const accepted = page.normalizeAccepted(read('epochs/20261119T1600Z/accepted.jsonl'));
   assert.equal(accepted.length, 2);
-  assert.deepEqual(accepted[0], {id: 'abcdef0123456789abcd', hotkey: '5FixtureMinerBeta0000000000000000000000000000000', uid: 23, uploadedAt: 1795090500000, passes: 9, rollouts: 16, q: 0.9328});
+  assert.deepEqual(accepted.map(row => [row.id, row.uid, row.uploadedAt, row.passes, row.rollouts]), [
+    ['00000000000000000003', 23, 1795097700000, 4, 8],
+    ['00000000000000000002', 17, 1795096800000, 6, 16],
+  ]);
   assert.equal(page.normalizeAccepted(read('accepted-all.jsonl')).length, 2);
   const payout = page.normalizePayout(json('payout.json'));
   assert.equal(payout.updatedAt, 1795116000000);
-  assert.deepEqual(payout.rows.map(row => [row.uid, row.weight, row.tasks]), [[17, 0.75, 3], [23, 0.25, 1]]);
+  assert.deepEqual(payout.rows.map(row => [row.uid, row.weight, row.tasks]), [[17, 0.5, 1], [23, 0.5, 1]]);
   const claimsOnly = page.normalizePayout({...json('payout.json'), weights: undefined});
-  assert.deepEqual(claimsOnly.rows.map(row => [row.uid, row.weight, row.tasks]), [[17, 0.75, 3], [23, 0.25, 1]]);
-  const realShape = page.normalizeResults({by_hotkey: {'5Miner': {uid: 1, submitted: 2, eligible: 1, scored: 1, accepted: 1}}});
-  assert.equal(realShape[0].hotkey, '5Miner');
-  assert.equal(page.normalizeState({epoch: '20261120T0000Z'}, null).deadline, Date.UTC(2026, 10, 20));
+  assert.deepEqual(claimsOnly.rows, []);
+  const burn = page.normalizePayout({...json('payout.json'), weights: {'0': 1}});
+  assert.deepEqual(burn.rows[0], {uid: 0, hotkey: null, weight: 1, tasks: null});
+  const currentState = page.normalizeState({...json('state.json'), current_epoch: '20261120T0000Z'}, null, json('links.json'));
+  assert.equal(currentState.scoringEpoch, '20261119T1600Z');
+  assert.equal(currentState.submissions, null);
   assert.equal(page.submissionCount({submissions: []}, {}), null);
 });
 
@@ -74,8 +79,9 @@ test('the dashboard renders every section from the fixture directory', async t =
   const data = await page.load(source.fetch, dom.window.document, '/generator/');
   const document = dom.window.document;
   assert.equal(document.querySelector('[data-f="epoch"]').textContent, '20261119T2000Z');
-  assert.equal(document.querySelector('[data-f="submissions"]').textContent, '13');
-  assert.equal(document.querySelector('[data-f="links"]').textContent, '3');
+  assert.equal(document.querySelector('[data-f="submissions"]').textContent, '3');
+  assert.equal(document.querySelector('[data-f="links"]').textContent, '2');
+  assert.equal(document.querySelector('[data-f="king"]').textContent, 'fixture-king-version');
   assert.match(document.getElementById('window').textContent, /2026-11-19 16:00:00 UTC → 2026-11-19 20:00:00 UTC/);
   assert.equal(document.querySelectorAll('#hotkey-results tbody tr').length, 2);
   assert.equal(document.querySelectorAll('#accepted-tasks tbody tr').length, 2);
@@ -83,13 +89,14 @@ test('the dashboard renders every section from the fixture directory', async t =
   assert.equal(document.getElementById('results-epoch').textContent, '20261119T1600Z');
   assert.equal(data.accepted.length, 2);
   assert.equal(document.getElementById('status').textContent, 'Public data loaded');
-  assert.deepEqual(source.requested.sort(), [
+  assert.deepEqual(new Set(source.requested), new Set([
     '/generator/epochs/20261119T1600Z/accepted.jsonl',
     '/generator/epochs/20261119T1600Z/results.json',
     '/generator/epochs/20261119T2000Z/manifest.json',
     '/generator/payout.json',
+    '/generator/links.json',
     '/generator/state.json',
-  ]);
+  ]));
 });
 
 test('first epoch, missing files and bad JSONL have graceful empty states', async t => {
@@ -104,12 +111,15 @@ test('first epoch, missing files and bad JSONL have graceful empty states', asyn
   assert.equal(page.epochTime('20261119T1800Z'), null);
   assert.equal(page.submissionCount({}, {}), null);
 
-  const emptyState = {...json('state.json'), epoch: '20261120T0000Z', last_scored_epoch: null, king_version: null};
+  const emptyState = json('empty-state.json');
+  assert.equal(emptyState.published_epochs, undefined);
+  assert.equal(emptyState.last_epoch, undefined);
   const dom = fixtureDOM(false);
   t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });
   const source = fetchFixtures({
     'state.json': JSON.stringify(emptyState),
     'payout.json': null,
+    'links.json': null,
   });
   await page.load(source.fetch, dom.window.document, '/generator/');
   const document = dom.window.document;
@@ -125,7 +135,7 @@ test('the Markdown fixture renders safely, including code, lists and tables', as
   const dom = fixtureDOM(true);
   t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });
   const source = fetchFixtures();
-  await page.loadGuide(source.fetch, dom.window.document, '/generator/');
+  await page.loadGuide(source.fetch, dom.window.document, './');
   const document = dom.window.document;
   assert.equal(document.querySelector('#guide-content h1').textContent, 'Generator miner guide');
   assert.equal(document.querySelectorAll('#guide-content ol li').length, 3);
@@ -141,10 +151,24 @@ test('the Markdown fixture renders safely, including code, lists and tables', as
   assert.equal(code.querySelector('code').textContent, '<img src=x onerror=alert(1)>');
 });
 
+test('the actual PR 296 guide renders its links and code blocks', () => {
+  const dom = new JSDOM('', {url: 'https://affine.example/generator-guide/'});
+  const container = dom.window.document.createElement('article');
+  const guide = fs.readFileSync(path.join(ROOT, 'site', 'static', 'generator-guide.md'), 'utf8');
+  page.renderMarkdown(guide, container, dom.window.document);
+  assert.equal(container.querySelector('h1').textContent, 'Generator miner guide');
+  assert.ok(container.querySelectorAll('h1,h2').length >= 10);
+  assert.ok(container.querySelectorAll('pre').length >= 10);
+  assert.ok(container.querySelector('a[href="https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py"]'));
+  assert.ok(container.querySelector('a[href="https://affine.io/generator"]'));
+  assert.equal(container.querySelectorAll('script').length, 0);
+  dom.window.close();
+});
+
 test('missing guide keeps the static launch placeholder', async t => {
   const dom = fixtureDOM(true);
   t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });
   await page.loadGuide(async () => ({ok: false, status: 404}), dom.window.document, '/generator/');
-  assert.match(dom.window.document.getElementById('guide-content').textContent, /guide will be published here/);
+  assert.match(dom.window.document.getElementById('guide-content').textContent, /Loading the miner-kit guide from the same origin/);
   assert.equal(dom.window.document.getElementById('status').textContent, 'Miner guide pending publication');
 });

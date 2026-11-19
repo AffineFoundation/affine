@@ -9,7 +9,7 @@
 
   const EPOCH_SECONDS = 4 * 60 * 60;
   const POOL_RELEASE = 'https://github.com/AffineFoundation/affine/releases/tag/sn120-math-prior-v1';
-  const MINER_KIT = 'https://github.com/AffineFoundation/affine/tree/v2/miner';
+  const MINER_KIT = 'https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py';
 
   function object(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -86,89 +86,52 @@
   }
 
   function submissionCount(manifest, state) {
-    manifest = object(manifest);
-    state = object(state);
-    const direct = pick(manifest, ['submission_count', 'n_submissions']);
-    if (count(direct) !== null) return direct;
-    for (const field of [manifest.submissions, manifest.tasks, manifest.counts, state.submissions, state.counts]) {
-      if (count(field) !== null) return field;
-      const nested = object(field);
-      const value = pick(nested, ['submissions', 'submission_count', 'tasks']);
-      if (count(value) !== null) return value;
-    }
-    let found = false;
-    let total = 0;
-    for (const rows of [list(manifest.submissions), list(manifest.tasks), list(manifest.hotkeys)]) {
-      if (!rows.length) continue;
-      for (const row of rows) {
-        const value = pick(object(row), ['submitted', 'task_count', 'n_tasks']);
-        const ids = object(row).task_ids;
-        const number = count(value) !== null ? value : list(ids).length;
-        if (!number) continue;
-        found = true;
-        total += number;
-      }
-      if (found) return total;
-    }
-    const byHotkey = object(manifest.submissions_by_hotkey);
-    for (const value of Object.values(byHotkey)) {
-      if (count(value) !== null) { total += value; found = true; }
-      else if (count(object(value).submitted) !== null) { total += object(value).submitted; found = true; }
-    }
-    if (found) return total;
-    return count(pick(state, ['submissions_this_epoch', 'submission_count', 'n_submitted']));
+    // snapshot.py publishes every valid file's original task count (including duplicates).
+    const files = list(object(manifest).files);
+    if (files.length) return files.reduce((total, row) => total + (object(row).valid === true ? (count(object(row).task_count) || 0) : 0), 0);
+    if (files.length === 0 && object(manifest).version === 'affine-generator-manifest-v1') return 0;
+    return count(object(object(state).counts).submitted);
   }
 
-  function linkCount(state, manifest) {
-    for (const source of [object(manifest), object(state), object(object(state).counts)]) {
-      const value = pick(source, ['link_holders', 'link_holder_count', 'n_link_holders', 'links', 'issued_links', 'active_links']);
-      if (count(value) !== null) return value;
-      if (Array.isArray(value)) return value.length;
-      if (value && typeof value === 'object') return Object.keys(value).length;
-    }
-    return null;
-  }
-
-  function normalizeState(raw, manifest, now) {
+  function normalizeState(raw, manifest, links, now) {
     const state = object(raw);
-    const epoch = text(pick(state, ['epoch', 'epoch_id', 'current_epoch', 'live_epoch'])) || text(object(state.epoch).id);
-    let start = timestamp(pick(state, ['window_start', 'submission_start', 'opens_at', 'start', 'opened_at']));
-    let deadline = timestamp(pick(state, ['deadline', 'deadline_at', 'closes_at', 'submission_deadline', 'window_end']));
+    const epoch = text(state.current_epoch);
+    let start = timestamp(state.window_open);
+    let deadline = timestamp(state.deadline ?? state.window_close);
     const epochDeadline = epochTime(epoch);
     if (start === null && deadline === null && epochDeadline !== null) {
       deadline = epochDeadline;
       start = deadline - EPOCH_SECONDS * 1000;
     }
-    const king = text(pick(state, ['king', 'king_version', 'frozen_king', 'frozen_king_version', 'head_version', 'head']))
-      || text(object(state.king).version) || text(object(state.king).version_id) || text(object(state.head).version_id);
+    const published = list(state.published_epochs).map(object);
     return {
-      epoch, start, deadline, king,
+      epoch, start, deadline,
+      king: text(state.frozen_king_version),
       submissions: submissionCount(manifest, state),
-      links: linkCount(state, manifest),
-      scoringEpoch: text(pick(state, ['last_scored_epoch', 'scored_epoch', 'results_epoch', 'last_results_epoch', 'latest_scored_epoch']))
-        || text(object(state.last_scored).epoch) || text(object(state.results).epoch) || text(object(state.scoring).last_scored_epoch),
-      manifestEpoch: text(object(manifest).epoch) || epoch,
+      links: links && typeof links === 'object' ? list(object(links).hotkeys).length : null,
+      scoringEpoch: text(state.last_epoch) || text(published.at(-1)?.epoch),
+      manifestEpoch: text(object(manifest).epoch),
       manifestPublished: Boolean(manifest && typeof manifest === 'object' && Object.keys(manifest).length),
-      status: text(pick(state, ['status', 'state', 'phase'])),
       now: finite(now) === null ? Date.now() : now,
     };
   }
 
   function normalizeResults(raw) {
     const document = object(raw);
-    let rows = pick(document, ['hotkeys', 'by_hotkey', 'miners', 'submissions', 'per_hotkey', 'results']);
+    let rows = document.hotkeys;
     if (Array.isArray(rows)) rows = rows.map(object);
     else {
       const keyed = object(rows);
       rows = Object.entries(keyed).map(([hotkey, value]) => ({hotkey, ...object(value)}));
     }
+    const uidByHotkey = new Map(list(document.tasks).map(row => [object(row).hotkey, count(object(row).uid)]));
     return rows.map(row => ({
-      hotkey: text(row.hotkey) || text(row.submitter) || '—',
-      uid: count(row.uid),
-      submitted: count(pick(row, ['submitted', 'n_submitted', 'task_count', 'tasks'])) ?? (Array.isArray(row.task_ids) ? row.task_ids.length : null),
-      eligible: count(pick(row, ['eligible', 'n_eligible', 'eligible_count'])),
-      scored: count(pick(row, ['scored', 'n_scored', 'scored_count'])),
-      accepted: count(pick(row, ['accepted', 'n_accepted', 'accepted_count'])),
+      hotkey: text(row.hotkey) || '—',
+      uid: count(row.uid) ?? uidByHotkey.get(text(row.hotkey)) ?? null,
+      submitted: count(row.submitted),
+      eligible: count(row.eligible),
+      scored: count(row.scored),
+      accepted: count(row.accepted),
     })).sort((a, b) => (b.accepted ?? -1) - (a.accepted ?? -1) || a.hotkey.localeCompare(b.hotkey));
   }
 
@@ -198,24 +161,10 @@
       weight: finite(pick(row, ['weight', 'share', 'w'])),
       tasks: count(pick(row, ['tasks', 'accepted', 'accepted_tasks', 'n_accepted'])),
     })).filter(row => row.uid !== null && row.weight !== null && row.weight >= 0);
-    if (!rows.length) {
-      // The core payout document has claims, not a separate weight vector. Aggregate that
-      // public record for display; the setter still owns registration and freshness checks.
-      const claims = list(document.claims).map(object);
-      const grouped = new Map();
-      for (const claim of claims) {
-        if (count(claim.uid) === null) continue;
-        const row = grouped.get(claim.uid) || {uid: claim.uid, hotkey: text(claim.hotkey), weight: 0, tasks: 0};
-        row.weight += 1 / claims.length;
-        row.tasks++;
-        grouped.set(claim.uid, row);
-      }
-      rows = [...grouped.values()];
-    }
     const claims = list(document.claims).map(object);
     rows.forEach(row => {
-      if (row.tasks === null) row.tasks = claims.filter(claim => claim.uid === row.uid).length;
-      if (!row.hotkey) {
+      if (row.tasks === null) row.tasks = row.uid === 0 ? null : claims.filter(claim => claim.uid === row.uid).length;
+      if (!row.hotkey && row.uid !== 0) {
         const hotkeys = object(document.hotkeys);
         row.hotkey = text(hotkeys[row.uid]) || text(object(hotkeys[row.uid]).hotkey) || text(claims.find(claim => claim.uid === row.uid)?.hotkey);
       }
@@ -270,11 +219,12 @@
     return span;
   }
 
-  function renderState(view, doc) {
+  function renderState(view, doc, results) {
+    if (!view.king && object(results).epoch === view.scoringEpoch) view.king = text(object(results).king);
     for (const key of ['epoch', 'king', 'submissions', 'links']) {
       const element = doc.querySelector(`[data-f="${key}"]`);
       let value = view[key];
-      if (key === 'submissions' && value === null) value = 'Not published';
+      if (key === 'submissions' && value === null) value = 'Awaiting manifest';
       if (key === 'links' && value === null) value = 'Not published';
       if (key === 'king' && value === null) value = 'Freezes at deadline';
       element.textContent = value ?? '—';
@@ -351,7 +301,8 @@
   }
 
   async function fetchPublic(path, root, fetcher, asText) {
-    const url = new URL(root + path, 'https://generator.invalid');
+    if (path === 'generator-guide.md') path = '/generator/generator-guide.md';
+    const url = new URL(path.startsWith('/') ? path : root + path, 'https://generator.invalid');
     if (url.origin !== 'https://generator.invalid') throw new TypeError('Only same-origin public paths are allowed');
     const response = await fetcher(url.pathname + '?t=' + Date.now(), {cache: 'no-store'});
     if (!response.ok) {
@@ -363,19 +314,25 @@
 
   async function load(fetcher, doc, root) {
     root = root || publicRoot(doc);
-    let view = normalizeState(null, null);
+    let view = normalizeState(null, null, null);
     let results = null;
     let accepted = null;
     let payout = null;
     let state = null;
+    let links = null;
     let scoredEpoch = null;
     try {
-      state = await fetchPublic('state.json', root, fetcher, false);
-      view = normalizeState(state, null);
+      [state, links] = await Promise.all([
+        fetchPublic('state.json', root, fetcher, false).catch(() => null),
+        fetchPublic('links.json', root, fetcher, false).catch(() => null),
+      ]);
+      view = normalizeState(state, null, links);
       const epochPattern = /^\d{8}T\d{4}Z$/;
-      const manifest = view.epoch && epochPattern.test(view.epoch)
-        ? await fetchPublic(`epochs/${view.epoch}/manifest.json`, root, fetcher, false).catch(() => null) : null;
-      Object.assign(view, normalizeState(state, manifest));
+      const manifestEpoch = epochPattern.test(view.epoch || '') ? view.epoch
+        : text(list(object(state).published_epochs).map(object).at(-1)?.epoch);
+      const manifest = manifestEpoch
+        ? await fetchPublic(`epochs/${manifestEpoch}/manifest.json`, root, fetcher, false).catch(() => null) : null;
+      Object.assign(view, normalizeState(state, manifest, links));
       scoredEpoch = view.scoringEpoch;
       if (scoredEpoch && epochPattern.test(scoredEpoch)) {
         [results, accepted] = await Promise.all([
@@ -386,10 +343,10 @@
       payout = await fetchPublic('payout.json', root, fetcher, false).catch(() => null);
     } catch (_) {
       // A first epoch or a transient public read failure keeps the complete empty shell.
-      view = normalizeState(state, null);
+      view = normalizeState(state, null, null);
       results = accepted = payout = null;
     }
-    renderState(view, doc);
+    renderState(view, doc, results);
     renderResults(results ? normalizeResults(results) : [], scoredEpoch, doc);
     renderAccepted(normalizeAccepted(accepted), scoredEpoch, doc);
     renderPayout(normalizePayout(payout), doc);
@@ -405,15 +362,16 @@
     const fragment = doc.createDocumentFragment();
     const codes = [];
     const source = String(value).replace(/`([^`\n]+)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`);
-    const token = /\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|\u0000(\d+)\u0000/g;
+    const token = /\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)|<(https?:\/\/[^\s>]+)>|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|\u0000(\d+)\u0000/g;
     let cursor = 0;
     let match;
     while ((match = token.exec(source)) !== null) {
       if (match.index > cursor) fragment.appendChild(doc.createTextNode(source.slice(cursor, match.index)));
       let element;
-      if (match[1] !== undefined) {
+      if (match[1] !== undefined || match[3] !== undefined) {
         element = doc.createElement('a');
-        const url = new URL(match[2], doc.baseURI);
+        const target = match[2] ?? match[3];
+        const url = new URL(target, doc.baseURI);
         if (url.protocol !== 'http:' && url.protocol !== 'https:') {
           fragment.appendChild(doc.createTextNode(match[0]));
           cursor = match.index + match[0].length;
@@ -421,13 +379,13 @@
         }
         element.href = url.href;
         element.rel = 'noopener noreferrer';
-        element.textContent = match[1];
-      } else if (match[3] !== undefined || match[4] !== undefined) {
-        element = doc.createElement(match[3] !== undefined ? 'strong' : 'em');
-        element.textContent = match[3] ?? match[4];
+        element.textContent = match[1] ?? target;
+      } else if (match[4] !== undefined || match[5] !== undefined) {
+        element = doc.createElement(match[4] !== undefined ? 'strong' : 'em');
+        element.textContent = match[4] ?? match[5];
       } else {
         element = doc.createElement('code');
-        element.textContent = codes[Number(match[5])];
+        element.textContent = codes[Number(match[6])];
       }
       fragment.appendChild(element);
       cursor = match.index + match[0].length;
@@ -536,7 +494,7 @@
 
   return {
     EPOCH_SECONDS, POOL_RELEASE, MINER_KIT, timestamp, epochTime, epochUtc, utc, countdown,
-    parseJSONL, submissionCount, linkCount, normalizeState, normalizeResults, normalizeAccepted,
+    parseJSONL, submissionCount, normalizeState, normalizeResults, normalizeAccepted,
     normalizePayout, inlineMarkdown, renderMarkdown, load, loadGuide, init,
   };
 });
