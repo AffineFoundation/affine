@@ -433,7 +433,7 @@ class Controller:
             snapshot = stored_irt_snapshot(self.store, state)
             if snapshot is None:
                 snapshot = self.sampler.public_snapshot()
-            self._rotation, self.sampler = self.pool.open(round_id, snapshot)
+            self._rotation, self.sampler = self.pool.open(round_id, snapshot, state)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
             rotation = self.pool.publish_open(self._rotation)
