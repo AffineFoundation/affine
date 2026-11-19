@@ -190,6 +190,8 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     def visible(b: dict[str, Any]) -> bool:
         if b.get("id") == "gsm8k" and not b.get("enabled"):
             return False
+        if str(b.get("id") or "").endswith(":full") or b.get("full_of"):
+            return False
         return bool(b.get("enabled") or b.get("in_avg") is False)
 
     enabled = sorted((b for b in bench["benchmarks"] if visible(b)),
@@ -197,6 +199,8 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     columns = []
     for b in enabled or (kept or {}).get("columns", ()):
         if b.get("id") == "gsm8k" and not b.get("enabled"):
+            continue
+        if str(b.get("id") or "").endswith(":full") or b.get("full_of"):
             continue
         column = {"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
         if column["id"] == "arxivmath":

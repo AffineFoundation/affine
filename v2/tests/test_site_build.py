@@ -263,6 +263,23 @@ def test_gsm8k_display_column_is_hidden_and_arxivmath_counts_fully_in_avg():
     assert ref["avg"] is None and "arxivmath" not in ref["cells"]  # missing a counted benchmark
 
 
+def test_full_run_companion_column_is_hidden_and_avg_is_unchanged():
+    """A full-run companion column is not shown. Its score stays in the cells and is not in Avg."""
+    bench = {
+        "updated_at": 5,
+        "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True),
+                       dict(id="arxivmath", label="ArXivMath", suite="math", order=2, enabled=True, in_avg=False),
+                       dict(id="arxivmath:full", label="ArXivMath, full run", suite="math", order=3, enabled=False, in_avg=False)],
+        "models": [king("new", 200)],
+        "results": [result("new", "b1", 0.8), result("new", "arxivmath", 0.2), result("new", "arxivmath:full", 0.9)],
+    }
+    view = bench_view(bench)
+    assert [column["id"] for column in view["columns"]] == ["b1", "arxivmath"]
+    assert view["columns"][1]["in_avg"] is True
+    new = view["rows"][0]
+    assert new["avg"] == 0.5 and "arxivmath:full" in new["cells"]
+
+
 def test_every_king_and_the_genesis_head_has_one_row_that_says_the_state_of_its_benchmark_run():
     """The file of the benchmark service names the folded head of a round. The snapshot lists the stacked and the folded head."""
     heads = [head("g" * 64, "genesis", 10, True), head("s1" * 32, "r000001", 20, False), head("f1" * 32, "r000001", 21, True),
