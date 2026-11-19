@@ -18,6 +18,8 @@ from .types import CAP, FAIL, PASS
 
 RULE_VERSION = "affine-pool-rotation-v1"
 INFO_RULE_VERSION = "affine-pool-rotation-v2"
+RANKING_LIMIT = 100_000
+RANKING_OUTSIDE_LIMIT = 20_000
 BASE_ACTIVE_SIZE = 20_120
 WITHDRAWN, HIGH, LOW = "withdrawn", "high", "low"
 EXCESS, DISPLACED = "excess", "displaced"
@@ -32,6 +34,8 @@ def rule_params(params: Params) -> dict[str, Any]:
              "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size")
     if params.rotation_rule == "info":
         names += ("rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max")
+        if params.rotation_unscreened_max:
+            names += ("rotation_unscreened_max",)
     return {name: getattr(params, name) for name in names}
 
 
@@ -59,8 +63,9 @@ class Reserve(Record):
     rotation independently replayable without a git checkout.
     ``candidate_meta`` is optional public metadata for the ranked v2 rule:
     ``{id: {prior_p?, source_prefix, env}}``. It carries no task text.
+    ``audit_verdicts`` carries the reserve row's screening provenance for the
+    unscreened-admission cap, independently of the display metadata.
     """
-    LEFT_OUT_AT_DEFAULT = ("candidate_meta",)
     manifest_sha: str
     queue: tuple[str, ...] = ()
     shards: tuple[ReserveShard, ...] = ()
@@ -68,22 +73,33 @@ class Reserve(Record):
     withdrawn_sha: str = ""
     withdrawn_count: int = 0
     candidate_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    LEFT_OUT_AT_DEFAULT = ("candidate_meta",)
+    audit_verdicts: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not is_sha256(self.manifest_sha):
             raise ContractError("reserve manifest_sha must be a sha256")
         if len(set(self.queue)) != len(self.queue):
             raise ContractError("the reserve queue repeats a task id")
+        if any(task_id not in self.queue or verdict not in ("keep", "unscreened") for task_id, verdict in self.audit_verdicts.items()):
+            raise ContractError("reserve audit verdicts must belong to queued tasks")
 
     @property
     def withdrawn_ids(self) -> frozenset[str]:
         return frozenset(str(row["id"]) for row in self.withdrawn)
 
-    def history(self) -> dict[str, Any]:
-        history = self.to_dict()
+    def to_dict(self) -> dict[str, Any]:
+        # factory defaults do not participate in Record.LEFT_OUT_AT_DEFAULT;
+        # omit empty optional maps explicitly for old-history round trips.
+        history = super().to_dict()
         if not self.candidate_meta:
             history.pop("candidate_meta", None)
+        if not self.audit_verdicts:
+            history.pop("audit_verdicts", None)
         return history
+
+    def history(self) -> dict[str, Any]:
+        return self.to_dict()
 
 
 @dataclass(frozen=True)
@@ -119,8 +135,9 @@ class Rotation(Record):
     initial_active_sha: str = ""
     rule_params: dict[str, Any] = field(default_factory=dict)
     rule_version: str = RULE_VERSION
-    LEFT_OUT_AT_DEFAULT = ("candidate_ranking", "retire_reason_counts", "restored_irt_rows", "initial_retired_archive", "initial_candidate_meta", "initial_retired_ledger", "retired_ledger", "opened_at")
+    LEFT_OUT_AT_DEFAULT = ("candidate_ranking", "retire_reason_counts", "restored_irt_rows", "initial_retired_archive", "initial_candidate_meta", "initial_retired_ledger", "retired_ledger", "opened_at", "ranking_complete")
     candidate_ranking: tuple[dict[str, Any], ...] = ()
+    ranking_complete: bool = True
     retire_reason_counts: dict[str, int] = field(default_factory=dict)
     restored_irt_rows: dict[str, tuple[float, float, int]] = field(default_factory=dict)
     initial_retired_archive: tuple[dict[str, Any], ...] = ()
@@ -138,6 +155,12 @@ class Rotation(Record):
             raise VerifyError("v1 rotation cannot carry v2 ranked-pool state")
         if self.rule_version == INFO_RULE_VERSION and not self.candidate_ranking:
             raise VerifyError("v2 rotation lacks its public candidate ranking")
+
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        if self.ranking_complete:
+            result.pop("ranking_complete", None)
+        return result
 
     def journal_block(self) -> dict[str, Any]:
         block = {
@@ -349,6 +372,7 @@ def rotate_info(
     for task_id, state in [(task_id, "active") for task_id in ids] + [(task_id, "reserve") for task_id in reserve.queue]:
         row = tasks.get(task_id)
         meta = _candidate_meta(reserve, task_id)
+        unscreened = bool(meta.get("unscreened")) or reserve.audit_verdicts.get(task_id) == "unscreened"
         rolls, passes = _ledger_row(ledger, task_id)
         if state == "active" and row is not None:
             rounds = int(row[2])
@@ -364,6 +388,7 @@ def rotate_info(
                          "score": 0.0 if LOW in flags else p * (1.0 - p), "flags": flags,
                          "source_prefix": str(meta.get("source_prefix") or task_id.split(":", 1)[0]),
                          "env": str(meta.get("env") or "affine_math"), "head_rollouts": rolls, "head_passes": passes,
+                         **({"unscreened": True} if unscreened else {}),
                          "admitted": False, "retired": False, "retire_reason": None,
                          "tie": sha256_hex(f"{round_id}|rank|{task_id}".encode())}
     for task_id, old in archives.items():
@@ -372,6 +397,7 @@ def rotate_info(
         meta = {
             key: old[key] for key in ("source_prefix", "env", "prior_p") if key in old
         } | dict(_candidate_meta(reserve, task_id))
+        unscreened = old.get("audit_verdict") == "unscreened" or reserve.audit_verdicts.get(task_id) == "unscreened"
         row = old.get("irt_row") or tasks.get(task_id)
         rounds = int(row[2]) if row and len(row) == 3 else 0
         p = predicted_pass(ability, float(row[0])) if row and rounds >= params.rotation_n_min else _prior(meta, params.rotation_prior_p)
@@ -385,6 +411,8 @@ def rotate_info(
                          "env": str(meta.get("env") or old.get("env") or "affine_math"),
                          "head_rollouts": rolls, "head_passes": passes, "admitted": False, "retired": False,
                          "retire_reason": None, "tie": sha256_hex(f"{round_id}|rank|{task_id}".encode())}
+        if unscreened:
+            rows[task_id]["unscreened"] = True
 
     def ascending(task_id: str) -> tuple[float, str, str]:
         row = rows[task_id]
@@ -416,7 +444,8 @@ def rotate_info(
                         **({"irt_row": list(saved[:3])} if saved else {}),
                         "head_rollouts": row["head_rollouts"], "head_passes": row["head_passes"],
                         "source_prefix": row["source_prefix"], "env": row["env"],
-                        **({"prior_p": meta["prior_p"]} if "prior_p" in meta else {})})
+                        **({"prior_p": meta["prior_p"]} if "prior_p" in meta else {}),
+                        **({"audit_verdict": "unscreened"} if row.get("unscreened", False) else {})})
 
     for task_id in sorted(active_set & withdrawn):
         retire(task_id, WITHDRAWN)
@@ -426,50 +455,77 @@ def rotate_info(
             retire(task_id, HIGH if HIGH in flags else LOW if LOW in flags else EXCESS)
             kept.remove(task_id)
     outside = (set(reserve.queue) | set(archives)) - withdrawn - kept - {task for task, row in archives.items() if row.get("reason") == WITHDRAWN}
+    unscreened_admissions = 0
+
+    def admit(task_id: str) -> None:
+        nonlocal unscreened_admissions
+        kept.add(task_id)
+        outside.remove(task_id)
+        rows[task_id]["admitted"] = True
+        unscreened_admissions += int(rows[task_id].get("unscreened", False))
+
     if len(kept) < target:
-        for task_id in sorted(outside, key=descending)[:target - len(kept)]:
-            kept.add(task_id)
-            rows[task_id]["admitted"] = True
-        outside -= kept
+        ranked = sorted(outside, key=descending)
+        selected: list[str] = []
+        for task_id in ranked:
+            if len(selected) == target - len(kept):
+                break
+            if params.rotation_unscreened_max and rows[task_id].get("unscreened", False) and unscreened_admissions >= params.rotation_unscreened_max:
+                continue  # stays queued for a later round
+            selected.append(task_id)
+            unscreened_admissions += int(rows[task_id].get("unscreened", False))
+        for task_id in selected:
+            admit(task_id)
     cap = int(params.rotation_churn_frac * target) if params.rotation_churn_max == 0 else min(int(params.rotation_churn_frac * target), params.rotation_churn_max)
     active_heap = [ascending(task_id) for task_id in kept]
     outside_heap = [descending(task_id) for task_id in outside]
     heapq.heapify(active_heap)
     heapq.heapify(outside_heap)
     swaps = 0
+    deferred: list[tuple[float, str, str]] = []
     while swaps < cap and active_heap and outside_heap:
         task_id = active_heap[0][2]
         candidate = outside_heap[0][2]
         if rows[candidate]["score"] <= rows[task_id]["score"]:
             break
+        if params.rotation_unscreened_max and rows[candidate].get("unscreened", False) and unscreened_admissions >= params.rotation_unscreened_max:
+            deferred.append(heapq.heappop(outside_heap))  # capped, but still first in rank for a later round
+            continue
         heapq.heappop(active_heap)
         heapq.heappop(outside_heap)
         flags = rows[task_id]["flags"]
         retire(task_id, HIGH if HIGH in flags else LOW if LOW in flags else DISPLACED)
         kept.remove(task_id)
         outside.add(task_id)
-        outside.remove(candidate)
-        kept.add(candidate)
-        rows[candidate]["admitted"] = True
+        admit(candidate)
         heapq.heappush(outside_heap, descending(task_id))
         swaps += 1
+    for item in deferred:
+        heapq.heappush(outside_heap, item)
     active = tuple(sorted(kept))
     ranking = tuple({key: value for key, value in row.items() if key != "tie"}
                     for row in sorted(rows.values(), key=lambda row: (-row["score"], row["tie"], row["id"]))
                     if row["retire_reason"] != WITHDRAWN)
-    admitted = tuple(row["id"] for row in ranking if row["admitted"])
+    complete = len(rows) <= RANKING_LIMIT
+    if not complete:
+        published = {row["id"] for row in ranking if row["state"] in ("active", "retired") or row["retired"] or row["id"] in kept}
+        outside_rows = [row for row in ranking if row["id"] not in published]
+        published.update(row["id"] for row in outside_rows[:RANKING_OUTSIDE_LIMIT])
+        ranking = tuple(row for row in ranking if row["id"] in published)
+    admitted = tuple(task_id for task_id, row in sorted(rows.items(), key=lambda item: (-item[1]["score"], item[1]["tie"], item[0])) if row["admitted"])
     upcoming = tuple(row["id"] for row in ranking if row["id"] in outside and row["id"] not in withdrawn)
     restored = {task_id: tuple(archives[task_id]["irt_row"][:3]) for task_id in admitted if task_id in archives and archives[task_id].get("irt_row")}
     counts = {reason: sum(row.reason == reason for row in retired.values()) for reason in sorted({row.reason for row in retired.values()})}
     return Rotation(
         round_id=round_id, active_ids=active, active_sha=active_sha(active), prev_active_sha=previous_sha,
-        admitted=admitted, retired=tuple(retired.values()), reserve_manifest_sha=reserve.manifest_sha,
+        admitted=tuple(task_id for task_id, row in sorted(rows.items(), key=lambda item: (-item[1]["score"], item[1]["tie"], item[0])) if row["admitted"]),
+        retired=tuple(retired.values()), reserve_manifest_sha=reserve.manifest_sha,
         queue_remaining=len(set(reserve.queue) - kept - withdrawn), next_up=upcoming[:params.rotation_queue_publish],
         reserve_history=reserve.history(), ledger={key: (rows[key]["head_rollouts"], rows[key]["head_passes"]) for key in active},
         retired_archive=tuple(archive), source_snapshot_id=source_snapshot_id,
         prev_state_sha=prev_state_sha, initial_active_sha=previous_sha if not prev_state_sha else "",
         rule_params=rule_params(params),
-        rule_version=INFO_RULE_VERSION, candidate_ranking=ranking, retire_reason_counts=counts,
+        rule_version=INFO_RULE_VERSION, candidate_ranking=ranking, ranking_complete=complete, retire_reason_counts=counts,
         restored_irt_rows=restored,
         retired_ledger={key: _ledger_row(initial_retired_ledger or {}, key) for key in (initial_retired_ledger or {})} |
                        {row.id: (row.head_rollouts, row.head_passes) for row in retired.values()},

@@ -6,11 +6,11 @@
 
 `sn120_v2/envs/reserve/` holds:
 
-- `shards/<NNNN>-<slug>.jsonl`: immutable, canonical JSONL. Each row has `id`, `env`, `problem`, `answer`, `source` (dataset, revision and original row), `license`, `added_at` (the UTC `YYYY-MM-DD` ingest date) and `audit`. Only `audit.verdict == "keep"` is accepted. `math:` and `dapo:` prefixes are reserved for the base pool.
+- `shards/<NNNN>-<slug>.jsonl`: immutable, canonical JSONL. Each row has `id`, `env`, `problem`, `answer`, `source` (dataset, revision and original row), `license`, `added_at` (the UTC `YYYY-MM-DD` ingest date) and `audit`. Ordinary rows have `audit.verdict == "keep"`. A global-prior row has exactly `{"method":"prior-v1 unscreened, prior_p from difficulty_meta","verdict":"unscreened"}` and may carry `prior_p`; it has passed the live grader answer-format self-check, not a difficulty or key screen. `math:` and `dapo:` prefixes are reserved for the base pool.
 - `withdrawn.jsonl`: append-only `{id, reason, added_at}`. A withdrawn reserve task is not admitted; a withdrawn active task is retired outside the `k` cap.
 - `MANIFEST.jsonl`: shard rows `{shard, sha256, count, added_at}` in admission order, followed by the current `{withdrawn: {sha256, count}}` pointer. `reserve_manifest_sha` is the SHA-256 of this file's bytes.
 
-The shipped reserve has zero shards. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens. `SN120_RESERVE_DIR` is a test-only override.
+The shipped reserve has the original screened shards followed by the first global-prior batch. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens. `SN120_RESERVE_DIR` is a test-only override.
 
 The reserve is not in `env_pin` or `params_hash`. Each rotated round records the reserve manifest SHA in its journal, round file, public rotation artifact and IRT snapshot. Shards and the manifest are mirrored under `public/pool/reserve/`; miners need no git checkout. The active set is public before its round: `public/pool/active/<active_sha>.json`; the next-up queue is in each round's `pool` block. On a fresh checkout, `PoolRuntime` restores the mirrored shards and retired archive before reading the catalog; a newer local manifest may extend, but not replace, that history.
 
@@ -38,6 +38,35 @@ python -m sn120_v2.envs.reserve ingest ... --readmit omni:17 readmit.jsonl
 ```
 
 Its `source_id` must be the retired id, problem and answer must exactly match the archive, and the row carries `audit.readmit_of = <retire round>`. It is a new queue entry. Low-retired and withdrawn tasks cannot return.
+
+## Global-prior ingest (unscreened, tooling only)
+
+The published [sn120-math-prior-v1 release](https://github.com/AffineFoundation/affine/releases/tag/sn120-math-prior-v1) is a candidate list, not a difficulty- or key-screened reserve. Prod's own evaluation is the screen. `ingest-prior` therefore labels these rows **unscreened**, without claiming they are audited `keep` rows:
+
+```
+uv pip install -e ".[envs,prior]"
+python -m sn120_v2.envs.reserve ingest-prior \
+  --prior-dir <MANIFEST-and-all-parquet-directory> --n 20000 --seed <seed> \
+  [--min-p 0.15 --max-p 0.85 --no-signal-share 0.10]
+python -m sn120_v2.envs.reserve verify
+```
+
+Before decoding rows it verifies every `MANIFEST.json` shard SHA-256, filename, schema and row count. `pyarrow` is an optional tooling dependency and is never imported by the controller. The release is not vendored.
+
+The deterministic `prior_p` mapping is:
+
+1. A published finite rate in `[0,1]`: `pass_rate_72b_tir` (also accepted under the published `pass_72b_tir` spelling), `llama8b_solve`, `medium_pass`, then generic `pass_rate` / `accuracy`, in that order.
+2. Nemotron `gptoss_acc`: the unweighted mean of all its published gpt-oss rates. Every rate must be finite and in `[0,1]`.
+3. OpenR1 `r1_correct`: a count out of eight, divided by eight.
+4. A known difficulty label: Polaris `k/8` maps to `1-k/8`; `easy`, `medium`, `hard` map to 0.85, 0.5, 0.15. This is a deterministic estimate, not a new fitted model. Other numeric difficulty labels, such as DeepMath's `difficulty`, have no published pass-rate meaning here and get no prior.
+
+Unsupported/missing metadata gets no `prior_p`; rotation then uses `rotation_prior_p`. Rows with `in_sn120_pool`, `key_from_majority` true (including the release's JSON string spelling), or an ID/problem already in the base, reserve, retired or withdrawn evidence are excluded before selection. The default band includes both endpoints: `0.15 <= prior_p <= 0.85`. At most `floor(n * no_signal_share)` no-signal rows are selected; this is a ceiling, not a quota, and defaults to 10%.
+
+Candidates are ordered by `sha256(seed + "|" + prior_id)`, with source as a final deterministic guard. At most `0.40*n` selected rows may come from one source. Exactly N eligible rows are required; the command fails rather than silently returning a short batch. Every selected answer passes the same live `grade_answer` self-check and ordinary problem/answer/mandate bounds. One canonical JSONL shard is appended per source/license, in that order, with `env=affine_math`, `<source-prefix>:<next numeric id>` IDs, original dataset revision/row provenance and the exact unscreened audit block above. All earlier shards and their manifest rows stay byte-identical.
+
+## Generator accepted tasks
+
+`python -m sn120_v2.envs.reserve ingest-generator accepted-<epoch>.jsonl ... --prior-dir DIR` accepts generator drops whose rows have `problem`, `answer`, `source_id`, measured `prior_p`, `submitter`, `n` and `k`. The checksum-verified prior-v1 release supplies the original source and license; accepted rows use the same source-prefixed numeric task IDs as `ingest-prior`. The prior problem hash dedupes against the prior batch, base pool, reserve, retired and withdrawn rows, and each accepted answer must pass the live grader self-check. Accepted rows keep the measured `prior_p` and carry `{"method":"generator accepted, measured king pass rate","verdict":"screened"}`; they are not subject to `rotation_unscreened_max`. Public rows never contain submitter/n/k. Per-epoch provenance is written separately under `provenance/generator-<epoch>.jsonl` and is not read by the controller or used in replay. Re-running an accepted file adds no tasks. `python v2/ops/generator_ingest.py --prior-dir DIR [--dry-run]` processes pending epochs from fresh `origin/v2` worktrees; it records an epoch only after its reserve-only PR is opened and, unless `--no-merge` is set, its confirmed merge SHA is returned.
 
 ## Rule (`affine-pool-rotation-v1`)
 
@@ -77,7 +106,8 @@ Select this rule with `rotation_rule="info"`. The existing v1 rule and its bytes
 - `rotation_churn_frac` (default 0.10),
 - `rotation_prior_p` (default 0.5),
 - `rotation_queue_publish` (default 2000), and
-- `rotation_churn_max` (default 0, no extra cap; when positive, an additional operational ceiling on steady-state swaps).
+- `rotation_churn_max` (default 0, no extra cap; when positive, an additional operational ceiling on steady-state swaps), and
+- `rotation_unscreened_max` (default 0, **no cap**; when positive, the maximum number of `audit.verdict == "unscreened"` tasks admitted per round, counting fill and swaps together).
 
 The candidates are the previous active set minus withdrawals, the unconsumed reserve queue, and the non-withdrawn retired archive. Withdrawn tasks never return. A v2 retirement is not permanent: a task can become a high-information candidate again. A returning task restores its exact archived `(difficulty, information, rounds_seen)` row and its head-ledger evidence; a brand-new task uses the same head-ability prior as v1. The IRT table keys remain exactly the active set.
 
@@ -87,7 +117,7 @@ With `T = rotation_active_size or the initial active size`, apply this order eve
 
 1. Remove withdrawn active tasks, outside the churn cap.
 2. If above target, retire the lowest-scored `|A|-T` active tasks, with no cap. Reasons are `excess`, or `high`/`low` for flagged tasks.
-3. If below target, admit the highest-scored outside candidates, with no cap.
+3. If below target, admit the highest-scored outside candidates, with no cap on screened candidates. A positive `rotation_unscreened_max` caps raw admissions across this fill and step 4 together; skipped raw candidates stay in the outside queue for later rounds.
 4. While a strictly higher-scored outside candidate exists, swap it for the lowest-scored active task, at most `floor(rotation_churn_frac * T)` times (and additionally at most `rotation_churn_max` when that is positive). Reasons are `high`, `low`, or `displaced`. Thus the swap count is reserve-bounded: it never exceeds the number of outside candidates strictly better than the active task replaced, and it is zero when no such candidate exists. Shrink/fill and withdrawals are not swaps and are not capped by these settings.
 
 Retirements are ascending by score; admissions are descending. Every tie uses `sha256(f"{round_id}|rank|{task_id}")`, with task ID as the final deterministic guard. There is no random number, wall-clock time, Python `hash()`, or dependence on shard/input order. `next_up` is the top `rotation_queue_publish` remaining outside candidates in rank order, not FIFO order. Reserve metadata is read once at runtime construction; the per-round selection is `O(|C| log |C|)` and carries only IDs, priors, IRT rows and ledger counts.
@@ -96,7 +126,7 @@ Retirements are ascending by score; admissions are descending. Every tie uses `s
 
 In addition to the existing active, rotation, state, reserve and retired files:
 
-- `public/pool/ranking/<round_id>.json` contains every candidate: `id`, previous `state`, `p`, `rounds_seen`, `score`, `flags`, `source_prefix`, `env`, `head_rollouts`, `head_passes`, and `admitted`/`retired`/`retire_reason` for this decision.
+- `public/pool/ranking/<round_id>.json` contains every candidate while the candidate count is at most 100,000: `id`, previous `state`, `p`, `rounds_seen`, `score`, `flags`, `source_prefix`, `env`, `head_rollouts`, `head_passes`, `unscreened` when true, and `admitted`/`retired`/`retire_reason` for this decision. Above 100,000 candidates it publishes all active and all retired-state rows, plus the top 20,000 remaining outside candidates in rank order. The file and Rotation carry `ranking_complete: false` for this bounded view. It never truncates replay inputs: the full queue, reserve history, IRT table, ledgers and retired archive remain in their existing public artifacts, and admitted IDs are derived from the complete decision rather than the view.
 - `public/pool/rotation/<round_id>.json` carries the same complete candidate ranking plus admitted IDs, retired IDs/reasons, `next_up`, `rule_params` and `retire_reason_counts`.
 - `public/pool/summary.json` aggregates the post-decision active composition and score histogram, reserve/retired counts, and the last 20 v2 rounds for the static `/pool` page (`pool.html`). The page has a top-50 upcoming queue and a client-side search over the complete latest ranking. All times are UTC.
 
@@ -104,7 +134,9 @@ The first v1-to-v2 transition publishes the complete previous retired archive, c
 
 Strict replayer schema additions (all optional and omitted on v1/old journals):
 
-- `Params`: `rotation_rule`, `rotation_churn_frac`, `rotation_prior_p`, `rotation_queue_publish`, `rotation_churn_max`.
+- `Params`: `rotation_rule`, `rotation_churn_frac`, `rotation_prior_p`, `rotation_queue_publish`, `rotation_churn_max`, `rotation_unscreened_max`.
+- `Reserve`: `audit_verdicts` (sparse non-`keep` verdicts; retired raw rows retain `audit_verdict` in their archive rows).
+- `Rotation`: `ranking_complete` (omitted when true; false for the bounded large-pool view). Ranked candidate rows include optional `unscreened: true`.
 - `Reserve`: `candidate_meta` (per-ID `source_prefix`, `env`, optional `prior_p`).
 - `Rotation`: `candidate_ranking`, `retire_reason_counts`, `restored_irt_rows`, `initial_retired_archive`, `initial_candidate_meta`, `initial_retired_ledger`, `retired_ledger`, `opened_at`.
 - Journal: no new record kind and no new `RoundRecord` field. The existing optional `RoundRecord.rotation` map additionally carries `retire_reason_counts` and the v2 `rule_version`; v2 artifact keys and rule params are included by the existing public view. Old journals replay without these additions.
