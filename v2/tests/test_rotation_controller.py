@@ -38,7 +38,8 @@ def make_reserve(root: Path, count: int = 20):
 
 
 def rotated_world(tmp_path, reserve_count=20, **changes) -> tuple[SimWorld, PoolRuntime]:
-    params = sim_params(rotation_enabled=True, rotation_k=3, rotation_retire_p=0.1, rotation_n_min=0, rotation_active_size=2, **changes)
+    params = sim_params(rotation_enabled=True, rotation_k=3, rotation_retire_p=0.1, rotation_n_min=0,
+                        rotation_active_size=changes.pop("rotation_active_size", 2), **changes)
     world = SimWorld(tmp_path, params)
     # Explicit initial ids keep the test quick; production PoolRuntime defaults
     # to all 20,120 base-pool ids, and therefore target size 20,120.
