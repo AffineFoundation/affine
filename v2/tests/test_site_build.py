@@ -45,7 +45,7 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "pool", "pool.html", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
     for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
         assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
@@ -82,6 +82,27 @@ def test_pool_page_builds_from_mirrored_summary_and_ranking(tmp_path):
     assert (out / "pool-data.json").read_text() == (store / layout.pool_ranking("r000070")).read_text()
     assert 'href="pool.html"' in (out / "index.html").read_text()
     assert "Task drill-down" in (out / "pool.html").read_text()
+
+
+def test_generator_pages_use_public_generator_paths_and_versioned_assets(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    page = (out / "generator" / "index.html").read_text()
+    guide = (out / "generator-guide" / "index.html").read_text()
+    for document in ((out / "generator.html").read_text(), (out / "generator-guide.html").read_text(), page, guide):
+        assert "{{" not in document
+        assert re.search(r'href="(?:\.\./)?site\.css\?v=[0-9a-f]{8}"', document)
+        assert re.search(r'href="(?:\.\./)?generator\.css\?v=[0-9a-f]{8}"', document)
+        assert re.search(r'src="(?:\.\./)?generator\.js\?v=[0-9a-f]{8}"', document)
+        assert not re.search(r'(?:href|src)="https?://[^\"]+\.(?:js|css)', document)
+    assert 'aria-current="page">Generator</a>' in page
+    assert 'href="../generator-guide/"' in page and 'href="generator-guide.html"' in (out / "generator.html").read_text()
+    assert 'href="../generator/"' in guide and 'href="../state.json"' in page
+    assert 'role="timer"' in page and 'generator-guide.md' in guide
+    assert '811,609' in page and 'sn120-math-prior-v1' in page
+    assert 'href="../generator.html"' not in page + guide
+    # The new navigation entry is confined to the Generator pages.
+    assert 'aria-current="page">Generator</a>' not in (out / "index.html").read_text()
 
 
 def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_the_script_fills(tmp_path):
