@@ -31,8 +31,9 @@ is pinned, its file order is preserved, and the task indices are 0 through 1208.
 
 `gsm8k_platinum` is enabled but initially has `in_avg = false`. The operator flips it to `true` once every shown row has a
 `gsm8k_platinum` result. Until the backfill finishes, counting it would leave rows without an Avg or make their averages
-incomparable. The original `gsm8k` benchmark is disabled and display-only; its published scores and the column remain as
-history. The root-level v1 `bench/` is unchanged.
+incomparable. The original `gsm8k` benchmark is disabled. As of 19 Nov 2026, the v2 table no longer shows the GSM8K column;
+its published scores remain in the store and in `public/benchmarks.json`. ArXivMath now counts fully in Avg. The root-level
+v1 `bench/` is unchanged.
 
 AffineValidator's checkout has local uncommitted edits to `v2/site/build.py`. The site-builder hunk of this change must be
 merged by hand there, or left out by the operator's decision; do not discard those local edits. Without that hunk, the old

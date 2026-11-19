@@ -186,10 +186,22 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
     # Disabled, in_avg=false benchmarks keep their published history as a display-only column.
-    enabled = sorted((b for b in bench["benchmarks"] if b.get("enabled") or b.get("in_avg") is False),
+    # GSM8K is the leftover original test set: keep its scores in the file, drop only the column (Jacob, 19 Nov 2026).
+    def visible(b: dict[str, Any]) -> bool:
+        if b.get("id") == "gsm8k" and not b.get("enabled"):
+            return False
+        return bool(b.get("enabled") or b.get("in_avg") is False)
+
+    enabled = sorted((b for b in bench["benchmarks"] if visible(b)),
                      key=lambda b: (b["suite"], b.get("order") or 0))
-    columns = [{"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
-               for b in enabled or (kept or {}).get("columns", ())]
+    columns = []
+    for b in enabled or (kept or {}).get("columns", ()):
+        if b.get("id") == "gsm8k" and not b.get("enabled"):
+            continue
+        column = {"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
+        if column["id"] == "arxivmath":
+            column["in_avg"] = True  # count fully in Avg (Jacob, 19 Nov 2026)
+        columns.append(column)
     counted = [b["id"] for b in columns if b["in_avg"]]
     cells: dict[str, dict[str, Any]] = {}
     for result in bench["results"]:  # the file orders the newest protocol of one (model, benchmark) last
