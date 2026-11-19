@@ -99,6 +99,26 @@ def test_retired_raw_provenance_caps_readmission_and_public_replay(tmp_path):
     assert report["matches"] and report["actual"] == report["expected"]
 
 
+def test_retirement_preserves_raw_provenance_for_later_rounds():
+    active = {f"a:{i}": [0.0, 0.25, 4] for i in range(3)}
+    pool = {"raw:0": .5, "screened:0": .49}
+    params = info_params(rotation_active_size=4, rotation_churn_frac=0.0, rotation_unscreened_max=1)
+    first = rotate_info("r000070", active, snapshot(active, 2.0), {}, reserve(pool, {"raw:0"}), params)
+    assert set(first.admitted) == {"raw:0"}
+    later_reserve = Reserve.from_dict(first.reserve_history | {"queue": (), "audit_verdicts": {}, "candidate_meta": {"raw:0": {"unscreened": True}}})
+    shrink = rotate_info("r000071", first.active_ids, snapshot({task: [0.0, .25, 4] for task in first.active_ids}, 2.0),
+                         first.ledger, later_reserve, info_params(rotation_active_size=1, rotation_churn_frac=0.0, rotation_unscreened_max=1),
+                         retired_archive=first.retired_archive)
+    assert shrink.admitted == ()
+    archived = next(row for row in shrink.retired_archive if row["id"] == "raw:0")
+    assert archived["audit_verdict"] == "unscreened"
+    later = rotate_info("r000072", shrink.active_ids, snapshot({task: [0.0, .25, 4] for task in shrink.active_ids}, 2.0),
+                        shrink.ledger, reserve({}, set()), info_params(rotation_active_size=4, rotation_churn_frac=0.0, rotation_unscreened_max=1),
+                        retired_archive=shrink.retired_archive)
+    row = next(row for row in later.candidate_ranking if row["id"] == "raw:0")
+    assert row["unscreened"] and "raw:0" in later.admitted
+
+
 def test_large_ranking_is_bounded_without_dropping_replay_inputs():
     count = RANKING_LIMIT + 1
     active = {"a:0": [0.0, 0.25, 4]}

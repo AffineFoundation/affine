@@ -73,7 +73,7 @@ class Reserve(Record):
     withdrawn_sha: str = ""
     withdrawn_count: int = 0
     candidate_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
-    LEFT_OUT_AT_DEFAULT = ("candidate_meta",)
+    LEFT_OUT_AT_DEFAULT = ("candidate_meta", "audit_verdicts")
     audit_verdicts: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -359,7 +359,7 @@ def rotate_info(
     for task_id, state in [(task_id, "active") for task_id in ids] + [(task_id, "reserve") for task_id in reserve.queue]:
         row = tasks.get(task_id)
         meta = _candidate_meta(reserve, task_id)
-        unscreened = reserve.audit_verdicts.get(task_id) == "unscreened"
+        unscreened = bool(meta.get("unscreened")) or reserve.audit_verdicts.get(task_id) == "unscreened"
         rolls, passes = _ledger_row(ledger, task_id)
         if state == "active" and row is not None:
             rounds = int(row[2])
@@ -499,7 +499,7 @@ def rotate_info(
         outside_rows = [row for row in ranking if row["id"] not in published]
         published.update(row["id"] for row in outside_rows[:RANKING_OUTSIDE_LIMIT])
         ranking = tuple(row for row in ranking if row["id"] in published)
-    admitted = tuple(row["id"] for row in ranking if row["admitted"])
+    admitted = tuple(task_id for task_id, row in sorted(rows.items(), key=lambda item: (-item[1]["score"], item[1]["tie"], item[0])) if row["admitted"])
     upcoming = tuple(row["id"] for row in ranking if row["id"] in outside and row["id"] not in withdrawn)
     restored = {task_id: tuple(archives[task_id]["irt_row"][:3]) for task_id in admitted if task_id in archives and archives[task_id].get("irt_row")}
     counts = {reason: sum(row.reason == reason for row in retired.values()) for reason in sorted({row.reason for row in retired.values()})}
