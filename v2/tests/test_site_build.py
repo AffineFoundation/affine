@@ -9,7 +9,11 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tomllib
+import urllib.error
 from pathlib import Path
+
+import pytest
 
 from sn120_v2 import layout, sim
 from sn120_v2.types import King, V1Import
@@ -45,11 +49,12 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "round.html", "supply.html", "v1.html", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
-    for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
-        assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
-    assert "{{" not in (out / "v1.html").read_text() and 'href="v1.html"' in page
+    for other in ("round.html", "supply.html", "v1.html"):  # each other page gets the same stamped files, and the home page links to it
+        for name in ("site.js", "site.css", "favicon.svg"):
+            assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / other).read_text())
+        assert "{{" not in (out / other).read_text() and f'href="{other}"' in page
     assert "{{" not in page
     stamps = dict(re.findall(r"""["']([\w.-]+\.(?:js|css|svg|ttf))\?v=([0-9a-f]{8})["']""", page))
     assert set(stamps) == {"site.js", "site.css", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"}
@@ -57,6 +62,27 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_the_home_page_starts_with_the_benchmark_table_and_the_round_and_the_supply_have_their_own_pages(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    index, live, supply, v1 = ((out / name).read_text() for name in ("index.html", "round.html", "supply.html", "v1.html"))
+    sections = re.findall(r'<section id="(\w+)"', index)
+    assert sections == ["bench", "charts", "kings", "queue", "history", "rounds", "heads"]  # each id of before still names its section
+    bench = index[index.index('<section id="bench"'):index.index('<section id="charts"')]
+    assert bench.index('<div class="scroll wait"><table>') < bench.index('<div class="sparks"')  # the table first, the cards under it
+    assert re.findall(r'<section id="(\w+)"', live) == ["round"] and '<body data-page="round">' in live and len(re.findall(r"<dd data-f=", live)) == 8
+    assert re.findall(r'<section id="(\w+)"', supply) == ["supply"] and '<body data-page="supply">' in supply
+    assert "fetch('miner-supply.json?t='" in supply and "miner-supply.json" not in index + live  # only the supply page asks for the counts
+    # an old link to a section that moved leads to its page, before the first data is asked for
+    moved = "{const to={'#round':'round.html','#supply':'supply.html'}[location.hash];if(to)location.replace(to);}"
+    assert moved in index and index.index(moved) < index.index("window.SITE_DATA=fetch(")
+    nav = '<a href="round.html">Round</a><a href="supply.html">Supply</a><a href="v1.html">v1 history</a>'
+    assert all(re.sub(r' aria-current="page"', "", page).count(nav) == 1 for page in (index, live, supply, v1))
+    assert [page.count('aria-current="page"') for page in (index, live, supply, v1)] == [0, 1, 1, 1]
+    style = (out / "site.css").read_text()  # the lines of a table that waits stay in the box of a table
+    assert ".scroll.wait::before{" in style and not re.search(r"(?<![\w.])\.wait::before", style)
 
 
 def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_the_script_fills(tmp_path):
@@ -67,21 +93,25 @@ def test_each_page_has_the_shell_of_the_benchmark_table_and_of_each_chart_that_t
         bench = page[page.index('<section id="bench"'):]
         bench = bench[:bench.index("</section>")]
         assert '<div class="sparks"' in bench and "<thead></thead><tbody></tbody><tfoot></tfoot>" in bench and 'id="refs"' in bench
-        assert "the reference models, the largest first" in bench and "leads for its size" in bench  # the order of the v1 page
+        assert 'class="note"' not in bench  # explanations live in heading tooltips, not under the table
     sizes = script[script.index("const SIZE = {"):script.index("const size = ")]  # by label in lower case, in billions of parameters
     table = dict(re.findall(r"'([^']+)': ([\d.]+)", sizes))
     assert len(table) == 22 and all(name == name.lower() and 1 < float(size) < 25 for name, size in table.items())
     tiles = re.findall(r'<div class="tile" id="([\w-]+)">', index)
-    assert tiles == ["c-z", "c-pass", "c-batch", "c-time"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
+    assert tiles == ["c-z", "c-pass", "c-batch", "c-time", "c-cost", "c-lr"] and index.index('id="bench"') < index.index('id="charts"') < index.index('id="kings"')
     assert all(f"tile('{name}'" in script for name in tiles) and 'class="tile"' not in v1
     # a table names its columns: each name must be a column of the script, and each table must be on a page
     columns = set(re.findall(r"^    (\w+): \{ h: ", script, re.M))
     tables = dict(re.findall(r"^    (\w+): \{ cols: \[([^\]]+)\]", script, re.M))
-    assert set(tables) == {"kings", "queue", "history", "rounds", "heads", "v1kings", "v1turns"}
+    assert set(tables) == {"kings", "queueRound", "queueWait", "history", "rounds", "heads", "v1kings", "v1turns"}
     for name, cols in tables.items():
         assert set(re.findall(r"'(\w+)'", cols)) <= columns, name
-        assert f'<section id="{name}"' in index + v1
-
+        if name.startswith("queue"):
+            assert f'data-table="{name}"' in index
+        else:
+            assert f'<section id="{name}"' in index + v1
+    assert 'id="queue-totals"' in index and 'id="queue-pager"' in index
+    assert "already evaluated" not in script + index + v1
 
 def test_only_an_applied_winner_gets_files_and_unknown_fields_never_reach_the_page(tmp_path):
     snap = snapshot(tmp_path)
@@ -163,15 +193,162 @@ def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_pat
     assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
 
 
-def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
+def test_a_head_links_its_manifest_when_it_is_current_or_when_the_file_is_on_the_site(tmp_path):
+    """The validator writes the manifest of a head only while that head is current. An older head has its file, or it has none."""
+    snap = snapshot(tmp_path)
+    current, stacked, genesis = (line["version_id"] for line in snap["heads"][::-1])
+    assert snap["head"]["head"]["version_id"] == current and snap["heads"][0]["round_id"] == "genesis"
+    links = lambda text: [line["manifest"] for line in json.loads(text)["heads"]]  # noqa: E731
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, None]  # no file but the snapshot
+    path = tmp_path / "store" / layout.head_manifest(genesis)
+    path.parent.mkdir(parents=True)
+    path.write_text("{}")
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, f"{URL}/{layout.head_manifest(genesis)}"]
+    assert stacked not in json.dumps(links(build(tmp_path, snap)[2]))
+
+    # over http(s): a yes and a 404 are kept for the process; a read that failed in another way gives no link and is asked again
+    exists, asked = runpy.run_path(str(BUILD))["exists"], []
+    answers = {"a": b"{}", "b": urllib.error.HTTPError(URL, 404, "Not Found", None, None),
+               "c": urllib.error.HTTPError(URL, 503, "Busy", None, None), "d": TimeoutError("slow")}
+
+    def fetch(location: str) -> bytes:
+        asked.append(location)
+        answer = answers[location.removeprefix(f"{URL}/")]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    exists.__globals__["fetch"] = fetch
+    assert [exists(f"{URL}/", name) for name in "abcd" * 2] == [True, False, False, False] * 2
+    assert asked == [f"{URL}/{name}" for name in "abcdcd"]
+
+
+def test_the_presence_penalty_of_a_profile_on_the_page_is_the_one_of_the_benchmark_settings():
+    """The benchmark file gives only the name of a settings profile. The page has one list with the presence penalty of each name;
+    a name of that list that the settings file of the benchmark service has carries the same value there."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    assert script.count("const PP = ") == 1
+    listed = {name: float(value) for name, value in re.findall(r"'([^']+)': ([\d.]+)", re.search(r"^  const PP = \{(.*)\};$", script, re.M)[1])}
+    profiles = tomllib.loads((BUILD.parents[1] / "bench" / "config" / "model_settings.toml").read_text())["profiles"]
+    assert set(listed) & set(profiles)
+    for name in set(listed) & set(profiles):
+        assert profiles[name]["presence_penalty"] == listed[name], name
+
+
+def test_a_cell_with_no_value_says_why_in_words(tmp_path):
+    """On the v2 page a cell with no value is a short word, and its tooltip says why. No dash and no dots stand for a value."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    column = dict(re.findall(r"^    (\w+): (\{ h: .*)$", script, re.M))
+    tables = {name: re.findall(r"'(\w+)'", cols) for name, cols in re.findall(r"^    (\w+): \{ cols: \[([^\]]+)\]", script, re.M)}
+    for name in ("z", "gain", "bar", "capHit", "look", "head"):  # a batch with no score, and a king that came from v1
+        assert "unscored(r)" in column[name] and "—" not in column[name], name
+    assert "noM(r)" in column["mPass"] and "noM(r)" in column["mCap"] and "'no file')" in column["manifest"]
+    unscored = script[script.index("const unscored = "):script.index("const noM = ")]
+    assert "V1 ? mute('—')" in unscored and "Carried over from v1" in unscored and "'Not scored. '" in unscored  # the v1 page keeps its dash
+    # each other column of a v2 table that can print a dash prints it only for a field that the builder always sets
+    always = {"round": "round_id", "uid": "uid", "reg": "registration_block"}
+    for name in {name for table in ("kings", "queueRound", "queueWait", "history", "rounds", "heads") for name in tables[table]}:
+        assert "—" not in column[name] or name in always, name
+    snap = snapshot(tmp_path)
+    data = json.loads(build(tmp_path, snap)[2])
+    queue_with_reg = data["queue"]["round"] + [row for row in data["queue"]["waiting"] if row.get("registration_block") is not None]
+    rows = {"round": data["kings"] + data["history"] + data["rounds"] + data["heads"], "uid": data["kings"] + data["queue"]["rows"] + data["history"],
+            "reg": queue_with_reg}
+    for name, field in always.items():
+        assert rows[name] and all(row[field] is not None for row in rows[name]), name
+    assert all(row[field] for field, part in (("hotkey", "kings"), ("hotkey", "history"), ("sha", "history"), ("at", "kings"), ("at", "history"),
+                                               ("at", "rounds"), ("at", "heads"), ("head", "rounds"), ("head", "heads")) for row in data[part])
+
+    # the benchmark table: a cell with no score says the state of the run of its row. "queued", "running" and "failed" are words of
+    # the benchmark service's table; a model that no table names has "no run yet" ("not run" in the narrow column of the average)
+    states = re.findall(r"^    (\w+): \['([^']+)', '\w+', '[^']+', '([^']+)'\],$", script[script.index("const RUN = {"):script.index("RUN.evaluating")], re.M)
+    assert states == [("queued", "queued", "queued"), ("running", "running", "running"), ("failed", "failed", "failed"), ("none", "no run yet", "no run yet")]
+    table = script[script.index("  function bench(b) {"):script.index("  /* The chart tiles")]
+    assert "—" not in table and "…" not in table and "pending" not in script
+    assert "'No run yet: no benchmark file is published.'" in script and "!b.updated_at && !V1" in table
+    assert 'the benchmark file says "evaluating"' in script and "The benchmark file lists this model as queued" in script
+    assert "'No run yet: the benchmark file does not name this model.'" in script
+    assert "c === AVG && run(r)[3].length > 7 ? r.status === 'none' ? 'not run' : 'none' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
+    assert "'no benchmark run yet'" in table and "'No run yet: no benchmark file is published.'" in table
+    assert not re.search(r"'(queued|running|failed)'", table)  # the page gives a row no state of its own
+    assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: a row has one only when it has every counted benchmark.'" in table
+    bare = data["bench"]  # what the page reads to say "no benchmark has run": no time of a table, and the state of each row
+    assert bare["updated_at"] is None and [(row["status"], row["cells"], row["avg"]) for row in bare["rows"]] == [("none", {}, None)] * 2
+    # the live round and the tooltips of the charts
+    live = script[script.index("  function render() {"):script.index("  function status(")]
+    tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
+    assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
+    assert "'none: no submission was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
+    home = (BUILD.parent / "static" / "index.html").read_text()
+    assert "Submissions per round" in home and "['submissions'," in tiles
+    assert "already evaluated" not in script + home
+    assert "class: 'grid'" not in script  # charts keep axis labels; no grid lines
+
+
+def test_the_price_feed_is_asked_less_often_with_no_network_and_not_at_all_from_a_hidden_page(tmp_path):
+    """The price code of the header, run in node with a fake page: five requests with no answer, one answer, one turn
+    with the page hidden, one more request with no answer. The test reads the wait after each turn, in minutes."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; this test runs the price code of site.js")
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    code = script[script.index("  const PRICE_WAITS"):script.index("  const copyView")]
+    assert "setInterval" not in code
+    harness = r"""
+const waits = [], plan = ['none', 'none', 'none', 'none', 'none', 'answer', 'hidden', 'none'];
+let requests = 0, next = null;
+const el = () => ({ hidden: false, closest: () => ({}) });
+const document = { hidden: plan[0] === 'hidden', querySelector: el, getElementById: el }, utc = String;
+const setTimeout = (run, ms) => { waits.push(ms / 60000); next = run; };
+const fetch = async () => { requests++; if (plan[waits.length] === 'none') throw new Error('offline'); return { ok: true, json: async () => ({ incentive_prices: {} }) }; };
+CODE
+(async () => {
+  while (waits.length < plan.length) {
+    while (!next) await new Promise(setImmediate);
+    const run = next; next = null; document.hidden = plan[waits.length] === 'hidden';
+    if (waits.length < plan.length) await run();
+  }
+  console.log(JSON.stringify({ waits: waits.slice(0, plan.length), requests }));
+})();
+"""
+    (tmp_path / "prices.js").write_text(harness.replace("CODE", code))
+    done = subprocess.run([node, str(tmp_path / "prices.js")], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"waits": [1, 2, 4, 10, 10, 1, 1, 1], "requests": 7}
+
+
+def test_queue_lists_round_and_waiting_separately_with_clear_totals(tmp_path):
     snap = snapshot(tmp_path)
     queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert [(row["line"], row["uid"], row["file_valid"], row["flags"]) for row in queue["rows"]] == [
-        (1, 8, True, ["leased"]), (2, 6, False, []), (3, 9, False, [])]
-    assert queue["total"] == len(queue["rows"])
+    assert [(row["line"], row["uid"], row["file_valid"], row["flags"], row["zone"]) for row in queue["round"]] == [
+        (1, 8, True, ["leased"], "round")]
+    assert [(row["line"], row["uid"], row["file_valid"], row["flags"], row["zone"], row["file_verdict"]) for row in queue["waiting"]] == [
+        (1, 6, False, [], "normal", "not_valid"), (2, 9, False, [], "normal", "not_valid")]
+    assert queue["rows"] == queue["waiting"]
+    assert queue["summary"] == {
+        "in_round": 1, "waiting": 2, "valid": 0, "not_valid": 2, "not_judged": 0, "front": 0, "back": 0,
+    }
+    assert queue["total"] == 2
     snap["queue"]["length"] = 57  # the snapshot lists only the first seats of a long line
     queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert queue["total"] - len(queue["rows"]) == 55
+    assert queue["summary"]["waiting"] == 57 and queue["total"] == 57 and len(queue["waiting"]) == 2
+    # queue.files lists every waiting hotkey: the page then shows all of them, with next's order first
+    snap["queue"]["files"] = {
+        "seats": 4, "hotkeys": 4, "valid": 1, "not_valid": 1, "not_judged": 2, "checked_at": 100,
+        "verdicts": [
+            {"uid": 6, "hotkey": snap["queue"]["next"][0]["hotkey"], "file_valid": False, "file_verdict": "not_valid"},
+            {"uid": 9, "hotkey": snap["queue"]["next"][1]["hotkey"], "file_valid": True, "file_verdict": "valid"},
+            {"uid": 90, "hotkey": "hk90", "file_valid": False, "file_verdict": "not_judged"},
+            {"uid": 91, "hotkey": "hk91", "file_valid": False, "file_verdict": "not_judged"},
+        ],
+    }
+    snap["queue"]["length"] = 4
+    queue = json.loads(build(tmp_path, snap)[2])["queue"]
+    assert [row["uid"] for row in queue["waiting"]] == [6, 9, 90, 91]
+    assert [row["file_verdict"] for row in queue["waiting"]] == ["not_valid", "valid", "not_judged", "not_judged"]
+    assert queue["summary"] == {
+        "in_round": 1, "waiting": 4, "valid": 1, "not_valid": 1, "not_judged": 2, "front": 0, "back": 0,
+    }
 
 
 def test_a_bad_or_missing_snapshot_keeps_the_last_good_data(tmp_path):
@@ -338,6 +515,79 @@ def test_the_reference_models_come_from_the_frozen_v1_history_whatever_the_bench
     assert bench_view(table, heads)["rows"] == [row for row in both["rows"] if not row.get("v1")]
 
 
+def test_a_cell_has_its_samples_for_each_problem_and_a_kept_cell_gets_the_count_from_its_sample_count():
+    columns = [dict(id="ax", label="AX", suite="math", order=1, enabled=True, in_avg=False), dict(id="b1", label="B1", suite="math", order=2, enabled=True)]
+
+    def sampled(model: str, bench: str, rollouts: object, expected: object) -> dict:
+        return result(model, bench, 0.5) | {"rollouts": rollouts, "samples": expected, "samples_expected": expected}
+
+    def cells(expected: dict) -> dict:  # a reference row as the v1 history holds it: a sample count and no ``rollouts``
+        return {name: {"score": 0.5, "se": None, "partial": False, "samples": count, "expected": count, "cap_rate": None} for name, count in expected.items()}
+
+    kept = {"updated_at": 1, "columns": columns, "rows": [
+        dict(label="Ref-A", kind="reference", status="scored", cells=cells({"ax": 1648, "b1": 500})),
+        dict(label="Ref-B", kind="reference", status="scored", cells=cells({"ax": 1000}))]}
+    frozen = json.dumps(kept)
+    heads = [head("g" * 64, "genesis", 10, True), head("f1" * 32, "r000001", 21, True)]
+    models = [king("king-1", 21, "r000001", "f1" * 32), dict(model_id="g", label="genesis M", kind="genesis", status="scored")]
+
+    def counts(results: list) -> dict:
+        view = bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads, kept)
+        return {row["label"]: {name: cell["rollouts"] for name, cell in row["cells"].items()} for row in view["rows"]}
+
+    # 103 problems with 2 samples each for the king and the genesis head: the reference row has 1648 / 103 = 16
+    cut = [sampled("king-1", "ax", 2, 206), sampled("g", "ax", 2, 206), sampled("king-1", "b1", 1, 500)]
+    assert counts(cut) == {"r000001 f1f1f1f1": {"ax": 2, "b1": 1}, "Ref-A": {"ax": 16, "b1": 1}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 2}}
+    # two results of one benchmark with different problem counts, or a result with no count: no number is made for a kept cell
+    assert counts(cut + [sampled("g", "b1", 1, 100)])["Ref-A"] == {"ax": 16, "b1": None}
+    for no_count in (None, 0, True, "2", 2.0):
+        assert counts([sampled("king-1", "ax", no_count, 206)])["Ref-A"] == {"ax": None, "b1": None}
+    assert counts([sampled("king-1", "ax", 4, 206)])["Ref-A"]["ax"] is None  # 206 / 4 leaves a rest
+    # a model whose run with the count of before is the shown one keeps that count; when its new run is in the file (the newest
+    # of one model and benchmark is last), the cell has the count of the new run
+    before = [sampled("g", "ax", 16, 1648), sampled("king-1", "ax", 2, 206)]
+    assert counts(before) == {"r000001 f1f1f1f1": {"ax": 2}, "Ref-A": {"ax": 16, "b1": None}, "Ref-B": {"ax": None}, "Genesis M": {"ax": 16}}
+    assert counts(before + [sampled("g", "ax", 2, 206)])["Genesis M"] == {"ax": 2}
+    assert counts([])["Ref-A"] == {"ax": None, "b1": None} and json.dumps(kept) == frozen  # the kept table is not changed
+
+
+def test_a_full_run_has_its_own_column_and_a_row_has_its_machine_and_the_v1_king_has_no_round():
+    heads = [dict(version_id="g" * 64, round_id="genesis", folded=True, applied_at=10.0), dict(version_id="f1" * 32, round_id="r000001", folded=True, applied_at=20.0)]
+    columns = [dict(id="ax", label="ArXivMath", suite="math", enabled=True, in_avg=False, order=1), dict(id="b1", label="B1", suite="math", enabled=True, order=2)]
+    pod = dict(name="affine-v2-bench-king-1", gpu="8xH100", usd_h=23.2, state="renting", since=30)
+    models = [
+        dict(model_id="king-1", label="one", kind="king", round_id="r000001", head_version_id="f1" * 32, crowned_at=20.0, status="evaluating", pod=pod, profile="q"),
+        dict(model_id="old", label="v1 king E1211", kind="v1-king", round_id=None, uid=920, v1_epoch=1211, status="waiting", waiting_for="source", pod="none"),
+        dict(model_id="g", label="genesis M", kind="genesis", status="failed", stopped="held", v1_epoch=7, pod=pod | {"state": "released", "since": "then"}),
+    ]
+    short = result("king-1", "ax", 0.5) | {"rollouts": 2, "samples": 206, "samples_expected": 206, "n": 103}
+
+    def made(results: list) -> dict:
+        return bench_view({"updated_at": 9, "benchmarks": columns, "models": models, "results": results}, heads)
+
+    plain = made([short, result("old", "b1", 0.4)])
+    assert [(column["id"], column["problems"]) for column in plain["columns"]] == [("ax", 103), ("b1", None)]
+    king, old, genesis = plain["rows"]
+    assert king["pod"] == {"state": "renting", "since": 30} and genesis["pod"] == {"state": "released", "since": None} and "uid" not in king
+    assert (old["label"], old["kind"], old["uid"], old["round_id"], old["head"], old["at"]) == ("v1 king", "v1-king", 920, None, None, None) and "pod" not in old
+    assert (old["status"], old["waiting_for"], old["v1_epoch"]) == ("waiting", "source", 1211) and "stopped" not in old and "waiting_for" not in king and king["profile"] == "q" and "profile" not in old
+    assert (genesis["status"], genesis["stopped"]) == ("failed", "held") and "v1_epoch" not in genesis and king["cells"]["ax"]["profile"] is None
+    assert king["cells"]["ax"]["derived"] is False and list(king["cells"]) == ["ax"]
+
+    # the value of the king was computed from its run of 16 samples for each problem, and that run has its own score
+    full = made([short | {"derived_from": "ax/v1", "score_full": 0.25, "se_full": 0.04, "samples_full": 1648, "cap_rate": 0.2, "profile": "p"}])
+    assert [(column["id"], column["label"], column.get("head"), column["in_avg"], column.get("full_of")) for column in full["columns"]] == [
+        ("ax", "ArXivMath", None, False, None), ("ax:full", "ArXivMath, full run", "full run", False, "ax"), ("b1", "B1", None, True, None)]
+    cells = full["rows"][0]["cells"]
+    assert cells["ax"]["derived"] is True and (cells["ax"]["score"], cells["ax"]["rollouts"]) == (0.5, 2)
+    assert (cells["ax:full"]["score"], cells["ax:full"]["samples"], cells["ax:full"]["rollouts"]) == (0.25, 1648, 16)
+    assert (cells["ax:full"]["se"], cells["ax:full"]["cap_rate"], cells["ax:full"]["profile"], cells["ax"]["profile"]) == (0.04, 0.2, "p", "p")
+    # a derived value with no score of the full run, and a later result of the same model with none: no column
+    for results in ([short | {"derived_from": "ax/v1"}], [short | {"score_full": 0.25, "samples_full": 1648}, short]):
+        assert [column["id"] for column in made(results)["columns"]] == ["ax", "b1"]
+
+
+
 def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_file(tmp_path):
     """``public/mining.json`` is the snapshot plus the publisher's own keys. ``public/benchmarks.json`` may be absent or bad."""
     snap = snapshot(tmp_path) | {"snapshot_digest": "d" * 64, "contract": {"public_url": "https://x.example", "objects": {}}, "upload": {"k": 1}}
@@ -363,6 +613,149 @@ def test_the_site_builds_from_the_publishers_file_with_or_without_the_benchmark_
         done, _, text = build(tmp_path, snap)
         assert done.returncode == 0 and "no benchmark file" in done.stderr
         assert json.loads(text)["bench"] == bare and json.loads(text)["kings"] == data["kings"]
+
+
+def public_round(tmp_path: Path, train: dict | None = None) -> tuple[Path, Path]:
+    """Put the round file of round r000001 of ``snapshot`` and a winning batch of 2 prompts and 5 rollouts in the store of ``build``."""
+    made = tmp_path / "world" / "store" / layout.round_file("r000001")
+    report, batch = tmp_path / "store" / layout.round_file("r000001"), tmp_path / "store" / layout.winner_batch("r000001")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(made, report)
+    groups = [dict(prompt=f"p{at}", rollouts=[dict(output="o", reward=float(reward)) for reward in range(size)]) for at, size in enumerate((2, 3))]
+    batch.write_text(json.dumps(dict(version="affine-batch-v3", hotkey="hk4", groups=groups) | ({} if train is None else {"train": train})))
+    return report, batch
+
+
+def test_a_closed_round_gets_its_phase_times_and_a_winner_the_size_and_the_settings_of_its_batch(tmp_path):
+    """``extend``: the values come from ``round.json`` and from the winner's ``batch.json``. Without a file its fields are None."""
+    settable = [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[], allowed="1e-06 to 0.0001", decided="recipe")]
+    snap = snapshot(tmp_path) | {"contract": {"public_url": "https://x.example", "miner_settable": settable}}
+    winner = next(entry for entry in snap["history"][0]["entries"] if entry["status"] == "winner")
+    done, _, text = build(tmp_path, snap)  # no round file and no batch in the store: the page is built, and nothing is said
+    assert done.returncode == 0 and "phase time" not in done.stderr and "batch size" not in done.stderr
+    bare, none = json.loads(text), dict(batch_prompts=None, batch_rollouts=None, train=None)
+    assert all(row["phases"] is None and row | none == row for row in bare["rounds"])
+    assert all(row | none == row for row in bare["history"]) and all(king | none == king for king in bare["kings"])
+    assert bare["train_settable"] == [dict(key="lora_lr", default=1e-05, low=1e-06, high=1e-04, integer=False, choices=[])]
+    assert (bare["cap_hit_floor"], bare["cap_hit_margin"]) == (snap["params"]["cap_hit_floor"], snap["params"]["cap_hit_margin"])
+    old = {name: value for name, value in snap["params"].items() if name != "cap_hit_floor"} | {"cap_hit_margin": "0.02"}
+    done, _, text = build(tmp_path, snap | {"params": old})  # a snapshot with no such number, or with a text for it
+    assert done.returncode == 0 and (json.loads(text)["cap_hit_floor"], json.loads(text)["cap_hit_margin"]) == (None, None)
+    assert [(king["delta"], king["se"]) for king in bare["kings"]] == [(winner["delta"], winner["se"]), (None, None)]  # the gain needs no file
+
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    wall = json.loads(report.read_text())["wall_s"]
+    done, out, text = build(tmp_path, snap)
+    data, facts = json.loads(text), dict(batch_prompts=2, batch_rollouts=5, train={"lora_lr": 2e-05})
+    assert done.returncode == 0, done.stderr
+    times = data["rounds"][0]["phases"]
+    assert list(times) == ["training", "evaluation", "promote", "fold", "other", "total"] and times["total"] == wall["total"]
+    assert {name: times[name] for name in ("training", "evaluation", "promote", "fold")} == {
+        name: wall[name] for name in ("training", "evaluation", "promote", "fold")}
+    assert times["other"] == wall["total"] - wall["training"] - wall["evaluation"] - wall["promote"] - wall["fold"] >= 0
+    rows = {row["uid"]: row for row in data["history"]}
+    assert data["rounds"][0] | facts == data["rounds"][0] and rows[4] | facts == rows[4] and data["kings"][0] | facts == data["kings"][0]
+    assert all(rows[uid] | none == rows[uid] for uid in (3, 7)) and data["kings"][1] | none == data["kings"][1]  # only a winner's batch is public
+    for name in ("phases", *none):  # no field of before is removed or changed
+        for row in (*data["rounds"], *data["history"], *data["kings"]):
+            row.pop(name, None)
+    for name in ("phases", *none):
+        for row in (*bare["rounds"], *bare["history"], *bare["kings"]):
+            row.pop(name, None)
+    assert data == bare
+
+    report.unlink(), batch.unlink()  # a closed round does not change: the last data file has its values, so no file is read again
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and again == text
+    (out / "site-data.json").write_text("{not json")  # a bad last file is not used, and the build goes on
+    done, _, again = build(tmp_path, snap)
+    assert done.returncode == 0 and "the last site-data.json gives no value" in done.stderr and json.loads(again)["rounds"][0]["phases"] is None
+
+
+def test_a_value_of_the_last_data_file_is_used_only_with_the_mark_of_this_builder_and_not_in_a_full_read(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path, {"lora_lr": 2e-05})
+    done, out, text = build(tmp_path, snap)
+    good, mark = json.loads(text), json.loads(text)["fields_mark"]
+    assert done.returncode == 0 and mark == "sn120-v2-site-fields-1" and good["kings"][0]["batch_prompts"] == 2
+
+    def wrong(change: dict) -> None:
+        """The last data file with wrong values in it, and other files in the store."""
+        last = json.loads(json.dumps(good)) | change
+        last["rounds"][0]["phases"]["training"] = 999
+        last["kings"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        last["rounds"][0] |= {"batch_prompts": 999, "train": {"lora_lr": 9}}
+        (out / "site-data.json").write_text(json.dumps(last))
+
+    wrong({})  # the mark of this builder: the values are taken as they are, and the store is not read
+    report.unlink(), batch.unlink()
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["batch_prompts"] == 999 and json.loads(text)["rounds"][0]["phases"]["training"] == 999
+    public_round(tmp_path, {"lora_lr": 2e-05})
+    for change in ({"fields_mark": "sn120-v2-site-fields-0"}, {"fields_mark": None}):  # another mark, or no mark: one full read
+        wrong(change)
+        done, _, text = build(tmp_path, snap)
+        assert done.returncode == 0 and json.loads(text) == good
+    last = json.loads(json.dumps(good))
+    del last["fields_mark"]
+    (out / "site-data.json").write_text(json.dumps(last).replace('"batch_prompts":2', '"batch_prompts":999'))  # the file of a builder of before
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text) == good
+    wrong({})  # by hand: --full-read takes no value of the last file
+    done, _, text = build(tmp_path, snap, "--full-read")
+    assert done.returncode == 0 and json.loads(text) == good
+
+
+def test_a_bad_round_file_or_batch_leaves_its_fields_empty_and_a_batch_with_no_train_block_sets_nothing(tmp_path):
+    snap = snapshot(tmp_path)
+    report, batch = public_round(tmp_path)
+    done, out, text = build(tmp_path, snap)
+    assert done.returncode == 0 and json.loads(text)["kings"][0]["train"] == {} and json.loads(text)["train_settable"] is None
+    for bad_report, bad_batch in (("{not json", "[1]"), (json.dumps({"wall_s": {"training": 1}}), json.dumps({"groups": [{"prompt": "p"}]})),
+                                  (json.dumps({"outcome": "applied"}), json.dumps({"groups": [], "train": {"lora_lr": float("nan")}}))):
+        (out / "site-data.json").unlink()
+        report.write_text(bad_report), batch.write_text(bad_batch)
+        done, _, text = build(tmp_path, snap)
+        data = json.loads(text)
+        assert done.returncode == 0 and "no phase time of round r000001" in done.stderr and "no batch size of round r000001" in done.stderr
+        assert data["rounds"][0]["phases"] is None and data["kings"][0]["batch_prompts"] is None and data["kings"][0]["train"] is None
+    batch.write_text("[" * 100_000)  # an error of any other kind: the page of before is still written
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0 and "not all fields of the round files and the batches: RecursionError" in done.stderr
+    assert json.loads(text)["kings"][0]["uid"] == 4 and json.loads(text)["kings"][0].get("train") is None
+    batch.unlink()
+    report.write_text(json.dumps({"wall_s": {"training": 4, "evaluation": 3, "total": 9}}))  # a round that applied no head has two phases
+    done, _, text = build(tmp_path, snap)  # the next build reads a file again when the last build got no value
+    assert json.loads(text)["rounds"][0]["phases"] == dict(training=4, evaluation=3, promote=None, fold=None, other=2, total=9)
+
+
+def test_a_benchmark_row_has_its_budget_and_a_reference_model_its_repo_and_its_size(tmp_path):
+    snap = snapshot(tmp_path)
+    folded = next(line for line in snap["heads"] if line["folded"] and line["round_id"] == "r000001")
+    path = tmp_path / "store" / layout.BENCHMARKS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    models = [king("king-0123", folded["applied_at"], "r000001", folded["version_id"]) | {"budget": 65536},
+              dict(model_id="q", label="Qwen3-8B", kind="reference", status="scored"),
+              dict(model_id="n", label="New-1B", kind="reference", status="scored", hf="org/New-1B@abc", budget=1000),
+              dict(model_id="u", label="Unknown-2B", kind="reference", status="scored")]
+    path.write_text(json.dumps({"updated_at": 5, "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True)], "models": models,
+                                "results": [result(model["model_id"], "b1", 0.5) for model in models]}))
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    rows = {row["label"]: (row["repo"], row["repo_rev"], row["size_b"], row["budget"]) for row in json.loads(text)["bench"]["rows"]}
+    assert rows.pop(f"r000001 {folded['version_id'][:8]}") == (None, None, None, 65536) and rows.pop("Genesis") == (None, None, None, None)
+    assert rows == {"Qwen3-8B": ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", 8.19, 38912),
+                    "New-1B": ("org/New-1B", "abc", None, 1000), "Unknown-2B": (None, None, None, None)}
+
+
+def test_the_list_of_the_reference_models_is_equal_to_the_last_benchmark_file_of_v1_and_to_the_sizes_of_the_page():
+    """``REFERENCE`` of the builder: the repo and the budget are those of the v1 file, and the size is the one that the page shows."""
+    listed = runpy.run_path(str(BUILD))["REFERENCE"]
+    v1 = json.loads((Path(__file__).parent / "data" / "v1_reference_models.json").read_text())  # ``models[]`` of the kind reference of that file
+    assert v1["sha256"] in BUILD.read_text() and len(v1["models"]) == len(listed) == 22
+    assert {name: (hf, budget) for name, (hf, _, budget) in listed.items()} == {model["label"].lower(): (model["hf"], model["budget"]) for model in v1["models"]}
+    sizes = re.search(r"const SIZE = \{(.*?)\};", BUILD.with_name("static").joinpath("site.js").read_text(), re.S).group(1)
+    assert {name: size for name, (_, size, _) in listed.items()} == {name: float(size) for name, size in re.findall(r"'([^']+)': ([\d.]+)", sizes)}
 
 
 def v1_site(root: Path) -> Path:
