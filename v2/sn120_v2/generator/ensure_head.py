@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -127,7 +128,7 @@ def select_base(version: str, head: Mapping[str, Any], links: Mapping[str, Any])
 
 def download_base(entry: Mapping[str, Mapping[str, Any]], target: Path, *, opener: Callable[..., Any] = urllib.request.urlopen) -> None:
     """Hash and size every downloaded file before the target may be renamed."""
-    target.mkdir(parents=True, exist_ok=False)
+    target.mkdir(parents=True, exist_ok=True)
     for name, row in sorted(entry.items()):
         path = target.joinpath(*PurePosixPath(name).parts)
         path.parent.mkdir(parents=True, exist_ok=True)

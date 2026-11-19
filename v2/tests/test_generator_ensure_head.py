@@ -7,6 +7,8 @@ import json
 import os
 import shutil
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +16,7 @@ import pytest
 
 from sn120_v2.errors import InfraError, VerifyError
 from sn120_v2.generator.ensure_head import (
-    ensure_head, installed_version, require_installed, restart_servers, select_base,
+    _read_json_url, download_base, ensure_head, installed_version, require_installed, restart_servers, select_base,
 )
 from test_generator_remote import EPOCH, make_remote
 
@@ -30,6 +32,50 @@ def documents(version=VERSION, sha=None):
     head = {"head": {"version_id": version}, "base_files": {"model.bin": sha}}
     links = {"head_version_id": version, "base": entry}
     return content, head, links
+
+
+def test_actual_http_read_and_version_mismatch_restart(tmp_path, monkeypatch):
+    """Exercise the real URL reader and download path, not read_record injection."""
+    target = "090b28a7215c365404d6bae45a9b2d72dd10eca1ab686111a64db321af82179c"
+    content, head, links = documents(target)
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/base":
+                raw = content
+            else:
+                document = head if self.path == "/head" else links
+                document = json.loads(json.dumps(document))
+                if self.path == "/links":
+                    document["base"]["files"][0]["url"] = root + "/base"
+                raw = json.dumps(document).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    root = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setattr("sn120_v2.generator.ensure_head.HEAD_URL", root + "/head")
+    monkeypatch.setattr("sn120_v2.generator.ensure_head.LINKS_URL", root + "/links")
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / ".head_version").write_text("eed10626")
+    calls = []
+    try:
+        head_document = _read_json_url(root + "/head")
+        assert head_document["head"]["version_id"] == target
+        report = ensure_head(target, base=base, read_record=_read_json_url, fetch_files=download_base, restart=lambda: calls.append("restart"))
+        assert report["status"] == "prepared" and calls == ["restart"]
+        assert installed_version(base) == target
+        assert (base / "model.bin").read_bytes() == content
+        require_installed(target, base)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_current_head_download_hash_swap_and_restart(tmp_path):
