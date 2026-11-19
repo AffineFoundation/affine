@@ -263,10 +263,13 @@ class PoolRuntime:
         # v1->v2 transition carries the complete archive of the previous state.
         return previous.retired_archive if previous else ()
 
-    def open(self, round_id: str, snapshot: Mapping[str, Any]) -> tuple[Rotation, IRTSampler]:
+    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None) -> tuple[Rotation, IRTSampler]:
+        # Assembly constructs this runtime before the controller replaces its
+        # startup State by replay. Always take the controller's current state.
+        state = self.state if state is None else state
         if self.active_rotation is not None:
             raise ConfigError("cannot rotate while a rotated round is open")
-        if snapshot.get("snapshot_id") and self.state.snapshot_id and snapshot.get("snapshot_id") != self.state.snapshot_id:
+        if snapshot.get("snapshot_id") and state.snapshot_id and snapshot.get("snapshot_id") != state.snapshot_id:
             raise VerifyError("rotation source snapshot is not the last closed round's snapshot")
         previous = self.previous
         a_prev = previous.active_ids if previous else self.initial_ids
@@ -282,7 +285,7 @@ class PoolRuntime:
         decision = rotate_rule(round_id, a_prev, snapshot, previous_ledger, reserve, self.params,
                                initial_size=len(self.initial_ids), retired_archive=retired_archive,
                                source_snapshot_id=snapshot.get("snapshot_id", ""),
-                               prev_state_sha=self.state.rotation_state_sha if previous and previous.rule_version != INFO_RULE_VERSION else previous.digest() if previous else "",
+                               prev_state_sha=state.rotation_state_sha if previous and previous.rule_version != INFO_RULE_VERSION else previous.digest() if previous else "",
                                **({"initial_candidate_meta": self.candidate_meta, "initial_retired_ledger": previous.retired_ledger}
                                   if self.params.rotation_rule == "info" and previous and previous.rule_version != INFO_RULE_VERSION else {}))
         if self.params.rotation_rule == "info":

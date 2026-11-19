@@ -15,7 +15,7 @@ from sn120_v2.errors import ConfigError, VerifyError
 from sn120_v2.irt import IRTSampler
 from sn120_v2.journal import Journal, read_journal
 from sn120_v2.params import Params
-from sn120_v2.pool_runtime import PoolRuntime, active_file, load_rotation
+from sn120_v2.pool_runtime import PoolRuntime, active_file, load_rotation, replay_rotation
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.state import ROUND_OPENED, load
 from sn120_v2.store import LocalStore
@@ -46,7 +46,11 @@ def rotated_world(tmp_path, reserve_count=20, **changes) -> tuple[SimWorld, Pool
     root = tmp_path / "reserve"
     make_reserve(root, reserve_count)
     base_ids = tuple(f"sim:{i}" for i in range(400))
-    pool = PoolRuntime(world.store, params, world.controller.state, root=root, base=world_pool(), initial_ids=base_ids)
+    # Assembly constructs PoolRuntime before Controller replays the journal:
+    # the runtime receives a distinct startup State, not controller.state.
+    startup = load(world.root / "journal.jsonl")
+    assert startup is not world.controller.state and startup.last_seq >= 0
+    pool = PoolRuntime(world.store, params, startup, root=root, base=world_pool(), initial_ids=base_ids)
     world.controller.pool = pool
     world.controller.sampler = world.sampler
     world.register(1, 0.0)
@@ -170,6 +174,74 @@ def test_head_change_uses_snapshot_head_not_caller_head(tmp_path):
     previous_snapshot = json.loads(world.store.get(layout.irt_snapshot(world.controller._rotation.source_snapshot_id)))
     assert previous_snapshot["snapshot_id"] == world.controller._rotation.source_snapshot_id
     assert world.store.exists(layout.irt_snapshot(record.snapshot_id))
+
+
+def incident_world(root: Path, rotation_rule: str) -> SimWorld:
+    params = sim_params(rotation_enabled=True, rotation_rule=rotation_rule, rotation_k=3,
+                        rotation_retire_p=0.1, rotation_n_min=0, rotation_active_size=2)
+    world = SimWorld(root, params)
+    world.sampler = IRTSampler(world.pool, params)
+    world.controller.sampler = world.sampler
+    world.register(1, 0.0)
+    world.round()
+    startup = load(world.root / "journal.jsonl")
+    assert startup.snapshot_id and startup is not world.controller.state
+    reserve_root = root / "reserve"
+    make_reserve(reserve_root)
+    pool = PoolRuntime(world.store, params, startup, root=reserve_root, base=world_pool(), initial_ids=world.pool)
+    world.controller.pool = pool
+    return world
+
+
+@pytest.mark.parametrize("rotation_rule", ["v1", "info"])
+def test_one_controller_rotates_three_rounds_identically_to_restarts(tmp_path, rotation_rule):
+    # Start with an existing snapshot, as after the incident's first close.
+    # The next round's snapshot must not be checked against this startup one.
+    live = incident_world(tmp_path / "live", rotation_rule)
+    restarted = incident_world(tmp_path / "restarted", rotation_rule)
+    decisions = {}
+    for world in (live, restarted):
+        keys = []
+        for index in range(3):
+            if index and world is restarted:
+                world.reopen()
+                pool = PoolRuntime(world.store, world.params, world.controller.state,
+                                   root=world.root / "reserve", initial_ids=world.pool)
+                world.controller.pool = pool
+                world.controller.sampler = IRTSampler(world.pool, world.params)
+            world.register(index + 2, 0.0)
+            record = world.round()
+            assert record is not None
+            keys.extend((layout.pool_rotation(record.round_id), layout.pool_rotation_state(record.rotation["state_sha"])))
+            assert replay_rotation(world.store, record.round_id)["matches"]
+        decisions[world.root.name] = {key: world.store.get(key) for key in keys}
+    assert decisions["live"] == decisions["restarted"]
+
+
+@pytest.mark.parametrize("rotation_rule", ["v1", "info"])
+def test_controller_owning_runtime_state_also_runs_three_rotated_rounds(tmp_path, rotation_rule):
+    params = sim_params(rotation_enabled=True, rotation_rule=rotation_rule, rotation_k=3,
+                        rotation_retire_p=0.1, rotation_n_min=0, rotation_active_size=2)
+    world = SimWorld(tmp_path, params)
+    world.sampler = IRTSampler(world.pool, params)
+    world.controller.sampler = world.sampler
+    root = tmp_path / "reserve"
+    make_reserve(root)
+    pool = PoolRuntime(world.store, params, world.controller.state, root=root,
+                       base=world_pool(), initial_ids=world.pool)
+    world.controller.pool = pool
+    for uid in range(1, 4):
+        world.register(uid, 0.0)
+        record = world.round()
+        assert record is not None and replay_rotation(world.store, record.round_id)["matches"]
+
+
+def test_rotation_open_still_refuses_a_snapshot_other_than_the_last_closed(tmp_path):
+    world, pool = rotated_world(tmp_path)
+    world.round()
+    previous = json.loads(world.store.get(layout.irt_snapshot(world.controller.state.snapshot_id)))
+    with pytest.raises(VerifyError, match="rotation source snapshot is not the last closed round's snapshot"):
+        pool.open("r000002", previous | {"snapshot_id": "not-the-last-closed-snapshot"}, state=world.controller.state)
 
 
 @pytest.mark.parametrize("rotation_rule", ["v1", "info"])
