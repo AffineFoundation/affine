@@ -31,6 +31,7 @@ for d in (ST, RES, PRIV):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
+ROLLOUT_RETRIES_PER_LOOP = 3; ROLLOUT_BACKOFF_S = 300; ROLLOUT_MAX_BACKOFF_S = 86400
 NODE = Node()
 
 
@@ -47,6 +48,7 @@ def log(**k):
 
 S = rj(SF, {}) or {}
 S.setdefault("fail", {}); S.setdefault("unavailable", []); S.setdefault("history", []); S.setdefault("rollout_uploads", {})
+S.setdefault("rollout_pending", {})  # only rollouts this code observed on the active single NODE; never legacy results
 def save(): wj(SF, S)
 
 
@@ -155,7 +157,12 @@ def collect(run):
         os.chmod(f"{PRIV}/{rk}/{bid}.per_task.jsonl", 0o600)
         os.makedirs(f"{RES}/{m['model_id']}", exist_ok=True); wj(result_path(m["model_id"], bid), r)
         got[bid] = round(r["score"], 4) if r.get("score") is not None else None
-        collect_rollout(run, bid, r)
+        exists = NODE.out(f"test -f {C.NODE_ROOT}/runs/{rk}/{bid}/rollouts.jsonl.gz && echo yes", timeout=15).strip() == "yes"
+        identity = f"{m['model_id']}/{bid}"
+        if exists and identity not in S["rollout_uploads"]:
+            # A result without this marker is legacy or predates this feature: retry_rollouts never discovers it.
+            S["rollout_pending"].setdefault(identity, dict(model=m["model_id"], run_key=rk, bid=bid, next_at=0.0, delay=ROLLOUT_BACKOFF_S, attempts=0))
+            collect_rollout(run, bid, r)
     done = rj_node_done(rk)
     S["history"].append(dict(model=rk, started=run["started"], finished=now(), wall_s=now() - run["started"], node_wall_s=(done or {}).get("wall_seconds"),
                              serve_s=(done or {}).get("serve_seconds"), scores=got, gpu=C_POD.get("gpu"), usd_h=C_POD.get("cost"), pod=C_POD.get("huid")))
@@ -235,6 +242,7 @@ def upload_rollout(mid, bid, path, result):
                 key=key)
     store.put(layout.public_rollout_bench_meta(mid, bid), json.dumps(meta, sort_keys=True, indent=1).encode())
     S["rollout_uploads"][f"{mid}/{bid}"] = data
+    S["rollout_pending"].pop(f"{mid}/{bid}", None)
     save()
     log(event="rollouts-uploaded", model=mid, benchmark=bid, rows=rows, bytes=size, sha256=data)
 
@@ -246,6 +254,8 @@ def collect_rollout(run, bid, result):
     try:
         known = S["rollout_uploads"].get(identity)
         if known and source.store().sha256(layout.public_rollout_bench(mid, bid)) == known:
+            S["rollout_pending"].pop(identity, None)
+            save()
             return
         if not os.path.isfile(path):
             fetch_rollout(rk, bid, path)
@@ -259,18 +269,23 @@ def collect_rollout(run, bid, result):
         else:
             raise IOError("rollout upload failed after three tries")
     except Exception as exc:  # score publication must never depend on a large public artifact
+        pending = S["rollout_pending"].setdefault(identity, dict(model=mid, run_key=rk, bid=bid, next_at=0.0, delay=ROLLOUT_BACKOFF_S, attempts=0))
+        pending["attempts"] = int(pending.get("attempts", 0)) + 1
+        pending["next_at"] = now() + float(pending.get("delay", ROLLOUT_BACKOFF_S))
+        pending["delay"] = min(ROLLOUT_MAX_BACKOFF_S, float(pending.get("delay", ROLLOUT_BACKOFF_S)) * 2)
+        save()
         log(event="rollouts-upload-deferred", model=mid, benchmark=bid, error=type(exc).__name__, detail=traceback.format_exc(limit=3)[-600:])
 
 
 def retry_rollouts():
-    """One bounded attempt per cached result per loop; missing node caches are retried on their next collected run."""
-    for mid in os.listdir(RES):
-        for filename in os.listdir(f"{RES}/{mid}") if os.path.isdir(f"{RES}/{mid}") else ():
-            if not filename.endswith(".json"):
-                continue
-            result = rj(f"{RES}/{mid}/{filename}")
-            if result:
-                collect_rollout(dict(model=dict(model_id=mid), run_key=mid), filename[:-5], result)
+    """At most three explicitly pending rollouts per loop. No historical-result or released-node discovery."""
+    current = now()
+    due = sorted((pending for pending in S["rollout_pending"].values() if float(pending.get("next_at", 0)) <= current),
+                 key=lambda pending: (float(pending.get("next_at", 0)), pending["model"], pending["bid"]))
+    for pending in due[:ROLLOUT_RETRIES_PER_LOOP]:
+        result = rj(result_path(pending["model"], pending["bid"]))
+        if result:
+            collect_rollout(dict(model=dict(model_id=pending["model"]), run_key=pending["run_key"]), pending["bid"], result)
 
 
 def rj_node_done(rk):

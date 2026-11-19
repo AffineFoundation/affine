@@ -1,9 +1,10 @@
 """Public model/task rollouts. Capture and publication never decide a score.
 
-The evaluator streams local gzip files as grades arrive. At round close only
+The evaluator appends plain JSONL as grades arrive. At round close only
 null/head and an applied winner are queued; every other candidate capture is
 unlinked locally and was never uploaded. A disk-backed publication queue
-survives a controller restart. The background worker retries store failures.
+survives a controller restart. The background worker retries store failures,
+parking a job after 20 attempts.
 """
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ from . import layout
 from .types import BoxResult, CAP, NOT_RUN, NULL_MODEL, PASS, RoundTicket
 
 SCHEMA = "sn120-v2-rollouts-gate-1"
+MIN_CAPTURE_FREE_BYTES = 50 << 30
+MAX_PUBLISH_ATTEMPTS = 20
 
 
 def utc(timestamp: int | float | None) -> str | None:
@@ -49,13 +52,6 @@ def deterministic_gzip(path: Path, rows: Iterable[dict[str, Any]]) -> tuple[int,
     return rows_n, path.stat().st_size, digest.hexdigest()
 
 
-def read_jsonl_gz(path: Path) -> Iterable[dict[str, Any]]:
-    with gzip.open(path, "rt", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                yield json.loads(line)
-
-
 @dataclass(frozen=True)
 class CapturedReply:
     """The same text/capped decision as before, plus unused-by-scoring metadata."""
@@ -75,125 +71,103 @@ class CapturedReply:
 
 
 class RolloutCapture:
-    """Thread-safe append-only local spool. No model text is held in memory."""
+    """Append-only local JSONL. No gzip member remains open across settlement."""
 
     def __init__(self, root: Path, pool):
         self.root, self.pool = Path(root), pool
         self.lock = threading.Lock()
         self.round_id = ""
-        self.files: dict[str, Any] = {}
-        self.paths: dict[str, Path] = {}
+        self.enabled = True
+        self.warned = False
 
     def start(self, request) -> None:
         with self.lock:
             if self.round_id == request.round_id:
                 return
-            self._close_unlocked()
             self.round_id = request.round_id
+            self._clean_old()
+            free = shutil.disk_usage(self.root.parent).free
+            self.enabled = free >= MIN_CAPTURE_FREE_BYTES
+            if not self.enabled and not self.warned:
+                print(f"public rollout capture disabled: {free} free bytes, below {MIN_CAPTURE_FREE_BYTES}", flush=True)
+                self.warned = True
 
-    def path(self, round_id: str, model: str) -> Path:
-        # The model id is a content hash, not an arbitrary local file name.
-        return self.root / round_id / "captures" / f"{model}.jsonl.gz"
+    def _clean_old(self) -> None:
+        current = int(self.round_id[-6:]) if self.round_id.startswith("r") and self.round_id[-6:].isdigit() else None
+        publication = self.root / "publication"
+        for path in self.root.glob("r[0-9][0-9][0-9][0-9][0-9][0-9]"):
+            number = int(path.name[1:])
+            if current is None or number >= current - 1:
+                continue
+            if not (publication / f"{path.name}.json").exists():
+                shutil.rmtree(path, ignore_errors=True)
 
     def reply(self, request, job, text: str, capped: bool, output_tokens: int, finish_reason: str) -> CapturedReply:
-        """Preserve the reply outside scoring; _grade adds its outcome and answer."""
         return CapturedReply(text, capped, output_tokens, finish_reason)
 
     def graded(self, request, job, reply, code: str, grade=None) -> None:
-        model, sample, index = job
         self.start(request)
+        if not self.enabled:
+            return
+        model, sample, index = job
         task = self.pool.task(request.task_ids[index])
         if isinstance(reply, CapturedReply):
-            text, capped = reply.text, reply.capped
+            text = reply.text
             tokens, finish = reply.output_tokens, reply.finish_reason
         else:
-            text, capped = reply if reply is not None else (None, False)
+            text = reply[0] if reply is not None else None
             tokens, finish = 0, None
-        extracted = getattr(grade, "answer", None)
         row = dict(round_id=request.round_id, role="head" if model == NULL_MODEL else "candidate",
                    model_version_id=request.head.version_id if model == NULL_MODEL else model,
                    winner_uid=None, sample_index=sample, task_pos=index, task_id=request.task_ids[index],
                    prompt=task.messages(), gold_answer=getattr(task, "answer", None),
-                   completion_text=text, extracted_answer=extracted, outcome=code,
+                   completion_text=text, extracted_answer=getattr(grade, "answer", None), outcome=code,
                    reward=1.0 if code == PASS else 0.0, capped=code == CAP,
                    output_tokens=tokens, finish_reason=finish)
+        data = json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode() + b"\n"
         with self.lock:
-            if model not in self.files:
-                path = self.path(request.round_id, model)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                self.paths[model] = path
-                self.files[model] = gzip.GzipFile(filename="", mode="wb", fileobj=path.open("ab"), mtime=0)
-            data = json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode() + b"\n"
-            self.files[model].write(data)
-            self.files[model].flush()
+            path = capture_file(self.root, request.round_id, model)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("ab") as handle:  # flush+close per row: readers never see a gzip trailer problem
+                handle.write(data)
+                handle.flush()
 
     def close(self) -> None:
-        with self.lock:
-            self._close_unlocked()
-
-    def _close_unlocked(self) -> None:
-        for handle in self.files.values():
-            try:
-                handle.close()
-            except OSError:
-                pass
-        self.files.clear()
-        self.round_id = ""
+        pass  # JSONL writes own their file handle; there is no compressor to finalize.
 
 
 def capture_file(root: Path, round_id: str, model: str) -> Path:
-    return Path(root) / round_id / "captures" / f"{model}.jsonl.gz"
+    return Path(root) / round_id / "captures" / f"{model}.jsonl"
 
 
 def published_rows(capture: Path, ticket, result, role: str, model: str, winner_uid: int | None):
-    """Latest capture per scored key, with bounded-memory disk deduplication.
-
-    A generation retry appends a fresh gzip member. Offset-index replacement
-    keeps the latest row. The SQLite index is disposable and never contains text.
-    """
-    import sqlite3
-    db_path = capture.with_name("positions.sqlite")
-    connection = sqlite3.connect(db_path)
-    try:
-        connection.execute("create table if not exists positions (sample integer, task_pos integer, offset integer, primary key(sample, task_pos))")
-        offset = 0
-        with capture.open("rb") as raw:
-            while True:
-                start = offset
-                with gzip.GzipFile(fileobj=raw, mode="rb") as gz:
-                    for line in gz:
-                        row = json.loads(line)
-                        connection.execute("insert or replace into positions values (?, ?, ?)",
-                                           (row["sample_index"], row["task_pos"], start))
-                offset = raw.tell()
-                if not raw.read(1):
-                    break
-                raw.seek(offset)
-        connection.commit()
-        outcomes = result.null_outcomes if role == "head" else next(
-            entry.outcomes for entry in result.entries if entry.lora is not None and entry.lora.lora_hash == model
-        )
+    """One plain-text scan, then one seek per scored row in sample/task order."""
+    positions: dict[tuple[int, int], int] = {}
+    with capture.open("rb") as raw:
+        while True:
+            offset = raw.tell()
+            line = raw.readline()
+            if not line:
+                break
+            row = json.loads(line)
+            positions[row["sample_index"], row["task_pos"]] = offset
+    outcomes = result.null_outcomes if role == "head" else next(
+        entry.outcomes for entry in result.entries if entry.lora is not None and entry.lora.lora_hash == model
+    )
+    with capture.open("rb") as raw:
         for sample, text in enumerate(outcomes):
             for task_pos, outcome in enumerate(text):
                 if outcome == NOT_RUN:
                     continue
-                position = connection.execute("select offset from positions where sample=? and task_pos=?", (sample, task_pos)).fetchone()
-                if position is None:
+                offset = positions.get((sample, task_pos))
+                if offset is None:
                     continue  # a round from before capture never invents a completion
-                with capture.open("rb") as raw:
-                    raw.seek(position[0])
-                    with gzip.GzipFile(fileobj=raw, mode="rb") as gz:
-                        found = next((json.loads(line) for line in gz
-                                      if (item := json.loads(line))["sample_index"] == sample and item["task_pos"] == task_pos), None)
-                if found is None:
-                    raise ValueError("a captured rollout position is missing")
+                raw.seek(offset)
+                found = json.loads(raw.readline())
                 if found["outcome"] != outcome:
                     raise ValueError("a captured outcome differs from the sealed result")
                 yield found | dict(role=role, winner_uid=winner_uid,
                                    model_version_id=ticket.head.version_id if role == "head" else model)
-    finally:
-        connection.close()
-        db_path.unlink(missing_ok=True)
 
 
 class GateRolloutPublisher:
@@ -203,10 +177,22 @@ class GateRolloutPublisher:
         self.store, self.root, self.retry_s = store, Path(work_dir) / "rollouts", retry_s
         self.jobs: queue.Queue[Path | None] = queue.Queue()
         self.errors: dict[str, str] = {}
+        self.parked: dict[str, str] = {}
+        self.attempts: dict[str, int] = {}
+        for job_path in (self.root / "publication").glob("*.json") if (self.root / "publication").exists() else ():
+            if job_path.name.endswith(".tickets.json"):
+                continue
+            try:
+                job = json.loads(job_path.read_text())
+                self.attempts[job_path.stem] = int(job.get("attempts", 0))
+                if job.get("parked"):
+                    self.parked[job_path.stem] = str(job.get("error") or "previous failure")
+            except (OSError, ValueError, TypeError):
+                self.attempts[job_path.stem] = 0
         self.worker = threading.Thread(target=self._run, name="sn120-v2-public-rollouts", daemon=True)
         self.worker.start()
         for path in sorted((self.root / "publication").glob("*.json")):
-            if not path.name.endswith(".tickets.json"):
+            if not path.name.endswith(".tickets.json") and path.stem not in self.parked:
                 self.jobs.put(path)
 
     def enqueue(self, pairs, winner_uid: int | None, params_hash: str, round_seed: str, closed_at: int) -> None:
@@ -233,15 +219,15 @@ class GateRolloutPublisher:
         os.replace(ticket_tmp, ticket_path)
         capture_dir = self.root / round_id / "captures"
         job = dict(round_id=round_id, winner_uid=winner_uid, params_hash=params_hash, round_seed=round_seed, closed_at=closed_at,
-                   head_model=NULL_MODEL, winner_model=winner[1].lora.lora_hash if winner else None)
+                   head_model=NULL_MODEL, winner_model=winner_model, attempts=0, parked=False)
         publication = self.root / "publication"
         publication.mkdir(parents=True, exist_ok=True)
         path = publication / f"{round_id}.json"
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(job, sort_keys=True))
         os.replace(tmp, path)
-        for capture in capture_dir.glob("*.jsonl.gz"):
-            if capture.name.removesuffix(".jsonl.gz") not in models:
+        for capture in capture_dir.glob("*.jsonl"):
+            if capture.name.removesuffix(".jsonl") not in models:
                 capture.unlink(missing_ok=True)
         self.jobs.put(path)
 
@@ -292,14 +278,29 @@ class GateRolloutPublisher:
             path = self.jobs.get()
             if path is None:
                 return
+            if path.stem in self.parked:
+                self.jobs.task_done()
+                continue
             try:
                 self._upload(path)
                 self.errors.pop(path.stem, None)
+                self.attempts.pop(path.stem, None)
             except Exception as exc:  # publication is never a round failure
+                attempts = self.attempts.get(path.stem, 0) + 1
+                self.attempts[path.stem] = attempts
                 self.errors[path.stem] = f"{type(exc).__name__}: {exc}"
-                print(f"public rollouts: {path.stem}: {self.errors[path.stem]}; retrying", flush=True)
-                time.sleep(self.retry_s)
-                self.jobs.put(path)
+                job = json.loads(path.read_text())
+                job.update(attempts=attempts, error=self.errors[path.stem], parked=attempts >= MAX_PUBLISH_ATTEMPTS)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(job, sort_keys=True))
+                os.replace(tmp, path)
+                if job["parked"]:
+                    self.parked[path.stem] = self.errors[path.stem]
+                    print(f"public rollouts: {path.stem}: parked after {attempts} failed attempts: {self.errors[path.stem]}", flush=True)
+                else:
+                    print(f"public rollouts: {path.stem}: {self.errors[path.stem]}; retrying ({attempts}/{MAX_PUBLISH_ATTEMPTS})", flush=True)
+                    time.sleep(self.retry_s)
+                    self.jobs.put(path)
             finally:
                 self.jobs.task_done()
 

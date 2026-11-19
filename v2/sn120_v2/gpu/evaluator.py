@@ -359,10 +359,15 @@ class VllmEvaluator:
                 reply = self.http(url + "/v1/chat/completions", body, budget)
                 result = read_reply(reply)
                 usage = reply.get("usage")
+                reason = "length" if result[1] else "stop"  # read_reply already validated the finish reason
+
                 tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
                 written.append((tokens, time.monotonic() - sent))
                 if self.capture is not None:
-                    result = self.capture.reply(request, job, result[0], result[1], tokens, reply["choices"][0]["finish_reason"])
+                    try:
+                        result = self.capture.reply(request, job, result[0], result[1], tokens, reason)
+                    except Exception as exc:  # noqa: BLE001 - metadata capture is never a failed model request
+                        print(f"public rollout reply capture failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 return result
             except _Deadline:
                 raise
