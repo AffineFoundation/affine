@@ -188,15 +188,17 @@ def stack(context: StackContext) -> Stack:
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None
     entropy: Callable[[], str] = feed.entropy if feed else lambda: os.urandom(16).hex()
     entropy_now: Callable[[], str] | None = feed.entropy_now if feed else None
-    runner = folder = pins = None
+    runner = folder = pins = rollout_publisher = None
     if context.command == "run":
         box = BoxConfig.from_env()
         evaluator_pool = pool_runtime.catalog if pool_runtime else pool
         trainer = LoraTrainer(store, box, _read_groups)
         evaluator = VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))
         from .gpu.solo import SoloRunner
+        from .rollouts import GateRolloutPublisher
 
         runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
+        rollout_publisher = GateRolloutPublisher(store, box.work_dir)
         folder = LoraFolder(store, box)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
     head = HeadPublish()
@@ -211,4 +213,4 @@ def stack(context: StackContext) -> Stack:
             keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
     overlap = order == OVERLAP and context.command == "run"
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, rollout_publisher=rollout_publisher, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)

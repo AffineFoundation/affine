@@ -231,6 +231,17 @@ curl -s https://affine.io/public/benchmarks.json | python3 -c 'import json,sys; 
 
 `bench status` shows the row in work, the queue, the fail counts and the rented pod at any time. It only reads, so it works while the unit runs.
 
+## Public full rollouts and deploy order
+
+The node also writes `OUT/<bench>/rollouts.jsonl.gz` from the verifiers message graph. Every expected sample has a row, including an explicit `error` row for a missing/failed rollout. The public file has only initial task chat messages, reference answers, sampled assistant text, grades and token/sampling metadata. It excludes runtime state, tool output, hostnames, IPs, pod ids and paths. Gzip is deterministic (`mtime=0`).
+
+The host streams that file through ssh (50–150 MB must not be held in RAM), verifies the node-computed SHA-256, then uploads:
+`public/rollouts/bench/<model_id>/<benchmark_id>.jsonl.gz` and its small `.meta.json` (`rows`, `bytes`, `sha256`, `bench_version`, UTC `finished_at`). A verified upload retires the disposable private download; R2 is the durable record. Transfer/store failures are logged as `rollouts-upload-deferred` and retried on later loops. They never prevent `summary.json`, `per_task.jsonl` collection or aggregate `public/benchmarks.json` publication. The bench store token needs write permission for these additional public keys.
+
+**Deploy order: site pull first, then bench, then production between rounds.** Update `v2/site/pull.py` and let one pull succeed before starting the new bench service, so new object keys are accepted and the live index can be built. For the GPU-side head/winner capture in this change, stop production only at a closed round, update its checkout, and start the next round with the updated code. No live deployment is implied by this document.
+
+See `v2/site/static/rollouts/SCHEMA.md` for field meanings. The hand-made backfill remains at its original paths; live paths do not replace it.
+
 ## 7. Stop, and the way back
 
 ```

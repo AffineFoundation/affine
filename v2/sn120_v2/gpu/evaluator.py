@@ -22,6 +22,7 @@ from typing import Any, Callable, Protocol, Sequence
 
 from ..errors import ContractError, InfraError
 from ..params import Params
+from ..rollouts import RolloutCapture
 from ..sampling import rollout_seed
 from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
@@ -266,6 +267,9 @@ class VllmEvaluator:
         self._solo_clients: int | None = None
         self._grader_lock = threading.Lock()
         self._grader_failure = False
+        self._grade_lock = threading.Lock()
+        # Side-effect-only public rollout spool. It is not read by any scoring path.
+        self.capture: RolloutCapture | None = RolloutCapture(config.work_dir / "rollouts", pool)
 
     def _reset_grader(self) -> None:
         """Discard every worker after a failure; the next round starts clean."""
@@ -355,7 +359,15 @@ class VllmEvaluator:
                 reply = self.http(url + "/v1/chat/completions", body, budget)
                 result = read_reply(reply)
                 usage = reply.get("usage")
-                written.append((int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0, time.monotonic() - sent))
+                reason = "length" if result[1] else "stop"  # read_reply already validated the finish reason
+
+                tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+                written.append((tokens, time.monotonic() - sent))
+                if self.capture is not None:
+                    try:
+                        result = self.capture.reply(request, job, result[0], result[1], tokens, reason)
+                    except Exception as exc:  # noqa: BLE001 - metadata capture is never a failed model request
+                        print(f"public rollout reply capture failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 return result
             except _Deadline:
                 raise
@@ -402,7 +414,7 @@ class VllmEvaluator:
         if deadline_hit:
             raise self._cut(request, started, served, models, table, written, len(jobs), sum(reply is not None for reply in replies))
         generated = time.monotonic()
-        codes = self._grade(tasks, jobs, replies)
+        codes = self._grade(tasks, jobs, replies, request)
         outcomes = {model: tuple("".join(codes[model, sample, index] for index in range(len(tasks))) for sample in range(params.samples_per_task)) for model in models}
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
         counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls), "max_loras": table, "open_files_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
@@ -557,7 +569,7 @@ class VllmEvaluator:
             key = (model, sample)
             while (model, sample, next_result[key]) in ordered:
                 current = (model, sample, next_result[key])
-                outcome = self._grade(tasks, [current], [ordered.pop(current)])[current]
+                outcome = self._grade(tasks, [current], [ordered.pop(current)], request)[current]
                 results(model, sample, current[2], outcome)
                 if done():
                     stop.set()
@@ -702,6 +714,8 @@ class VllmEvaluator:
     def close(self) -> None:
         servers, self._servers, self._urls, self._loaded = self._servers, [], [], set()
         head, self._head = self._head, None
+        if self.capture is not None:
+            self.capture.close()
         errors = []
         for group in (servers, list(self._solo_servers.values())):
             try:
@@ -724,9 +738,10 @@ class VllmEvaluator:
         if errors:
             raise InfraError(f"evaluator cleanup failed: {errors[0]}") from errors[0]
 
-    def _grade(self, tasks: Sequence[str], jobs: list, replies: list) -> dict[tuple[str, int, int], str]:
+    def _grade(self, tasks: Sequence[str], jobs: list, replies: list, request: EvalRequest | None = None) -> dict[tuple[str, int, int], str]:
         codes = {job: ERROR if reply is None else CAP for job, reply in zip(jobs, replies)}
         ended = [(job, reply[0]) for job, reply in zip(jobs, replies) if reply is not None and not reply[1]]
+        recorded: dict[tuple[str, int, int], Any] = {}
         for _ in range(self.settings.grade_tries):
             try:
                 grades = self._grade_batch([(self.pool.task(tasks[job[2]]), text, False) for job, text in ended])
@@ -736,8 +751,16 @@ class VllmEvaluator:
                 raise InfraError("the grader returned a wrong number of grades")
             for (job, _), grade in zip(ended, grades):
                 codes[job] = grade.code if grade.code in (PASS, FAIL, ERROR) else ERROR
+                recorded[job] = grade
             ended = [item for item, grade in zip(ended, grades) if box_fault(grade)]
             if not ended:
+                if self.capture is not None and request is not None:
+                    try:
+                        with self._grade_lock:
+                            for job, reply in zip(jobs, replies):
+                                self.capture.graded(request, job, reply, codes[job], recorded.get(job))
+                    except Exception as exc:  # noqa: BLE001 - a data-export side effect never changes a score
+                        print(f"public rollout capture failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 return codes
         raise InfraError(f"a grader worker died on {len(ended)} replies in every one of {self.settings.grade_tries} tries; the look is not scored")
 

@@ -113,12 +113,14 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
-    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, *small, *tables}
+    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
     assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json"} | BUILT
-    for key in copied:  # each file is at the path of its key, byte for byte
+    for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
+    assert json.loads(files[layout.ROLLOUT_INDEX]) == {"schema": "sn120-v2-rollouts-index-2", "backfill": None, "bench": [], "gate": [], "schema_doc": "SCHEMA.md"}
+    assert (site / "public/rollouts/SCHEMA.md").read_bytes() == (PULL.parent / "static/rollouts/SCHEMA.md").read_bytes()
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
-    assert set(json.loads(files[INDEX])["files"]) == copied | {LINKS}
+    assert set(json.loads(files[INDEX])["files"]) == copied - {"public/rollouts/SCHEMA.md"} | {LINKS}
     assert not list(site.rglob(".tmp-*")) and "site-data.json" in files["index.html"].decode()
 
     manifest = HeadManifest.from_json(files[layout.CURRENT])
@@ -158,7 +160,7 @@ def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):
     for zone in ("bases", "masters", "loras"):  # no weight file is copied
         assert not (site / "public" / zone).exists()
     source = PULL.read_text()
-    assert re.findall(r"\.list\(([^)]*)\)", source) == ["HEADS", "ROUNDS"]  # the whole prefix is never listed
+    assert re.findall(r"\.list\(([^)]*)\)", source) == ["HEADS", "ROUNDS", "layout.ROLLOUT_BENCH_PREFIX", "layout.ROLLOUT_GATE_PREFIX"]  # the whole prefix is never listed
 
     store.put(layout.CURRENT, b'{"epoch": 41, "model": "v1"}')  # a pointer of other software at the key of the head pointer
     good = (site / layout.CURRENT).read_bytes()
