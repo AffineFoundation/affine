@@ -40,7 +40,7 @@ from . import layout
 from .admission import SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
 from .canonical import canonical_json, to_jsonable
-from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
+from .errors import BatchRejected, ConfigError, ContractError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide
@@ -176,10 +176,59 @@ def check_env_pin(params: Params) -> None:
         raise ConfigError(f"params.env_pin is {params.env_pin}, but this pool and grader have env_pin {actual}")
 
 
-def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
-    """The task-table snapshot of the last closed round. Give it to the sampler after a restart."""
+def stored_irt_snapshot(store: ObjectStore, state: State, active_ids: Sequence[str] | None = None) -> Mapping[str, Any] | None:
+    """The last closed table, with optional between-round legacy recovery."""
     key = layout.irt_snapshot(state.snapshot_id) if state.snapshot_id else ""
-    return json.loads(store.get(key)) if key and store.exists(key) else None
+    snapshot = json.loads(store.get(key)) if key and store.exists(key) else None
+    if snapshot is not None and active_ids is not None and state.round is None and snapshot.get("schema") == "affine-irt-v1":
+        from .irt import verify_snapshot
+        verify_snapshot(snapshot)
+        if set(snapshot["tasks"]) != set(active_ids):
+            snapshot = {**snapshot, "recover_legacy": _recover_irt_rows(store, state, snapshot)}
+    return snapshot
+
+
+def _recover_irt_rows(store: ObjectStore, state: State, snapshot: Mapping[str, Any]) -> dict[str, list[float | int]]:
+    """Recover legacy measured rows from recent verified public artifacts.
+
+    This in-memory migration never replaces a current measurement. Newest
+    retained measurements win. Optional corrupt or unavailable history is
+    skipped; current snapshot verification and store failures remain strict.
+    """
+    from .irt import verify_snapshot
+
+    recovered: dict[str, list[float | int]] = {}
+    for record in reversed(state.rounds):
+        if record.snapshot_id != state.snapshot_id:
+            try:
+                historical = json.loads(store.get(layout.irt_snapshot(record.snapshot_id)))
+                if historical.get("snapshot_id") != record.snapshot_id:
+                    raise VerifyError("historical IRT snapshot does not match its journal record")
+                verify_snapshot(historical)
+                for source in (historical["tasks"], historical.get("dormant", {})):
+                    for task, row in source.items():
+                        if task not in recovered and row[2] > 0:
+                            recovered[task] = list(row[:3])
+            except (KeyError, ContractError, UnicodeError, ValueError, TypeError, IndexError, AttributeError):
+                # Corrupt optional evidence is not a reason to stop a round.
+                # IRTSampler later applies the same row validation before use.
+                pass
+        if record.rotation is not None:
+            from .pool_runtime import load_rotation
+
+            try:
+                rotation = load_rotation(store, record.rotation["state_sha"])
+                journal = dict(record.rotation)
+                del journal["state_sha"]
+                journal.pop("size", None)
+                if rotation.round_id != record.round_id or rotation.journal_block() != journal:
+                    raise VerifyError("historical rotation does not match its journal record")
+                for retired in rotation.retired:
+                    if retired.id not in recovered and retired.irt_row is not None and retired.irt_row[2] > 0:
+                        recovered[retired.id] = list(retired.irt_row)
+            except (KeyError, ContractError, UnicodeError, ValueError, TypeError, IndexError, AttributeError):
+                pass
+    return recovered
 
 
 class Controller:
@@ -423,17 +472,23 @@ class Controller:
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
             return []
-        if callable(entropy):
-            entropy = entropy()
-        if clock is not None:
-            now = clock()  # the lease starts here
-        head = state.head
         rotation = None
+        recover = None
         if self.pool is not None:
             snapshot = stored_irt_snapshot(self.store, state)
             if snapshot is None:
                 snapshot = self.sampler.public_snapshot()
-            self._rotation, self.sampler = self.pool.open(round_id, snapshot, state)
+            if snapshot.get("schema") == "affine-irt-v1":
+                from .irt import verify_snapshot
+                verify_snapshot(snapshot)
+                recover = _recover_irt_rows(self.store, state, snapshot)
+        if callable(entropy):
+            entropy = entropy()
+        if clock is not None:
+            now = clock()  # the lease starts here, after optional recovery I/O
+        head = state.head
+        if self.pool is not None:
+            self._rotation, self.sampler = self.pool.open(round_id, snapshot, state, recover=recover)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
             rotation = self.pool.publish_open(self._rotation)

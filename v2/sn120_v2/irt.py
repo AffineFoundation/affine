@@ -44,6 +44,10 @@ SCHEMA = "affine-irt-v1"
 MODEL = "rasch: P(pass) = 1 / (1 + exp(difficulty - ability))"
 BODY_KEYS = ("schema", "model", "head_version_id", "rounds", "updates", "config", "heads", "loras", "tasks")
 TASK_COLUMNS = ("difficulty", "information", "rounds_seen", "sampling_mass")
+DORMANT_COLUMNS = TASK_COLUMNS[:3]
+# A non-empty dormant map is part of the snapshot body. Omitting it when empty
+# keeps every snapshot whose pool never lost a measured task byte-identical.
+DORMANT_KEY = "dormant"
 DRAW_RULE = (
     "pi(task) = min(1, n_tasks * mass / total mass), fixed size n_tasks, systematic sampling on the pool "
     "ordered by sha256('<round_seed>|irt-order|<task_id>'), start = sha256('<round_seed>|irt-start') mod "
@@ -170,14 +174,41 @@ def draw_from_masses(masses: Mapping[str, int], snapshot_id: str, round_seed: st
     return Draw(snapshot_id, round_seed, tuple(chosen), tuple(weights[task] for task in chosen))
 
 
+def _sealed_body(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    body = {key: snapshot[key] for key in BODY_KEYS}
+    if "rotation" in snapshot:
+        body["rotation"] = snapshot["rotation"]
+    if snapshot.get(DORMANT_KEY):
+        body[DORMANT_KEY] = snapshot[DORMANT_KEY]
+    return body
+
+
 def snapshot_digest(snapshot: Mapping[str, Any]) -> str:
-    return "irt-" + digest({key: snapshot[key] for key in BODY_KEYS} | ({"rotation": snapshot["rotation"]} if "rotation" in snapshot else {}))
+    return "irt-" + digest(_sealed_body(snapshot))
+
+
+def _measured_row(row: Any) -> bool:
+    return (
+        isinstance(row, (list, tuple)) and len(row) == 3
+        and type(row[0]) in (int, float) and math.isfinite(row[0]) and abs(row[0]) <= LIMIT
+        and type(row[1]) in (int, float) and math.isfinite(row[1]) and row[1] > 0
+        and type(row[2]) is int and row[2] > 0
+    )
 
 
 def verify_snapshot(snapshot: Mapping[str, Any]) -> None:
     """Fail closed unless the snapshot is of this schema and its id is the hash of its content."""
     if snapshot.get("schema") != SCHEMA or any(key not in snapshot for key in BODY_KEYS):
         raise VerifyError("not an affine-irt-v1 snapshot")
+    dormant = snapshot.get(DORMANT_KEY, {})
+    tasks = snapshot["tasks"]
+    valid = isinstance(dormant, dict) and isinstance(tasks, dict)
+    for task, row in (dormant.items() if valid else ()):
+        valid = isinstance(task, str) and bool(task) and task not in tasks and _measured_row(row)
+        if not valid:
+            break
+    if not valid:
+        raise VerifyError("invalid dormant IRT rows")
     if snapshot.get("snapshot_id") != snapshot_digest(snapshot):
         raise VerifyError("IRT snapshot id does not match its content")
 
@@ -221,6 +252,7 @@ class IRTSampler:
         *,
         initial: Mapping[str, float | Sequence[float]] | None = None,
         rotation: Mapping[str, Any] | None = None,
+        recover: Mapping[str, Sequence[float]] | None = None,
     ) -> None:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
         params = params or Params()
@@ -244,12 +276,12 @@ class IRTSampler:
         self._rotation = copy.deepcopy(rotation)
         if snapshot is not None:
             verify_snapshot(snapshot)
-            body = copy.deepcopy({key: snapshot[key] for key in BODY_KEYS})
+            body = copy.deepcopy(_sealed_body(snapshot))
             # Rotation is a body field only when enabled, so snapshot_id seals
             # it. Old snapshots, and every off-mode snapshot, have no such key.
             saved_rotation = body.get("rotation")
             self._rotation = saved_rotation if saved_rotation is not None else self._rotation
-            if body["config"] == config and set(body["tasks"]) == set(pool) and (rotation is None or rotation == saved_rotation):
+            if body["config"] == config and set(body["tasks"]) == set(pool) and (rotation is None or rotation == saved_rotation) and not recover:
                 self._body, self._id = body, snapshot["snapshot_id"]
                 return
         else:
@@ -257,18 +289,45 @@ class IRTSampler:
         # A normal new pool task starts at the old prior. An admitted task may
         # explicitly start at head ability, giving p=.5 and maximum Fisher q.
         # A returning task supplies its full archived row, not a fresh prior.
+        # Legacy recovery may replace only a row already lost to the default
+        # prior. A current measurement is never overwritten.
+        dormant = dict(body.get(DORMANT_KEY, {}))
+        legacy: dict[str, Sequence[float]] = {}
+        for task, row in (recover or {}).items():
+            current = body["tasks"].get(task)
+            if task not in dormant and _measured_row(row) and (current is None or list(current[:3]) == [0.0, PRIOR_PRECISION, 0]):
+                legacy[task] = row
+
         def start_row(task: str) -> Sequence[float]:
+            if task in dormant:
+                return dormant[task]
             if initial and task in initial:
                 row = initial[task]
                 if isinstance(row, (int, float)):
                     return (round(row, DECIMALS), PRIOR_PRECISION, 0)
                 return (round(float(row[0]), DECIMALS), float(row[1]), int(row[2]))
+            if task in legacy:
+                return legacy[task]
             return (0.0, PRIOR_PRECISION, 0)
 
-        body["tasks"] = {
-            task: list(body["tasks"].get(task, start_row(task)))[:3]
-            for task in sorted(pool)
-        }
+        selected = set(pool)
+        for task, row in body["tasks"].items():
+            if task not in selected and row[2] > 0:
+                dormant[task] = list(row[:3])
+        rebuilt_tasks = {}
+        for task in sorted(pool):
+            current = body["tasks"].get(task)
+            if current is not None and list(current[:3]) != [0.0, PRIOR_PRECISION, 0]:
+                rebuilt_tasks[task] = list(current[:3])
+            else:
+                rebuilt_tasks[task] = list(start_row(task))[:3]
+        body["tasks"] = rebuilt_tasks
+        for task in selected:
+            dormant.pop(task, None)
+        if dormant:
+            body[DORMANT_KEY] = {task: dormant[task] for task in sorted(dormant)}
+        else:
+            body.pop(DORMANT_KEY, None)
         if rotation is not None:
             body["rotation"] = copy.deepcopy(rotation)
         else:
@@ -379,7 +438,7 @@ class IRTSampler:
         return self._id
 
     def public_snapshot(self) -> Mapping[str, Any]:
-        """The published snapshot. Its ``snapshot_id`` is the hash of the ``BODY_KEYS`` fields."""
+        """The published snapshot, including optional measured rows outside the draw pool."""
         body = copy.deepcopy(self._body)
         head = body["heads"].get(body["head_version_id"], {})
         return {

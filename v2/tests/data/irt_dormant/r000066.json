@@ -1,0 +1,708 @@
+{
+  "active_ids": [
+    "nmv2:101",
+    "nmv2:112",
+    "nmv2:161",
+    "nmv2:195",
+    "nmv2:221",
+    "nmv2:24",
+    "nmv2:262",
+    "nmv2:27",
+    "nmv2:292",
+    "nmv2:299",
+    "nmv2:30",
+    "nmv2:315",
+    "nmv2:328",
+    "nmv2:368",
+    "nmv2:410",
+    "nmv2:412",
+    "nmv2:476",
+    "nmv2:505",
+    "nmv2:514",
+    "nmv2:519",
+    "nmv2:532",
+    "nmv2:538",
+    "nmv2:539",
+    "nmv2:548",
+    "nmv2:585",
+    "nmv2:591",
+    "nmv2:625",
+    "nmv2:632",
+    "nmv2:641",
+    "nmv2:65",
+    "nmv2:650",
+    "nmv2:67"
+  ],
+  "active_sha": "834bf7e74c44ea3526f36c6d96151284bbf9f49f36840c78bf032ff317a4e7c7",
+  "admitted": [
+    "nmv2:101",
+    "nmv2:538",
+    "nmv2:539",
+    "nmv2:67",
+    "nmv2:585",
+    "nmv2:412",
+    "nmv2:632",
+    "nmv2:195",
+    "nmv2:221",
+    "nmv2:548",
+    "nmv2:641",
+    "nmv2:161",
+    "nmv2:505",
+    "nmv2:410",
+    "nmv2:292",
+    "nmv2:532",
+    "nmv2:328",
+    "nmv2:514",
+    "nmv2:24",
+    "nmv2:65",
+    "nmv2:299",
+    "nmv2:112",
+    "nmv2:519",
+    "nmv2:368",
+    "nmv2:591",
+    "nmv2:625",
+    "nmv2:650",
+    "nmv2:27",
+    "nmv2:262",
+    "nmv2:476",
+    "nmv2:315",
+    "nmv2:30"
+  ],
+  "fixture_note": "Exact decision fields and rows from the public artifact; full active/ledger/queue collections intentionally reduced for fixture size.",
+  "initial_active_sha": "f3b09a97f4aaf9a3503638ff09b06f2cde67d6d5b08d196c91112b7eb4b15725",
+  "ledger": {
+    "nmv2:101": [
+      0,
+      0
+    ],
+    "nmv2:112": [
+      0,
+      0
+    ],
+    "nmv2:161": [
+      0,
+      0
+    ],
+    "nmv2:195": [
+      0,
+      0
+    ],
+    "nmv2:221": [
+      0,
+      0
+    ],
+    "nmv2:24": [
+      0,
+      0
+    ],
+    "nmv2:262": [
+      0,
+      0
+    ],
+    "nmv2:27": [
+      0,
+      0
+    ],
+    "nmv2:292": [
+      0,
+      0
+    ],
+    "nmv2:299": [
+      0,
+      0
+    ],
+    "nmv2:30": [
+      0,
+      0
+    ],
+    "nmv2:315": [
+      0,
+      0
+    ],
+    "nmv2:328": [
+      0,
+      0
+    ],
+    "nmv2:368": [
+      0,
+      0
+    ],
+    "nmv2:410": [
+      0,
+      0
+    ],
+    "nmv2:412": [
+      0,
+      0
+    ],
+    "nmv2:476": [
+      0,
+      0
+    ],
+    "nmv2:505": [
+      0,
+      0
+    ],
+    "nmv2:514": [
+      0,
+      0
+    ],
+    "nmv2:519": [
+      0,
+      0
+    ],
+    "nmv2:532": [
+      0,
+      0
+    ],
+    "nmv2:538": [
+      0,
+      0
+    ],
+    "nmv2:539": [
+      0,
+      0
+    ],
+    "nmv2:548": [
+      0,
+      0
+    ],
+    "nmv2:585": [
+      0,
+      0
+    ],
+    "nmv2:591": [
+      0,
+      0
+    ],
+    "nmv2:625": [
+      0,
+      0
+    ],
+    "nmv2:632": [
+      0,
+      0
+    ],
+    "nmv2:641": [
+      0,
+      0
+    ],
+    "nmv2:65": [
+      0,
+      0
+    ],
+    "nmv2:650": [
+      0,
+      0
+    ],
+    "nmv2:67": [
+      0,
+      0
+    ]
+  },
+  "next_up": [],
+  "prev_active_sha": "f3b09a97f4aaf9a3503638ff09b06f2cde67d6d5b08d196c91112b7eb4b15725",
+  "prev_state_sha": "",
+  "queue_remaining": 773,
+  "reserve_history": {
+    "manifest_sha": "1ff318f54e54fca7f8f576ff26a7ac50daf9cbe9c1c717b6b3617480c00c8386",
+    "queue": [],
+    "shards": [
+      {
+        "added_at": "2026-11-19",
+        "count": 651,
+        "sha256": "a56562bf9f73bf48c4869c33e9256882e2e09c87a93f947ee6d4490aba639c9d",
+        "shard": "0001-nvidia-nemotron-math-v2-8e793210e175b6406c752a870f.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 45,
+        "sha256": "e03f165207bf6775cc642af19d0ce38119e26d34a1f16fa32922299a8c6ee4f4",
+        "shard": "0002-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 42,
+        "sha256": "5709b879772d7575c9ae12e50ad5908ad77e4c5d5222b091432bc08194074ee4",
+        "shard": "0003-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 31,
+        "sha256": "eb5cea393363649971f0c4cf2666783dd42b42072f3c0b2a1badc28a8878472f",
+        "shard": "0004-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 12,
+        "sha256": "f009c41281df9fb3fa3f4450d1872fe436933fed79624d00c6661db42cf869e4",
+        "shard": "0005-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 8,
+        "sha256": "d8bbd7e1d29fe2aae643c215a485b3bea3d61c9cb378b0511658f14c76f7073d",
+        "shard": "0006-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 5,
+        "sha256": "febdc444e41503581bf1a7beb6e8ed5063616a4976d7d1439a2177b2776195b4",
+        "shard": "0007-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 6,
+        "sha256": "6782eff10b4b0e3b006cfd869ee8e46e538fcf4be3be4d24ac544c93354c08bb",
+        "shard": "0008-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 3,
+        "sha256": "b1614f0643bbec661e6c84b73b5e68bc04755a73e3396d030b3072db02afb011",
+        "shard": "0009-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 2,
+        "sha256": "96b6576189d55f78805355cd0b2c1c4beaec83b6e107de7f1c541e1f7cc039b2",
+        "shard": "0010-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      }
+    ],
+    "withdrawn": [],
+    "withdrawn_count": 0,
+    "withdrawn_sha": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "reserve_manifest_sha": "1ff318f54e54fca7f8f576ff26a7ac50daf9cbe9c1c717b6b3617480c00c8386",
+  "retired": [
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10781",
+      "irt_row": [
+        -1.58552,
+        0.867357,
+        10
+      ],
+      "p_or_rate": 0.9822732721112238,
+      "reason": "high",
+      "rounds_seen": 10
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:8550",
+      "irt_row": [
+        -1.544362,
+        0.839852,
+        9
+      ],
+      "p_or_rate": 0.9815422006733612,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:5614",
+      "irt_row": [
+        -1.516881,
+        0.816902,
+        9
+      ],
+      "p_or_rate": 0.9810376796948533,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6593",
+      "irt_row": [
+        -1.507971,
+        0.811199,
+        8
+      ],
+      "p_or_rate": 0.9808712168197619,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:5696",
+      "irt_row": [
+        -1.497994,
+        0.809104,
+        8
+      ],
+      "p_or_rate": 0.9806831187687581,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:7452",
+      "irt_row": [
+        -1.490493,
+        0.817789,
+        9
+      ],
+      "p_or_rate": 0.9805405082516412,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:7370",
+      "irt_row": [
+        -1.470045,
+        0.802829,
+        8
+      ],
+      "p_or_rate": 0.9801464856724793,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:2446",
+      "irt_row": [
+        -1.464938,
+        0.803288,
+        9
+      ],
+      "p_or_rate": 0.9800468626905063,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:3229",
+      "irt_row": [
+        -1.461583,
+        0.794148,
+        9
+      ],
+      "p_or_rate": 0.9799811498605936,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:831",
+      "irt_row": [
+        -1.4602,
+        0.760556,
+        6
+      ],
+      "p_or_rate": 0.9799540000160144,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:1233",
+      "irt_row": [
+        -1.459982,
+        0.765104,
+        6
+      ],
+      "p_or_rate": 0.9799497171414989,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:5699",
+      "irt_row": [
+        -1.455042,
+        0.806873,
+        9
+      ],
+      "p_or_rate": 0.9798524242135955,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:9071",
+      "irt_row": [
+        -1.447377,
+        0.82513,
+        9
+      ],
+      "p_or_rate": 0.9797005465860891,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10564",
+      "irt_row": [
+        -1.445593,
+        0.796084,
+        8
+      ],
+      "p_or_rate": 0.9796650371110841,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:4692",
+      "irt_row": [
+        -1.445205,
+        0.779326,
+        8
+      ],
+      "p_or_rate": 0.9796573061489282,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1316",
+      "irt_row": [
+        -1.44477,
+        0.786139,
+        8
+      ],
+      "p_or_rate": 0.9796486352820144,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:712",
+      "irt_row": [
+        -1.443827,
+        0.785261,
+        8
+      ],
+      "p_or_rate": 0.9796298260087791,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:5445",
+      "irt_row": [
+        -1.436904,
+        0.845952,
+        10
+      ],
+      "p_or_rate": 0.9794912162545354,
+      "reason": "high",
+      "rounds_seen": 10
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6990",
+      "irt_row": [
+        -1.432363,
+        0.77774,
+        8
+      ],
+      "p_or_rate": 0.9793997969620185,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:2994",
+      "irt_row": [
+        -1.431559,
+        0.7687,
+        8
+      ],
+      "p_or_rate": 0.9793835693370816,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:3317",
+      "irt_row": [
+        -1.431058,
+        0.795621,
+        9
+      ],
+      "p_or_rate": 0.9793734510190467,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:1892",
+      "irt_row": [
+        -1.430536,
+        0.752008,
+        7
+      ],
+      "p_or_rate": 0.9793629034086194,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:3505",
+      "irt_row": [
+        -1.429849,
+        0.745389,
+        6
+      ],
+      "p_or_rate": 0.9793490137358905,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6454",
+      "irt_row": [
+        -1.429309,
+        0.773,
+        8
+      ],
+      "p_or_rate": 0.9793380896660409,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:5523",
+      "irt_row": [
+        -1.425121,
+        0.766599,
+        8
+      ],
+      "p_or_rate": 0.9792531751646246,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:4523",
+      "irt_row": [
+        -1.424717,
+        0.756235,
+        7
+      ],
+      "p_or_rate": 0.9792449657520297,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:4862",
+      "irt_row": [
+        -1.424691,
+        0.764393,
+        8
+      ],
+      "p_or_rate": 0.9792444373146123,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:5512",
+      "irt_row": [
+        -1.41897,
+        0.755043,
+        7
+      ],
+      "p_or_rate": 0.9791278399457456,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:2326",
+      "irt_row": [
+        -1.417738,
+        0.743773,
+        7
+      ],
+      "p_or_rate": 0.9791026472940726,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:6777",
+      "irt_row": [
+        -1.417322,
+        0.753324,
+        7
+      ],
+      "p_or_rate": 0.9790941339656359,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:3921",
+      "irt_row": [
+        -1.415469,
+        0.764361,
+        7
+      ],
+      "p_or_rate": 0.9790561715685345,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:1819",
+      "irt_row": [
+        -1.414639,
+        0.753825,
+        7
+      ],
+      "p_or_rate": 0.9790391454965425,
+      "reason": "high",
+      "rounds_seen": 7
+    }
+  ],
+  "retired_archive": [],
+  "round_id": "r000066",
+  "rule_params": {
+    "rotation_active_size": 0,
+    "rotation_enabled": true,
+    "rotation_k": 32,
+    "rotation_n_min": 3,
+    "rotation_n_min_low": 8,
+    "rotation_retire_low_p": 0.0,
+    "rotation_retire_p": 0.95
+  },
+  "rule_version": "affine-pool-rotation-v1",
+  "source_snapshot_id": "irt-c2afc207598fe7734c3bf33cd7034784f99b81f5f6a8c69a0cb509b68188197f"
+}

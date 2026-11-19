@@ -21,6 +21,8 @@ from sn120_v2.irt import (
     SAME_SEED_CORRELATION,
     IRTSampler,
     draw_from_masses,
+    snapshot_digest,
+    verify_snapshot,
     draw_from_snapshot,
     fisher_masses,
     predicted_pass,
@@ -363,6 +365,84 @@ def test_a_stored_band_snapshot_migrates_to_fisher_without_losing_learned_state(
         assert after[key] == before[key]
     assert {task: row[3] for task, row in after["tasks"].items()} == fisher_masses(before["tasks"], before["head_ability"], 0.1)
     assert IRTSampler(POOL, Params(), snapshot=after).snapshot_id() == after["snapshot_id"]
+
+
+def test_pool_rebuilds_keep_measured_rows_dormant_without_changing_draw_rules(build):
+    pool = ["base:a", "base:b", "reserve:new"]
+    sampler = IRTSampler(pool[:2], Params(), initial={task: 0.0 for task in pool[:2]})
+    draw = sampler.draw(build.head(), "measured", 2)
+    sampler.update(build.head(), draw, {"null": ("PF",)})
+    before = published(sampler)
+    rows = {task: before["tasks"][task][:3] for task in pool[:2]}
+
+    def rebuild(active, snapshot, admitted=(), rotation=None):
+        return IRTSampler(active, Params(), snapshot=snapshot,
+                          initial={task: before["head_ability"] for task in admitted}, rotation=rotation)
+
+    # A measured admitted task and a measured retired task both survive an
+    # on -> off rollback. Dormant rows have no sampling mass.
+    rotated = ["base:a", "reserve:new"]
+    off_pool = ["base:b", "reserve:new"]
+    on = rebuild(rotated, before, admitted=("reserve:new",), rotation={"round_id": "r000001"})
+    draw = on.draw(build.head(), "measure-admit", 2)
+    on.update(build.head(), draw, {"null": ("PF",)})
+    rotated_snapshot = published(on)
+    off = rebuild(off_pool, rotated_snapshot)
+    off_snapshot = published(off)
+    assert off_snapshot["tasks"]["base:b"][:3] == rows["base:b"]
+    assert off_snapshot["dormant"] == {"base:a": rotated_snapshot["tasks"]["base:a"][:3]}
+    assert off_snapshot["pool_size"] == 2 and off_snapshot["mass_total"] == sum(row[3] for row in off_snapshot["tasks"].values())
+    assert set(draw_from_snapshot(off_snapshot, "off-draw", 2).task_ids) <= set(off_pool)
+
+    # Re-enabling restores both the previously retired task and the admitted
+    # task's new measurement, even though PoolRuntime supplies a head prior.
+    returned = rebuild(rotated, off_snapshot, admitted=("base:a", "reserve:new"), rotation={"round_id": "r000002"})
+    returned_snapshot = published(returned)
+    assert returned_snapshot["tasks"]["base:a"][:3] == rotated_snapshot["tasks"]["base:a"][:3]
+    assert returned_snapshot["tasks"]["reserve:new"][:3] == rotated_snapshot["tasks"]["reserve:new"][:3]
+    assert returned_snapshot["dormant"]["base:b"] == rows["base:b"]
+
+    # Dormant wins over both the admitted-at-head prior and an older archive.
+    archived = [-0.123456, 0.75, 17]
+    v2 = IRTSampler(rotated, Params(), snapshot=off_snapshot,
+                    initial={"base:a": archived, "reserve:new": 99.0}, rotation={"round_id": "r000002"})
+    assert published(v2)["tasks"]["base:a"][:3] == rotated_snapshot["tasks"]["base:a"][:3]
+    assert published(v2)["tasks"]["reserve:new"][:3] == rotated_snapshot["tasks"]["reserve:new"][:3]
+    never = IRTSampler(["never:measured", "base:a"], Params(), snapshot=off_snapshot,
+                       initial={"never:measured": 2.43})
+    assert published(never)["tasks"]["never:measured"][:3] == [2.43, PRIOR_PRECISION, 0]
+
+    # A task with no measurement is not retained or revived from a prior.
+    fresh = rebuild(["never:measured", "base:a"], off_snapshot)
+    fresh_snapshot = published(fresh)
+    assert fresh_snapshot["tasks"]["never:measured"][:3] == NEW_TASK
+    assert "never:measured" not in fresh_snapshot.get("dormant", {})
+
+
+def test_snapshot_without_departures_is_byte_identical_and_dormant_rows_are_strict(build):
+    sampler = trained(build.head(), rounds=3)
+    before = canonical_json(sampler.public_snapshot())
+    snapshot = json.loads(before)
+    assert "dormant" not in snapshot
+    same = IRTSampler(POOL, Params(irt_draw_rule="band"), snapshot=snapshot)
+    assert canonical_json(same.public_snapshot()) == before
+
+    smaller = IRTSampler(POOL[:-1], Params(irt_draw_rule="band"), snapshot=snapshot)
+    shrunk = published(smaller)
+    assert shrunk["dormant"] == {POOL[-1]: snapshot["tasks"][POOL[-1]][:3]}
+    assert canonical_json(shrunk) == canonical_json(IRTSampler(POOL[:-1], Params(irt_draw_rule="band"), snapshot=shrunk).public_snapshot())
+    assert snapshot_digest({**shrunk, "dormant": {}}) != shrunk["snapshot_id"]
+    verify_snapshot(shrunk)
+    empty = {**shrunk, "dormant": {}}
+    assert snapshot_digest(empty) != shrunk["snapshot_id"]
+    forged = {**shrunk, "dormant": {POOL[-1]: [0.0, PRIOR_PRECISION, 0]}}
+    forged["snapshot_id"] = snapshot_digest(forged)
+    with pytest.raises(VerifyError, match="dormant"):
+        verify_snapshot(forged)
+    overlap = {**shrunk, "dormant": {POOL[0]: [0.0, PRIOR_PRECISION, 1]}}
+    overlap["snapshot_id"] = snapshot_digest(overlap)
+    with pytest.raises(VerifyError, match="dormant"):
+        verify_snapshot(overlap)
 
 
 def test_the_published_snapshot_is_the_whole_state(build):

@@ -263,7 +263,8 @@ class PoolRuntime:
         # v1->v2 transition carries the complete archive of the previous state.
         return previous.retired_archive if previous else ()
 
-    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None) -> tuple[Rotation, IRTSampler]:
+    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None,
+             *, recover: Mapping[str, Sequence[float]] | None = None) -> tuple[Rotation, IRTSampler]:
         # Assembly constructs this runtime before the controller replaces its
         # startup State by replay. Always take the controller's current state.
         state = self.state if state is None else state
@@ -305,7 +306,8 @@ class PoolRuntime:
         ability = float(snapshot.get("head_ability", snapshot["heads"].get(snapshot["head_version_id"], {}).get("ability", 0.0)))
         initial = {task: ability for task in decision.admitted if task not in decision.restored_irt_rows}
         initial.update(decision.restored_irt_rows)
-        sampler = IRTSampler(decision.active_ids, self.params, snapshot=snapshot, initial=initial, rotation=meta)
+        sampler = IRTSampler(decision.active_ids, self.params, snapshot=snapshot, initial=initial, rotation=meta,
+                             recover=recover)
         return decision, sampler
 
     def publish_open(self, decision: Rotation, *, opened_at: int = 0) -> dict[str, Any]:

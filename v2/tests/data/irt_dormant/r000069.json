@@ -1,0 +1,868 @@
+{
+  "active_ids": [
+    "nmv2:10",
+    "nmv2:101",
+    "nmv2:104",
+    "nmv2:110",
+    "nmv2:111",
+    "nmv2:112",
+    "nmv2:125",
+    "nmv2:161",
+    "nmv2:163",
+    "nmv2:190",
+    "nmv2:195",
+    "nmv2:203",
+    "nmv2:221",
+    "nmv2:228",
+    "nmv2:24",
+    "nmv2:262",
+    "nmv2:27",
+    "nmv2:281",
+    "nmv2:292",
+    "nmv2:297",
+    "nmv2:299",
+    "nmv2:30",
+    "nmv2:310",
+    "nmv2:315",
+    "nmv2:324",
+    "nmv2:326",
+    "nmv2:328",
+    "nmv2:354",
+    "nmv2:368",
+    "nmv2:375",
+    "nmv2:385",
+    "nmv2:4",
+    "nmv2:40",
+    "nmv2:405",
+    "nmv2:410",
+    "nmv2:412",
+    "nmv2:414",
+    "nmv2:422",
+    "nmv2:456",
+    "nmv2:467",
+    "nmv2:476",
+    "nmv2:505",
+    "nmv2:512",
+    "nmv2:514",
+    "nmv2:519",
+    "nmv2:526",
+    "nmv2:532",
+    "nmv2:535",
+    "nmv2:538",
+    "nmv2:539",
+    "nmv2:548",
+    "nmv2:585",
+    "nmv2:591",
+    "nmv2:595",
+    "nmv2:625",
+    "nmv2:632",
+    "nmv2:641",
+    "nmv2:648",
+    "nmv2:65",
+    "nmv2:650",
+    "nmv2:66",
+    "nmv2:67",
+    "nmv2:84",
+    "nmv2:86"
+  ],
+  "active_sha": "da57ad36cc1ddae6c6f962f08740d066d91824de2f1b7edf3caca043cda15589",
+  "admitted": [
+    "nmv2:467",
+    "nmv2:163",
+    "nmv2:281",
+    "nmv2:405",
+    "nmv2:203",
+    "nmv2:526",
+    "nmv2:535",
+    "nmv2:456",
+    "nmv2:66",
+    "nmv2:40",
+    "nmv2:86",
+    "nmv2:84",
+    "nmv2:190",
+    "nmv2:111",
+    "nmv2:297",
+    "nmv2:385",
+    "nmv2:354",
+    "nmv2:4",
+    "nmv2:324",
+    "nmv2:422",
+    "nmv2:375",
+    "nmv2:104",
+    "nmv2:512",
+    "nmv2:10",
+    "nmv2:648",
+    "nmv2:110",
+    "nmv2:414",
+    "nmv2:228",
+    "nmv2:310",
+    "nmv2:595",
+    "nmv2:326",
+    "nmv2:125"
+  ],
+  "fixture_note": "Exact decision fields and rows from the public artifact; full active/ledger/queue collections intentionally reduced for fixture size.",
+  "initial_active_sha": "",
+  "ledger": {
+    "nmv2:10": [
+      0,
+      0
+    ],
+    "nmv2:101": [
+      1,
+      1
+    ],
+    "nmv2:104": [
+      0,
+      0
+    ],
+    "nmv2:110": [
+      0,
+      0
+    ],
+    "nmv2:111": [
+      0,
+      0
+    ],
+    "nmv2:112": [
+      0,
+      0
+    ],
+    "nmv2:125": [
+      0,
+      0
+    ],
+    "nmv2:161": [
+      1,
+      1
+    ],
+    "nmv2:163": [
+      0,
+      0
+    ],
+    "nmv2:190": [
+      0,
+      0
+    ],
+    "nmv2:195": [
+      1,
+      0
+    ],
+    "nmv2:203": [
+      0,
+      0
+    ],
+    "nmv2:221": [
+      0,
+      0
+    ],
+    "nmv2:228": [
+      0,
+      0
+    ],
+    "nmv2:24": [
+      0,
+      0
+    ],
+    "nmv2:262": [
+      1,
+      1
+    ],
+    "nmv2:27": [
+      0,
+      0
+    ],
+    "nmv2:281": [
+      0,
+      0
+    ],
+    "nmv2:292": [
+      1,
+      0
+    ],
+    "nmv2:297": [
+      0,
+      0
+    ],
+    "nmv2:299": [
+      0,
+      0
+    ],
+    "nmv2:30": [
+      0,
+      0
+    ],
+    "nmv2:310": [
+      0,
+      0
+    ],
+    "nmv2:315": [
+      0,
+      0
+    ],
+    "nmv2:324": [
+      0,
+      0
+    ],
+    "nmv2:326": [
+      0,
+      0
+    ],
+    "nmv2:328": [
+      0,
+      0
+    ],
+    "nmv2:354": [
+      0,
+      0
+    ],
+    "nmv2:368": [
+      1,
+      0
+    ],
+    "nmv2:375": [
+      0,
+      0
+    ],
+    "nmv2:385": [
+      0,
+      0
+    ],
+    "nmv2:4": [
+      0,
+      0
+    ],
+    "nmv2:40": [
+      0,
+      0
+    ],
+    "nmv2:405": [
+      0,
+      0
+    ],
+    "nmv2:410": [
+      1,
+      0
+    ],
+    "nmv2:412": [
+      0,
+      0
+    ],
+    "nmv2:414": [
+      0,
+      0
+    ],
+    "nmv2:422": [
+      0,
+      0
+    ],
+    "nmv2:456": [
+      0,
+      0
+    ],
+    "nmv2:467": [
+      0,
+      0
+    ],
+    "nmv2:476": [
+      0,
+      0
+    ],
+    "nmv2:505": [
+      1,
+      0
+    ],
+    "nmv2:512": [
+      0,
+      0
+    ],
+    "nmv2:514": [
+      1,
+      0
+    ],
+    "nmv2:519": [
+      1,
+      0
+    ],
+    "nmv2:526": [
+      0,
+      0
+    ],
+    "nmv2:532": [
+      0,
+      0
+    ],
+    "nmv2:535": [
+      0,
+      0
+    ],
+    "nmv2:538": [
+      0,
+      0
+    ],
+    "nmv2:539": [
+      1,
+      1
+    ],
+    "nmv2:548": [
+      0,
+      0
+    ],
+    "nmv2:585": [
+      0,
+      0
+    ],
+    "nmv2:591": [
+      0,
+      0
+    ],
+    "nmv2:595": [
+      0,
+      0
+    ],
+    "nmv2:625": [
+      1,
+      1
+    ],
+    "nmv2:632": [
+      0,
+      0
+    ],
+    "nmv2:641": [
+      0,
+      0
+    ],
+    "nmv2:648": [
+      0,
+      0
+    ],
+    "nmv2:65": [
+      0,
+      0
+    ],
+    "nmv2:650": [
+      1,
+      0
+    ],
+    "nmv2:66": [
+      0,
+      0
+    ],
+    "nmv2:67": [
+      0,
+      0
+    ],
+    "nmv2:84": [
+      0,
+      0
+    ],
+    "nmv2:86": [
+      0,
+      0
+    ]
+  },
+  "next_up": [],
+  "prev_active_sha": "834bf7e74c44ea3526f36c6d96151284bbf9f49f36840c78bf032ff317a4e7c7",
+  "prev_state_sha": "416a2e8815aa6b7ad143780dc45193bae04d48333d018e61c10016f85118d68b",
+  "queue_remaining": 741,
+  "reserve_history": {
+    "manifest_sha": "1ff318f54e54fca7f8f576ff26a7ac50daf9cbe9c1c717b6b3617480c00c8386",
+    "queue": [],
+    "shards": [
+      {
+        "added_at": "2026-11-19",
+        "count": 651,
+        "sha256": "a56562bf9f73bf48c4869c33e9256882e2e09c87a93f947ee6d4490aba639c9d",
+        "shard": "0001-nvidia-nemotron-math-v2-8e793210e175b6406c752a870f.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 45,
+        "sha256": "e03f165207bf6775cc642af19d0ce38119e26d34a1f16fa32922299a8c6ee4f4",
+        "shard": "0002-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 42,
+        "sha256": "5709b879772d7575c9ae12e50ad5908ad77e4c5d5222b091432bc08194074ee4",
+        "shard": "0003-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 31,
+        "sha256": "eb5cea393363649971f0c4cf2666783dd42b42072f3c0b2a1badc28a8878472f",
+        "shard": "0004-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 12,
+        "sha256": "f009c41281df9fb3fa3f4450d1872fe436933fed79624d00c6661db42cf869e4",
+        "shard": "0005-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 8,
+        "sha256": "d8bbd7e1d29fe2aae643c215a485b3bea3d61c9cb378b0511658f14c76f7073d",
+        "shard": "0006-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 5,
+        "sha256": "febdc444e41503581bf1a7beb6e8ed5063616a4976d7d1439a2177b2776195b4",
+        "shard": "0007-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 6,
+        "sha256": "6782eff10b4b0e3b006cfd869ee8e46e538fcf4be3be4d24ac544c93354c08bb",
+        "shard": "0008-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 3,
+        "sha256": "b1614f0643bbec661e6c84b73b5e68bc04755a73e3396d030b3072db02afb011",
+        "shard": "0009-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      },
+      {
+        "added_at": "2026-11-19",
+        "count": 2,
+        "sha256": "96b6576189d55f78805355cd0b2c1c4beaec83b6e107de7f1c541e1f7cc039b2",
+        "shard": "0010-ycchen-crystal-math-preview-03fc77140fc0fe9f9f9fb3.jsonl"
+      }
+    ],
+    "withdrawn": [],
+    "withdrawn_count": 0,
+    "withdrawn_sha": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "reserve_manifest_sha": "1ff318f54e54fca7f8f576ff26a7ac50daf9cbe9c1c717b6b3617480c00c8386",
+  "retired": [
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:3685",
+      "irt_row": [
+        -1.441241,
+        0.781507,
+        9
+      ],
+      "p_or_rate": 0.9813184386554173,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1988",
+      "irt_row": [
+        -1.438236,
+        0.777832,
+        8
+      ],
+      "p_or_rate": 0.9812632695578167,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:704",
+      "irt_row": [
+        -1.437017,
+        0.816587,
+        9
+      ],
+      "p_or_rate": 0.9812408442784895,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:7866",
+      "irt_row": [
+        -1.435608,
+        0.75809,
+        7
+      ],
+      "p_or_rate": 0.9812148908696325,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1651",
+      "irt_row": [
+        -1.422182,
+        0.770308,
+        8
+      ],
+      "p_or_rate": 0.9809658142753243,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:6356",
+      "irt_row": [
+        -1.418971,
+        0.778332,
+        9
+      ],
+      "p_or_rate": 0.9809057661654088,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:7912",
+      "irt_row": [
+        -1.414623,
+        0.816198,
+        9
+      ],
+      "p_or_rate": 0.9808241591630945,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10827",
+      "irt_row": [
+        -1.413584,
+        0.759507,
+        8
+      ],
+      "p_or_rate": 0.9808046077524761,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:3269",
+      "irt_row": [
+        -1.410689,
+        0.800281,
+        9
+      ],
+      "p_or_rate": 0.9807500278593114,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1492",
+      "irt_row": [
+        -1.409679,
+        0.814054,
+        9
+      ],
+      "p_or_rate": 0.9807309503929053,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:597",
+      "irt_row": [
+        -1.408838,
+        0.765352,
+        8
+      ],
+      "p_or_rate": 0.9807150509552294,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:9760",
+      "irt_row": [
+        -1.408615,
+        0.755684,
+        8
+      ],
+      "p_or_rate": 0.9807108328952011,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:834",
+      "irt_row": [
+        -1.407597,
+        0.832335,
+        10
+      ],
+      "p_or_rate": 0.9806915658654317,
+      "reason": "high",
+      "rounds_seen": 10
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:930",
+      "irt_row": [
+        -1.407517,
+        0.733956,
+        6
+      ],
+      "p_or_rate": 0.9806900509576958,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6449",
+      "irt_row": [
+        -1.405612,
+        0.752974,
+        8
+      ],
+      "p_or_rate": 0.9806539427761244,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1245",
+      "irt_row": [
+        -1.40505,
+        0.737822,
+        7
+      ],
+      "p_or_rate": 0.9806432777510292,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10175",
+      "irt_row": [
+        -1.405033,
+        0.769035,
+        8
+      ],
+      "p_or_rate": 0.9806429550537201,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:6051",
+      "irt_row": [
+        -1.404981,
+        0.78132,
+        9
+      ],
+      "p_or_rate": 0.9806419679468618,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1746",
+      "irt_row": [
+        -1.403154,
+        0.807153,
+        10
+      ],
+      "p_or_rate": 0.9806072549872963,
+      "reason": "high",
+      "rounds_seen": 10
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:6758",
+      "irt_row": [
+        -1.401965,
+        0.72533,
+        6
+      ],
+      "p_or_rate": 0.9805846312453914,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6509",
+      "irt_row": [
+        -1.400862,
+        0.724543,
+        6
+      ],
+      "p_or_rate": 0.9805636207415033,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:860",
+      "irt_row": [
+        -1.400756,
+        0.816942,
+        9
+      ],
+      "p_or_rate": 0.9805616004263105,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:4754",
+      "irt_row": [
+        -1.400134,
+        0.740886,
+        7
+      ],
+      "p_or_rate": 0.980549741220888,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10345",
+      "irt_row": [
+        -1.400037,
+        0.754657,
+        7
+      ],
+      "p_or_rate": 0.9805478911558693,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:8900",
+      "irt_row": [
+        -1.399641,
+        0.723578,
+        6
+      ],
+      "p_or_rate": 0.9805403365235192,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10165",
+      "irt_row": [
+        -1.398745,
+        0.795581,
+        9
+      ],
+      "p_or_rate": 0.98052323259779,
+      "reason": "high",
+      "rounds_seen": 9
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:9777",
+      "irt_row": [
+        -1.398442,
+        0.725341,
+        6
+      ],
+      "p_or_rate": 0.9805174452360538,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:8264",
+      "irt_row": [
+        -1.397086,
+        0.721564,
+        6
+      ],
+      "p_or_rate": 0.9804915247032607,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:5065",
+      "irt_row": [
+        -1.39703,
+        0.786648,
+        8
+      ],
+      "p_or_rate": 0.9804904535123353,
+      "reason": "high",
+      "rounds_seen": 8
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:6525",
+      "irt_row": [
+        -1.397019,
+        0.721947,
+        6
+      ],
+      "p_or_rate": 0.9804902430930583,
+      "reason": "high",
+      "rounds_seen": 6
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "dapo:10745",
+      "irt_row": [
+        -1.395813,
+        0.741921,
+        7
+      ],
+      "p_or_rate": 0.9804671599935554,
+      "reason": "high",
+      "rounds_seen": 7
+    },
+    {
+      "head_passes": 0,
+      "head_rollouts": 0,
+      "id": "math:1869",
+      "irt_row": [
+        -1.394457,
+        0.773066,
+        9
+      ],
+      "p_or_rate": 0.9804411738933674,
+      "reason": "high",
+      "rounds_seen": 9
+    }
+  ],
+  "retired_archive": [],
+  "round_id": "r000069",
+  "rule_params": {
+    "rotation_active_size": 0,
+    "rotation_enabled": true,
+    "rotation_k": 32,
+    "rotation_n_min": 3,
+    "rotation_n_min_low": 8,
+    "rotation_retire_low_p": 0.0,
+    "rotation_retire_p": 0.95
+  },
+  "rule_version": "affine-pool-rotation-v1",
+  "source_snapshot_id": "irt-0dab1259c51eb8e2a78bf4a6a048138f8ed971b0e0e162a53e3ee5b0429b48ac"
+}

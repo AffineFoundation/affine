@@ -179,7 +179,10 @@ def stack(context: StackContext) -> Stack:
         setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
         setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
     )
-    sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
+    active_ids = pool_runtime.active_ids if pool_runtime else pool.task_ids
+    saved = stored_irt_snapshot(store, state, active_ids)
+    recover = saved.pop("recover_legacy", None) if saved is not None else None
+    sampler = IRTSampler(active_ids, params, snapshot=saved, recover=recover)
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
     publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
