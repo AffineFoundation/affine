@@ -27,6 +27,7 @@ service user. Config example:
   "network": "finney",
   "public_url": "https://affine.io",
   "credentials_file": "/home/const/sn120-generator/credentials",
+  "first_epoch": "20261120T0400Z",
   "ssh": {
     "host": "scorer-host-from-operator",
     "port": 22,

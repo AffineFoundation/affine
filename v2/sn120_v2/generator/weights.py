@@ -303,6 +303,13 @@ def _load_sdk() -> Any:
         raise RuntimeError("bittensor SDK is unavailable") from exc
 
 
+def storage_index(netuid: int, mechid: int) -> int:
+    """Finney's single NetUidStorageIndex for a subnet mechanism."""
+    if type(netuid) is not int or type(mechid) is not int or netuid < 0 or mechid < 0:
+        raise ValueError("netuid and mechid must be nonnegative integers")
+    return mechid * 4096 + netuid
+
+
 def read_chain(chain: Any, sdk: Any) -> ChainState:
     """Read registrations and mechanism-1 LastUpdate at the current head."""
     block = int(chain.block)
@@ -311,7 +318,7 @@ def read_chain(chain: Any, sdk: Any) -> ChainState:
     hotkeys = {int(uid): str(hotkey) for uid, hotkey in dict(rows).items()}
     if sorted(hotkeys) != list(range(len(hotkeys))):
         raise RuntimeError("registration snapshot is not a complete UID vector")
-    updates = chain.query(storage.LastUpdate, [NETUID, MECH_ID])
+    updates = chain.query(storage.LastUpdate, [storage_index(NETUID, MECH_ID)])
     if not isinstance(updates, Sequence) or isinstance(updates, (str, bytes)) or not updates:
         raise RuntimeError("mechanism-1 LastUpdate did not return the UID vector")
     if len(hotkeys) != len(updates):

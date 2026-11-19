@@ -100,7 +100,7 @@ def test_generator_pages_use_public_generator_paths_and_versioned_assets(tmp_pat
     assert 'href="../generator/"' in guide and 'href="../state.json"' in page
     assert 'role="timer"' in page and 'href="/generator/generator-guide.md"' in guide
     assert (out / "generator" / "generator-guide.md").read_bytes() == (out / "generator-guide.md").read_bytes()
-    assert 'https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py' in page + guide
+    assert 'https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_miner.py' in page + guide
     assert '811,609' in page and 'sn120-math-prior-v1' in page
     assert 'href="../generator.html"' not in page + guide
     # The new navigation entry is confined to the Generator pages.

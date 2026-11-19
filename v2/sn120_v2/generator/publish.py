@@ -170,8 +170,8 @@ def publication(
     normalized = normalize_output(output, job)
     if not isinstance(secret, str) or not secret or sha256_hex(secret.encode()) != normalized["seed_commitment"]:
         raise VerifyError("the revealed seed secret does not match the window commitment")
-    if epoch_deadline(epoch).timestamp() != frozen_at:
-        raise VerifyError("the king was not frozen at the epoch deadline")
+    if not epoch_deadline(epoch).timestamp() <= frozen_at <= epoch_deadline(epoch).timestamp() + 120:
+        raise VerifyError("the king was not captured within the epoch deadline grace period")
     rows = normalized["tasks"]
     accepted = [row for row in rows if row["decision"] == ACCEPT]
     by_id = {row["task_id"]: row for row in rows}

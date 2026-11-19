@@ -4,8 +4,8 @@ Generator is **mechanism 1 of SN120** (Bittensor netuid 120), and receives **10%
 
 Public page: <https://affine.io/generator>
 
-Miner kit: [`v2/miner/generator_miner.py`](https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py)
-Reference search: [`v2/miner/generator_search.py`](https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_search.py)
+Miner kit: [`v2/miner/generator_miner.py`](https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_miner.py)
+Reference search: [`v2/miner/generator_search.py`](https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_search.py)
 Protocol: [`v2/sn120_v2/generator/`](https://github.com/AffineFoundation/affine/tree/v2/v2/sn120_v2/generator)
 
 ## 1. Install and prepare the pool

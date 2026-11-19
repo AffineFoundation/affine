@@ -220,7 +220,9 @@ class FakeChain:
 
     def query(self, item, keys):
         self.queries.append(("query", item, keys))
-        assert keys == [120, 1]
+        assert item == "LastUpdate"
+        assert keys == [weights.storage_index(weights.NETUID, weights.MECH_ID)]
+        assert keys == [4216]
         return [0 if uid == 0 else 999 for uid in range(max(REGISTERED) + 1)]
 
     def plan(self, intent, wallet):
@@ -293,6 +295,23 @@ def test_default_dry_run_has_no_wallet_intent_plan_or_chain_execution(tmp_path):
     assert report["status"] == "dry_run", report
     assert not report["execute"]
     assert sdk.intents == fake.intents == fake.executions == []
+
+
+def test_missing_payout_dry_run_reaches_uid0_plan(tmp_path):
+    report, sdk, fake = runner(tmp_path, payout_path=tmp_path / "missing-payout.json")
+    assert report["status"] == "dry_run" and report["burn"]
+    assert report["uids"] == [0] and report["weights"] == {"0": 1.0}
+    assert "missing or unreadable" in report["reason"]
+    assert sdk.intents == fake.intents == fake.executions == []
+    assert ("query", "LastUpdate", [4216]) in fake.queries
+
+
+def test_storage_index_is_single_mech_netuid_key():
+    assert weights.storage_index(120, 1) == 4216
+    assert weights.storage_index(120, 0) == 120
+    for netuid, mechid in ((-1, 1), (120, -1), (True, 1), (120, False)):
+        with pytest.raises(ValueError):
+            weights.storage_index(netuid, mechid)
 
 
 def test_skip_gates_run_before_chain_and_do_not_fallback_to_burn(tmp_path):

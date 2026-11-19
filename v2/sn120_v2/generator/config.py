@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import ConfigError
+from .epoch import epoch_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class Config:
     secret_file: Path = Path("generator-seed-secret")
     ssh: dict[str, Any] | None = None
     head_url: str = "https://affine.io/public/head.json"
+    first_epoch: str = "20261120T0400Z"
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":
@@ -29,16 +31,20 @@ class Config:
             raise ConfigError(f"cannot read Generator config {path}: {type(exc).__name__}") from exc
         if not isinstance(raw, dict):
             raise ConfigError("Generator config must be a JSON object")
-        fields = {"site_dir", "work_dir", "pool_dir", "network", "public_url", "credentials_file", "secret_file", "ssh", "head_url"}
+        fields = {"site_dir", "work_dir", "pool_dir", "network", "public_url", "credentials_file", "secret_file", "ssh", "head_url", "first_epoch"}
         unknown = set(raw) - fields
         if unknown:
             raise ConfigError(f"unknown Generator config fields: {', '.join(sorted(unknown))}")
         missing = {key for key in ("site_dir", "work_dir", "pool_dir") if not isinstance(raw.get(key), str) or not raw[key]}
         if missing:
             raise ConfigError(f"Generator config needs: {', '.join(sorted(missing))}")
-        for key in ("network", "public_url", "credentials_file", "head_url"):
+        for key in ("network", "public_url", "credentials_file", "head_url", "first_epoch"):
             if not isinstance(raw.get(key, getattr(cls, key, "")), str):
                 raise ConfigError(f"Generator config {key} must be a string")
+        try:
+            first_epoch = epoch_id(raw.get("first_epoch", cls("unused", "unused", "unused").first_epoch))
+        except ValueError as exc:
+            raise ConfigError(f"Generator config first_epoch is invalid: {exc}") from exc
         ssh = raw.get("ssh")
         if ssh is not None and not isinstance(ssh, dict):
             raise ConfigError("Generator config ssh must be an object")
@@ -46,7 +52,7 @@ class Config:
             Path(raw["site_dir"]).expanduser(), Path(raw["work_dir"]).expanduser(), Path(raw["pool_dir"]).expanduser(),
             raw.get("network", "finney"), raw.get("public_url", "https://affine.io"), raw.get("credentials_file", ""),
             Path(raw.get("secret_file", "generator-seed-secret")).expanduser(), ssh,
-            raw.get("head_url", "https://affine.io/public/head.json"),
+            raw.get("head_url", "https://affine.io/public/head.json"), first_epoch,
         )
 
 

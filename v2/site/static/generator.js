@@ -9,7 +9,7 @@
 
   const EPOCH_SECONDS = 4 * 60 * 60;
   const POOL_RELEASE = 'https://github.com/AffineFoundation/affine/releases/tag/sn120-math-prior-v1';
-  const MINER_KIT = 'https://github.com/AffineFoundation/affine/blob/v2/v2/miner/generator_miner.py';
+  const MINER_KIT = 'https://github.com/AffineFoundation/affine/blob/bb/generator-integration/v2/miner/generator_miner.py';
 
   function object(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};

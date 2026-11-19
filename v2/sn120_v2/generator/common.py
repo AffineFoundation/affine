@@ -157,17 +157,14 @@ class PublicSink:
         return f"{self.public_url}/generator/{relative}"
 
     def put(self, relative: str, raw: bytes) -> None:
-        path = self.path(relative)
-        if path.is_file() and path.read_bytes() == raw:
-            # Repair a missing mirror without rewriting a complete public file.
-            if self.store is None:
-                return
-            try:
-                if self.store.get("public/generator/" + relative) == raw:
-                    return
-            except KeyError:
-                pass
-        atomic_bytes(path, raw)
+        if self.store is not None:
+            self.put_mirror(relative, raw)
+        else:
+            atomic_bytes(self.path(relative), raw)
+
+    def put_mirror(self, relative: str, raw: bytes) -> None:
+        """Write local bytes first, then mirror. Callers may run mirrors concurrently."""
+        atomic_bytes(self.path(relative), raw)
         if self.store is not None:
             self.store.put("public/generator/" + relative, raw)
 

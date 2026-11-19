@@ -81,7 +81,7 @@ def test_sibling_shaped_output_and_rollout_publish(tmp_path):
 def test_tick_runs_all_due_phases_and_does_not_republish(tmp_path):
     site = tmp_path / "site"
     site.mkdir()
-    config = Config(site, tmp_path / "work", tmp_path / "pool")
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
     now = DEADLINE + 60
     calls = []
     evidence = config.work_dir / "jobs" / EPOCH / "evidence.json"
@@ -93,37 +93,88 @@ def test_tick_runs_all_due_phases_and_does_not_republish(tmp_path):
         return {"status": "snapshot", "epoch": EPOCH}
     steps = {
         "links": lambda **kwargs: calls.append("links") or {"status": "issued"},
+        "window_state": lambda **kwargs: calls.append("state"),
         "snapshot": fake_snapshot,
         "dispatch": lambda **kwargs: calls.append("dispatch") or SimpleNamespace(to_dict=lambda: {"state": "dispatched", "epoch": EPOCH}),
         "collect": lambda **kwargs: calls.append("collect") or SimpleNamespace(to_dict=lambda: {"state": "running", "epoch": EPOCH}),
     }
     remote = SimpleNamespace(dispatch=lambda epoch: steps["dispatch"](epoch=epoch), collect=lambda epoch: steps["collect"](epoch=epoch))
+    write_seed(config.work_dir, EPOCH)
     # Avoid network through the same step injection used by the pure driver.
     with pytest.MonkeyPatch.context() as patch:
         from sn120_v2.generator import control
-        patch.setattr(control, "update_window_state", lambda *args, **kwargs: None)
+        patch.setattr(control, "update_window_state", lambda *args, **kwargs: steps["window_state"]())
+        patch.setattr(control, "fetch_head", lambda url, path, now: path.parent.mkdir(parents=True, exist_ok=True) or path.write_text('{"version":"test-king"}'))
         patch.setattr(control, "read_registrations", lambda client, clock: ({1: "hk"}, {"hk"}))
         tick(config, now=now, client=None, store=None, pool=None, remote=remote, steps=steps)
-        assert calls == ["links", "snapshot", "dispatch", "collect"]
+        assert calls == ["snapshot", "dispatch", "collect", "links", "state"]
         calls.clear()
         tick(config, now=now + 1, client=None, store=None, pool=None, remote=remote, steps=steps)
-        assert calls == ["links", "dispatch", "collect"]
+        assert calls == ["dispatch", "collect", "links", "state"]
         # A completed intake is the one authoritative do-not-publish marker.
         intake = site / "generator" / "epochs" / EPOCH / "intake.sha256"
         intake.parent.mkdir(parents=True)
         intake.write_text(sha256_hex(b"") + "  intake.jsonl\n")
         calls.clear()
         tick(config, now=now + 2, client=None, store=None, pool=None, remote=remote, steps=steps)
-        assert calls == ["links"], "a complete epoch is never snapshotted, dispatched or republished"
+        assert calls == ["links", "state"], "a complete epoch is never snapshotted, dispatched or republished"
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 60, 180])
+def test_tick_captures_only_just_closed_epoch_within_grace(tmp_path, monkeypatch, offset):
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
+    write_seed(config.work_dir, EPOCH)
+    calls = []
+    monkeypatch.setattr("sn120_v2.generator.control.fetch_head", lambda url, path, now: calls.append(now) or path.parent.mkdir(parents=True, exist_ok=True) or path.write_text('{"version":"test-king"}'))
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: {"status": "not_due"})
+    monkeypatch.setattr("sn120_v2.generator.control.update_window_state", lambda **kwargs: None)
+    phases = {
+        "snapshot": lambda **kwargs: {"status": "snapshot", "epoch": kwargs["epoch"]},
+        "dispatch": lambda **kwargs: SimpleNamespace(to_dict=lambda: {"state": "running"}),
+        "collect": lambda **kwargs: SimpleNamespace(to_dict=lambda: {"state": "running"}),
+    }
+    now = DEADLINE + offset
+    if offset > 120:
+        with pytest.raises(ConfigError, match="grace"):
+            tick(config, now=now, client=None, store=None, pool=None, steps=phases)
+    else:
+        tick(config, now=now, client=None, store=None, pool=None, steps=phases)
+        if offset >= 0:
+            king = json.loads((config.work_dir / "king" / f"{EPOCH}.json").read_text())
+            assert king["captured_at_epoch"] == now
+            assert king["epoch"] == EPOCH
+        else:
+            assert not (config.work_dir / "king" / f"{EPOCH}.json").exists()
+    assert calls == ([now] if 0 <= offset <= 120 else [])
+
+
+def test_first_boot_does_not_process_epochs_before_launch(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch="20261120T0400Z")
+    before = epoch_deadline("20261120T0000Z").timestamp() - 3600
+    monkeypatch.setattr("sn120_v2.generator.control.fetch_head", lambda *args, **kwargs: pytest.fail("no earlier king"))
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: {"status": "before_first_epoch", "count": 0})
+    monkeypatch.setattr("sn120_v2.generator.control.snapshot_epoch", lambda **kwargs: pytest.fail("no earlier snapshot"))
+    events = tick(config, now=before, client=None, store=None, pool=None)
+    assert [event["phase"] for event in events] == ["links"]
+    state = json.loads((site / "generator" / "state.json").read_text())
+    assert state["current_epoch"] == "20261120T0400Z"
+    assert (config.work_dir / "seeds" / "20261120T0400Z.json").is_file()
+    assert not (config.work_dir / "seeds" / "20261120T0000Z.json").exists()
+    assert not (config.work_dir / "king").exists()
 
 
 def test_tick_rejects_publication_after_results_deadline(tmp_path):
     site = tmp_path / "site"
     site.mkdir()
-    config = Config(site, tmp_path / "work", tmp_path / "pool")
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
     results = config.work_dir / "epochs" / EPOCH / "out" / "results.json"
     results.parent.mkdir(parents=True)
     results.write_text("{}")
+    write_seed(config.work_dir, EPOCH)
     with pytest.MonkeyPatch.context() as patch:
         from sn120_v2.generator import control
         patch.setattr(control, "update_window_state", lambda *args, **kwargs: None)

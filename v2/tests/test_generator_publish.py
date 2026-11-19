@@ -58,10 +58,16 @@ def make_output(n=2, passes=4, total=8):
     }
 
 
+def test_publication_accepts_grace_capture_and_rejects_late_king(tmp_path):
+    publication(make_job(), make_output(), out_dir=tmp_path, secret=SECRET, history=[], registered={1: "hk-a", 2: "hk-b"}, now=DEADLINE + 1, pool_rows=Pool(), frozen_at=DEADLINE + 120)
+    with pytest.raises(VerifyError, match="grace"):
+        publication(make_job(), make_output(), out_dir=tmp_path, secret=SECRET, history=[], registered={1: "hk-a", 2: "hk-b"}, now=DEADLINE + 1, pool_rows=Pool(), frozen_at=DEADLINE + 121)
+
+
 def test_publication_has_only_four_intake_fields_and_reveals_secret(tmp_path):
     plan = publication(
         make_job(), make_output(), out_dir=tmp_path, secret=SECRET, history=[], registered={1: "hk-a", 2: "hk-b"},
-        now=DEADLINE + 1, pool_rows=Pool(), frozen_at=DEADLINE,
+        now=DEADLINE + 1, pool_rows=Pool(), frozen_at=DEADLINE + 60,
     )
     assert len(plan["accepted"]) == 2
     assert all(set(row) == {"problem", "answer", "source_id", "prior_p"} for row in plan["intake"])

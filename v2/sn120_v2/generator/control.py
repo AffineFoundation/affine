@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..canonical import sha256_hex
 from ..errors import ConfigError, VerifyError
+from ..links import public_key
 from .common import PublicSink, atomic_json, json_bytes, read_json, utc_text
 from .config import Config
 from .epoch import epoch_deadline, epoch_id, epoch_start
@@ -32,11 +35,18 @@ def write_seed(work_dir: Path, epoch: str) -> dict[str, Any]:
     return row
 
 
+KING_CAPTURE_GRACE_S = 120
+
+
 def frozen_at(king_path: Path, epoch: str) -> float:
     row = read_json(king_path)
     if row.get("epoch") != epoch:
         raise VerifyError("frozen king epoch does not match the job")
-    return float(row["captured_at_epoch"])
+    captured = float(row["captured_at_epoch"])
+    deadline = epoch_deadline(epoch).timestamp()
+    if not deadline <= captured <= deadline + KING_CAPTURE_GRACE_S:
+        raise VerifyError("frozen king capture is outside the deadline grace period")
+    return captured
 
 
 def read_registrations(client: Any, clock: Callable[[], float]) -> tuple[dict[int, str], set[str]]:
@@ -48,32 +58,100 @@ def read_registrations(client: Any, clock: Callable[[], float]) -> tuple[dict[in
 
 
 def _write_links(sink: PublicSink, files: Mapping[str, bytes]) -> None:
-    for name in sorted(files, key=lambda name: name == "links.json"):
-        relative = name.removeprefix("generator/")
-        if relative.startswith("links/") or relative == "links.json":
-            sink.put(relative, files[name])
+    """Publish every per-hotkey grant before the index, mirroring in parallel."""
+    grants = {
+        name.removeprefix("generator/"): raw for name, raw in files.items()
+        if name.removeprefix("generator/").startswith("links/")
+    }
+    # A slow store cannot hold up local atomic publication or other mirrors.
+    with ThreadPoolExecutor(max_workers=16, thread_name_prefix="generator-links") as executor:
+        futures = [executor.submit(sink.put_mirror, relative, grants[relative]) for relative in sorted(grants)]
+        for future in futures:
+            future.result()
+    if "generator/links.json" in files:
+        sink.put_mirror("links.json", files["generator/links.json"])
 
 
 def issue_links(config: Config, *, now: float, client: Any, store: Any) -> dict[str, Any]:
-    from .links import GeneratorPresigner, eligible, link_files
+    """Refresh only grants that need it; preserve grants through epoch expiry."""
+    from .links import GeneratorPresigner, PREFETCH_S, link_files
     state_path = config.work_dir / "links-state.json"
     state = read_json(state_path) if state_path.is_file() else {}
-    if now - float(state.get("issued_at", 0)) < 600:
+    if now - float(state.get("chain_read_at", state.get("issued_at", 0))) < 600:
         return {"status": "not_due"}
-    from .control import read_registrations
     registered, activated = read_registrations(client, lambda: now)
     hotkeys = sorted({hotkey for uid, hotkey in registered.items() if uid != 0 and hotkey in activated})
-    files = link_files(hotkeys, GeneratorPresigner(store), now)
-    sink = PublicSink(config.site_dir, store, config.public_url)
-    _write_links(sink, files)
     epoch = epoch_id(now)
-    document = {"epoch": epoch, "issued_at": now, "hotkeys": hotkeys}
-    atomic_json(state_path, document)
-    return {"status": "issued", "epoch": epoch, "count": len(hotkeys)}
+    if epoch_deadline(epoch) < epoch_deadline(config.first_epoch):
+        return {"status": "before_first_epoch", "epoch": epoch, "count": 0}
+    remaining = epoch_deadline(epoch).timestamp() - now
+    prefetch = 0 < remaining <= PREFETCH_S
+    sink = PublicSink(config.site_dir, store, config.public_url)
+    previous = state.get("hotkeys", {})
+    if isinstance(previous, dict):
+        known = set(previous)
+    elif isinstance(previous, list):  # Upgrade the original aggregate state safely.
+        known = set(previous)
+    else:
+        known = set()
+    sink_hotkeys = []
+    for path in (config.site_dir / "generator" / "links").glob("*.json"):
+        try:
+            document = json.loads(path.read_bytes())
+            if document.get("hotkey") == path.stem:
+                sink_hotkeys.append(path.stem)
+        except (OSError, ValueError):
+            continue
+    all_hotkeys = sorted(known | set(sink_hotkeys) | set(hotkeys))
+    issued = state.get("issued", {})
+    if not isinstance(issued, dict):
+        issued = {}
+    due = []
+    for hotkey in hotkeys:
+        old = issued.get(hotkey, {})
+        path = sink.path(f"links/{hotkey}.json")
+        current = {}
+        if path.is_file():
+            try:
+                current = json.loads(path.read_bytes())
+            except (OSError, ValueError):
+                current = {}
+        expected_deadline = int(epoch_deadline(epoch).timestamp())
+        valid_file = (
+            current.get("version") == "affine-generator-link-v1"
+            and current.get("hotkey") == hotkey
+            and current.get("sealed_to") == public_key(hotkey).hex()
+            and current.get("epoch") == epoch
+            and current.get("deadline") == expected_deadline
+        )
+        if (old.get("epoch") != epoch or not valid_file
+                or (prefetch and "next" not in current)):
+            due.append(hotkey)
+    files = link_files(due, GeneratorPresigner(store), now) if due else {}
+    index = {
+        "version": "affine-generator-link-v1", "issued_at": int(now),
+        "epoch": epoch, "deadline": int(epoch_deadline(epoch).timestamp()),
+        "hotkeys": all_hotkeys, "link_file": "generator/links/<hotkey>.json",
+        "prefetch_before_deadline_seconds": PREFETCH_S,
+        "upload_mode": "overwrite_until_deadline",
+    }
+    # Keep the index synchronized even if no grants need replacement.
+    files["generator/links.json"] = json_bytes(index)
+    _write_links(sink, files)
+    for hotkey in due:
+        issued[hotkey] = {"epoch": epoch, "issued_at": now, "prefetch": prefetch}
+    document = {
+        "epoch": epoch, "chain_read_at": now, "hotkeys": all_hotkeys,
+        "issued": issued,
+    }
+    atomic_json(state_path, document, private=True)
+    return {"status": "issued" if due else "unchanged", "epoch": epoch, "count": len(due), "active": len(hotkeys)}
 
 
 def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store: Any, pool: Any) -> dict[str, Any]:
     sink = PublicSink(config.site_dir, store, config.public_url)
+    if epoch_deadline(epoch) < epoch_deadline(config.first_epoch):
+        return {"status": "before_first_epoch", "epoch": epoch}
     manifest_rel = f"epochs/{epoch}/manifest.json"
     job_path = config.work_dir / "jobs" / epoch / "evidence.json"
     if sink.exists(manifest_rel) and job_path.is_file():
@@ -132,6 +210,8 @@ def update_window_state(config: Config, *, epoch: str, now: float, store: Any) -
 
 
 def publish_epoch(config: Config, *, epoch: str, now: float, client: Any, store: Any, pool: Any) -> dict[str, Any]:
+    if epoch_deadline(epoch) < epoch_deadline(config.first_epoch):
+        return {"status": "before_first_epoch", "epoch": epoch, "accepted": 0}
     from .publish import publish
     seed = read_json(config.work_dir / "seeds" / f"{epoch}.json")
     frozen = frozen_at(config.work_dir / "king" / f"{epoch}.json", epoch)
@@ -157,25 +237,31 @@ def tick(
     run = lambda name, default, **kwargs: actions.get(name, default)(**kwargs)
     current = epoch_id(now)
     events: list[dict[str, Any]] = []
-    write_seed(config.work_dir, current)
-    king_path = config.work_dir / "king" / f"{current}.json"
-    if not king_path.is_file() and now >= epoch_deadline(current).timestamp():
-        fetch_head(config.head_url, king_path, now=now)
-        row = read_json(king_path)
-        row.update({"epoch": current, "captured_at_epoch": epoch_deadline(current).timestamp()})
-        atomic_json(king_path, row)
-    # The operator's issuer has its own 10-minute guard in links.issue.
-    result = run("links", issue_links, config=config, now=now, client=client, store=store)
-    if result.get("status") not in ("not_due", "unchanged"):
-        events.append({"phase": "links", **result})
-    update_window_state(config, epoch=current, now=now, store=store)
+    planned = max(current, config.first_epoch)
+    write_seed(config.work_dir, planned)
+    # Freeze only the just-closed epoch, and only during the explicit grace.
+    closed = epoch_id(int(now // 14400) * 14400 - 1)
+    king_path = config.work_dir / "king" / f"{closed}.json"
+    if (closed >= config.first_epoch and not king_path.is_file()
+            and (config.work_dir / "seeds" / f"{closed}.json").is_file()):
+        elapsed = now - epoch_deadline(closed).timestamp()
+        if 0 <= elapsed <= KING_CAPTURE_GRACE_S:
+            fetch_head(config.head_url, king_path, now=now)
+            row = read_json(king_path)
+            row.update({"epoch": closed, "captured_at_epoch": now})
+            atomic_json(king_path, row)
+        elif elapsed > KING_CAPTURE_GRACE_S:
+            raise ConfigError(f"missed the {KING_CAPTURE_GRACE_S}s king capture grace for {closed}")
+    # The deadline snapshot and scorer phases must not wait for link issuance.
     for number in range(3):
         deadline = epoch_deadline(current).timestamp() - number * 4 * 3600
         epoch = epoch_id(deadline - 1)
         job_path = config.work_dir / "jobs" / epoch / "evidence.json"
         results_path = config.work_dir / "epochs" / epoch / "out" / "results.json"
         intake_path = config.site_dir / "generator" / "epochs" / epoch / "intake.sha256"
-        if now < deadline + 60 or intake_path.is_file():
+        if (now < deadline + 60 or intake_path.is_file()
+                or epoch < config.first_epoch
+                or not (config.work_dir / "seeds" / f"{epoch}.json").is_file()):
             continue
         if not job_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60:
             events.append({"phase": "snapshot", **run("snapshot", snapshot_epoch, config=config, epoch=epoch, now=now, client=client, store=store, pool=pool)})
@@ -189,4 +275,8 @@ def tick(
             if now > deadline + 3 * 3600 + 45 * 60:
                 raise ConfigError(f"scoring results for {epoch} missed the results deadline")
             events.append({"phase": "publish", **run("publish", publish_epoch, config=config, epoch=epoch, now=now, client=read_registrations(client, lambda: now)[0], store=store, pool=pool)})
+    result = run("links", issue_links, config=config, now=now, client=client, store=store)
+    if result.get("status") != "not_due":
+        events.append({"phase": "links", **result})
+    run("window_state", update_window_state, config=config, epoch=planned, now=now, store=store)
     return events
