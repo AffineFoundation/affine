@@ -12,6 +12,7 @@ import sys
 import textwrap
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -138,6 +139,63 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
     assert phase["phase"] == "solo_eval" and phase["clients_per_server"] == 8
     assert phase["configured_clients_per_server"] == 8 and phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+
+
+def test_solo_server_spawns_and_health_waits_do_not_block_other_gpus(build, tmp_path):
+    seam = VllmEvaluator.__new__(VllmEvaluator)
+    seam.settings = ServeSettings(start_timeout_s=10.0, first_port=8100)
+    seam._solo_lock = threading.RLock()
+    seam._solo_start_locks = {}
+    seam._solo_servers, seam._solo_urls, seam._solo_loaded = {}, {}, {}
+    seam._solo_server_clients, seam._solo_clients = {}, None
+    seam._head, seam._table = None, 0
+    seam.config = SimpleNamespace(work_dir=tmp_path)
+    seam.resident = SimpleNamespace(tree=lambda prefix, identity: tmp_path / "base")
+    seam._wait_one_gpu_free = lambda gpu: None
+    waiting, spawned = set(), []
+    gate = threading.Event()
+    spawn_gate = threading.Event()
+
+    def spawn(argv, env, log):
+        gpu = int(argv[argv.index("--port") + 1]) - 8100
+        spawned.append(gpu)
+        if len(spawned) == 2:
+            spawn_gate.set()
+        assert spawn_gate.wait(timeout=5), "a server spawn held the shared lock"
+        return SimpleNamespace(alive=lambda: True, stop=lambda: None)
+
+    def http(url, body, timeout):
+        gpu = int(url.split(":")[2].split("/")[0]) - 8100
+        waiting.add(gpu)
+        if len(waiting) == 2:
+            gate.set()
+        assert gate.wait(timeout=5), "a health wait held the shared lock"
+        return {}
+
+    seam.spawn, seam.http = spawn, http
+    seam.sleep = lambda _: None
+    params = build.params(n_gpus=2)
+    with ThreadPoolExecutor(2) as pool:
+        urls = list(pool.map(lambda gpu: seam._serve_one(build.head(), params, 2, gpu), range(2)))
+    assert urls == ["http://127.0.0.1:8100", "http://127.0.0.1:8101"]
+    assert set(spawned) == set(waiting) == {0, 1}
+
+
+def test_loaded_lora_short_circuit_does_not_take_the_solo_lock(build):
+    seam = VllmEvaluator.__new__(VllmEvaluator)
+    artifact = build.artifact(build.head(), build.entry(0), build.params())
+    seam._solo_loaded = {0: {artifact.lora_hash}}
+
+    class Locked:
+        def __enter__(self):
+            raise AssertionError("an already-loaded LoRA took the shared lock")
+
+        def __exit__(self, *args):
+            pass
+
+    seam._solo_lock = Locked()
+    seam._call = lambda *args: (_ for _ in ()).throw(AssertionError("an already-loaded LoRA was loaded again"))
+    seam._load_one(0, artifact)
 
 
 def test_default_serving_uses_hashed_fp8_and_512_sequence_params(build):

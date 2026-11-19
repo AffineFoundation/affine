@@ -261,6 +261,7 @@ class VllmEvaluator:
         self._solo_server_clients: dict[int, int] = {}
         self._solo_urls: dict[int, str] = {}
         self._solo_loaded: dict[int, set[str]] = {}
+        self._solo_start_locks: dict[int, threading.Lock] = {}
         self._solo_lock = threading.RLock()
         self._solo_clients: int | None = None
         self._grader_lock = threading.Lock()
@@ -411,6 +412,8 @@ class VllmEvaluator:
 
     def _load_one(self, gpu: int, lora) -> None:
         """Load one adapter on one solo server, once per server lifetime."""
+        if lora.lora_hash in self._solo_loaded.get(gpu, set()):
+            return
         with self._solo_lock:
             if lora.lora_hash in self._solo_loaded.setdefault(gpu, set()):
                 return
@@ -620,42 +623,68 @@ class VllmEvaluator:
     def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
         """Start or reuse exactly one GPU's server, independent of its peers."""
         with self._solo_lock:
+            start_lock = self._solo_start_locks.setdefault(gpu, threading.Lock())
+        with start_lock:
+            return self._start_one(head, params, table, gpu)
+
+    def _start_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
+        """One GPU startup, without blocking startup or loading on its peers."""
+        clients = self._solo_clients if self._solo_clients is not None else self.settings.clients_per_server
+        with self._solo_lock:
             existing = self._solo_servers.get(gpu)
-            clients = self._solo_clients if self._solo_clients is not None else self.settings.clients_per_server
             if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
                 return self._solo_urls[gpu]
-            if existing is not None:
-                existing.stop()
+            self._solo_servers.pop(gpu, None)
+            self._solo_server_clients.pop(gpu, None)
+            self._solo_urls.pop(gpu, None)
+            self._solo_loaded.pop(gpu, None)
+        if existing is not None:
+            existing.stop()
+        base_dir = resident_head(self.resident, head)
+        self._wait_one_gpu_free(gpu)
+        logs = self.config.work_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        port = self.settings.first_port + gpu
+        argv = server_argv(str(base_dir), port, params, clients, table)
+        # Spawning and the health wait are slow: never hold the shared Solo
+        # lock while another GPU can start, load an adapter, or claim work.
+        server = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
+        url = f"http://127.0.0.1:{port}"
+        with self._solo_lock:
+            # A concurrent caller for this GPU may have installed a server
+            # while this one was spawning. Never let the stale process win.
+            if gpu in self._solo_servers:
+                server.stop()
+                existing = self._solo_servers[gpu]
+                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
+                    return self._solo_urls[gpu]
                 self._solo_servers.pop(gpu, None)
                 self._solo_server_clients.pop(gpu, None)
                 self._solo_urls.pop(gpu, None)
                 self._solo_loaded.pop(gpu, None)
-            base_dir = resident_head(self.resident, head)
-            self._wait_one_gpu_free(gpu)
-            logs = self.config.work_dir / "logs"
-            logs.mkdir(parents=True, exist_ok=True)
-            port = self.settings.first_port + gpu
-            argv = server_argv(str(base_dir), port, params, clients, table)
+                existing.stop()
             self._head, self._table = head, table
-            self._solo_servers[gpu] = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
+            self._solo_servers[gpu] = server
             self._solo_server_clients[gpu] = clients
-            url = f"http://127.0.0.1:{port}"
             self._solo_urls[gpu] = url
             self._solo_loaded[gpu] = set()
-            waited = 0.0
-            while True:
-                try:
-                    self.http(url + "/health", None, 10.0)
-                    return url
-                except (OSError, HttpError):
-                    server = self._solo_servers[gpu]
-                    if not server.alive() or waited >= self.settings.start_timeout_s:
-                        server.stop()
-                        self._solo_servers.pop(gpu, None)
-                        self._solo_urls.pop(gpu, None)
-                        raise InfraError(f"the vLLM server at {url} did not start") from None
-                    self.sleep(5.0)
-                    waited += 5.0
+        waited = 0.0
+        while True:
+            try:
+                self.http(url + "/health", None, 10.0)
+                return url
+            except (OSError, HttpError):
+                if not server.alive() or waited >= self.settings.start_timeout_s:
+                    server.stop()
+                    with self._solo_lock:
+                        if self._solo_servers.get(gpu) is server:
+                            self._solo_servers.pop(gpu, None)
+                            self._solo_server_clients.pop(gpu, None)
+                            self._solo_urls.pop(gpu, None)
+                            self._solo_loaded.pop(gpu, None)
+                    raise InfraError(f"the vLLM server at {url} did not start") from None
+                self.sleep(5.0)
+                waited += 5.0
 
     def close_one(self, gpu: int) -> None:
         with self._solo_lock:
@@ -676,6 +705,7 @@ class VllmEvaluator:
             except Exception as exc:  # noqa: BLE001 - release the other resources too
                 errors.append(exc)
         self._solo_servers, self._solo_server_clients, self._solo_urls, self._solo_loaded = {}, {}, {}, {}
+        self._solo_start_locks = {}
         self._solo_clients = None
         self._solo_scheduler = None
         try:

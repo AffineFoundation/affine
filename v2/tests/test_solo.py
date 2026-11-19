@@ -114,7 +114,7 @@ def test_steal_waits_after_null_for_a_lora_then_exits_when_all_work_is_done(buil
     assert not stopped.wait(0.05), "null exhaustion must not end a worker while training can add a LoRA"
     scheduler.add_lora(0, lora, gpu=0)
     deadline = time.monotonic() + 5
-    while len(claims) < 5:
+    while len(claims) < 8:
         assert time.monotonic() < deadline, claims
         time.sleep(0.005)
     scheduler.training_finished()

@@ -109,7 +109,7 @@ class SoloScheduler:
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
             while True:
-                if self.failure is not None or self.cut:
+                if self.failure is not None or self.cut or (self.training_done and not self.alive):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
                 claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner)
@@ -271,6 +271,8 @@ class SoloWorker:
                             reply = future.result()
                         except _Deadline:
                             stopped = True
+                            if self.scheduler is not None:
+                                self.scheduler.deadline_cut()
                             continue
                         except _Cancelled:
                             continue
@@ -421,6 +423,8 @@ class SoloRunner(LocalRunner):
                 self.trainer.close()
         finally:
             warm_pool.shutdown(wait=True, cancel_futures=True)
+        if self.clock() >= limit:
+            scheduler.deadline_cut()
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()

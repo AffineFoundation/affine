@@ -8,13 +8,17 @@ A GPU with no training assignment starts its vLLM server and claims null rollout
 
 The last LoRA is added before the scheduler marks training complete, so a worker cannot observe training completion while its final artifact is not yet available. Work-selection order, task/sample indexing, rollout seeds, grading, scoring, and early-look decisions are unchanged.
 
-The regression test in `tests/test_solo_round.py` runs eight GPU scheduler workers with six LoRAs still in training. It requires every GPU to serve null before the LoRAs are added, then requires every GPU to serve rollouts, GPUs 6 and 7 to serve LoRA work, and every LoRA and null outcome to complete. A direct scheduler test also covers exhausted null work with one LoRA and one GPU.
+The regression test in `tests/test_solo_round.py` runs eight GPU scheduler workers with six LoRAs still in training. It requires every GPU to serve null before the LoRAs are added, then requires every GPU to serve rollouts, GPUs 6 and 7 to serve LoRA work, and every LoRA and null outcome to complete. A direct scheduler test also covers exhausted null work with one LoRA and one GPU. With no live LoRA, the early-exit guard requires `training_done and not alive`; the separate exhausted-work check still lets workers exit after every job is claimed.
+
+## Concurrent startup and adapter loading
+
+Each GPU has its own startup lock, so repeated callers reuse one server. Spawning and the health wait do not hold the shared `_solo_lock`; only the lifecycle dictionary updates use it. Thus one GPU's vLLM startup does not serialize its peers or block already-loaded LoRA claims. `_load_one` also checks its per-GPU loaded set before taking the shared lock and repeats the check after acquiring it. The tests force two GPU spawns and two health waits to overlap and reject any shared-lock acquisition for an already-loaded adapter.
 
 ## Deadline keeps the completed paired prefix
 
 At the scoring cutoff, Solo now returns the complete `eval_chunk_tasks` block prefix shared by null and every still-live LoRA, padded with `NOT_RUN` for the unfinished tail, and marks `stopped_at_limit=True`. This restores the paired-prefix behavior of the streaming evaluator: completed work is not discarded merely because the round limit interrupted the rest. Only an empty shared prefix raises `InfraError`. The public round text consequently reports `(stopped at the time limit)`.
 
-The tests cover a partial shared prefix with extra null results, the existing round-text wording, and the empty-prefix failure. They do not change the judging rule, early looks, or seeds.
+The tests cover a partial shared prefix with extra null results, the existing round-text wording, and the empty-prefix failure. A `_Deadline` observed by a worker marks the scheduler cut directly, and the runner also checks the deadline after the pool drains. This covers all workers returning before the runner's clock poll, the path that previously left `scheduler.cut` false and discarded completed work. A runner-level regression verifies the shared prefix and `stopped_at_limit=True` in that case. They do not change the judging rule, early looks, or seeds.
 
 ## FP8 KV cache and 512 concurrent requests
 
@@ -40,4 +44,6 @@ Operator-supplied offline measurements on 8x B300:
 | bf16 | 256 | 6,632 tok/s | Not supplied |
 | fp8 | 512 | 10,904 tok/s | 0 |
 
-These are offline measurements, not results from a new live round. This change has not been run on B300 hardware as part of this PR.
+Affine also measured the scheduler and concurrent-startup fixes in a shadow test on 8x B300 using the `r000057` inputs: 5,562 s eval wall versus 9,114 s live (**39% lower**), 94% average utilization across all eight GPUs, and the same decision as live. The referenced `PART-A.md` notes were not available in this checkout; these figures are supplied by Affine, not reproduced by this PR's local tests.
+
+These are offline or shadow-test measurements, not results from a new live round. This change has not been run on B300 hardware as part of this PR.
