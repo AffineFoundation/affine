@@ -83,13 +83,25 @@ def test_idle_gpus_serve_null_before_slow_training_adds_loras(build):
     scheduler = SoloScheduler(runner, ticket, 10000)
     gate = threading.Condition()
     null_gpus = set()
+    lora_gpus = set()
     served = []
     rollouts = []
     stopped = []
 
     def worker(gpu):
         def steal(gpu, owner):
+            if scheduler.training_done:
+                with gate:
+                    # A non-idle GPU may not drain LoRAs before both idle GPUs
+                    # have had their first LoRA claim. An idle GPU yields after
+                    # its first claim too, so the other idle GPU can join.
+                    while lora_gpus != {6, 7} and (gpu not in (6, 7) or gpu in lora_gpus):
+                        assert gate.wait(timeout=30), f"idle LoRA workers missing: {lora_gpus}"
             claim = scheduler.steal(gpu, owner)
+            if claim is not None and claim[0] != NULL_MODEL and gpu in (6, 7):
+                with gate:
+                    lora_gpus.add(gpu)
+                    gate.notify_all()
             if claim is not None and claim[0] == NULL_MODEL and gpu not in null_gpus:
                 with gate:
                     null_gpus.add(gpu)
@@ -101,6 +113,9 @@ def test_idle_gpus_serve_null_before_slow_training_adds_loras(build):
 
         def record(model, sample, index, code):
             rollouts.append((gpu, model))
+            if model != NULL_MODEL:
+                with gate:
+                    gate.notify_all()
             scheduler.result(model, sample, index, code)
 
         Worker(gpu, served).run(steal=steal, result=record, judge=scheduler.judge, alive=lambda: True, deadline=10000)
@@ -124,7 +139,7 @@ def test_idle_gpus_serve_null_before_slow_training_adds_loras(build):
     assert all(not thread.is_alive() for thread in threads)
     assert {event[1] for event in served if event[0] == "serve"} == set(range(8))
     assert {gpu for gpu, model in rollouts} == set(range(8))
-    assert any(gpu in (6, 7) and model != NULL_MODEL for gpu, model in rollouts)
+    assert lora_gpus == {6, 7}
     null, scored, dropped, stopped_at_limit = scheduler.finish()
     assert null == ("P" * 64,) and all(scored[pos] == ("P" * 64,) for pos in range(6))
     assert not dropped and not stopped_at_limit
