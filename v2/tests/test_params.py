@@ -7,12 +7,13 @@ import pytest
 
 from sn120_v2.canonical import digest, to_jsonable
 from sn120_v2.errors import BatchRejected, ConfigError, ContractError
+from conftest import Build
 from sn120_v2.params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GenesisSpec, MinerBound, Params, Recipe, load_params, require_env
 
 SPEC_DEFAULTS = dict(
     netuid=120, env="math", batch_cap=32, max_loras_per_box=32, n_min_start=1, n_gpus=8, samples_per_task=1,
     looks=(0.25, 0.5, 1.0), max_output_tokens=65536, max_context_tokens=69632, temperature=1.0, top_p=0.95, top_k=20,
-    dtype="bfloat16", z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=128 * 1024 * 1024,
+    dtype="bfloat16", kv_cache_dtype="auto", max_num_seqs=256, z_bar=1.0, cap_hit_floor=0.33, cap_hit_margin=0.02, fold_every_k=1, max_batch_bytes=128 * 1024 * 1024,
     max_prompts=2000, max_rollouts=8000, min_reasoning_tokens=32, reasoning_token_share=0.5, max_answer_only_frac=0.05,
     max_answer_repeat_frac=0.10, max_answer_repeat_count=32, reward_tolerance=0.0, calibration_tol=0.003, kings_window=10,
     burn_uid=0, weights_cadence_s=3600, budget_usd_per_hour=200.0,
@@ -25,6 +26,21 @@ def test_defaults_match_the_spec_parameter_table():
     assert {name: getattr(params, name) for name in SPEC_DEFAULTS} == SPEC_DEFAULTS
     assert {name: getattr(params.recipe, name) for name in SPEC_RECIPE_DEFAULTS} == SPEC_RECIPE_DEFAULTS
     assert params.recipe.train_max_output_tokens == 32768, "the training cap is independent of the scoring cap"
+
+
+def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
+    params = Params()
+    assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
+    assert params.params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
+    raw = json.dumps(params.to_dict(), sort_keys=True)
+    assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
+    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1"
+    ticket = Build.ticket(params=params)
+    assert ticket.digest() == ticket.digest()
+    from sn120_v2.types import RoundTicket
+    restored = RoundTicket.from_dict(ticket.to_dict())
+    assert restored.digest() == ticket.digest() and restored.params == params
 
 
 def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip():
@@ -75,7 +91,7 @@ def test_look_sizes_end_with_every_task():
     [
         {"batch_cap": 0}, {"batch_cap": 33}, {"n_min_start": 0}, {"n_tasks": 0}, {"looks": ()}, {"looks": (0.5, 0.9)},
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
-        {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"lease_timeout_s": 0}, {"kings_window": 0},
+        {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
     ],
 )

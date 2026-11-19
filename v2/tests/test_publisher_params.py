@@ -94,7 +94,7 @@ def sentences(text: str) -> str:
 
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
-    "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
+    "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
 }  # fmt: skip
 
 
@@ -182,7 +182,6 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"The chunk runs again: at most {publisher.BOX_TRIES} runs in all",
         f"not usable: at most {serve.retries + 1} tries in all",
         f"graded again: at most {serve.grade_tries} grades in all",
-        f"--max-num-seqs {serve.clients_per_server}",
         f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
         f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params
@@ -263,14 +262,12 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     assert not unused, f"fixed_phrases names a phrase with no fixed number: {unused}"
 
     first, second = (publisher.stated_params(one) for one in texts)
-    # When enabled, every non-default rotation value must still be stated.
-    default_rotation = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
-    assert set(first) == set(second) - default_rotation
-    expected_keys = {f.name for f in dataclasses.fields(Params)} - {"recipe"} - default_rotation
-    # This test renders a params-only enabled snapshot without a round block;
-    # section content is covered by the rotation publisher golden test.
-    assert set(second) == expected_keys or set(second) == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
-    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype"}, "all_moved must move every number of the params"
+    # Opt-in fields are absent at defaults, preserving old Params and llms
+    # bytes. Non-default serving and rotation values must still be stated.
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    assert set(first) == {f.name for f in dataclasses.fields(Params)} - {"recipe"} - omitted
+    assert set(second) == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
+    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype"}, "all_moved must move every number of the params"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
 

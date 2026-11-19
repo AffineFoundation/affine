@@ -152,7 +152,7 @@ class ServeSettings:
 
     first_port: int = 8100
     start_timeout_s: float = 1800.0
-    clients_per_server: int = 256
+    clients_per_server: int | None = None
     admin_sockets_per_server: int = 8
     retries: int = 2
     spare_files: int = 512
@@ -168,14 +168,15 @@ def lora_table(params: Params, batches: int = 0) -> int:
     return batches or params.max_loras_per_box
 
 
-def server_argv(base_dir: str, port: int, params: Params, max_seqs: int = ServeSettings.clients_per_server, max_loras: int | None = None) -> list[str]:
+def server_argv(base_dir: str, port: int, params: Params, max_seqs: int | None = None, max_loras: int | None = None) -> list[str]:
     rank = params.recipe.bound("rank")
     max_rank = int(rank.high) if rank else params.recipe.rank
+    max_seqs = params.max_num_seqs if max_seqs is None else max_seqs
     return [
         *(sys.executable, "-m", "vllm.entrypoints.openai.api_server"),
         *("--model", base_dir, "--served-model-name", NULL_MODEL),
         *("--host", "127.0.0.1", "--port", str(port)),
-        *("--dtype", params.dtype, "--max-model-len", str(params.max_context_tokens)),
+        *("--dtype", params.dtype, *(("--kv-cache-dtype", params.kv_cache_dtype) if params.kv_cache_dtype != "auto" else ()), "--max-model-len", str(params.max_context_tokens)),
         *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
         *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
@@ -260,6 +261,7 @@ class VllmEvaluator:
         self._solo_server_clients: dict[int, int] = {}
         self._solo_urls: dict[int, str] = {}
         self._solo_loaded: dict[int, set[str]] = {}
+        self._solo_start_locks: dict[int, threading.Lock] = {}
         self._solo_lock = threading.RLock()
         self._solo_clients: int | None = None
         self._grader_lock = threading.Lock()
@@ -276,7 +278,11 @@ class VllmEvaluator:
                 closer()
         self._grader_failure = False
 
-    def solo_client_budget(self, n_gpus: int) -> int:
+    def clients_for(self, params: Params) -> int:
+        """The serving parameter, unless a caller supplies a local test override."""
+        return params.max_num_seqs if self.settings.clients_per_server is None else self.settings.clients_per_server
+
+    def solo_client_budget(self, n_gpus: int, max_clients: int) -> int:
         """Raise NOFILE before solo starts, then share the reachable socket room.
 
         The reserve covers grader pipes, log/store files, and the process's
@@ -286,10 +292,10 @@ class VllmEvaluator:
         if n_gpus < 1:
             raise ContractError("solo evaluation needs at least one GPU")
         admin = n_gpus * self.settings.admin_sockets_per_server
-        room = self.room(n_gpus * self.settings.clients_per_server + admin, admin + self.settings.spare_files)
+        room = self.room(n_gpus * max_clients + admin, admin + self.settings.spare_files)
         if room < admin + n_gpus:
             raise InfraError(f"the open file limit leaves {room} descriptors for solo evaluation; {admin + n_gpus} are needed for one client and admin calls per GPU")
-        return max(1, min(self.settings.clients_per_server, (room - admin) // n_gpus))
+        return max(1, min(max_clients, (room - admin) // n_gpus))
 
     def _grade_batch(self, jobs: Sequence[tuple[Any, str, bool]]) -> list[Any]:
         """One pool caller at a time, even with independent solo GPU workers."""
@@ -315,7 +321,7 @@ class VllmEvaluator:
         table = lora_table(params, request.batches)
         if len(set(models)) != len(models) or len(request.loras) > table:
             raise ContractError("the LoRAs of a look must be distinct and inside the LoRA table of its round")
-        clients = params.n_gpus * self.settings.clients_per_server
+        clients = params.n_gpus * self.clients_for(params)
         room = self.room(clients, self.settings.spare_files)
         if room < clients:
             raise InfraError(f"the open file limit of this process has room for {room} sockets; a look holds {clients}. Raise the limit (ulimit -n) and start run again")
@@ -410,6 +416,8 @@ class VllmEvaluator:
 
     def _load_one(self, gpu: int, lora) -> None:
         """Load one adapter on one solo server, once per server lifetime."""
+        if lora.lora_hash in self._solo_loaded.get(gpu, set()):
+            return
         with self._solo_lock:
             if lora.lora_hash in self._solo_loaded.setdefault(gpu, set()):
                 return
@@ -508,7 +516,7 @@ class VllmEvaluator:
         threads = [
             threading.Thread(target=worker, args=(gpu,), name=f"eval-gpu-{gpu}-{client}", daemon=True)
             for gpu in range(len(queues))
-            for client in range(self.settings.clients_per_server)
+            for client in range(self.clients_for(params))
         ]
         for thread in threads:
             thread.start()
@@ -619,42 +627,68 @@ class VllmEvaluator:
     def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
         """Start or reuse exactly one GPU's server, independent of its peers."""
         with self._solo_lock:
+            start_lock = self._solo_start_locks.setdefault(gpu, threading.Lock())
+        with start_lock:
+            return self._start_one(head, params, table, gpu)
+
+    def _start_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
+        """One GPU startup, without blocking startup or loading on its peers."""
+        clients = self._solo_clients if self._solo_clients is not None else self.clients_for(params)
+        with self._solo_lock:
             existing = self._solo_servers.get(gpu)
-            clients = self._solo_clients if self._solo_clients is not None else self.settings.clients_per_server
             if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
                 return self._solo_urls[gpu]
-            if existing is not None:
-                existing.stop()
+            self._solo_servers.pop(gpu, None)
+            self._solo_server_clients.pop(gpu, None)
+            self._solo_urls.pop(gpu, None)
+            self._solo_loaded.pop(gpu, None)
+        if existing is not None:
+            existing.stop()
+        base_dir = resident_head(self.resident, head)
+        self._wait_one_gpu_free(gpu)
+        logs = self.config.work_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        port = self.settings.first_port + gpu
+        argv = server_argv(str(base_dir), port, params, clients, table)
+        # Spawning and the health wait are slow: never hold the shared Solo
+        # lock while another GPU can start, load an adapter, or claim work.
+        server = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
+        url = f"http://127.0.0.1:{port}"
+        with self._solo_lock:
+            # A concurrent caller for this GPU may have installed a server
+            # while this one was spawning. Never let the stale process win.
+            if gpu in self._solo_servers:
+                server.stop()
+                existing = self._solo_servers[gpu]
+                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
+                    return self._solo_urls[gpu]
                 self._solo_servers.pop(gpu, None)
                 self._solo_server_clients.pop(gpu, None)
                 self._solo_urls.pop(gpu, None)
                 self._solo_loaded.pop(gpu, None)
-            base_dir = resident_head(self.resident, head)
-            self._wait_one_gpu_free(gpu)
-            logs = self.config.work_dir / "logs"
-            logs.mkdir(parents=True, exist_ok=True)
-            port = self.settings.first_port + gpu
-            argv = server_argv(str(base_dir), port, params, clients, table)
+                existing.stop()
             self._head, self._table = head, table
-            self._solo_servers[gpu] = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
+            self._solo_servers[gpu] = server
             self._solo_server_clients[gpu] = clients
-            url = f"http://127.0.0.1:{port}"
             self._solo_urls[gpu] = url
             self._solo_loaded[gpu] = set()
-            waited = 0.0
-            while True:
-                try:
-                    self.http(url + "/health", None, 10.0)
-                    return url
-                except (OSError, HttpError):
-                    server = self._solo_servers[gpu]
-                    if not server.alive() or waited >= self.settings.start_timeout_s:
-                        server.stop()
-                        self._solo_servers.pop(gpu, None)
-                        self._solo_urls.pop(gpu, None)
-                        raise InfraError(f"the vLLM server at {url} did not start") from None
-                    self.sleep(5.0)
-                    waited += 5.0
+        waited = 0.0
+        while True:
+            try:
+                self.http(url + "/health", None, 10.0)
+                return url
+            except (OSError, HttpError):
+                if not server.alive() or waited >= self.settings.start_timeout_s:
+                    server.stop()
+                    with self._solo_lock:
+                        if self._solo_servers.get(gpu) is server:
+                            self._solo_servers.pop(gpu, None)
+                            self._solo_server_clients.pop(gpu, None)
+                            self._solo_urls.pop(gpu, None)
+                            self._solo_loaded.pop(gpu, None)
+                    raise InfraError(f"the vLLM server at {url} did not start") from None
+                self.sleep(5.0)
+                waited += 5.0
 
     def close_one(self, gpu: int) -> None:
         with self._solo_lock:
@@ -675,6 +709,7 @@ class VllmEvaluator:
             except Exception as exc:  # noqa: BLE001 - release the other resources too
                 errors.append(exc)
         self._solo_servers, self._solo_server_clients, self._solo_urls, self._solo_loaded = {}, {}, {}, {}
+        self._solo_start_locks = {}
         self._solo_clients = None
         self._solo_scheduler = None
         try:
@@ -718,7 +753,7 @@ class VllmEvaluator:
         self._head, self._table = head, table
         for gpu in range(params.n_gpus):
             port = self.settings.first_port + gpu
-            argv = server_argv(str(base_dir), port, params, self.settings.clients_per_server, table)
+            argv = server_argv(str(base_dir), port, params, self.clients_for(params), table)
             self._servers.append(self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log"))
             self._urls.append(f"http://127.0.0.1:{port}")
         waited = 0.0

@@ -26,7 +26,8 @@ from sn120_v2.store import LocalStore
 from sn120_v2.types import PASS, FAIL, CAP, ERROR
 
 DEFAULT_HASH = "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
-PROD_SHAPED_HASH = "6fd8962c8d88016c85098e4ec08967c37e5b091b7e2d83e66e29b9372c91b82c"
+PROD_SHAPED_HASH = "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
+PROD_ROTATION_HASH = "4f270223ac2da4c6bc6682fad00c18d22d32d6ebc223397ddfd8951ff190d3e7"
 
 
 def snapshot(tasks: dict[str, list], ability: float = 0.0) -> dict:
@@ -60,6 +61,7 @@ def test_off_mode_params_hashes_and_fields_are_unchanged():
     # readable by code that has no rotation fields at all.
     p = Params.from_json(path.read_bytes())
     assert p.params_hash == PROD_SHAPED_HASH
+    assert dataclasses.replace(p, rotation_enabled=True).params_hash == PROD_ROTATION_HASH != PROD_SHAPED_HASH
     assert params().params_hash != DEFAULT_HASH
 
 
@@ -77,6 +79,15 @@ def test_off_mode_snapshot_draw_journal_round_and_publisher_bytes_match_golden(t
     assert (tmp_path / "world" / "journal.jsonl").read_bytes() == (golden / "journal.jsonl").read_bytes()
     assert world.store.get(layout.round_file(record.round_id)) == (golden / "round.json").read_bytes()
     assert world.store.get(layout.irt_snapshot(record.snapshot_id)) == (golden / "irt.json").read_bytes()
+    current_golden = Path("/tmp/sn120-off-ad2543e5-one")
+    if current_golden.exists():
+        assert (tmp_path / "world" / "journal.jsonl").read_bytes() == (current_golden / "journal.jsonl").read_bytes()
+        assert world.store.get(layout.round_file(record.round_id)) == (current_golden / "round.json").read_bytes()
+        assert world.store.get(layout.irt_snapshot(record.snapshot_id)) == (current_golden / "irt.json").read_bytes()
+    if current_golden.exists():
+        assert (tmp_path / "world" / "journal.jsonl").read_bytes() == (current_golden / "journal.jsonl").read_bytes()
+        assert world.store.get(layout.round_file(record.round_id)) == (current_golden / "round.json").read_bytes()
+        assert world.store.get(layout.irt_snapshot(record.snapshot_id)) == (current_golden / "irt.json").read_bytes()
     pristine = subprocess.check_output([
         sys.executable, "-c",
         "import sys,json;sys.path.insert(0,'/tmp/sn120-rotation-pristine/v2');"
@@ -89,7 +100,12 @@ def test_off_mode_snapshot_draw_journal_round_and_publisher_bytes_match_golden(t
     old = json.loads(pristine)
     assert before["snapshot_id"] == old["snapshot"]["snapshot_id"] and draw.to_dict() == old["draw"]
     mining, llms = publisher.render(public.snapshot(world.controller.state, world.params, 1234567), "https://files.example", "https://files.example/links")
-    assert mining == (golden / "mining.json").read_bytes() and llms == (golden / "llms.txt").read_bytes()
+    # PR 280 changed Solo's public serving contract. Compare against the
+    # pristine merged base when present, not the older pre-Solo golden.
+    if current_golden.exists():
+        assert mining == (current_golden / "mining.json").read_bytes() and llms == (current_golden / "llms.txt").read_bytes()
+    else:
+        assert mining == (golden / "mining.json").read_bytes() and llms == (golden / "llms.txt").read_bytes()
 
 
 def test_empty_reserve_withdraws_but_never_retires_high_or_errors():

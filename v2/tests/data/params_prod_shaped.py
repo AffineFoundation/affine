@@ -1,15 +1,14 @@
-"""The prod-shaped off-mode fixture used by test_pool_rotation.py."""
+"""The live prod-shaped off-mode fixture used by test_pool_rotation.py."""
 from sn120_v2.params import Params
 
 
 def fixture() -> Params:
-    """Current defaults plus PR 274's live worker-image/code pin shape.
+    """Exact live production params supplied for the 2026-11-19 merge.
 
-    PR 274 changes the pool/grader, not a Params field. An empty env_pin keeps
-    that choice out of this test. The all-zero image digest is a placeholder,
-    not a credential or a digest claimed to be in production.
+    Serving values ``kv_cache_dtype=fp8`` and ``max_num_seqs=512`` remain
+    explicit. Rotation fields are absent and therefore load at their defaults,
+    preserving the supplied params_hash. This is public configuration only;
+    no host, credential, or live service is read by this fixture.
     """
-    return Params.from_dict({
-        "env_pin": "",
-        "recipe": {"image_digests": ["sha256:0000000000000000000000000000000000000000000000000000000000000000"]},
-    })
+    from pathlib import Path
+    return Params.from_json((Path(__file__).with_suffix(".json")).read_bytes())
