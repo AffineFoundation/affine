@@ -422,17 +422,17 @@ class ScorerRemote:
         if not previous and local_results.is_file():
             return self._status(name, {"state": "complete", "job_sha256": job_digest})
         if previous:
-            if previous.get("shard_count", 1) == 1:
-                epoch_helpers = ()
             if previous.get("job_sha256") not in (None, "", job_digest):
                 raise ConfigError("Generator job changed after dispatch; explicitly reset state or use a new epoch")
             if previous.get("state") == "failed":
                 return self._status(name, previous)
             if previous.get("state") == "complete" and local_results.is_file():
                 return self._status(name, previous)
+            if previous.get("launch_attempted") and not epoch_helpers:
+                return self._status(name, previous, "scorer launch attempted; collect to resume")
             if previous.get("state") == "dispatched":
                 return self._status(name, previous, "copy outcome unknown; collect to resume")
-            if not epoch_helpers:
+            if previous.get("state") != "preparing":
                 previous = {}
 
         primary_launched = bool(previous.get("launch_attempted") or previous.get("state") == "complete")

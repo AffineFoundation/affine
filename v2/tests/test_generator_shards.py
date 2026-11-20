@@ -195,6 +195,36 @@ def test_legacy_state_without_shard_count_never_calls_helpers(tmp_path):
     assert remote.collect(epoch).complete
 
 
+def test_k1_sticky_states_return_without_any_ssh_or_scp(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote
+    for state_name in ("running", "complete", "failed"):
+        for with_helpers in (False, True):
+            key = tmp_path / f"{state_name}-{with_helpers}-key"
+            key.write_text("fake")
+            config = SSHConfig("primary", 22, key, tmp_path / f"{state_name}-{with_helpers}-work")
+            primary = FakeRemote(config)
+            helper = FakeRemote(config)
+            remote = ScorerRemote(config, runner=primary, helpers=[helper] if with_helpers else [])
+            epoch = EPOCH
+            job_path = remote.work_dir / "jobs" / epoch / "job.json"
+            job_path.parent.mkdir(parents=True)
+            job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+            if state_name == "complete":
+                result_path = remote.work_dir / "epochs" / epoch / "out" / "results.json"
+                result_path.parent.mkdir(parents=True)
+                result_path.write_text("{}")
+            state = remote.work_dir / "jobs" / epoch / "remote-state.json"
+            state.write_text(json.dumps({
+                "epoch": epoch, "state": state_name, "launch_attempted": True,
+                "job_sha256": __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes()), "attempts": 1,
+            }))
+            result = remote.dispatch(epoch)
+            expected = state_name
+            assert result.state == expected
+            assert primary.calls == [] and helper.calls == []
+            assert primary.copies == [] and helper.copies == []
+
+
 def test_helper_config_and_dispatch_idempotency(tmp_path):
     key = tmp_path / "key"
     key.write_text("fake")
