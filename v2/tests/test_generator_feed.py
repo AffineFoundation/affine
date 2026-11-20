@@ -12,9 +12,16 @@ from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.envs.reserve import MANIFEST, WITHDRAWN, empty_manifest, load_reserve, prepare_live_reserve
 from sn120_v2.envs.reserve.generator import ingest_generator
 from sn120_v2.envs.reserve.__main__ import main
-from sn120_v2.errors import VerifyError
+from sn120_v2.errors import V2Error, VerifyError
 from sn120_v2.pool_runtime import mirror_reserve
 from sn120_v2.store import LocalStore
+
+
+def write_intake_done(args: Namespace, count: int | None = None) -> None:
+    raw = Path(args.input).read_bytes()
+    Path(args.input).with_suffix(".done").write_text(json.dumps({
+        "epoch": args.epoch, "lines": len(raw.splitlines()) if count is None else count,
+        "sha256": sha256_hex(raw), "format": "generator-intake-v2"}))
 
 
 def reserve(root: Path, count: int = 1, prefix: str = "seed", start: int = 0) -> None:
@@ -202,6 +209,56 @@ def test_generator_cli_exit_3_and_4_and_dotted_license_shard(tmp_path, monkeypat
     assert main(argv) == 3
     assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
     capsys.readouterr()
+
+
+def test_live_intake_v2_first_rows_preserve_row_king_without_results(tmp_path, monkeypatch):
+    seed, root = tmp_path / "seed", tmp_path / "reserve"
+    reserve(seed, 0)
+    prepare_live_reserve(root, seed)
+    monkeypatch.setenv("SN120_RESERVE_DIR", str(root))
+    fixture = Path(__file__).parent / "fixtures/generator-intake-v2-20261120T0400Z.jsonl"
+    rows = [json.loads(line) for line in fixture.read_bytes().splitlines()]
+    args = generator_args(tmp_path, rows)
+    Path(args.input).write_bytes(fixture.read_bytes())
+    Path(args.input).with_suffix(".done").write_bytes(fixture.with_suffix(".done").read_bytes())
+    Path(args.results).unlink()  # Production ingest-ready supplies no --results.
+    report = ingest_generator(args)
+    assert report["rows"] == 4 and report["ingested"] >= 1
+    assert "schema" not in report["rejected"] and report["rejected"]["proof"] == 1
+    king = "56bae61bb4fde8dc786567e1e833ff5d53f5203f537a32ff2d2ee1fbdfc2e810"
+    assert report["king"] == king and report["king_revisions"] == [king]
+    stored = [json.loads(line) for name in report["shards"] for line in (root / "shards" / name).read_bytes().splitlines()]
+    assert len(stored) == report["ingested"]
+    assert all(row["audit"]["ref"].endswith("#king=" + king) for row in stored)
+    assert all(f"frozen king {king[:12]} " in row["audit"]["method"] for row in stored)
+    ledger = json.loads((root / "generator-ingested.jsonl").read_text())
+    assert ledger["king"] == king and ledger["input_sha256"] == sha256_hex(fixture.read_bytes())
+
+
+def test_king_precedence_and_revision_format(tmp_path, monkeypatch):
+    seed, root = tmp_path / "seed", tmp_path / "reserve"
+    reserve(seed, 0)
+    prepare_live_reserve(root, seed)
+    monkeypatch.setenv("SN120_RESERVE_DIR", str(root))
+    row = {"problem": "Unique king priority compute 10 + 2", "answer": "12", "task_id": "king-priority",
+           "license": "mit", "prior_p": .5, "king": "d" * 64, "prior_king": "e" * 64, "king_revision": "f" * 64}
+    args = generator_args(tmp_path, [row])
+    Path(args.results).unlink()
+    write_intake_done(args)
+    report = ingest_generator(args)
+    stored = json.loads((root / "shards" / report["shards"][0]).read_text())
+    assert stored["audit"]["ref"].endswith("#king=" + "d" * 64)
+    assert report["king"] == "d" * 64
+    for number, (key, value) in enumerate((("king", ""), ("prior_king", None), ("king_revision", "A" * 64), ("king", "f" * 63), ("prior_king", "f" * 63))):
+        bad = {key: value, "problem": f"Invalid king row {number}", "answer": "1", "source_id": "bad", "prior_p": .5}
+        if number == 4:
+            bad["king"] = "d" * 64  # Lower-priority fields are validated too.
+        args = generator_args(tmp_path / f"bad{number}", [bad], f"20261120T{800 + number:04d}Z")
+        Path(args.results).unlink()
+        write_intake_done(args)
+        with pytest.raises(V2Error, match="nonempty lowercase 64-hex"):
+            ingest_generator(args)
+    assert len((root / "generator-ingested.jsonl").read_text().splitlines()) == 1
 
 
 def test_publish_refuses_manifest_different_from_decision(tmp_path):

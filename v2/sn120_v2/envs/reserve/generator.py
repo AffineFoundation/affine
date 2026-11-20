@@ -207,6 +207,20 @@ def _license(row: dict[str, Any]) -> tuple[str, str] | None:
     return (value, slug) if slug else None
 
 
+def _king(row: dict[str, Any], results: dict[str, Any] | None = None) -> tuple[str, bool]:
+    """Return the row's frozen king before the optional epoch results fallback."""
+    for key in ("king", "prior_king", "king_revision"):
+        if key in row and (not isinstance(row[key], str) or not re.fullmatch(r"[0-9a-f]{64}", row[key])):
+            raise V2Error(f"Generator row {key} must be a nonempty lowercase 64-hex revision")
+    for key in ("king", "prior_king", "king_revision"):
+        if key in row:
+            return row[key], True
+    revision = (results or {}).get("king", "unpublished")
+    if not isinstance(revision, str) or not revision:
+        raise V2Error("Generator row king revision must be a nonempty string")
+    return revision, False
+
+
 def _reject(counts: collections.Counter, drops: list[dict[str, Any]], number: int, row: dict[str, Any], reason: str) -> None:
     counts[reason] += 1
     drops.append({"row": number, "source_id": row.get("source_id"), "reason": reason})
@@ -277,12 +291,10 @@ def _recover_epoch(root: Path, rows: list[dict[str, Any]], listed: list[Any], re
             if original is not None:
                 audit, added_at, task_id = original["audit"], original["added_at"], original["id"]
             else:
-                revision = row.get("prior_king", row.get("king_revision", results.get("king", "unpublished")))
-                if not isinstance(revision, str) or not revision:
-                    raise V2Error("Generator row king revision must be a nonempty string")
+                revision, from_row = _king(row, results)
                 audit = {"verdict": "keep",
                          "method": f"SN120 Generator mech 1 accepted: frozen king {revision[:12]} s/8 in 2..6 at n=8, prior_p=s/8; ingest filters: dedupe, license, MC, proof, grader self-check",
-                         "ref": f"https://affine.io/generator/epochs/{epoch}/results.json" + (f"#king={revision}" if "prior_king" in row or "king_revision" in row else "")}
+                         "ref": f"https://affine.io/generator/epochs/{epoch}/results.json" + (f"#king={revision}" if from_row else "")}
                 added_at, task_id = history[0].added_at, f"gen:{next_gen}"
                 next_gen += 1
             groups.setdefault(licensed[1], []).append(task_row(
@@ -407,19 +419,17 @@ def ingest_generator(args: Any) -> dict[str, Any]:
         groups: dict[str, list[dict[str, Any]]] = {}
         sidecars: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
         counts: collections.Counter = collections.Counter()
-        kings = sorted({str(row.get("prior_king", row.get("king_revision", (results or {}).get("king", "unpublished")))) for row in rows})
+        kings = sorted({_king(row, results)[0] for row in rows})
         def audit_for(row: dict[str, Any]) -> dict[str, Any]:
-            revision = row.get("prior_king", row.get("king_revision", (results or {}).get("king", "unpublished")))
-            if not isinstance(revision, str) or not revision:
-                raise V2Error("Generator row king revision must be a nonempty string")
+            revision, from_row = _king(row, results)
             return {
                 "verdict": "keep",
                 "method": f"SN120 Generator mech 1 accepted: frozen king {revision[:12]} s/8 in 2..6 at n=8, prior_p=s/8; ingest filters: dedupe, license, MC, proof, grader self-check",
-                "ref": f"https://affine.io/generator/epochs/{epoch}/results.json" + (f"#king={revision}" if "prior_king" in row or "king_revision" in row else ""),
+                "ref": f"https://affine.io/generator/epochs/{epoch}/results.json" + (f"#king={revision}" if from_row else ""),
             }
         for number, row in enumerate(rows):
             norm = normalise(str(row.get("problem", "")))
-            extra = set(row) - {"problem", "answer", "source_id", "prior_p", "source", "license", "task_id", "prior_king", "king_revision"}
+            extra = set(row) - {"problem", "answer", "source_id", "prior_p", "source", "license", "task_id", "king", "prior_king", "king_revision"}
             reason = ""
             if {"problem", "answer"} - set(row) or extra or any(not isinstance(row.get(key), str) for key in ("problem", "answer")) or not isinstance(row.get("task_id", row.get("source_id")), str) or not row.get("task_id", row.get("source_id")):
                 reason = "schema"
@@ -498,7 +508,7 @@ def ingest_generator(args: Any) -> dict[str, Any]:
                   "shards": shard_names, "at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                   "reserve_manifest_sha": verified.manifest_sha,
                   "king_revisions": kings,
-                  "king": (results or {}).get("king", previous.get("king") if previous else None),
+                  "king": kings[0] if len(kings) == 1 else None,
                   **({"original_input_sha256": previous.get("original_input_sha256", previous.get("input_sha256"))} if backfill else {}),
                   "problems": sorted({sha256_hex(normalise(str(row.get("problem", ""))).encode()) for row in rows} | (set(previous.get("problems", ())) if backfill else set())),
                   **({"backfill": True, "backfill_parent_sha256": previous.get("input_sha256"),
