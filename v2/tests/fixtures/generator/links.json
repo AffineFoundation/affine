@@ -1,0 +1,13 @@
+{
+ "deadline": 1795118400,
+ "epoch": "20261119T2000Z",
+ "hotkeys": [
+  "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF",
+  "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS"
+ ],
+ "issued_at": 1795104060,
+ "link_file": "generator/links/<hotkey>.json",
+ "prefetch_before_deadline_seconds": 600,
+ "upload_mode": "overwrite_until_deadline",
+ "version": "affine-generator-link-v1"
+}

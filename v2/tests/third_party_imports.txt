@@ -41,3 +41,6 @@ sympy
 
 # links: sealed upload links and activation
 nacl
+
+# Generator: optional published-prior parquet adapter
+pyarrow
