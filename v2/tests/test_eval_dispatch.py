@@ -211,6 +211,34 @@ def test_seed_pairing_and_server_routing(round_of_seven):
         assert len({str({**body, "model": ""}) for _, body in pairs}) == 1
 
 
+def test_king_two_samples_have_independent_seeds_and_one_paired_sample(round_of_seven):
+    world = round_of_seven
+    params = dataclasses.replace(world.params, null_samples_per_task=2)
+    ticket = dataclasses.replace(world.ticket, params=params)
+    result = world.runner.run(ticket)
+    assert result.null_outcomes == ("P" * N_TASKS, "P" * N_TASKS)
+    counts = Counter(body["model"] for _, body in world.servers.bodies)
+    assert counts[NULL_MODEL] == 2 * N_TASKS
+    assert all(counts[name] == N_TASKS for name in world.names)
+    by_task = {}
+    for port, body in world.servers.bodies:
+        task = body["messages"][-1]["content"]
+        expected = rollout_seed(ticket.draw.round_seed, task, 0)
+        assert body["seed"] in (expected, rollout_seed(ticket.draw.round_seed, task, 1))
+        if body["model"] != NULL_MODEL:
+            assert body["seed"] == expected
+        elif body["seed"] == expected:
+            by_task.setdefault(task, []).append(body)
+    assert len(by_task) == N_TASKS
+    for task, bodies in by_task.items():
+        null_zero = [body for body in bodies if body["model"] == NULL_MODEL]
+        assert len(null_zero) == 1
+        second = [body for port, body in world.servers.bodies if body["model"] == NULL_MODEL and body["messages"][-1]["content"] == task and body["seed"] != null_zero[0]["seed"]]
+        assert len(second) == 1
+        assert second[0]["seed"] == rollout_seed(ticket.draw.round_seed, task, 1)
+    assert [line["rollouts"] for line in world.lines() if line["phase"] == "eval_stream"] == [(2 + N_LORAS) * N_TASKS]
+
+
 def test_short_rollouts_refill_slots_while_an_earlier_rollout_is_blocked(round_of_seven):
     world = round_of_seven
     original = world.servers.http
