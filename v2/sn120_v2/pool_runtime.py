@@ -205,16 +205,32 @@ class PoolRuntime:
             return
         manifest = self.store.get(layout.RESERVE_MANIFEST)
         withdrawn = self.store.get(layout.RESERVE_WITHDRAWN)
+        local_manifest = (root / "MANIFEST.jsonl").read_bytes()
+        local_withdrawn = (root / "withdrawn.jsonl").read_bytes()
         remote = [json.loads(line) for line in manifest.splitlines()]
-        here = [json.loads(line) for line in (root / "MANIFEST.jsonl").read_bytes().splitlines()]
-        if len(here) == 1 and set(here[0]) == {"withdrawn"}:
-            # The shipped empty manifest is a cache miss, not evidence of
-            # deleted history. Its existing withdrawal pointer is checked by
-            # the normal loader after restoration.
-            here = remote
-        if here[:-1][:len(remote) - 1] != remote[:-1]:
-            raise VerifyError("local reserve does not extend its public mirror")
-        if manifest != (root / "MANIFEST.jsonl").read_bytes():
+        here = [json.loads(line) for line in local_manifest.splitlines()]
+        cache_miss = len(here) == 1 and set(here[0]) == {"withdrawn"}
+        restore = cache_miss
+        remote_withdrawn = [json.loads(line) for line in withdrawn.splitlines()]
+        local_withdrawals = [json.loads(line) for line in local_withdrawn.splitlines()]
+        if not cache_miss:
+            local_history, remote_history = here[:-1], remote[:-1]
+            equal = local_history == remote_history
+            extends = len(local_history) > len(remote_history) and local_history[:len(remote_history)] == remote_history
+            older = len(local_history) < len(remote_history) and local_history == remote_history[:len(local_history)]
+            if not (equal or extends or older):
+                raise VerifyError("local reserve does not extend its public mirror")
+            if (equal or extends) and local_withdrawals[:len(remote_withdrawn)] != remote_withdrawn:
+                # Packaged extensions, including withdrawals, stay local; a
+                # shorter or changed withdrawal history is never overwritten.
+                raise VerifyError("local reserve withdrawals do not extend its public mirror")
+            if older:
+                # An older checkout may be a strict prefix of the mirror. Only
+                # restore it when its withdrawals are also a remote prefix.
+                if local_withdrawals != remote_withdrawn[:len(local_withdrawals)]:
+                    raise VerifyError("local reserve withdrawals do not extend its public mirror")
+                restore = True
+        if restore and manifest != local_manifest:
             (root / "MANIFEST.jsonl").write_bytes(manifest)
             (root / "withdrawn.jsonl").write_bytes(withdrawn)
         prefix = "public/pool/reserve/shards/"
