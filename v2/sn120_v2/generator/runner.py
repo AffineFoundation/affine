@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import os
+import resource
 import sys
 import time
 from pathlib import Path
@@ -109,6 +110,22 @@ def progress(job: ScoringJob, states: Mapping[str, TaskState], stage: str, out: 
     atomic_write(out / PROGRESS_FILE, canonical_json({"epoch": job.epoch, "stage": stage, "updated_at": now, "tasks": rows}))
 
 
+def prepare_file_descriptors(clients_per_server: int) -> int:
+    """Raise the soft FD limit before opening inference sockets, or cap safely."""
+    target = min(65536, resource.getrlimit(resource.RLIMIT_NOFILE)[1])
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    needed = 8 * clients_per_server + 256
+    if soft < target:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+            soft = target
+        except (OSError, ValueError):
+            pass
+    if soft < needed:
+        return max(1, min(clients_per_server, (soft - 256) // 8))
+    return clients_per_server
+
+
 def run_job(
     job: ScoringJob,
     out: Path,
@@ -123,6 +140,7 @@ def run_job(
 ) -> dict[str, Any]:
     """Resume or finish a scoring job, returning its complete local results."""
     started_at, started = clock(), monotonic()
+    clients_per_server = prepare_file_descriptors(clients_per_server)
     urls = tuple(urls or default_urls())
     states, completed = recover(job, out)
     if completed:

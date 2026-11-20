@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +18,7 @@ from ..errors import InfraError, VerifyError
 from ..gpu.evaluator import HttpError, Params, chat_body, read_reply
 from .constants import SAMPLING
 from .http import BudgetDeadline, LocalHttp, loopback_url
-from .scoring import ROLLOUT_VERSION, ROLLOUTS_DIR, ScoringJob, TaskState, append_rollout, finish_grade, rollout_seed
+from .scoring import ROLLOUT_VERSION, ROLLOUTS_DIR, ScoringJob, TaskState, append_rollout, finish_grade, next_batch, rollout_seed, settle
 
 
 def sync_directory(path: Path) -> None:
@@ -133,6 +135,12 @@ class Usage:
         self.generate_seconds += seconds
 
 
+class SlotUnavailable(Exception):
+    def __init__(self, slot: int):
+        super().__init__(f"slot {slot} temporarily unavailable")
+        self.slot = slot
+
+
 class BatchRunner:
     """Assign work to the least-loaded server; grade only durable responses."""
 
@@ -167,6 +175,10 @@ class BatchRunner:
         self._assigned: dict[tuple[str, int], int] = {}
         self._executor: ThreadPoolExecutor | None = None
         self._first_error: BaseException | None = None
+        self._slot_cooldown = [0.0] * len(self.urls)
+        self._slot_errors = [0] * len(self.urls)
+        self._last_progress = 0.0
+        self._stage = "stage1"
 
     @property
     def cutoff(self) -> bool:
@@ -181,7 +193,11 @@ class BatchRunner:
         if self._cutoff or self.clock() >= self.job.budget_deadline:
             raise BudgetDeadline()
         loads = [sum(slot == index for slot in self._assigned.values()) for index in range(len(self.urls))]
-        return min(range(len(loads)), key=loads.__getitem__)
+        now = self.monotonic()
+        healthy = [index for index in range(len(loads)) if self._slot_cooldown[index] <= now and loads[index] < self.clients_per_server]
+        if not healthy:
+            return None
+        return min(healthy, key=loads.__getitem__)
 
     def _request(self, item: tuple[str, int], slot: int) -> tuple[str, int, dict[str, Any]]:
         task_id, sample = item
@@ -216,14 +232,23 @@ class BatchRunner:
             except HttpError as exc:
                 if 400 <= exc.status < 500:
                     raise InfraError(f"Generator vLLM rejected sampling parameters with HTTP {exc.status}") from exc
-                attempts += 1
-            except (TimeoutError, OSError):
+                self._mark_sick(slot, f"HTTP {exc.status}")
+                raise SlotUnavailable(slot) from exc
+            except (TimeoutError, OSError) as exc:
                 if self.clock() >= self.job.budget_deadline or self._cutoff:
                     raise BudgetDeadline()
-                attempts += 1
+                self._mark_sick(slot, f"{type(exc).__name__} errno={exc.errno if isinstance(exc, OSError) else None}")
+                raise SlotUnavailable(slot) from exc
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 raise InfraError(f"Generator vLLM returned an invalid chat response: {type(exc).__name__}: {exc}") from exc
         raise InfraError(f"Generator local server at {self.urls[slot]} failed three requests")
+
+    def _mark_sick(self, slot: int, detail: str) -> None:
+        """A transport fault affects one slot, never all in-flight requests."""
+        self._slot_errors[slot] += 1
+        delay = min(60.0, 0.25 * (2 ** min(self._slot_errors[slot] - 1, 8)))
+        self._slot_cooldown[slot] = self.monotonic() + delay
+        print(f"generator scorer slot={slot} transient {detail} backoff_s={delay:g}", file=sys.stderr, flush=True)
 
     def _checkpoint(self, task_id: str, sample: int, reply: Mapping[str, Any]) -> dict[str, Any]:
         state = self.states[task_id]
@@ -305,7 +330,7 @@ class BatchRunner:
         return len(responses)
 
     def run(self, pending: Sequence[tuple[str, int]], batch: Sequence[tuple[str, int]]) -> int:
-        """Grade pending rows, generate missing rows, then grade new responses."""
+        """Keep inference slots full; checkpoint and grade without a batch barrier."""
         self.http.reset()
         self._cutoff = False
         self._first_error = None
@@ -313,48 +338,75 @@ class BatchRunner:
         self._assigned = {}
         self._tasks = {}
         graded = self._grade_responses(pending) if pending else 0
-        if not batch:
-            return graded
-        for task_id, _ in batch:
-            self.task(task_id)
+        queue = deque(batch)
+        stage = self._stage
         capacity = len(self.urls) * self.clients_per_server
         if len(batch) > capacity:
-            raise InfraError(f"Generator scheduler supplied {len(batch)} requests above capacity {capacity}")
+            queue = deque(batch[:capacity])
         self._executor = ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="generator-scorer")
+
+        def submit(item):
+            slot = self._choose_slot()
+            if slot is None:
+                return False
+            self._assigned[item] = slot
+            future = self._executor.submit(self._request, item, slot)
+            self._futures[future] = (item[0], item[1], slot)
+            return True
+
         try:
-            for item in batch:
-                try:
-                    slot = self._choose_slot()
-                except BudgetDeadline:
-                    self._cutoff = True
-                    self.http.cancel()
+            while self._futures or queue:
+                while len(self._futures) < capacity and self.clock() < self.job.budget_deadline and not self._cutoff:
+                    if not queue:
+                        refill, stage = next_batch(self.job, self.states, 0 if stage == "stage1" else capacity - len(self._futures))
+                        self._stage = stage
+                        queue.extend(refill)
+                        if not queue:
+                            break
+                    item = queue.popleft()
+                    if sum(task == item[0] for task, _, _ in self._futures.values()) >= 8:
+                        queue.append(item)
+                        break
+                    if item[1] < self.states[item[0]].n or item[1] in self.states[item[0]].responses:
+                        continue
+                    if any(task == item[0] and sample == item[1] for task, sample, _ in self._futures.values()):
+                        continue
+                    if not submit(item):
+                        queue.appendleft(item)
+                        self._assigned.pop(item, None)
+                        break
+                if not self._futures:
+                    if queue and self.clock() < self.job.budget_deadline:
+                        time.sleep(0.01)
+                        continue
                     break
-                self._assigned[item] = slot
-                future = self._executor.submit(self._request, item, slot)
-                self._futures[future] = (item[0], item[1], slot)
-            while self._futures:
-                done, _ = wait(tuple(self._futures), timeout=0.25, return_when=FIRST_COMPLETED)
+                done, _ = wait(tuple(self._futures), timeout=0.1, return_when=FIRST_COMPLETED)
                 if not done:
                     if self.clock() >= self.job.budget_deadline:
                         self._cutoff = True
                         self.http.cancel()
                     continue
                 for future in done:
-                    item = self._futures.pop(future)
-                    # Keep the batch's assignments until every request has
-                    # dispatched. Fast replies must not let one server consume
-                    # the whole batch while slower peers are still starting.
+                    task_id, sample, slot = self._futures.pop(future)
+                    self._assigned.pop((task_id, sample), None)
                     try:
-                        task_id, sample, reply = future.result()
-                        self._checkpoint(task_id, sample, reply)
+                        returned_task, returned_sample, reply = future.result()
+                        self._checkpoint(returned_task, returned_sample, reply)
+                        graded += self._grade_responses([(returned_task, returned_sample)])
+                        settle(self.states[returned_task])
+                    except SlotUnavailable:
+                        self._assigned.pop((task_id, sample), None)
+                        queue.appendleft((task_id, sample))
                     except BudgetDeadline:
                         self._cutoff = True
-                        self.http.cancel()
                     except BaseException as exc:
                         self._abort(exc)
-            if self._first_error is not None:
-                raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
-            return graded + self._grade_responses(batch)
+                        # Continue draining other completed futures into durable journals.
+                        self._cutoff = True
+                if self._first_error is not None:
+                    raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
+            graded += self._grade_responses([(task.task_id, self.states[task.task_id].n) for task in self.job.tasks])
+            return graded
         finally:
             self._cutoff = True
             self.http.cancel()

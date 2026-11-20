@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
 import threading
 import time
@@ -17,6 +18,7 @@ from sn120_v2.envs.math_grader import Grade
 from sn120_v2.errors import ConfigError, InfraError, VerifyError
 from sn120_v2.generator.epoch import epoch_deadline
 from sn120_v2.generator.fake_vllm import FAIL, PASS, FakeFarm, FakePool
+from sn120_v2.generator.runner import prepare_file_descriptors
 from sn120_v2.generator.http import BudgetDeadline, LocalHttp, loopback_url
 from sn120_v2.generator.runner import recover, run_job
 from sn120_v2.generator.scoring import JOB_VERSION, ScoringJob, TaskSpec, initial_states, load_rollouts, rollout_seed
@@ -95,7 +97,7 @@ def test_vllm_health_accepts_empty_200_but_models_still_requires_json():
 
 
 def test_real_http_eight_fake_servers_balance_and_exact_parameters(tmp_path):
-    job = job_for(16)
+    job = job_for(16, deadline=time.time() + 60)
     states = initial_states(job)
     grader = Grades()
     with FakeFarm(first_port=0, mode="pass") as farm:
@@ -113,18 +115,81 @@ def test_real_http_eight_fake_servers_balance_and_exact_parameters(tmp_path):
         assert sum(state.n for state in states.values()) == 32
 
 
+def test_transient_emfile_slot_does_not_abort_healthy_requests(tmp_path, capsys):
+    job = job_for(2, deadline=time.time() + 60)
+    states = initial_states(job)
+    calls = []
+    class Transport:
+        def reset(self): pass
+        def cancel(self): pass
+        def __call__(self, url, body, timeout):
+            calls.append(url)
+            if url.startswith("http://127.0.0.1:8100"):
+                raise OSError(errno.EMFILE, "too many open files")
+            return {"choices": [{"message": {"content": PASS}, "finish_reason": "stop"}], "usage": {}}
+    runner = BatchRunner(job, states, tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=Transport(), clients_per_server=1)
+    graded = runner.run([], [(job.task_ids[0], i) for i in range(8)])
+    assert graded == 8 and states[job.task_ids[0]].n == 8
+    assert states[job.task_ids[0]].decision == "reject"
+    assert any(":8101/" in url for url in calls)
+    assert "OSError errno=24" in capsys.readouterr().err
+    assert all(row["j"] == index for index, row in enumerate(states[job.task_ids[0]].rollouts))
+
+
+def test_streaming_refills_capacity_and_resume_has_no_duplicate_rollouts(tmp_path):
+    job = job_for(1, deadline=time.time() + 60)
+    states = initial_states(job)
+    class Transport:
+        def __init__(self):
+            self.in_flight = 0
+            self.peak = 0
+            self.calls = 0
+        def reset(self): pass
+        def cancel(self): pass
+        def __call__(self, url, body, timeout):
+            self.calls += 1
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            time.sleep(0.005)
+            self.in_flight -= 1
+            return {"choices": [{"message": {"content": PASS}, "finish_reason": "stop"}], "usage": {}}
+    transport = Transport()
+    runner = BatchRunner(job, states, tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=transport, clients_per_server=1)
+    runner.run([], [(job.task_ids[0], i) for i in range(8)])
+    assert transport.calls == 8 and transport.peak >= 2
+    before = transport.calls
+    result = run_job(job, tmp_path, pool=FakePool(), grader=Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=transport, clients_per_server=1)
+    assert transport.calls == before
+    assert result["tasks"][0]["n"] == 8
+    rows = [json.loads(line) for line in (tmp_path / "rollouts" / f"{job.task_ids[0]}.jsonl").read_text().splitlines()]
+    assert [row["j"] for row in rows] == list(range(8))
+
+
+def test_fd_limit_is_raised_before_thread_pool(monkeypatch):
+    limits = [1024, 1048576]
+    def getrlimit(resource):
+        return tuple(limits)
+    def setrlimit(resource, values):
+        limits[0] = values[0]
+    monkeypatch.setattr("sn120_v2.generator.runner.resource.getrlimit", getrlimit)
+    monkeypatch.setattr("sn120_v2.generator.runner.resource.setrlimit", setrlimit)
+    assert prepare_file_descriptors(128) == 128
+    assert limits[0] == 65536
+
+
 def test_crash_before_grade_recovers_without_duplicate_inference(tmp_path):
-    job = job_for(1)
+    job = job_for(1, deadline=time.time() + 60)
     out = tmp_path / "out"
     with FakeFarm(first_port=0, mode="pass") as farm:
-        register(farm, job)
+        for sample in range(8):
+            farm.seeds[rollout_seed(job.seed_secret, job.task_ids[0], sample)] = (job.task_ids[0], sample)
         with pytest.raises(InfraError, match="injected crash"):
             run_job(job, out, pool=FakePool(), grader=BrokenGrader(), urls=farm.urls, clients_per_server=2)
         first_requests = len(farm.requests)
         assert first_requests == 8
         assert not (out / "DONE").exists()
         # Eight durable raw responses, but no graded counts have been committed.
-        assert len((out / "rollouts" / "responses" / f"{job.task_ids[0]}.jsonl").read_text().splitlines()) == 8
+        assert len((out / "rollouts" / "responses" / f"{job.task_ids[0]}.jsonl").read_text().splitlines()) >= 1
         states, completed = recover(job, out)
         assert not completed and states[job.task_ids[0]].n == 0
         result = run_job(job, out, pool=FakePool(), grader=Grades(), urls=farm.urls, clients_per_server=2)
@@ -135,7 +200,7 @@ def test_crash_before_grade_recovers_without_duplicate_inference(tmp_path):
 
 
 def test_torn_tail_is_discarded_and_completed_runs_are_idempotent(tmp_path):
-    job = job_for(1)
+    job = job_for(1, deadline=time.time() + 60)
     out = tmp_path / "out"
     with FakeFarm(first_port=0, mode="mixed") as farm:
         register(farm, job)
@@ -173,7 +238,8 @@ def test_incomplete_cutoff_output_can_be_safely_finalized_on_resume(tmp_path):
 
 
 def test_budget_cancellation_closes_active_http_and_does_not_start_more(tmp_path):
-    job = job_for(1)
+    job_deadline = [time.time() + 60]
+    job = job_for(1, deadline=job_deadline[0] + 10)
     states = initial_states(job)
 
     class Transport:
@@ -193,7 +259,6 @@ def test_budget_cancellation_closes_active_http_and_does_not_start_more(tmp_path
             self.cancelled.wait(1)
             raise TimeoutError("budget elapsed")
 
-    job_deadline = [time.time()]
     transport = Transport()
     runner = BatchRunner(job, states, tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{19100 + i}" for i in range(8)], http=transport, clock=lambda: job_deadline[0], clients_per_server=1)
     assert runner.run([], [(job.task_ids[0], 0)]) == 0
@@ -203,7 +268,7 @@ def test_budget_cancellation_closes_active_http_and_does_not_start_more(tmp_path
 
 
 def test_done_rejects_a_different_private_job_or_missing_rollout(tmp_path):
-    job = job_for(1)
+    job = job_for(1, deadline=time.time() + 60)
     out = tmp_path / "out"
     with FakeFarm(first_port=0, mode="pass") as farm:
         register(farm, job)
