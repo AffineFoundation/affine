@@ -31,11 +31,14 @@ class FakeRemote:
         self.markers: dict[str, str] = {}
         self.archive = b""
         self.launch_error: Exception | None = None
+        self.prepare_error: Exception | None = None
         self.copy_error: Exception | None = None
         self.collect_error: Exception | None = None
 
     def ssh(self, command: str, *, timeout=None):
         self.calls.append(("ssh", command))
+        if "ensure_head" in command and self.prepare_error is not None:
+            raise self.prepare_error
         if "nohup" in command:
             if self.launch_error is not None:
                 raise self.launch_error

@@ -114,7 +114,7 @@ def test_tick_runs_all_due_phases_and_does_not_republish(tmp_path):
         calls.append("snapshot")
         evidence.parent.mkdir(parents=True, exist_ok=True)
         evidence.write_text("{}")
-        (evidence.parent / "job.json").write_text('{"epoch":"' + EPOCH + '"}')
+        (evidence.parent / "job.json").write_text('{"epoch":"' + EPOCH + '", "budget_deadline":1795146300.0}')
         return {"status": "snapshot", "epoch": EPOCH}
     steps = {
         "links": lambda **kwargs: calls.append("links") or {"status": "issued"},

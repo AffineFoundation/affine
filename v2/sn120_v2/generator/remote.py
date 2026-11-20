@@ -483,10 +483,6 @@ class ScorerRemote:
                 record.update(shard_count=1, helper_identities=[], helpers=[], state="preparing", detail="helper unavailable before launch; using primary-only K=1 scoring")
                 epoch_helpers = ()
             _write_json(state_path, record)
-            if epoch_helpers and any(row.get("launch_attempted") for row in record["helpers"]):
-                # Durable helper state is authoritative even if the process died
-                # before recording the primary launch. Neither pod may relaunch.
-                return self._status(name, record, "helper launch attempted; collect to resume")
         qroot, qjob = remote_path(root), remote_path(remote_job)
         qout, qdone = remote_path(remote_out), remote_path(done)
         self.runner.ssh(f"umask 077 && mkdir -p -- {qroot}")
@@ -673,12 +669,12 @@ class ScorerRemote:
         helper_records = [dict(row) for row in previous.get("helpers", [])]
         if epoch_helpers:
             pending = []
-            helpers_by_index = {
-                int(row["shard"]): row for row in previous.get("helpers", [])
-                if isinstance(row, Mapping) and type(row.get("shard")) is int
+            failed_helpers = {
+                index for index, row in enumerate(previous.get("helpers", []), 1)
+                if isinstance(row, Mapping) and row.get("state") == "failed"
             }
             for index, runner in enumerate(epoch_helpers, 1):
-                if helpers_by_index.get(index, {}).get("state") == "failed":
+                if index in failed_helpers:
                     continue
                 try:
                     marker = self._marker(f"{REMOTE_ROOT}/jobs/{name}/done.json", runner=runner)
@@ -699,7 +695,7 @@ class ScorerRemote:
                 job = json.loads((self.work_dir / "jobs" / name / "job.json").read_text())
                 deadline = float(job["budget_deadline"])
                 grace = float(previous.get("results_grace_s", 45 * 60))
-                if time.time() <= deadline + grace:
+                if time.time() < deadline + grace:
                     record.update(state="running", detail=f"helpers not complete: {','.join(map(str, pending))}")
                     _write_json(state_path, record)
                     return self._status(name, record)
@@ -717,7 +713,7 @@ class ScorerRemote:
                 helper_outs = [
                     (index, self._collect_out(name, remote_out, shard=index, runner=runner))
                     for index, runner in enumerate(epoch_helpers, 1)
-                    if index not in pending
+                    if index not in pending and index not in failed_helpers
                 ]
                 out = self._merge_shards(name, out, helper_outs)
             try:
@@ -770,7 +766,7 @@ class ScorerRemote:
             grace = 45 * 60
             if state_path.is_file():
                 grace = json.loads(state_path.read_text()).get("results_grace_s", grace)
-            if time.time() <= float(job["budget_deadline"]) + grace:
+            if time.time() < float(job["budget_deadline"]) + grace:
                 raise InfraError("Generator shard results do not cover exactly the job tasks")
             for shard in range(count):
                 if shard in completed_shards:

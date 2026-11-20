@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,24 @@ def write_seed(work_dir: Path, epoch: str) -> dict[str, Any]:
 
 KING_CAPTURE_GRACE_S = 120
 RESULTS_GRACE_S = 45 * 60
+
+
+def results_deadline(config: Config, epoch: str) -> float:
+    """The epoch's persisted scorer/collection budget, shared by dispatch and merge."""
+    job_path = config.work_dir / "jobs" / epoch / "job.json"
+    if job_path.is_file():
+        job = read_json(job_path)
+        state_path = config.work_dir / "jobs" / epoch / "remote-state.json"
+        state = read_json(state_path) if state_path.is_file() else {}
+        grace = float(state.get("results_grace_s", RESULTS_GRACE_S))
+        if not math.isfinite(grace) or grace < 0:
+            raise ConfigError("Generator results grace must be a nonnegative finite number")
+        return float(job["budget_deadline"]) + grace
+    return epoch_deadline(epoch).timestamp() + 3 * 3600 + 45 * 60 + RESULTS_GRACE_S
+
+
+def _within_results_window(config: Config, epoch: str, now: float) -> bool:
+    return now <= results_deadline(config, epoch)
 
 
 def frozen_at(king_path: Path, epoch: str) -> float:
@@ -333,12 +352,14 @@ def tick(
         elif elapsed > KING_CAPTURE_GRACE_S:
             events.append({"phase": "king_capture", **run("void", void_missed_king, config=config, epoch=closed, now=now, store=store)})
     # The deadline snapshot and scorer phases must not wait for link issuance.
-    for number in range(3):
-        deadline = epoch_deadline(current).timestamp() - number * 4 * 3600
-        epoch = epoch_id(deadline - 1)
+    for number in range(4):
+        epoch = epoch_id(epoch_deadline(current).timestamp() - number * 4 * 3600 - 1)
+        deadline = epoch_deadline(epoch).timestamp()
         job_path = config.work_dir / "jobs" / epoch / "evidence.json"
         results_path = config.work_dir / "epochs" / epoch / "out" / "results.json"
         intake_path = config.site_dir / "generator" / "epochs" / epoch / "intake.sha256"
+        if now > results_deadline(config, epoch) and not results_path.is_file():
+            continue
         if (now < deadline + 60 or intake_path.is_file()
                 or epoch < config.first_epoch
                 or not (config.work_dir / "seeds" / f"{epoch}.json").is_file()):
@@ -353,7 +374,7 @@ def tick(
                 continue
         if epoch in failed_epochs:
             continue
-        if job_path.is_file() and not results_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60 + RESULTS_GRACE_S:
+        if job_path.is_file() and not results_path.is_file() and _within_results_window(config, epoch, now):
             if remote is None:
                 failed_epochs.add(epoch)
                 events.append({"phase": "dispatch", "epoch": epoch, "status": "error", "error": "ConfigError: Generator ssh config is required for dispatch and collect"})
@@ -367,7 +388,7 @@ def tick(
             if epoch in failed_epochs:
                 continue
         if results_path.is_file() and epoch not in failed_epochs:
-            if now > deadline + 3 * 3600 + 45 * 60 + RESULTS_GRACE_S:
+            if not _within_results_window(config, epoch, now):
                 error = f"scoring results for {epoch} missed the results deadline"
                 failed_epochs.add(epoch)
                 events.append({"phase": "publish", "epoch": epoch, "status": "error", "error": f"ConfigError: {error}"})

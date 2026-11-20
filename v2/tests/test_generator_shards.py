@@ -349,7 +349,75 @@ def test_helper_failure_deadline_synthesizes_time_budget_without_rollouts(tmp_pa
     assert not (merged / "rollouts" / f"{current.tasks[1].task_id}.jsonl").exists()
 
 
-def test_helper_state_alone_prevents_duplicate_helper_and_primary_launch(tmp_path):
+def test_launch_matrix_primary_and_helper_attempts(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote
+    for primary_attempted in (False, True):
+        for helper_attempted in (False, True):
+            key = tmp_path / f"{primary_attempted}-{helper_attempted}-key"
+            key.write_text("fake")
+            config = SSHConfig("primary", 22, key, tmp_path / f"{primary_attempted}-{helper_attempted}-work")
+            primary, helper = FakeRemote(config), FakeRemote(config)
+            remote = ScorerRemote(config, runner=primary, helpers=[helper])
+            epoch = EPOCH
+            job_path = remote.work_dir / "jobs" / epoch / "job.json"
+            job_path.parent.mkdir(parents=True)
+            job_path.write_text(json.dumps(transport_job().to_dict()))
+            state_path = remote.work_dir / "jobs" / epoch / "remote-state.json"
+            digest = __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes())
+            helper_state = {"epoch": epoch, "state": "dispatched" if helper_attempted else "prepared", "shard": 1, "launch_attempted": helper_attempted, "job_sha256": digest}
+            remote._write_helper_state(state_path, 1, helper_state)
+            state_path.write_text(json.dumps({
+                "epoch": epoch, "state": "preparing", "launch_attempted": primary_attempted,
+                "shard_count": 2, "helper_identities": [{"host": config.host, "port": config.port}],
+                "job_sha256": digest, "attempts": 1, "helpers": [helper_state],
+            }))
+            for _ in range(3):
+                assert remote.dispatch(epoch).state == "dispatched"
+            assert sum("nohup" in command for _, command in primary.calls) == (0 if primary_attempted else 1)
+            assert sum("nohup" in command for _, command in helper.calls) == (0 if helper_attempted else 1)
+
+
+def test_failed_preparation_after_primary_launch_is_never_collected(tmp_path, monkeypatch):
+    from test_generator_remote import EPOCH, FakeRemote, archive
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary, helper = FakeRemote(config), FakeRemote(config)
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    epoch = EPOCH
+    current = ScoringJob(epoch, (TaskSpec("0" * 20, "owner-0"), TaskSpec("1" * 20, "owner-1")), "a" * 64, "secret", epoch_deadline(epoch).timestamp() + 13500, POOL_ID)
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps(current.to_dict()))
+    state_path = remote.work_dir / "jobs" / epoch / "remote-state.json"
+    digest = __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes())
+    remote._write_helper_state(state_path, 1, {"epoch": epoch, "state": "dispatched", "shard": 1, "launch_attempted": False, "job_sha256": digest})
+    state_path.write_text(json.dumps({
+        "epoch": epoch, "state": "running", "launch_attempted": True, "shard_count": 2,
+        "helper_identities": [{"host": config.host, "port": config.port}], "job_sha256": digest, "attempts": 1,
+        "helpers": [{"epoch": epoch, "state": "dispatched", "shard": 1, "launch_attempted": False, "job_sha256": digest}],
+    }))
+    helper.prepare_error = InfraError("failed preparation")
+    remote.dispatch(epoch)
+    assert json.loads((remote.work_dir / "jobs" / epoch / "remote-state-shard-1.json").read_text())["state"] == "failed"
+    helper.markers["done.json"] = '{"code":0}'
+    helper.archive = archive({"./results.json": b'{"bad": "must never be downloaded"}'})
+    primary.markers["done.json"] = '{"code":0}'
+    primary.archive = archive({
+        "./results.json": json.dumps({
+            "epoch": epoch, "head_version": current.head_version, "seed_commitment": __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(current.seed_secret.encode()),
+            "pool_pin": current.pool_pin, "shard": {"index": 0, "count": 2, "tasks": 1},
+            "tasks": [{"id": "0" * 20, "hotkey": "owner-0", "s": 0, "n": 8, "q": 0, "decision": "reject"}],
+            "timings": {}, "throughput": {}, "servers": [], "hotkeys": {},
+        }).encode(),
+    })
+    assert remote.collect(epoch).complete
+    assert not any(kind == "tar" for kind, _ in helper.calls)
+    assert remote.collect(epoch).complete
+    assert not any(kind == "tar" for kind, _ in helper.calls)
+
+
+def test_helper_state_alone_launches_only_unattempted_primary(tmp_path):
     from test_generator_remote import EPOCH, FakeRemote
     key = tmp_path / "key"
     key.write_text("fake")
@@ -374,10 +442,43 @@ def test_helper_state_alone_prevents_duplicate_helper_and_primary_launch(tmp_pat
     }))
     assert remote.dispatch(epoch).state == "dispatched"
     assert not any("nohup" in command for _, command in helper.calls)
-    assert not any("nohup" in command for _, command in primary.calls)
+    primary_launch = [command for _, command in primary.calls if "nohup" in command]
+    assert len(primary_launch) == 1 and "--shard 0/2" in primary_launch[0]
+    assert remote.dispatch(epoch).state == "dispatched"
+    assert len([command for _, command in primary.calls if "nohup" in command]) == 1
+    assert not any("nohup" in command for _, command in helper.calls)
     state = json.loads(state_path.read_text())
-    assert state["shard_count"] == 2 and state["launch_attempted"] is False
+    assert state["shard_count"] == 2 and state["launch_attempted"] is True
     assert state["helpers"][0]["launch_attempted"] is True
+
+
+def test_real_helper_launch_crash_resumes_only_unattempted_primary(tmp_path, monkeypatch):
+    from test_generator_remote import EPOCH, FakeRemote
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    first_primary, first_helper = FakeRemote(config), FakeRemote(config)
+    remote = ScorerRemote(config, runner=first_primary, helpers=[first_helper])
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps(transport_job().to_dict()))
+    real_launch = remote._launch_helpers
+    def crash_after_helper_state(name, state_path, record):
+        real_launch(name, state_path, record)
+        raise InfraError("process crashed after helper launch")
+    monkeypatch.setattr(remote, "_launch_helpers", crash_after_helper_state)
+    with pytest.raises(InfraError, match="crashed"):
+        remote.dispatch(epoch)
+    assert sum("nohup" in command for _, command in first_helper.calls) == 1
+    assert sum("nohup" in command for _, command in first_primary.calls) == 0
+    primary, helper = FakeRemote(config), FakeRemote(config)
+    resumed = ScorerRemote(config, runner=primary, helpers=[helper])
+    assert resumed.dispatch(epoch).state == "dispatched"
+    assert sum("nohup" in command for _, command in primary.calls) == 1
+    assert not any("nohup" in command for _, command in helper.calls)
+    assert resumed.dispatch(epoch).state == "dispatched"
+    assert sum("nohup" in command for _, command in primary.calls) == 1
 
 
 def test_outcome_matrix_launch_and_helper_failure(tmp_path):
@@ -592,6 +693,73 @@ def test_real_cli_default_and_shard_1_of_2_against_fake_servers(tmp_path, monkey
         assert document.get("shard", {}).get("count", 1) == (1 if shard is None else 2)
         assert (out / "DONE").is_file()
         assert all((out / "rollouts" / f"{task_id}.jsonl").is_file() for task_id in expected)
+
+
+def test_tick_dead_helper_publishes_after_actual_results_edge(tmp_path, monkeypatch):
+    from sn120_v2.canonical import sha256_hex
+    from sn120_v2.generator.common import PublicSink
+    from sn120_v2.generator.config import Config
+    from sn120_v2.generator.control import tick, write_seed
+    from sn120_v2.generator.decisions import decision
+    from sn120_v2.generator.epoch import epoch_start
+    from test_generator_publish import Pool
+    from test_generator_remote import FakeRemote, archive
+    epoch = "20261120T0000Z"
+    deadline = epoch_deadline(epoch).timestamp()
+    current = ScoringJob(epoch, (TaskSpec("0" * 20, "owner-0"), TaskSpec("1" * 20, "owner-1")), "a" * 64, "private seed", deadline + 13500, POOL_ID)
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=epoch)
+    seed = write_seed(config.work_dir, epoch)
+    current = ScoringJob(epoch, current.tasks, current.head_version, seed["secret"], current.budget_deadline, current.pool_pin)
+    king = config.work_dir / "king" / f"{epoch}.json"
+    king.parent.mkdir(parents=True)
+    king.write_text(json.dumps({"epoch": epoch, "version": current.head_version, "captured_at_epoch": deadline}))
+    job_dir = config.work_dir / "jobs" / epoch
+    job_dir.mkdir(parents=True)
+    (job_dir / "job.json").write_text(json.dumps(current.to_dict()))
+    evidence = {
+        "epoch": epoch, "pool": POOL_ID, "king": current.head_version, "seed_commitment": sha256_hex(current.seed_secret.encode()),
+        "tasks": [{"task_id": task.task_id, "hotkey": task.hotkey, "uid": index + 1, "uploaded_at": epoch_start(epoch).timestamp() + index + 1, "file_sha256": sha256_hex(task.task_id.encode()), "head_version": current.head_version} for index, task in enumerate(current.tasks)],
+    }
+    (job_dir / "evidence.json").write_text(json.dumps(evidence))
+    key = tmp_path / "key"
+    key.write_text("fake")
+    primary, helper = FakeRemote(SSHConfig("primary", 22, key, config.work_dir)), FakeRemote(SSHConfig("primary", 22, key, config.work_dir))
+    remote = ScorerRemote(SSHConfig("primary", 22, key, config.work_dir), runner=primary, helpers=[helper])
+    primary.markers["done.json"] = '{"code":0}'
+    primary.archive = archive({
+        "./results.json": json.dumps({
+            "epoch": epoch, "head_version": current.head_version, "pool_pin": current.pool_pin,
+            "seed_commitment": sha256_hex(current.seed_secret.encode()), "shard": {"index": 0, "count": 2, "tasks": 1},
+            "tasks": [{"id": "0" * 20, "hotkey": "owner-0", "s": 4, "n": 8, "q": decision(4, 8).q, "decision": "accept"}],
+            "timings": {}, "throughput": {}, "servers": [], "hotkeys": {},
+        }).encode(),
+        f"./rollouts/{'0' * 20}.jsonl": json.dumps({"text": "accepted text", "seed": 0, "pass": True}).encode() + b"\n",
+    })
+    remote.dispatch(epoch)
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: {"status": "not_due"})
+    monkeypatch.setattr("sn120_v2.generator.control.read_registrations", lambda client, clock: ({1: "owner-0", 2: "owner-1"}, {"owner-0", "owner-1"}))
+    clock = [current.budget_deadline + 2699]
+    monkeypatch.setattr("sn120_v2.generator.remote.time.time", lambda: clock[0])
+    before = tick(config, now=clock[0], client=None, store=None, pool=Pool(), remote=remote)
+    assert not (config.work_dir / "epochs" / epoch / "out").exists()
+    assert any(row["phase"] == "collect" and row["state"] == "running" for row in before)
+    assert not any(row["phase"] == "publish" for row in before)
+    # Actual epoch budget, not an independently recomputed scheduler cutoff.
+    clock[0] = current.budget_deadline + 2700
+    events = tick(config, now=clock[0], client=None, store=None, pool=Pool(), remote=remote)
+    assert any(row["phase"] == "collect" and row["state"] == "complete" for row in events), events
+    assert any(row["phase"] == "publish" and row["status"] == "published" for row in events), events
+    assert not any(kind == "tar" for kind, _ in helper.calls)
+    public = json.loads((site / "generator" / "epochs" / epoch / "results.json").read_text())
+    assert public["tasks"][1]["decision"] == "unscored"
+    assert public["tasks"][1]["unscored_reason"] == "time_budget"
+    assert set(public["tasks"][1]) == {"task_sha256", "decision", "n", "s", "unscored_reason"}
+    assert (site / "generator" / "epochs" / epoch / "intake.sha256").is_file()
+    assert json.loads((site / "generator" / "payout.json").read_text())["weights"] == {"1": 1.0}
+    clock[0] += 1
+    assert not any(row["phase"] == "collect" for row in tick(config, now=clock[0], client=None, store=None, pool=Pool(), remote=remote))
 
 
 def test_merged_helper_timeout_passes_real_publication_privacy_verifier(tmp_path):
