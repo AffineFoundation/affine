@@ -135,6 +135,8 @@ def test_public_sink_can_explicitly_disable_mirror_for_rehearsal(tmp_path):
 
 def test_script_has_no_external_deletion_or_public_sink_store(tmp_path):
     source = (Path(__file__).parents[2] / "tools/generator_rehearsal.py").read_text()
+    assert "control.write_seed(config.work_dir, epoch_id(simulated))" in source
+    source = (Path(__file__).parents[2] / "tools/generator_rehearsal.py").read_text()
     assert ".delete(" not in source
     assert "rm -" not in source
     assert "publish_epoch(config, epoch=EPOCH, now=simulated, client={1: hotkey}, store=None, pool=pool)" in source

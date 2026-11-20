@@ -29,7 +29,7 @@ from sn120_v2.errors import ConfigError, V2Error
 from sn120_v2.generator import control
 from sn120_v2.generator.common import atomic_json, open_store, read_json, read_jsonl, utc_text
 from sn120_v2.generator.config import Config
-from sn120_v2.generator.epoch import epoch_deadline, epoch_start, submission_object
+from sn120_v2.generator.epoch import epoch_deadline, epoch_id, epoch_start, submission_object
 from sn120_v2.generator.links import GeneratorPresigner, link_files
 from sn120_v2.generator.pool import PriorPool
 from sn120_v2.generator.remote import REMOTE_ROOT, ScorerRemote
@@ -201,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         original_sink = control.PublicSink
         control.PublicSink = lambda site_dir, store, public_url, **kwargs: original_sink(site_dir, None, public_url, mirror=False)
         control.write_seed(config.work_dir, EPOCH)
+        control.write_seed(config.work_dir, epoch_id(simulated))
         control.write_seed(config.work_dir, EPOCH)
         # Actual public head and actual capture time, not a fabricated past capture.
         stage = "read-public-head"
