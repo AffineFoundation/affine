@@ -20,7 +20,7 @@ from .irt import IRTSampler
 from .params import Params
 from .rotation import INFO_RULE_VERSION, Reserve, Rotation, fold_ledger, rotate, rotate_info
 from .seams import ObjectStore
-from .state import State
+from .state import ABANDONED, NO_DECISION, State
 
 
 def load_active(store: ObjectStore, sha: str) -> tuple[str, ...]:
@@ -114,6 +114,21 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
                 continue
             rows.append({"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer})
         store.put(layout.RETIRED_TASKS, canonical_json(rows))
+
+
+def unscored_rotation(previous: Rotation | None, snapshot: Mapping[str, Any], record: Any = None) -> bool:
+    """An unscored rotation keeps measured rows and treats new admits as fresh.
+
+    Its previous snapshot must be the source of that rotation. Live open gets
+    the close outcome from replayed State; public replay gets its stored report.
+    """
+    if previous is None or not previous.source_snapshot_id or snapshot.get("snapshot_id") != previous.source_snapshot_id:
+        return False
+    if record is None:
+        raise VerifyError("unscored rotation replay needs its round close record")
+    outcome = record.get("outcome") if isinstance(record, Mapping) else getattr(record, "outcome", None)
+    round_id = record.get("round_id") if isinstance(record, Mapping) else getattr(record, "round_id", None)
+    return round_id == previous.round_id and outcome in (NO_DECISION, ABANDONED)
 
 
 def pool_summary(rotation: Rotation, opened_at: int = 0) -> dict[str, Any]:
@@ -289,6 +304,7 @@ class PoolRuntime:
             raise VerifyError("rotation source snapshot is not the last closed round's snapshot")
         previous = self.previous
         a_prev = previous.active_ids if previous else self.initial_ids
+        unscored = unscored_rotation(previous, snapshot, state.rounds[-1] if state.rounds else None)
         reserve = self._rule_reserve()
         retired_archive = self._retired_inputs(previous)
         if self.params.rotation_rule == "info":
@@ -302,6 +318,7 @@ class PoolRuntime:
                                initial_size=len(self.initial_ids), retired_archive=retired_archive,
                                source_snapshot_id=snapshot.get("snapshot_id", ""),
                                prev_state_sha=state.rotation_state_sha if previous and previous.rule_version != INFO_RULE_VERSION else previous.digest() if previous else "",
+                               **({"allow_unscored_previous": unscored} if self.params.rotation_rule == "info" else {}),
                                **({"initial_candidate_meta": self.candidate_meta, "initial_retired_ledger": previous.retired_ledger}
                                   if self.params.rotation_rule == "info" and previous and previous.rule_version != INFO_RULE_VERSION else {}))
         if self.params.rotation_rule == "info":
@@ -384,10 +401,14 @@ def replay_rotation(store: ObjectStore, round_id: str, snapshot: Mapping[str, An
         previous_ledger.update(expected.initial_retired_ledger)
         if not reserve.candidate_meta and expected.initial_candidate_meta:
             reserve = Reserve.from_dict(history | {"candidate_meta": expected.initial_candidate_meta})
+    unscored = False
+    if expected.rule_version == INFO_RULE_VERSION and previous and set(source["tasks"]) != set(previous.active_ids):
+        unscored = unscored_rotation(previous, source, json.loads(store.get(layout.round_file(previous.round_id))))
     actual = rotate_rule(round_id, previous.active_ids if previous else load_active(store, expected.initial_active_sha),
                          source, previous_ledger, reserve, params,
                          initial_size=len(load_active(store, expected.initial_active_sha)) if previous is None else len(previous.active_ids),
                          retired_archive=archive, source_snapshot_id=expected.source_snapshot_id, prev_state_sha=expected.prev_state_sha,
+                         **({"allow_unscored_previous": unscored} if expected.rule_version == INFO_RULE_VERSION else {}),
                          **({"initial_candidate_meta": expected.initial_candidate_meta or None,
                              "initial_retired_ledger": expected.initial_retired_ledger or None}
                             if expected.rule_version == INFO_RULE_VERSION else {}))
