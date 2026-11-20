@@ -225,6 +225,67 @@ def test_k1_sticky_states_return_without_any_ssh_or_scp(tmp_path):
             assert primary.copies == [] and helper.copies == []
 
 
+def test_launch_matrix_preserves_primary_for_every_k_and_state(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote
+    for state_name in ("preparing", "dispatched", "running", "collecting", "complete", "failed"):
+        for launched in (False, True):
+            for count in (1, 2):
+                key = tmp_path / f"{state_name}-{launched}-{count}-key"
+                key.write_text("fake")
+                config = SSHConfig("primary", 22, key, tmp_path / f"{state_name}-{launched}-{count}-work")
+                primary = FakeRemote(config)
+                helper = FakeRemote(config)
+                helper.config = config
+                remote = ScorerRemote(config, runner=primary, helpers=[helper] if count == 2 else [])
+                epoch = EPOCH
+                job_path = remote.work_dir / "jobs" / epoch / "job.json"
+                job_path.parent.mkdir(parents=True)
+                job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+                if state_name == "complete":
+                    result_path = remote.work_dir / "epochs" / epoch / "out" / "results.json"
+                    result_path.parent.mkdir(parents=True)
+                    result_path.write_text("{}")
+                state = remote.work_dir / "jobs" / epoch / "remote-state.json"
+                state.write_text(json.dumps({
+                    "epoch": epoch, "state": state_name, "launch_attempted": launched,
+                    "shard_count": count,
+                    "helper_identities": [{"host": config.host, "port": config.port}] if count == 2 else [],
+                    "job_sha256": __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes()), "attempts": 1,
+                }))
+                remote.dispatch(epoch)
+                if launched:
+                    assert sum("nohup" in command for _, command in primary.calls) == 0
+                    assert primary.copies == []
+                if count == 2:
+                    assert sum("nohup" in command for _, command in helper.calls) <= 1
+
+
+def test_ten_tick_k2_launch_and_merge_once(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote, public_archive
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary = FakeRemote(config)
+    helper = FakeRemote(config)
+    helper.destination = "root@helper"
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+    for _ in range(10):
+        remote.dispatch(epoch)
+    assert sum("nohup" in command for _, command in primary.calls) == 1
+    assert sum("nohup" in command for _, command in helper.calls) == 1
+    primary.markers["done.json"] = '{"code":0}'
+    helper.markers["done.json"] = '{"code":0}'
+    primary.archive = public_archive()
+    helper.archive = public_archive()
+    with pytest.raises(InfraError):
+        remote.collect(epoch)
+    assert not (remote.work_dir / "epochs" / epoch / "out").exists()
+
+
 def test_helper_config_and_dispatch_idempotency(tmp_path):
     key = tmp_path / "key"
     key.write_text("fake")

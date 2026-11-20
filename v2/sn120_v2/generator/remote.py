@@ -428,8 +428,14 @@ class ScorerRemote:
                 return self._status(name, previous)
             if previous.get("state") == "complete" and local_results.is_file():
                 return self._status(name, previous)
-            if previous.get("launch_attempted") and not epoch_helpers:
-                return self._status(name, previous, "scorer launch attempted; collect to resume")
+            if previous.get("launch_attempted"):
+                record = dict(previous)
+                if epoch_helpers:
+                    record["helpers"] = self._dispatch_helpers(name, job_path, state_path, job_digest, previous)
+                else:
+                    record["helpers"] = []
+                _write_json(state_path, record)
+                return self._status(name, record, "scorer launch attempted; collect to resume")
             if previous.get("state") == "dispatched":
                 return self._status(name, previous, "copy outcome unknown; collect to resume")
             if previous.get("state") != "preparing":
