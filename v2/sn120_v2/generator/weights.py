@@ -221,9 +221,9 @@ def decide(
 ) -> Decision:
     """Return the sole permitted action for this invocation, without any I/O.
 
-    Missing or malformed payout data, stale/future payout freshness, and any
-    changed/missing earning UID hotkey all select a full UID-0 burn.  A changed
-    hotkey never causes shares to be silently renormalized to other miners.
+    Missing or malformed payout data and stale/future payout freshness select a
+    full UID-0 burn. Changed or missing earning hotkeys redirect only their own
+    equal claim shares to UID 0; other miners are never silently topped up.
     Chain/identity uncertainty instead skips: it is not evidence for a burn.
     """
     try:
@@ -259,30 +259,24 @@ def decide(
             if updated_at > current or current - updated_at > PAYOUT_MAX_AGE_SECONDS:
                 decision = _burn("payout.json is stale or future-dated; burning UID 0", chain, updated_at)
             else:
-                # Burn the whole mechanism on any registration churn.  The
-                # payout primitive still performs the actual equal-task-share
-                # computation for the unchanged, valid case.
-                changed = sorted(
-                    {claim.uid for claim in claims if chain.hotkeys.get(claim.uid) != claim.hotkey}
-                )
-                if changed:
-                    decision = _burn(
-                        "earning UID hotkey changed or is unregistered (UIDs " + ",".join(map(str, changed)) + "); burning UID 0",
-                        chain,
-                        updated_at,
-                    )
+                try:
+                    table = payout_weights(claims, chain.hotkeys, now=current, updated_at=updated_at)
+                    table = check_weights(table)
+                    if any(uid not in chain.hotkeys for uid in table):
+                        raise ContractError("payout selected an unregistered UID")
+                except (ContractError, TypeError, ValueError):
+                    decision = _burn("payout weights are invalid; burning UID 0", chain, updated_at)
                 else:
-                    try:
-                        table = payout_weights(claims, chain.hotkeys, now=current, updated_at=updated_at)
-                        table = check_weights(table)
-                        if any(uid not in chain.hotkeys for uid in table):
-                            raise ContractError("payout selected an unregistered UID")
-                    except (ContractError, TypeError, ValueError):
-                        decision = _burn("payout weights are invalid; burning UID 0", chain, updated_at)
+                    changed = sorted({claim.uid for claim in claims if chain.hotkeys.get(claim.uid) != claim.hotkey})
+                    redirected = [uid for uid in changed if table.get(BURN_UID, 0.0) > 0]
+                    burn = table == {BURN_UID: 1.0}
+                    if burn:
+                        reason = "every earning UID hotkey changed or is unregistered (UIDs " + ",".join(map(str, redirected)) + "); burning UID 0"
+                    elif redirected:
+                        reason = "valid trailing Generator payout; shares of changed/unregistered UIDs " + ",".join(map(str, redirected)) + " sent to UID 0"
                     else:
-                        burn = table == {BURN_UID: 1.0}
-                        reason = "no payable accepted tasks; burning UID 0" if burn else "valid trailing Generator payout"
-                        decision = Decision("submit", reason, table, burn, chain.block, updated_at)
+                        reason = "valid trailing Generator payout"
+                    decision = Decision("submit", reason, table, burn, chain.block, updated_at)
     if not execute:
         return Decision(
             "dry_run",
