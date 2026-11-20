@@ -379,6 +379,7 @@ def task_result(job: ScoringJob, state: TaskState) -> dict[str, Any]:
         "n": state.n,
         "q": state.q if state.decision != UNSCORED else None,
         "decision": state.decision,
+        "unscored_reason": "time_budget" if state.decision == UNSCORED and "completed rollouts; 8 required" in state.reason else None,
         "reason": state.reason,
         "rollouts": rollout_object(job.epoch, f"{state.spec.task_id}.jsonl"),
     }

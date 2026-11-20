@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+import urllib.request
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -178,6 +179,12 @@ class BatchRunner:
         self._slot_cooldown = [0.0] * len(self.urls)
         self._next_slot = 0
         self._slot_errors = [0] * len(self.urls)
+        self._slot_limits = [clients_per_server] * len(self.urls)
+        self._slot_inflight = [0] * len(self.urls)
+        self._slot_condition = threading.Condition()
+        self._preemptions = [None] * len(self.urls)
+        self._metrics_stop = threading.Event()
+        self._metrics_thread = None
         self._last_progress = 0.0
         self._stage = "stage1"
 
@@ -197,7 +204,7 @@ class BatchRunner:
         for _ in range(len(self.urls)):
             slot = self._next_slot
             self._next_slot = (slot + 1) % len(self.urls)
-            if self._slot_cooldown[slot] <= now:
+            if self._slot_cooldown[slot] <= now and self._slot_inflight[slot] < self._slot_limits[slot]:
                 return slot
         return None
 
@@ -211,6 +218,7 @@ class BatchRunner:
                 raise BudgetDeadline()
             timeout = max(0.001, self.job.budget_deadline - self.clock())
             try:
+                self._acquire_slot(slot)
                 self.usage.requests += 1
                 reply = self.http(self.urls[slot] + "/v1/chat/completions", request_body(self.task(task_id), seed), timeout)
                 text, capped = read_reply(reply)
@@ -243,7 +251,54 @@ class BatchRunner:
                 raise SlotUnavailable(slot) from exc
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 raise InfraError(f"Generator vLLM returned an invalid chat response: {type(exc).__name__}: {exc}") from exc
+            finally:
+                self._release_slot(slot)
         raise InfraError(f"Generator local server at {self.urls[slot]} failed three requests")
+
+    def _metrics_once(self, slot: int) -> None:
+        """Lower only this slot's limit after increased preemptions; never auto-raise."""
+        try:
+            with urllib.request.urlopen(self.urls[slot] + "/metrics", timeout=2) as response:
+                text = response.read(1024 * 1024).decode()
+            value = None
+            for line in text.splitlines():
+                if line.startswith("vllm:num_preemptions_total"):
+                    value = float(line.split()[-1])
+                    break
+            if value is None:
+                return
+            previous = self._preemptions[slot]
+            self._preemptions[slot] = value
+            if previous is not None and value > previous:
+                new_limit = max(min(192, self.clients_per_server), self._slot_limits[slot] - 16)
+                if new_limit != self._slot_limits[slot]:
+                    self._slot_limits[slot] = new_limit
+                    print(f"generator scorer slot={slot} preemptions {previous:g}->{value:g} limit={new_limit}", file=sys.stderr, flush=True)
+        except Exception:
+            return
+
+    def _metrics_loop(self) -> None:
+        while not self._metrics_stop.wait(30):
+            for slot in range(len(self.urls)):
+                self._metrics_once(slot)
+
+    def _start_metrics(self) -> None:
+        if self._metrics_thread is None:
+            self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True, name="generator-preemptions")
+            self._metrics_thread.start()
+
+    def _acquire_slot(self, slot: int) -> None:
+        with self._slot_condition:
+            while self._slot_inflight[slot] >= self._slot_limits[slot]:
+                if self._cutoff or self.clock() >= self.job.budget_deadline:
+                    raise BudgetDeadline()
+                self._slot_condition.wait(0.1)
+            self._slot_inflight[slot] += 1
+
+    def _release_slot(self, slot: int) -> None:
+        with self._slot_condition:
+            self._slot_inflight[slot] = max(0, self._slot_inflight[slot] - 1)
+            self._slot_condition.notify_all()
 
     def _mark_sick(self, slot: int, detail: str) -> None:
         """A transport fault affects one slot, never all in-flight requests."""
@@ -336,6 +391,7 @@ class BatchRunner:
     def run(self, pending: Sequence[tuple[str, int]], batch: Sequence[tuple[str, int]]) -> int:
         """Keep inference slots full; checkpoint and grade without a batch barrier."""
         self.http.reset()
+        self._start_metrics()
         self._cutoff = False
         self._first_error = None
         self._futures = {}
@@ -360,6 +416,8 @@ class BatchRunner:
             queue.extend(refill)
             self._stage = stage
         self._executor = ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="generator-scorer")
+        touched = set()
+        last_grade = self.monotonic()
 
         def submit(item):
             slot = self._choose_slot()
@@ -395,16 +453,33 @@ class BatchRunner:
                     break
                 done, _ = wait(tuple(self._futures), timeout=0.1, return_when=FIRST_COMPLETED)
                 if not done:
+                    if self.monotonic() - last_grade >= 20 and touched:
+                        try:
+                            graded += self._grade_responses([(task, 0) for task in sorted(touched)])
+                            touched.clear()
+                            last_grade = self.monotonic()
+                        except BaseException as exc:
+                            self._abort(exc)
+                            self._cutoff = True
                     if self.clock() >= self.job.budget_deadline:
                         self._cutoff = True
                         self.http.cancel()
                     continue
                 for future in done:
+                    if self.monotonic() - last_grade >= 20 and touched:
+                        try:
+                            graded += self._grade_responses([(task, 0) for task in sorted(touched)])
+                            touched.clear()
+                            last_grade = self.monotonic()
+                        except BaseException as exc:
+                            self._abort(exc)
+                            self._cutoff = True
                     task_id, sample, slot = self._futures.pop(future)
                     self._assigned.pop((task_id, sample), None)
                     try:
                         returned_task, returned_sample, reply = future.result()
                         self._checkpoint(returned_task, returned_sample, reply)
+                        touched.add(returned_task)
                         graded += self._grade_responses([(returned_task, returned_sample)])
                         settle(self.states[returned_task])
                     except SlotUnavailable:
@@ -421,6 +496,7 @@ class BatchRunner:
                 raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
             return graded
         finally:
+            self._metrics_stop.set()
             self._cutoff = True
             self.http.cancel()
             if self._executor is not None:

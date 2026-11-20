@@ -174,6 +174,36 @@ def test_concurrency_allows_384_and_caps_at_512(tmp_path):
         BatchRunner(job, initial_states(job), tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=513)
 
 
+def test_preemption_backoff_is_per_slot_and_never_raises(tmp_path, monkeypatch, capsys):
+    job = job_for(1, deadline=time.time() + 60)
+    runner = BatchRunner(job, initial_states(job), tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=224)
+    values = [0, 2]
+    class Reply:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self, limit): return f"vllm:num_preemptions_total {values[0]}\n".encode()
+    monkeypatch.setattr("sn120_v2.generator.worker.urllib.request.urlopen", lambda *args, **kwargs: Reply())
+    runner._metrics_once(0)
+    values[0] = 3
+    runner._metrics_once(0)
+    assert runner._slot_limits[0] == 208
+    assert runner._slot_limits[1:] == [224] * 7
+    runner._metrics_once(0)
+    assert runner._slot_limits[0] == 208
+    values[0] = 1
+    runner._metrics_once(0)
+    assert runner._slot_limits[0] == 208
+    assert "preemptions" in capsys.readouterr().err
+
+
+def test_metrics_failure_keeps_slot_limit(tmp_path, monkeypatch):
+    job = job_for(1, deadline=time.time() + 60)
+    runner = BatchRunner(job, initial_states(job), tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=224)
+    monkeypatch.setattr("sn120_v2.generator.worker.urllib.request.urlopen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("metrics unavailable")))
+    runner._metrics_once(0)
+    assert runner._slot_limits[0] == 224
+
+
 def test_fd_limit_is_raised_before_thread_pool(monkeypatch):
     limits = [1024, 1048576]
     def getrlimit(resource):
@@ -210,6 +240,34 @@ def test_out_of_order_durable_response_is_not_duplicated_on_resume(tmp_path):
     runner._checkpoint(job.task_ids[0], 1, {"text": PASS, "capped": False, "seconds": 0, "completion_tokens": 0, "prompt_tokens": 0, "server": "http://127.0.0.1:8100"})
     assert set(state.responses) == {1}
     assert len(path.read_text().splitlines()) == 2
+
+
+def test_midstage_periodic_grading_preserves_prefixes_and_decisions(tmp_path):
+    job = job_for(4, deadline=time.time() + 60)
+    states = initial_states(job)
+    current = [time.time()]
+    job = dataclasses.replace(job, budget_deadline=current[0] + 25)
+    monotonic = [0.0]
+    class Transport:
+        def reset(self): pass
+        def cancel(self): pass
+        def __call__(self, url, body, timeout):
+            monotonic[0] += 21
+            current[0] += 7
+            return {"choices": [{"message": {"content": PASS}, "finish_reason": "stop"}], "usage": {}}
+    runner = BatchRunner(job, states, tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=Transport(), clients_per_server=1, clock=lambda: current[0], monotonic=lambda: monotonic[0])
+    runner.run([], [(task.task_id, j) for task in job.tasks for j in range(8)])
+    for task in job.tasks:
+        state = states[task.task_id]
+        path = tmp_path / "rollouts" / f"{task.task_id}.jsonl"
+        committed = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        assert state.n == len(committed) == len(state.rollouts)
+        assert [row["j"] for row in committed] == list(range(state.n))
+        assert state.n <= 8
+        if state.n == 8:
+            assert state.decision in ("accept", "reject") and state.final
+        else:
+            assert state.decision == "unscored" and not state.final
 
 
 def test_crash_before_grade_recovers_without_duplicate_inference(tmp_path):

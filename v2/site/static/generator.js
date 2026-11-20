@@ -283,7 +283,7 @@
       for (const key of ['submitted', 'eligible', 'scored', 'accepted']) cell(tr, row[key] ?? '—', 'num');
     }
     doc.getElementById('results-note').textContent = epoch
-      ? 'Submitted: valid task IDs at the deadline snapshot. Eligible: IDs remaining after registration, activation, deduplication and pool checks. Scored: IDs with completed rollouts. Accepted: IDs admitted to the permanent task ledger.'
+      ? 'Submitted: valid task IDs at the deadline snapshot. Eligible: IDs remaining after registration, activation, deduplication and pool checks. Scored: IDs with completed rollouts. Accepted: IDs admitted to the permanent task ledger. Unscored time-budget tasks are shown only as task_sha256; miners can hash their submitted IDs to match and resubmit.'
       : 'The first epoch has not been scored yet. Results will appear after scoring and publication.';
   }
 

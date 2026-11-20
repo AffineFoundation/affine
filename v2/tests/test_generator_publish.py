@@ -98,7 +98,7 @@ def test_rejected_and_unscored_public_rows_are_hashed_and_text_stays_private(tmp
     assert accepted_row["rollouts"].endswith(f"/{task_id(1)}.jsonl")
     assert accepted_row["decision"] == "accept" and accepted_row["s"] == 4 and accepted_row["n"] == 8
     assert rejected_row == {"task_sha256": sha256_hex(task_id(2).encode()), "decision": "reject", "n": 8, "s": 0}
-    assert unscored_row == {"task_sha256": sha256_hex(task_id(3).encode()), "decision": "unscored", "n": 4, "s": 2}
+    assert unscored_row == {"task_sha256": sha256_hex(task_id(3).encode()), "decision": "unscored", "n": 4, "s": 2, "unscored_reason": "time_budget"}
     assert set(plan["rollouts"]) == {task_id(1)}
     assert task_id(2).encode() not in json_bytes(plan["results"])
     assert task_id(3).encode() not in json_bytes(plan["results"])

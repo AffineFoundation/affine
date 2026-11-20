@@ -208,6 +208,7 @@ def publication(
             } if row["decision"] == ACCEPT else {
                 "task_sha256": sha256_hex(row["task_id"].encode()),
                 "decision": row["decision"], "n": row["n"], "s": row["s"],
+                **({"unscored_reason": "time_budget"} if row["decision"] == "unscored" else {}),
             }
             for row in rows
         ],
