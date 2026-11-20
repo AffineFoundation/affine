@@ -491,7 +491,7 @@ class BatchRunner:
                         self._abort(exc)
                         # Continue draining other completed futures into durable journals.
                         self._cutoff = True
-            graded += self._grade_responses([(task.task_id, self.states[task.task_id].n) for task in self.job.tasks])
+            graded += self._grade_responses([(task.task_id, self.states[task.task_id].n) for task in self.job.tasks if task.task_id in self.states])
             if self._first_error is not None:
                 raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
             return graded

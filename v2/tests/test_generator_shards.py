@@ -146,6 +146,30 @@ def test_delayed_helper_never_creates_partial_output(tmp_path):
     assert not (remote.work_dir / "epochs" / epoch / "out").exists()
 
 
+def test_epoch_helper_set_is_pinned_at_primary_launch(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote, public_archive
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary = FakeRemote(config)
+    remote = ScorerRemote(config, runner=primary)
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+    remote.dispatch(epoch)
+    state = json.loads((remote.work_dir / "jobs" / epoch / "remote-state.json").read_text())
+    assert state["shard_count"] == 1 and state["helper_identities"] == []
+    helper = FakeRemote(config)
+    helper.destination = "root@new-helper"
+    remote.helpers = (helper,)
+    remote.dispatch(epoch)
+    assert not helper.calls
+    primary.markers["done.json"] = '{"code":0}'
+    primary.archive = public_archive()
+    assert remote.collect(epoch).complete
+
+
 def test_helper_config_and_dispatch_idempotency(tmp_path):
     key = tmp_path / "key"
     key.write_text("fake")

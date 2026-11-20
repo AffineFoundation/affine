@@ -303,6 +303,7 @@ class ScorerRemote:
         self.config = config
         self.runner = SSHRunner(config) if runner is None else runner
         self.helpers = tuple(helpers)
+        self._epoch_helpers: dict[str, tuple[Any, ...]] = {}
         self.work_dir = config.work_dir
 
     @staticmethod
@@ -392,10 +393,18 @@ class ScorerRemote:
         name, job_path, state_path, root, remote_job, remote_out, done = self._paths(epoch)
         _, job_digest = self._job(job_path)
         previous = self._read_state(state_path, name)
+        if name not in self._epoch_helpers:
+            self._epoch_helpers[name] = tuple(self.helpers[:max(0, int(previous.get("shard_count", 1 + len(self.helpers))) - 1)])
         local_results = self.work_dir / "epochs" / name / "out" / "results.json"
         if not previous and local_results.is_file():
             return self._status(name, {"state": "complete", "job_sha256": job_digest})
         if previous:
+            if "shard_count" not in previous:
+                previous["shard_count"] = 1 + len(self.helpers)
+            if previous["shard_count"] == 1:
+                self._epoch_helpers[name] = ()
+            elif name not in self._epoch_helpers:
+                self._epoch_helpers[name] = tuple(self.helpers[:previous["shard_count"] - 1])
             if previous.get("job_sha256") not in (None, "", job_digest):
                 raise ConfigError("Generator job changed after dispatch; explicitly reset state or use a new epoch")
             if previous.get("state") == "failed":
@@ -404,7 +413,7 @@ class ScorerRemote:
                 return self._status(name, previous)
             if previous.get("state") == "dispatched":
                 return self._status(name, previous, "copy outcome unknown; collect to resume")
-            if not self.helpers:
+            if not self._epoch_helpers.get(name):
                 previous = {}
 
         record = dict(previous) if previous.get("launch_attempted") else {
@@ -423,6 +432,11 @@ class ScorerRemote:
             "detail": "preparing exact frozen head; scorer has not been launched", "launch_attempted": False,
             "job_sha256": job_digest, "attempts": 1, "dispatched_at": time.time(),
         }
+        if "shard_count" not in record:
+            record["shard_count"] = 1 + len(self.helpers)
+            record["helper_identities"] = [
+                {"host": helper.config.host, "port": helper.config.port} for helper in self.helpers
+            ]
         _write_json(state_path, record)  # Durable before the first network call.
         qroot, qjob = remote_path(root), remote_path(remote_job)
         qout, qdone = remote_path(remote_out), remote_path(done)
@@ -445,8 +459,8 @@ class ScorerRemote:
         _write_json(state_path, record)
 
         scorer = SCORER_COMMAND.format(epoch=name)
-        if self.helpers:
-            scorer += f" --shard 0/{1 + len(self.helpers)}"
+        if self._epoch_helpers.get(name, self.helpers):
+            scorer += f" --shard 0/{record['shard_count']}"
         failed = f"{root}/failed.json"
         # No eval, environment forwarding or user command.  The marker file is
         # complete before mv, and is named done only after scorer exit code 0.
@@ -471,8 +485,9 @@ class ScorerRemote:
 
     def _dispatch_helpers(self, name: str, job_path: Path, state_path: Path, job_digest: str, previous: Mapping[str, Any]) -> list[dict[str, Any]]:
         """Prepare every helper before launching it, with independent sticky state."""
-        if not self.helpers:
-            return []
+        if not self._epoch_helpers.get(name):
+            self._epoch_helpers[name] = tuple(self.helpers)
+        helpers = self._epoch_helpers[name]
         records = [dict(row) for row in previous.get("helpers", [])]
         for index in range(1, len(self.helpers) + 1):
             path = state_path.with_name(f"remote-state-shard-{index}.json")
@@ -482,11 +497,11 @@ class ScorerRemote:
                     records.append(record)
                 else:
                     records[index - 1] = record
-        while len(records) < len(self.helpers):
+        while len(records) < len(helpers):
             records.append({})
         head_version = json.loads(job_path.read_text())["head_version"]
         root = f"{REMOTE_ROOT}/jobs/{name}"
-        for index, runner in enumerate(self.helpers, 1):
+        for index, runner in enumerate(helpers, 1):
             record = records[index - 1]
             if record.get("job_sha256") not in (None, "", job_digest):
                 raise ConfigError("Generator helper job changed after dispatch")
@@ -501,7 +516,7 @@ class ScorerRemote:
             runner.ssh(f"PYTHONPATH={REMOTE_PYTHONPATH} /root/venv/bin/python -m sn120_v2.generator.ensure_head {shlex.quote(head_version)}", timeout=HEAD_PREPARE_TIMEOUT_S)
             record.update(state="dispatched", launch_attempted=True)
             self._write_helper_state(state_path, index, record)
-            scorer = SCORER_COMMAND.format(epoch=name) + f" --shard {index}/{1 + len(self.helpers)}"
+            scorer = SCORER_COMMAND.format(epoch=name) + f" --shard {index}/{1 + len(helpers)}"
             failed = f"{root}/failed.json"
             inner = (
                 f"PYTHONPATH={REMOTE_PYTHONPATH} {scorer}; code=$?; "
@@ -542,6 +557,7 @@ class ScorerRemote:
     def collect(self, epoch: str) -> RemoteStatus:
         name, _, state_path, _, _, remote_out, done = self._paths(epoch)
         previous = self._read_state(state_path, name)
+        epoch_helpers = self._epoch_helpers.get(name, ())
         local_results = self.work_dir / "epochs" / name / "out" / "results.json"
         if not previous:
             if local_results.is_file():
@@ -566,9 +582,9 @@ class ScorerRemote:
             self._failed(state_path, record, "Generator scorer done marker names the wrong epoch")
         record.update(state="collecting", detail="successful done marker observed; downloading public out")
         _write_json(state_path, record)
-        if self.helpers:
+        if epoch_helpers:
             pending = []
-            for index, runner in enumerate(self.helpers, 1):
+            for index, runner in enumerate(epoch_helpers, 1):
                 marker = self._marker(f"{REMOTE_ROOT}/jobs/{name}/done.json", runner=runner)
                 if marker is None or marker.get("code") != 0:
                     pending.append(index)
@@ -577,9 +593,9 @@ class ScorerRemote:
                 _write_json(state_path, record)
                 return self._status(name, record)
         try:
-            out = self._collect_out(name, remote_out, shard=0 if self.helpers else None)
-            if self.helpers:
-                helper_outs = [self._collect_out(name, remote_out, shard=index, runner=runner) for index, runner in enumerate(self.helpers, 1)]
+            out = self._collect_out(name, remote_out, shard=0 if epoch_helpers else None)
+            if epoch_helpers:
+                helper_outs = [self._collect_out(name, remote_out, shard=index, runner=runner) for index, runner in enumerate(epoch_helpers, 1)]
                 out = self._merge_shards(name, out, helper_outs)
             try:
                 results = json.loads((out / "results.json").read_text(encoding="utf-8"))
