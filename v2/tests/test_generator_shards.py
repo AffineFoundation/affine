@@ -77,7 +77,7 @@ def test_merge_and_reject_mismatch_overlap(tmp_path):
             "seed_commitment": "a" * 64, "pool_pin": current.pool_pin,
             "shard": {"index": index, "count": 2, "tasks": 1},
             "tasks": [{"id": current.tasks[index].task_id, "s": 4, "n": 8, "decision": "accept"}],
-            "timings": {"wall_s": 1}, "throughput": {"rollouts": 8}, "servers": [], "hotkeys": {},
+            "timings": {"wall_s": 1}, "throughput": {"rollouts": 8}, "servers": [], "hotkeys": {"owner": {"submitted": index + 1, "accepted": 1}},
         }
     for path, index in ((primary, 0), (helper, 1)):
         (path / "results.json").write_text(json.dumps(document(index)))
@@ -88,6 +88,7 @@ def test_merge_and_reject_mismatch_overlap(tmp_path):
     assert [row["id"] for row in results["tasks"]] == [task.task_id for task in current.tasks]
     assert "shard" not in results
     assert results["throughput"] == [{"rollouts": 8}, {"rollouts": 8}]
+    assert results["hotkeys"] == {"owner": {"submitted": 3, "accepted": 2}}
     (primary / "rollouts" / f"{current.tasks[1].task_id}.jsonl").write_text("{}\n")
     with pytest.raises(InfraError, match="overlap"):
         remote._merge_shards(current.epoch, primary, [helper])
@@ -97,6 +98,52 @@ def test_merge_and_reject_mismatch_overlap(tmp_path):
     (helper / "results.json").write_text(json.dumps(bad))
     with pytest.raises(InfraError, match="identity"):
         remote._merge_shards(current.epoch, primary, [helper])
+
+
+def test_repeated_dispatch_launches_primary_and_helper_once(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary = FakeRemote(config)
+    helper = FakeRemote(config)
+    helper.destination = "root@helper"
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+    for _ in range(5):
+        remote.dispatch(epoch)
+    assert sum("nohup" in command for _, command in primary.calls) == 1
+    assert sum("nohup" in command for _, command in helper.calls) == 1
+    assert sum("ensure_head" in command for _, command in primary.calls) == 1
+    assert sum("ensure_head" in command for _, command in helper.calls) == 1
+
+
+def test_delayed_helper_never_creates_partial_output(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote, public_archive
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary = FakeRemote(config)
+    helper = FakeRemote(config)
+    helper.destination = "root@helper"
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+    remote.dispatch(epoch)
+    primary.markers["done.json"] = '{"code":0}'
+    primary.archive = public_archive()
+    helper.archive = public_archive()
+    assert remote.collect(epoch).state == "running"
+    assert not (remote.work_dir / "epochs" / epoch / "out").exists()
+    helper.markers["done.json"] = '{"code":0}'
+    with pytest.raises(InfraError):
+        remote.collect(epoch)
+    assert not (remote.work_dir / "epochs" / epoch / "out").exists()
 
 
 def test_helper_config_and_dispatch_idempotency(tmp_path):

@@ -402,16 +402,22 @@ class ScorerRemote:
                 return self._status(name, previous)
             if previous.get("state") == "complete" and local_results.is_file():
                 return self._status(name, previous)
-            if previous.get("launch_attempted") or previous.get("state") == "complete":
-                # Only this state is sticky: a second launch is never safe.
-                if not self.helpers:
-                    return self._status(name, previous, "scorer launch attempted; collect to resume")
-                # Helpers may be prepared independently after primary launch.
-            elif previous.get("state") == "dispatched":
+            if previous.get("state") == "dispatched":
                 return self._status(name, previous, "copy outcome unknown; collect to resume")
-            elif not self.helpers:
+            if not self.helpers:
                 previous = {}
 
+        record = dict(previous) if previous.get("launch_attempted") else {
+            "epoch": name, "state": "dispatched",
+            "detail": "preparing exact frozen head; scorer has not been launched", "launch_attempted": False,
+            "job_sha256": job_digest, "attempts": 1, "dispatched_at": time.time(),
+        }
+        primary_launched = bool(previous.get("launch_attempted") or previous.get("state") == "complete")
+        if primary_launched:
+            helper_records = self._dispatch_helpers(name, job_path, state_path, job_digest, previous)
+            record["helpers"] = helper_records
+            _write_json(state_path, record)
+            return self._status(name, record, "primary already launched; helpers resumed")
         record: dict[str, Any] = {
             "epoch": name, "state": "dispatched",
             "detail": "preparing exact frozen head; scorer has not been launched", "launch_attempted": False,
@@ -560,17 +566,20 @@ class ScorerRemote:
             self._failed(state_path, record, "Generator scorer done marker names the wrong epoch")
         record.update(state="collecting", detail="successful done marker observed; downloading public out")
         _write_json(state_path, record)
+        if self.helpers:
+            pending = []
+            for index, runner in enumerate(self.helpers, 1):
+                marker = self._marker(f"{REMOTE_ROOT}/jobs/{name}/done.json", runner=runner)
+                if marker is None or marker.get("code") != 0:
+                    pending.append(index)
+            if pending:
+                record.update(state="running", detail=f"helpers not complete: {','.join(map(str, pending))}")
+                _write_json(state_path, record)
+                return self._status(name, record)
         try:
-            out = self._collect_out(name, remote_out)
+            out = self._collect_out(name, remote_out, shard=0 if self.helpers else None)
             if self.helpers:
-                helper_outs = []
-                for index, runner in enumerate(self.helpers, 1):
-                    marker = self._marker(f"{REMOTE_ROOT}/jobs/{name}/done.json", runner=runner)
-                    if marker is None or marker.get("code") != 0:
-                        record.update(state="running", detail=f"helper shard {index} has not completed")
-                        _write_json(state_path, record)
-                        return self._status(name, record)
-                    helper_outs.append(self._collect_out(name, remote_out, shard=index, runner=runner))
+                helper_outs = [self._collect_out(name, remote_out, shard=index, runner=runner) for index, runner in enumerate(self.helpers, 1)]
                 out = self._merge_shards(name, out, helper_outs)
             try:
                 results = json.loads((out / "results.json").read_text(encoding="utf-8"))
@@ -622,16 +631,27 @@ class ScorerRemote:
         merged["timings"] = [document.get("timings", {}) for document in documents]
         merged["throughput"] = [document.get("throughput", {}) for document in documents]
         merged["servers"] = [document.get("servers", []) for document in documents]
-        merged["hotkeys"] = base.get("hotkeys", {})
+        merged["hotkeys"] = {}
+        for document in documents:
+            for hotkey, counts in document.get("hotkeys", {}).items():
+                total = merged["hotkeys"].setdefault(hotkey, {})
+                for field, value in counts.items():
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        total[field] = total.get(field, 0) + value
         merged["publication"] = base.get("publication", {})
-        out = self.work_dir / "epochs" / epoch / "out"
+        final = self.work_dir / "epochs" / epoch / "out"
+        out = self.work_dir / "epochs" / epoch / ".merged-staging"
+        if out.exists():
+            shutil.rmtree(out)
+        if final.exists():
+            raise InfraError("merged Generator output already exists")
         existing = set()
         for path in [primary, *helpers]:
             for rollout in (path / "rollouts").glob("*.jsonl"):
                 if rollout.name in existing:
                     raise InfraError("Generator shard rollouts overlap")
                 existing.add(rollout.name)
-        if out.exists():
+        if final.exists():
             raise InfraError("merged Generator output already exists")
         shutil.copytree(primary, out)
         for path in helpers:
@@ -641,14 +661,17 @@ class ScorerRemote:
                     raise InfraError("Generator shard rollouts overlap")
                 shutil.copyfile(rollout, target)
         _write_json(out / "results.json", merged)
-        return out
+        os.replace(out, final)
+        return final
 
-    def _collect_out(self, epoch: str, remote_out: str, *, shard: int = 0, runner: Any = None) -> Path:
+    def _collect_out(self, epoch: str, remote_out: str, *, shard: int | None = None, runner: Any = None) -> Path:
         runner = self.runner if runner is None else runner
-        suffix = "" if shard == 0 else f"-shard-{shard}"
+        suffix = "" if shard is None else f"-shard-{shard}"
         """Download one fixed tar and manually extract only safe public files."""
         staging = self.work_dir / "epochs" / epoch / f".out-download{suffix}"
         final = self.work_dir / "epochs" / epoch / f"out{suffix}"
+        if suffix:
+            final = self.work_dir / "epochs" / epoch / f"out-shard-{shard}"
         self._clear_staging(staging)
         staging.mkdir(parents=True, mode=0o700)
         try:
