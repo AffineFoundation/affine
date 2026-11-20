@@ -158,6 +158,7 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
             if task_id not in seen_withdrawn:
                 by_id[task_id] = task
                 normalised.setdefault(normalise(task.problem), task_id)
+    retired_ids = {str(row.get("id", "")) for row in retired_rows}
     for shard in history:
         try:
             raw = (root / "shards" / shard.shard).read_bytes()
@@ -190,12 +191,16 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 if row["id"] not in high_retired or original is None or (row["problem"], row["answer"]) != (original.problem, original.answer):
                     raise VerifyError("an explicit readmit must exactly match its high-retired original")
             elif row["id"] in by_id or normalise(row["problem"]) in normalised:
-                raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
+                if not (allow_retired and row["id"] in retired_ids):
+                    raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
+                # A ranked task may return through its retirement archive. Its
+                # original shard row is historical evidence, not a second task.
             if canonical_json(row) + b"\n" != raw.splitlines(keepends=True)[len(ordered)] or not raw.endswith(b"\n"):
                 raise VerifyError("reserve rows must be canonical JSONL, one newline-terminated row each")
             task = Task(row["id"], row["env"], row["problem"], row["answer"])
-            extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
-            by_id[task.task_id] = task
+            if not (allow_retired and task.task_id in retired_ids):
+                extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
+                by_id[task.task_id] = task
             ordered.append(task.task_id)
         ordered.sort(key=lambda task_id: sha256_hex(f"{shard.sha256}|reserve-order|{task_id}".encode()))
         queue.extend(ordered)
