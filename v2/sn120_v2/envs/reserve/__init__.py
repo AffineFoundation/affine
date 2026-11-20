@@ -13,10 +13,10 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from ...canonical import canonical_json, file_sha256, sha256_hex
+from ...canonical import canonical_json, sha256_hex
 from ...errors import ConfigError, VerifyError
 from ...rotation import Reserve, ReserveShard
-from ..math_pool import MathPool, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
+from ..math_pool import MANDATE, MathPool, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 
 RESERVE_ENV = "SN120_RESERVE_DIR"  # tests only; production uses the packaged directory
 MANIFEST = "MANIFEST.jsonl"
@@ -26,6 +26,7 @@ DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 SHARD = re.compile(r"[0-9]{4}-[a-z0-9][a-z0-9-]*\.jsonl\Z")
 MIN_PROBLEM_CHARS, MAX_PROBLEM_CHARS = 1, 16_384
 MIN_ANSWER_CHARS, MAX_ANSWER_CHARS = 1, 2_048
+UNSCREENED_METHOD = "prior-v1 unscreened, prior_p from difficulty_meta"
 
 
 def reserve_dir() -> Path:
@@ -153,11 +154,13 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
     # low-retired tasks stay excluded from admission forever.
     extra: dict[str, Task] = {}
     queue: list[str] = []
+    verdicts: dict[str, str] = {}
     if allow_retired:
         for task_id, task in retired_tasks.items():
             if task_id not in seen_withdrawn:
                 by_id[task_id] = task
                 normalised.setdefault(normalise(task.problem), task_id)
+    retired_ids = {str(row.get("id", "")) for row in retired_rows}
     for shard in history:
         try:
             raw = (root / "shards" / shard.shard).read_bytes()
@@ -177,10 +180,17 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 raise VerifyError("reserve row has a mistyped field or added_at")
             if "prior_p" in row and (type(row["prior_p"]) not in (int, float) or not math.isfinite(row["prior_p"]) or not 0.0 <= row["prior_p"] <= 1.0):
                 raise VerifyError("reserve prior_p must be a finite number in [0, 1]")
-            if not isinstance(row["audit"], dict) or row["audit"].get("verdict") != "keep" or not {"method", "ref"} <= set(row["audit"]):
-                raise VerifyError("only an audited keep row may be in the reserve")
-            if set(row["audit"]) - {"verdict", "method", "ref", "readmit_of"}:
-                raise VerifyError("unknown reserve audit field")
+            audit = row["audit"]
+            if not isinstance(audit, dict) or not isinstance(audit.get("verdict"), str) or not isinstance(audit.get("method"), str) or not audit["method"]:
+                raise VerifyError("reserve audit needs a verdict and method")
+            if audit["verdict"] == "keep":
+                allowed = {"method", "ref"} <= set(audit) and set(audit) <= {"verdict", "method", "ref", "readmit_of"}
+            elif audit["verdict"] == "unscreened":
+                allowed = set(audit) == {"method", "verdict"} and audit["method"] == UNSCREENED_METHOD
+            else:
+                allowed = False
+            if not allowed:
+                raise VerifyError("reserve row has an unsupported audit verdict or method")
             if not row["problem"].strip() or not row["answer"].strip():
                 raise VerifyError(f"reserve task {row['id']} has an empty problem or answer")
             if row["id"] in extra:
@@ -190,12 +200,21 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 if row["id"] not in high_retired or original is None or (row["problem"], row["answer"]) != (original.problem, original.answer):
                     raise VerifyError("an explicit readmit must exactly match its high-retired original")
             elif row["id"] in by_id or normalise(row["problem"]) in normalised:
-                raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
+                if allow_retired and row["id"] in retired_ids:
+                    # Ranked rotation returns through the retired archive; its
+                    # original shard row is historical evidence, not a new
+                    # admission candidate. Keep the queue's complete history.
+                    pass
+                else:
+                    raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
             if canonical_json(row) + b"\n" != raw.splitlines(keepends=True)[len(ordered)] or not raw.endswith(b"\n"):
                 raise VerifyError("reserve rows must be canonical JSONL, one newline-terminated row each")
             task = Task(row["id"], row["env"], row["problem"], row["answer"])
-            extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
-            by_id[task.task_id] = task
+            if not (allow_retired and task.task_id in retired_ids):
+                extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
+                by_id[task.task_id] = task
+            if audit["verdict"] != "keep":
+                verdicts[task.task_id] = audit["verdict"]
             ordered.append(task.task_id)
         ordered.sort(key=lambda task_id: sha256_hex(f"{shard.sha256}|reserve-order|{task_id}".encode()))
         queue.extend(ordered)
@@ -206,7 +225,8 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
     admitted = MathPool(tuple(task for task_id, task in by_id.items() if allow_retired or task_id not in low_retired), base.sha256)
     catalog = Catalog(base, combined, admitted, frozenset() if allow_retired else frozenset(low_retired)) if with_catalog else None
     reserve = Reserve(sha256_hex(manifest), tuple(task for task in queue if task not in seen_withdrawn),
-                      tuple(history), withdrawn, sha256_hex(withdrawn_raw), len(withdrawn))
+                      tuple(history), withdrawn, sha256_hex(withdrawn_raw), len(withdrawn),
+                      audit_verdicts=verdicts)
     return reserve, catalog
 
 
@@ -233,6 +253,8 @@ def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catal
             meta[row["id"]] = {"source_prefix": row["id"].split(":", 1)[0], "env": row["env"]}
             if "prior_p" in row:
                 meta[row["id"]]["prior_p"] = row["prior_p"]
+            if row["audit"]["verdict"] == "unscreened":
+                meta[row["id"]]["unscreened"] = True
     path = root / "retired_tasks.json"
     if path.exists():
         for row in json.loads(path.read_bytes()):

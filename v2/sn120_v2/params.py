@@ -197,6 +197,7 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
+        "rotation_unscreened_max",
     )
 
     netuid: int = 120
@@ -244,6 +245,7 @@ class Params(Record):
     rotation_prior_p: float = 0.5  # when neither an IRT row nor a reserve prior is known
     rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
     rotation_churn_max: int = 0  # optional operational cap on swaps; 0 = no cap beyond churn_frac and better candidates
+    rotation_unscreened_max: int = 0  # 0 = no cap; positive = maximum unscreened admissions per round, including fill and swaps
 
     # Judging.
     z_bar: float = 1.0  # a winner needs z strictly above this
@@ -323,6 +325,7 @@ class Params(Record):
         _need(self.rotation_rule in ("v1", "info"), "rotation_rule must be 'v1' or 'info'")
         _need(_unit(self.rotation_churn_frac) and _unit(self.rotation_prior_p), "rotation churn fraction and prior must be in [0, 1]")
         _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
+        _need(self.rotation_unscreened_max >= 0, "rotation_unscreened_max must be >= 0; 0 means no cap")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
