@@ -193,6 +193,7 @@ def test_empty_or_expired_valid_claims_use_primitive_burn():
     old = Claim(T1, 7, "hk7", NOW - 24 * 3600, "a" * 64)
     expired = submitted(decide(doc=document(old, updated_at=NOW), execute=True))
     assert empty.weights == expired.weights == {0: 1.0} and empty.burn and expired.burn
+    assert empty.reason == expired.reason == "no payable accepted tasks; burning UID 0"
 
 
 @pytest.mark.parametrize(

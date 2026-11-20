@@ -46,7 +46,7 @@ from .constants import (
     PAYOUT_SCHEMA_VERSION,
     PAYOUT_WINDOW_SECONDS,
 )
-from .payout import Claim, payout_weights
+from .payout import Claim, payout_weights, trailing_claims
 from .protocol import valid_task_id
 
 VERSION_KEY = 0
@@ -267,11 +267,13 @@ def decide(
                 except (ContractError, TypeError, ValueError):
                     decision = _burn("payout weights are invalid; burning UID 0", chain, updated_at)
                 else:
-                    changed = sorted({claim.uid for claim in claims if chain.hotkeys.get(claim.uid) != claim.hotkey})
+                    changed = sorted({claim.uid for claim in trailing_claims(claims, current) if chain.hotkeys.get(claim.uid) != claim.hotkey})
                     redirected = [uid for uid in changed if table.get(BURN_UID, 0.0) > 0]
                     burn = table == {BURN_UID: 1.0}
-                    if burn:
+                    if burn and redirected:
                         reason = "every earning UID hotkey changed or is unregistered (UIDs " + ",".join(map(str, redirected)) + "); burning UID 0"
+                    elif burn:
+                        reason = "no payable accepted tasks; burning UID 0"
                     elif redirected:
                         reason = "valid trailing Generator payout; shares of changed/unregistered UIDs " + ",".join(map(str, redirected)) + " sent to UID 0"
                     else:
