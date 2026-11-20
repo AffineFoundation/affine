@@ -91,7 +91,7 @@ class SSHConfig:
         """Load host, port, identity_file/key_path and work_dir from JSON data."""
         if not isinstance(value, Mapping):
             raise ConfigError("Generator SSH config must be a JSON object")
-        allowed = {"host", "port", "identity_file", "key_path", "work_dir", "user", "timeout_s"}
+        allowed = {"host", "port", "identity_file", "key_path", "work_dir", "user", "timeout_s", "helpers"}
         unknown = set(value) - allowed
         if unknown:
             raise ConfigError(f"unknown Generator SSH config fields: {', '.join(sorted(map(str, unknown)))}")
@@ -299,10 +299,18 @@ def _epoch_serialized(method: Callable[..., RemoteStatus]) -> Callable[..., Remo
 class ScorerRemote:
     """Dispatch once, then collect only a code-zero done marker's public out."""
 
-    def __init__(self, config: SSHConfig, runner: Any = None) -> None:
+    def __init__(self, config: SSHConfig, runner: Any = None, helpers: Sequence[Any] = ()) -> None:
         self.config = config
         self.runner = SSHRunner(config) if runner is None else runner
+        self.helpers = tuple(helpers)
         self.work_dir = config.work_dir
+
+    @staticmethod
+    def _helper_runners(value: Mapping[str, Any], work_dir: str | Path) -> list[SSHRunner]:
+        helpers = value.get("helpers", [])
+        if not isinstance(helpers, list) or any(not isinstance(helper, Mapping) for helper in helpers):
+            raise ConfigError("Generator helpers must be a list of SSH config objects")
+        return [SSHRunner(SSHConfig.from_dict({**helper, "work_dir": os.fspath(work_dir)})) for helper in helpers]
 
     @classmethod
     def from_config(
@@ -319,7 +327,7 @@ class ScorerRemote:
             config = SSHConfig.from_file(value)
             if work_dir is not None and config.work_dir != Path(work_dir).expanduser().resolve():
                 raise ConfigError("Generator SSH config work_dir differs from control-plane work_dir")
-        return cls(config, runner=runner)
+        return cls(config, runner=runner, helpers=cls._helper_runners(value, work_dir) if isinstance(value, Mapping) else [])
 
     def _paths(self, epoch: str) -> tuple[str, Path, Path, str, str, str, str]:
         name = epoch_id(epoch)
@@ -396,12 +404,13 @@ class ScorerRemote:
                 return self._status(name, previous)
             if previous.get("launch_attempted") or previous.get("state") == "complete":
                 # Only this state is sticky: a second launch is never safe.
-                return self._status(name, previous, "scorer launch attempted; collect to resume")
-            # A copy timeout remains sticky, as before. A failure during the
-            # later fixed head-preparation call is safe to retry, not relaunch.
-            if previous.get("state") == "dispatched":
+                if not self.helpers:
+                    return self._status(name, previous, "scorer launch attempted; collect to resume")
+                # Helpers may be prepared independently after primary launch.
+            elif previous.get("state") == "dispatched":
                 return self._status(name, previous, "copy outcome unknown; collect to resume")
-            previous = {}
+            elif not self.helpers:
+                previous = {}
 
         record: dict[str, Any] = {
             "epoch": name, "state": "dispatched",
@@ -421,12 +430,17 @@ class ScorerRemote:
             f"{shlex.quote(head_version)}"
         )
         self.runner.ssh(ensure, timeout=HEAD_PREPARE_TIMEOUT_S)
+        helper_records = self._dispatch_helpers(name, job_path, state_path, job_digest, previous)
+        if self.helpers:
+            record["helpers"] = helper_records
         # Only an uncertain scorer launch is sticky. Before this point, head
         # preparation can be retried without ever running two scorers.
         record.update(state="dispatched", detail="head prepared; scorer launch attempted", launch_attempted=True)
         _write_json(state_path, record)
 
         scorer = SCORER_COMMAND.format(epoch=name)
+        if self.helpers:
+            scorer += f" --shard 0/{1 + len(self.helpers)}"
         failed = f"{root}/failed.json"
         # No eval, environment forwarding or user command.  The marker file is
         # complete before mv, and is named done only after scorer exit code 0.
@@ -449,13 +463,63 @@ class ScorerRemote:
         _write_json(state_path, record)
         return self._status(name, record)
 
-    def _marker(self, path: str) -> dict[str, Any] | None:
+    def _dispatch_helpers(self, name: str, job_path: Path, state_path: Path, job_digest: str, previous: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Prepare every helper before launching it, with independent sticky state."""
+        if not self.helpers:
+            return []
+        records = [dict(row) for row in previous.get("helpers", [])]
+        for index in range(1, len(self.helpers) + 1):
+            path = state_path.with_name(f"remote-state-shard-{index}.json")
+            if path.is_file():
+                record = json.loads(path.read_text())
+                if len(records) < index:
+                    records.append(record)
+                else:
+                    records[index - 1] = record
+        while len(records) < len(self.helpers):
+            records.append({})
+        head_version = json.loads(job_path.read_text())["head_version"]
+        root = f"{REMOTE_ROOT}/jobs/{name}"
+        for index, runner in enumerate(self.helpers, 1):
+            record = records[index - 1]
+            if record.get("job_sha256") not in (None, "", job_digest):
+                raise ConfigError("Generator helper job changed after dispatch")
+            if record.get("launch_attempted"):
+                continue
+            record.update(epoch=name, state="dispatched", job_sha256=job_digest, launch_attempted=False, shard=index)
+            self._write_helper_state(state_path, index, record)
+            runner.ssh(f"umask 077 && mkdir -p -- {remote_path(root)}")
+            runner.scp(job_path, f"{runner.destination}:{remote_path(root + '/job.json')}")
+            record["state"] = "preparing"
+            self._write_helper_state(state_path, index, record)
+            runner.ssh(f"PYTHONPATH={REMOTE_PYTHONPATH} /root/venv/bin/python -m sn120_v2.generator.ensure_head {shlex.quote(head_version)}", timeout=HEAD_PREPARE_TIMEOUT_S)
+            record.update(state="dispatched", launch_attempted=True)
+            self._write_helper_state(state_path, index, record)
+            scorer = SCORER_COMMAND.format(epoch=name) + f" --shard {index}/{1 + len(self.helpers)}"
+            failed = f"{root}/failed.json"
+            inner = (
+                f"PYTHONPATH={REMOTE_PYTHONPATH} {scorer}; code=$?; "
+                f"if [ \"$code\" -eq 0 ]; then kind=done; else kind=failed; fi; "
+                f"tmp={root}/.$kind.$$.json; "
+                f"printf '%s\\n' \"{{\\\"epoch\\\":\\\"{name}\\\",\\\"code\\\":$code}}\" > \"$tmp\" && "
+                f"if [ \"$code\" -eq 0 ]; then mv -- \"$tmp\" {remote_path(root + '/done.json')}; "
+                f"else mv -- \"$tmp\" {remote_path(failed)}; fi; exit \"$code\""
+            )
+            runner.ssh(f"{{ mkdir -p -- {remote_path(root + '/out')} && nohup /bin/sh -c {shlex.quote(inner)} ; }} < /dev/null >> {remote_path(root + '/scorer.log')} 2>&1 &")
+            self._write_helper_state(state_path, index, record)
+        return records
+
+    @staticmethod
+    def _write_helper_state(state_path: Path, index: int, record: Mapping[str, Any]) -> None:
+        _write_json(state_path.with_name(f"remote-state-shard-{index}.json"), record)
+
+    def _marker(self, path: str, *, runner: Any = None) -> dict[str, Any] | None:
         # Fixed bounded shell; there is intentionally no public arbitrary SSH.
         script = (
             "if [ -f {path} ]; then bytes=$(wc -c < {path}) || exit 2; "
             "[ \"$bytes\" -le 4096 ] || exit 3; cat -- {path}; fi"
         ).format(path=remote_path(path))
-        text = _stdout(self.runner.ssh(script))
+        text = _stdout((self.runner if runner is None else runner).ssh(script))
         if not text.strip():
             return None
         if len(text.encode("utf-8")) > 4096:
@@ -498,6 +562,16 @@ class ScorerRemote:
         _write_json(state_path, record)
         try:
             out = self._collect_out(name, remote_out)
+            if self.helpers:
+                helper_outs = []
+                for index, runner in enumerate(self.helpers, 1):
+                    marker = self._marker(f"{REMOTE_ROOT}/jobs/{name}/done.json", runner=runner)
+                    if marker is None or marker.get("code") != 0:
+                        record.update(state="running", detail=f"helper shard {index} has not completed")
+                        _write_json(state_path, record)
+                        return self._status(name, record)
+                    helper_outs.append(self._collect_out(name, remote_out, shard=index, runner=runner))
+                out = self._merge_shards(name, out, helper_outs)
             try:
                 results = json.loads((out / "results.json").read_text(encoding="utf-8"))
             except (OSError, ValueError, UnicodeError) as exc:
@@ -514,14 +588,71 @@ class ScorerRemote:
         _write_json(state_path, record)
         return self._status(name, record)
 
-    def _collect_out(self, epoch: str, remote_out: str) -> Path:
+    def _merge_shards(self, epoch: str, primary: Path, helpers: list[Path]) -> Path:
+        job = json.loads((self.work_dir / "jobs" / epoch / "job.json").read_text())
+        documents = [json.loads((primary / "results.json").read_text())]
+        documents += [json.loads((path / "results.json").read_text()) for path in helpers]
+        rollout_names = set()
+        for path in [primary, *helpers]:
+            for rollout in (path / "rollouts").glob("*.jsonl"):
+                if rollout.name in rollout_names:
+                    raise InfraError("Generator shard rollouts overlap")
+                rollout_names.add(rollout.name)
+        base = documents[0]
+        for document in documents[1:]:
+            for key in ("epoch", "head_version", "seed_commitment", "pool_pin"):
+                if document.get(key) != base.get(key):
+                    raise InfraError("Generator shard result identity mismatch")
+        count = len(helpers) + 1
+        by_id = {}
+        for shard, document in enumerate(documents):
+            if document.get("shard", {}).get("index", shard) != shard or document.get("shard", {}).get("count", count) != count:
+                raise InfraError("Generator shard result shard metadata mismatch")
+            for task in document.get("tasks", []):
+                task_id = task.get("id", task.get("task_id"))
+                if task_id in by_id:
+                    raise InfraError("Generator shard results contain overlapping task IDs")
+                by_id[task_id] = task
+        ordered = [row["id"] for row in job["tasks"]]
+        if set(by_id) != set(ordered) or len(by_id) != len(ordered):
+            raise InfraError("Generator shard results do not cover exactly the job tasks")
+        merged = dict(base)
+        merged.pop("shard", None)
+        merged["tasks"] = [by_id[task_id] for task_id in ordered]
+        merged["timings"] = [document.get("timings", {}) for document in documents]
+        merged["throughput"] = [document.get("throughput", {}) for document in documents]
+        merged["servers"] = [document.get("servers", []) for document in documents]
+        merged["hotkeys"] = base.get("hotkeys", {})
+        merged["publication"] = base.get("publication", {})
+        out = self.work_dir / "epochs" / epoch / "out"
+        existing = set()
+        for path in [primary, *helpers]:
+            for rollout in (path / "rollouts").glob("*.jsonl"):
+                if rollout.name in existing:
+                    raise InfraError("Generator shard rollouts overlap")
+                existing.add(rollout.name)
+        if out.exists():
+            raise InfraError("merged Generator output already exists")
+        shutil.copytree(primary, out)
+        for path in helpers:
+            for rollout in (path / "rollouts").glob("*.jsonl"):
+                target = out / "rollouts" / rollout.name
+                if target.exists():
+                    raise InfraError("Generator shard rollouts overlap")
+                shutil.copyfile(rollout, target)
+        _write_json(out / "results.json", merged)
+        return out
+
+    def _collect_out(self, epoch: str, remote_out: str, *, shard: int = 0, runner: Any = None) -> Path:
+        runner = self.runner if runner is None else runner
+        suffix = "" if shard == 0 else f"-shard-{shard}"
         """Download one fixed tar and manually extract only safe public files."""
-        staging = self.work_dir / "epochs" / epoch / ".out-download"
-        final = self.work_dir / "epochs" / epoch / "out"
+        staging = self.work_dir / "epochs" / epoch / f".out-download{suffix}"
+        final = self.work_dir / "epochs" / epoch / f"out{suffix}"
         self._clear_staging(staging)
         staging.mkdir(parents=True, mode=0o700)
         try:
-            result = self.runner.ssh_bytes(f"tar -C {remote_path(remote_out)} -czf - --exclude=./rollouts/responses .")
+            result = runner.ssh_bytes(f"tar -C {remote_path(remote_out)} -czf - --exclude=./rollouts/responses .")
             raw = result if isinstance(result, bytes) else getattr(result, "stdout", b"")
             if not isinstance(raw, bytes) or not raw:
                 raise InfraError("Generator remote out archive is empty")

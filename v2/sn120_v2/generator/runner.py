@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from ..canonical import canonical_json
-from ..errors import ContractError, InfraError, VerifyError
+from ..errors import ConfigError, ContractError, InfraError, VerifyError
 from .http import LocalHttp, default_urls
 from .pool import PriorPool
 from .scoring import (
@@ -55,7 +55,7 @@ def _output_identity(job: ScoringJob) -> dict[str, Any]:
     }
 
 
-def recover(job: ScoringJob, out: Path) -> tuple[dict[str, TaskState], bool]:
+def recover(job: ScoringJob, out: Path, *, shard: tuple[int, int] = (0, 1)) -> tuple[dict[str, TaskState], bool]:
     """Return checkpointed state and whether an identical completed run exists."""
     check_out(out)
     identity_path = out / "job-identity.json"
@@ -71,7 +71,7 @@ def recover(job: ScoringJob, out: Path) -> tuple[dict[str, TaskState], bool]:
     else:
         atomic_write(identity_path, canonical_json(identity))
     repair_checkpoints(job, out)
-    states = initial_states(job)
+    states = initial_states(job, shard)
     load_rollouts(job, states, out)
     done_path = out / DONE_FILE
     if done_path.exists():
@@ -105,7 +105,7 @@ def progress(job: ScoringJob, states: Mapping[str, TaskState], stage: str, out: 
             "decision": states[task.task_id].decision,
             "ungraded": len(states[task.task_id].responses),
         }
-        for task in job.tasks
+        for task in job.tasks if task.task_id in states
     ]
     atomic_write(out / PROGRESS_FILE, canonical_json({"epoch": job.epoch, "stage": stage, "updated_at": now, "tasks": rows}))
 
@@ -137,12 +137,13 @@ def run_job(
     clients_per_server: int = 32,
     clock: Callable[[], float] = time.time,
     monotonic: Callable[[], float] = time.monotonic,
+    shard: tuple[int, int] = (0, 1),
 ) -> dict[str, Any]:
     """Resume or finish a scoring job, returning its complete local results."""
     started_at, started = clock(), monotonic()
     clients_per_server = prepare_file_descriptors(clients_per_server)
     urls = tuple(urls or default_urls())
-    states, completed = recover(job, out)
+    states, completed = recover(job, out, shard=shard)
     if completed:
         return json.loads((out / RESULTS_FILE).read_bytes())
     progress(job, states, "recovered", out, clock())
@@ -220,7 +221,11 @@ def run_job(
             "servers": len(urls),
         }
         results = make_results(job, states, timings=timings, throughput=throughput, servers=urls)
+        if shard != (0, 1):
+            results["shard"] = {"index": shard[0], "count": shard[1], "tasks": len(states)}
         for task in job.tasks:
+            if task.task_id not in states:
+                continue
             path = out / ROLLOUTS_DIR / f"{task.task_id}.jsonl"
             if not path.exists():
                 atomic_write(path, b"")
@@ -252,6 +257,12 @@ def real_run(args: argparse.Namespace) -> dict[str, Any]:
     from ..envs.math_grader import GradePool
 
     job = ScoringJob.load(args.job)
+    try:
+        shard = tuple(int(value) for value in args.shard.split("/", 1))
+        if len(shard) != 2 or shard[1] < 1 or not 0 <= shard[0] < shard[1]:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ConfigError("scorer --shard must be I/K with 0 <= I < K") from None
     out = Path(args.out) if args.out else Path(args.root) / "jobs" / job.epoch / "out"
     lock = lock_job(job, Path(args.root))
     try:
@@ -264,6 +275,7 @@ def real_run(args: argparse.Namespace) -> dict[str, Any]:
                 pool=pool,
                 grader=grader,
                 clients_per_server=args.clients_per_server,
+                shard=args.shard,
             )
         finally:
             grader.close()
@@ -280,6 +292,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--pool-cache", default="/root/gen/pool", help="verified prior-v1 shard cache")
     run.add_argument("--out", help="override output directory (local testing only)")
     run.add_argument("--clients-per-server", type=int, default=224)
+    run.add_argument("--shard", default="0/1", help="owned task shard I/K (default 0/1)")
     run.add_argument("--grade-workers", type=int, default=16)
     run.add_argument("--grade-timeout", type=float, default=60.0)
     test = commands.add_parser("selftest", help="run two jobs against eight fake loopback vLLM servers")

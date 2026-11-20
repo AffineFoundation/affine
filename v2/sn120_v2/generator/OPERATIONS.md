@@ -31,7 +31,16 @@ service user. Config example:
   "ssh": {
     "host": "scorer-host-from-operator",
     "port": 22,
-    "key_path": "/home/const/sn120-generator/scorer_ed25519"
+    "key_path": "/home/const/sn120-generator/scorer_ed25519",
+    "helpers": [
+      {
+        "host": "helper-scorer-from-operator",
+        "port": 22,
+        "user": "root",
+        "key_path": "/home/const/sn120-generator/scorer_ed25519",
+        "work_dir": "/home/const/sn120-generator/work"
+      }
+    ]
   }
 }
 ```

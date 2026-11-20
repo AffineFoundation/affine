@@ -204,7 +204,12 @@ class TaskState:
         return self.s, self.n
 
 
-def initial_states(job: ScoringJob) -> dict[str, TaskState]:
+def initial_states(job: ScoringJob, shard: tuple[int, int] = (0, 1)) -> dict[str, TaskState]:
+    """Owned job-order subset; default shard preserves today's complete state."""
+    index, count = shard
+    if type(index) is not int or type(count) is not int or count < 1 or not 0 <= index < count:
+        raise ContractError("Generator scorer shard must be 0 <= index < count")
+    return {task.task_id: TaskState(task) for position, task in enumerate(job.tasks) if position % count == index}
     return {task.task_id: TaskState(task) for task in job.tasks}
 
 
@@ -213,6 +218,8 @@ def stage_one_rounds(job: ScoringJob, states: Mapping[str, TaskState]) -> Iterat
     queues: dict[str, deque[str]] = defaultdict(deque)
     owners: list[str] = []
     for task in job.tasks:
+        if task.task_id not in states:
+            continue
         if task.hotkey not in queues:
             owners.append(task.hotkey)
         queues[task.hotkey].append(task.task_id)
@@ -241,6 +248,8 @@ def undecided_order(job: ScoringJob, states: Mapping[str, TaskState]) -> list[li
     positions = {task.task_id: index for index, task in enumerate(job.tasks)}
     groups = []
     for task in job.tasks:
+        if task.task_id not in states:
+            continue
         state = states[task.task_id]
         if state.final or state.decision != UNSCORED or state.n < MIN_SAMPLES or state.n >= MAX_SAMPLES:
             continue
@@ -328,6 +337,8 @@ def load_rollouts(job: ScoringJob, states: Mapping[str, TaskState], out: Path) -
     """Recover committed grades first, then ungraded out-of-order responses."""
     count = 0
     for task in job.tasks:
+        if task.task_id not in states:
+            continue
         state = states[task.task_id]
         path = out / ROLLOUTS_DIR / f"{task.task_id}.jsonl"
         try:
@@ -433,7 +444,7 @@ def make_results(
         "timings": dict(timings),
         "throughput": dict(throughput),
         "hotkeys": hotkey_results(job, states),
-        "tasks": [task_result(job, states[task.task_id]) for task in job.tasks],
+        "tasks": [task_result(job, states[task.task_id]) for task in job.tasks if task.task_id in states],
         "publication": {
             "results": epoch_results(job.epoch),
             "note": "Complete pod-local record. Validator publishes accepted rollouts only; rejected submissions remain hashes.",
