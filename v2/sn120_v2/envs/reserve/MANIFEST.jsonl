@@ -13,4 +13,15 @@
 {"added_at":"2026-11-19","count":2,"sha256":"bb579ec960212813080c4a1b29f3c59e1118aa37a103f437df45c311694a8bc0","shard":"0013-nvidia-openmathreasoning-d3d08664.jsonl"}
 {"added_at":"2026-11-19","count":2,"sha256":"a066c2c0152b19581061cc44cc4b1838c3d1a4a3342cb2a10fb868b7ddb6e06b","shard":"0014-polaris-project-polaris-dataset-53k-296f8e34.jsonl"}
 {"added_at":"2026-11-19","count":1,"sha256":"eb2cf9684699723fb8539a7cd27ad50019aaed7957339bee028e6fcf88ba9b68","shard":"0015-ai-mo-numinamath-1-5-1b05109f.jsonl"}
+{"added_at":"2026-11-20","count":383,"sha256":"04dca25de8b0860c94229dccfae72fe930be139bf6378f63b441371a315cc4c9","shard":"0016-zwhe99-deepmath-103k-5cf055d1.jsonl"}
+{"added_at":"2026-11-20","count":334,"sha256":"a68469a69dac041ce6d6f49d1d35a3085eb8e8fad6e137189268a6886322068e","shard":"0017-polaris-project-polaris-dataset-53k-296f8e34.jsonl"}
+{"added_at":"2026-11-20","count":166,"sha256":"be6242c0515f5a575516c629c2428e51882b0b50a6d644cc8e1dc163bc3d3e6d","shard":"0018-nvidia-nemotron-math-v2-8e793210.jsonl"}
+{"added_at":"2026-11-20","count":13,"sha256":"2f4a5a0a34fbc853ebd3ee7d4a973ab8f829e65904371e31a662cf7caad37ed4","shard":"0019-nvidia-nemotron-math-v2-8e793210.jsonl"}
+{"added_at":"2026-11-20","count":4,"sha256":"e1defaea8b17973e785fa94e0fea313f611a853354b7c08a2dbb9bf47321a34c","shard":"0020-nvidia-openmathreasoning-d3d08664.jsonl"}
+{"added_at":"2026-11-20","count":4,"sha256":"915f3588e9b910d397c8ddd061a6366d44505d58048ac869ad104e068708d276","shard":"0021-ycchen-crystal-math-preview-03fc7714.jsonl"}
+{"added_at":"2026-11-20","count":3,"sha256":"db2cefcd13df8912413ac144b817b636df010ad2132fb2801916770cedb7b7d2","shard":"0022-matharena-arxivmath-training-df812401.jsonl"}
+{"added_at":"2026-11-20","count":3,"sha256":"29a36d661856510fc7f39436b25c760c3b86ee008fa35d2f29bbcbecf3899351","shard":"0023-ycchen-crystal-math-preview-03fc7714.jsonl"}
+{"added_at":"2026-11-20","count":1,"sha256":"f542af1ba3d42a40597fcaf46072cd837abf1370595a696de25e49fc34943413","shard":"0024-ai-mo-numinamath-1-5-1b05109f.jsonl"}
+{"added_at":"2026-11-20","count":1,"sha256":"7e60b0c287d7468ed1ac163f63921008660a480c2794cae3e309db3e0bd33590","shard":"0025-matharena-arxivmath-training-df812401.jsonl"}
+{"added_at":"2026-11-20","count":1,"sha256":"5d72d7c0bc356990f85859e86a21d4cb36e3d8cad31ec444eed0ef50d0864253","shard":"0026-ycchen-crystal-math-preview-03fc7714.jsonl"}
 {"withdrawn":{"count":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
