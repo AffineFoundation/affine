@@ -139,11 +139,12 @@ def object_metadata(store: Any, key: str) -> dict[str, Any]:
 class PublicSink:
     """Atomic website files mirrored byte-for-byte to public/generator in R2."""
 
-    def __init__(self, site_dir: str | Path, store: Any | None = None, public_url: str = "https://affine.io"):
+    def __init__(self, site_dir: str | Path, store: Any | None = None, public_url: str = "https://affine.io", *, mirror: bool = True):
         self.root = Path(site_dir)
         if not self.root.is_dir():
             raise ConfigError(f"the public website root {self.root} must already exist")
         self.store = store
+        self.mirror = mirror
         self.public_url = public_url.rstrip("/")
         if not self.public_url.startswith(("https://", "http://")):
             raise ConfigError("the Generator public URL must be an explicit HTTP(S) URL")
@@ -165,7 +166,7 @@ class PublicSink:
     def put_mirror(self, relative: str, raw: bytes) -> None:
         """Write local bytes first, then mirror. Callers may run mirrors concurrently."""
         atomic_bytes(self.path(relative), raw)
-        if self.store is not None:
+        if self.mirror and self.store is not None:
             self.store.put("public/generator/" + relative, raw)
 
     def json(self, relative: str, value: Any) -> None:
