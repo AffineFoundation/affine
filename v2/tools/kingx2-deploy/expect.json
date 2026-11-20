@@ -1,0 +1,14 @@
+{
+  "active_size": 10000,
+  "gate_round": "r000082",
+  "irt_draw_rule": "sqrt_fisher",
+  "n_tasks": 2000,
+  "new_commit": "7e768a1ff1e121fed891b6ed23817a5e9a08d8a3",
+  "new_digest": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",
+  "new_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a",
+  "null_samples": 2,
+  "old_commit": "28c56f439c0c0fbf3554c8546cc86dbd88119125",
+  "old_digest": "64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9",
+  "old_params_hash": "94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c",
+  "public_retry_seconds": 1200
+}
