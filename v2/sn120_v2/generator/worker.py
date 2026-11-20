@@ -163,8 +163,8 @@ class BatchRunner:
         self.urls = tuple(loopback_url(url) for url in urls)
         if len(self.urls) != 8:
             raise InfraError("Generator scoring needs exactly eight local vLLM endpoints")
-        if type(clients_per_server) is not int or not 1 <= clients_per_server <= 256:
-            raise InfraError("Generator clients_per_server must be 1..256")
+        if type(clients_per_server) is not int or not 1 <= clients_per_server <= 512:
+            raise InfraError("Generator clients_per_server must be 1..512")
         self.http, self.clock, self.monotonic = http, clock, monotonic
         self.clients_per_server = clients_per_server
         self.usage = Usage()

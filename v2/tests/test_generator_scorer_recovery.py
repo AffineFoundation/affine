@@ -165,6 +165,15 @@ def test_streaming_refills_capacity_and_resume_has_no_duplicate_rollouts(tmp_pat
     assert [row["j"] for row in rows] == list(range(8))
 
 
+def test_concurrency_allows_384_and_caps_at_512(tmp_path):
+    job = job_for(1, deadline=time.time() + 60)
+    for value in (384, 512):
+        runner = BatchRunner(job, initial_states(job), tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=value)
+        assert runner.clients_per_server == value
+    with pytest.raises(InfraError, match="1..512"):
+        BatchRunner(job, initial_states(job), tmp_path, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=513)
+
+
 def test_fd_limit_is_raised_before_thread_pool(monkeypatch):
     limits = [1024, 1048576]
     def getrlimit(resource):
