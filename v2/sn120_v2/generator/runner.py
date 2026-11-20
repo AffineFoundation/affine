@@ -79,10 +79,10 @@ def recover(job: ScoringJob, out: Path, *, shard: tuple[int, int] = (0, 1)) -> t
             if json.loads(done_path.read_bytes()) != identity:
                 raise VerifyError("Generator DONE marker does not match the job")
             result = json.loads((out / RESULTS_FILE).read_bytes())
-            expected = result["tasks"]
+            expected = [row for row in result["tasks"] if row["id"] in states]
             actual = [
                 {"id": task.task_id, "hotkey": task.hotkey, "s": states[task.task_id].s, "n": states[task.task_id].n}
-                for task in job.tasks
+                for task in job.tasks if task.task_id in states
             ]
             if [{key: row[key] for key in actual[0]} for row in expected] != actual:
                 raise VerifyError("Generator DONE marker does not match rollout checkpoints")

@@ -210,7 +210,6 @@ def initial_states(job: ScoringJob, shard: tuple[int, int] = (0, 1)) -> dict[str
     if type(index) is not int or type(count) is not int or count < 1 or not 0 <= index < count:
         raise ContractError("Generator scorer shard must be 0 <= index < count")
     return {task.task_id: TaskState(task) for position, task in enumerate(job.tasks) if position % count == index}
-    return {task.task_id: TaskState(task) for task in job.tasks}
 
 
 def stage_one_rounds(job: ScoringJob, states: Mapping[str, TaskState]) -> Iterator[list[tuple[str, int]]]:

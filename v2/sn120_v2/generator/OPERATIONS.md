@@ -37,8 +37,7 @@ service user. Config example:
         "host": "helper-scorer-from-operator",
         "port": 22,
         "user": "root",
-        "key_path": "/home/const/sn120-generator/scorer_ed25519",
-        "work_dir": "/home/const/sn120-generator/work"
+        "key_path": "/home/const/sn120-generator/scorer_ed25519"
       }
     ]
   }
@@ -56,6 +55,30 @@ every base-file size and SHA-256, atomically replaces `/root/dl/base`, writes
 command refuses any mismatch between that marker and the job. Unknown heads,
 bad hashes or unhealthy servers prevent scoring. Preparation failures may be
 retried; after a launch attempt, only collection is resumed.
+
+### Add or remove a scoring pod
+
+Change only the `ssh.helpers` array in the operator JSON; do not include a
+`work_dir` inside a helper entry because the control plane supplies its own
+private work directory. With one helper, the primary owns task positions
+`0,2,4,...` (`--shard 0/2`) and the helper owns `1,3,5,...` (`--shard 1/2`).
+Both receive the byte-identical `job.json` and run the same frozen head. Add or
+remove helpers **between epochs**, before the next snapshot/dispatch. The first
+dispatch persists `shard_count` and each helper's host/port. Adding a helper
+later cannot alter a running or completed epoch; a legacy state with no
+`shard_count` always remains K=1. Removing a helper recorded by an in-flight
+epoch is rejected: keep its SSH entry until that epoch's results are collected
+and published, even if the pod has failed.
+
+A helper that cannot be prepared before any scorer launch makes that new epoch
+fall back to K=1. Once a primary or helper launch has been attempted, no pod is
+relaunched or substituted. If a launched helper never writes a valid `DONE`, its
+entire owned task shard becomes `unscored` with `unscored_reason=time_budget`
+only after the scoring-budget deadline plus the 45-minute results grace. The
+other completed shards are merged and published atomically. Do not copy an
+incomplete helper output directory or manually reset launch state to bypass
+this deadline. No deployment is performed by editing this documentation or
+qualifying the integration branch.
 
 The pool cache must contain all eight verified `sn120-math-prior-v1` shards,
 `MANIFEST.json`, and the complete ID index. Use `PriorPool(...,
