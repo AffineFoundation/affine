@@ -215,3 +215,58 @@ def test_info_controller_lifecycle_restores_table_and_replays(tmp_path):
     assert set(restored.previous.ledger).isdisjoint(restored.previous.retired_ledger), (
         "a returned task keeps its ledger only in the active pool until it retires again"
     )
+
+
+def test_info_rotation_open_no_decision_then_next_open_restarts(tmp_path):
+    from test_rotation_controller import rotated_world
+    from sn120_v2.controller import Controller, stored_irt_snapshot
+    from sn120_v2.journal import Journal
+    from sn120_v2.pool_runtime import PoolRuntime
+
+    world, pool = rotated_world(tmp_path, 20, rotation_rule="info", rotation_active_size=4, rotation_churn_frac=0.25)
+    # Explicit priors make one reserve row strictly outrank one active task.
+    from test_rotation_controller import make_reserve
+    import shutil
+    shutil.rmtree(tmp_path / "reserve")
+    make_reserve(tmp_path / "reserve", 20)
+    pool.candidate_meta = {task: dict(meta, prior_p=1.0) for task, meta in pool.candidate_meta.items()}
+    first = world.round()
+    assert first is not None and first.outcome == "null"
+    source = json.loads(world.store.get(layout.irt_snapshot(world.controller.state.snapshot_id)))
+    world.register(2, 0.0)
+    tickets = world.controller.open_round(world.clock(), "no-decision-entropy")
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+    previous = world.controller.state.rounds[-1]
+    assert previous.outcome == "no_decision" and previous.rotation is not None
+    assert previous.rotation["active_sha"] != first.rotation["active_sha"]
+    assert set(source["tasks"]) != set(world.controller._rotation.active_ids)
+
+    # A fresh journal, runtime and sampler are the production restart path.
+    journal = Journal(world.root / "journal.jsonl", "no-decision-restart", world.clock())
+    pool = PoolRuntime(world.store, world.params, world.controller.state,
+                       root=tmp_path / "reserve", initial_ids=world.pool)
+    sampler = IRTSampler(pool.active_ids, world.params, snapshot=source)
+    controller = Controller(journal, world.store, world.admission, sampler, world.params, pool=pool)
+    world.now += world.params.apply_retry_s
+    tickets = controller.open_round(world.clock(), "after-no-decision-entropy")
+    assert len(controller._rotation.active_ids) == 4
+    assert len(tickets) == 1 and len(tickets[0].draw.task_ids) == min(world.params.n_tasks, 4)
+    active = controller._rotation.active_sha
+    draw = tickets[0].draw
+    for task, row in source["tasks"].items():
+        if task in controller._rotation.active_ids:
+            assert controller.sampler.public_snapshot()["tasks"][task][:3] == row[:3]
+    for task in controller._rotation.admitted:
+        if task not in source["tasks"]:
+            assert controller.sampler.public_snapshot()["tasks"][task][2] == 0
+
+    pool = PoolRuntime(world.store, world.params, controller.state,
+                       root=tmp_path / "reserve", initial_ids=world.pool)
+    sampler = IRTSampler(pool.active_ids, world.params, snapshot=stored_irt_snapshot(world.store, controller.state))
+    controller = Controller(Journal(world.root / "journal.jsonl", "open-restart", world.clock()),
+                            world.store, world.admission, sampler, world.params, pool=pool)
+    restarted = controller.tickets()
+    assert len(restarted) == 1
+    assert restarted[0].draw == draw and pool.active_rotation.active_sha == active
