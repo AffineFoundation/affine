@@ -65,6 +65,15 @@
 #   SN120_LOOP_KILL_GRACE_S   seconds that a left process gets after SIGTERM, then SIGKILL (30)
 #   SN120_LOOP_GPU_FREE_MIB   a GPU with more used memory than this is in use (1024, the limit of the evaluator)
 #   SN120_LOOP_GPU_WAIT_S     seconds to wait for free GPUs before the loop stops (120)
+#   /root/sn120-run/reserve-live.path  if present, one absolute path; exported as SN120_RESERVE_DIR
+
+if [ -f /root/sn120-run/reserve-live.path ]; then
+    IFS= read -r SN120_RESERVE_DIR < /root/sn120-run/reserve-live.path
+    case $SN120_RESERVE_DIR in
+        /*) export SN120_RESERVE_DIR ;;
+        *) printf '%s\n' 'reserve-live.path must contain one absolute path' >&2; exit 64 ;;
+    esac
+fi
 
 set -u
 

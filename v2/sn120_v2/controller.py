@@ -433,10 +433,9 @@ class Controller:
             snapshot = stored_irt_snapshot(self.store, state)
             if snapshot is None:
                 snapshot = self.sampler.public_snapshot()
-            self._rotation, self.sampler = self.pool.open(round_id, snapshot, state)
+            self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
-            rotation = self.pool.publish_open(self._rotation)
         draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
         self._store_snapshot(draw.snapshot_id)
         tickets, leases = [], []

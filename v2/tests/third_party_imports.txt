@@ -41,3 +41,6 @@ sympy
 
 # links: sealed upload links and activation
 nacl
+
+# prior_index: offline builder only; the reserve consumer reads JSON
+pyarrow

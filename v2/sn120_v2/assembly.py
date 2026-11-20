@@ -170,7 +170,7 @@ def stack(context: StackContext) -> Stack:
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime.catalog if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
     order = after_king()
     if order == OVERLAP and mode() != CHAIN:
         raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")
@@ -191,7 +191,7 @@ def stack(context: StackContext) -> Stack:
     runner = folder = pins = rollout_publisher = None
     if context.command == "run":
         box = BoxConfig.from_env()
-        evaluator_pool = pool_runtime.catalog if pool_runtime else pool
+        evaluator_pool = pool_runtime if pool_runtime else pool
         trainer = LoraTrainer(store, box, _read_groups)
         evaluator = VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))
         from .gpu.solo import SoloRunner

@@ -23,7 +23,7 @@ from ...canonical import canonical_json, sha256_hex
 from ...errors import V2Error
 from ..math_pool import MANDATE, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 from . import (
-    ID, MANIFEST, MIN_ANSWER_CHARS, MAX_ANSWER_CHARS, MAX_PROBLEM_CHARS, WITHDRAWN, empty_manifest, load_reserve, normalise, read_raw,
+    ID, MANIFEST, MIN_ANSWER_CHARS, MAX_ANSWER_CHARS, MAX_PROBLEM_CHARS, WITHDRAWN, atomic_write, empty_manifest, ingest_lock, load_reserve, normalise, read_raw,
     reserve_dir, task_row,
 )
 
@@ -61,6 +61,11 @@ def _retired_catalog(rows: dict[str, dict[str, Any]], root: Path) -> dict[str, T
 
 def ingest(args: argparse.Namespace) -> dict[str, Any]:
     root = reserve_dir()
+    with ingest_lock(root, exclusive=True):
+        return _ingest_locked(args, root)
+
+
+def _ingest_locked(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     if not ID.fullmatch(args.prefix + ":0") or args.prefix in ("math", "dapo"):
         raise V2Error("prefix must be lowercase alphanumeric/underscore, and not reserved math or dapo")
     reserve, catalog = load_reserve(root, with_catalog=True)
@@ -184,8 +189,7 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
     # after it; append-only verification covers the complete earlier prefix.
     history = (root / MANIFEST).read_bytes().splitlines()
     history[-1:-1] = [canonical_json(shard_line)]
-    (root / MANIFEST).write_bytes(b"\n".join(history) + b"\n")
-    # A rerun of this exact input + reserve is a no-op, not a second shard.
+    atomic_write(root / MANIFEST, b"\n".join(history) + b"\n")
     # The shard filename is source-scoped, so input collisions never replace
     # bytes of another source.
     load_reserve(root)  # verify the committed bytes, fail loudly on any problem
@@ -196,6 +200,11 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
 
 def withdraw(args: argparse.Namespace) -> dict[str, Any]:
     root = reserve_dir()
+    with ingest_lock(root, exclusive=True):
+        return _withdraw_locked(args, root)
+
+
+def _withdraw_locked(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     reserve, _ = load_reserve(root)
     if args.id in reserve.withdrawn_ids:
         raise V2Error(f"{args.id} is already withdrawn")
@@ -213,7 +222,7 @@ def withdraw(args: argparse.Namespace) -> dict[str, Any]:
     if "withdrawn" not in json.loads(history[-1]):
         raise V2Error("reserve manifest has no withdrawn pointer")
     history[-1] = canonical_json({"withdrawn": {"sha256": sha256_hex(raw), "count": len(raw.splitlines())}})
-    (root / MANIFEST).write_bytes(b"\n".join(history) + b"\n")
+    atomic_write(root / MANIFEST, b"\n".join(history) + b"\n")
     load_reserve(root)
     return row
 
@@ -235,6 +244,15 @@ def parser() -> argparse.ArgumentParser:
     add.add_argument("--reject-mc", action="store_true")
     add.add_argument("--env", default="affine_math", help="task slice (default: affine_math, scored with the base pool)")
     add.add_argument("--readmit", action="append", help="retired id to readmit explicitly; repeatable")
+    generator = commands.add_parser("ingest-generator")
+    generator.add_argument("input")
+    generator.add_argument("--epoch", required=True)
+    generator.add_argument("--results")
+    generator.add_argument("--done", help="accepted-EPOCH.done; defaults to the JSONL path with .done suffix")
+    generator.add_argument("--prior-index")
+    generator.add_argument("--active", help="public active id list; defaults to the current public summary's active ids")
+    generator.add_argument("--public-url", default="https://affine.io")
+    generator.set_defaults(reject_mc=True)
     commands.add_parser("verify")
     commands.add_parser("status")
     remove = commands.add_parser("withdraw")
@@ -246,7 +264,10 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        if args.command == "ingest":
+        if args.command == "ingest-generator":
+            from .generator import ingest_generator
+            report = ingest_generator(args)
+        elif args.command == "ingest":
             report = ingest(args)
         elif args.command == "withdraw":
             report = withdraw(args)
@@ -255,6 +276,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             report = status() | {"verified": True}
     except (V2Error, OSError, ValueError) as exc:
+        if args.command == "ingest-generator":
+            from .generator import Incomplete, InputChanged
+            if isinstance(exc, (Incomplete, InputChanged)):
+                print(json.dumps({"error": "incomplete" if isinstance(exc, Incomplete) else "input_changed", "reason": str(exc)}), file=sys.stderr)
+                return 3 if isinstance(exc, Incomplete) else 4
         print(json.dumps({"error": type(exc).__name__, "reason": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(report, indent=2, sort_keys=True))
