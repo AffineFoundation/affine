@@ -12,7 +12,7 @@ from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import ConfigError
 from sn120_v2.store import LocalStore
 from sn120_v2.generator.config import Config
-from sn120_v2.generator.control import tick, write_seed, update_window_state
+from sn120_v2.generator.control import RESULTS_GRACE_S, tick, write_seed, update_window_state
 from sn120_v2.generator.decisions import decision
 from sn120_v2.generator.epoch import epoch_deadline, epoch_start
 from sn120_v2.generator.publish import publication
@@ -260,6 +260,47 @@ def test_phase_error_is_event_and_does_not_block_links(tmp_path, monkeypatch):
     events = tick(config, now=DEADLINE + 60, client=None, store=None, pool=None, steps={"snapshot": broken})
     assert any(event.get("status") == "error" and event["error"] == "FileNotFoundError" for event in events)
     assert calls == ["links"]
+
+
+def test_results_grace_allows_collect_and_publish_then_rejects(tmp_path):
+    assert RESULTS_GRACE_S == 2700
+    epoch = "20261120T0400Z"
+    deadline = epoch_deadline(epoch).timestamp()
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
+    write_seed(config.work_dir, epoch)
+    evidence = config.work_dir / "jobs" / epoch / "evidence.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("{}")
+    king = config.work_dir / "king" / f"{epoch}.json"
+    king.parent.mkdir(parents=True, exist_ok=True)
+    king.write_text('{"version":"test-king"}')
+    results = config.work_dir / "epochs" / epoch / "out" / "results.json"
+    results.parent.mkdir(parents=True)
+    calls = []
+    remote = SimpleNamespace(
+        dispatch=lambda epoch: {"state": "dispatched"},
+        collect=lambda epoch: (results.write_text("{}"), {"state": "complete"})[1],
+    )
+    steps = {
+        "dispatch": lambda **kwargs: {"state": "dispatched"},
+        "collect": lambda **kwargs: (results.write_text("{}"), {"state": "complete"})[1],
+        "publish": lambda **kwargs: calls.append(kwargs["now"]) or {"status": "published", "epoch": epoch},
+        "links": lambda **kwargs: {"status": "unchanged"},
+        "window_state": lambda **kwargs: None,
+    }
+    with pytest.MonkeyPatch.context() as patch:
+        from sn120_v2.generator import control
+        patch.setattr(control, "read_registrations", lambda client, clock: ({1: "hk"}, {"hk"}))
+        events = tick(config, now=deadline + 3 * 3600 + 50 * 60, client=None, store=None, pool=None, remote=remote, steps=steps)
+        tick(config, now=deadline + 3 * 3600 + 50 * 60, client=None, store=None, pool=None, remote=remote, steps=steps)
+        assert calls == [deadline + 3 * 3600 + 50 * 60] * 2
+        assert any(event["phase"] == "collect" and event["state"] == "complete" for event in events)
+        assert any(event["phase"] == "publish" and event["status"] == "published" for event in events)
+        events = tick(config, now=deadline + 4 * 3600 + 31 * 60, client=None, store=None, pool=None, remote=remote, steps=steps)
+        assert any(event["phase"] == "publish" and event["status"] == "error" and "missed" in event["error"] for event in events)
+        assert not any(event["phase"] == "collect" for event in events)
 
 
 def test_tick_rejects_publication_after_results_deadline(tmp_path):

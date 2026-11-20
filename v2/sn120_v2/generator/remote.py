@@ -521,14 +521,14 @@ class ScorerRemote:
         self._clear_staging(staging)
         staging.mkdir(parents=True, mode=0o700)
         try:
-            result = self.runner.ssh_bytes(f"tar -C {remote_path(remote_out)} -cf - .")
+            result = self.runner.ssh_bytes(f"tar -C {remote_path(remote_out)} -czf - --exclude=./rollouts/responses .")
             raw = result if isinstance(result, bytes) else getattr(result, "stdout", b"")
             if not isinstance(raw, bytes) or not raw:
                 raise InfraError("Generator remote out archive is empty")
             if len(raw) > MAX_ARCHIVE_STREAM_BYTES:
                 raise InfraError("Generator remote out archive exceeds collection bounds")
             try:
-                archive = tarfile.open(fileobj=io.BytesIO(raw), mode="r:")
+                archive = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
             except (tarfile.TarError, OSError, EOFError) as exc:
                 raise InfraError("Generator remote out is not a valid tar archive") from exc
             with archive:

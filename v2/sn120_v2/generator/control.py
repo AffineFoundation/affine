@@ -36,6 +36,7 @@ def write_seed(work_dir: Path, epoch: str) -> dict[str, Any]:
 
 
 KING_CAPTURE_GRACE_S = 120
+RESULTS_GRACE_S = 45 * 60
 
 
 def frozen_at(king_path: Path, epoch: str) -> float:
@@ -352,7 +353,7 @@ def tick(
                 continue
         if epoch in failed_epochs:
             continue
-        if job_path.is_file() and not results_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60:
+        if job_path.is_file() and not results_path.is_file() and now <= deadline + 3 * 3600 + 45 * 60 + RESULTS_GRACE_S:
             if remote is None:
                 failed_epochs.add(epoch)
                 events.append({"phase": "dispatch", "epoch": epoch, "status": "error", "error": "ConfigError: Generator ssh config is required for dispatch and collect"})
@@ -366,7 +367,7 @@ def tick(
             if epoch in failed_epochs:
                 continue
         if results_path.is_file() and epoch not in failed_epochs:
-            if now > deadline + 3 * 3600 + 45 * 60:
+            if now > deadline + 3 * 3600 + 45 * 60 + RESULTS_GRACE_S:
                 error = f"scoring results for {epoch} missed the results deadline"
                 failed_epochs.add(epoch)
                 events.append({"phase": "publish", "epoch": epoch, "status": "error", "error": f"ConfigError: {error}"})

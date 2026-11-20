@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import gzip
 import shlex
 import subprocess
 import tarfile
@@ -57,13 +58,13 @@ class FakeRemote:
         self.calls.append(("tar", command))
         if self.collect_error is not None:
             raise self.collect_error
-        assert command == f"tar -C {ROOT}/out -cf - ."
+        assert command == f"tar -C {ROOT}/out -czf - --exclude=./rollouts/responses ."
         return SimpleNamespace(returncode=0, stdout=self.archive, stderr=b"")
 
 
 def archive(files: dict[str, bytes], *, special: tuple[str, str] | None = None) -> bytes:
     output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:") as tar:
+    with tarfile.open(fileobj=output, mode="w:gz") as tar:
         for name, data in files.items():
             info = tarfile.TarInfo(name)
             info.size = len(data)
@@ -105,7 +106,7 @@ def public_archive() -> bytes:
 def ordinary_archive(files: dict[str, bytes]) -> bytes:
     """Real tar output includes directories and a leading ./ entry."""
     output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:") as tar:
+    with tarfile.open(fileobj=output, mode="w:gz") as tar:
         tar.addfile(tarfile.TarInfo("."))
         directories = {str(Path(name).parent) for name in files if str(Path(name).parent) != "."}
         for name in sorted(directories):
@@ -138,6 +139,23 @@ def test_dispatch_is_fixed_async_private_and_idempotent(tmp_path):
     assert remote.dispatch(EPOCH).state == "dispatched"
     assert fake.calls == before
     assert (remote.work_dir / "jobs" / EPOCH / ".remote.lock").is_file()
+
+
+def test_gzip_collection_excludes_private_journal_and_preserves_member_limits(tmp_path):
+    remote, fake, _ = make_remote(tmp_path)
+    remote.dispatch(EPOCH)
+    fake.markers["done.json"] = '{"code":0}'
+    fake.archive = public_archive()
+    assert remote.collect(EPOCH).complete
+    assert any("--exclude=./rollouts/responses" in command for kind, command in fake.calls if kind == "tar")
+    assert not (remote.work_dir / "epochs" / EPOCH / "out" / "rollouts" / "responses").exists()
+    assert (remote.work_dir / "epochs" / EPOCH / "out" / "rollouts" / "one.jsonl").is_file()
+    other, other_fake, _ = make_remote(tmp_path / "unsafe")
+    other.dispatch(EPOCH)
+    other_fake.markers["done.json"] = '{"code":0}'
+    other_fake.archive = archive({"./results.json": b'{"ok":true}', "../escape": b"bad"})
+    with pytest.raises(InfraError):
+        other.collect(EPOCH)
 
 
 def test_collect_requires_success_marker_and_preserves_public_tree(tmp_path):
