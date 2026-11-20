@@ -275,7 +275,7 @@ def real_run(args: argparse.Namespace) -> dict[str, Any]:
                 pool=pool,
                 grader=grader,
                 clients_per_server=args.clients_per_server,
-                shard=args.shard,
+                shard=shard,
             )
         finally:
             grader.close()

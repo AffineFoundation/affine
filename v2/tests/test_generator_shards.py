@@ -15,7 +15,7 @@ from sn120_v2.generator.epoch import epoch_deadline
 from sn120_v2.generator.fake_vllm import FakeFarm, FakePool
 from sn120_v2.generator.remote import ScorerRemote, SSHConfig, SSHRunner
 from sn120_v2.generator.runner import run_job
-from sn120_v2.generator.scoring import ScoringJob, TaskSpec, rollout_seed
+from sn120_v2.generator.scoring import ScoringJob, TaskSpec, initial_states, rollout_seed, settle, task_result
 
 
 def job(count=6, *, deadline=None):
@@ -53,6 +53,8 @@ def grades():
     class Grader:
         def grade_many(self, jobs):
             return [Grade("P", 1.0, False, "\\boxed{1}", "fake") if "\\boxed{1}" in output and not capped else Grade("F", 0.0, False, "\\boxed{2}", "fake") for _, output, capped in jobs]
+        def close(self):
+            pass
     return Grader()
 
 
@@ -340,7 +342,42 @@ def test_helper_failure_deadline_synthesizes_time_budget_without_rollouts(tmp_pa
     assert document["tasks"][0]["decision"] == "accept"
     assert document["tasks"][1]["decision"] == "unscored"
     assert document["tasks"][1]["unscored_reason"] == "time_budget" and document["tasks"][1]["n"] == 0
+    state = initial_states(current, (1, 2))[current.tasks[1].task_id]
+    settle(state, exhausted=True)
+    assert document["tasks"][1] == task_result(current, state)
+    assert {key: type(value) for key, value in document["tasks"][1].items()} == {key: type(value) for key, value in task_result(current, state).items()}
     assert not (merged / "rollouts" / f"{current.tasks[1].task_id}.jsonl").exists()
+
+
+def test_helper_state_alone_prevents_duplicate_helper_and_primary_launch(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    primary, helper = FakeRemote(config), FakeRemote(config)
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    epoch = EPOCH
+    job_path = remote.work_dir / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps(transport_job().to_dict()))
+    state_path = remote.work_dir / "jobs" / epoch / "remote-state.json"
+    digest = __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes())
+    # Crash after durable helper launch state, before the primary launch flag.
+    remote._write_helper_state(state_path, 1, {
+        "epoch": epoch, "state": "dispatched", "shard": 1,
+        "launch_attempted": True, "job_sha256": digest,
+    })
+    state_path.write_text(json.dumps({
+        "epoch": epoch, "state": "preparing", "launch_attempted": False,
+        "shard_count": 2, "helper_identities": [{"host": config.host, "port": config.port}],
+        "job_sha256": digest, "attempts": 1,
+    }))
+    assert remote.dispatch(epoch).state == "dispatched"
+    assert not any("nohup" in command for _, command in helper.calls)
+    assert not any("nohup" in command for _, command in primary.calls)
+    state = json.loads(state_path.read_text())
+    assert state["shard_count"] == 2 and state["launch_attempted"] is False
+    assert state["helpers"][0]["launch_attempted"] is True
 
 
 def test_outcome_matrix_launch_and_helper_failure(tmp_path):
@@ -405,7 +442,7 @@ def test_launch_matrix_helper_launch_uncertainty_never_relaunches_primary(tmp_pa
     remote = ScorerRemote(config, runner=resumed_primary, helpers=[resumed_helper])
     assert remote.dispatch(EPOCH).state == "dispatched"
     assert sum("nohup" in command for _, command in resumed_primary.calls) == 0
-    assert sum("nohup" in command for _, command in resumed_helper.calls) == 1
+    assert sum("nohup" in command for _, command in resumed_helper.calls) == 0
     before = list(resumed_primary.calls), list(resumed_helper.calls)
     assert remote.dispatch(EPOCH).state == "dispatched"
     assert (resumed_primary.calls, resumed_helper.calls) == before
@@ -494,7 +531,9 @@ def test_dead_helper_publishes_owned_shard_as_time_budget(tmp_path, monkeypatch)
     assert status.complete
     assert not any(kind == "tar" for kind, _ in helper.calls)
     results = json.loads((status.out_dir / "results.json").read_text())
-    assert results["tasks"][1] == {"id": "1" * 20, "hotkey": "owner-1", "s": 0, "n": 0, "q": None, "decision": "unscored", "unscored_reason": "time_budget", "reason": "helper did not complete before the scoring budget grace"}
+    expected = initial_states(current, (1, 2))["1" * 20]
+    settle(expected, exhausted=True)
+    assert results["tasks"][1] == task_result(current, expected)
     assert results["hotkeys"]["owner-1"]["submitted"] == 1
     assert results["hotkeys"]["owner-1"]["unscored"] == 1
     assert results["hotkeys"]["owner-1"]["scored"] == 0
@@ -528,6 +567,31 @@ def test_live_k1_state_is_unchanged_and_zero_launch_calls(tmp_path):
     primary.archive = public_archive()
     assert remote.collect(epoch).complete
     assert [kind for kind, _ in primary.calls] == ["ssh", "ssh", "tar"]
+
+
+def test_real_cli_default_and_shard_1_of_2_against_fake_servers(tmp_path, monkeypatch):
+    from sn120_v2.generator import runner
+    current = transport_job(2)
+    for shard in (None, "1/2"):
+        out = tmp_path / ("default" if shard is None else "helper")
+        argv = ["run", str(tmp_path / "job.json"), "--root", str(tmp_path / "root"), "--out", str(out), "--pool-cache", str(tmp_path / "pool"), "--clients-per-server", "2"]
+        if shard is not None:
+            argv += ["--shard", shard]
+        args = runner.parser().parse_args(argv)
+        (tmp_path / "job.json").write_text(json.dumps(current.to_dict()))
+        with FakeFarm(first_port=0, mode="mixed") as farm:
+            for task in current.tasks:
+                for sample in range(32):
+                    farm.seeds[rollout_seed(current.seed_secret, task.task_id, sample)] = (task.task_id, sample)
+            monkeypatch.setattr(runner, "default_urls", lambda: farm.urls)
+            monkeypatch.setattr(runner, "PriorPool", lambda path: FakePool())
+            monkeypatch.setattr("sn120_v2.envs.math_grader.GradePool", lambda **kwargs: grades())
+            document = runner.real_run(args)
+        expected = initial_states(current, (0, 1) if shard is None else (1, 2))
+        assert [row["id"] for row in document["tasks"]] == list(expected)
+        assert document.get("shard", {}).get("count", 1) == (1 if shard is None else 2)
+        assert (out / "DONE").is_file()
+        assert all((out / "rollouts" / f"{task_id}.jsonl").is_file() for task_id in expected)
 
 
 def test_merged_helper_timeout_passes_real_publication_privacy_verifier(tmp_path):
@@ -569,6 +633,72 @@ def test_merged_helper_timeout_passes_real_publication_privacy_verifier(tmp_path
     assert unscored["decision"] == "unscored" and unscored["n"] == 0
     assert set(plan["rollouts"]) == {task_ids[0]}
     assert task_ids[1].encode() not in json.dumps(plan["results"]).encode()
+
+
+def test_k1_and_k2_public_results_intake_and_payout_are_byte_identical(tmp_path, monkeypatch):
+    from sn120_v2.canonical import sha256_hex
+    from sn120_v2.generator.decisions import decision
+    from sn120_v2.generator.epoch import epoch_start
+    from sn120_v2.generator.publish import publication
+    from test_generator_publish import Pool
+    epoch = "20261120T0000Z"
+    secret = "private-publication-comparison"
+    current = ScoringJob(epoch, (TaskSpec("0" * 20, "owner-0"), TaskSpec("1" * 20, "owner-1")), "a" * 64, secret, epoch_deadline(epoch).timestamp() + 13500, POOL_ID)
+    states = initial_states(current)
+    decisions = ((4, 8), (0, 8))
+    for state, (passed, total) in zip(states.values(), decisions):
+        state.s, state.n, state.rollouts = passed, total, [{} for _ in range(total)]
+        settle(state)
+        assert state.final
+    rows = [task_result(current, state) for state in states.values()]
+    assert [row["decision"] for row in rows] == ["accept", "reject"]
+    expired = initial_states(current, (1, 2))["1" * 20]
+    settle(expired, exhausted=True)
+    rows[1] = task_result(current, expired)
+    full = {
+        "epoch": epoch, "head_version": current.head_version, "pool_pin": current.pool_pin,
+        "seed_commitment": sha256_hex(secret.encode()), "tasks": rows,
+        "timings": {"wall_s": 1}, "throughput": {"rollouts": 8}, "servers": ["primary"],
+    }
+    shard_documents = [
+        {**full, "shard": {"index": index, "count": 2, "tasks": 1}, "tasks": [rows[index]]}
+        for index in range(2)
+    ]
+    key = tmp_path / "key"
+    key.write_text("fake")
+    remote = ScorerRemote(SSHConfig("primary", 22, key, tmp_path / "work"))
+    job_dir = remote.work_dir / "jobs" / epoch
+    job_dir.mkdir(parents=True)
+    (job_dir / "job.json").write_text(json.dumps(current.to_dict()))
+    paths = []
+    for index, document in enumerate(shard_documents):
+        path = remote.work_dir / "epochs" / epoch / f"out-shard-{index}"
+        (path / "rollouts").mkdir(parents=True)
+        (path / "results.json").write_text(json.dumps(document))
+        paths.append(path)
+    # The primary accepted row has a rollout; the helper's rejected row has
+    # private evidence only. For timeout, it is synthesized by the real scorer.
+    rollout = {"text": "accepted text", "seed": 0, "pass": True}
+    (paths[0] / "rollouts" / f"{'0' * 20}.jsonl").write_text(json.dumps(rollout) + "\n")
+    (paths[1] / "rollouts" / f"{'1' * 20}.jsonl").write_text(json.dumps({"text": "private rejected text"}) + "\n")
+    (tmp_path / "k1" / "rollouts").mkdir(parents=True)
+    (tmp_path / "k1" / "rollouts" / f"{'0' * 20}.jsonl").write_text(json.dumps(rollout) + "\n")
+    (tmp_path / "k1" / "rollouts" / f"{'1' * 20}.jsonl").write_text(json.dumps({"text": "private rejected text"}) + "\n")
+    merged = remote._merge_shards(epoch, paths[0], [(1, paths[1])])
+    evidence = {
+        "epoch": epoch, "pool": POOL_ID, "king": current.head_version, "seed_commitment": full["seed_commitment"],
+        "tasks": [{"task_id": task.task_id, "hotkey": task.hotkey, "uid": index + 1, "uploaded_at": epoch_start(epoch).timestamp() + index + 1, "file_sha256": sha256_hex(task.task_id.encode()), "head_version": current.head_version} for index, task in enumerate(current.tasks)],
+    }
+    registered = {1: "owner-0", 2: "owner-1"}
+    kwargs = {"secret": secret, "history": [], "registered": registered, "now": epoch_deadline(epoch).timestamp() + 60, "pool_rows": Pool(), "frozen_at": epoch_deadline(epoch).timestamp()}
+    baseline = publication(evidence, full, out_dir=tmp_path / "k1", **kwargs)
+    plan = publication(evidence, json.loads((merged / "results.json").read_text()), out_dir=merged, **kwargs)
+    from sn120_v2.generator.common import json_bytes, jsonl_bytes
+    assert json_bytes(plan["results"]) == json_bytes(baseline["results"])
+    assert jsonl_bytes(plan["accepted"]) == jsonl_bytes(baseline["accepted"])
+    assert jsonl_bytes(plan["intake"]) == jsonl_bytes(baseline["intake"])
+    assert json_bytes(plan["payout"]) == json_bytes(baseline["payout"])
+    assert plan["rollouts"] == baseline["rollouts"]
 
 
 def test_helper_config_and_dispatch_idempotency(tmp_path):

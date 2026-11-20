@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from ..canonical import canonical_json, sha256_hex
 from ..errors import ConfigError, ContractError, InfraError
 from .epoch import epoch_id
+from .scoring import ScoringJob, initial_states, make_results, settle, task_result
 
 REMOTE_ROOT = "/root/gen"
 REMOTE_PYTHONPATH = "/root/gen/src"
@@ -470,8 +471,7 @@ class ScorerRemote:
             ]
             epoch_helpers = tuple(self.helpers)
         if epoch_helpers:
-            # A later control-plane release can change its grace; the epoch's
-            # existing budget contract is immutable once dispatch has started.
+            # The epoch's existing budget contract is immutable once dispatch starts.
             record.setdefault("results_grace_s", 45 * 60)
         _write_json(state_path, record)  # Durable before the first network call.
         head_version = json.loads(job_path.read_text())["head_version"]
@@ -483,6 +483,10 @@ class ScorerRemote:
                 record.update(shard_count=1, helper_identities=[], helpers=[], state="preparing", detail="helper unavailable before launch; using primary-only K=1 scoring")
                 epoch_helpers = ()
             _write_json(state_path, record)
+            if epoch_helpers and any(row.get("launch_attempted") for row in record["helpers"]):
+                # Durable helper state is authoritative even if the process died
+                # before recording the primary launch. Neither pod may relaunch.
+                return self._status(name, record, "helper launch attempted; collect to resume")
         qroot, qjob = remote_path(root), remote_path(remote_job)
         qout, qdone = remote_path(remote_out), remote_path(done)
         self.runner.ssh(f"umask 077 && mkdir -p -- {qroot}")
@@ -528,7 +532,7 @@ class ScorerRemote:
 
     def _helper_records(self, state_path: Path, previous: Mapping[str, Any], count: int) -> list[dict[str, Any]]:
         records = [dict(row) for row in previous.get("helpers", [])]
-        for index in range(1, count - 1):
+        for index in range(1, count):
             path = state_path.with_name(f"remote-state-shard-{index}.json")
             if path.is_file():
                 record = json.loads(path.read_text())
@@ -593,6 +597,8 @@ class ScorerRemote:
         if not previous:
             return []
         records = self._prepare_helpers(name, job_path, state_path, job_digest, previous)
+        if any(row.get("launch_attempted") for row in records):
+            return records
         if any(row.get("state") == "failed" for row in records):
             # Do not begin a new sharded epoch after its primary is already
             # running K=1, and never claim an unreachable helper is running.
@@ -732,6 +738,7 @@ class ScorerRemote:
 
     def _merge_shards(self, epoch: str, primary: Path, helpers: list[tuple[int, Path]]) -> Path:
         job = json.loads((self.work_dir / "jobs" / epoch / "job.json").read_text())
+        scoring_job = ScoringJob.from_dict(job)
         documents = [(0, json.loads((primary / "results.json").read_text()))]
         documents += [(index, json.loads((path / "results.json").read_text())) for index, path in helpers]
         helper_paths = [path for _, path in helpers]
@@ -745,10 +752,12 @@ class ScorerRemote:
         if state_path.is_file():
             count = json.loads(state_path.read_text()).get("shard_count", count)
         by_id = {}
+        completed_shards = {shard for shard, _ in documents}
         for shard, document in documents:
             if document.get("shard", {}).get("index", shard) != shard or document.get("shard", {}).get("count", count) != count:
                 raise InfraError("Generator shard result shard metadata mismatch")
-            if sorted(row.get("id", row.get("task_id")) for row in document.get("tasks", [])) != sorted(task["id"] for position, task in enumerate(job["tasks"]) if position % count == shard):
+            expected = {state.spec.task_id for state in initial_states(scoring_job, (shard, count)).values()}
+            if {row.get("id", row.get("task_id")) for row in document.get("tasks", [])} != expected:
                 raise InfraError(f"Generator shard {shard} result does not cover exactly its owned tasks")
             for task in document.get("tasks", []):
                 task_id = task.get("id", task.get("task_id"))
@@ -763,13 +772,15 @@ class ScorerRemote:
                 grace = json.loads(state_path.read_text()).get("results_grace_s", grace)
             if time.time() <= float(job["budget_deadline"]) + grace:
                 raise InfraError("Generator shard results do not cover exactly the job tasks")
-            for task_id in missing:
-                owner = next(row["hotkey"] for row in job["tasks"] if row["id"] == task_id)
-                by_id[task_id] = {
-                    "id": task_id, "hotkey": owner, "s": 0, "n": 0, "q": None,
-                    "decision": "unscored", "unscored_reason": "time_budget",
-                    "reason": "helper did not complete before the scoring budget grace",
-                }
+            for shard in range(count):
+                if shard in completed_shards:
+                    continue
+                states = initial_states(scoring_job, (shard, count))
+                for state in states.values():
+                    settle(state, exhausted=True)
+                    by_id[state.spec.task_id] = task_result(scoring_job, state)
+                expired = make_results(scoring_job, states, timings={"budget_exhausted": True}, throughput={}, servers=())
+                documents.append((shard, expired))
         if set(by_id) != set(ordered) or len(by_id) != len(ordered):
             raise InfraError("Generator shard results do not cover exactly the job tasks")
         merged = dict(base)
