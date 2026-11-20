@@ -88,7 +88,7 @@ test('the dashboard renders every section from the fixture directory', async t =
   assert.equal(document.querySelectorAll('#payout-rows tbody tr').length, 2);
   assert.equal(document.getElementById('results-epoch').textContent, '20261119T1600Z');
   assert.equal(data.accepted.length, 2);
-  assert.equal(document.getElementById('status').textContent, 'Public data loaded');
+  assert.equal(document.getElementById('status').textContent, 'Public epoch state loaded');
   assert.deepEqual(new Set(source.requested), new Set([
     '/generator/epochs/20261119T1600Z/accepted.jsonl',
     '/generator/epochs/20261119T1600Z/results.json',
@@ -97,6 +97,45 @@ test('the dashboard renders every section from the fixture directory', async t =
     '/generator/links.json',
     '/generator/state.json',
   ]));
+});
+
+test('open window and in-flight scoring render without published epochs', async t => {
+  const currentEpoch = '20261120T0800Z';
+  const scoringEpoch = '20261120T0400Z';
+  const state = {
+    version: 'affine-generator-state-v1', current_epoch: currentEpoch,
+    window_open: '2026-11-20T04:00:00Z', window_close: '2026-11-20T08:00:00Z',
+    deadline: '2026-11-20T08:00:00Z',
+    scoring: {epoch: scoringEpoch, deadline: '2026-11-20T04:00:00Z', status: 'scoring',
+      frozen_king_version: '090b28a7215c365404d6bae45a9b2d72dd10eca1ab686111a64db321af82179c',
+      frozen_king_at: '2026-11-20T04:00:30Z', manifest: '/generator/epochs/20261120T0400Z/manifest.json'},
+    links: {epochs: [{epoch: scoringEpoch, manifest: '/generator/epochs/20261120T0400Z/manifest.json'}]},
+  };
+  const manifest = {version: 'affine-generator-manifest-v1', epoch: scoringEpoch, files: [
+    {valid: true, task_count: 6}, {valid: true, task_count: 4},
+  ], unique_tasks: 10};
+  const dom = fixtureDOM(false);
+  t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });
+  const requested = [];
+  const fetcher = async url => {
+    const pathname = new URL(url, 'https://affine.example').pathname;
+    requested.push(pathname);
+    const contents = pathname.endsWith('state.json') ? JSON.stringify(state) : pathname.endsWith('manifest.json') ? JSON.stringify(manifest) : null;
+    if (contents === null) return {ok: false, status: 404};
+    return {ok: true, status: 200, json: async () => JSON.parse(contents), text: async () => contents};
+  };
+  const data = await page.load(fetcher, dom.window.document, '/generator/');
+  assert.equal(data.state.epoch, currentEpoch);
+  assert.equal(data.state.activeScoringEpoch, scoringEpoch);
+  assert.equal(data.state.scoringStatus, 'scoring');
+  assert.equal(data.state.king, state.scoring.frozen_king_version);
+  assert.equal(data.state.submissions, 10);
+  assert.equal(dom.window.document.querySelector('[data-f="epoch"]').textContent, currentEpoch);
+  assert.equal(dom.window.document.querySelector('[data-f="king"]').textContent, state.scoring.frozen_king_version);
+  assert.match(dom.window.document.getElementById('scoring-progress').textContent, /Scoring epoch 20261120T0400Z · scoring · 10 submitted/);
+  assert.equal(dom.window.document.getElementById('status').textContent, 'Public epoch state loaded');
+  assert.ok(!dom.window.document.body.textContent.includes('Awaiting public epoch state'));
+  assert.ok(requested.includes('/generator/epochs/20261120T0400Z/manifest.json'));
 });
 
 test('the control plane publication schemas drive every dashboard section', () => {
@@ -159,7 +198,7 @@ test('first epoch, missing files and bad JSONL have graceful empty states', asyn
   assert.match(document.querySelector('#hotkey-results .empty').textContent, /first epoch has not been scored yet/);
   assert.match(document.querySelector('#accepted-tasks .empty').textContent, /No accepted tasks yet/);
   assert.match(document.querySelector('#payout-rows .empty').textContent, /No payout vector yet/);
-  assert.equal(document.getElementById('status').textContent, 'Public data loaded');
+  assert.equal(document.getElementById('status').textContent, 'Public epoch state loaded');
   assert.ok(!source.requested.some(url => url.includes('/results.json')));
 });
 

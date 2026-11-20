@@ -105,12 +105,20 @@
     }
     const published = list(state.published_epochs).map(object).filter(row => row.status !== 'void');
     const publishedIds = new Set(list(state.published_epochs).map(object).map(row => row.epoch));
+    const scoring = object(state.scoring);
+    const scoringEpoch = text(scoring.epoch);
     return {
       epoch, start, deadline,
-      king: text(state.frozen_king_version),
+      king: text(scoring.frozen_king_version) || text(state.frozen_king_version),
       submissions: submissionCount(manifest, state),
       links: links && typeof links === 'object' ? list(object(links).hotkeys).length : null,
       scoringEpoch: publishedIds.has(state.last_epoch) ? text(published.at(-1)?.epoch) : text(state.last_epoch) || text(published.at(-1)?.epoch),
+      activeScoringEpoch: scoringEpoch,
+      scoringStatus: text(scoring.status),
+      scoringDeadline: timestamp(scoring.deadline),
+      scoringKing: text(scoring.frozen_king_version),
+      scoringKingAt: timestamp(scoring.frozen_king_at),
+      scoringManifest: text(scoring.manifest),
       manifestEpoch: text(object(manifest).epoch),
       manifestPublished: Boolean(manifest && typeof manifest === 'object' && Object.keys(manifest).length),
       now: finite(now) === null ? Date.now() : now,
@@ -222,6 +230,19 @@
 
   function renderState(view, doc, results) {
     if (!view.king && object(results).epoch === view.scoringEpoch) view.king = text(object(results).king);
+    const progress = doc.getElementById('scoring-progress');
+    if (view.activeScoringEpoch) {
+      const status = view.scoringStatus || 'snapshot';
+      const manifest = view.scoringManifest;
+      progress.textContent = `Scoring epoch ${view.activeScoringEpoch} · ${status} · ${view.submissions ?? '—'} submitted · ${view.scoringKingAt ? `king captured ${utc(view.scoringKingAt)}` : 'king capture pending'}`;
+      if (manifest) {
+        progress.appendChild(doc.createTextNode(' · '));
+        const link = doc.createElement('a');
+        link.href = manifest;
+        link.textContent = 'Manifest';
+        progress.appendChild(link);
+      }
+    } else progress.textContent = 'No closed epoch has been scheduled for scoring yet.';
     for (const key of ['epoch', 'king', 'submissions', 'links']) {
       const element = doc.querySelector(`[data-f="${key}"]`);
       let value = view[key];
@@ -241,7 +262,7 @@
       : 'The deadline manifest has not been published. Counts from public link issuance are shown when available; no private submission data is read.';
     const tick = () => {
       const timer = doc.querySelector('[data-f="countdown"]');
-      if (view.deadline === null) timer.textContent = 'Awaiting epoch state';
+      if (view.deadline === null) timer.textContent = 'Deadline pending';
       else if (Date.now() >= view.deadline) timer.textContent = 'Closed · scoring';
       else timer.textContent = countdown(view.deadline, Date.now());
     };
@@ -329,7 +350,8 @@
       ]);
       view = normalizeState(state, null, links);
       const epochPattern = /^\d{8}T\d{4}Z$/;
-      const manifestEpoch = epochPattern.test(view.epoch || '') ? view.epoch
+      const manifestEpoch = view.activeScoringEpoch && epochPattern.test(view.activeScoringEpoch) ? view.activeScoringEpoch
+        : view.epoch && epochPattern.test(view.epoch) ? view.epoch
         : text(list(object(state).published_epochs).map(object).filter(row => row.status !== 'void').at(-1)?.epoch);
       const manifest = manifestEpoch
         ? await fetchPublic(`epochs/${manifestEpoch}/manifest.json`, root, fetcher, false).catch(() => null) : null;
@@ -352,7 +374,7 @@
     renderAccepted(normalizeAccepted(accepted), scoredEpoch, doc);
     renderPayout(normalizePayout(payout), doc);
     const status = doc.getElementById('status');
-    status.textContent = state ? 'Public data loaded' : 'Awaiting first public epoch';
+    status.textContent = state ? 'Public epoch state loaded' : 'Public epoch state unavailable';
     status.dataset.state = state ? 'available' : 'unavailable';
     return {state: view, results, accepted: normalizeAccepted(accepted), payout: normalizePayout(payout)};
   }

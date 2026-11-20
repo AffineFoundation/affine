@@ -355,8 +355,10 @@ class BatchRunner:
             return True
 
         try:
-            while self._futures or queue:
-                while len(self._futures) < capacity and self.clock() < self.job.budget_deadline and not self._cutoff:
+            while self._futures or (queue and self._first_error is None):
+                if self._first_error is not None and not self._futures:
+                    break
+                while self._first_error is None and len(self._futures) < capacity and self.clock() < self.job.budget_deadline and not self._cutoff:
                     if not queue:
                         refill, stage = next_batch(self.job, self.states, 0 if stage == "stage1" else capacity - len(self._futures))
                         self._stage = stage
@@ -403,9 +405,9 @@ class BatchRunner:
                         self._abort(exc)
                         # Continue draining other completed futures into durable journals.
                         self._cutoff = True
-                if self._first_error is not None:
-                    raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
             graded += self._grade_responses([(task.task_id, self.states[task.task_id].n) for task in self.job.tasks])
+            if self._first_error is not None:
+                raise InfraError(f"Generator inference failed; rerun resumes completed rollouts: {self._first_error}") from self._first_error
             return graded
         finally:
             self._cutoff = True

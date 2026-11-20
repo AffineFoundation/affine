@@ -232,6 +232,31 @@ def update_window_state(config: Config, *, epoch: str, now: float, store: Any) -
     sink = PublicSink(config.site_dir, store, config.public_url)
     state = read_json(sink.path("state.json")) if sink.exists("state.json") else {}
     seed = read_json(config.work_dir / "seeds" / f"{epoch}.json")
+    closed = epoch_id(epoch_start(epoch).timestamp() - 1)
+    closed_king = config.work_dir / "king" / f"{closed}.json"
+    closed_job = config.work_dir / "jobs" / closed / "evidence.json"
+    manifest_rel = f"epochs/{closed}/manifest.json"
+    manifest_exists = sink.exists(manifest_rel)
+    published = next((row for row in state.get("published_epochs", []) if row.get("epoch") == closed), None)
+    if (config.work_dir / "king" / f"{closed}.missed.json").is_file():
+        scoring_status = "void"
+    elif published:
+        scoring_status = "published"
+    elif closed_job.is_file() or manifest_exists:
+        scoring_status = "scoring"
+    else:
+        scoring_status = "snapshot"
+    scoring = {
+        "epoch": closed,
+        "deadline": utc_text(epoch_deadline(closed)),
+        "status": scoring_status,
+        "manifest": sink.url(manifest_rel) if manifest_exists else None,
+    }
+    if closed_king.is_file():
+        king = read_json(closed_king)
+        scoring["frozen_king_version"] = king["version"]
+        scoring["frozen_king_at"] = king["captured_at"]
+    state["scoring"] = scoring
     king_path = config.work_dir / "king" / f"{epoch}.json"
     state.update({
         "version": "affine-generator-state-v1", "current_epoch": epoch,
@@ -245,8 +270,11 @@ def update_window_state(config: Config, *, epoch: str, now: float, store: Any) -
         king = read_json(king_path)
         state["frozen_king_version"] = king["version"]
         state["frozen_king_at"] = king["captured_at"]
-    if isinstance(state.get("links"), dict) and not state["links"].get("epochs"):
-        state["links"]["epochs"] = [{"epoch": row["epoch"], "manifest": sink.url(f"epochs/{row['epoch']}/manifest.json")} for row in state.get("published_epochs", [])]
+    if isinstance(state.get("links"), dict):
+        state["links"]["epochs"] = [
+            {"epoch": path.parent.name, "manifest": sink.url(f"epochs/{path.parent.name}/manifest.json")}
+            for path in sorted((config.site_dir / "generator" / "epochs").glob("*/manifest.json"))
+        ]
     sink.json("state.json", state)
 
 

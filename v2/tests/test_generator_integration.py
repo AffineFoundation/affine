@@ -12,7 +12,7 @@ from sn120_v2.canonical import sha256_hex
 from sn120_v2.errors import ConfigError
 from sn120_v2.store import LocalStore
 from sn120_v2.generator.config import Config
-from sn120_v2.generator.control import tick, write_seed
+from sn120_v2.generator.control import tick, write_seed, update_window_state
 from sn120_v2.generator.decisions import decision
 from sn120_v2.generator.epoch import epoch_deadline, epoch_start
 from sn120_v2.generator.publish import publication
@@ -77,6 +77,30 @@ def test_sibling_shaped_output_and_rollout_publish(tmp_path):
     assert plan["intake"] == [{"problem": "2 + 2?", "answer": "4", "source_id": "prior-1", "prior_p": 0.5}]
     assert b"response" in plan["rollouts"]["01" * 10]
     assert b"grade" in plan["rollouts"]["01" * 10]
+
+
+def test_window_state_exposes_closed_scoring_and_existing_manifests(tmp_path):
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch="20261120T0400Z")
+    write_seed(config.work_dir, "20261120T0800Z")
+    king = config.work_dir / "king" / "20261120T0400Z.json"
+    king.parent.mkdir(parents=True)
+    king.write_text('{"version":"current-king","captured_at":"2026-11-20T04:00:30Z"}')
+    manifest = site / "generator/epochs/20261120T0400Z/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"files":[]}')
+    job = config.work_dir / "jobs" / "20261120T0400Z" / "evidence.json"
+    job.parent.mkdir(parents=True)
+    job.write_text("{}")
+    update_window_state(config, epoch="20261120T0800Z", now=epoch_deadline("20261120T0400Z").timestamp() + 3600, store=None)
+    state = json.loads((site / "generator/state.json").read_text())
+    assert state["scoring"] == {
+        "epoch": "20261120T0400Z", "deadline": "2026-11-20T04:00:00Z", "status": "scoring",
+        "manifest": "https://affine.io/generator/epochs/20261120T0400Z/manifest.json",
+        "frozen_king_version": "current-king", "frozen_king_at": "2026-11-20T04:00:30Z",
+    }
+    assert state["links"]["epochs"] == [{"epoch": "20261120T0400Z", "manifest": state["scoring"]["manifest"]}]
 
 
 def test_tick_runs_all_due_phases_and_does_not_republish(tmp_path):
