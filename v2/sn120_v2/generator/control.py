@@ -317,10 +317,13 @@ def publish_epoch(config: Config, *, epoch: str, now: float, client: Any, store:
     out_dir = config.work_dir / "epochs" / epoch / "out"
     output = read_json(out_dir / "results.json")
     snapshot = client if isinstance(client, Mapping) else {reg.uid: reg.hotkey for reg in client}
+    cap_rejections = []
+    if frozen_cap(config.work_dir, epoch) is not None:
+        cap_rejections = [row for row in read_json(config.work_dir / "jobs" / epoch / "manifest.json").get("files", []) if row.get("cap_rejected")]
     plan = publish(
         sink=PublicSink(config.site_dir, store, config.public_url), job=job, output=output, out_dir=out_dir,
         secret=seed["secret"], registered=snapshot, now=now, pool_rows=pool, frozen_at=frozen,
-        cap_rejections=[row for row in read_json(config.work_dir / "jobs" / epoch / "manifest.json").get("files", []) if row.get("cap_rejected")],
+        cap_rejections=cap_rejections,
     )
     # Rebuilding state here retains the open window and the previous ledger.
     update_window_state(config, epoch=epoch_id(now), now=now, store=store)
