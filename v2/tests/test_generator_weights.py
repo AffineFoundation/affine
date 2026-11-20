@@ -148,14 +148,44 @@ def test_freshness_boundary_and_future_timestamp(age):
     assert stale.payout_updated_at == NOW - PAYOUT_MAX_AGE_SECONDS - 0.001
 
 
-def test_any_changed_or_missing_earning_hotkey_burns_instead_of_renormalizing():
+def test_changed_or_missing_earning_hotkey_redirects_only_that_share():
     original, other = claims()[0], Claim(T2, 8, "hk8", NOW - 90, "b" * 64)
     doc = document(original, other)
-    changed = decide(doc=doc, state=chain(hotkeys={0: OWNER, 7: "new-key", 8: "hk8"}), execute=True)
-    missing = decide(doc=doc, state=chain(hotkeys={0: OWNER, 8: "hk8"}), execute=True)
-    for result in (changed, missing):
+    for state in (
+        chain(hotkeys={0: OWNER, 7: "new-key", 8: "hk8"}),
+        chain(hotkeys={0: OWNER, 8: "hk8"}),
+    ):
+        result = decide(doc=doc, state=state, execute=True)
         submitted(result)
-        assert result.weights == {0: 1.0} and result.burn and "hotkey changed" in result.reason
+        assert result.weights == {0: 0.5, 8: 0.5}
+        assert not result.burn and "sent to UID 0" in result.reason
+        assert sum(result.weights.values()) == pytest.approx(1.0)
+        assert all(value > 0 for value in result.weights.values())
+
+
+def test_partial_burn_keeps_other_uids_exact_shares():
+    rows = [
+        Claim(T1, 7, "hk7", NOW - 100, "a" * 64),
+        Claim(T2, 7, "hk7", NOW - 90, "b" * 64),
+        Claim("03" * 10, 7, "hk7", NOW - 80, "c" * 64),
+        Claim("04" * 10, 8, "hk8", NOW - 70, "d" * 64),
+        Claim("05" * 10, 9, "hk9", NOW - 60, "e" * 64),
+    ]
+    result = decide(doc=document(*rows), state=chain(hotkeys={0: OWNER, 7: "hk7", 8: "hk8", 9: "changed"}), execute=True)
+    submitted(result)
+    assert result.weights == pytest.approx({7: 0.6, 8: 0.2, 0: 0.2})
+    assert result.weights[7] == pytest.approx(0.6) and result.weights[8] == pytest.approx(0.2)
+    assert sum(result.weights.values()) == pytest.approx(1.0)
+    assert all(value > 0 for value in result.weights.values())
+    assert not result.burn
+
+
+def test_every_earning_hotkey_changed_burns_entire_mechanism():
+    original, other = claims()[0], Claim(T2, 8, "hk8", NOW - 90, "b" * 64)
+    result = decide(doc=document(original, other), state=chain(hotkeys={0: OWNER, 7: "new7", 8: "new8"}), execute=True)
+    assert result.weights == {0: 1.0} and result.burn
+    assert "every earning UID hotkey changed" in result.reason
+    assert sum(result.weights.values()) == 1.0
 
 
 def test_empty_or_expired_valid_claims_use_primitive_burn():

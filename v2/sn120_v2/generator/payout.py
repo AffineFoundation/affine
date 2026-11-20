@@ -157,9 +157,11 @@ def payout_weights(
     """Equal weight per accepted unique task in the trailing 24 hours.
 
     The once-ever history must be supplied, not just recent claims. Multiple
-    accepted tasks for one UID add their shares. If no task is payable, or the
-    payout was last updated more than six hours ago, all weight goes to UID 0.
-    A stale payout never leaves an all-zero table or retains historical winners.
+    accepted tasks for one UID add their shares. A changed or unregistered earning
+    hotkey redirects only that claim's equal share to UID 0; other UIDs are never
+    topped up. If no task is payable, or the payout was last updated more than six
+    hours ago, all weight goes to UID 0. A stale payout never leaves an all-zero
+    table or retains historical winners.
     """
     now = _timestamp(now, "now")
     updated_at = _timestamp(updated_at, "payout updated_at")
@@ -168,15 +170,19 @@ def payout_weights(
     if updated_at > now or now - updated_at > PAYOUT_MAX_AGE_SECONDS:
         return {BURN_UID: 1.0}
     recent = trailing_claims(claims, now)
-    shares: dict[int, float] = {}
-    for claim in recent:
-        if registered.get(claim.uid) == claim.hotkey and claim.uid != burn_uid:
-            shares[claim.uid] = shares.get(claim.uid, 0.0) + 1.0 / len(recent)
-    if not shares:
+    if not recent:
         return {BURN_UID: 1.0}
-    # Exact normalization avoids a nonzero residual when chain weights are set.
+    shares: dict[int, float] = {BURN_UID: 0.0}
+    for claim in recent:
+        uid = claim.uid if registered.get(claim.uid) == claim.hotkey and claim.uid != burn_uid else burn_uid
+        shares[uid] = shares.get(uid, 0.0) + 1.0 / len(recent)
     total = math.fsum(shares.values())
-    normalized = {uid: share / total for uid, share in shares.items()}
+    if total <= 0:
+        return {BURN_UID: 1.0}
+    normalized = {uid: share / total for uid, share in shares.items() if share > 0 or uid == BURN_UID and len(shares) == 1}
+    residual = 1.0 - math.fsum(normalized.values())
+    if residual and BURN_UID in normalized:
+        normalized[BURN_UID] = normalized[BURN_UID] + residual
     return check_weights(normalized)
 
 

@@ -64,12 +64,29 @@ def test_two_unique_tasks_pay_equal_task_shares_to_same_or_different_uids():
     assert payout.payout_weights([one, two, three], {7: "hk7", 8: "hk8"}, now=NOW, updated_at=NOW) == pytest.approx({7: 2 / 3, 8: 1 / 3})
 
 
-def test_registration_churn_excludes_old_hotkey_but_never_returns_zero():
+def test_registration_churn_redirects_only_invalid_claim_shares():
     one = claim(T1, uid=7, hotkey="old")
     two = claim(T2, uid=8, hotkey="current")
-    assert payout.payout_weights([one, two], {7: "new", 8: "current"}, now=NOW, updated_at=NOW) == {8: 1.0}
+    assert payout.payout_weights([one, two], {7: "new", 8: "current"}, now=NOW, updated_at=NOW) == {0: 0.5, 8: 0.5}
+    assert payout.payout_weights([one, two], {8: "current"}, now=NOW, updated_at=NOW) == {0: 0.5, 8: 0.5}
     assert payout.payout_weights([one], {7: "new"}, now=NOW, updated_at=NOW) == {0: 1.0}
     assert payout.payout_weights([claim(uid=0)], {0: "hk7"}, now=NOW, updated_at=NOW) == {0: 1.0}
+
+
+def test_partial_burn_preserves_valid_shares_without_top_up():
+    rows = [
+        claim(T1, uid=7, hotkey="hk7"), claim(T2, uid=7, hotkey="hk7"),
+        claim("03" * 10, uid=7, hotkey="hk7"), claim("04" * 10, uid=8, hotkey="hk8"),
+        claim("05" * 10, uid=9, hotkey="hk9"),
+    ]
+    registered = {7: "hk7", 8: "hk8", 9: "hk9"}
+    all_valid = payout.payout_weights(rows, registered, now=NOW, updated_at=NOW)
+    partial = payout.payout_weights(rows, {7: "hk7", 8: "hk8", 9: "changed"}, now=NOW, updated_at=NOW)
+    assert partial[7] == pytest.approx(all_valid[7])
+    assert partial[8] == pytest.approx(all_valid[8])
+    assert partial == pytest.approx({7: 0.6, 8: 0.2, 0: 0.2})
+    assert sum(partial.values()) == pytest.approx(1.0)
+    assert all(value > 0 for value in partial.values())
 
 
 def test_trailing_window_is_exactly_24_hours_and_never_future():
