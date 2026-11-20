@@ -246,7 +246,7 @@ def fetch_head(url: str, path: Path, *, now: float) -> dict[str, Any]:
 
 def head_version(document: Mapping[str, Any]) -> str:
     """Read an existing public head pointer without inventing a model identifier."""
-    for key in ("version", "head_version", "head_version_id", "id"):
+    for key in ("version_id", "version", "head_version", "head_version_id", "id"):
         if isinstance(document.get(key), str) and document[key]:
             return document[key]
     head = document.get("head")

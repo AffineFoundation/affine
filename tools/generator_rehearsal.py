@@ -17,6 +17,8 @@ import secrets
 import shlex
 import sys
 import time
+import traceback
+import re
 import urllib.request
 from pathlib import Path
 
@@ -66,14 +68,23 @@ def validate_paths(config: Config, scratch: Path) -> None:
     for original in (original_site, original_work):
         if scratch == original or original in scratch.parents:
             raise ConfigError("scratch must not be the production work/site directory or contain it")
+    scratch.mkdir(parents=True, mode=0o700)
+    scratch.chmod(0o700)
     site, work = scratch / "site", scratch / "work"
     for directory in (site, work):
-        if directory.exists():
-            raise ConfigError("scratch site/work must not already exist; choose a fresh scratch directory")
-        directory.mkdir(parents=True, mode=0o700)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         directory.chmod(0o700)
     if scratch.stat().st_mode & 0o077:
         raise ConfigError("scratch parent must not be group/world accessible")
+
+
+def sanitized_error(exc: BaseException) -> dict:
+    """Diagnose a failed run without echoing capabilities or secret key material."""
+    message = re.sub(r"https?://[^\s]+", "[URL]", str(exc))
+    message = re.sub(r"(?i)(?:secret|token|signature|credential|private[_ -]?key|seed)\s*[=:]\s*\S+", "[redacted]", message)
+    message = re.sub(r"\b[0-9a-fA-F]{64,}\b", "[redacted-hex]", message)
+    frames = [f"{Path(frame.filename).name}:{frame.lineno} {frame.name}" for frame in traceback.extract_tb(exc.__traceback__)[-4:]]
+    return {"type": type(exc).__name__, "message": message[:2000], "frames": frames}
 
 
 def isolated_config(config: Config, scratch: Path) -> Config:
@@ -169,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         "deletion_performed": False,
     }
     remote = None
+    stage = "store-preflight"
     try:
         if store.exists(object_key):
             raise ConfigError("refusing to overwrite an existing rehearsal submission")
@@ -180,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         control.read_registrations = lambda client, clock: ({1: hotkey}, {hotkey})
         ids = [row["id"] for _, row in zip(range(6), pool.iter_rows(0))]
         print(f"Rehearsal epoch {EPOCH}: six real prior-v1 tasks; throwaway identity only.")
+        stage = "upload"
         object_key = upload_simulated(store, hotkey, key, ids, epoch_start(EPOCH).timestamp())
         audit["uploaded"] = True
         if not store.exists(object_key):
@@ -190,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         control.write_seed(config.work_dir, EPOCH)
         control.write_seed(config.work_dir, EPOCH)
         # Actual public head and actual capture time, not a fabricated past capture.
+        stage = "read-public-head"
         head, _ = read_public_head(config.head_url)
         audit["actual_head_observed_at"] = utc_text(REAL_CLOCK())
         audit["simulated_king_capture_at"] = utc_text(simulated)
@@ -199,14 +213,17 @@ def main(argv: list[str] | None = None) -> int:
         }, private=True)
         clocked_store = RehearsalClock(store, epoch_start(EPOCH).timestamp() + 120)
         print("Snapshotting the real signed upload into isolated scratch work.")
+        stage = "snapshot"
         control.snapshot_epoch(config, epoch=EPOCH, now=simulated, client=None, store=clocked_store, pool=pool)
         if not (config.work_dir / "jobs" / EPOCH / "job.json").is_file():
             raise ConfigError("rehearsal snapshot did not produce a scoring job")
         remote = ScorerRemote.from_config(original.ssh, config.work_dir)
         if remote.runner.ssh(f"if [ -e {shlex.quote(pod_job)} ]; then printf occupied; fi", timeout=30).stdout.strip():
             raise ConfigError("refusing to overwrite an existing pod rehearsal job")
+        stage = "dispatch"
         remote.dispatch(EPOCH)
         print("Scorer dispatched. Polling its durable completion marker (no secrets printed).")
+        stage = "collect"
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
             status = remote.collect(EPOCH)
@@ -216,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raise TimeoutError("rehearsal scorer did not complete within the timeout; evidence is preserved")
         output = read_json(config.work_dir / "epochs" / EPOCH / "out" / "results.json")
+        stage = "publish"
         control.publish_epoch(config, epoch=EPOCH, now=simulated, client={1: hotkey}, store=None, pool=pool)
         public = config.site_dir / "generator"
         results = read_json(public / "epochs" / EPOCH / "results.json")
@@ -241,8 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:
         audit["status"] = "failed"
-        audit["error_type"] = type(exc).__name__
-        print(f"Rehearsal stopped: {type(exc).__name__}. Evidence is preserved for review.", file=sys.stderr)
+        audit["stage"] = stage
+        audit["error"] = sanitized_error(exc)
+        print(f"Rehearsal failed during {stage}: {audit['error']['message']}", file=sys.stderr)
+        for frame in audit["error"]["frames"]:
+            print(f"  {frame}", file=sys.stderr)
+        print("Evidence is preserved for review; no capability URLs are printed.", file=sys.stderr)
         return 1
     finally:
         audit["deletion_performed"] = False
