@@ -17,6 +17,7 @@ from .config import Config
 from .epoch import epoch_deadline, epoch_id, epoch_start
 from .links import GeneratorPresigner, link_files
 from .constants import POOL_ID
+from .cap import cap_inputs, freeze, frozen as frozen_cap, public
 from .remote import ScorerRemote
 from .snapshot import build_snapshot, fetch_head
 
@@ -73,18 +74,20 @@ def _write_links(sink: PublicSink, files: Mapping[str, bytes]) -> None:
         sink.put_mirror("links.json", files["generator/links.json"])
 
 
-def issue_links(config: Config, *, now: float, client: Any, store: Any) -> dict[str, Any]:
+def issue_links(config: Config, *, now: float, client: Any, store: Any, force: bool = False) -> dict[str, Any]:
     """Refresh only grants that need it; preserve grants through epoch expiry."""
     from .links import GeneratorPresigner, PREFETCH_S, link_files
     state_path = config.work_dir / "links-state.json"
     state = read_json(state_path) if state_path.is_file() else {}
-    if now - float(state.get("chain_read_at", state.get("issued_at", 0))) < 600:
+    if not force and now - float(state.get("chain_read_at", state.get("issued_at", 0))) < 600:
         return {"status": "not_due"}
     registered, activated = read_registrations(client, lambda: now)
     hotkeys = sorted({hotkey for uid, hotkey in registered.items() if uid != 0 and hotkey in activated})
     epoch = epoch_id(now)
     if epoch_deadline(epoch) < epoch_deadline(config.first_epoch):
         return {"status": "before_first_epoch", "epoch": epoch, "count": 0}
+    following = epoch_id(epoch_deadline(epoch))
+    inputs = cap_inputs(config.submission_cap, ssh=config.ssh)
     remaining = epoch_deadline(epoch).timestamp() - now
     prefetch = 0 < remaining <= PREFETCH_S
     sink = PublicSink(config.site_dir, store, config.public_url)
@@ -128,13 +131,26 @@ def issue_links(config: Config, *, now: float, client: Any, store: Any) -> dict[
         if (old.get("epoch") != epoch or not valid_file
                 or (prefetch and "next" not in current)):
             due.append(hotkey)
-    files = link_files(due, GeneratorPresigner(store), now) if due else {}
+    caps: dict[str, int] = {}
+    if due:
+        current_record = freeze(config.work_dir, epoch, inputs, len(hotkeys), now=now)
+        if prefetch:
+            next_record = freeze(config.work_dir, following, inputs, len(hotkeys), now=now)
+        else:
+            next_record = frozen_cap(config.work_dir, following)
+        caps = {record["epoch"]: record["cap"] for record in (current_record, next_record) if record is not None}
+    else:
+        records = [frozen_cap(config.work_dir, target) for target in (epoch, following)]
+        caps = {record["epoch"]: record["cap"] for record in records if record is not None}
+    files = link_files(due, GeneratorPresigner(store), now, caps=caps) if due else {}
     index = {
         "version": "affine-generator-link-v1", "issued_at": int(now),
         "epoch": epoch, "deadline": int(epoch_deadline(epoch).timestamp()),
         "hotkeys": all_hotkeys, "link_file": "generator/links/<hotkey>.json",
         "prefetch_before_deadline_seconds": PREFETCH_S,
         "upload_mode": "overwrite_until_deadline",
+        **({"max_tasks": caps[epoch]} if epoch in caps else {}),
+        **({"next_epoch": following, "next_max_tasks": caps[following]} if prefetch and following in caps else {}),
     }
     # Keep the index synchronized even if no grants need replacement.
     files["generator/links.json"] = json_bytes(index)
@@ -210,8 +226,13 @@ def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store
         store, epoch=epoch, registered=registered, activations=activated,
         known_task_ids=lambda task_id: task_id in pool, previously_accepted=previous,
         king=king["version"], seed_commitment=seed["seed_commitment"],
+        submission_cap=frozen_cap(config.work_dir, epoch),
     )
     atomic_json(job_path, job)
+    manifest["cap_rejections"] = [{"hotkey": row["hotkey"], "reason": row["reason"]} for row in manifest["files"] if row.get("cap_rejected")]
+    atomic_json(config.work_dir / "jobs" / epoch / "manifest.json", manifest, private=True)
+    sink.put(manifest_rel, json_bytes(manifest))
+    update_window_state(config, epoch=epoch_id(now), now=now, store=store)
     if job["tasks"]:
         from .snapshot import scorer_job
         atomic_json(job_path.with_name("job.json"), scorer_job(job, seed["secret"]), private=True)
@@ -222,9 +243,8 @@ def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store
             "pool": POOL_ID,
             "pool_pin": POOL_ID,
             "seed_secret": seed["secret"], "seed_commitment": seed["seed_commitment"], "tasks": [], "hotkeys": {},
+            **({"submission_cap": public(job["submission_cap"])} if "submission_cap" in job else {}),
         }, private=True)
-    sink.put(manifest_rel, json_bytes(manifest))
-    update_window_state(config, epoch=epoch_id(now), now=now, store=store)
     return {"status": "snapshot", "epoch": epoch, "tasks": len(job["tasks"])}
 
 
@@ -276,6 +296,14 @@ def update_window_state(config: Config, *, epoch: str, now: float, store: Any) -
             {"epoch": path.parent.name, "manifest": sink.url(f"epochs/{path.parent.name}/manifest.json")}
             for path in sorted((config.site_dir / "generator" / "epochs").glob("*/manifest.json"))
         ]
+    state.pop("submission_cap", None)
+    state.pop("next_submission_cap", None)
+    current_cap = frozen_cap(config.work_dir, epoch)
+    if current_cap is not None:
+        state["submission_cap"] = public(current_cap)
+    next_cap = frozen_cap(config.work_dir, epoch_id(epoch_deadline(epoch)))
+    if next_cap is not None:
+        state["next_submission_cap"] = public(next_cap)
     sink.json("state.json", state)
 
 
@@ -292,6 +320,7 @@ def publish_epoch(config: Config, *, epoch: str, now: float, client: Any, store:
     plan = publish(
         sink=PublicSink(config.site_dir, store, config.public_url), job=job, output=output, out_dir=out_dir,
         secret=seed["secret"], registered=snapshot, now=now, pool_rows=pool, frozen_at=frozen,
+        cap_rejections=[row for row in read_json(config.work_dir / "jobs" / epoch / "manifest.json").get("files", []) if row.get("cap_rejected")],
     )
     # Rebuilding state here retains the open window and the previous ledger.
     update_window_state(config, epoch=epoch_id(now), now=now, store=store)

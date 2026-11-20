@@ -197,6 +197,7 @@ def _grant(
     issued_at: int,
     expires_at: int,
     prefer_first: bool,
+    max_tasks: int | None = None,
 ) -> tuple[dict[str, Any], str]:
     deadline = int(epoch.epoch_deadline(epoch_name).timestamp())
     key = epoch.submission_object(epoch_name, hotkey)
@@ -220,6 +221,7 @@ def _grant(
         "upload_mode": mode,
         "first_upload_final": mode == FIRST_UPLOAD_FINAL,
         "overwrite_until_deadline": mode == OVERWRITE_UNTIL_DEADLINE,
+        **({"max_tasks": max_tasks} if max_tasks is not None else {}),
     }
     return link, mode
 
@@ -232,6 +234,7 @@ def link_files(
     ttl_s: int = EPOCH_SECONDS,
     first_upload_final: bool = False,
     conditional_support: ConditionalSupport | None = None,
+    caps: Mapping[str, int] | None = None,
 ) -> dict[str, bytes]:
     """Build sealed site files for an already registered/activated ID set.
 
@@ -256,6 +259,10 @@ def link_files(
     # capped at its own (not the current epoch's) deadline.
     next_expiry = min(next_deadline, issued_at + ttl_s)
     prefetch = 0 < deadline - issued_at <= PREFETCH_S
+    caps = dict(caps or {})
+    for target, value in caps.items():
+        if epoch.epoch_id(target) != target or type(value) is not int or value < 1:
+            raise ConfigError("Generator link max_tasks must be a positive integer per epoch")
     prefer_first = bool(first_upload_final and _supported(presigner, conditional_support))
 
     files: dict[str, bytes] = {}
@@ -266,7 +273,7 @@ def link_files(
             sealed_to = public_key(hotkey).hex()
             path = _site_path(hotkey)
             current_link, current_mode = _grant(
-                presigner, hotkey, current, "current", issued_at, current_expiry, prefer_first
+                presigner, hotkey, current, "current", issued_at, current_expiry, prefer_first, caps.get(current)
             )
             outer = {
                 "version": LINK_VERSION,
@@ -277,13 +284,16 @@ def link_files(
                 "expires_at": current_expiry,
                 "sealed_to": sealed_to,
                 "upload_mode": current_mode,
+                **({"max_tasks": caps[current]} if current in caps else {}),
                 "current": seal(current_link, hotkey),
             }
             if prefetch:
                 next_link, _ = _grant(
-                    presigner, hotkey, following, "next", issued_at, next_expiry, prefer_first
+                    presigner, hotkey, following, "next", issued_at, next_expiry, prefer_first, caps.get(following)
                 )
                 outer["next_epoch"] = following
+                if following in caps:
+                    outer["next_max_tasks"] = caps[following]
                 outer["next"] = seal(next_link, hotkey)
         except ContractError:
             # A valid SS58 address can still be a non-Ed25519/non-curve key.
@@ -303,6 +313,8 @@ def link_files(
         "link_file": LINKS_DIR + "<hotkey>.json",
         "prefetch_before_deadline_seconds": PREFETCH_S,
         "upload_mode": next(iter(modes)) if len(modes) == 1 else ("mixed" if modes else default_mode),
+        **({"max_tasks": caps[current]} if current in caps else {}),
+        **({"next_epoch": following, "next_max_tasks": caps[following]} if prefetch and following in caps else {}),
     }
     files[INDEX] = _json(index)
     return files

@@ -119,6 +119,8 @@
       scoringKing: text(scoring.frozen_king_version),
       scoringKingAt: timestamp(scoring.frozen_king_at),
       scoringManifest: text(scoring.manifest),
+      submissionCap: object(state.submission_cap),
+      nextSubmissionCap: object(state.next_submission_cap),
       manifestEpoch: text(object(manifest).epoch),
       manifestPublished: Boolean(manifest && typeof manifest === 'object' && Object.keys(manifest).length),
       now: finite(now) === null ? Date.now() : now,
@@ -252,6 +254,15 @@
       element.textContent = value ?? '—';
       if (key === 'king' && view.king) element.title = view.king;
     }
+    const capNote = doc.getElementById('submission-cap');
+    const cap = view.submissionCap;
+    if (count(cap.cap) !== null && text(cap.epoch)) {
+      capNote.hidden = false;
+      capNote.textContent = `Per-hotkey cap for ${cap.epoch}: ${cap.cap} tasks · ${text(cap.formula) || 'capacity-sized per-epoch cap'} · frozen for this UTC window.`;
+      if (count(view.nextSubmissionCap.cap) !== null && text(view.nextSubmissionCap.epoch)) {
+        capNote.textContent += ` Next ${view.nextSubmissionCap.epoch}: ${view.nextSubmissionCap.cap} tasks.`;
+      }
+    } else capNote.hidden = true;
     doc.getElementById('window').textContent = view.start !== null && view.deadline !== null
       ? `${utc(view.start)} → ${utc(view.deadline)} (deadline excluded)`
       : 'Submission window is not published yet';
@@ -285,6 +296,13 @@
     doc.getElementById('results-note').textContent = epoch
       ? 'Submitted: valid task IDs at the deadline snapshot. Eligible: IDs remaining after registration, activation, deduplication and pool checks. Scored: IDs with completed rollouts. Accepted: IDs admitted to the permanent task ledger. Unscored time-budget tasks are shown only as task_sha256; miners can hash their submitted IDs to match and resubmit.'
       : 'The first epoch has not been scored yet. Results will appear after scoring and publication.';
+  }
+
+  function renderSubmissionRejections(results, doc) {
+    const section = doc.getElementById('submission-rejections');
+    const rows = list(object(results).submissions).map(object).filter(row => text(row.hotkey) && text(row.reason));
+    section.hidden = rows.length === 0;
+    doc.getElementById('submission-rejections-note').textContent = rows.map(row => `${row.hotkey}: ${row.reason}`).join(' · ');
   }
 
   function renderAccepted(rows, epoch, doc) {
@@ -370,6 +388,7 @@
       results = accepted = payout = null;
     }
     renderState(view, doc, results);
+    renderSubmissionRejections(results, doc);
     renderResults(results ? normalizeResults(results) : [], scoredEpoch, doc);
     renderAccepted(normalizeAccepted(accepted), scoredEpoch, doc);
     renderPayout(normalizePayout(payout), doc);

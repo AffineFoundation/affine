@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping
 from ..canonical import sha256_hex
 from ..errors import ConfigError, ContractError, VerifyError, V2Error
 from .common import PublicSink, atomic_json, json_bytes, object_metadata, open_store, read_json, timestamp, utc_text
+from .cap import public as public_cap, rejection_reason
 from .config import Config, add_config
 from .constants import MAX_SUBMISSION_BYTES, POOL_ID, POOL_MANIFEST_URL
 from .epoch import epoch_deadline, epoch_id, epoch_start, submission_object
@@ -100,6 +101,7 @@ def build_snapshot(
     previously_accepted: Iterable[str],
     king: str,
     seed_commitment: str,
+    submission_cap: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Inspect every object at its deadline head, including malformed submissions."""
     epoch = epoch_id(epoch)
@@ -157,6 +159,11 @@ def build_snapshot(
         except (ContractError, ValueError, TypeError, VerifyError):
             reason = "invalid_schema_or_signature" if not reason else reason
         record["reason"] = reason
+        if submission is not None and not reason and submission_cap is not None and len(submission.task_ids) > submission_cap["cap"]:
+            reason = rejection_reason(len(submission.task_ids), epoch, submission_cap["cap"])
+            record["reason"] = reason
+            record["cap_rejected"] = True
+            record["task_count"] = len(submission.task_ids)
         if submission is not None and not reason:
             record["valid"] = True
             record["task_count"] = len(submission.task_ids)
@@ -205,6 +212,7 @@ def build_snapshot(
         "seed_commitment": seed_commitment,
         "tasks": round_robin(winners),
         "counts": counts,
+        **({"submission_cap": public_cap(submission_cap)} if submission_cap is not None else {}),
     }
     return manifest, job
 
@@ -301,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             store, epoch=epoch, registered=registered, activations=activated,
             known_task_ids=pool, previously_accepted=previous,
             king=king["version"], seed_commitment=commitment,
+            submission_cap=read_json(config.work_dir / "caps" / f"{epoch}.json") if (config.work_dir / "caps" / f"{epoch}.json").is_file() else None,
         )
         # Publish hashes immediately; private evidence and seed stay off public R2.
         sink.put(relative, json_bytes(manifest))

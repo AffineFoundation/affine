@@ -332,7 +332,12 @@ def print_link(link: dict[str, Any], *, show_url: bool = False) -> None:
         print(link["put_url"])
 
 
-def upload(link: dict[str, Any], raw: bytes, *, replace: bool = False) -> None:
+def upload(link: dict[str, Any], raw: bytes, *, replace: bool = False, cap: int | None = None, epoch_name: str | None = None) -> None:
+    if cap is not None:
+        document = json.loads(raw)
+        target = epoch_name or _linked_epoch(link)
+        if len(document["task_ids"]) > cap:
+            fail(f"submission has {len(document['task_ids'])} task ids; the per-hotkey cap for {target} is {cap}")
     if link.get("upload_mode") == "overwrite_until_deadline" and not replace:
         fail("this grant is overwrite_until_deadline; pass --replace only if you intend to replace your earlier upload before the deadline")
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
@@ -460,6 +465,19 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def public_cap(args: argparse.Namespace, target: str) -> int | None:
+    document = read_json(getattr(args, "state_url", STATE_URL))
+    current = document.get("current_epoch") or document.get("epoch")
+    field = "submission_cap" if current == target else "next_submission_cap"
+    value = document.get(field)
+    if not isinstance(value, dict) or value.get("epoch") != target:
+        return None
+    cap = value.get("cap")
+    if type(cap) is not int or not 1 <= cap <= MAX_TASKS_PER_SUBMISSION:
+        fail("public submission cap is invalid")
+    return cap
+
+
 def cmd_upload(args: argparse.Namespace) -> int:
     try:
         raw = args.batch.expanduser().read_bytes()
@@ -472,7 +490,8 @@ def cmd_upload(args: argparse.Namespace) -> int:
         fail("the batch hotkey does not own this sealed link")
     if submission.epoch != _linked_epoch(link):
         fail(f"batch epoch {submission.epoch} does not match link epoch {_linked_epoch(link)}")
-    upload(link, raw, replace=args.replace)
+    cap = link["max_tasks"] if "max_tasks" in link else public_cap(args, _linked_epoch(link))
+    upload(link, raw, replace=args.replace, cap=cap, epoch_name=_linked_epoch(link))
     print(f"uploaded epoch {submission.epoch}: {len(submission.task_ids)} tasks; PUT URL not logged")
     return 0
 
@@ -561,6 +580,7 @@ def parser() -> argparse.ArgumentParser:
             p.add_argument("--epoch", help="select the sealed next-epoch grant when available")
             p.add_argument("--replace", action="store_true", help="explicitly replace an earlier upload in overwrite mode")
             p.add_argument("--link-file", help=argparse.SUPPRESS)
+            p.add_argument("--state-url", default=STATE_URL, help=argparse.SUPPRESS)
         p.set_defaults(run=cmd_check if name == "check" else cmd_upload)
 
     p = commands.add_parser("status", help="read public Generator state, epoch results and optionally accepted-all")

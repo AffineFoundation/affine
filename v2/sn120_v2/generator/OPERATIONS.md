@@ -28,6 +28,17 @@ service user. Config example:
   "public_url": "https://affine.io",
   "credentials_file": "/home/const/sn120-generator/credentials",
   "first_epoch": "20261120T0400Z",
+  "submission_cap": {
+    "first_epoch": "20261120T2000Z",
+    "rollouts_per_pod_s": 3.15,
+    "pods": 1,
+    "scoring_budget_s": 13500,
+    "king_swap_s": 900,
+    "safety_margin": 0.25,
+    "samples_per_task": 8,
+    "min_cap": 1,
+    "max_cap": 32
+  },
   "ssh": {
     "host": "scorer-host-from-operator",
     "port": 22,
@@ -53,6 +64,22 @@ The pool cache must contain all eight verified `sn120-math-prior-v1` shards,
 build_index=True)` once in an offline preparation step; never substitute another
 pool. The index may be removed and rebuilt if damaged; the published manifest
 hash remains `45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115`.
+
+## Submission capacity cap
+
+The optional `submission_cap` object shown above is additive; all other config
+values and behavior stay unchanged. It enables caps from `20261120T2000Z`
+onward. At the first link issuance for an epoch (including `next` prefetch),
+`work/caps/<epoch>.json` freezes the active-hotkey count, formula inputs and cap.
+The capacity is
+`floor(rollouts_per_pod_s * pods * (scoring_budget_s - king_swap_s) * (1 - safety_margin) / samples_per_task)`,
+and the cap is that capacity divided by active hotkeys, floored and clamped to
+`min_cap..max_cap`. Default pods are `1 + len(ssh.helpers)`; explicit `pods`
+overrides that default. Defaults other than throughput, first epoch and pods
+are the values shown above. `20261120T1600Z` and earlier epochs are uncapped.
+Later registration changes never rewrite a frozen cap. Snapshot rejects an
+over-cap batch in full, without truncating or scoring any of its IDs. Miners
+see `max_tasks` in public and sealed links and in `state.json`.
 
 ## Commands
 
