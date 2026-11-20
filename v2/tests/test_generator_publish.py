@@ -78,6 +78,34 @@ def test_publication_has_only_four_intake_fields_and_reveals_secret(tmp_path):
     assert all(row["task_id"] in plan["rollouts"] for row in plan["accepted"])
 
 
+def test_rejected_and_unscored_public_rows_are_hashed_and_text_stays_private(tmp_path):
+    job = make_job(3)
+    output = make_output(3)
+    output["tasks"][0] = {"task_id": task_id(1), "s": 4, "n": 8, "q": decision(4, 8).q, "decision": "accept"}
+    output["tasks"][1] = {"task_id": task_id(2), "s": 0, "n": 8, "q": decision(0, 8).q, "decision": "reject"}
+    output["tasks"][2] = {"task_id": task_id(3), "s": 2, "n": 4, "q": None, "decision": "unscored"}
+    output["rollouts"] = {
+        task_id(i): [{"text": f"private generated text {i}", "seed": i, "pass": i == 1}]
+        for i in range(1, 4)
+    }
+    private_output = tmp_path / "private-out"
+    (private_output / "rollouts").mkdir(parents=True)
+    for i in range(1, 4):
+        (private_output / "rollouts" / f"{task_id(i)}.jsonl").write_text(json.dumps(output["rollouts"][task_id(i)][0]) + "\n")
+    plan = publication(job, output, out_dir=private_output, secret=SECRET, history=[], registered={1: "hk-a", 2: "hk-b", 3: "hk-c"}, now=DEADLINE + 60, pool_rows=Pool(), frozen_at=DEADLINE + 60)
+    accepted_row, rejected_row, unscored_row = plan["results"]["tasks"]
+    assert accepted_row["task_id"] == task_id(1)
+    assert accepted_row["rollouts"].endswith(f"/{task_id(1)}.jsonl")
+    assert accepted_row["decision"] == "accept" and accepted_row["s"] == 4 and accepted_row["n"] == 8
+    assert rejected_row == {"task_sha256": sha256_hex(task_id(2).encode()), "decision": "reject", "n": 8, "s": 0}
+    assert unscored_row == {"task_sha256": sha256_hex(task_id(3).encode()), "decision": "unscored", "n": 4, "s": 2}
+    assert set(plan["rollouts"]) == {task_id(1)}
+    assert task_id(2).encode() not in json_bytes(plan["results"])
+    assert task_id(3).encode() not in json_bytes(plan["results"])
+    assert b"private generated text 2" not in b"".join(plan["rollouts"].values())
+    assert (private_output / "rollouts" / f"{task_id(2)}.jsonl").is_file()
+
+
 def test_publish_is_atomic_idempotent_and_writes_intake_last(tmp_path):
     root = tmp_path / "site"
     root.mkdir()

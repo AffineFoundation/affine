@@ -17,7 +17,7 @@ from .common import PublicSink, append_once, atomic_bytes, atomic_json, json_byt
 from .config import Config, add_config
 from .constants import ACCEPT, BURN_UID, MAX_SAMPLES, MIN_SAMPLES, POOL_ID
 from .decisions import decision as protocol_decision
-from .epoch import epoch_deadline, epoch_id
+from .epoch import epoch_deadline, epoch_id, rollout_object
 from .payout import Claim, first_accepted_claims, payout_document, payout_weights, trailing_claims
 from .protocol import valid_task_id
 from .snapshot import accepted_ids, load_history
@@ -200,7 +200,17 @@ def publication(
         "version": "affine-generator-results-v1", "epoch": epoch,
         "published_at": utc_text(now), "pool": POOL_ID, "king": job["king"],
         "king_frozen_at": utc_text(frozen_at), "seed_commitment": normalized["seed_commitment"],
-        "seed_secret": secret, "hotkeys": counts, "tasks": rows,
+        "seed_secret": secret, "hotkeys": counts, "tasks": [
+            {
+                "task_id": row["task_id"], "decision": row["decision"], "s": row["s"], "n": row["n"],
+                "q": row["q"], "rollouts": rollout_object(epoch, f"{row['task_id']}.jsonl"),
+                "hotkey": row["hotkey"], "uid": row["uid"],
+            } if row["decision"] == ACCEPT else {
+                "task_sha256": sha256_hex(row["task_id"].encode()),
+                "decision": row["decision"], "n": row["n"], "s": row["s"],
+            }
+            for row in rows
+        ],
         "counts": {"tasks": len(rows), "accepted": len(accepted), "rejected": len(rows) - len(accepted)},
     }
     accepted_rows = []
@@ -220,7 +230,7 @@ def publication(
             raise VerifyError("the pinned pool row lacks problem, answer or source_id")
         # The mixer receives only the exact published pool identity and measured rate.
         intake_rows.append({"problem": problem, "answer": answer, "source_id": source_id, "prior_p": row["s"] / row["n"] if row["n"] else 0.0})
-    rollouts = load_rollouts(out_dir, output, by_id)
+    rollouts = load_rollouts(out_dir, output, {row["task_id"] for row in accepted})
     history_rows = list(history)
     old_claims = _history_claims(history_rows)
     recent = trailing_claims(claims.values(), now)

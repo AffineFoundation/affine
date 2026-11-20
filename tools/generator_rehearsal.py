@@ -246,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         if actual != expected:
             raise ConfigError("rehearsal intake checksum does not match")
         audit.update({
-            "status": "complete", "decisions": {row["id"]: row["decision"] for row in results["tasks"]},
+            "status": "complete", "decisions": {row.get("task_id", row["task_sha256"]): row["decision"] for row in results["tasks"]},
             "accepted": results["counts"]["accepted"], "intake_lines": len(intake),
             "intake_sha256": sha256_hex(raw_intake),
             "scorer_epoch": output["epoch"], "scratch_site": str(public),
