@@ -34,6 +34,10 @@ Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
 `.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
 for protocol checks. Credentials and generated artifacts stay outside Git.
 
+## v2 public task pool
+
+The v2 branch's [pool rotation document](v2/POOL_ROTATION.md) specifies the public active/reserve/retired task lifecycle. With `rotation_rule="info"`, `affine-pool-rotation-v2` ranks every candidate by Bernoulli Fisher information, keeps a configurable active size, and publishes the complete deterministic ranking and next-up queue. The static `/pool` page (`pool.html`) shows active-set composition, score histogram, recent admits/retires and per-task public evidence. The v1 rotation rule remains the default; this code does not activate the new params or deploy itself.
+
 Read AGENTS.md before modifying this repo. Legacy production and its private archive
 remain separate; this checkout does not automatically deploy changes.
 

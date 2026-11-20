@@ -1,0 +1,5215 @@
+{
+ "source": "A tier, 1,020 flagged tasks of gate-pool-v2 (sha256 8d34d276...), reviewed 2026-11-08",
+ "remove": [
+  {
+   "id": "dapo:10015",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Asks to find all polynomials (answer is the family 0, +-x^n etc., infinitely many); a single numeric key 5 does not correspond to the question as posed."
+  },
+  {
+   "id": "dapo:1019",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "Maximum is sqrt(3)/18 (numerically verified 0.096225), i.e. (0+sqrt3)/18 giving 21; key 12 matches no natural normalization."
+  },
+  {
+   "id": "dapo:10583",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Locus is the line x=(a+b)/2 (with exclusions); 'sum of x coefficients of the equation' depends on unstated normalization and parameters a,b."
+  },
+  {
+   "id": "dapo:11233",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Range is (-25/16, 6) (numeric sampling confirms min ~-1.562, max ~6), endpoint sum 71/16, not 2."
+  },
+  {
+   "id": "dapo:11892",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "2023",
+   "gate_head_pass": 0.0,
+   "reason": "Synthetic Charpit PDE problem with conditions that do not determine a unique solution; key 2023 is not derivable."
+  },
+  {
+   "id": "dapo:11984",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Key 3 is refuted: prefixes 1,16,169,169744,16974441796 are all squares (5 squares); the intended problem/answer is unclear."
+  },
+  {
+   "id": "dapo:12224",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1038.33",
+   "gate_head_pass": 0.0,
+   "reason": "Only a data table with no question; nothing to solve."
+  },
+  {
+   "id": "dapo:12667",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "120",
+   "gate_head_pass": null,
+   "reason": "Two-part question (marked price 200, cost 120); key gives only part (2)."
+  },
+  {
+   "id": "dapo:12852",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": null,
+   "reason": "Multi-part question including an enumeration part; single key 12 covers at most one part."
+  },
+  {
+   "id": "dapo:12948",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "198",
+   "gate_head_pass": 0.05,
+   "reason": "Two-part question (54 steps; 198); key gives only part (2)."
+  },
+  {
+   "id": "dapo:13866",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "-5",
+   "gate_head_pass": 0.0,
+   "reason": "Depends on a limited domain 'shown' in a missing graph; on all reals g(x)=d cannot have exactly six roots for integer d generically."
+  },
+  {
+   "id": "dapo:13962",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Requires a bar graph that is not given."
+  },
+  {
+   "id": "dapo:2150",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "O lies on x=3 by symmetry; parallel condition forces Q1=(0,+-2), so O=(3,+-3), r^2=10, area 10pi."
+  },
+  {
+   "id": "dapo:2509",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "49",
+   "gate_head_pass": 0.0,
+   "reason": "cos AOB = 0 so C = 45 deg = (45/1) deg giving 46; key 49 matches no clear normalization."
+  },
+  {
+   "id": "dapo:3106",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Answer is an interval (3/2, 2]; 'endpoints a/b, give a+b sum' relies on unstated convention for the integer endpoint."
+  },
+  {
+   "id": "dapo:3458",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Only n=3 gives a rational term, a_3 = 5/2; key 3 is the index, not the term."
+  },
+  {
+   "id": "dapo:3678",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Templated: answer (2n-4)/(n-1) asks 'm+n' at n=3 which gives 1 as a value, not m+n; the n clash makes the request ill-defined."
+  },
+  {
+   "id": "dapo:5686",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "105",
+   "gate_head_pass": 0.03333333333333333,
+   "reason": "Garbled translation; with every pair playing once and 5 players leaving after 2 games each, C(n-5,2)+10-x=100 gives n=19 (x=1); 105 is not consistent."
+  },
+  {
+   "id": "dapo:6825",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Factorization is 3(a-b)(b-c)(c-a); 'sum of coefficients' is convention-dependent (sign/order of differences, expanded sum is 0); key 9 unjustified."
+  },
+  {
+   "id": "dapo:7003",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Root triples must satisfy e1+e3=2e2; nonnegative solutions are (0,0,0),(0,1,1),(3,6,27),(3,7,16),(4,4,24): 5 polynomials (key 3 counts only positive roots)."
+  },
+  {
+   "id": "dapo:8139",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Says 'three elements' but lists only (3,8),(4,-1) (the third, (5,4), is missing); with two generators a=35, key 7 is for the original."
+  },
+  {
+   "id": "dapo:8389",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "69",
+   "gate_head_pass": 0.0,
+   "reason": "Area equality forces cyclic with perpendicular diagonals, so AB=BC=4, BD=8, CD=4sqrt3=6.928; 10*CD to one decimal is 69.3."
+  },
+  {
+   "id": "dapo:8557",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Parabola equation/parameter convention and 'sum of coordinates of the points' are unspecified."
+  },
+  {
+   "id": "dapo:8957",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "104",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: 52 unordered (312 ordered) triples of distinct integers with gcd 20 and lcm 20000; 104 matches neither."
+  },
+  {
+   "id": "dapo:9061",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3219226",
+   "gate_head_pass": 0.0,
+   "reason": "As stated, max S at (401,401,401,401,402) and min at (2002,1,1,1,1) give 1617628; key 3219226 uses the original's dropped |xi-xj|<=2 condition for the min."
+  },
+  {
+   "id": "dapo:9250",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "64",
+   "gate_head_pass": 0.0,
+   "reason": "Asymptote figure is garbled/truncated; visible fills give 28 half-unit triangles, inconsistent with key 64 without the full figure."
+  },
+  {
+   "id": "dapo:956",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "17",
+   "gate_head_pass": 0.0,
+   "reason": "The quantity to find is omitted and the 'answer format' 4sqrt3/9 is given outright; m+n+k would be 16, not 17."
+  },
+  {
+   "id": "dapo:9711",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "51",
+   "gate_head_pass": 0.0,
+   "reason": "Formula garbled ('(n^2+32)S_n^{+}1'); key 51 corresponds to the original S_n/((n+32)S_{n+1})."
+  },
+  {
+   "id": "dapo:9950",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "20",
+   "gate_head_pass": 0.0,
+   "reason": "Depends on a shading figure that is not given."
+  },
+  {
+   "id": "dapo:10206",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "24",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Multiple-choice options are missing; as stated any multiple of 4 (and 1 for r=0) is attainable, so 'sum of all n' is undefined."
+  },
+  {
+   "id": "dapo:1046",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "17",
+   "gate_head_pass": 0.0,
+   "reason": "Interval length is garbled ('c^{-1}/sqrt t', presumably e^{-t}/sqrt t giving sqrt(pi) and 17); as written the integral diverges."
+  },
+  {
+   "id": "dapo:11243",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "26",
+   "gate_head_pass": 0.0,
+   "reason": "Refers to a figure (points A, B, line segments) that is not provided."
+  },
+  {
+   "id": "dapo:11557",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "33",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric construction (B-mixtilinear touch point X, tangents to incircle, Poncelet) gives YZ^2=16.000, not 33."
+  },
+  {
+   "id": "dapo:11736",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "891",
+   "gate_head_pass": 0.0,
+   "reason": "As written (products (x_i-x_j)(y_i-y_j) over index pairs) the max is 24 (one per linear order); key 891 is the antichain answer for the intended condition (x_i-y_i)(x_j-y_j)<0 (verified count 891)."
+  },
+  {
+   "id": "dapo:11897",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": null,
+   "reason": "Garbled statement (missing 'r integers', condition (a) k<=4r makes 'smallest k' ill-defined); original is a proof that 4r classes suffice."
+  },
+  {
+   "id": "dapo:11985",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric check on random acute triangles shows EF/E'F' is not constant, so the problem as stated has no single answer."
+  },
+  {
+   "id": "dapo:12127",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Problem text contains a pasted (incorrect) solution; key 2 is impossible since 72 (a,c) configurations need at least 4 three-outcome weighings."
+  },
+  {
+   "id": "dapo:12226",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "10",
+   "gate_head_pass": 0.175,
+   "reason": "Not a problem: a fragment of a solution with undefined variables X1,Y1,..."
+  },
+  {
+   "id": "dapo:12438",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "k = 2^9 \\\\times m",
+   "gate_head_pass": null,
+   "reason": "Two-part 'find all k' question; key 'k = 2^9 times m' is a garbled partial answer covering only one case."
+  },
+  {
+   "id": "dapo:1254",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Contradictory data: d=0 forces all a_j=a_0=0, contradicting a_n=1."
+  },
+  {
+   "id": "dapo:12771",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "S = 111",
+   "gate_head_pass": null,
+   "reason": "Yes/no two-part question; S=75+4a so 121 impossible and 111 possible; key 'S = 111' is not a gradeable single answer."
+  },
+  {
+   "id": "dapo:13073",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "243",
+   "gate_head_pass": 0.0,
+   "reason": "Wording 'the correct number that she should have multiplied by 3' reads as 81, while key 243 is the correct product."
+  },
+  {
+   "id": "dapo:13794",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "\\\\frac{16}{9}",
+   "gate_head_pass": 0.18333333333333332,
+   "reason": "Series is not geometric: ratios are 16/9 then 4/3; key also has doubled backslash."
+  },
+  {
+   "id": "dapo:1397",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "84",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over all (x1,x2,x3) with at least 4 of 12 valid x4 (integer a,b) gives 90; duplicate of dapo:3464 which has a different key (48)."
+  },
+  {
+   "id": "dapo:1732",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Exact polynomial gcd of the two quintics is 1, so they share no roots as written (likely a transcription typo in the original)."
+  },
+  {
+   "id": "dapo:1956",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "328",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric optimization gives min -1/54 and max 1/324, so m+n sums to 53+325=378 (380 if sign dropped); key 328 matches neither."
+  },
+  {
+   "id": "dapo:241",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Add-on reuses m for both the minimum and the format parameter; true values are min -2, max sqrt2-3, and the requested form doesn't fit."
+  },
+  {
+   "id": "dapo:2663",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "49",
+   "gate_head_pass": 0.0,
+   "reason": "A={1,log2 3,log2 5}; the add-on format '{a,log_b,log_c}' is garbled and natural reading gives 9, not 49."
+  },
+  {
+   "id": "dapo:2852",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "6",
+   "gate_head_pass": 0.0,
+   "reason": "Requires a figure of the pinwheel that is not provided."
+  },
+  {
+   "id": "dapo:328",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1166",
+   "gate_head_pass": 0.0,
+   "reason": "Requires the staircase figure (external link only)."
+  },
+  {
+   "id": "dapo:3464",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "48",
+   "gate_head_pass": 0.0,
+   "reason": "Same problem as dapo:1397 (key 84) with key 48; brute force gives 90."
+  },
+  {
+   "id": "dapo:3801",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.025,
+   "reason": "T depends on which 25 primes are chosen (e.g. huge if 2 is included); key 1 only holds for the worst case/all-odd primes, which the statement does not specify."
+  },
+  {
+   "id": "dapo:4157",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Minimum is -1/4; key 5 takes m=1,n=4 ignoring sign, while m=-1 gives 3."
+  },
+  {
+   "id": "dapo:4963",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "37",
+   "gate_head_pass": 0.0,
+   "reason": "f=sin^2x+a sinx+a-3/a; for a>=2 min at sinx=-1 is 1-3/a<=0 iff a<=3, range [2,3], endpoint sum 5=5/1, p+q=6."
+  },
+  {
+   "id": "dapo:6178",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "323",
+   "gate_head_pass": 0.0,
+   "reason": "Divisible by 323 for all even n, infinitely many; 'number of integer values' is meaningless and key 323 is nonsense."
+  },
+  {
+   "id": "dapo:6827",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "15",
+   "gate_head_pass": 0.0,
+   "reason": "'Determine all distributions' converted to 'provide the value when n=5' with no defined quantity; key 15 has no clear meaning."
+  },
+  {
+   "id": "dapo:7491",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "Max is sqrt3/18 (numerically confirmed), so (m+sqrt n)/k = (0+sqrt3)/18 gives 21; key 12 does not match."
+  },
+  {
+   "id": "dapo:8153",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Uniqueness holds for every pair with b=a^2/4 (a curve), so 'the unique pair' does not exist."
+  },
+  {
+   "id": "dapo:8417",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for k=1 though k>1 is required, and ((k+1)/k)^k at k=1 is 2 giving m+n=3, not key 2."
+  },
+  {
+   "id": "dapo:8962",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.025,
+   "reason": "f(-x)=(x-1)/(x+1)=1/f(x) is an expression; 'k/m format, give k+m' is meaningless."
+  },
+  {
+   "id": "dapo:9173",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "13",
+   "gate_head_pass": 0.1,
+   "reason": "Proof problem with garbled add-on 'x=v=2' (x and x+1/x cannot both be 2)."
+  },
+  {
+   "id": "dapo:9260",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "200",
+   "gate_head_pass": 0.0,
+   "reason": "Add-on 'sum of the resistors for both principal designs' is contrived from a construction question (original answer 100)."
+  },
+  {
+   "id": "dapo:9582",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "A∩B are points (±1,±(a-1)),(±(a-1),±1); regular octagon iff a-1 = sqrt2±1, so a = sqrt2 or 2+sqrt2, sum 2+2sqrt2, m+n+k=6."
+  },
+  {
+   "id": "dapo:10041",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "18",
+   "gate_head_pass": 0.0,
+   "reason": "Depends on an unshown diagram: angle FAD is 27 or 117 depending on which side the square lies, and key 18 only matches angle GAD; it can't be determined without the figure."
+  },
+  {
+   "id": "dapo:10217",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "1006",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force of the generating function mod 2 (and an involution argument) gives b_{4i}=1 iff i=4j^2, so the sum over i<=2012 is 22, not 1006."
+  },
+  {
+   "id": "dapo:10825",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "60",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "The path is defined only by a missing figure ('the path shown'). The intended answer 20pi+40 -> 60 matches the AMC 8 original."
+  },
+  {
+   "id": "dapo:10952",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "The possible values are a=1/3 and a=sqrt(10). The 'm/n or sqrt(m), give max m+n' add-on is ill-defined for sqrt(m), which has no n."
+  },
+  {
+   "id": "dapo:11081",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "74",
+   "gate_head_pass": 0.0,
+   "reason": "As written, \\binom{[x]}{n} makes the first sum (n-1)/2 for any m, so the target sum is undetermined. The key 74 (m=5,n=4) only works if the notation means binom(n,[x]), a transposed Chinese C_n^k."
+  },
+  {
+   "id": "dapo:11593",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "The number of accent choices per letter is never specified, so n is undefined; key 4 relies on one assumed accent inventory from the original statement."
+  },
+  {
+   "id": "dapo:11914",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "4028",
+   "gate_head_pass": 0.35,
+   "reason": "The number of distinct roots of q with |r|<2015 depends on p and is not determined. The statement looks like a garbled 'prove' problem; key 4028 vs miners' 2015."
+  },
+  {
+   "id": "dapo:12857",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "408",
+   "gate_head_pass": 0.0,
+   "reason": "Two-part question. Part (a) has 12 triples (9 if m>=1), and part (b) asks for a list. Key 408 is the minimal product knm, which neither part asks for."
+  },
+  {
+   "id": "dapo:12977",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "n = 4",
+   "gate_head_pass": null,
+   "reason": "A yes/no existence question keyed as 'n = 4'; any sufficiently large n works, so the expected answer form ('yes') does not match the key."
+  },
+  {
+   "id": "dapo:131",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "75",
+   "gate_head_pass": 0.0375,
+   "reason": "The graph is given only as an image link, so the problem can't be solved from the text."
+  },
+  {
+   "id": "dapo:13275",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "360,720,1080",
+   "gate_head_pass": null,
+   "reason": "Two-part question with only part (b) keyed; part (b) also has a likely typo (N/a_1 vs N/a_4)."
+  },
+  {
+   "id": "dapo:13628",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "\\\\sqrt{3}",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for x=4, y=sqrt6-2 and the square root of x-1 (+-sqrt3); key gives only sqrt3."
+  },
+  {
+   "id": "dapo:13882",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "a = 33",
+   "gate_head_pass": null,
+   "reason": "Asks both for a and for the solution of the system (x=3/2, y=3); the key gives only 'a = 33' (correct by symmetry x->3-x)."
+  },
+  {
+   "id": "dapo:1398",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "How the 40 already-written haikus relate to the schedule is unclear; natural readings give hour 9 or hour 6, not the keyed 4 (which ignores the 40)."
+  },
+  {
+   "id": "dapo:3713",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "50",
+   "gate_head_pass": 0.0,
+   "reason": "Garbled translation ('a strip of length 100 is worth a chip', 'change any 2 neighboring chips'). The intended problem (reverse 100 chips; free swaps across 4 chips) has answer 50."
+  },
+  {
+   "id": "dapo:4661",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "25",
+   "gate_head_pass": 0.0,
+   "reason": "Requires a bar graph that isn't given."
+  },
+  {
+   "id": "dapo:4884",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Condition (2) should read A_i ∩ A_j = ∅ (a partition), not ≠ ∅. The known answer to the intended problem is m=56, and key 2 is wrong."
+  },
+  {
+   "id": "dapo:536",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "The defining condition on V (e.g. |P(x)|<=1 on [0,1]) is missing; the statement is just a sup with no constraints."
+  },
+  {
+   "id": "dapo:5571",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "237",
+   "gate_head_pass": 0.0,
+   "reason": "Relies on 'as shown' for how the triangle sits relative to the axes; the configuration is not fully specified in the text."
+  },
+  {
+   "id": "dapo:570",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "25",
+   "gate_head_pass": 0.0,
+   "reason": "The representation of u in terms of f and g is not unique (shifting all arguments gives other valid formulas), so a+b+c+d+e=25 is one convention among several."
+  },
+  {
+   "id": "dapo:6211",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "6",
+   "gate_head_pass": 0.0,
+   "reason": "The operation is garbled ('sum of the previous term and the previous term, which is equal to 1'); the intended x->1-x reading gives argmax 2/3+(1/3)2^-50 and key 6, but read literally as x->x+1 the answer differs."
+  },
+  {
+   "id": "dapo:6517",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "12",
+   "gate_head_pass": 0.725,
+   "reason": "The minimum is 3sqrt2+2sqrt5 (sum of diagonals). 'Sum of all coefficients' can mean a+c=5 (most miners) or a+b+c+d=12 (key)."
+  },
+  {
+   "id": "dapo:6650",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "log_b cos x = (1/2)log_b(1-b^{2a}), so p=2a depends on the variable a; the numeric 'm+n+p' add-on doesn't fit."
+  },
+  {
+   "id": "dapo:7526",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "56",
+   "gate_head_pass": 0.0,
+   "reason": "The figure is given only as an image link."
+  },
+  {
+   "id": "dapo:8027",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "Uniqueness requires y>=2x for x<y, so the maximum is the chain 1,2,4,...,1024 with 11 elements; key 10 is wrong (miners say 11)."
+  },
+  {
+   "id": "dapo:8159",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "The maximum area is 3sqrt11/2, which doesn't fit the stated form (sqrt m + n)/k; key 16 treats 3 as 'n'."
+  },
+  {
+   "id": "dapo:899",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "11",
+   "gate_head_pass": 0.0,
+   "reason": "The maximum volume is 2sqrt6/3, which doesn't fit the stated form (sqrt m + n)/k; key 11 treats the coefficient 2 as 'n'."
+  },
+  {
+   "id": "dapo:9091",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "56",
+   "gate_head_pass": 0.03,
+   "reason": "Brute force gives 57 counting n=1 (empty products, R=Q=1) and 56 excluding it; the key 56 implicitly excludes n=1 although 1<=n is stated."
+  },
+  {
+   "id": "dapo:9834",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "The ratio is 4/pi, which is not a ratio of integers k/m; the k+m add-on is ill-posed."
+  },
+  {
+   "id": "dapo:10229",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "31",
+   "gate_head_pass": 0.0,
+   "reason": "Leftover templating: 'when n=3 the answer is m/n, give m+n' grafted onto a general-n problem with clashing m notation."
+  },
+  {
+   "id": "dapo:10829",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "f=sin(4x-pi/6)+1/2 gives max 3/2 and min 1 on the interval; the 'sum of numerators and denominators' add-on is ill-defined and gives 7, not the key 12."
+  },
+  {
+   "id": "dapo:10970",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "54",
+   "gate_head_pass": 0.0,
+   "reason": "P is the diagonal intersection; PA*PC=PB*PD forces diagonals 3+8=11 and 4+6=10, area max 1/2*11*10=55 with perpendicular diagonals (achievable)."
+  },
+  {
+   "id": "dapo:12476",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "13",
+   "gate_head_pass": 0.025,
+   "reason": "Multi-part problem; in part (3) mn=2 gives (m,n)=(1,2) a=13 and (2,1) a=7, key lists only 13."
+  },
+  {
+   "id": "dapo:12547",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "8 + \\\\sqrt{545}",
+   "gate_head_pass": 0.0375,
+   "reason": "Geometry as stated (stream line through point 2E,6N of cowboy) gives sqrt(425), matching no option; problem mangled from AMC cowboy problem, and key has doubled backslash."
+  },
+  {
+   "id": "dapo:12684",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "22,33,40,42",
+   "gate_head_pass": null,
+   "reason": "a+b=43, b+1|44: (a,b)=(42,1),(40,3),(33,10),(22,21); key lists part (a)'s a-values while final part (b) asks for b."
+  },
+  {
+   "id": "dapo:12798",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "60",
+   "gate_head_pass": 0.0,
+   "reason": "Equation reduces to cos^2x+tan x=2, i.e. t^3-2t^2+t-1=0, t≈1.755, x≈60.3°, not 60; likely transcription error."
+  },
+  {
+   "id": "dapo:13279",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "20",
+   "gate_head_pass": 0.0,
+   "reason": "As stated, products n..n+20 are divisible by the square of a member for arbitrarily large n (e.g. all n up to 900), so no largest n; key 20 corresponds to a different original statement."
+  },
+  {
+   "id": "dapo:13904",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force gives max separators 1,2,2,2,3,4,5,6 for n=2..9, so the answer depends on n (n-3 for n>=5); the constant key 2 is wrong as an 'in terms of n' answer."
+  },
+  {
+   "id": "dapo:140",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Relies on a picture ('as shown') that is not provided; the configuration of the three triangles and pentagon is not determined by the text."
+  },
+  {
+   "id": "dapo:1822",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "134",
+   "gate_head_pass": 0.0,
+   "reason": "From the asy figure, side = r(1+1/sqrt2) with r=4, area = 24+16sqrt2 = 24+sqrt512, so m+n=536, not 134."
+  },
+  {
+   "id": "dapo:2010",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Min area is sqrt(2)e^{1/2}/2, so in the given form n=1/2 and m+n+k=4.5; the integer add-on (key 5) doesn't fit."
+  },
+  {
+   "id": "dapo:2420",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "15",
+   "gate_head_pass": 0.0,
+   "reason": "Needs a figure ('as shown') to locate P,Q,R,S relative to the circles; not given."
+  },
+  {
+   "id": "dapo:3163",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "660",
+   "gate_head_pass": 0.0,
+   "reason": "Problem asks for n and the a_i (and the max product); key gives only n=660."
+  },
+  {
+   "id": "dapo:3287",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over vertex paths 000->111 with non-crossing face diagonals gives max length 3+4√2≈8.66; key 7 equals the number of links, not the length."
+  },
+  {
+   "id": "dapo:4473",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Translation error: original has 3^k calls among any n-2 people (answer n=5); with '3k' many n work and the 'sum of possible n' is not 5."
+  },
+  {
+   "id": "dapo:4667",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Known HMMT answer is 20/3 (also the miner consensus); key 2 is wrong."
+  },
+  {
+   "id": "dapo:6434",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Primes 11,13,17,19 occur in no other number ≤20, so no partition of all of 1..20 into square-product groups exists; statement is corrupted."
+  },
+  {
+   "id": "dapo:6660",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "96",
+   "gate_head_pass": 0.025,
+   "reason": "Numeric check over random circle/triangle configs shows [ACE]-[BDF] = (√3/12)(S1-S2) invariantly, giving 192·√3/12 = 16√3, not 96."
+  },
+  {
+   "id": "dapo:7391",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for 'real part plus imaginary part' of a real minimum; true minimum of |AC|+3|BD| is 8+8√3."
+  },
+  {
+   "id": "dapo:7573",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "23",
+   "gate_head_pass": 0.0,
+   "reason": "Refers to a diagram pattern that is not provided."
+  },
+  {
+   "id": "dapo:7825",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Quotient is a-b, but with a=1,b=-1 the divisor contains a+b=0 so the division is undefined; key 1 is not a-b=2 either."
+  },
+  {
+   "id": "dapo:9204",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "'Find all the ways' asks for arrangements; the unique chain (and its reverse) is the answer, key '1' is a count not asked for."
+  },
+  {
+   "id": "dapo:927",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "Scoring system is unstated: with 2-1-0 points the max gap is n (10), with 3-1-0 it is 2n-1 (19)."
+  },
+  {
+   "id": "dapo:9419",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "-1",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Locus is 4x^2+y^2-4x+2y=0; the 'sum of x and y coefficients' depends on normalization (-2 here, key -1 uses halved form)."
+  },
+  {
+   "id": "dapo:9613",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "180",
+   "gate_head_pass": 0.0,
+   "reason": "Shaded region is defined only by a diagram that is not provided."
+  },
+  {
+   "id": "dapo:9768",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "6",
+   "gate_head_pass": 0.0375,
+   "reason": "The asked quantity (presumably R1/R2) is missing from the statement; R1/R2=√3/3 would give m+n=6."
+  },
+  {
+   "id": "math:3692",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "-\\frac{5}{2}",
+   "gate_head_pass": 0.0,
+   "reason": "6x^2+13x-5=(2x+5)(3x-1), so t=-5/2 and 1/3; key lists only -5/2."
+  },
+  {
+   "id": "math:6776",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "18",
+   "gate_head_pass": 0.0,
+   "reason": "k^2+36≡0 mod 180 gives k=12,18,42,...; asks for two smallest but key lists only 18."
+  },
+  {
+   "id": "math:6839",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "150^\\circ",
+   "gate_head_pass": 0.0,
+   "reason": "|c-(a·c)a|=1 gives a·c=±√3, so θ=30° or 150°; key lists only 150°."
+  },
+  {
+   "id": "math:7410",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "-3",
+   "gate_head_pass": 0.0,
+   "reason": "Singular iff a+b+c=0 (value -3) or a=b=c (value 3/2); key lists only -3."
+  },
+  {
+   "id": "dapo:10054",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Rear tire lifts when torque balance gives a = gw/(2h), so k=1, m=2 and k+m=3, not 2."
+  },
+  {
+   "id": "dapo:11917",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Statement is garbled: a cover of the plane by small open sets does not define a minimum N with 'any selection of N sets' having a triple intersection."
+  },
+  {
+   "id": "dapo:12309",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "128\\\\pi",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for both central angle (pi) and area (128pi) but key gives only area, written with a doubled backslash '128\\\\pi'."
+  },
+  {
+   "id": "dapo:12693",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "-1",
+   "gate_head_pass": 0.0,
+   "reason": "x1/x2 is a primitive cube root w; series has a typo (w^4 after w^2) and the full sum to w^1999 equals 1+w=-w^2, not -1, and depends on which root."
+  },
+  {
+   "id": "dapo:12804",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "1200",
+   "gate_head_pass": 0.0,
+   "reason": "Two-part question (a: 20 billion DM, b: about 1176 DM per capita); key 1200 is a rounded part b only."
+  },
+  {
+   "id": "dapo:12895",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "5490",
+   "gate_head_pass": 0.0,
+   "reason": "Two blanks (6 sequences containing 1; 5490 total); key gives only the second."
+  },
+  {
+   "id": "dapo:12988",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "e^{-1}\\approx0.368",
+   "gate_head_pass": null,
+   "reason": "Two-part question: general answer (1-V*/V)^N and limit e^{-1}; key gives only the limit with an approximation appended."
+  },
+  {
+   "id": "dapo:13123",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "57",
+   "gate_head_pass": 0.0,
+   "reason": "Four-part relay (a=4,b=5,c=24,d=57); key gives only final part d=57, which is correct."
+  },
+  {
+   "id": "dapo:13541",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "k=6",
+   "gate_head_pass": 0.45,
+   "reason": "Two integer solutions fit: (a,b,c)=(2,-8,8) gives g(150)=43808 so k=6, and (3,-20,28) gives 64528 so k=9."
+  },
+  {
+   "id": "dapo:13831",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "1:3",
+   "gate_head_pass": 0.0,
+   "reason": "Intersection points divide sides 3:1 from the apex (1:3 from base vertex); ratio order is unspecified."
+  },
+  {
+   "id": "dapo:13913",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "\\\\frac{3}{10}",
+   "gate_head_pass": 0.0,
+   "reason": "Red count stays even (2+2k), so 5 red balls is impossible; probability 0 and keyed 3/10 corresponds to a different urn rule. Key also has doubled backslash."
+  },
+  {
+   "id": "dapo:14049",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "10",
+   "gate_head_pass": 0.2,
+   "reason": "Inconsistent story (5 fixes at 15 min exceed an hour); key 10 assumes all 150 minutes spent fixing, miners say 8/9."
+  },
+  {
+   "id": "dapo:2954",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "a=-2/5, b=-1/3, a+b=-11/15; 'integer part' is -1 by floor or 0 by truncation (key 0)."
+  },
+  {
+   "id": "dapo:3519",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "30",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Sum = ln2/4 - pi/24 (numerically verified), denominators 4+24=28; form is also non-unique."
+  },
+  {
+   "id": "dapo:4693",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "89",
+   "gate_head_pass": 0.0,
+   "reason": "Requires the AIME figure ('as shown') that is not provided; answer 89 relies on it."
+  },
+  {
+   "id": "dapo:5218",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "546",
+   "gate_head_pass": 0.0,
+   "reason": "Proper colorings of C7 with 4 colors: 2184 labeled, 312 up to rotation, 156 up to rotation+reflection; key 546 matches none clearly."
+  },
+  {
+   "id": "dapo:5372",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "50",
+   "gate_head_pass": 0.0,
+   "reason": "Configuration (where D, E, F lie) requires a missing figure."
+  },
+  {
+   "id": "dapo:6436",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Templating reuses a,b ('sum is (b/a)pi, find a+b'); underlying answer 4pi/3 (pi + pi/3) gives 7 only via a garbled m/n conversion."
+  },
+  {
+   "id": "dapo:6709",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Answer depends on n (known answer 2n+2); key '2' is a constant. Prompt also contains leftover output-format instructions."
+  },
+  {
+   "id": "dapo:7272",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "18",
+   "gate_head_pass": 0.0,
+   "reason": "True cosine is 3*sqrt5/10 = sqrt45/10, which does not fit (sqrt m + n)/k; key 18 comes from misreading it as (sqrt5+3)/10."
+  },
+  {
+   "id": "dapo:8067",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "19901",
+   "gate_head_pass": 0.0,
+   "reason": "DP on small cases confirms max is at (1,100,...,100) with f0=19901 and a unique array, so f0+count=19902; key gives f0 only (original problem likely asked for the minimum)."
+  },
+  {
+   "id": "dapo:90",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "17",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: x, x^2+2x, 2x^2+x, x^3+3x^2+2x, 2x^3+3x^2+x (n<=7); coefficient sums 1+3+3+6+6=19."
+  },
+  {
+   "id": "dapo:9125",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "327",
+   "gate_head_pass": 0.0,
+   "reason": "Add-on 'sum of all summands' is trivially 1957; key 327 (=163+164, the distinct summands) does not match the question asked."
+  },
+  {
+   "id": "dapo:9436",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "11",
+   "gate_head_pass": 0.0,
+   "reason": "Problem text is a fragment missing the definition of H(P) and the integral."
+  },
+  {
+   "id": "dapo:9769",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "667",
+   "gate_head_pass": 0.0,
+   "reason": "Garbled OCR statement; the answer is a family of formulas and the 'm/n format' add-on does not fit."
+  },
+  {
+   "id": "dapo:998",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "36",
+   "gate_head_pass": 0.0,
+   "reason": "Two solutions a=5pi/6 and a=13pi/12; key 36 sums both m+n values (11+25), not a single m/n."
+  },
+  {
+   "id": "math:7413",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "\\begin{pmatrix} -2/3 \\\\ 2/3 \\\\ 1/3 \\end{pmatrix}",
+   "gate_head_pass": null,
+   "reason": "Both ±(2/3,-2/3,-1/3) are valid unit normals; key gives only one sign."
+  },
+  {
+   "id": "dapo:10081",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "As written (sum from k=1, n=2) the value is -2(x-1)^2+(x-2)^2 = 2-x^2; key 2 corresponds to the sum from k=0 ((-1)^n n!), and 'when n=2' is templated."
+  },
+  {
+   "id": "dapo:1026",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "5361",
+   "gate_head_pass": 0.0,
+   "reason": "Since 2011 is prime, x+y+z=2011 with permutations of (670,670,671) are the only solutions with x,y>=15 (x+y+z=1 case has none, brute-forced); element sum is 6033, not 5361."
+  },
+  {
+   "id": "dapo:10515",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "14",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over dates from 2008-04-15: first k with equal day-of-month is 76 (Jan 30 and Jun 30); k=14 gives Apr 1 and Apr 29."
+  },
+  {
+   "id": "dapo:10669",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for the probability 'when n = 1/6', which is nonsensical for a number of throws; templating error."
+  },
+  {
+   "id": "dapo:11006",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "179",
+   "gate_head_pass": 0.0,
+   "reason": "The answer depends on the unspecified angle alpha; the question is a garbled rewrite of a cone-geodesic problem and 179 is unjustifiable."
+  },
+  {
+   "id": "dapo:11774",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "24",
+   "gate_head_pass": 0.0,
+   "reason": "As written x^y = y^{x^{-y}} has only (1,1) (sum 2); key 24 corresponds to x^y = y^{x-y} with solutions (1,1),(8,2),(9,3), so the statement is garbled."
+  },
+  {
+   "id": "dapo:11924",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Minimal number of discontinuities is 1 (e.g. f=1/2+(x/2)sin(1/(1-x)) on [0,1), f(1)=1/2), and 'sum of all possible values of n' when n is minimized is a malformed add-on; key 2 is wrong as written."
+  },
+  {
+   "id": "dapo:12021",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "33",
+   "gate_head_pass": 0.0,
+   "reason": "Numerically S = (3pi/8)log 2 - G, giving A+B+C=27/8 and p+q=35 under the natural choice B=2, but the representation is non-unique (B=4, A=3/16 etc.) and two answer-format add-ons are stacked; key 33 does not match."
+  },
+  {
+   "id": "dapo:12560",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "16.5\\\\sqrt{3}",
+   "gate_head_pass": 0.0,
+   "reason": "Data contradictory: with BC=6, CD=7 and angle C=120, BD must be sqrt(127), not 8; the key 16.5 sqrt3 also does not match the area 23.5 sqrt3 from the angle data."
+  },
+  {
+   "id": "dapo:13003",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "0.05",
+   "gate_head_pass": 0.0,
+   "reason": "Two questions (ends in 2: 1/4; ends in 12: 1/20); key gives only the second."
+  },
+  {
+   "id": "dapo:13652",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "45",
+   "gate_head_pass": 0.0,
+   "reason": "Two questions (6 suitcases: 15 attempts; 10 suitcases: 45); key gives only the second."
+  },
+  {
+   "id": "dapo:1373",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "15",
+   "gate_head_pass": 0.0,
+   "reason": "Range works out to S in (0, 3sqrt3/2) U (3sqrt3/2, 6sqrt3); 'sum of endpoints' is ill-defined (gives 13 or 16 or 10 depending on convention) and none gives the key 15."
+  },
+  {
+   "id": "dapo:13844",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "2048",
+   "gate_head_pass": 0.15,
+   "reason": "Two-part question: (a) type of 2004 (type A) and (b) least N>2004 of other type (2048); key covers only (b)."
+  },
+  {
+   "id": "dapo:2250",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "Equal perimeters forces height = base, but no specific triangle is determined, so 'sum of base and height' has no unique value."
+  },
+  {
+   "id": "dapo:3193",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Requires the dot plot of scores, which is not provided."
+  },
+  {
+   "id": "dapo:3318",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "6",
+   "gate_head_pass": 0.0,
+   "reason": "Sum equals (n+2-ni)/2 (check n=4: 3-2i), so the coefficient of i depends on n and cannot be a constant b in k/m(n+a-b i); key 6 assumes b=1."
+  },
+  {
+   "id": "dapo:3521",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.025,
+   "reason": "Linear algebra: the all-ones vector is not in the span of the 2x3/3x2 rectangle constraints (rank 30 vs 31), so the sum is not determined for free; known answer is one query, 100 dollars."
+  },
+  {
+   "id": "dapo:3746",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "51",
+   "gate_head_pass": 0.0,
+   "reason": "Possible b are 0 and 0.50,0.51,...,1.00; their sum is 38.25 (key 51 is the count of the nonzero values)."
+  },
+  {
+   "id": "dapo:3952",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "660",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for n and the a_i (659 threes and one 2, product 2*3^659); key gives only n=660."
+  },
+  {
+   "id": "dapo:4088",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "354476",
+   "gate_head_pass": 0.0,
+   "reason": "Two independent brute-force implementations of the entanglement graph on 64 atoms give 350976 quadruples with odd edge count, not 354476."
+  },
+  {
+   "id": "dapo:4496",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "28",
+   "gate_head_pass": 0.0,
+   "reason": "Correct range is [9/4,5/2] U [13/4,+inf), so a+...+f = 9+4+5+2+13+4 = 37; wording '起始点' is also muddled."
+  },
+  {
+   "id": "dapo:5220",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "169",
+   "gate_head_pass": 0.0,
+   "reason": "a=b+2 with b>=5; right triangles (10,8,6), (8,6,10), (17,15,8) give a in {8,10,17}, sum 35."
+  },
+  {
+   "id": "dapo:5433",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": null,
+   "reason": "a=2 and l is 2x-4y+5=0, whose coefficient sum is 3 only under one sign/scale normalization (-3 or any multiple otherwise)."
+  },
+  {
+   "id": "dapo:5777",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "523152",
+   "gate_head_pass": 0.03333333333333333,
+   "reason": "Both 523152 and 523656 are divisible by 504; key lists only one."
+  },
+  {
+   "id": "dapo:5996",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "11",
+   "gate_head_pass": 0.0,
+   "reason": "Condition is that n divides 99, so 3, 9, 11, 33, 99 all work; the original AMC answer choices that singled out 11 are missing."
+  },
+  {
+   "id": "dapo:6442",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1019595",
+   "gate_head_pass": 0.0,
+   "reason": "Statement asks for the sum of mn (product), which is huge; key 1019595 = sum of m/n over 1<=m<n<=2020, so the \\frac was garbled into {m}{n}."
+  },
+  {
+   "id": "dapo:7199",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "720",
+   "gate_head_pass": 0.0,
+   "reason": "By Sturm comparison with sin(sqrt2021 x), the minimal c is pi/sqrt(2021); key 720 is unrelated to the stated problem."
+  },
+  {
+   "id": "dapo:7283",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0375,
+   "reason": "sin^2(2a)=sin a sin 4a forces cos a = -1/2, so m/n = -1/2 and m+n = 1; key 3 drops the sign."
+  },
+  {
+   "id": "dapo:7416",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "Integral equals (pi/8) ln 2, which is not of the form m pi / n; the answer template is wrong."
+  },
+  {
+   "id": "dapo:790",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.01,
+   "reason": "Unfolding makes the corner images the integer lattice, so N(T) ~ pi T^2 and least a = pi; integer part is 3, not 1."
+  },
+  {
+   "id": "dapo:8845",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "128",
+   "gate_head_pass": 0.0,
+   "reason": "Forbidding 000 (or 111) leaves 504 binary 10-words, all realizable in a 10000-digit walk on an irreducible shift; so M=504, not 128."
+  },
+  {
+   "id": "dapo:9004",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "19",
+   "gate_head_pass": 0.0,
+   "reason": "Requires the grid figure of AMC, which is not provided."
+  },
+  {
+   "id": "dapo:9440",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Multiple-choice options are missing, so 'sum of correct options' cannot be determined."
+  },
+  {
+   "id": "dapo:9633",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "700",
+   "gate_head_pass": 0.0,
+   "reason": "Requires the mobile figure (beam lengths/arrangement), which is not provided."
+  },
+  {
+   "id": "dapo:10265",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force n=4..7 shows only n=4 works (K4), matching the known result that n=4 is the only value; the key 4 is the value of n, not the number of values."
+  },
+  {
+   "id": "dapo:1069",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "2012",
+   "gate_head_pass": 0.0,
+   "reason": "As stated the answer is trivially 2 (a vertex with out-degree 1 to a vertex of out-degree 1 reaches only 2 vertices); key 2012 corresponds to a different (king-type) statement, so the problem is mistranslated."
+  },
+  {
+   "id": "dapo:11009",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "24",
+   "gate_head_pass": 0.0,
+   "reason": "Requires a figure defining the dashed path, which is not provided."
+  },
+  {
+   "id": "dapo:11196",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "14",
+   "gate_head_pass": 0.0,
+   "reason": "Volume is sqrt(2)/12, but the template asks for a+b+c with form sqrt(c)/b having no a; answer is 14 or 15 depending on reading (miners split)."
+  },
+  {
+   "id": "dapo:11654",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "Known answer depends on n: minimum is 12 for n=3 and 16 for n>=4; the problem asks for general n>=3 but key gives only 16."
+  },
+  {
+   "id": "dapo:12022",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "99^2 is not a sum of 2 distinct positive squares but large n clearly work, so a 'largest n' does not exist as stated; key 3 does not fit."
+  },
+  {
+   "id": "dapo:12334",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "n = 750",
+   "gate_head_pass": null,
+   "reason": "Yes/no existence question keyed with a specific n=750 (the smallest such n; any multiple of 750 works)."
+  },
+  {
+   "id": "dapo:12602",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "A=5,B=10,C=15,D=30",
+   "gate_head_pass": null,
+   "reason": "Equations force D=30, A=5, B+C=25 only, so many quadruples work (question asks for 'at least one')."
+  },
+  {
+   "id": "dapo:12699",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "\\\\frac{140}{9}",
+   "gate_head_pass": 0.0,
+   "reason": "Cayley-Menger with the given edges gives volume sqrt(6275)/6 ~ 13.20, matching none of the options; the data are inconsistent with key 140/9."
+  },
+  {
+   "id": "dapo:12920",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "27",
+   "gate_head_pass": 0.3,
+   "reason": "27 counts distinct values (reduced fractions), while 36 counts numerator/denominator pairs; both readings defensible."
+  },
+  {
+   "id": "dapo:13171",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "72\\pi \\text{ cm}^3",
+   "gate_head_pass": 0.0,
+   "reason": "Hemisphere volume depends on r alone, which is not determined by the cylinder volume 72pi; the combined volume is underdetermined."
+  },
+  {
+   "id": "dapo:13303",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "18",
+   "gate_head_pass": 0.0,
+   "reason": "Requires a figure showing the squares and grey triangle; not provided."
+  },
+  {
+   "id": "dapo:13566",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Third equation has a typo (tg^2 x + tg y instead of tg x + tg y); with the intended system tans are 1,2,3 and answer 4, but the literal system differs."
+  },
+  {
+   "id": "dapo:1672",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "Exhaustive search gives max n^2-1 on 2x2,3x3,4x4 boards (and 24 reachable on 5x5), so 8x8 max is 63, not 16."
+  },
+  {
+   "id": "dapo:1889",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Key 9 is far too small: pairs of balls rotated 90 degrees per layer with spacing sqrt2 already fit 26 balls; the true maximum (source likely 36) is not 9.",
+   "note": "no clean key given"
+  },
+  {
+   "id": "dapo:2286",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "33340000",
+   "gate_head_pass": 0.0,
+   "reason": "Expression has unbalanced parentheses and under the natural reading the value at x=1..100 is ~1.07e8, inconsistent with key 33340000."
+  },
+  {
+   "id": "dapo:3027",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Statement has typos (should be A_i∩A_j=∅, 'in A_i'); the known answer to this 14-partition problem is m=56, key 3 is wrong."
+  },
+  {
+   "id": "dapo:3342",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.025,
+   "reason": "Compass radius is unspecified (with radius 1 points repeat every 6); by the three-gap theorem the count can be 2 or 3, key 3 is only the upper bound."
+  },
+  {
+   "id": "dapo:3758",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "252",
+   "gate_head_pass": 0.0,
+   "reason": "Checking local solvability of n^2 = -2015^2 mod y^6-x^6 (validated against brute force for small moduli) gives pairs (3,28),(4,21),(7,24),(8,21),(20,21),(28,33), sum 1848."
+  },
+  {
+   "id": "dapo:5781",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "20",
+   "gate_head_pass": 0.03333333333333333,
+   "reason": "Depends entirely on a figure (square sizes) that is not provided."
+  },
+  {
+   "id": "dapo:6453",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Templated add-on ('sum of the bounds of u when |u|=1 and a=b=1') does not fit the original question, whose answer is c=pi/|ln a - ln b|."
+  },
+  {
+   "id": "dapo:7301",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Perpendicular tangents give x2=-1/4; with m/n=-1/4 the sum m+n is 3, while the key 5 uses |m|; sign convention unstated."
+  },
+  {
+   "id": "dapo:7933",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "1002",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force (0 counted as a square): integers 315-325 and 332-350 qualify; endpoint sum 1322 (1328 if 0 is excluded, which adds 1-5). Key 1002 matches neither."
+  },
+  {
+   "id": "dapo:8479",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Equation is (z+i)^4=1+i, a square with area 2^(5/4), which is irrational; the requested k/m form is impossible, so key 9 is meaningless."
+  },
+  {
+   "id": "dapo:9007",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "35",
+   "gate_head_pass": 0.0,
+   "reason": "With lengths in [m,2m] every triple is a triangle; with disjoint segments the max is trivially 5, and with shared segments it is far more than 35 (e.g. 11 short + 5 long gives 275), so key 35 fits no reading."
+  },
+  {
+   "id": "dapo:9136",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "24",
+   "gate_head_pass": 0.0,
+   "reason": "Any multiple of 4 (and 0) is achievable, so the set of possible n is infinite; the 'sum of all n' add-on (key 24) presumably came from lost multiple-choice options."
+  },
+  {
+   "id": "dapo:9232",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "59",
+   "gate_head_pass": 0.0,
+   "reason": "N=8p for every prime p>3 satisfies N/d(N)=p (e.g. 40, 56), so there are infinitely many N and the sum is undefined; key 59 comes from a finite list."
+  },
+  {
+   "id": "dapo:964",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "750",
+   "gate_head_pass": 0.0,
+   "reason": "Without the figure CD can be 25, 43, 57 or 75 depending on leg orientation, giving areas 450, 558, 642 or 750; the key assumes the obtuse configuration."
+  },
+  {
+   "id": "math:4251",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "(-5, 1)",
+   "gate_head_pass": 0.0,
+   "reason": "Hyperbola is (y-4)^2/3-(x+5)^2/6=1 with foci (-5,1) and (-5,7); the problem accepts either, but the key lists only (-5,1) and miners' (-5,7) was graded wrong."
+  },
+  {
+   "id": "dapo:10537",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Probability is (5-pi)/4 (verified by simulation), so with r+s*pi form r=5/4, s=-1/4 and r+s=1; key 4 corresponds to an unstated (r+s*pi)/4 form."
+  },
+  {
+   "id": "dapo:10909",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "10",
+   "gate_head_pass": 0.007142857142857143,
+   "reason": "Removing the outer two layers leaves (n-4)^3; (n-4)^3 > n^3/2 first holds at n=20. Key 10 corresponds to removing only one layer ((n-2)^3)."
+  },
+  {
+   "id": "dapo:11658",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "'存在 x0<0 ... 恒成立' is self-contradictory; under the existence reading the integer a are -2,-1,0,1 with sum -2 (brute-checked), not the key 0."
+  },
+  {
+   "id": "dapo:11951",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Original problem asks to prove S(p) <= c p^(2/3) for some constant; 'smallest constant' is not determined and key 1 is unjustified."
+  },
+  {
+   "id": "dapo:1209",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "16",
+   "gate_head_pass": 0.01,
+   "reason": "Newton search from 8000 random complex starts stably finds 96 distinct solutions with residual <1e-9, not 16."
+  },
+  {
+   "id": "dapo:12717",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "2012\\\\sqrt{2}",
+   "gate_head_pass": 0.25,
+   "reason": "Two-part question (a) 2sqrt2, (b) 2012sqrt2; key gives only part (b)."
+  },
+  {
+   "id": "dapo:12935",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "\\\\frac{1}{4}",
+   "gate_head_pass": 0.15,
+   "reason": "Multi-part (a2, a3, general term; existence of c); key 1/4 only answers part (2)."
+  },
+  {
+   "id": "dapo:13046",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "M = 5",
+   "gate_head_pass": null,
+   "reason": "Asks for both M and who was second in the high jump (C); key gives only M=5."
+  },
+  {
+   "id": "dapo:13177",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "15",
+   "gate_head_pass": 0.275,
+   "reason": "Two parts: (a)=6, (b)=C(6,2)=15; key gives only part (b)."
+  },
+  {
+   "id": "dapo:13761",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1600",
+   "gate_head_pass": 0.0,
+   "reason": "Sample size (total sampled) is not given, so B+D cannot be determined."
+  },
+  {
+   "id": "dapo:1428",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Templated 'm=3' version: (9+n)|(n^2+3) iff (n+9)|84, so the largest n is 75, not 5; the key comes from the original two-way divisibility problem."
+  },
+  {
+   "id": "dapo:1552",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Yes/no existence question encoded with key '1'; not a numerical answer."
+  },
+  {
+   "id": "dapo:1702",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "56",
+   "gate_head_pass": 0.025,
+   "reason": "Depends on unstated 'today' (contest year); age cannot be determined from the text."
+  },
+  {
+   "id": "dapo:2134",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "192",
+   "gate_head_pass": 0.025,
+   "reason": "F ranges over Aut(S6) (1440, brute-forced); exactly 48 satisfy the condition (inner automorphisms by sigma preserving {1,2}), not 192."
+  },
+  {
+   "id": "dapo:2288",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4050",
+   "gate_head_pass": 0.0,
+   "reason": "Equally spaced directions (18 deg apart) give 10*(18+36+54+72)+5*90=2250, the known maximum; 4050=45*90 is impossible."
+  },
+  {
+   "id": "dapo:2794",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Required angle 3A/2+B/2-C/2 is about 101 deg, but angle HBD for D on segment AH is at most 90-A (about 32 deg); condition cannot hold as written."
+  },
+  {
+   "id": "dapo:3228",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "6",
+   "gate_head_pass": 0.0,
+   "reason": "Exponent garbled as n^d (should be n^a); intended answers a=2,4 sum to 6."
+  },
+  {
+   "id": "dapo:4113",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Garbled templating: asks for f(n,2k) at k=1 'in format 2^k-1' and then 'm+n'; key 0 meaningless."
+  },
+  {
+   "id": "dapo:4939",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Templated 'n=2' add-on; the key 0 is nonsensical (c=0 is trivial). The intended max is c=2n, i.e. 4."
+  },
+  {
+   "id": "dapo:5129",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "21",
+   "gate_head_pass": 0.0,
+   "reason": "Positive-integer solutions are (3,5),(4,7), sum 19; key 21 includes the non-positive x=0 solution (0,2)."
+  },
+  {
+   "id": "dapo:6462",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "56",
+   "gate_head_pass": 0.025,
+   "reason": "Conditions are garbled (should be union = A and pairwise disjoint); as written every A_i = A and the answer would be trivial (m=4), not 56."
+  },
+  {
+   "id": "dapo:6610",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Two-part problem; part (2)'s max area depends on a,b and is not of the form m/n, and key 5 matches neither part (part (1) gives a=3)."
+  },
+  {
+   "id": "dapo:6815",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "51",
+   "gate_head_pass": 0.0,
+   "reason": "Formula is garbled ('(n^2+32)S_n^{+}1'); intended f(n)=S_n/((n+32)S_{n+1}) has max 1/50, giving 51."
+  },
+  {
+   "id": "dapo:695",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "8",
+   "gate_head_pass": 0.5416666666666666,
+   "reason": "Part (a) has 8 squares (all B^k and A^2), which matches the key, but part (b) asks for the words and is not keyed."
+  },
+  {
+   "id": "dapo:7208",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for a polynomial (x^4+x^3-3x^2-2x+2); key 9 is an unstated derived number (sum of the absolute values of the coefficients)."
+  },
+  {
+   "id": "dapo:7461",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "The condition gives c^2=2b^2, so |AB|/|F1F2| = 2b/(2sqrt2 b) = sqrt2/2, which is not of the stated m/n form; key 4 assumes an unstated reading."
+  },
+  {
+   "id": "dapo:8097",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "10 lines give 45 pairs; each parallel class has at most 2 lines (5 points), so at most 5 parallel pairs (regular pentagon), giving at least 40 non-parallel pairs; key 5 is the parallel-pair count."
+  },
+  {
+   "id": "dapo:8364",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "With x=1+1/u, 2-1/x maps u->u+1 and 3-2/x maps u->(u+1)/2; the pattern gives u=5, x=6/5, p/q=10085/6 (numerically confirmed), so p+q=10091."
+  },
+  {
+   "id": "dapo:8484",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.0375,
+   "reason": "Area range is (0,1/2); the endpoint sum 1/2 is not an integer, so the 'integer value' request with key 0 is ill-posed."
+  },
+  {
+   "id": "dapo:9149",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.025,
+   "reason": "Arrangement of the five unit squares comes from a missing figure; with the standard figure c=2/3 (key 5), but the text alone is underdetermined."
+  },
+  {
+   "id": "dapo:9469",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "-1",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for both limits (x_n -> -1, y_n -> 0); key gives only -1."
+  },
+  {
+   "id": "math:7382",
+   "env": "affine_math",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "\\frac{5\\pi}{3}",
+   "gate_head_pass": 0.0,
+   "reason": "No range for theta is stated; -pi/3 is equally valid, but the key accepts only 5pi/3."
+  },
+  {
+   "id": "math:7489",
+   "env": "affine_math",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "-\\frac{\\pi}{3}",
+   "gate_head_pass": 0.0,
+   "reason": "sin(3x-pi)=sin(3(x-pi/3)) is shifted pi/3 to the right; the standard phase shift is pi/3, and the key -pi/3 uses the opposite sign convention."
+  },
+  {
+   "id": "dapo:10116",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Key 2 appears to be in units of the target triangle's area; with side length 1 stated, the absolute total area would be sqrt(3)/2, so the expected normalization is unstated."
+  },
+  {
+   "id": "dapo:10542",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "6",
+   "gate_head_pass": 0.025,
+   "reason": "As written (a_i only for i=1..n-1, x_n free) n=7 works: x=1,2,3,5,6,11 with distinct x+1980/x and x_7=1; brute force shows 7 is max. Key 6 likely corresponds to a different original condition."
+  },
+  {
+   "id": "dapo:10719",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "10153",
+   "gate_head_pass": 0.0,
+   "reason": "Need 7|x and 7|y: 142^2=20164 ordered pairs; key 10153 counts unordered pairs with x<=y. 'Pairs' is ambiguous."
+  },
+  {
+   "id": "dapo:10915",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "61",
+   "gate_head_pass": 0.0,
+   "reason": "Free swaps permute within residue classes mod 4; reversal maps class 1<->0 and 2<->3, every token needs one class change, each paid swap changes two, and adjacent 0/1 and 2/3 swaps achieve it: 50."
+  },
+  {
+   "id": "dapo:11669",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Mod 7 odd integers hit all residues, so x^6 cannot be matched mod 7 by a lower-degree polynomial; any degree>=7 reduces to degree<=6 via CRT. Max is 6, not 5."
+  },
+  {
+   "id": "dapo:1210",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "15",
+   "gate_head_pass": 0.0,
+   "reason": "With half-chord constraints R^2 ranges over [15, 27.5); 15 is the minimum (attained), the maximum is a non-attained supremum 55/2. Key matches 'minimum', so min/max is swapped."
+  },
+  {
+   "id": "dapo:1220",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: max x1+..+x5=110, and the max of x9-x1 is 13 (x=16,22,23,24,25,26,27,28,29); 9 is the minimum, so the key answers a different question."
+  },
+  {
+   "id": "dapo:1236",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "96",
+   "gate_head_pass": 0.0,
+   "reason": "'What could be the volume' is a multiple-choice question with options missing; any 12k^3 works."
+  },
+  {
+   "id": "dapo:12519",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "1100",
+   "gate_head_pass": 0.0,
+   "reason": "Two blanks (200 billboards, 1100 meters) but key gives only the length."
+  },
+  {
+   "id": "dapo:12632",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "Value depends on m, which comes from a previous problem not given."
+  },
+  {
+   "id": "dapo:12731",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "4 \\\\pi - 4.912",
+   "gate_head_pass": 0.0,
+   "reason": "Multiple-choice with approximate decimal options and unclear tangency configuration; key also contains a doubled backslash '4 \\\\pi'."
+  },
+  {
+   "id": "dapo:12829",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3/2",
+   "gate_head_pass": 0.0,
+   "reason": "LDL test of the tridiagonal quadratic form gives threshold lambda ~1.000495 = sqrt(1010/1009); lambda=3/2 makes the form indefinite."
+  },
+  {
+   "id": "dapo:12942",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "{0}\\\\cup(1,2)",
+   "gate_head_pass": 0.15,
+   "reason": "Two inequalities asked; key gives only part (2) answer (part (1): x>-2, x!=4). Key also has a doubled backslash."
+  },
+  {
+   "id": "dapo:13181",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "\\frac{k}{(k-1)^2}",
+   "gate_head_pass": null,
+   "reason": "Two-part question (L=k/(k-1) and the second limit); key gives only part (b)."
+  },
+  {
+   "id": "dapo:13593",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5.0",
+   "gate_head_pass": 0.0,
+   "reason": "'Closest to' refers to answer choices that are missing."
+  },
+  {
+   "id": "dapo:13765",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Matching-format question asking to list all options for two islanders; single key '1' cannot represent the answer."
+  },
+  {
+   "id": "dapo:13858",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "121,16,36,121,484",
+   "gate_head_pass": 0.0,
+   "reason": "Two-part question (a) and (b) with a 'find all' list; key is a concatenated list mixing both parts."
+  },
+  {
+   "id": "dapo:13941",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "39",
+   "gate_head_pass": 0.08333333333333333,
+   "reason": "Two parts (max yellow apples, max apples); key 39 answers only part (b)."
+  },
+  {
+   "id": "dapo:2483",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "367",
+   "gate_head_pass": 0.0,
+   "reason": "Depends on a missing diagram: the spiral's starting direction changes the answer (367, 357, 331, 346 for the four starts)."
+  },
+  {
+   "id": "dapo:2835",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Pairwise tangent circles: equilateral triangle of side 2r inscribed in square of side 1-2r gives r=1/(2+2cos15deg), so (2-1/r)^2=4cos^2 15deg=2+sqrt3."
+  },
+  {
+   "id": "dapo:3771",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "8083",
+   "gate_head_pass": 0.0,
+   "reason": "Problem text is just a fraction with no question."
+  },
+  {
+   "id": "dapo:4779",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Duplicate of dapo:1220: max of x9-x1 is 13 (key 9 is the minimum)."
+  },
+  {
+   "id": "dapo:5235",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "-1008",
+   "gate_head_pass": 0.0,
+   "reason": "Direct computation of the alternating digit sum of 123...2016 gives 3935."
+  },
+  {
+   "id": "dapo:5838",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "255",
+   "gate_head_pass": 0.0,
+   "reason": "Key 255 counts position subsets (2^8-1); counting distinct subsequence strings (repeated R) gives 191."
+  },
+  {
+   "id": "dapo:6311",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "14",
+   "gate_head_pass": 0.0,
+   "reason": "With the stated F_0=F_1=1 the sum is ~2.35916 with no (a-sqrt b)/c form found; the key 14 = (7-sqrt5)/2 corresponds to standard indexing F_1=F_2=1."
+  },
+  {
+   "id": "dapo:6982",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.025,
+   "reason": "Overlap area is 1/sin(alpha), not a ratio of integers; the k/m add-on does not fit and the figure is missing."
+  },
+  {
+   "id": "dapo:7957",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "760",
+   "gate_head_pass": 0.0,
+   "reason": "As written (+59n) there are no positive n: (2n+59)^2+43=4m^2 has no positive solutions. Key 760=19*40 corresponds to n^2-59n+881."
+  },
+  {
+   "id": "dapo:8366",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "Asks a count (3 solutions) and then the sum of the solutions (10^2006+1) via a templated add-on; key 12 matches neither."
+  },
+  {
+   "id": "dapo:849",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "19",
+   "gate_head_pass": 0.0,
+   "reason": "Solution set is (0,1)U(1,2^{2/7})U(4,+inf), giving 0+1+1+2+2+7+4=17; key 19 does not match (form also non-unique)."
+  },
+  {
+   "id": "dapo:9797",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.03,
+   "reason": "Two-part question (max levels =4, probability of passing first three =100/243); key gives only part (1)."
+  },
+  {
+   "id": "dapo:9939",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for both the most and least profitable methods, then a templated 'integer value of the best method' with no defined mapping from a)-c) to integers."
+  },
+  {
+   "id": "dapo:10546",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.04,
+   "reason": "Parametrizing x=ty+m and imposing AD=6BE (7t=5(r-s)) gives AM/ME=|y1|/|y4|=sqrt(3) numerically for several m, not 3."
+  },
+  {
+   "id": "dapo:1105",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "34<=n<=36 so 11^3 divides n!; 'largest power of 11' could be answered as the exponent 3 or as 11^3=1331."
+  },
+  {
+   "id": "dapo:11424",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Templated add-on 'when a=1, give the sum of the triple' grafted onto a find-all problem; solutions are (a,0,0) and (-1,-1,1), so for a=1 the triple (1,0,0) sums to 1, not the key 0."
+  },
+  {
+   "id": "dapo:11727",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "89",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: valid n are 9,50,289,1682; for n=1682 the largest number written is 1681^2=2825761, which is 505 mod 2008, not 89."
+  },
+  {
+   "id": "dapo:11973",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Synthetic nonsense: the premise (non-rectifiable curve, Laurent approximation of 1) does not determine any 'smallest M', and the key 7 has no derivation."
+  },
+  {
+   "id": "dapo:12104",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "36",
+   "gate_head_pass": 0.0,
+   "reason": "As written the sum is about 69.135 with no closed form; the key 36 corresponds to the original sum 1/(sqrt n + sqrt(n+1)) which telescopes to sqrt(1369)-1."
+  },
+  {
+   "id": "dapo:12369",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "x=1, x=3",
+   "gate_head_pass": null,
+   "reason": "Two equations; part (1) has a solution in terms of a,b but only part (2)'s roots x=1,3 are keyed."
+  },
+  {
+   "id": "dapo:12734",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "2\\\\sqrt{2}",
+   "gate_head_pass": 0.55,
+   "reason": "Two-part question (trajectory equation and max area); only part (II) max area 2sqrt(2) is keyed (verified correct)."
+  },
+  {
+   "id": "dapo:12838",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "18",
+   "gate_head_pass": 0.0,
+   "reason": "Outer-layer positions are underspecified; the two natural readings give 22 or 28 equilateral triangles, neither matching the key 18."
+  },
+  {
+   "id": "dapo:13055",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "t = 25",
+   "gate_head_pass": null,
+   "reason": "Garbled two-part question (least positive real t and least positive integer t); only the integer part t=25 is keyed, with 't =' prefix."
+  },
+  {
+   "id": "dapo:13371",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "40",
+   "gate_head_pass": 0.0,
+   "reason": "Computation gives t=2(b+d)/(3(b+d)) = 2/3 hour; key 40 assumes minutes, unstated unit."
+  },
+  {
+   "id": "dapo:13448",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Op polynomials factor as (x^2+x+1)(x^2+2x+3) and (x^2+x+1)(2x^3+4x^2+7x+1); reachable configs are (x^2+x+1)Q with Q in (2,x+1), e.g. op1 minus two op2 at floor 2 leaves [1,2,2,1]; counting gives T(6)=360, T(12)=7875, total 8235, not 0."
+  },
+  {
+   "id": "dapo:13684",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "180.00",
+   "gate_head_pass": 0.0,
+   "reason": "Student-days 21+20+45=86, so Balboa earns 20*744/86=7440/43 (about 173.02); key 180 fits the original numbers (likely total 774), not the stated data."
+  },
+  {
+   "id": "dapo:13954",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "12500",
+   "gate_head_pass": 0.0,
+   "reason": "Altered AIME 1998 problem: with 25|x| and 625 the curve does not factor and a grid flood fill finds no bounded region at all, so the volume is undefined."
+  },
+  {
+   "id": "dapo:1717",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "low",
+   "answer_key": "196",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric construction (D=O+(R/r)(A-I)) gives AX^2=448/3 (the reflected orientation of equal area gives about 244.8); neither matches 196."
+  },
+  {
+   "id": "dapo:2141",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.03333333333333333,
+   "reason": "Garbled statement (mentions M x N) but for the 2x4 grid brute force shows 3 rectangle queries suffice (row 1, cols 1-2, cols 2-3), and 3 is the lower bound log2(8)."
+  },
+  {
+   "id": "dapo:25",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Statement is truncated: 'these numbers' and 'Shiny' are never defined; the original answer K(n)=-(n-1)/2 gives -1 for n=3, not the key 1."
+  },
+  {
+   "id": "dapo:2644",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Numerically solving angle BPC=135 gives CP/AP=4.6458=2+sqrt(7), so a+b=9, not 3."
+  },
+  {
+   "id": "dapo:2836",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Garbled Chinese template; min of f is 2sqrt(3)-4, so sqrt(2)*(min-1)=2sqrt(6)-5sqrt(2), nowhere near the key 1."
+  },
+  {
+   "id": "dapo:363",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "25",
+   "gate_head_pass": 0.0,
+   "reason": "Request 'sum of 12 alpha v' is garbled; alpha=3/4, beta=4/3 so key 25 matches 12(alpha+beta), but the asked quantity is not stated."
+  },
+  {
+   "id": "dapo:4615",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "564",
+   "gate_head_pass": 0.0,
+   "reason": "Leg lengths are only given in an external image; problem text lacks needed data."
+  },
+  {
+   "id": "dapo:4956",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "The function whose zeros are counted is missing from the statement."
+  },
+  {
+   "id": "dapo:5684",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1089",
+   "gate_head_pass": 0.0,
+   "reason": "Template mash-up: the count is (6r^2+4r+1)(6s^2+4s+1), which is 363 at r=2,s=1; the 'sum of coefficients' instruction contradicts this and the key 1089 matches neither reading."
+  },
+  {
+   "id": "dapo:6099",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "144",
+   "gate_head_pass": 0.0,
+   "reason": "Angle '25 deg 300 min' is garbled; key 144 corresponds to a 2.5 deg (2 deg 30 min) rotation, while 25 deg 30 min would give 240."
+  },
+  {
+   "id": "dapo:6312",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "206",
+   "gate_head_pass": 0.0,
+   "reason": "Visible area = 175pi/3 - 25sqrt(3) (numerically verified 139.96); with p=-25 allowed as an integer, m+n+p+q=156; key 206 uses |p|."
+  },
+  {
+   "id": "dapo:6474",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Last digits of (n(n+1)/2)^2 are only 0,1,4,5,6,9, so 2,3,7,8 are all impossible; the single key 2 is one of four valid answers (originally multiple choice)."
+  },
+  {
+   "id": "dapo:6630",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "36",
+   "gate_head_pass": 0.0,
+   "reason": "Each union of two transport types must be connected (>=12 edges), so 2E>=36 and E>=18, which is achievable; 36 is the double-counted bound, not the answer."
+  },
+  {
+   "id": "dapo:6993",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Leftover 'n=1' template: with n=1 the conditions x_1 != 0 and sum x_i = 0 contradict each other."
+  },
+  {
+   "id": "dapo:7332",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Number of even subgraphs is 2^{e-v+1}; a connected simple graph with v=2 has e=1, giving 1, not 2."
+  },
+  {
+   "id": "dapo:8377",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1394",
+   "gate_head_pass": 0.0,
+   "reason": "Recurrence is garbled ('a_{n/}^2+2'); as written S_64 is about 5.2e16, while the key 1394 comes from the intended a_n=a_{n/2}+2."
+  },
+  {
+   "id": "dapo:8932",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Coordinates A(-4,0,0),C(4,0,0),B(0,3,0),D(0,-3,0), center (4,0,r): tangency forces edge direction (3/4,0,sqrt7/4) and r=8/sqrt7, about 3.02, not 4."
+  },
+  {
+   "id": "dapo:9249",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "49",
+   "gate_head_pass": 0.0,
+   "reason": "Two parts (n=2 and n=100) but one key; part (1) gives 4901/99 (about 49.5), so key 49 matches neither part cleanly."
+  },
+  {
+   "id": "dapo:9674",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "14",
+   "gate_head_pass": 0.1,
+   "reason": "The angle beta itself is not of the form sqrt(m)/n; sin(beta)=sqrt(10)/4 gives 14 (key) but cos(beta)=sqrt(6)/4 gives 10 (miners' answer), so the statement is garbled about which function is meant."
+  },
+  {
+   "id": "dapo:1818",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over all m and both directions: winners 2,7,5 force the 4th winner to be 3 (one direction) or 6 (other); 8 is never reachable, and the free choice of direction makes the answer non-unique."
+  },
+  {
+   "id": "dapo:12400",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for two quantities (scalar square = 9, length = 3); key gives only the length."
+  },
+  {
+   "id": "dapo:7516",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Part (2) of a multi-part problem; k(x0) is defined only in the missing part (1). Brute force (iterate until x<=1) gives max V = 5, matching the key, but the statement is incomplete."
+  },
+  {
+   "id": "dapo:57",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Templated rewrite sets a=b=1, contradicting the hypothesis a<b; then the ratio is identically 0, so the m/n answer and key 2 are meaningless."
+  },
+  {
+   "id": "dapo:5190",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "Each chord step sweeps signed area (1/2)sin a; sum over a=253..77 step 2 gives (sqrt6-sqrt2)/8 * cot 1 deg (verified numerically), so a+b+c=16; key 12 drops the factor 1/2."
+  },
+  {
+   "id": "dapo:13146",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": null,
+   "reason": "Two-part problem: (a) m=24, (b) n=12; key gives only part (b)."
+  },
+  {
+   "id": "dapo:3777",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "2993",
+   "gate_head_pass": 0.0,
+   "reason": "Garbled templating of 'n <= 998 or n >= 3989'; the stated form 'n > 2b+1' does not fit 3989 with integer b, and key 2993 (=998+1995) is inconsistent with it."
+  },
+  {
+   "id": "dapo:3584",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Problem assumes n>=4 but asks for n=3; with 3 points there are at most 3 segments, so key 4 is impossible."
+  },
+  {
+   "id": "dapo:11119",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Templated 'm/n format, give m+n when n=2' collides with the sequence index n; a_n = C(3n,n)/(2n+1) gives a_2=3 (=3/1, m+n=4), so key 3 rests on an ill-defined instruction."
+  },
+  {
+   "id": "dapo:6016",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "b_n = (sqrt(1+sqrt b_{n-1}) - 1)^2 and the sum equals 2 - 2 ln 2 = 0.6137 (verified numerically), whose integer part is 0; key 2 is the constant term, not the integer part."
+  },
+  {
+   "id": "dapo:10987",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Asks for both the maximum and minimum terms (which are specific a_n values), but the key is just '1', which is neither (a_n is never 1)."
+  },
+  {
+   "id": "dapo:12012",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "medium",
+   "answer_key": "13",
+   "gate_head_pass": 0.025,
+   "reason": "Numerical minimization over the simplex puts the minimizer at x ~ 2.6175, not a simple rational p/q with p+q=13; expression appears garbled."
+  },
+  {
+   "id": "dapo:7223",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "x = y/(1+y) is an expression in y, so 'm/n form, give m+n' is meaningless; key 2 is arbitrary."
+  },
+  {
+   "id": "dapo:6481",
+   "env": "dapo",
+   "verdict": "BROKEN",
+   "confidence": "high",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "Locus is x^2+(y-1/5)^2=(4/5)^2, but the instruction 'give m+n' never defines m,n; key 16 is not derivable. Also two-part with part (2) unkeyed."
+  },
+  {
+   "id": "dapo:13211",
+   "env": "dapo",
+   "verdict": "AMBIGUOUS",
+   "confidence": "medium",
+   "answer_key": "400",
+   "gate_head_pass": 0.0,
+   "reason": "'What values can n^2 d take' has answer +-400 (reversing the progression flips the sign of d); key lists only 400."
+  }
+ ],
+ "fix_key": [
+  {
+   "id": "dapo:10399",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Numerically |2+2e^{2pi i/5}+e^{6pi i/5}| = 2.23607 = sqrt5; key 5 is the squared modulus.",
+   "new_key": "\\sqrt{5}"
+  },
+  {
+   "id": "dapo:11056",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Condition reduces to a^2=b^2+c^2+bc (A=120 deg); min AD = sqrt(3)/3, so m+n=6; key 1 impossible for positive m,n.",
+   "new_key": "6"
+  },
+  {
+   "id": "dapo:11435",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2016",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force gives 1512 distinct values; key 2016 exceeds the number of i values.",
+   "new_key": "1512"
+  },
+  {
+   "id": "dapo:11729",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "Minimum x+y = (3+2sqrt2)/5 (numerically verified), so m+n+k = 3+2+5 = 10, not 9.",
+   "new_key": "10"
+  },
+  {
+   "id": "dapo:12373",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "12^{47}",
+   "gate_head_pass": 0.0,
+   "reason": "Tuzik meets Ivan 1020 s after 12:30, i.e. 12:47; key written as 12^{47}.",
+   "new_key": "12:47"
+  },
+  {
+   "id": "dapo:12539",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k=2, k=3, k=4",
+   "gate_head_pass": 0.375,
+   "reason": "Brute force mod 10^k confirms k=2,3,4 only; key written as 'k=2, k=3, k=4' assignments.",
+   "new_key": "2, 3, 4"
+  },
+  {
+   "id": "dapo:12736",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "k = 1012",
+   "gate_head_pass": 0.2,
+   "reason": "Known answer 1012; key has 'k =' assignment.",
+   "new_key": "1012"
+  },
+  {
+   "id": "dapo:13072",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "k = n",
+   "gate_head_pass": 0.225,
+   "reason": "Answer k=n; key has 'k =' assignment.",
+   "new_key": "n"
+  },
+  {
+   "id": "dapo:13382",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "a=1, 3, 6, 10",
+   "gate_head_pass": 0.05,
+   "reason": "Brute force confirms a in {1,3,6,10}; key has 'a=' prefix.",
+   "new_key": "1, 3, 6, 10"
+  },
+  {
+   "id": "dapo:13602",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k = 8m + 1",
+   "gate_head_pass": 0.7,
+   "reason": "Answer 8m+1 (miners agree); key has 'k =' assignment.",
+   "new_key": "8m+1"
+  },
+  {
+   "id": "dapo:1719",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Exhaustive search over all monotone 4x4 fillings gives minimum 8 good pairs, not 4.",
+   "new_key": "8"
+  },
+  {
+   "id": "dapo:1940",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "4x^2-20x-375<=0 gives -7.5<=x<=12.5, so M-m=20; key 9 is wrong (19 even if integers).",
+   "new_key": "20"
+  },
+  {
+   "id": "dapo:2401",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "10105",
+   "gate_head_pass": 0.0,
+   "reason": "E = n 2^{n-1}/(2^n-1) is slightly above 1010.5 for distinct vertices, so ceil(10E)=10106.",
+   "new_key": "10106"
+  },
+  {
+   "id": "dapo:2646",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "63",
+   "gate_head_pass": 0.0,
+   "reason": "a_n = n(n-1)/2+1, ratio = (n-1)/2 + 2019/n; n=64 gives 63.0469 < 63.0476 at n=63.",
+   "new_key": "64"
+  },
+  {
+   "id": "dapo:3778",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "23",
+   "gate_head_pass": 0.0,
+   "reason": "For n=3, sum=3, sum of squares 9: minimum of sum of cubes is 15 at (-1,2,2) (numeric scan of whole circle).",
+   "new_key": "15"
+  },
+  {
+   "id": "dapo:4150",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "24",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over all 24^3 triples gives 48 valid triples.",
+   "new_key": "48"
+  },
+  {
+   "id": "dapo:4629",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Sum = (1/3) ln^3 2 (numerically 0.33333), so m+n = 4.",
+   "new_key": "4"
+  },
+  {
+   "id": "dapo:483",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "With u=a+4, v=b-3: u^3+u+1=0 and v^3+v-1=0, so v=-u and a+b=-1.",
+   "new_key": "-1"
+  },
+  {
+   "id": "dapo:5142",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1111111110",
+   "gate_head_pass": 0.0,
+   "reason": "Key 1111111110 not divisible by 8 or 7; brute force gives 1111011111000 as smallest 0/1 multiple of 2520.",
+   "new_key": "1111011111000"
+  },
+  {
+   "id": "dapo:639",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2016031",
+   "gate_head_pass": 0.0,
+   "reason": "Frobenius number of 2008,2009,2010 with nonnegative coefficients is 2016031 (the key); with positive x,y,z as stated, add 6027 to get 2022058.",
+   "new_key": "2022058"
+  },
+  {
+   "id": "dapo:7117",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: R(13)=R(14)=25 and R(97)=R(98), so 2 two-digit n.",
+   "new_key": "2"
+  },
+  {
+   "id": "dapo:7346",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-120",
+   "gate_head_pass": 0.0,
+   "reason": "Sum of A is 15/3=5, so A = {6,2,0,-3} and the product is 0, not -120.",
+   "new_key": "0"
+  },
+  {
+   "id": "dapo:7979",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Each element lies in 7 nonempty proper subsets, so 7S=28 and S=4.",
+   "new_key": "4"
+  },
+  {
+   "id": "math:1336",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "5225 \\text{ cubic inches}",
+   "gate_head_pass": 1.0,
+   "reason": "Answer 5225 correct; key includes 'cubic inches' text.",
+   "new_key": "5225"
+  },
+  {
+   "id": "math:2324",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "0.20",
+   "gate_head_pass": 0.0,
+   "reason": "Problem asks for the letter; correct choice is C (0.20) but key is '0.20'.",
+   "new_key": "C"
+  },
+  {
+   "id": "math:3458",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "-2x-1",
+   "gate_head_pass": 0.0,
+   "reason": "Both g=2x+1 and g=-2x-1 work; key lists only one.",
+   "new_key": "2x+1, -2x-1"
+  },
+  {
+   "id": "math:4569",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "-12 \\text{ or } -30",
+   "gate_head_pass": null,
+   "reason": "Correct values; key uses 'or' instead of comma list.",
+   "new_key": "-12, -30"
+  },
+  {
+   "id": "math:6226",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "14 \\text{ right triangles}",
+   "gate_head_pass": 0.75,
+   "reason": "Answer 14 correct; key includes 'right triangles' text.",
+   "new_key": "14"
+  },
+  {
+   "id": "math:6812",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "-3",
+   "gate_head_pass": 0.0,
+   "reason": "Eigenvalues are 1+-4 = 5 and -3; key lists only -3.",
+   "new_key": "5, -3"
+  },
+  {
+   "id": "math:7317",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "75^\\circ, 75^\\circ",
+   "gate_head_pass": 0.0,
+   "reason": "Angles are 30, 75, 75 (law of cosines gives apex 30); key omits 30.",
+   "new_key": "30^\\circ, 75^\\circ, 75^\\circ"
+  },
+  {
+   "id": "dapo:11066",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "36",
+   "gate_head_pass": 0.0,
+   "reason": "AC=7, triangle ACD with sides 7,5,3 has angle D=120 deg, so ABCD is cyclic and Ptolemy gives 7*BD=35+21, BD=8.",
+   "new_key": "8"
+  },
+  {
+   "id": "dapo:12855",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "c = \\\\frac{1}{4}",
+   "gate_head_pass": 0.1,
+   "reason": "Answer 1/4 is the known result, but key 'c = \\\\frac{1}{4}' has an assignment and doubled backslash.",
+   "new_key": "\\frac{1}{4}"
+  },
+  {
+   "id": "dapo:13221",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "P(P(a)) = a",
+   "gate_head_pass": 0.025,
+   "reason": "Yes/no question; key written as the statement 'P(P(a)) = a' rather than 'Yes'.",
+   "new_key": "Yes"
+  },
+  {
+   "id": "dapo:13615",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 8, 9",
+   "gate_head_pass": 0.35,
+   "reason": "Answer set {8,9} plausible; key has 'n =' assignment.",
+   "new_key": "8, 9"
+  },
+  {
+   "id": "dapo:13869",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "0 \\\\text{ and } m-1",
+   "gate_head_pass": null,
+   "reason": "Min 0 and max m-1 is correct; key uses doubled-backslash '\\\\text{ and }'.",
+   "new_key": "0, m-1"
+  },
+  {
+   "id": "dapo:2163",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "20",
+   "gate_head_pass": 0.0,
+   "reason": "(n-2)^3 > n^3/2 first holds at n=10 (512>500; n=9: 343<364.5).",
+   "new_key": "10"
+  },
+  {
+   "id": "dapo:2519",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "15",
+   "gate_head_pass": 0.0,
+   "reason": "Evenness gives f(-10)-1000=f(10)+1000, so f(-10)=2015.",
+   "new_key": "2015"
+  },
+  {
+   "id": "dapo:4052",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "89",
+   "gate_head_pass": 0.0,
+   "reason": "Checked mod p for all two-digit primes: only p=41 satisfies F_{n+100}+F_n = 0 mod p for all n; 89 fails.",
+   "new_key": "41"
+  },
+  {
+   "id": "dapo:5145",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric construction gives EB/ED = 2.3094 = 4/sqrt3 = sqrt(BC/BD), not 4.",
+   "new_key": "\\frac{4\\sqrt{3}}{3}"
+  },
+  {
+   "id": "dapo:5552",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-22",
+   "gate_head_pass": 0.0,
+   "reason": "x&y=x-y satisfies both rules, giving 2000&2002=-2.",
+   "new_key": "-2"
+  },
+  {
+   "id": "dapo:6516",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Roots are 1, i, 2+3i, 3+2i (verified), forming a sqrt2 x 2sqrt2 rectangle of area 4.",
+   "new_key": "4"
+  },
+  {
+   "id": "dapo:7007",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1358",
+   "gate_head_pass": 0.0,
+   "reason": "(839/28)(419/15)=351541/420=837+1/420, so a+m+n=1258.",
+   "new_key": "1258"
+  },
+  {
+   "id": "dapo:7152",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "606",
+   "gate_head_pass": 0.0,
+   "reason": "Fourth largest of 5 = second smallest, E=2*91/6=30.33, floor(10E)=303; key 606 corresponds to the fourth smallest.",
+   "new_key": "303"
+  },
+  {
+   "id": "dapo:7233",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2976",
+   "gate_head_pass": 0.0,
+   "reason": "Integer-valuedness requires n | 6*2013=12078 and every divisor works (e.g. 2013(m^3-m)); sum of divisors of 12078 is 29016 (key 2976 = sigma(2013)).",
+   "new_key": "29016"
+  },
+  {
+   "id": "dapo:7739",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "g(x)/x = (x+1)(1+1/x)^x/x -> e, integer part 2.",
+   "new_key": "2"
+  },
+  {
+   "id": "dapo:8594",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "Equation reduces to cos(theta)=0 with sin(theta)!=1, largest negative angle -pi/2, so m+n=3.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:9072",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "B'C' = R(tanB+tanC) = (8/sqrt7)(3sqrt7+sqrt7/3) = 80/3.",
+   "new_key": "\\frac{80}{3}"
+  },
+  {
+   "id": "dapo:9373",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-4",
+   "gate_head_pass": 0.0,
+   "reason": "Values at vertices are 13, 14, -18; max-min = 32.",
+   "new_key": "32"
+  },
+  {
+   "id": "dapo:9827",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "F(s,t)=5s^2-7st+6t^2, so |C-A|=10*sqrt(5/6) and (sqrt30/6)|C-A| = 25/3.",
+   "new_key": "\\frac{25}{3}"
+  },
+  {
+   "id": "math:1446",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k=6",
+   "gate_head_pass": null,
+   "reason": "Key 'k=6' contains an assignment.",
+   "new_key": "6"
+  },
+  {
+   "id": "math:3241",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "164 \\pi \\mbox{ square feet}",
+   "gate_head_pass": null,
+   "reason": "Correct (R^2=8^2+10^2), but key includes 'square feet' text.",
+   "new_key": "164\\pi"
+  },
+  {
+   "id": "math:5386",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n = 255",
+   "gate_head_pass": null,
+   "reason": "255=15*17 is correct; key has 'n =' assignment.",
+   "new_key": "255"
+  },
+  {
+   "id": "math:6274",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "114\\text{ square units}",
+   "gate_head_pass": null,
+   "reason": "Area 54+60=114 correct; key includes 'square units' text.",
+   "new_key": "114"
+  },
+  {
+   "id": "dapo:12458",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "\\\\frac{7}{3}",
+   "gate_head_pass": 0.0,
+   "reason": "With c*h1=6, a*h2=12 and (a+c)(h1+h2)=40, the ratio r satisfies 3r^2-11r+6=0, so r=3 (choice D), not 7/3.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:12673",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = p - 1",
+   "gate_head_pass": null,
+   "reason": "The key 'n = p - 1' never says p is prime; the answer is all n with n+1 prime (f(x)=g^x works).",
+   "new_key": "n+1 is prime (n = p-1 for a prime p)"
+  },
+  {
+   "id": "dapo:2180",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-9",
+   "gate_head_pass": 0.0,
+   "reason": "The factorizable cases are t=-3, -3w, -3w^2 (w a primitive cube root of unity, t^3=-27), whose sum is 0; key -9 counts -3 three times.",
+   "new_key": "0"
+  },
+  {
+   "id": "dapo:2522",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "32",
+   "gate_head_pass": 0.0,
+   "reason": "Integrating the moments gives mu_n = n*mu_{n-1}/(3(1-2^{-n})), so mu_2 = 16/27*mu_0 = 80/3 for mu_0=45. That is not an integer, so key 32 and the 'integer value' instruction are both off.",
+   "new_key": "80/3"
+  },
+  {
+   "id": "dapo:2900",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "The minimum is 1/2, at x=y=z=1/2 (cosines of an equilateral triangle), so m+n=3, not 5.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:3504",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2037",
+   "gate_head_pass": 0.0,
+   "reason": "floor((n-2^i)/2^{i+1}) = floor((n+2^i)/2^{i+1})-1, so the sum is n-1-k and the expression equals k+1 = 1001 (numerically verified for small k).",
+   "new_key": "1001"
+  },
+  {
+   "id": "dapo:3808",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "45",
+   "gate_head_pass": 0.0,
+   "reason": "Solving numerically, R-Q=10 with angle PMQ=100 forces PM=MQ=MR, giving Q=40, R=50, P=90; key 45 is wrong.",
+   "new_key": "40"
+  },
+  {
+   "id": "dapo:5039",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1005",
+   "gate_head_pass": 0.0,
+   "reason": "Numerical minimization of the two enclosed areas over c in (-1,5/27) gives c=-11/27 (the line through the inflection point); key 1005 is unrelated.",
+   "new_key": "-11/27"
+  },
+  {
+   "id": "dapo:8615",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "The minimum is on alpha+beta=2pi: sin a + 2cos a >= -sqrt5, which is attainable; numerical grid search confirms -sqrt5, so m+n+q=1+5+1=7, not 12.",
+   "new_key": "7"
+  },
+  {
+   "id": "dapo:9193",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "pow(1991,2000,10^6) = 880001, not 1.",
+   "new_key": "880001"
+  },
+  {
+   "id": "dapo:9393",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2020",
+   "gate_head_pass": 0.0,
+   "reason": "(a+b)k+b=2020 with 0<=b<a+b requires 2020 mod k < floor(2020/k); brute force gives 88 visionary k, not 2020.",
+   "new_key": "88"
+  },
+  {
+   "id": "math:5451",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "43_5.",
+   "gate_head_pass": 0.0,
+   "reason": "161/7=23=43_5 is correct, but the key has a trailing period; gate pass 0.",
+   "new_key": "43_5"
+  },
+  {
+   "id": "dapo:1176",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Threshold is 2 (a=b=2 gives 5/4+6/8=2), but 'find all k' asks for the set k>=2, not the single value.",
+   "new_key": "k >= 2"
+  },
+  {
+   "id": "dapo:12130",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "7:55 p.m.",
+   "gate_head_pass": 0.05,
+   "reason": "Answer 7:55 p.m. is correct (5h55m after 1:00); key's text/punctuation form likely causes grader mismatches, should accept 7:55 PM.",
+   "new_key": "7:55 p.m."
+  },
+  {
+   "id": "dapo:12301",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 7",
+   "gate_head_pass": 0.15,
+   "reason": "Known answer n=7; key written as assignment 'n = 7'.",
+   "new_key": "7"
+  },
+  {
+   "id": "dapo:13103",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 7, m = 49",
+   "gate_head_pass": null,
+   "reason": "Answer n=7, m=49 correct but key is two assignments for a two-question prompt; grader mismatch likely.",
+   "new_key": "7, 49"
+  },
+  {
+   "id": "dapo:13523",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "[1225,1525]",
+   "gate_head_pass": 0.0,
+   "reason": "Bounds verified (>=C(50,2) two-club members, <=2750 memberships), answer is every integer in [1225,1525]; interval key notation may mismatch.",
+   "new_key": "all integers n with 1225 <= n <= 1525"
+  },
+  {
+   "id": "dapo:13715",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n = 2018",
+   "gate_head_pass": null,
+   "reason": "Known answer 2018; key written as assignment 'n = 2018'.",
+   "new_key": "2018"
+  },
+  {
+   "id": "dapo:13815",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "\\\\frac{n(n+1)}{2}",
+   "gate_head_pass": 0.0,
+   "reason": "Known answer n(n+1)/2, but key contains doubled backslashes ('\\\\frac'), likely breaking LaTeX parsing.",
+   "new_key": "n(n+1)/2"
+  },
+  {
+   "id": "dapo:2914",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "170",
+   "gate_head_pass": 0.0,
+   "reason": "Enumeration gives 33 three-letter words from c,o,m,b,o; 170 counts words of all lengths 1-5 (4+13+33+60+60).",
+   "new_key": "33"
+  },
+  {
+   "id": "dapo:3822",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Unfolding: line from G(8,5) direction (20,-14) gives H(10,3.6), I(34/7,0), J(0,17/5), so AJ=17/5 and m+n=22.",
+   "new_key": "22"
+  },
+  {
+   "id": "dapo:4078",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "127",
+   "gate_head_pass": 0.0,
+   "reason": "Condition gives 1<=lg x<2, x=10..99 (90 elements), so proper subsets 2^90-1, not 127.",
+   "new_key": "2^{90}-1"
+  },
+  {
+   "id": "dapo:5176",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0125,
+   "reason": "16a+4b+c exceeds a+b+c>=1 strictly and is at most 4+21/8 (not attained), so P(4) ∈ (65,70.625): integers 66..70, i.e. 5 values.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:5585",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "40",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: 64 five-digit numbers with digits in {0,1,3,4} divisible by 15 (last digit 0, digit sum ≡0 mod 3).",
+   "new_key": "64"
+  },
+  {
+   "id": "dapo:6223",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "High-precision iteration gives integer parts 2,4,8,10,14,... (a_{2k}=6k+2), so floor(a_2020)=6062, not 3.",
+   "new_key": "6062"
+  },
+  {
+   "id": "dapo:6533",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2011",
+   "gate_head_pass": 0.0,
+   "reason": "With x_1=1 and x_2=...=x_2011=2023065 the LHS is 1+2023065^{n+1}, so a=2023065 works for all n; the sum is 1+2010*2023065=4066360651 (the miner answer), not 2011.",
+   "new_key": "4066360651"
+  },
+  {
+   "id": "dapo:8619",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "864100",
+   "gate_head_pass": 0.0,
+   "reason": "Enumeration of 6-digit non-increasing-digit numbers: 864100 is 2004th and 864110 is 2005th.",
+   "new_key": "864110"
+  },
+  {
+   "id": "dapo:9095",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "40",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric solve gives A=(1,√63) with B=(0,0),C=(10,0) (AC=12, T=(-8,0)), area 5√63=15√7≈39.69, not 40.",
+   "new_key": "15\\sqrt{7}"
+  },
+  {
+   "id": "dapo:9845",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.0,
+   "reason": "Total digits through m-digit numbers is ((9m-1)10^m+1)/9; the 10^1987th digit falls among 1984-digit numbers, so f(1987)=1984 (known IMO longlist answer).",
+   "new_key": "1984"
+  },
+  {
+   "id": "math:1650",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "-\\frac{5}{3}.",
+   "gate_head_pass": null,
+   "reason": "Roots of (3x+2)(x+1) sum to -5/3; key has a trailing period.",
+   "new_key": "-\\frac{5}{3}"
+  },
+  {
+   "id": "math:2400",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k=3",
+   "gate_head_pass": null,
+   "reason": "(10-2k)/(5+k)=1/2 gives k=3; key written as 'k=3'.",
+   "new_key": "3"
+  },
+  {
+   "id": "math:4686",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\text{(E)},",
+   "gate_head_pass": 0.0,
+   "reason": "A=5,B=2 gives 5+2+3+7=17 prime → (E); key has a trailing comma.",
+   "new_key": "E"
+  },
+  {
+   "id": "math:5490",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k = 1",
+   "gate_head_pass": null,
+   "reason": "p^2≡1 mod 12 for primes >3, so k=1; key written as 'k = 1'.",
+   "new_key": "1"
+  },
+  {
+   "id": "math:6473",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "7\\text{ hours}.",
+   "gate_head_pass": 0.0,
+   "reason": "7!/12=420 minutes = 7 hours; key has '\\text{ hours}.' with trailing period.",
+   "new_key": "7"
+  },
+  {
+   "id": "dapo:10233",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Kenneth's sum is -1000a^999/(a^1000-1), Ellen's is -1000a; solutions are a=0 plus two real roots ±sqrt(u) of u^500-u^499=1, giving 3 values.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:10500",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Expression is sigma_{-k}(n)*(2020+2019/n)^2 > 2020^2 with infimum 2020^2 (n large prime), so largest m is 2020^2=4080400, not 0.",
+   "new_key": "4080400"
+  },
+  {
+   "id": "dapo:10661",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Power of a point gives MD=R/2, AM=R, so AD=3R/2 and cos AOD = 1 - 9/8 = -1/8.",
+   "new_key": "-\\frac{1}{8}"
+  },
+  {
+   "id": "dapo:11608",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "M_n -> beta=(1+sqrt13)/2, m_n = sqrt(3-M_{n-1}); sup ratio squared = (3+beta)/(3-beta) = 4+sqrt13; key 4 is truncated.",
+   "new_key": "4+\\sqrt{13}"
+  },
+  {
+   "id": "dapo:12485",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n = 5",
+   "gate_head_pass": 0.5666666666666667,
+   "reason": "Answer 5 is correct; key written as assignment 'n = 5'.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:12548",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = k-1",
+   "gate_head_pass": 0.0,
+   "reason": "Known answer n = k-1; key has 'n =' assignment.",
+   "new_key": "k-1"
+  },
+  {
+   "id": "dapo:13285",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 2, 3, 6",
+   "gate_head_pass": null,
+   "reason": "Answer {2,3,6} correct (with d=1 implicitly excluded); key has 'n =' assignment.",
+   "new_key": "2, 3, 6"
+  },
+  {
+   "id": "dapo:13407",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "P(x)=-2 x^{2}+4 x",
+   "gate_head_pass": 0.0,
+   "reason": "n=1 and P(x)=-2x^2+4x verified; key has 'P(x)=' and omits n.",
+   "new_key": "-2x^2+4x"
+  },
+  {
+   "id": "dapo:13648",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\\\frac{3\\\\pi}{4}",
+   "gate_head_pass": 0.0,
+   "reason": "Slope -1 gives 3pi/4 (135 degrees); key contains doubled backslashes '\\\\frac{3\\\\pi}{4}'.",
+   "new_key": "\\frac{3\\pi}{4}"
+  },
+  {
+   "id": "dapo:13728",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "d(C,AB)^2 = d1*d2 = 36 with d1=9 d2 gives distances 2 and 18, sum 20.",
+   "new_key": "20"
+  },
+  {
+   "id": "dapo:1651",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "|w|=|w-2| gives Re w=1 and w is a positive multiple of 1-i, so z1/z2 = 1-i and real+imag = 0.",
+   "new_key": "0"
+  },
+  {
+   "id": "dapo:275",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "36",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: faces 1,2 / 4,5 / 7,8 on opposite pairs works, minimum sum 27.",
+   "new_key": "27"
+  },
+  {
+   "id": "dapo:3297",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4022",
+   "gate_head_pass": 0.0,
+   "reason": "Iterating gives z_2015 = 2015+1007i, sum 3022.",
+   "new_key": "3022"
+  },
+  {
+   "id": "dapo:4210",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1011",
+   "gate_head_pass": 0.0,
+   "reason": "Generating function 1/((1-x)^2(1-x^2)) gives coefficient 1011*1012 = 1023132 for x^2021.",
+   "new_key": "1023132"
+  },
+  {
+   "id": "dapo:7176",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Common-neighbor bound gives 3T >= (sum d^2 - 12*216)/2 >= 2592, so T >= 864 (known answer 864); 0 is wrong.",
+   "new_key": "864"
+  },
+  {
+   "id": "dapo:7411",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "204",
+   "gate_head_pass": 0.0,
+   "reason": "Lending conserves the total; final 3*24=72 (original 39,21,12). Key 204 is wrong.",
+   "new_key": "72"
+  },
+  {
+   "id": "dapo:7611",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "19990002000",
+   "gate_head_pass": 0.0,
+   "reason": "Solutions are x=2000 (y=2) and x=1999000 (y=1); key concatenates them as '19990002000'.",
+   "new_key": "2000, 1999000"
+  },
+  {
+   "id": "dapo:9205",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "12",
+   "gate_head_pass": 0.0,
+   "reason": "OG parallel to BC, M midpoint; coordinates M=(0,0), O=(0,3), A=(3,9), R^2=45 gives BC=12, height 9, area 54.",
+   "new_key": "54"
+  },
+  {
+   "id": "dapo:9270",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "14",
+   "gate_head_pass": 0.025,
+   "reason": "Exact DP over plus-centers in the 8x9 interior gives a maximum of 15 crosses.",
+   "new_key": "15"
+  },
+  {
+   "id": "dapo:963",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Numerically PF = sqrt13 - 1, so m - n = 12.",
+   "new_key": "12"
+  },
+  {
+   "id": "math:1711",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "x=\\frac{1}{67}",
+   "gate_head_pass": null,
+   "reason": "Correct value; key is an assignment 'x=\\frac{1}{67}'.",
+   "new_key": "\\frac{1}{67}"
+  },
+  {
+   "id": "math:3296",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "K=8",
+   "gate_head_pass": null,
+   "reason": "Correct; key written as 'K=8'.",
+   "new_key": "8"
+  },
+  {
+   "id": "math:5000",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "7 \\text{ distinct integers}",
+   "gate_head_pass": null,
+   "reason": "Answer 7 with trailing text 'distinct integers'.",
+   "new_key": "7"
+  },
+  {
+   "id": "math:5675",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "160^\\circ",
+   "gate_head_pass": 0.0,
+   "reason": "Answer 160 is the known MATH answer; key glues ^\\circ.",
+   "new_key": "160"
+  },
+  {
+   "id": "math:6524",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "428\\text{ square centimeters}",
+   "gate_head_pass": null,
+   "reason": "432*0.99=427.68 -> 428; key has trailing unit text.",
+   "new_key": "428"
+  },
+  {
+   "id": "math:6935",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\begin{pmatrix} -1 & 0 \\\\ 0 & -1 \\end{pmatrix}.",
+   "gate_head_pass": 0.0,
+   "reason": "Value -I verified; key has trailing period.",
+   "new_key": "\\begin{pmatrix} -1 & 0 \\\\ 0 & -1 \\end{pmatrix}"
+  },
+  {
+   "id": "dapo:1164",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-3",
+   "gate_head_pass": 0.0,
+   "reason": "abc=-22 and sum 1/a^3 = -3/22 (reciprocal polynomial 22y^3-20y+1), so the expression is 3; numerics confirm 3, not -3.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:12313",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "m=2,3",
+   "gate_head_pass": null,
+   "reason": "Equation factors as ((m-1)x-6)((m+1)x-12)=0; m=2,3 give positive integer roots; key has 'm=' assignment.",
+   "new_key": "2, 3"
+  },
+  {
+   "id": "dapo:12698",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n=7,=49",
+   "gate_head_pass": 0.0,
+   "reason": "Two-part answer n=7, m=49 is correct, but key 'n=7,=49' is garbled.",
+   "new_key": "n=7, m=49"
+  },
+  {
+   "id": "dapo:13167",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.2,
+   "reason": "b cos B = a cos A gives A=B (sides 1,1,sqrt3, dot product 3/2) or C=90 (dot product 2); both valid, key lists only 2.",
+   "new_key": "\\frac{3}{2} \\text{ or } 2"
+  },
+  {
+   "id": "dapo:13298",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "60,120,90,90",
+   "gate_head_pass": 0.025,
+   "reason": "Tangent-chord relations give sin(A/2)=sin(B/2)=1/sqrt2, sin(D/2)=1/2, so A=B=90, D=60, C=120; key lists the angles out of order of A,B,C,D.",
+   "new_key": "A=90, B=90, C=120, D=60"
+  },
+  {
+   "id": "dapo:13411",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n = p-1",
+   "gate_head_pass": null,
+   "reason": "Expression equals C(n+1,i)/(n+1), integer for all i iff n+1 is prime; key omits that p is prime.",
+   "new_key": "n = p - 1 \\text{ for prime } p"
+  },
+  {
+   "id": "dapo:13547",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k = 9",
+   "gate_head_pass": null,
+   "reason": "Cow-path problem, optimal k=9; key has 'k =' assignment.",
+   "new_key": "9"
+  },
+  {
+   "id": "dapo:13916",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "t = \\\\frac{1}{k-1}",
+   "gate_head_pass": null,
+   "reason": "Known answer t=1/(k-1); key carries 't =' assignment.",
+   "new_key": "\\frac{1}{k-1}"
+  },
+  {
+   "id": "dapo:14059",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 4",
+   "gate_head_pass": null,
+   "reason": "Known answer n=4; key carries 'n =' assignment.",
+   "new_key": "4"
+  },
+  {
+   "id": "dapo:1872",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1438383",
+   "gate_head_pass": 0.0,
+   "reason": "(3a-2018)(3b-2018)=2018^2 gives pairs (673,1358114),(674,340033),(1009,2018) and reverses; total of all entries is 3405042.",
+   "new_key": "3405042"
+  },
+  {
+   "id": "dapo:2571",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "|Im a|=sqrt3 and cos(3 theta)=0 give |a| = sqrt3 (theta=pi/2) or 2sqrt3 (theta=pi/6), so sqrt3|a| is 3 or 6, sum 9; key 3 misses one.",
+   "new_key": "9"
+  },
+  {
+   "id": "dapo:4734",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "403",
+   "gate_head_pass": 0.0,
+   "reason": "n^3+3^n = 0 mod 5 for n = 4,6,7,13 mod 20; that is 400 + 4 = 404 values up to 2015.",
+   "new_key": "404"
+  },
+  {
+   "id": "dapo:5604",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "486",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: only 18, 45, 90, 99 have digit sum equal to that of 2x..9x; sum 252.",
+   "new_key": "252"
+  },
+  {
+   "id": "dapo:6585",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force over n in [0, 4095] that are squares mod 2^12 gives sum = 1536 mod 4096.",
+   "new_key": "1536"
+  },
+  {
+   "id": "math:11",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k = \\frac{-33}{2}",
+   "gate_head_pass": null,
+   "reason": "f(2)-g(2) = 22.5-4+k = 2 gives k=-33/2; key has 'k =' assignment.",
+   "new_key": "-\\frac{33}{2}"
+  },
+  {
+   "id": "math:1980",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\$\\dfrac23 \\approx \\$0.67",
+   "gate_head_pass": 0.0,
+   "reason": "Expected value 1/2+1-5/6 = 2/3, i.e. $0.67; key mixes $\\dfrac23 \\approx $0.67 and miners' '$0.67' was graded wrong.",
+   "new_key": "0.67"
+  },
+  {
+   "id": "math:334",
+   "env": "affine_math",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "(8,38)",
+   "gate_head_pass": 0.0,
+   "reason": "x^2-6x-16=0 gives x=-2 and x=8, so the intersection points are (-2,18) and (8,38); key lists only one.",
+   "new_key": "(-2,18); (8,38)"
+  },
+  {
+   "id": "math:38",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "2, 3, \\text{ and } 4",
+   "gate_head_pass": null,
+   "reason": "3 < x^2 < 17 gives x=2,3,4; key contains '\\text{ and }'.",
+   "new_key": "2, 3, 4"
+  },
+  {
+   "id": "math:504",
+   "env": "affine_math",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "(0, 1)",
+   "gate_head_pass": 0.0,
+   "reason": "6x^2+12x=0 gives x=-2 and x=0, so points (-2,23) and (0,1); key lists only (0,1).",
+   "new_key": "(-2, 23); (0, 1)"
+  },
+  {
+   "id": "math:6623",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\mbox{four}",
+   "gate_head_pass": 0.0,
+   "reason": "gcd(40,72)=8 has 4 divisors; key '\\mbox{four}' is never matched (0/120).",
+   "new_key": "4"
+  },
+  {
+   "id": "math:6782",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "\\begin{pmatrix} 1 & -1 \\\\ 1 & \\phantom -1 \\end{pmatrix}",
+   "gate_head_pass": 0.0,
+   "reason": "M sends (1,0) to (1,1) and (0,1) to (-1,1); key contains \\phantom.",
+   "new_key": "\\begin{pmatrix} 1 & -1 \\\\ 1 & 1 \\end{pmatrix}"
+  },
+  {
+   "id": "dapo:11371",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "399",
+   "gate_head_pass": 0.0,
+   "reason": "a_n=(n+1)/(2n) by induction (verified exactly with fractions), so a_100=101/200 and m+n=301.",
+   "new_key": "301"
+  },
+  {
+   "id": "dapo:12516",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "m = 4(n-2)",
+   "gate_head_pass": 0.45,
+   "reason": "Answer 4(n-2) is correct, but key is an assignment 'm = 4(n-2)'; clean key 4n-8.",
+   "new_key": "4n-8"
+  },
+  {
+   "id": "dapo:12815",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "b = c",
+   "gate_head_pass": 0.2,
+   "reason": "Yes/no question (it does follow that b=c); key written as 'b = c' rather than Yes.",
+   "new_key": "Yes"
+  },
+  {
+   "id": "dapo:13042",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "0or12",
+   "gate_head_pass": 0.35,
+   "reason": "Answer x=0 or 12 is correct but key glued as '0or12'.",
+   "new_key": "0, 12"
+  },
+  {
+   "id": "dapo:13658",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.025,
+   "reason": "n^(n+1)+(n+1)^n is always odd, so p=2 never works; the known answer is every odd prime.",
+   "new_key": "all odd primes"
+  },
+  {
+   "id": "dapo:13917",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "2 \\\\text{ and } 4",
+   "gate_head_pass": 0.15,
+   "reason": "Answer set {2,4} matches source, but key written as '2 \\text{ and } 4'.",
+   "new_key": "2, 4"
+  },
+  {
+   "id": "dapo:1410",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Power of a point: BD(BD+1)=EC(EC+2) with BD=sqrt2 EC gives EC=2-sqrt2, so OD^2=4+(2-sqrt2)(4-sqrt2)=14-6sqrt2; key 4 is the degenerate D=B case.",
+   "new_key": "14-6\\sqrt{2}"
+  },
+  {
+   "id": "dapo:2129",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "98",
+   "gate_head_pass": 0.0,
+   "reason": "Condition reduces to b-a=floor(b/a): pairs (a,a+1) for a=2..99 (98) plus (2,4); brute force gives 99.",
+   "new_key": "99"
+  },
+  {
+   "id": "dapo:4103",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "24",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric solve gives A=12, B=132 degrees (classic answer A=12), so A+B=144, not 24.",
+   "new_key": "144"
+  },
+  {
+   "id": "dapo:4501",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Curve is quarter-ellipse plus two hyperbola branches with asymptote sqrt3x+y=0; sqrt3x+y ranges over (0,sqrt6], so range is [4-sqrt6,4) and floor(8-sqrt6)=5.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:4752",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "f is increasing on [5,8], range [-3,sqrt3]; sum of squares is 9+3=12.",
+   "new_key": "12"
+  },
+  {
+   "id": "dapo:5224",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Same as dapo:4501: range [4-sqrt6,4), floor(p+q)=5.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:5610",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "31185",
+   "gate_head_pass": 0.0,
+   "reason": "360 has 24 divisors; brute force gives the smallest odd integer with 24 divisors as 3465=3^2*5*7*11 (31185 has 40 divisors).",
+   "new_key": "3465"
+  },
+  {
+   "id": "dapo:7443",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "a=0 gives real roots 0 and 5^(1/3), sum not 0. Factoring (x^2+px+q)(x^2-px+r) gives a=p with p^6-4p^3-25=0, so a=(2+sqrt29)^(1/3)~1.948.",
+   "new_key": "\\sqrt[3]{2+\\sqrt{29}}"
+  },
+  {
+   "id": "math:1100",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "b=\\frac{1}{49}",
+   "gate_head_pass": null,
+   "reason": "Answer 1/49 is correct but key is the assignment 'b=\\frac{1}{49}'.",
+   "new_key": "\\frac{1}{49}"
+  },
+  {
+   "id": "math:202",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "x = 12",
+   "gate_head_pass": null,
+   "reason": "8x=9x-12 gives 12; key is the assignment 'x = 12'.",
+   "new_key": "12"
+  },
+  {
+   "id": "math:2871",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "30^\\circ.",
+   "gate_head_pass": 0.0,
+   "reason": "Answer 30 degrees is correct but key has a degree sign and trailing period '30^\\circ.'.",
+   "new_key": "30"
+  },
+  {
+   "id": "math:5157",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "x=4",
+   "gate_head_pass": null,
+   "reason": "Need 5 | 186+x, so x=4; key is the assignment 'x=4'.",
+   "new_key": "4"
+  },
+  {
+   "id": "dapo:11212",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "274",
+   "gate_head_pass": 0.0,
+   "reason": "C(11,4)-C(8,4)=330-70=260, confirmed by brute force.",
+   "new_key": "260"
+  },
+  {
+   "id": "dapo:1180",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "f(n) is the binary digit sum; max for n<2014 is 10, achieved by 1023,1535,1791,1919,1983 (5 values), brute-force confirmed.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:12354",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "m = 3",
+   "gate_head_pass": 0.7,
+   "reason": "Answer m=3 is correct; key has an 'm =' assignment.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:12627",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "\\\\sqrt{3}",
+   "gate_head_pass": 0.0,
+   "reason": "With C=(0,0,1), CA=sqrt2 forces A_z=0; B_z=+-1/2, and A nearest to C requires B_z=-1/2, giving BD=1. Key sqrt3 corresponds to B being nearer to C.",
+   "new_key": "1"
+  },
+  {
+   "id": "dapo:12824",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "m = 1529",
+   "gate_head_pass": 0.65,
+   "reason": "Value 1529 matches the known HMMT answer; key has 'm =' assignment.",
+   "new_key": "1529"
+  },
+  {
+   "id": "dapo:13420",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "low",
+   "answer_key": "x = y = z",
+   "gate_head_pass": null,
+   "reason": "Yes/no question ('do they all have to be equal?'); key 'x = y = z' is not a gradable answer; intended answer is yes.",
+   "new_key": "Yes"
+  },
+  {
+   "id": "dapo:13567",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "k=6,3, \\\\frac{10}{3}",
+   "gate_head_pass": null,
+   "reason": "Verified k=6,3,10/3 all give integer roots; key has 'k=' assignment and doubled backslash.",
+   "new_key": "6, 3, \\frac{10}{3}"
+  },
+  {
+   "id": "dapo:13852",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "R=12.5,S=108",
+   "gate_head_pass": 0.35,
+   "reason": "Asks two quantities; key 'R=12.5,S=108' is fine in substance but packed with assignments.",
+   "new_key": "R = \\frac{25}{2}, S = 108"
+  },
+  {
+   "id": "dapo:13922",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "low",
+   "answer_key": "n = 6m",
+   "gate_head_pass": null,
+   "reason": "Answer is all n divisible by 6 (n=6m via m,2m,3m); key 'n = 6m' is an assignment form a grader may not match.",
+   "new_key": "all multiples of 6"
+  },
+  {
+   "id": "dapo:2613",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "770",
+   "gate_head_pass": 0.0,
+   "reason": "xy=50(x+y)=75(x-y) gives x=5y, y=60, x=300, sum 360.",
+   "new_key": "360"
+  },
+  {
+   "id": "dapo:3763",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "x=8pi k/3 (k=1..8) and x=8pi k/5 (k=1..14) with 2 overlaps give 20 solutions in (0,24pi).",
+   "new_key": "20"
+  },
+  {
+   "id": "dapo:3980",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "f(-10)-1000=f(10)+1000, so f(-10)=2015.",
+   "new_key": "2015"
+  },
+  {
+   "id": "dapo:4502",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "Distance from O to plane ABC is sqrt3/3, so m+n=6, not 3.",
+   "new_key": "6"
+  },
+  {
+   "id": "dapo:545",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "sum_k (-1)^(n-k) C(n,k) k^n = n!, and with n=8 even the sign matches, so the value is 8!=40320.",
+   "new_key": "40320"
+  },
+  {
+   "id": "dapo:5631",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "90",
+   "gate_head_pass": 0.0,
+   "reason": "a = 120*integral_0^1 (1+x)^(-1/2) dx = 240(sqrt2-1) = 99.41, so [a]=99.",
+   "new_key": "99"
+  },
+  {
+   "id": "dapo:602",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Each element lies in 7 nonempty proper subsets, so 7S=28 and S=4.",
+   "new_key": "4"
+  },
+  {
+   "id": "math:584",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "r=6.2",
+   "gate_head_pass": null,
+   "reason": "floor(r)=6 gives r=6.2 as the unique solution; key has an 'r=' assignment.",
+   "new_key": "6.2"
+  },
+  {
+   "id": "dapo:10304",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "71",
+   "gate_head_pass": 0.0,
+   "reason": "Numeric maximization gives max area (25+3*sqrt(41))/2 ~ 22.105, so m+n+k=25+3+41=69, not 71.",
+   "new_key": "69"
+  },
+  {
+   "id": "dapo:11222",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2020",
+   "gate_head_pass": 0.0,
+   "reason": "A circle with diameter 2r is the same circle, area 505; key 2020 matches a misread (radius 2r).",
+   "new_key": "505"
+  },
+  {
+   "id": "dapo:13356",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "n = 11",
+   "gate_head_pass": null,
+   "reason": "Brute force confirms F_11=105>100 first; key written as 'n = 11'.",
+   "new_key": "11"
+  },
+  {
+   "id": "dapo:1570",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Direct computation gives S(S(S(2003^2003)))=2 (also 2003^2003 = 2 mod 9); key 8 is wrong.",
+   "new_key": "2"
+  },
+  {
+   "id": "dapo:1901",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "67",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "Enumerating all permutations: max 43/9, min 38/31, difference 991/279, so m+n=1270.",
+   "new_key": "1270"
+  },
+  {
+   "id": "dapo:214",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "60",
+   "gate_head_pass": 0.0,
+   "reason": "a2=9, a3=441, so a0+a1+a2+a3=452 (miner consensus); key 60 is wrong. Wording '前三项' with four terms is also sloppy.",
+   "new_key": "452"
+  },
+  {
+   "id": "dapo:2316",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "55",
+   "gate_head_pass": 0.0,
+   "reason": "Five 4-sums take values 44..47 with one repeated: 4T=182+46 gives T=57 (numbers 13,12,11,11,10).",
+   "new_key": "57"
+  },
+  {
+   "id": "dapo:326",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "151249135832",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force finds 1, 512, 4913, 5832, 17576, 19683; key is a garbled concatenation of only the first four.",
+   "new_key": "1, 512, 4913, 5832, 17576, 19683"
+  },
+  {
+   "id": "dapo:3627",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "13",
+   "gate_head_pass": null,
+   "reason": "For n=4, x=(1,-1,1,-1) gives min difference 2, which is the maximum possible, so a/b=2/1 and a+b=3.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:4346",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "16",
+   "gate_head_pass": 0.0,
+   "reason": "ABCD is an isosceles trapezoid; diagonal 7, angle D=60deg, R=7/sqrt3=7sqrt3/3, so a+b+c=13.",
+   "new_key": "13"
+  },
+  {
+   "id": "dapo:4951",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "|f^{-1}(x-1)|<1 iff -3/2<x-1<3/2, interval (-1/2,5/2), so a-b=-3.",
+   "new_key": "-3"
+  },
+  {
+   "id": "dapo:5130",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "503",
+   "gate_head_pass": 0.0,
+   "reason": "Need n^2=n mod 1000: idempotents 0,1,376,625; three-digit ones sum to 1001.",
+   "new_key": "1001"
+  },
+  {
+   "id": "dapo:5479",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "100",
+   "gate_head_pass": 0.0,
+   "reason": "Direct computation of sum_{x=0}^{99} (x^2+1)^{-1} mod 199 gives 150.",
+   "new_key": "150"
+  },
+  {
+   "id": "dapo:6464",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "Equilibrium (2,1), eigenvalues 2+-i, y=1+e^{2t}(-cos t+B sin t), so y(pi)=1+e^{2pi} (verified numerically) and a+b+c=4.",
+   "new_key": "4"
+  },
+  {
+   "id": "dapo:6820",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.04,
+   "reason": "Grid search over K,L,M gives minimal overlap area 1/8 (known answer); key 0 is wrong.",
+   "new_key": "\\frac{1}{8}"
+  },
+  {
+   "id": "dapo:733",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "i^p+(p-i)^p = 0 mod p^2 so r_i+r_{p-i}=p^2; the sum is p^2(p-1)/2, not 0.",
+   "new_key": "\\frac{p^2(p-1)}{2}"
+  },
+  {
+   "id": "dapo:8678",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "205",
+   "gate_head_pass": 0.0,
+   "reason": "Roots 7pi/12+2kpi and 23pi/12+2kpi; first 20 sum to 205pi ~ 644.03, integer part 644. Key 205 is the pi coefficient.",
+   "new_key": "644"
+  },
+  {
+   "id": "dapo:9150",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "11",
+   "gate_head_pass": 0.0,
+   "reason": "1991=11*181; product divisible by 181 for all choices requires two numbers congruent mod 181, so n=182.",
+   "new_key": "182"
+  },
+  {
+   "id": "dapo:9661",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "8",
+   "gate_head_pass": 0.0,
+   "reason": "Right triangle with inradius r has (a-2r)(b-2r)=2r^2; 2*2015^2 has 54 divisors, giving 27 unordered pairs (r=1 check gives 3-4-5 only).",
+   "new_key": "27"
+  },
+  {
+   "id": "math:1206",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "q = 3",
+   "gate_head_pass": null,
+   "reason": "p+q=pq=9/2 gives q=3; key written as 'q = 3'.",
+   "new_key": "3"
+  },
+  {
+   "id": "math:4369",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "-2 \\text{ or } -12",
+   "gate_head_pass": null,
+   "reason": "Numerator must vanish at x=2 (c=-2) or x=-3 (c=-12); key uses '\\text{ or }' while the problem asks for comma-separated values.",
+   "new_key": "-2, -12"
+  },
+  {
+   "id": "math:6144",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "05\\!:\\!00",
+   "gate_head_pass": 0.0,
+   "reason": "LCM 300 minutes = 5 hours after noon; key contains LaTeX spacing '05\\!:\\!00'.",
+   "new_key": "05:00"
+  },
+  {
+   "id": "math:767",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "a=-30.5",
+   "gate_head_pass": null,
+   "reason": "g(g(g(10.5)))=-1 and solving for negative a gives -30.5; key written as 'a=-30.5'.",
+   "new_key": "-30.5"
+  },
+  {
+   "id": "dapo:10935",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "3",
+   "gate_head_pass": 0.0,
+   "reason": "792! has floor(792/5)+floor(792/25)+floor(792/125)+floor(792/625)=158+31+6+1=196 trailing zeros, not 3.",
+   "new_key": "196"
+  },
+  {
+   "id": "dapo:12639",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "k=4,7, \\\\frac{13}{3}",
+   "gate_head_pass": 0.7,
+   "reason": "Values k=4,7,13/3 are correct but the key has a 'k=' prefix and a doubled backslash in \\\\frac.",
+   "new_key": "4, 7, \\frac{13}{3}"
+  },
+  {
+   "id": "dapo:12944",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 4m",
+   "gate_head_pass": 0.5,
+   "reason": "Answer (all multiples of 4) is right in substance but key 'n = 4m' uses an undefined variable and assignment form.",
+   "new_key": "n \\equiv 0 \\pmod 4"
+  },
+  {
+   "id": "dapo:13600",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n = 60k",
+   "gate_head_pass": null,
+   "reason": "Known answer is all multiples of 60; key 'n = 60k' uses assignment form with an undefined k.",
+   "new_key": "n \\equiv 0 \\pmod{60}"
+  },
+  {
+   "id": "dapo:13773",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "a = n\\\\pi",
+   "gate_head_pass": null,
+   "reason": "Perpendicular tangent slopes need cos a cos b=-1, so a=n*pi is right, but the key is an assignment 'a = n\\\\pi' with a doubled backslash and undefined n.",
+   "new_key": "n\\pi,\\ n\\in\\mathbb{Z}"
+  },
+  {
+   "id": "dapo:13864",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "x=0, \\\\pm \\\\sqrt{3}",
+   "gate_head_pass": 0.0,
+   "reason": "Solutions are the constant tuples with x^3=3x; key 'x=0, \\\\pm\\\\sqrt{3}' is an assignment with doubled backslashes and does not express the tuple form.",
+   "new_key": "x_1=x_2=\\cdots=x_{1987}\\in\\{0,\\sqrt{3},-\\sqrt{3}\\}"
+  },
+  {
+   "id": "dapo:2392",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "5",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "For odd a, x=1/2 gives min{1/2,||3/2||}=1/2, so the max for a=3 is 1/2 and m+n=3, not 5.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:3775",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "30",
+   "gate_head_pass": 0.0,
+   "reason": "Rate 125/h; after 6h, 500+165=665 items remain for 4h, i.e. 166.25/h, a 33% increase (key 30 fits the original 150 extra items).",
+   "new_key": "33"
+  },
+  {
+   "id": "dapo:3992",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "f(x+7)f(x)=-1 gives period 14, so f(-100)=f(12)=-1/f(5)=-1/2 and m+n=3, not 1.",
+   "new_key": "3"
+  },
+  {
+   "id": "dapo:4126",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "19990002000",
+   "gate_head_pass": 0.0,
+   "reason": "4x^4+1=(2x^2+2x+1)(2x^2-2x+1) is prime only for x=+-1, giving 5; key 19990002000 is unrelated.",
+   "new_key": "5"
+  },
+  {
+   "id": "dapo:4364",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1503",
+   "gate_head_pass": 0.0,
+   "reason": "Smallest square ending in 9009 is 1503^2=2259009; the key gives the root 1503, not the square.",
+   "new_key": "2259009"
+  },
+  {
+   "id": "dapo:5140",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "2",
+   "gate_head_pass": 0.0,
+   "reason": "cos t=(1+-sqrt3)/2 but only (1-sqrt3)/2 is in [-1,1], so cos 2t=1-sqrt3 is the only value; key 2 includes the invalid root.",
+   "new_key": "1-\\sqrt{3}"
+  },
+  {
+   "id": "dapo:5239",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "4",
+   "gate_head_pass": 0.0,
+   "reason": "Closed walks on the 4x4 rook graph: (6^8+15*2^8)/16=105216=2^8*3*137, which has 36 divisors, not 4.",
+   "new_key": "36"
+  },
+  {
+   "id": "dapo:6822",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "62",
+   "gate_head_pass": 0.0,
+   "reason": "KE and KF are perpendicular bisectors, so KA=KB=KC=KD with K the midpoint of AD; AD is a diameter and angle ACD=90 deg (62 is angle ADC).",
+   "new_key": "90"
+  },
+  {
+   "id": "dapo:7109",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "143",
+   "gate_head_pass": 0.0,
+   "reason": "a_n+a_{n+1}=3n with a_1=1 gives a=1,2,4,5,7,..., so c_4=a_4 a_5=35; key 143 is c_8.",
+   "new_key": "35"
+  },
+  {
+   "id": "dapo:7973",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "50",
+   "gate_head_pass": 0.0,
+   "reason": "By de Bruijn-Erdos, a linear space on 100 points with no line equal to X needs at least 100 lines (the near-pencil achieves it), not 50.",
+   "new_key": "100"
+  },
+  {
+   "id": "dapo:9059",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "-1",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "f'(x)>=|x|-7/4 for all x reduces to (2m+1)^2<=9 and (1-2m)^2<=9, so m in [-1,1] and the endpoint sum is 0, not -1.",
+   "new_key": "0"
+  },
+  {
+   "id": "math:2226",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "high",
+   "answer_key": "0.56 = 56\\%",
+   "gate_head_pass": 0.0,
+   "reason": "0.4*0.2+0.6*0.8=0.56, i.e. 56%; the key '0.56 = 56\\%' is an equation string rather than a single answer.",
+   "new_key": "56\\%"
+  },
+  {
+   "id": "math:3995",
+   "env": "affine_math",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "9",
+   "gate_head_pass": 0.0,
+   "reason": "The first locus is the circle centered -5 with radius 4 (points -9 to -1); |z|=k is tangent to it for k=1 (external) and k=9 (internal), so the key 9 is incomplete.",
+   "new_key": "1, 9"
+  },
+  {
+   "id": "math:6173",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "b = -4",
+   "gate_head_pass": null,
+   "reason": "x=-2 gives b=-4; key is written as an assignment 'b = -4'.",
+   "new_key": "-4"
+  },
+  {
+   "id": "math:94",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "x = 2",
+   "gate_head_pass": null,
+   "reason": "5^{x+4}=5^{3x} gives x=2; key is written as the assignment 'x = 2'.",
+   "new_key": "2"
+  },
+  {
+   "id": "dapo:2557",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "7",
+   "gate_head_pass": 0.0,
+   "reason": "Brute force: only a=731 (733*739*751) and a=749 (751*757*769) give exactly 8 divisors; the common prime is 751, not 7.",
+   "new_key": "751"
+  },
+  {
+   "id": "math:6918",
+   "env": "affine_math",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "75^\\circ",
+   "gate_head_pass": 0.0,
+   "reason": "Law of cosines gives angles 45, 60, 75; the key lists only 75 degrees, so complete answers are graded wrong.",
+   "new_key": "45^\\circ, 60^\\circ, 75^\\circ"
+  },
+  {
+   "id": "dapo:13441",
+   "env": "dapo",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "n=3,4,5, \\\\cdots, 14",
+   "gate_head_pass": null,
+   "reason": "Answer n in {3,...,14} is right (|PA| = (sqrt5/2)x - 2 ranges over [sqrt5-2, 3]), but the key contains 'n=' and a double-escaped \\\\cdots, which a grader will likely not match; also n=2 is arguably valid by convention.",
+   "new_key": "3,4,5,\\ldots,14"
+  },
+  {
+   "id": "dapo:11573",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.0,
+   "reason": "(0,0) is obviously a solution, so 0 is wrong; brute force finds 12 integer pairs.",
+   "new_key": "12"
+  },
+  {
+   "id": "dapo:3682",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "0",
+   "gate_head_pass": 0.016666666666666666,
+   "reason": "M(t) = (1+t^n)/((1-t^2)(1-t^n)) gives P(n) = (n^2-1)/12 (checked numerically for n=1..5), so P(0) = -1/12.",
+   "new_key": "-\\frac{1}{12}"
+  },
+  {
+   "id": "math:3095",
+   "env": "affine_math",
+   "verdict": "KEY_FORMAT",
+   "confidence": "medium",
+   "answer_key": "\\{4,5,7\\}",
+   "gate_head_pass": 0.0,
+   "reason": "Answer {4,5,7} is correct (4^2+5^2 < 7^2), but this is multiple choice and 0/40 gate pass suggests letter answers 'B' are not matched; key should accept B.",
+   "new_key": "(B) \\{4,5,7\\}"
+  },
+  {
+   "id": "dapo:6401",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1",
+   "gate_head_pass": 0.0,
+   "reason": "x3 must be positive; with x3=1, x2,x4 >= 1/(2t) and x2+x4=2t force t^2 >= 1/2, achieved, so t_min = 1/sqrt2, not 1.",
+   "new_key": "\\frac{\\sqrt{2}}{2}"
+  },
+  {
+   "id": "dapo:11015",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "10",
+   "gate_head_pass": 0.0,
+   "reason": "Taking a_k = k gives sum 210, which brute force confirms is the maximum (minimum is 2); key 10 matches neither.",
+   "new_key": "210"
+  },
+  {
+   "id": "dapo:6613",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "432",
+   "gate_head_pass": 0.0,
+   "reason": "Regular sections through the center: 3 squares (area 4) and 4 regular hexagons (area 3sqrt3): 12sqrt3+12, so a+b+c=27; key 432 = 12*3*12 is the product.",
+   "new_key": "27"
+  },
+  {
+   "id": "dapo:319",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "1010",
+   "gate_head_pass": 0.0,
+   "reason": "n works iff n is odd and not divisible by 25 (5...5 = 5*repunit); brute force gives 970, key 1010 counts all odd n.",
+   "new_key": "970"
+  },
+  {
+   "id": "dapo:10877",
+   "env": "dapo",
+   "verdict": "BAD_KEY",
+   "confidence": "high",
+   "answer_key": "17",
+   "gate_head_pass": 0.0,
+   "reason": "Adding all equations gives x+y+z+u+v=15; unique solution (0,6,7,3,-1) verified.",
+   "new_key": "15"
+  }
+ ],
+ "blind_check": {
+  "n": 60,
+  "agree_keep_vs_act": 55,
+  "agree_exact": 52,
+  "disagree": [
+   {
+    "id": "math:409",
+    "first": "KEEP",
+    "blind": "KEY_FORMAT",
+    "first_reason": "100-k^2 is a square for k=6,8,10.",
+    "blind_reason": "100-k^2 must be a square: k=6,8,10; key embeds '\\text{, and }'."
+   },
+   {
+    "id": "dapo:14059",
+    "first": "KEY_FORMAT",
+    "blind": "KEEP",
+    "first_reason": "Known answer n=4; key carries 'n =' assignment.",
+    "blind_reason": "Known olympiad result: a circumscribed polygon can be cut into equal triangles by non-crossing diagonals only for n=4."
+   },
+   {
+    "id": "dapo:10748",
+    "first": "KEEP",
+    "blind": "AMBIGUOUS",
+    "first_reason": "Geese / non-swans = 30/75 = 40%.",
+    "blind_reason": "Rewording 'not swans and were geese' literally gives 30%; key 40 is the intended 'percent of non-swans that were geese'."
+   },
+   {
+    "id": "dapo:8444",
+    "first": "KEEP",
+    "blind": "AMBIGUOUS",
+    "first_reason": "Taking sqrt of negatives as imaginary: 87 pairs with a=-b, |a|≤44, a≠±10, plus 16 pairs with -ab-2016=|a+b|, total 103; miners' 87 ignores the second case.",
+    "blind_reason": "With real square roots only, a=-b gives 87 pairs; key 103 also counts 16 pairs where ab+2016<0 and both terms are imaginary and cancel. Convention-dependent."
+   },
+   {
+    "id": "dapo:12806",
+    "first": "KEEP",
+    "blind": "KEY_FORMAT",
+    "first_reason": "Known competition result min max |cos x + a cos2x + b cos3x| = sqrt3/2.",
+    "blind_reason": "Numerical minimax confirms M=sqrt3/2, but key string has doubled backslashes."
+   }
+  ]
+ }
+}

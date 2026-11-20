@@ -1,0 +1,13 @@
+[project]
+name = "math-test"
+version = "0.1.0"
+description = "Full MATH test split (Hendrycks et al., 5,000 problems; answer = last \\boxed{} of the reference solution) -- Affine bench env (verifiers v1, math-verify scoring)"
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0", "math-verify>=0.8.0", "datasets"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["math_test"]

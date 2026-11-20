@@ -1,0 +1,14 @@
+# Starts sn120-v2-site-pull.service one time each minute, also after a reboot.
+# Enable this timer and not the service. While one run is active, the next start does nothing.
+
+[Unit]
+Description=SN120 v2 public pull and status site (each minute)
+
+[Timer]
+OnCalendar=*-*-* *:*:30
+AccuracySec=5s
+Persistent=false
+Unit=sn120-v2-site-pull.service
+
+[Install]
+WantedBy=timers.target
