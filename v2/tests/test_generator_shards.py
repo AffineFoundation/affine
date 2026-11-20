@@ -170,6 +170,31 @@ def test_epoch_helper_set_is_pinned_at_primary_launch(tmp_path):
     assert remote.collect(epoch).complete
 
 
+def test_legacy_state_without_shard_count_never_calls_helpers(tmp_path):
+    from test_generator_remote import EPOCH, FakeRemote, public_archive
+    key = tmp_path / "key"
+    key.write_text("fake")
+    config = SSHConfig("primary", 22, key, tmp_path / "work")
+    epoch = EPOCH
+    job_path = tmp_path / "work" / "jobs" / epoch / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
+    state_path = tmp_path / "work" / "jobs" / epoch / "remote-state.json"
+    state_path.write_text(json.dumps({
+        "epoch": epoch, "state": "dispatched", "launch_attempted": True,
+        "job_sha256": __import__("sn120_v2.canonical", fromlist=["sha256_hex"]).sha256_hex(job_path.read_bytes()), "attempts": 1,
+    }))
+    primary = FakeRemote(config)
+    helper = FakeRemote(config)
+    helper.destination = "root@legacy-helper"
+    remote = ScorerRemote(config, runner=primary, helpers=[helper])
+    remote.dispatch(epoch)
+    assert helper.calls == []
+    primary.markers["done.json"] = '{"code":0}'
+    primary.archive = public_archive()
+    assert remote.collect(epoch).complete
+
+
 def test_helper_config_and_dispatch_idempotency(tmp_path):
     key = tmp_path / "key"
     key.write_text("fake")
@@ -182,6 +207,7 @@ def test_helper_config_and_dispatch_idempotency(tmp_path):
     calls = []
     class Runner:
         destination = "root@helper"
+        config = type("Config", (), {"host": "helper", "port": 23})()
         def ssh(self, command, *, timeout=None):
             calls.append(command)
             return type("Reply", (), {"stdout": ""})()
@@ -193,9 +219,9 @@ def test_helper_config_and_dispatch_idempotency(tmp_path):
     job_path.parent.mkdir(parents=True)
     job_path.write_text(json.dumps({"epoch": epoch, "head_version": "a" * 64, "tasks": []}))
     state = remote.work_dir / "jobs" / epoch / "remote-state.json"
-    remote._dispatch_helpers(epoch, job_path, state, "a" * 64, {})
+    remote._dispatch_helpers(epoch, job_path, state, "a" * 64, {"shard_count": 2, "helper_identities": [{"host": "helper", "port": 23}]})
     before = list(calls)
-    remote._dispatch_helpers(epoch, job_path, state, "a" * 64, {})
+    remote._dispatch_helpers(epoch, job_path, state, "a" * 64, {"shard_count": 2, "helper_identities": [{"host": "helper", "port": 23}]})
     assert calls == before
     assert any("--shard 1/2" in command for command in before)
     assert any("ensure_head" in command for command in before)
