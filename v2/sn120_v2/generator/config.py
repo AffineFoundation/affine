@@ -22,6 +22,7 @@ class Config:
     ssh: dict[str, Any] | None = None
     head_url: str = "https://affine.io/public/head.json"
     first_epoch: str = "20261120T0400Z"
+    submission_cap: dict[str, Any] | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":
@@ -31,7 +32,7 @@ class Config:
             raise ConfigError(f"cannot read Generator config {path}: {type(exc).__name__}") from exc
         if not isinstance(raw, dict):
             raise ConfigError("Generator config must be a JSON object")
-        fields = {"site_dir", "work_dir", "pool_dir", "network", "public_url", "credentials_file", "secret_file", "ssh", "head_url", "first_epoch"}
+        fields = {"site_dir", "work_dir", "pool_dir", "network", "public_url", "credentials_file", "secret_file", "ssh", "head_url", "first_epoch", "submission_cap"}
         unknown = set(raw) - fields
         if unknown:
             raise ConfigError(f"unknown Generator config fields: {', '.join(sorted(unknown))}")
@@ -52,7 +53,7 @@ class Config:
             Path(raw["site_dir"]).expanduser(), Path(raw["work_dir"]).expanduser(), Path(raw["pool_dir"]).expanduser(),
             raw.get("network", "finney"), raw.get("public_url", "https://affine.io"), raw.get("credentials_file", ""),
             Path(raw.get("secret_file", "generator-seed-secret")).expanduser(), ssh,
-            raw.get("head_url", "https://affine.io/public/head.json"), first_epoch,
+            raw.get("head_url", "https://affine.io/public/head.json"), first_epoch, raw.get("submission_cap"),
         )
 
 

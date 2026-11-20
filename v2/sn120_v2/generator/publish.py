@@ -164,6 +164,7 @@ def publication(
     now: float,
     pool_rows: PoolRows,
     frozen_at: float,
+    cap_rejections: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Pure publication plan; no file or remote store is modified here."""
     epoch = epoch_id(job["epoch"])
@@ -213,7 +214,11 @@ def publication(
             for row in rows
         ],
         "counts": {"tasks": len(rows), "accepted": len(accepted), "rejected": len(rows) - len(accepted)},
+        **({"submission_cap": dict(job["submission_cap"])} if "submission_cap" in job else {}),
     }
+    rejections = [{"hotkey": row["hotkey"], "reason": row["reason"]} for row in cap_rejections if row.get("cap_rejected")]
+    if "submission_cap" in job:
+        results["submissions"] = rejections
     accepted_rows = []
     intake_rows = []
     for row in accepted:
@@ -284,6 +289,7 @@ def publish(
     *, sink: PublicSink, job: Mapping[str, Any], output: Mapping[str, Any], out_dir: Path,
     secret: str, registered: Mapping[int, str], now: float, pool_rows: PoolRows, frozen_at: float,
     state_document: Mapping[str, Any] | None = None,
+    cap_rejections: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Idempotently publish an epoch; intake is last, then its digest and state."""
     epoch = epoch_id(job["epoch"])
@@ -298,7 +304,7 @@ def publish(
                 return {"status": "already_complete", "epoch": epoch, "accepted": []}
         raise VerifyError(f"published {epoch} is complete but state.json lacks its published_epochs entry")
     history = _validate_history(read_jsonl(raw_history, "accepted-all.jsonl"))
-    plan = publication(job, output, out_dir=out_dir, secret=secret, history=history, registered=registered, now=now, pool_rows=pool_rows, frozen_at=frozen_at)
+    plan = publication(job, output, out_dir=out_dir, secret=secret, history=history, registered=registered, now=now, pool_rows=pool_rows, frozen_at=frozen_at, cap_rejections=cap_rejections)
     if any(row["task_id"] in plan["old_claims"] for row in plan["accepted"]):
         raise VerifyError("snapshot admitted a task that was already accepted; refusing duplicate payment")
     results_raw = json_bytes(plan["results"])
@@ -360,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
             secret=secret, registered={reg.uid: reg.hotkey for reg in snapshot.registrations},
             now=time.time() if args.now is None else args.now, pool_rows=PriorPool(config.pool_dir),
             frozen_at=float(frozen["captured_at_epoch"]),
+            cap_rejections=read_json(config.work_dir / "jobs" / epoch / "manifest.json").get("cap_rejections", []),
         )
         print(f"published {epoch}: {len(plan['accepted'])} accepted tasks; intake complete")
         return 0

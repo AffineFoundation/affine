@@ -236,6 +236,31 @@ test('the actual PR 296 guide renders its links and code blocks', () => {
   dom.window.close();
 });
 
+test('frozen cap and per-hotkey rejection render from public schemas', async t => {
+  const currentEpoch = '20261120T2000Z';
+  const scoringEpoch = '20261120T1600Z';
+  const formula = 'floor(rollouts_per_pod_s * pods * (scoring_budget_s - king_swap_s) * (1 - safety_margin) / samples_per_task)';
+  const state = {
+    current_epoch: currentEpoch, last_epoch: scoringEpoch, published_epochs: [{epoch: scoringEpoch}],
+    window_open: '2026-11-20T16:00:00Z', window_close: '2026-11-20T20:00:00Z',
+    scoring: {epoch: scoringEpoch, status: 'scoring', deadline: '2026-11-20T16:00:00Z'},
+    submission_cap: {epoch: currentEpoch, cap: 13, formula},
+    next_submission_cap: {epoch: '20261121T0000Z', cap: 13, formula},
+  };
+  const results = {epoch: scoringEpoch, submissions: [{hotkey: 'miner', reason: 'submission has 14 task ids; the per-hotkey cap for 20261120T1600Z is 13'}]};
+  const dom = fixtureDOM(false);
+  t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });
+  await page.load(async url => {
+    const contents = url.includes('state.json') ? JSON.stringify(state) : url.includes('results.json') ? JSON.stringify(results) : null;
+    return {ok: contents !== null, status: contents === null ? 404 : 200, json: async () => JSON.parse(contents), text: async () => contents};
+  }, dom.window.document, '/generator/');
+  const document = dom.window.document;
+  assert.match(document.getElementById('submission-cap').textContent, /Per-hotkey cap for 20261120T2000Z: 13 tasks/);
+  assert.match(document.getElementById('submission-cap').textContent, /floor\(rollouts_per_pod_s/);
+  assert.equal(document.getElementById('submission-rejections').hidden, false);
+  assert.match(document.getElementById('submission-rejections-note').textContent, /miner: submission has 14 task ids/);
+});
+
 test('missing guide keeps the static launch placeholder', async t => {
   const dom = fixtureDOM(true);
   t.after(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close(); });

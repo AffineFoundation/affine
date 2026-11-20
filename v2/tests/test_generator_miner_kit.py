@@ -302,6 +302,21 @@ def test_status_filters_public_results_for_hotkey(tmp_path, capsys):
     assert kit.status_for_hotkey({"results": [{"hotkey": A.hotkey, "accepted": 1}]}, A.hotkey)["accepted"] == 1
 
 
+def test_sealed_and_public_cap_refuse_over_cap_before_upload(tmp_path):
+    _, link = sealed_link()
+    link["max_tasks"] = 1
+    raw = canonical_json(kit.batch_document(EPOCH, A.hotkey, TASKS[:2], A.key))
+    with pytest.raises(ConfigError, match=f"submission has 2 task ids; the per-hotkey cap for {EPOCH} is 1"):
+        kit.upload(link, raw, replace=True, cap=link["max_tasks"], epoch_name=EPOCH)
+    del link["max_tasks"]
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"current_epoch": EPOCH, "submission_cap": {"epoch": EPOCH, "cap": 1}}))
+    args = SimpleNamespace(state_url=str(state))
+    assert kit.public_cap(args, EPOCH) == 1
+    with pytest.raises(ConfigError, match=f"submission has 2 task ids; the per-hotkey cap for {EPOCH} is 1"):
+        kit.upload(link, raw, replace=True, cap=kit.public_cap(args, EPOCH), epoch_name=EPOCH)
+
+
 def test_guide_and_llms_section_name_protocol_and_files():
     guide = (Path(__file__).parents[1] / "site/static/generator-guide.md").read_text()
     section = (Path(__file__).parents[1] / "sn120_v2/generator/LLMS_SECTION.md").read_text()
