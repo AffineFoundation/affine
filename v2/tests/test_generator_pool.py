@@ -159,6 +159,20 @@ def test_verified_registry_preserves_id_and_uses_production_prompt(tmp_path, val
     assert len(seen) >= 2
 
 
+def test_tasks_read_each_shard_once_and_preserve_requested_order(tmp_path, valid_manifest, monkeypatch):
+    parsed, rows = _tiny_pool(tmp_path, valid_manifest)
+    monkeypatch.setattr(pool, "POOL_ROWS", 2)
+    calls = []
+    def reader(path, shard):
+        calls.append(path.name)
+        yield from enumerate(rows)
+    registry = pool.PriorPool(tmp_path, manifest=parsed, reader=reader, build_index=True)
+    calls.clear()
+    tasks = registry.tasks([rows[1]["id"], rows[0]["id"]])
+    assert [task.task_id for task in tasks] == [rows[1]["id"], rows[0]["id"]]
+    assert len(calls) == 1
+
+
 def test_id_index_is_canonical_pinned_and_not_a_new_task_dataset(tmp_path, valid_manifest, monkeypatch):
     parsed, rows = _tiny_pool(tmp_path, valid_manifest)
     monkeypatch.setattr(pool, "POOL_ROWS", 2)

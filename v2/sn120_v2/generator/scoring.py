@@ -354,8 +354,8 @@ def load_rollouts(job: ScoringJob, states: Mapping[str, TaskState], out: Path) -
                     record = json.loads(raw)
                     if not isinstance(record, dict):
                         raise VerifyError(f"Generator response {task.task_id} is not an object")
-                    if type(record.get("j")) is int and record["j"] < state.n:
-                        continue  # the committed rollout supersedes its raw response
+                    if type(record.get("j")) is int and (record["j"] < state.n or record["j"] in state.responses):
+                        continue  # first durable response wins, including out-of-order duplicates
                     append_rollout(state, record, job=job)
                     count += 1
         except (OSError, UnicodeDecodeError, ValueError) as exc:

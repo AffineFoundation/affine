@@ -170,6 +170,7 @@ def run_job(
         monotonic=monotonic,
     )
     capacity = len(urls) * clients_per_server
+    stage_capacity = max(capacity, 32 * len(job.tasks))
     try:
         while clock() < job.budget_deadline:
             pending = pending_rollouts(states)
@@ -178,7 +179,7 @@ def run_job(
             for state in states.values():
                 if not state.final and state.n == len(state.rollouts) and state.n not in state.responses:
                     settle(state)
-            batch, stage = next_batch(job, states, capacity)
+            batch, stage = next_batch(job, states, stage_capacity)
             if not batch:
                 if pending_rollouts(states):
                     continue

@@ -177,6 +177,32 @@ def test_fd_limit_is_raised_before_thread_pool(monkeypatch):
     assert limits[0] == 65536
 
 
+def test_out_of_order_durable_response_is_not_duplicated_on_resume(tmp_path):
+    job = job_for(1, deadline=time.time() + 60)
+    out = tmp_path / "out"
+    first = {
+        "version": "affine-generator-rollout-v1", "epoch": job.epoch,
+        "task_id": job.task_ids[0], "hotkey": job.tasks[0].hotkey, "j": 1,
+        "seed": rollout_seed(job.seed_secret, job.task_ids[0], 1), "head_version": job.head_version,
+        "messages": [], "response": PASS, "capped": False, "grade": {},
+    }
+    first["grade"] = {}
+    path = out / "rollouts" / "responses" / f"{job.task_ids[0]}.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(first) + "\n" + json.dumps(first) + "\n")
+    states = initial_states(job)
+    assert load_rollouts(job, states, out) == 1
+    state = states[job.task_ids[0]]
+    assert set(state.responses) == {1}
+    runner = BatchRunner(job, states, out, FakePool(), Grades(), urls=[f"http://127.0.0.1:{8100+i}" for i in range(8)], http=LocalHttp(), clients_per_server=1)
+    original = runner._checkpoint
+    runner._checkpoint = lambda task_id, sample, reply: original(task_id, sample, reply)
+    # A duplicate durable response is ignored at both recovery and checkpoint boundaries.
+    runner._checkpoint(job.task_ids[0], 1, {"text": PASS, "capped": False, "seconds": 0, "completion_tokens": 0, "prompt_tokens": 0, "server": "http://127.0.0.1:8100"})
+    assert set(state.responses) == {1}
+    assert len(path.read_text().splitlines()) == 2
+
+
 def test_crash_before_grade_recovers_without_duplicate_inference(tmp_path):
     job = job_for(1, deadline=time.time() + 60)
     out = tmp_path / "out"

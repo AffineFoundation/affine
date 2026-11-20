@@ -384,9 +384,29 @@ class PriorPool:
         """Render the unchanged published rows through v2's production Task type."""
         from ..envs.math_pool import ENV_ID, Task
 
+        selected = self.require_ids(task_ids)
+        grouped: dict[int, dict[int, list[str]]] = {}
+        for task_id in selected:
+            location = self._locations[task_id]
+            grouped.setdefault(location.shard, {}).setdefault(location.row, []).append(task_id)
+        found: dict[str, dict[str, Any]] = {}
+        for shard, locations in grouped.items():
+            remaining = set(locations)
+            for row_number, row in self.reader(self.paths[shard], self.manifest.shards[shard]):
+                if row_number not in remaining:
+                    continue
+                for task_id in locations[row_number]:
+                    if row.get("id") != task_id:
+                        raise VerifyError("Generator pool index does not resolve to the published ID")
+                    found[task_id] = dict(row)
+                remaining.remove(row_number)
+                if not remaining:
+                    break
+            if remaining:
+                raise VerifyError("Generator pool index points beyond its published shard")
         result = []
-        for task_id in self.require_ids(task_ids):
-            row = self.row(task_id)
+        for task_id in selected:
+            row = found[task_id]
             if not isinstance(row.get("problem"), str) or not isinstance(row.get("answer"), str):
                 raise VerifyError(f"Generator prior row {task_id} has no valid problem and answer")
             result.append(Task(task_id=task_id, slice=ENV_ID, problem=row["problem"], answer=row["answer"]))

@@ -176,6 +176,7 @@ class BatchRunner:
         self._executor: ThreadPoolExecutor | None = None
         self._first_error: BaseException | None = None
         self._slot_cooldown = [0.0] * len(self.urls)
+        self._next_slot = 0
         self._slot_errors = [0] * len(self.urls)
         self._last_progress = 0.0
         self._stage = "stage1"
@@ -192,12 +193,13 @@ class BatchRunner:
     def _choose_slot(self) -> int:
         if self._cutoff or self.clock() >= self.job.budget_deadline:
             raise BudgetDeadline()
-        loads = [sum(slot == index for slot in self._assigned.values()) for index in range(len(self.urls))]
         now = self.monotonic()
-        healthy = [index for index in range(len(loads)) if self._slot_cooldown[index] <= now and loads[index] < self.clients_per_server]
-        if not healthy:
-            return None
-        return min(healthy, key=loads.__getitem__)
+        for _ in range(len(self.urls)):
+            slot = self._next_slot
+            self._next_slot = (slot + 1) % len(self.urls)
+            if self._slot_cooldown[slot] <= now:
+                return slot
+        return None
 
     def _request(self, item: tuple[str, int], slot: int) -> tuple[str, int, dict[str, Any]]:
         task_id, sample = item
@@ -272,6 +274,8 @@ class BatchRunner:
             "completion_tokens": reply["completion_tokens"],
         }
         with self._disk_lock:
+            if sample < self.states[task_id].n or sample in self.states[task_id].responses:
+                return self.states[task_id].responses.get(sample, {})
             append_durable(self.out / ROLLOUTS_DIR / "responses" / f"{task_id}.jsonl", record)
             append_rollout(state, record, job=self.job)
         return record
@@ -337,12 +341,24 @@ class BatchRunner:
         self._futures = {}
         self._assigned = {}
         self._tasks = {}
+        preload = list(dict.fromkeys([task_id for task_id, _ in pending] + [task_id for task_id, _ in batch]))
+        if preload:
+            self._tasks.update(zip(preload, self.pool.tasks(tuple(preload))))
         graded = self._grade_responses(pending) if pending else 0
+        preload = list(dict.fromkeys([task_id for task_id, _ in pending] + [task_id for task_id, _ in batch]))
+        if preload:
+            self._tasks.update(zip(preload, self.pool.tasks(tuple(preload))))
         queue = deque(batch)
+        self._assigned.clear()
         stage = self._stage
         capacity = len(self.urls) * self.clients_per_server
-        if len(batch) > capacity:
-            queue = deque(batch[:capacity])
+        if not queue:
+            for state in self.states.values():
+                if not state.final:
+                    settle(state)
+            refill, stage = next_batch(self.job, self.states, max(capacity, 32 * len(self.job.tasks)))
+            queue.extend(refill)
+            self._stage = stage
         self._executor = ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="generator-scorer")
 
         def submit(item):
@@ -360,15 +376,10 @@ class BatchRunner:
                     break
                 while self._first_error is None and len(self._futures) < capacity and self.clock() < self.job.budget_deadline and not self._cutoff:
                     if not queue:
-                        refill, stage = next_batch(self.job, self.states, 0 if stage == "stage1" else capacity - len(self._futures))
-                        self._stage = stage
-                        queue.extend(refill)
-                        if not queue:
-                            break
+                        break
                     item = queue.popleft()
                     if sum(task == item[0] for task, _, _ in self._futures.values()) >= 8:
-                        queue.append(item)
-                        break
+                        continue
                     if item[1] < self.states[item[0]].n or item[1] in self.states[item[0]].responses:
                         continue
                     if any(task == item[0] and sample == item[1] for task, sample, _ in self._futures.values()):
