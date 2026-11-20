@@ -204,6 +204,25 @@ def test_missed_king_voids_epoch_and_next_epoch_proceeds(tmp_path, monkeypatch):
     assert any(event.get("status") == "unchanged" for event in events if event["phase"] == "links")
 
 
+def test_missing_pool_index_fails_snapshot_without_mass_rejection(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    config = Config(site, tmp_path / "work", tmp_path / "pool", first_epoch=EPOCH)
+    write_seed(config.work_dir, EPOCH)
+    king = config.work_dir / "king" / f"{EPOCH}.json"
+    king.parent.mkdir(parents=True)
+    king.write_text('{"version":"test-king"}')
+    class MissingIndex:
+        def __init__(self, root):
+            raise ConfigError("Generator pool ID index is missing")
+    monkeypatch.setattr("sn120_v2.generator.pool.PriorPool", MissingIndex)
+    monkeypatch.setattr("sn120_v2.generator.control.issue_links", lambda **kwargs: {"status": "unchanged"})
+    remote = SimpleNamespace(dispatch=lambda **kwargs: pytest.fail("no dispatch without pool index"))
+    events = tick(config, now=DEADLINE + 60, client=None, store=None, pool=None, remote=remote)
+    assert any(event["phase"] == "snapshot" and event["status"] == "error" and "ConfigError" in event["error"] for event in events)
+    assert not (site / "generator" / "epochs" / EPOCH / "manifest.json").exists()
+
+
 def test_phase_error_is_event_and_does_not_block_links(tmp_path, monkeypatch):
     site = tmp_path / "site"
     site.mkdir()

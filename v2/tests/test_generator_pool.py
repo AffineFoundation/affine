@@ -173,6 +173,19 @@ def test_id_index_is_canonical_pinned_and_not_a_new_task_dataset(tmp_path, valid
         pool.PriorPool(tmp_path, manifest=parsed, reader=lambda path, shard: enumerate(rows))
 
 
+def test_missing_or_incomplete_index_fails_closed(tmp_path, valid_manifest, monkeypatch):
+    parsed, rows = _tiny_pool(tmp_path, valid_manifest)
+    monkeypatch.setattr(pool, "POOL_ROWS", 2)
+    reader = lambda path, shard: enumerate(rows)
+    with pytest.raises(ConfigError, match="missing"):
+        pool.PriorPool(tmp_path, manifest=parsed, reader=reader)
+    registry = pool.PriorPool(tmp_path, manifest=parsed, reader=reader, build_index=True)
+    lines = registry.index_path.read_bytes().splitlines()
+    registry.index_path.write_bytes(lines[0] + b"\n" + lines[-1] + b"\n")
+    with pytest.raises(ConfigError, match="incomplete"):
+        pool.PriorPool(tmp_path, manifest=parsed, reader=reader)
+
+
 def test_shard_sha_is_verified_before_reader_is_called(tmp_path, valid_manifest):
     parsed, rows = _tiny_pool(tmp_path, valid_manifest)
     next(tmp_path.glob("shards/*")).write_bytes(b"tampered")

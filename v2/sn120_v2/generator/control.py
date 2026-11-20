@@ -193,6 +193,12 @@ def snapshot_epoch(config: Config, *, epoch: str, now: float, client: Any, store
         return {"status": "void_missed_king_capture", "epoch": epoch}
     if now < epoch_deadline(epoch).timestamp() + 60:
         return {"status": "not_due", "epoch": epoch}
+    if pool is None:
+        try:
+            from .pool import PriorPool
+            pool = PriorPool(config.pool_dir)
+        except ConfigError as exc:
+            return {"status": "error", "epoch": epoch, "error": f"{type(exc).__name__}: {exc}"}
     king = read_json(config.work_dir / "king" / f"{epoch}.json")
     frozen = frozen_at(config.work_dir / "king" / f"{epoch}.json", epoch)
     seed = read_json(config.work_dir / "seeds" / f"{epoch}.json")

@@ -281,9 +281,18 @@ class PriorPool:
         self.index_path = self.root / "id-index.jsonl"
         self._locations: dict[str, PoolLocation] = {}
         if self.index_path.is_file():
-            self._load_index()
+            try:
+                self._load_index()
+            except VerifyError as exc:
+                if "does not cover all" in str(exc):
+                    raise ConfigError("Generator pool ID index is incomplete; rebuild it explicitly with build_index=True") from exc
+                raise
         elif build_index:
             self.build_index()
+        else:
+            raise ConfigError("Generator pool ID index is missing; build it explicitly with build_index=True before snapshot admission")
+        if len(self._locations) != POOL_ROWS:
+            raise ConfigError(f"Generator pool ID index is incomplete: {len(self._locations)} rows, expected {POOL_ROWS}; rebuild it explicitly")
 
     def _load_index(self) -> None:
         try:
