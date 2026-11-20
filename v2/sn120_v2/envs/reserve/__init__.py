@@ -18,7 +18,8 @@ from ...errors import ConfigError, VerifyError
 from ...rotation import Reserve, ReserveShard
 from ..math_pool import MathPool, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 
-RESERVE_ENV = "SN120_RESERVE_DIR"  # tests only; production uses the packaged directory
+RESERVE_ENV = "SN120_RESERVE_DIR"
+
 MANIFEST = "MANIFEST.jsonl"
 WITHDRAWN = "withdrawn.jsonl"
 ID = re.compile(r"([a-z][a-z0-9_]*):([0-9]+)\Z")
@@ -29,9 +30,36 @@ MIN_ANSWER_CHARS, MAX_ANSWER_CHARS = 1, 2_048
 
 
 def reserve_dir() -> Path:
-    # The environment override exists for tests. It is never read by off-mode
-    # controller/assembly paths.
-    return Path(os.environ.get(RESERVE_ENV) or Path(__file__).parent)
+    """The immutable packaged seed. Runtime state uses ``live_reserve_dir``."""
+    return Path(__file__).parent
+
+
+def live_reserve_dir(state_dir: str | Path | None = None) -> Path:
+    """Live state defaults to the controller directory, not the git checkout."""
+    if os.environ.get(RESERVE_ENV):
+        return Path(os.environ[RESERVE_ENV])
+    if state_dir is None:
+        raise ConfigError("live reserve needs --state-dir or SN120_RESERVE_DIR")
+    return Path(state_dir) / "reserve"
+
+
+def reserve_root(root: str | Path | None = None, *, state_dir: str | Path | None = None) -> Path:
+    """Resolve an explicit test/live root, otherwise the controller state root."""
+    return live_reserve_dir(state_dir) if root is None else Path(root)
+
+
+def seed_reserve(root: str | Path, seed: str | Path | None = None) -> None:
+    """Copy seed bytes without ever changing or deleting files in the seed."""
+    seed = reserve_dir() if seed is None else Path(seed)
+    root = Path(root)
+    if root == seed:
+        raise ConfigError("packaged reserve is immutable; choose a live state directory")
+    (root / "shards").mkdir(parents=True, exist_ok=True)
+    for source in (seed / MANIFEST, seed / WITHDRAWN, *(seed / "shards").glob("*.jsonl")):
+        target = root / source.relative_to(seed)
+        if not target.exists():
+            with source.open("rb") as src, target.open("xb") as dst:
+                dst.write(src.read())
 
 
 def normalise(problem: str) -> str:
@@ -98,7 +126,7 @@ def load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, 
 
 
 def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, allow_retired: bool = False) -> tuple[Reserve, Catalog | None]:
-    root = reserve_dir() if root is None else Path(root)
+    root = reserve_root(root)
     manifest, withdrawn_raw, lines, withdrawn = read_raw(root)
     history, seen_shards = [], set()
     for row in lines[:-1]:
@@ -216,7 +244,7 @@ def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catal
     This reads shards once at runtime construction, never once per round.
     Returning retired tasks keep their source metadata in the v2 archive.
     """
-    root = reserve_dir() if root is None else Path(root)
+    root = reserve_root(root)
     base = load_pool()
     archive = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
     meta: dict[str, dict[str, Any]] = {}

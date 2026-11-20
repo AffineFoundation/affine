@@ -163,7 +163,7 @@ def stack(context: StackContext) -> Stack:
     pool_runtime = None
     if params.rotation_enabled and context.command != "set-params":
         from .pool_runtime import PoolRuntime
-        pool_runtime = PoolRuntime(store, params, state)
+        pool_runtime = PoolRuntime(store, params, state, root=context.state_dir / "reserve")
     if context.command != "set-params":
         check_env_pin(params)
     tokens = HeadTokens(store, context.state_dir / "tokenizer", state.manifest)
