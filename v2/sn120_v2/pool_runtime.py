@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 from . import layout
 from .canonical import canonical_json, sha256_hex
 from .envs.math_pool import MathPool, Task, load_pool
-from .envs.reserve import Catalog, candidate_metadata, load_reserve, read_raw, reserve_dir
+from .envs.reserve import Catalog, candidate_metadata, load_reserve, read_raw, reserve_dir, reserve_root, seed_reserve
 from .errors import ConfigError, VerifyError
 from .irt import IRTSampler
 from .params import Params
@@ -51,7 +51,7 @@ def load_rotation(store: ObjectStore, state_sha: str) -> Rotation:
 
 def mirror_reserve(store: ObjectStore, root: str | Path | None = None) -> None:
     """Mirror verified reserve bytes; shards go before the manifest pointer."""
-    root = reserve_dir() if root is None else Path(root)
+    root = reserve_root(root)
     manifest, withdrawn, rows, _ = read_raw(root)
     for row in rows[:-1]:
         store.put(layout.reserve_shard(row["shard"], row["sha256"]), (root / "shards" / row["shard"]).read_bytes())
@@ -148,11 +148,13 @@ def pool_summary(rotation: Rotation, opened_at: int = 0) -> dict[str, Any]:
 class PoolRuntime:
     """A MathPool-compatible catalog plus the reserve rotation lifecycle."""
     def __init__(self, store: ObjectStore, params: Params, state: State, *, root: str | Path | None = None,
-                 base: MathPool | None = None, initial_ids: Sequence[str] | None = None) -> None:
+                 base: MathPool | None = None, initial_ids: Sequence[str] | None = None,
+                 seed: str | Path | None = None) -> None:
         self.store, self.params, self.state = store, params, state
         self.base = base or load_pool()
         self.initial_ids = tuple(sorted(initial_ids or self.base.task_ids))
-        self.root = root
+        self.root = reserve_root(root)
+        self.seed = reserve_dir() if seed is None else Path(seed)
         self.previous: Rotation | None = None
         if state.rotation_state_sha:
             self.previous = load_rotation(store, state.rotation_state_sha)
@@ -163,8 +165,8 @@ class PoolRuntime:
                 self.admitted_counts[task_id] = self.admitted_counts.get(task_id, 0) + 1
             current = load_rotation(self.store, current.prev_state_sha) if current.prev_state_sha else None
         self._restore_public_cache()
-        self.reserve, self.catalog = load_reserve(root, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
-        self.candidate_meta = candidate_metadata(root, self.reserve, self.catalog) if self.params.rotation_rule == "info" else {}
+        self.reserve, self.catalog = load_reserve(self.root, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
+        self.candidate_meta = candidate_metadata(self.root, self.reserve, self.catalog) if self.params.rotation_rule == "info" else {}
         self.active_rotation: Rotation | None = None
         if state.round is not None and state.round.rotation is not None:
             current = load_rotation(store, state.round.rotation["state_sha"])
@@ -190,10 +192,32 @@ class PoolRuntime:
         A fresh checkout has only the empty packaged reserve. A newer local
         ingest may extend the last public mirror, but it may not replace it.
         """
-        root = Path(self.root or reserve_dir())
+        root = self.root
+        assert root is not None
         local = root / "shards"
-        if not local.is_dir() or not (root / "MANIFEST.jsonl").is_file():
-            return
+        if not (root / "MANIFEST.jsonl").is_file():
+            # Migrate the packaged catalog exactly once. It may be a valid
+            # extension of the last public mirror; later code updates must not
+            # re-seed or replace the live manifest.
+            seed_reserve(root, self.seed)
+            # A checkout dirty from the old writer can contain an ingest newer
+            # than the packaged seed. Preserve it only when it extends both
+            # histories; never replace a divergent local catalog.
+            legacy = self.seed
+            if legacy != root and (legacy / "MANIFEST.jsonl").is_file():
+                _, _, seed_rows, seed_withdrawals = read_raw(root)
+                _, _, legacy_rows, legacy_withdrawals = read_raw(legacy)
+                if (len(legacy_rows) > len(seed_rows)
+                        and legacy_rows[:-1][:len(seed_rows) - 1] == seed_rows[:-1]
+                        and legacy_withdrawals[:len(seed_withdrawals)] == seed_withdrawals):
+                    # The complete candidate is checked before any legacy byte
+                    # can replace the newly seeded live state.
+                    load_reserve(legacy)
+                    for source in [legacy / "MANIFEST.jsonl", legacy / "withdrawn.jsonl", *(legacy / "shards").glob("*.jsonl")]:
+                        target = root / source.relative_to(legacy)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(source.read_bytes())
+        local.mkdir(parents=True, exist_ok=True)
         if self.store.exists(layout.RETIRED_POOL):
             index = json.loads(self.store.get(layout.RETIRED_POOL))
             tasks = json.loads(self.store.get(layout.RETIRED_TASKS))
@@ -205,18 +229,24 @@ class PoolRuntime:
             return
         manifest = self.store.get(layout.RESERVE_MANIFEST)
         withdrawn = self.store.get(layout.RESERVE_WITHDRAWN)
+        local_manifest, _, here, local_withdrawals = read_raw(root)
         remote = [json.loads(line) for line in manifest.splitlines()]
-        here = [json.loads(line) for line in (root / "MANIFEST.jsonl").read_bytes().splitlines()]
         if len(here) == 1 and set(here[0]) == {"withdrawn"}:
-            # The shipped empty manifest is a cache miss, not evidence of
-            # deleted history. Its existing withdrawal pointer is checked by
-            # the normal loader after restoration.
-            here = remote
-        if here[:-1][:len(remote) - 1] != remote[:-1]:
-            raise VerifyError("local reserve does not extend its public mirror")
-        if manifest != (root / "MANIFEST.jsonl").read_bytes():
-            (root / "MANIFEST.jsonl").write_bytes(manifest)
-            (root / "withdrawn.jsonl").write_bytes(withdrawn)
+            # The shipped empty/withdrawn-only manifest is a cache miss when
+            # the public mirror has shards. Its withdrawal pointer is restored
+            # from the same authoritative mirror before normal verification.
+            if len(remote) > 1:
+                (root / "MANIFEST.jsonl").write_bytes(manifest)
+                (root / "withdrawn.jsonl").write_bytes(withdrawn)
+        else:
+            remote_shards = remote[:-1]
+            if here[:-1][:len(remote_shards)] != remote_shards:
+                raise VerifyError("local reserve does not extend its public mirror")
+            remote_withdrawals = [json.loads(line) for line in withdrawn.splitlines()]
+            if local_withdrawals[:len(remote_withdrawals)] != remote_withdrawals:
+                raise VerifyError("local reserve withdrawals do not extend their public mirror")
+            # Never replace non-empty local history with a shorter mirror.
+            # The verified loader checks its final withdrawal pointer below.
         prefix = "public/pool/reserve/shards/"
         mirrored: dict[str, bytes] = {}
         for key in self.store.list(prefix):
@@ -320,7 +350,8 @@ class PoolRuntime:
         return block
 
     def _publish_retired_local(self, decision: Rotation) -> None:
-        root = Path(self.root or reserve_dir())
+        root = self.root
+        assert root is not None
         rows, tasks = [], []
         for row in decision.retired_archive:
             try:

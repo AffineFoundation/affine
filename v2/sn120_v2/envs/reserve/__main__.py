@@ -24,7 +24,7 @@ from ...errors import V2Error
 from ..math_pool import MANDATE, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 from . import (
     ID, MANIFEST, MIN_ANSWER_CHARS, MAX_ANSWER_CHARS, MAX_PROBLEM_CHARS, WITHDRAWN, empty_manifest, load_reserve, normalise, read_raw,
-    reserve_dir, task_row,
+    reserve_root, seed_reserve, task_row,
 )
 
 
@@ -59,8 +59,14 @@ def _retired_catalog(rows: dict[str, dict[str, Any]], root: Path) -> dict[str, T
     return {row["id"]: Task(row["id"], row["env"], row["problem"], row["answer"]) for row in json.loads(path.read_bytes())}
 
 
+def _root(args: argparse.Namespace) -> Path:
+    root = reserve_root(state_dir=getattr(args, "state_dir", None))
+    seed_reserve(root)
+    return root
+
+
 def ingest(args: argparse.Namespace) -> dict[str, Any]:
-    root = reserve_dir()
+    root = _root(args)
     if not ID.fullmatch(args.prefix + ":0") or args.prefix in ("math", "dapo"):
         raise V2Error("prefix must be lowercase alphanumeric/underscore, and not reserved math or dapo")
     reserve, catalog = load_reserve(root, with_catalog=True)
@@ -195,7 +201,7 @@ def ingest(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def withdraw(args: argparse.Namespace) -> dict[str, Any]:
-    root = reserve_dir()
+    root = _root(args)
     reserve, _ = load_reserve(root)
     if args.id in reserve.withdrawn_ids:
         raise V2Error(f"{args.id} is already withdrawn")
@@ -218,8 +224,8 @@ def withdraw(args: argparse.Namespace) -> dict[str, Any]:
     return row
 
 
-def status() -> dict[str, Any]:
-    reserve, _ = load_reserve()
+def status(args: argparse.Namespace) -> dict[str, Any]:
+    reserve, _ = load_reserve(_root(args))
     return {"shards": len(reserve.shards), "tasks": sum(row.count for row in reserve.shards),
             "withdrawn": reserve.withdrawn_count, "queued": len(reserve.queue),
             "reserve_manifest_sha": reserve.manifest_sha, "next_ids": list(reserve.queue[:64])}
@@ -227,6 +233,7 @@ def status() -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="python -m sn120_v2.envs.reserve", description=__doc__)
+    top.add_argument("--state-dir", type=Path, help="controller state directory; live reserve is <state-dir>/reserve")
     commands = top.add_subparsers(dest="command", required=True)
     add = commands.add_parser("ingest")
     add.add_argument("input")
@@ -251,9 +258,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "withdraw":
             report = withdraw(args)
         elif args.command == "status":
-            report = status()
+            report = status(args)
         else:
-            report = status() | {"verified": True}
+            report = status(args) | {"verified": True}
     except (V2Error, OSError, ValueError) as exc:
         print(json.dumps({"error": type(exc).__name__, "reason": str(exc)}), file=sys.stderr)
         return 2

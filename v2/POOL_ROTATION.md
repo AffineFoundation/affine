@@ -10,21 +10,21 @@
 - `withdrawn.jsonl`: append-only `{id, reason, added_at}`. A withdrawn reserve task is not admitted; a withdrawn active task is retired outside the `k` cap.
 - `MANIFEST.jsonl`: shard rows `{shard, sha256, count, added_at}` in admission order, followed by the current `{withdrawn: {sha256, count}}` pointer. `reserve_manifest_sha` is the SHA-256 of this file's bytes.
 
-The shipped reserve has zero shards. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens. `SN120_RESERVE_DIR` is a test-only override.
+The packaged reserve is an immutable seed. The controller copies it once into `<state-dir>/reserve/`; all runtime and CLI writes, including the manifest, withdrawals, shards and retired archive, stay outside the checkout. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens. `SN120_RESERVE_DIR` overrides the live root for tests and isolated tooling.
 
-The reserve is not in `env_pin` or `params_hash`. Each rotated round records the reserve manifest SHA in its journal, round file, public rotation artifact and IRT snapshot. Shards and the manifest are mirrored under `public/pool/reserve/`; miners need no git checkout. The active set is public before its round: `public/pool/active/<active_sha>.json`; the next-up queue is in each round's `pool` block. On a fresh checkout, `PoolRuntime` restores the mirrored shards and retired archive before reading the catalog; a newer local manifest may extend, but not replace, that history.
+The reserve is not in `env_pin` or `params_hash`. Each rotated round records the reserve manifest SHA in its journal, round file, public rotation artifact and IRT snapshot. Shards and the manifest are mirrored under `public/pool/reserve/`; miners need no git checkout. The active set is public before its round: `public/pool/active/<active_sha>.json`; the next-up queue is in each round's `pool` block. On a fresh checkout, `PoolRuntime` restores the mirrored shards and retired archive into the live root before reading the catalog; a newer local manifest may extend, but not replace, that history.
 
 ## Ingest
 
 From `v2/`, with the same grader extras used by `build_clean_pool`:
 
 ```
-python -m sn120_v2.envs.reserve ingest \
+python -m sn120_v2.envs.reserve --state-dir /data/affine ingest \
   --source omni-math@<revision> --license CC-BY-4.0 --prefix omni \
   --audit-method <method> --audit-ref <audit-report-or-commit> input.jsonl
-python -m sn120_v2.envs.reserve verify
-python -m sn120_v2.envs.reserve status
-python -m sn120_v2.envs.reserve withdraw omni:17 --reason 'wrong answer key'
+python -m sn120_v2.envs.reserve --state-dir /data/affine verify
+python -m sn120_v2.envs.reserve --state-dir /data/affine status
+python -m sn120_v2.envs.reserve --state-dir /data/affine withdraw omni:17 --reason 'wrong answer key'
 ```
 
 Input has one `{problem, answer, source_id?, prior_p?}` per line. `prior_p` is an optional finite public prior pass rate in [0,1], used by the ranked v2 rule when no IRT row is available. `--env` chooses the task slice (default `affine_math`). Ingest NFKC-normalises, case-folds and whitespace-collapses problems for dedupe. It checks against the v2.1 pool, v2.0 archive, all reserve shards, withdrawn ids, the retired archive and the input itself. It uses the live grader self-check `grade_answer(answer, problem, '<think>x</think> \\boxed{' + answer + '}', False) == P`, requires a nonempty single-line answer, rejects MANDATE, and enforces params-free problem/answer bounds of 16,384/2,048 characters. `--reject-mc` also applies the grader's multiple-choice heuristic. Rejected rows and counts go to `<shard>.rejected.json`, never to the reserve.
@@ -34,7 +34,7 @@ IDs continue at `<prefix>:<max existing n + 1>`. An empty re-run writes nothing.
 A high-retired task returns only explicitly:
 
 ```
-python -m sn120_v2.envs.reserve ingest ... --readmit omni:17 readmit.jsonl
+python -m sn120_v2.envs.reserve --state-dir /data/affine ingest ... --readmit omni:17 readmit.jsonl
 ```
 
 Its `source_id` must be the retired id, problem and answer must exactly match the archive, and the row carries `audit.readmit_of = <retire round>`. It is a new queue entry. Low-retired and withdrawn tasks cannot return.
@@ -120,6 +120,6 @@ The command downloads the public decision, previous state and source IRT snapsho
 
 ## Enable (only with Jacob's approval)
 
-1. Ingest and `verify` a reserve shard. Commit only the shard and manifest line; the live box reads it on the next round open after the normal code update.
+1. Ingest and `verify` a reserve shard in the controller's live state directory. The next round open mirrors it and uses its verified manifest; no checkout file changes.
 2. Stop `run` between rounds and use normal `set-params` with a complete params file containing `rotation_enabled: true`. `rotation_k=32`, `rotation_retire_p=0.95`, `rotation_n_min=3`, low-retire off and `rotation_active_size=0` are the defaults.
 3. Restart `run`. The first complete new round rotates before its draw. Existing open rounds are never changed in flight. Keep monitoring active size, retire/admit ids, queue and ledger; rollback is a normal between-round params change with `rotation_enabled: false`.
