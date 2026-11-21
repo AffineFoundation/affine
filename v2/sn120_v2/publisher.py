@@ -1224,9 +1224,11 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
         "  open, the scoring ends.",
         *([
-            "- Field-median win rule, in full: duplicates are removed first by the existing dedup, the round uses one round-wide",
-            "  training seed, and there are no eligibility floors. For each task t, m_t is the median of the per-task pass rates",
-            "  of the deduped scoring batches plus the king; an even 0/1 split gives 0.5. A batch dropped early contributes only",
+            "- Field-median win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
+            "  round-wide training seed.",
+            *_no_floor_lines(params),
+            "  For each task t, m_t is the median of the per-task pass rates of the deduped scoring batches plus the king;",
+            "  an even 0/1 split gives 0.5. A batch dropped early contributes only",
             "  on tasks it ran. For your scored tasks, d_t = your pass rate - m_t; `field_delta` is the weighted mean of d_t",
             "  and `field_se` its standard error, with the same weights as the king estimate. `field_z` = `field_delta` / `field_se`,",
             "  or 0 when `field_se` is 0. Crown only when `field_z` > `z_field_bar` AND paired z",
@@ -1265,6 +1267,13 @@ def _scoring_lines(params: Params) -> list[str]:
     ]
 
 
+def _no_floor_lines(params: Params) -> list[str]:
+    return [
+        f"  There are no minimum-signal or update-norm floors (`min_signal_rollouts` {params.min_signal_rollouts},",
+        f"  `min_step_norm` {show(params.min_step_norm)}); only non-finite or stored null updates and duplicates are removed.",
+    ] if params.min_signal_rollouts == 1 and params.min_step_norm == 0 else []
+
+
 def _win_rule_lines(params: Params) -> list[str]:
     if params.crown_gate != "field_median":
         return [
@@ -1274,7 +1283,8 @@ def _win_rule_lines(params: Params) -> list[str]:
         ]
     return [
         "- Win rule (`crown_gate` = `field_median`): duplicates are removed first (the existing dedup), and the round has one",
-        "  round-wide training seed. There are no floors on how many candidates may be eligible.",
+        "  round-wide training seed.",
+        *_no_floor_lines(params),
         "- Per task t, the field median m_t is the median of the per-task pass rates of the deduped scoring batches plus the king.",
         "  With an even number of members, the two middle values are averaged (0.5 for a 0/1 split). A batch dropped at an",
         "  early look contributes only on the tasks it ran. On your scored tasks, d_t = your pass rate - m_t; `field_delta` is",
