@@ -450,11 +450,15 @@ class VllmEvaluator:
         return SoloWorker(self, ticket, trained, deadline, gpu)
 
     def build_merged(self, round_id: str, head: HeadVersion, lora, params: Params, gpu: int):
-        """Build one candidate's base after training, using the install arithmetic."""
+        """Build one candidate's base after training, using the install arithmetic.
+
+        A fixed-order build runs in a spawned child: its CUDA context must not
+        remain in the controller and trip the next free-GPU check.
+        """
         import shutil
 
         from .. import layout
-        from .merged import build_candidate_base, candidate_fold_settings
+        from .merged import candidate_fold_settings, candidate_in_child
 
         if not params.eval_merged:
             raise InfraError("a merged candidate can only be built with eval_merged")
@@ -468,7 +472,7 @@ class VllmEvaluator:
             reserved = self._merged_reserved.get(round_id, 0)
             self._merged_reserved[round_id] = reserved + need
         try:
-            return build_candidate_base(
+            return candidate_in_child(
                 master_dir, base_dir, lora_dir, lora.rank, out, kernel=kernel,
                 device=f"cuda:{gpu}" if kernel == "fixed-order-v1" else "cpu",
                 threads=threads, reserved=reserved,

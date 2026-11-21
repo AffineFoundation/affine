@@ -237,6 +237,21 @@ def test_stop_all_reaches_every_process_and_reports_a_failure():
     assert jobs == [] and procs.gpu_env([4, 5], {"A": "1"}) == {"A": "1", "CUDA_VISIBLE_DEVICES": "4,5"}
 
 
+def test_controller_cuda_memory_is_not_excluded_from_the_free_gpu_check():
+    # The incident's process report named the long-lived run PID on GPU 4.
+    # Production's aggregate query drops that PID; its limit therefore applies
+    # to controller memory too. Exempting it would hide leaked descendants.
+    controller_pid = os.getpid()
+    process_report = [(controller_pid, "python -m sn120_v2 run", 4, 1316)]
+    assert process_report[0][0] == controller_pid and process_report[0][3] > 1024
+    memory_by_gpu = {gpu: sum(mib for pid, command, index, mib in process_report if index == gpu) for gpu in range(8)}
+    with pytest.raises(InfraError, match=r"GPUs \[4\] are still in use; evaluation must not start"):
+        procs.wait_gpus_free(1024, 0.0, report=lambda: "\n".join(f"{gpu}, {mib}" for gpu, mib in memory_by_gpu.items()))
+    process_report.clear()  # the isolated candidate-build child has exited
+    memory_by_gpu = {gpu: sum(mib for pid, command, index, mib in process_report if index == gpu) for gpu in range(8)}
+    procs.wait_gpus_free(1024, 0.0, report=lambda: "\n".join(f"{gpu}, {mib}" for gpu, mib in memory_by_gpu.items()))
+
+
 def test_gpus_count_as_free_only_when_the_driver_says_so():
     assert procs.busy_gpus("0, 3\n1, 81000\n2, 900\n", 1024) == [1]
     assert procs.busy_gpus("0, 3\ngarbage\n", 1024) == [1]  # a line that cannot be read fails closed
