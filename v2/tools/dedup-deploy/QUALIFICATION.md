@@ -278,8 +278,14 @@ ROLLBACK QUALIFICATION PASS: undecided/decided open dedup rounds refuse before f
 ROLLBACK QUALIFICATION PASS: unmodified old loop uses the compatibility executable and exits after exactly one bounded start
 ```
 
-This is **working-tree development evidence only**, not a final committed-kit
-PASS. The compatibility loader validates the exact full `d5979c30…` pin,
+The stable committed-kit rollback rerun at `bef1e0a8` also completed with exit
+0 and emitted the same seven PASS lines above. Its actual output is
+`/home/bb/scratch/dedup-combined-rollback-committed-v2.log`. An earlier
+rollback-v1 attempt overlapped the history-preservation merge and failed while
+reading conflict-marker-contaminated generated params; it is invalid evidence
+and is not counted as a replay failure.
+
+The compatibility loader validates the exact full `d5979c30…` pin,
 including `eval_merged=true` and the combined worker digest, before exposing
 old behavior. It removes the seven dedup fields, historical `z_bar=1.5` override
 and `eval_merged=true`, then translates only the reviewed combined worker digest
@@ -424,27 +430,91 @@ uses `getattr(params, "eval_merged", False)` at that legacy boundary. The
 production merged tested-base and install-fold guards remain mandatory under
 new params. Normal development v3 was restarted from a fresh isolated root;
 its outer log's early `REFUSED` line is the intentional competing-deployment
-guard check, not the rehearsal's terminal result. No v3 completion is claimed
-here without its terminal output.
+guard check, not the rehearsal's terminal result. It subsequently completed
+with exit 0 and the terminal line
+`DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS`.
+Its real old-code `r000091` gate closed applied with 2,000 scored tasks and no
+lease failures; apply pinned `50afaca3`, then `r000092` closed applied with
+2,000 scored tasks, one duplicate, one charged null update, zero admission
+cuts, evaluation wall 1,234 seconds, and no lease failures. Public checks
+passed, and `r000093` opened in the same single loop. The log is
+`/home/bb/scratch/dedup-combined-development-v3.log`. This remains development
+evidence, not a committed-kit PASS.
 
 The earlier normal-v1/v2 stale-manifest attempts described below predate these
 combined merged-fixture runs; the names refer to different attempts.
+
+Combined abort-after-open development v1 completed with exit 0 and terminal
+`DRY DEVELOPMENT COMPLETE: bounded new-code finish and shimmed old rollback`.
+After `50afaca3` applied and opened `r000092` under `d5979c30…`, the simulated
+unhealthy-public response correctly caused `autodeploy exit 1 (no PASS)`. New
+code finished the undecided `r000092` as applied without discarding its stored
+result; compatibility-shimmed old `c5252865` and old params were restored, and
+exactly one old-code loop started. Its log is
+`/home/bb/scratch/dedup-combined-abort-development-v1.log`. This is development
+recovery evidence, not a final committed-kit PASS.
 
 At `2026-11-21T14:21:47Z`, both GitHub PR #310 and `refs/pull/310/head` still
 resolved to `1fa67a9770884eb679ffeb91fd133ac49575d117`. The integrated release
 is `50afaca32ea982796728a0b07cb6e3c579ef378b`, its GPU tree matches AFF-5,
 and `c5252865` remains an ancestor. AFF-5's terminal report is recorded above.
 
+### Committed-kit normal rehearsal
+
+The clean committed-kit normal rehearsal launched from `be725d3a` completed
+with exit 0. Its frozen kit is content-identical to the ancestry-preserving
+`bef1e0a8` revision. It ran without `DEDUP_DRY_DEVELOPMENT`, compared all 24
+kit files recursively, and preserved generator/reserve bytes. The actual
+terminal output is `/home/bb/scratch/dedup-combined-committed-normal-v1.log`:
+
+```text
+2026-11-21T14:33:10Z gate r000091; old HEAD c5252865
+2026-11-21T14:34:18Z journal gate r000091: yes applied n_tasks 2000 lease_failed 0 why []
+2026-11-21T14:35:01Z APPLY OK: new HEAD 50afaca3; params applied through set-params CLI
+2026-11-21T14:36:03Z first open r000092: OK active 10000 params d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c n_tasks 2000 snapshot sqrt_fisher eval_wall_s None cuts None admission_cuts None why []
+2026-11-21T14:36:06Z first-open public PASS; same loop must close r000092 and open r000093
+2026-11-21T14:36:28Z first new-code round r000092 close: yes applied n_tasks 2000 lease_failed 0 why []; second r000093 opened in same process
+2026-11-21T14:36:29Z first-round health: OK active None params None n_tasks 2000 snapshot None eval_wall_s 1234 cuts {'duplicate': 1, 'null_update': 1} admission_cuts {'min_rollouts': 0, 'null_update': 0} why []
+2026-11-21T14:36:29Z PASS: dedup 50afaca3; merged evaluation enabled; r000092 closed n_tasks=2000 with exactly 2 null strings x 2000 chars for every box, no lease_failed, eval wall 1234s; duplicate/null-update decision cut counts logged; both admission floors are no-ops; crown threshold z_bar=1.5; r000093 opened in the same single loop; public files healthy
+generator and reserve bytes preserved
+health evidence verified {'duplicate': 1, 'null_update': 1} {'min_rollouts': 0, 'null_update': 0} no-op admission fixtures accepted
+2026-11-21T14:36:39Z DRY AUTODEPLOY PASS: real dedup/no-op-floor/z1.5 run/gate/apply/open/public/health; r000091 boundary was offline-only
+```
+
+### Committed-kit abort-after-open rehearsal
+
+The clean committed-kit abort-after-open rehearsal completed with exit 0 at
+`bef1e0a8`, without `DEDUP_DRY_DEVELOPMENT`, after comparing all 24 kit files
+recursively. Its simulated unhealthy public response correctly produced
+`autodeploy exit 1 (no PASS)`; the offline recovery rehearsal itself then
+completed with the final PASS below. The undecided `r000092` was finished as
+applied by reviewed new code without discarding sealed evidence, the
+compatibility overlay restored `c5252865` and old params, and exactly one old
+loop started. Generator and reserve bytes remained intact. The actual log is
+`/home/bb/scratch/dedup-combined-committed-abort-v1.log`:
+
+```text
+2026-11-21T14:33:11Z gate r000091; old HEAD c5252865
+2026-11-21T14:34:21Z journal gate r000091: yes applied n_tasks 2000 lease_failed 0 why []
+2026-11-21T14:35:02Z APPLY OK: new HEAD 50afaca3; params applied through set-params CLI
+2026-11-21T14:36:02Z first open r000092: OK active 10000 params d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c n_tasks 2000 snapshot sqrt_fisher eval_wall_s None cuts None admission_cuts None why []
+2026-11-21T14:36:10Z FAIL: public files not healthy after 8 seconds: BAD public-check failed or used the remaining retry window
+2026-11-21T14:37:19Z autodeploy exit 1 (no PASS)
+14:37:16Z rollback: reviewed new-code run finished undecided r000092 as applied; no stored result was discarded
+2026-11-21T14:37:19Z old-code loop started after rollback
+shimmed old params/code verified
+generator and reserve bytes preserved
+2026-11-21T14:37:22Z DRY POST-OPEN ROLLBACK PASS: sealed/undecided evidence finished under new code; shimmed old params/code and one old loop
+```
+
 Pending at this source revision:
 
 - Terminal complete combined-release and integrated-kit suites, retaining the
   pre-existing public-snapshot failure explicitly.
-- Combined normal and abort-after-open development rehearsal terminal output.
-- Clean committed-kit normal and abort-after-open rehearsals.
-- Committed-kit rollback qualification.
-- Exact final kit HEAD and every kit-file SHA-256.
 
-Final rehearsal must compare the complete recursive 24-file kit and run without
-`DEDUP_DRY_DEVELOPMENT=1`. Only verbatim output from those runs may be added
-here or reported as final PASS evidence. No current committed-kit normal,
-abort or rollback PASS is claimed.
+The final rehearsals compared the complete recursive 24-file kit and ran
+without `DEDUP_DRY_DEVELOPMENT=1`. Only their verbatim output is recorded as
+committed-kit PASS evidence. Normal, abort and all seven rollback checks are
+now complete; no production deployment is implied. The complete 24-file SHA-256
+inventory for the pushed kit revision is
+`/home/bb/scratch/dedup-combined-final-kit-hashes.json`.
