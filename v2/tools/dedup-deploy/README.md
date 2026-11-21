@@ -140,6 +140,18 @@ duplicate/null-update accounting and refuses open dedup work before writing a
 leader fence. This is replay compatibility, not permission for old code to
 finish a dedup ticket.
 
+The separate validator/weights reader can **remain on native release
+`5e9df838` after this rollback**; it does not need to revert to `c5252865`.
+`qualify-rollback.py` proves the complete post-repin journal with no overlay:
+historical dedup params/round fields and duplicate/null-update decisions,
+tagged non-finite sealed evidence, and final IDLE params `bba7a409…`,
+`z_bar=1.0`, `dedup_enabled=false`, batch-scoped seeds. Its release
+`weights_writer --dry-run` seam returns `would set` from the restored journal
+with zero chain submissions, an unchanged journal and no writer state/lock.
+The compatibility shim is for the old controller, not for native new-code
+readers. A production validator must still use its existing journal mirror;
+this synthetic fixture does not test a live chain submission or live state.
+
 ## Operator environment and preservation
 
 Use the operator's existing environment and the explicit environment settings

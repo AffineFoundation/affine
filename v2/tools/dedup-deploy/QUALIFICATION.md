@@ -248,6 +248,43 @@ code, check out `c5252865`, apply the complete old `bba7a409…` params through
 the hashed compatibility loader, and start exactly one old-code loop. Sealed
 evidence is never deleted to make old code accept history.
 
+### Native release reader after rollback
+
+The validator/weights host can stay on native release `5e9df838` after a
+controller rollback; it does not need to go back to `c5252865`. The native
+release `Params.from_dict` gives an old record that omits the seven dedup
+fields their effective legacy values, including `dedup_enabled=false` and
+batch-scoped training seeds. Release state/result types already decode
+historical duplicate decisions, duplicate clusters and tagged non-finite
+stored evidence. The compatibility overlay is needed by the **old controller**,
+not by native release readers.
+
+`qualify-rollback.py` now runs the post-repin journal through a fresh `-I`
+interpreter with only the native new-v2 source on its import path. It asserts
+the historical new params canonical hash, all seven historical dedup fields
+and `z_bar=1.5`, new round fields and charged duplicate/null-update decisions,
+a tagged non-finite sealed report, and final IDLE params `bba7a409…`,
+`z_bar=1.0`, `dedup_enabled=false`, `train_seed_scope=batch`. It then invokes
+the release weights-writer dry-run with an in-memory chain. That actual report
+was `status="would set"`, two kings, weights `{1: 0.5, 7: 0.5}`, with zero
+submissions, an unchanged journal and no writer state/lock. The first manual
+probe used a partial sparse-UID fake chain and correctly returned
+`would defer`; it is not a passing dry-run result. The complete sparse-UID
+fixture closes that test setup gap. It is synthetic and does not test a live
+chain write or a production journal mirror.
+
+The first full run with this assertion completed with exit 0 at
+`/home/bb/scratch/dedup-z15-rollback-release-read-v1.log` and emitted:
+
+```text
+ROLLBACK QUALIFICATION PASS: native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write
+```
+
+No external `/validator-ready` or `/validator-rollback-ready` marker gate was
+added. The cancelled proposal would have made the new or old loop depend on a
+separate box watcher; the existing `APPLY OK`, `PASS:` and `ROLLBACK` lines
+remain evidence markers only, not readiness dependencies.
+
 ## Frozen-input planning evidence
 
 The offline plan summary is

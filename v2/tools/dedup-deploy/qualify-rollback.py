@@ -208,6 +208,68 @@ def stack(context):
     assert json.loads(status.stdout)["params_hash"] == OLD_PIN, status.stderr
     out(f"old-code compatibility CLI re-pins bba7a409 after historical {NEW_PIN[:8]}; unknown/newer params refused")
 
+    # The independent validator stays on native release code after this old-code
+    # controller rollback. Prove that its journal/weights reader needs no shim:
+    # all dedup fields, decisions and tagged evidence have real release decoders.
+    # Subprocesses start from a scratch directory so no installed package or
+    # compatibility environment can silently replace the selected new-v2 tree.
+    native = output / "release-read-after-rollback.py"
+    native.write_text('''import contextlib,io,json,os,pathlib,sys
+sys.path.insert(0,sys.argv[1])
+from sn120_v2.chain import FakeChain,SubtensorClient
+from sn120_v2.journal import read_journal
+from sn120_v2.state import load
+from sn120_v2.store import LocalStore
+from sn120_v2.types import TrainReport
+from sn120_v2.weights_writer import main,read_view
+root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; new_pin=sys.argv[4]
+before=(root/"journal.jsonl").read_bytes()
+rows=read_journal(root/"journal.jsonl")
+history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
+assert history and all(r.data["params"]["z_bar"]==1.5 for r in history)
+from sn120_v2.params import Params
+assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={new_pin}
+assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)
+state=load(root/"journal.jsonl"); view=read_view(root)
+assert state.params.params_hash==view.params.params_hash==old_pin
+assert state.params.z_bar==1.0 and not state.params.dedup_enabled
+assert state.params.train_seed_scope=="batch" and state.round is None
+assert state.kings and any(e.status=="duplicate" for r in state.rounds for e in r.decision.entries)
+settled=next(r for r in state.rounds if any(e.status=="null_update" for e in r.decision.entries))
+assert any(r.data["round"].get("duplicate_decisions") for r in rows if r.kind=="round_opened")
+store=LocalStore(pathlib.Path(sys.argv[5]))
+raw=json.loads(store.get(f"qualification/sealed/{settled.round_id}/{settled.leases[0].lease_id}.json"))
+report=next(e["lora"]["report"] for e in raw["entries"] if e["lora"]["report"].get("step_norm_nonfinite"))
+assert TrainReport.from_dict(report).step_norm_nonfinite=="nan"
+king_hotkeys={k.uid:k.hotkey for k in view.kings}
+hotkeys={uid:f"dry-unused-{uid}" for uid in range(max(king_hotkeys)+1)}|king_hotkeys
+hotkeys[0]=view.validator_hotkey
+chain=FakeChain(hotkeys,view.validator_hotkey)
+SubtensorClient.connect=classmethod(lambda cls,*args:chain)
+stdout=io.StringIO()
+with contextlib.redirect_stdout(stdout):
+    assert main(["--state-dir",str(root),"--network","offline-fixture","--dry-run"])==0
+result=json.loads(stdout.getvalue())
+assert result["status"]=="would set" and result["kings"]==len(view.kings)
+assert set(result["weights"])=={str(uid) for uid in king_hotkeys}
+assert chain.submissions==0 and (root/"journal.jsonl").read_bytes()==before
+assert not (root/"weights_state.json").exists() and not (root/"weights.lock").exists()
+print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
+                  "final_params_hash":old_pin,"z_bar":state.params.z_bar,
+                  "kings":len(view.kings),"weights_dry_run":result["status"],
+                  "journal_unchanged":True,"chain_submissions":chain.submissions},sort_keys=True))
+''')
+    native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}
+    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, NEW_PIN, str(fixture / "store")],
+                               cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
+    if completed.returncode:
+        raise AssertionError(completed.stderr + completed.stdout)
+    report = json.loads(completed.stdout)
+    assert report["native_release_read"] and not report["compatibility_overlay"]
+    assert report["weights_dry_run"] == "would set" and report["journal_unchanged"] and not report["chain_submissions"]
+    (output / "release-read-after-rollback.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    out("native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write")
+
     # Mirror catch-up precedes the refusal. No local leader fence, no durable
     # journal append, and no object write may occur for either open variant.
     from sn120_v2.journal import Journal, Mirror
