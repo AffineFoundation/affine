@@ -276,10 +276,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "priority": ["first_seen_unix", "queue_pos"],
             "dropped_status": DUPLICATE,
             "null_update_status": NULL_UPDATE,
-            "min_signal_rollouts": (
-                "max(min_signal_rollouts, effective recipe.minibatches)"
-                if params.min_signal_rollouts > 1 else "effective recipe.minibatches"
-            ),
+            "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
             "min_step_norm": params.min_step_norm,
             "min_step_norm_rule": (
                 "static global_norm_cap and stored step_norm must be at least min_step_norm"
@@ -338,11 +335,14 @@ def _recipe_lines(params: Params) -> list[str]:
         if cap_bound is not None
         else "A file may not set a cap of its own now."
     )
-    if params.min_step_norm > 0 and cap_bound is not None:
-        cap_yours += (
-            f" Values below {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower"
-            " bound is smaller."
-        )
+    if cap_bound is not None:
+        if params.min_step_norm > 0:
+            cap_yours += (
+                f" Values below {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower"
+                " bound is smaller."
+            )
+        else:
+            cap_yours += " There is no minimum norm, so every valid nonnegative cap passes this static floor check."
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
@@ -611,24 +611,14 @@ def _duplicate_lines(params: Params) -> list[str]:
     settable_keys = {row["key"] for row in miner_settable(params.recipe)}
     signal_recipe = "`minibatches`" if "minibatches" in settable_keys else "minibatches"
     static_cap = "`train.global_norm_cap`" if "global_norm_cap" in settable_keys else "global_norm_cap"
-    if params.min_signal_rollouts > 1:
-        signal = [
-            f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
-            f"  than max({params.min_signal_rollouts}, the effective recipe {signal_recipe}, currently {params.recipe.minibatches}) rollouts with a nonzero advantage",
-            "  and at least one usable output token inside the training caps. The formula uses `min_signal_rollouts` (above),",
-            "  not a hardcoded minimum. Without tokenizer checks no rollout is known to be dropped by the training caps. This",
-            "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
-            "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
-        ]
-    else:
-        signal = [
-            f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
-            f"  nonzero-advantage rollouts than the effective recipe {signal_recipe} (currently {params.recipe.minibatches}), a trainer",
-            "  requirement: each optimizer step needs at least one active rollout. The rollouts also need at least one usable",
-            "  output token inside the training caps. Without tokenizer checks no rollout is known to be dropped by the caps. This",
-            "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
-            "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
-        ]
+    signal = [
+        f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
+        f"  than {params.min_signal_rollouts} rollouts with a nonzero advantage and at least one usable output token inside the training caps.",
+        f"  The configured minimum signal is {params.min_signal_rollouts}; {signal_recipe} adds no admission floor. With fewer active rows than",
+        "  requested minibatches, training makes fewer nonempty minibatches rather than rejecting the file. Without tokenizer checks no rollout",
+        "  is known to be dropped by the training caps. This admission rejection is invalid and uncharged: the seat keeps its place, and no",
+        "  training GPU is used. Upload a new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
+    ]
     static_norm = [
         f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
         "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
