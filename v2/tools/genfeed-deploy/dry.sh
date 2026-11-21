@@ -1,42 +1,40 @@
 #!/usr/bin/env bash
-# Dry-run only: scratch clone, r080 journal copy, and public mirror.
-# No production checkout, loop, ingestd, R2, or secrets are touched.
+# Scratch-only kit harness: no production checkout, loop, ingestd, R2 or secrets.
+# INPUT must contain the supplied, hash-verified generator-intake-v2 epochs.
 set -eu
-D=${D:-/home/bb/scratch/generator-feed-thr-bf5k52pbwr/genfeed-dry}
+D=${D:-/home/bb/scratch/genfeed-v2-fix-thr-scudbjrnmb/genfeed-dry}
 SRC=${SRC:-/home/bb/inbox/genfeed-r080}
-REPO=${REPO:-/home/bb/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_bf5k52pbwr-1/affine}
-OLD=28c56f439c0c0fbf3554c8546cc86dbd88119125
-NEW=cbddc9e7b4234b88dc0b9738f6b96eaaf05354c8
+INPUT=${INPUT:-/home/bb/inbox/genfeed-live-v2/genfeed-live-v2}
+REPO=${REPO:-/home/bb/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_scudbjrnmb-1/affine}
+KIT=${KIT:-/home/bb/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_scudbjrnmb-1/affine/v2/tools/genfeed-deploy}
+OLD=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["old_commit"])' "$KIT/expect.json")
+NEW=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["new_commit"])' "$KIT/expect.json")
 PY=${PY:-/tmp/sn120-v2-pool-runtime-tests/bin/python}
 PRIOR=${PRIOR:-/home/bb/scratch/generator-feed-thr-bf5k52pbwr/prior-index.json}
 PUBLIC_STORE=${PUBLIC_STORE:-/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-public-final/store}
 PUBLIC_INITIAL_MANIFEST=${PUBLIC_INITIAL_MANIFEST:-/home/bb/scratch/generator-feed-thr-bf5k52pbwr/public-reserve-current-1533.jsonl}
-KIT=${KIT:-/home/bb/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_bf5k52pbwr-1/affine/v2/tools/genfeed-deploy}
+# The apply harness uses the exact pinned index, not an optional pyarrow rebuild.
+REPLAY=${REPLAY:-/home/bb/scratch/genfeed-v2-fix-thr-scudbjrnmb/open-exact-sequential}
+[ -f "$REPLAY/report.json" ] || { echo "missing measured live-v2 sequential replay: $REPLAY/report.json"; exit 2; }
+python3 -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); reports=json.loads(p.read_text()); assert len(reports)==4,reports; [(lambda r: (_ for _ in ()).throw(AssertionError(r)) if not (r["append_only"] and r["replay"] and r["open"]["active_size"]==10000 and r["open"]["gen_admitted"]>0 and r["open"]["reserve_manifest_sha"]==r["ingest"]["reserve_manifest_sha"]) else None)(r) for r in reports]' "$REPLAY/report.json"
 rm -rf "$D"
-mkdir -p "$D/here" "$D/state" "$D/work/logs" "$D/public" "$D/cut" "$D/generator"
+mkdir -p "$D/here" "$D/state" "$D/work/logs" "$D/public" "$D/cut" "$D/generator/genfeed-deploy"
 exec > "$D/dry.log" 2>&1
-echo "$(date -u +%FT%TZ) dry run start: r080 copy, no prod/R2/secrets"
-echo "intended replay: r000081 318 Generator admissions; ingest 0800Z after health PASS; r000082 554 Generator admissions"
+echo "$(date -u +%FT%TZ) dry run start: r080 copy, real generator-intake-v2, no prod/R2/secrets"
 git clone -q --no-checkout "$REPO" "$D/repo"
 cd "$D/repo"
 git checkout -q --detach "$OLD"
 cp "$SRC/MANIFEST.jsonl" "$SRC/retired.json" "$SRC/retired_tasks.json" "$SRC/withdrawn.jsonl" "$D/repo/v2/sn120_v2/envs/reserve/"
-# A detached scratch checkout must be exactly as clean as old production.
 cmp "$SRC/MANIFEST.jsonl" <(git show "$OLD:v2/sn120_v2/envs/reserve/MANIFEST.jsonl")
 cmp "$SRC/withdrawn.jsonl" <(git show "$OLD:v2/sn120_v2/envs/reserve/withdrawn.jsonl")
 cp "$SRC/journal.jsonl" "$D/state/journal.jsonl"
 cp "$KIT/expect.json" "$KIT/ol_operator.py" "$D/here/"
 python3 -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); d["prior_index"]=sys.argv[2]; p.write_text(json.dumps(d,indent=2)+"\n")' "$D/here/expect.json" "$D/generator/prior-index.json"
-cp "$PRIOR" "$D/prior-index.json"
-# Cache the already hash-verified public release assets for an offline stage
-# test; stage still checks every asset and rebuilds from NEW's archived code.
-mkdir -p "$D/here/stage-work/prior-release"
-cp /home/bb/scratch/generator-feed-thr-bf5k52pbwr/prior-assets/MANIFEST.json /home/bb/scratch/generator-feed-thr-bf5k52pbwr/prior-assets/*.parquet "$D/here/stage-work/prior-release/"
-# Read-only public fetches served from the isolated r080 LocalStore.
-python3 -I -c 'import pathlib,shutil,sys; src=pathlib.Path(sys.argv[1]); dst=pathlib.Path(sys.argv[2]); shutil.copytree(src,dst,dirs_exist_ok=True); manifest=pathlib.Path(sys.argv[3]); shutil.copy2(manifest,dst/"public/pool/reserve/MANIFEST.jsonl"); [p.unlink() for p in (dst/"public/pool/reserve/shards").glob("*sn120-generator-*")]; [p.unlink() for p in (dst/"public/pool/rotation").glob("r00008[12].json")]; [p.unlink() for p in (dst/"public/pool/state").glob("r00008[12].json")]' "$PUBLIC_STORE" "$D/public" "$PUBLIC_INITIAL_MANIFEST"
+cp "$PRIOR" "$D/generator/prior-index.json"
+python3 -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); sys.path.insert(0,sys.argv[2]); from sn120_v2.state import load; s=load(p); (pathlib.Path(sys.argv[3])/"params.json").write_text(json.dumps(s.params.to_dict(),indent=2,sort_keys=True)+"\n"); (pathlib.Path(sys.argv[3])/"plan.json").write_text("{}\n")' "$D/state/journal.jsonl" "$D/repo/v2" "$D/cut"
+python3 -I -c 'import pathlib,shutil,sys; src=pathlib.Path(sys.argv[1]); dst=pathlib.Path(sys.argv[2]); shutil.copytree(src,dst,dirs_exist_ok=True); shutil.copy2(pathlib.Path(sys.argv[3]),dst/"public/pool/reserve/MANIFEST.jsonl"); [p.unlink() for p in (dst/"public/pool/reserve/shards").glob("*sn120-generator-*")]; [p.unlink() for p in (dst/"public/pool/rotation").glob("r00008[1-4].json")]; [p.unlink() for p in (dst/"public/pool/state").glob("r00008[1-4].json")]' "$PUBLIC_STORE" "$D/public" "$PUBLIC_INITIAL_MANIFEST"
 cat > "$D/public-server.py" <<'PY'
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
 import os, sys
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -48,20 +46,14 @@ PORT=18765
 python3 -I "$D/public-server.py" "$D/public" "$PORT" &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true' EXIT
-# Public manifest fetch in ol_operator uses urllib against this local read-only mirror.
 export R2_DRY=1 R2_V2="$D/repo/v2" R2_STATE="$D/state" R2_HERE="$D/here" R2_PUBLIC="http://127.0.0.1:$PORT" R2_PY="$PY" R2_CUT="$D/cut" R2_RESERVE_PATH_FILE="$D/reserve-live.path" R2_RESERVE_DIR="$D/live-reserve" R2_PRIOR_INDEX="$D/generator/prior-index.json" R2_GENERATOR_INBOX="$D/inbox" R2_GENERATOR_PID="$D/ingestd.pid" PYTHONPATH="$D/repo/v2"
 mkdir -p "$D/inbox" "$D/cut" "$D/generator/genfeed-deploy"
 OP="python3 $D/here/ol_operator.py"
-echo "== stage from public release assets and NEW's archived builder"
-$OP stage
-# Parameters for the dry-run only; no set-params operation occurs.
-python3 -I -c 'import json,pathlib; p=pathlib.Path("/home/bb/scratch/generator-feed-thr-bf5k52pbwr/replay/state/journal.jsonl"); import sys; sys.path.insert(0,"/home/bb/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_bf5k52pbwr-1/affine/v2"); from sn120_v2.state import load; s=load(p); (pathlib.Path(sys.argv[1])/"params.json").write_text(json.dumps(s.params.to_dict(),indent=2,sort_keys=True)+"\n"); (pathlib.Path(sys.argv[1])/"plan.json").write_text("{}\n")' "$D/cut"
-echo "== old preflight (loop stopped after r080 close in dry harness)"
+# The pinned index was built and verified separately; apply needs JSON only.
+R2_PRIOR_INDEX="$D/generator/prior-index.json" python3 -I -c 'import importlib.util,sys; spec=importlib.util.spec_from_file_location("dry_index_check",sys.argv[1]); op=importlib.util.module_from_spec(spec); spec.loader.exec_module(op); op.verify_prior_index()' "$D/here/ol_operator.py"
 $OP preflight
-echo "== journal-close dispatch and negative gate on the still-open r080"
 $OP journal-close r000080 > "$D/here/gate-r000080.json"
-python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert not d["clean"] and "no round_closed" in d["why"], d; print("journal-close open-round refusal",d["why"])' "$D/here/gate-r000080.json"
-echo "== apply refuses a missing prior index before changing checkout or selector"
+python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert not d["clean"] and "no round_closed" in d["why"], d' "$D/here/gate-r000080.json"
 mv "$D/generator/prior-index.json" "$D/generator/prior-index.json.missing"
 if $OP apply > "$D/here/apply-missing-index.out" 2>&1; then echo "apply accepted missing prior index"; exit 1; fi
 [ ! -e "$D/reserve-live.path" ]
@@ -73,50 +65,59 @@ grep -q 'prior index pool/schema mismatch' "$D/here/apply-wrong-index.out"
 [ ! -e "$D/reserve-live.path" ]
 [ "$(git rev-parse HEAD)" = "$OLD" ]
 cp "$PRIOR" "$D/generator/prior-index.json"
-echo "missing/wrong prior index refusal preserved old HEAD and absent selector"
-echo "== apply"
+# Copy only the supplied live-v2 files; no public metadata accepted.jsonl is used.
+for epoch in 0400 0800 1200 1600; do
+  cp "$INPUT/accepted-20261120T${epoch}Z.jsonl" "$INPUT/accepted-20261120T${epoch}Z.done" "$D/inbox/"
+done
+(cd "$INPUT" && sha256sum -c SHA256SUMS)
+# An empty/incomplete pending epoch cannot print DONE or permit loop start.
+mkdir "$D/empty-inbox"
+if R2_RESERVE_DIR="$D/empty-live" R2_GENERATOR_INBOX="$D/empty-inbox" $OP ingest-ready > "$D/here/no-complete.out" 2>&1; then echo "ingest-ready accepted no complete epoch"; exit 1; fi
+grep -q 'no complete epoch was ingested' "$D/here/no-complete.out"
+! grep -q 'INGEST READY DONE' "$D/here/no-complete.out"
+# Reproduce the failed deployment's dirty LIVE before the single valid apply.
+mkdir -p "$D/live-reserve"
+printf '%s\n' '{"epoch":"20261120T0400Z","ingested":0,"rejected":{"schema":885}}' > "$D/live-reserve/generator-ingested.jsonl"
+printf '[]\n' > "$D/live-reserve/retired.json"
 $OP apply
-echo "== HEAD now $(git rev-parse HEAD)"
-git status --short
-echo "== reserve status on external live path"
-R2_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" SN120_RESERVE_DIR="$D/live-reserve" "$PY" -m sn120_v2.envs.reserve status
-# The dry input has two real epochs and a future epoch without public results.
-cp /home/bb/inbox/genfeed/accepted-20261120T0400Z.jsonl /home/bb/inbox/genfeed/accepted-20261120T0800Z.jsonl "$D/inbox/"
-cp /home/bb/scratch/generator-feed-thr-bf5k52pbwr/results-20261120T0400Z.json /home/bb/scratch/generator-feed-thr-bf5k52pbwr/results-20261120T0800Z.json "$D/inbox/"
-printf '{"format":"generator-intake-v2","epoch":"20261120T1200Z","lines":0,"sha256":"%s"}\n' "$(python3 -I -c 'import hashlib; print(hashlib.sha256(b"").hexdigest())')" > "$D/inbox/accepted-20261120T1200Z.done"
-: > "$D/inbox/accepted-20261120T1200Z.jsonl"
-echo "== ingest-ready"
+find "$D" -maxdepth 1 -type d -name 'live-reserve.backup-*' -exec test -f '{}/generator-ingested.jsonl' \; -print -quit | grep -q .
+[ ! -e "$D/live-reserve/generator-ingested.jsonl" ]
+[ "$(cat "$D/live-reserve/retired.json")" != '[]' ]
+[ -s "$D/live-reserve/retired_tasks.json" ]
+cmp "$D/repo/v2/sn120_v2/envs/reserve/MANIFEST.jsonl" <(git show "$NEW:v2/sn120_v2/envs/reserve/MANIFEST.jsonl")
+echo "dirty LIVE backup and fresh packaged seed PASS"
 $OP ingest-ready
-echo "== verify only oldest epoch is ingested before first open"
-python3 -I -c 'import json,pathlib; p=pathlib.Path("'"$D"'/live-reserve/generator-ingested.jsonl"); rows=[json.loads(x) for x in p.read_bytes().splitlines()]; assert len(rows)==1 and rows[0]["epoch"]=="20261120T0400Z", rows; print("pre-open oldest-only ledger", rows[0]["ingested"], "tasks")'
-echo "== start-loop (suppressed); ingestd must not start yet"
+python3 -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); rows=[json.loads(x) for x in p.read_bytes().splitlines()]; assert len(rows)==1 and rows[0]["epoch"]=="20261120T0400Z" and rows[0]["ingested"]==318 and "schema" not in rows[0]["rejected"] and rows[0]["king"]=="56bae61bb4fde8dc786567e1e833ff5d53f5203f537a32ff2d2ee1fbdfc2e810", rows; print("pre-open oldest-only live-v2 ledger",rows[0]["ingested"],"kept")' "$D/live-reserve/generator-ingested.jsonl"
+# A just-ingested zero-kept epoch must fail closed even if intake itself exits 0.
+# Isolated operator module: replace only sh() with an intake that writes 0 kept.
+mkdir "$D/zero-live" "$D/zero-inbox"
+cp "$D/inbox/accepted-20261120T0400Z.jsonl" "$D/inbox/accepted-20261120T0400Z.done" "$D/zero-inbox/"
+R2_RESERVE_DIR="$D/zero-live" R2_GENERATOR_INBOX="$D/zero-inbox" python3 -I -c 'import importlib.util,json,pathlib,sys; spec=importlib.util.spec_from_file_location("dry_zero",sys.argv[1]); op=importlib.util.module_from_spec(spec); spec.loader.exec_module(op); from types import SimpleNamespace; epoch="20261120T0400Z"; op.sh=lambda *args,**kwargs: ((pathlib.Path(op.LIVE)/"generator-ingested.jsonl").write_text(json.dumps({"epoch":epoch,"ingested":0})+"\n"),SimpleNamespace(returncode=0,stdout="nothing kept"))[1];
+try: op.ingest_ready()
+except SystemExit as error: assert "kept 0 tasks" in str(error),error
+else: raise AssertionError("zero-kept ingest-ready succeeded")' "$D/here/ol_operator.py"
 $OP start-loop
-echo "== publish first-open reserve and the exact r081 replay rotation"
 SN120_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" "$PY" -c 'from sn120_v2.pool_runtime import mirror_reserve; from sn120_v2.store import LocalStore; from sn120_v2.envs.reserve import reserve_dir; mirror_reserve(LocalStore("'"$D"'/public"), reserve_dir())'
-python3 -I -c 'import json,pathlib,shutil,sys; report=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert report["r081"]["admitted"]==318 and report["r081"]["gen_admitted"]==318 and report["r081"]["retired"]==318 and report["r081"]["active_size"]==10000 and report["replay"], report; src=pathlib.Path("/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/store/public/pool/rotation/r000081.json"); dst=pathlib.Path(sys.argv[2])/"public/pool/rotation/r000081.json"; shutil.copy2(src,dst); assert json.loads(dst.read_text())["reserve_manifest_sha"]==report["r081"]["reserve_manifest_sha"]; print("r081 measured replay",report["r081"])' /home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/report.json "$D/public"
-echo "== first open r000081 open-check against the replay journal"
-R2_STATE=/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/state $OP open-check r000081 > "$D/here/open-r000081.json"
-python3 -I -c 'import json,pathlib; d=json.loads(pathlib.Path("'"$D"'/here/open-r000081.json").read_text()); assert d["ok"] and d["gen_admitted"]==318 and d["admitted"]==318 and d["size"]==10000, d; print("r081 open-check CLI PASS",d["gen_admitted"],"Generator admissions")'
-echo "== first open r000081 public health check; only now start ingestd"
+# The replay is an already measured r080 -> r081..r084 scratch run, not live state.
+python3 -I -c 'import json,pathlib,shutil,sys; r=json.loads((pathlib.Path(sys.argv[1])/"report.json").read_text())[0]["open"]; assert r["round"]=="r000081" and r["admitted"]==318 and r["gen_admitted"]==318 and r["retired"]==318 and r["active_size"]==10000,r; dst=pathlib.Path(sys.argv[2])/"public/pool/rotation/r000081.json"; shutil.copy2(pathlib.Path(sys.argv[1])/"store/public/pool/rotation/r000081.json",dst); print("r081 measured live-v2 replay",r)' "$REPLAY" "$D/public"
+R2_STATE="$REPLAY/state" $OP open-check r000081 > "$D/here/open-r000081.json"
+python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["ok"] and d["gen_admitted"]==318 and d["size"]==10000,d' "$D/here/open-r000081.json"
 $OP public-check r000081
-python3 -I -c 'import json,pathlib; p=pathlib.Path("'"$D"'/here/public-r000081.json"); d=json.loads(p.read_text()); assert d["ok"] and d["gen_admitted"]==318 and d["generator_shards"]==6, d; print("r081 public health PASS", d["gen_admitted"], "Generator admissions,", d["generator_shards"], "Generator shards")'
+python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["ok"] and d["gen_admitted"]==318 and d["generator_shards"]==6,d' "$D/here/public-r000081.json"
 $OP start-ingestd
-echo "== ingestd later-epoch path (direct CLI; daemon loop remains suppressed)"
-R2_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" SN120_RESERVE_DIR="$D/live-reserve" "$PY" -m sn120_v2.envs.reserve ingest-generator "$D/inbox/accepted-20261120T0800Z.jsonl" --epoch 20261120T0800Z --results "$D/inbox/results-20261120T0800Z.json" --prior-index "$D/generator/prior-index.json"
-python3 -I -c 'import json,pathlib; p=pathlib.Path("'"$D"'/live-reserve/generator-ingested.jsonl"); rows=[json.loads(x) for x in p.read_bytes().splitlines()]; assert len(rows)==2 and [x["epoch"] for x in rows]==["20261120T0400Z","20261120T0800Z"] and rows[1]["ingested"]==554, rows; print("post-health 0800Z ledger", rows[1]["ingested"], "tasks")'
-SN120_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" "$PY" -c 'from sn120_v2.pool_runtime import mirror_reserve; from sn120_v2.store import LocalStore; from sn120_v2.envs.reserve import reserve_dir; mirror_reserve(LocalStore("'"$D"'/public"), reserve_dir())'
-python3 -I -c 'import json,pathlib,shutil,sys; report=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert report["r082"]["admitted"]==554 and report["r082"]["gen_admitted"]==554 and report["r082"]["retired"]==554 and report["r082"]["active_size"]==10000 and report["r082_replay"], report; src=pathlib.Path("/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/store/public/pool/rotation/r000082.json"); dst=pathlib.Path(sys.argv[2])/"public/pool/rotation/r000082.json"; shutil.copy2(src,dst); assert json.loads(dst.read_text())["reserve_manifest_sha"]==report["r082"]["reserve_manifest_sha"]; print("r082 measured replay",report["r082"])' /home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/report.json "$D/public"
-$OP public-check r000082
-python3 -I -c 'import json,pathlib; d=json.loads(pathlib.Path("'"$D"'/here/public-r000082.json").read_text()); assert d["ok"] and d["gen_admitted"]==554, d; print("r082 public health PASS",d["gen_admitted"],"Generator admissions")'
-echo "== journal-close CLI on real scored r078 and negative synthetic r081"
-R2_STATE=/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/state $OP journal-close r000078 --next-open-ok > "$D/here/first-r000078.json"
-python3 -I -c 'import json,pathlib; d=json.loads(pathlib.Path("'"$D"'/here/first-r000078.json").read_text()); assert d["clean"] and d["outcome"]=="null" and d["n_tasks"]==2000 and d["opened_after_close"]==["r000079","r000080","r000081","r000082"], d; print("journal-close CLI PASS",d["outcome"],"n_tasks",d["n_tasks"],"next",d["opened_after_close"])'
-R2_STATE=/home/bb/scratch/generator-feed-thr-bf5k52pbwr/r080-0400-then-0800/state $OP journal-close r000081 > "$D/here/closed-r000081.json"
-python3 -I -c 'import json,pathlib; d=json.loads(pathlib.Path("'"$D"'/here/closed-r000081.json").read_text()); assert not d["clean"] and "no round_settled" in d["why"] and d["opened_after_close"]==["r000082"], d; print("journal-close negative gate PASS",d["why"])'
-echo "== rollback"
+for spec in '0800 082' '1200 083' '1600 084'; do
+  set -- $spec
+  SN120_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" "$PY" -m sn120_v2.envs.reserve ingest-generator "$D/inbox/accepted-20261120T$1Z.jsonl" --epoch "20261120T$1Z" --prior-index "$D/generator/prior-index.json"
+  SN120_RESERVE_DIR="$D/live-reserve" PYTHONPATH="$D/repo/v2" "$PY" -c 'from sn120_v2.pool_runtime import mirror_reserve; from sn120_v2.store import LocalStore; from sn120_v2.envs.reserve import reserve_dir; mirror_reserve(LocalStore("'"$D"'/public"), reserve_dir())'
+  python3 -I -c 'import pathlib,shutil,sys; src=pathlib.Path(sys.argv[1]); dst=pathlib.Path(sys.argv[2]); rid=sys.argv[3]; shutil.copy2(src/("store/public/pool/rotation/"+rid+".json"),dst/("public/pool/rotation/"+rid+".json"))' "$REPLAY" "$D/public" "r000$2"
+  $OP public-check "r000$2"
+  python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["ok"] and d["gen_admitted"]>0 and d["active_size"]==10000,d; print(sys.argv[2],"public health PASS",d["gen_admitted"],"Generator admissions")' "$D/here/public-r000$2.json" "r000$2"
+done
+R2_STATE="$REPLAY/state" $OP journal-close r000078 --next-open-ok > "$D/here/first-r000078.json"
+python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["clean"] and d["outcome"]=="null" and d["n_tasks"]==2000,d' "$D/here/first-r000078.json"
+R2_STATE="$REPLAY/state" $OP journal-close r000081 > "$D/here/closed-r000081.json"
+python3 -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert not d["clean"] and "no round_settled" in d["why"],d' "$D/here/closed-r000081.json"
 $OP rollback
-echo "HEAD now $(git rev-parse HEAD)"
 [ "$(git rev-parse HEAD)" = "$OLD" ]
 [ ! -e "$D/reserve-live.path" ]
-git status --short
 printf '%s\n' "$(date -u +%FT%TZ) DRY PASS"

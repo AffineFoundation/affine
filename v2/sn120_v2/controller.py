@@ -335,6 +335,17 @@ class Controller:
         if not self.state.heads:
             raise V2Error("the journal has no genesis yet; give the parameters to bootstrap")
         self._log(PARAMS_SET, {"params": params.to_dict()}, now)
+        # set-params runs in its own process, but a controller may also keep
+        # running (the loop uses this method between rounds). Keep its live
+        # sampler and rotation inputs in step with the newly pinned params;
+        # otherwise the next open can seal an old-rule draw under a new hash.
+        if self.pool is not None:
+            self.pool.params = params
+        from .irt import IRTSampler
+        if isinstance(self.sampler, IRTSampler):
+            snapshot = stored_irt_snapshot(self.store, self.state) or self.sampler.public_snapshot()
+            self.sampler = IRTSampler(tuple(snapshot["tasks"]), params, snapshot=snapshot,
+                                      rotation=snapshot.get("rotation"))
         self._pin()
 
     def sync_registrations(self, chain: ChainSnapshot, now: int, force: bool = False) -> SyncPlan:

@@ -11,7 +11,8 @@ Rules it keeps:
 * Batches train at the same time, each on its own slot of GPUs. With more
   batches than slots, a batch waits for a free slot.
 * The trainer is closed before evaluation starts, so its GPUs are free.
-* Null M is scored in every look, with the same tasks and seeds as the LoRAs.
+* Null M is scored in every look on the same tasks. Sample 0 shares the
+  LoRA seeds; additional king-only samples use their own seeds.
 * The round's time limit is hard. It cuts every look, the first one too:
   - Training has its own time, ``train_time_budget_s`` from the lease. At its
     end no new training starts and every job that still runs is stopped. Such
@@ -199,7 +200,8 @@ class LocalRunner:
         """Stream all tasks; keep only complete blocks and exact look prefixes."""
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
-        null = [""] * samples
+        null_samples = params.null_samples
+        null = [""] * null_samples
         scored = {pos: [""] * samples for pos in trained}
         dropped: dict[int, int] = {}
         alive, stopped = set(sorted(trained)), False
@@ -281,6 +283,7 @@ class LocalRunner:
             for sample in range(samples):
                 for pos in alive:
                     common = min(common, len(scored[pos][sample]))
+            for sample in range(null_samples):
                 common = min(common, len(null[sample]))
             common = (common // block) * block
             if stopped:
@@ -300,7 +303,8 @@ class LocalRunner:
         """Compatibility seam for simulators without the streaming protocol."""
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
-        null = [""] * samples
+        null_samples = params.null_samples
+        null = [""] * null_samples
         scored = {pos: [""] * samples for pos in trained}
         dropped: dict[int, int] = {}
         alive, start, stopped = sorted(trained), 0, False
@@ -315,8 +319,9 @@ class LocalRunner:
                 if chunk is None:
                     stopped = True
                     break
-                for sample in range(samples):
+                for sample in range(null_samples):
                     null[sample] += chunk.outcomes[NULL_MODEL][sample]
+                for sample in range(samples):
                     for pos in alive:
                         scored[pos][sample] += chunk.outcomes[trained[pos].lora_hash][sample]
                 start = end

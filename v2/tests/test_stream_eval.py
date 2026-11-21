@@ -36,7 +36,7 @@ class OutcomeEvaluator:
         names = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
         outcomes = {}
         for model in names:
-            outcomes[model] = tuple("".join(self.outcome(model, sample, self.ticket.draw.task_ids.index(task)) for task in request.task_ids) for sample in range(request.params.samples_per_task))
+            outcomes[model] = tuple("".join(self.outcome(model, sample, self.ticket.draw.task_ids.index(task)) for task in request.task_ids) for sample in range(request.params.null_samples if model == NULL_MODEL else request.params.samples_per_task))
         return EvalChunk(request.look, request.task_ids, outcomes, self.image)
 
     def close(self):
@@ -55,7 +55,7 @@ class StreamingOutcomeEvaluator(OutcomeEvaluator):
                     self.cancelled.add(model)
                     continue
                 self.sent.append((model, index))
-                for sample in range(request.params.samples_per_task):
+                for sample in range(request.params.null_samples if model == NULL_MODEL else request.params.samples_per_task):
                     result(model, sample, index, self.outcome(model, sample, index))
         return len(request.task_ids)
 
@@ -85,6 +85,19 @@ def compare(build, effects=None, params=None, n_tasks=64, n_loras=3):
     assert [(e.uid, e.status, e.score) for e in decide([(ticket, streamed)]).entries] == [(e.uid, e.status, e.score) for e in decide([(ticket, baseline)]).entries]
     check_result(ticket, streamed)
     return ticket, streamed, baseline, new
+
+
+def test_king_two_samples_match_block_and_stream_paths(build):
+    n = 64
+    effects = {0: [PASS] * n}
+    for pos in range(3):
+        effects[pos + 1] = [FAIL if (index * (pos + 1)) % 5 < 3 else PASS for index in range(n)]
+    params = build.params(n_tasks=n, null_samples_per_task=2, min_scored_tasks=8)
+    ticket, streamed, baseline, seam = compare(build, effects, params=params)
+    assert len(streamed.null_outcomes) == 2
+    assert all(len(entry.outcomes) == 1 for entry in streamed.entries)
+    assert len([model for model, index in seam.sent if model == NULL_MODEL]) == n
+    assert len(seam.calls) == 1 and seam.calls[0].params.null_samples == 2
 
 
 def test_look_decisions_match_the_chunked_path_on_the_same_simulated_outcomes(build):

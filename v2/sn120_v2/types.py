@@ -435,7 +435,7 @@ class BoxResult(Record):
 
 @dataclass(frozen=True)
 class Score(Record):
-    """One LoRA against null M on the same tasks and seeds."""
+    """One LoRA against the mean king outcome; sample 0 shares its seed."""
 
     n_tasks: int  # tasks this LoRA was scored on
     delta: float  # weighted mean of (LoRA pass rate - null M pass rate) per task

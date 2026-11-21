@@ -7,8 +7,10 @@ one logit scale (a Rasch model):
 
 Draw. Each pool task has a whole-number sampling mass in the snapshot. With
 the Fisher rule, a task gets mass in proportion to the Fisher information
-``p * (1 - p)`` of its predicted pass rate under the Rasch model, mixed with
-a uniform share over every pool task. With the band rule, a task gets more
+``p * (1 - p)`` of its predicted pass rate under the Rasch model. The
+sqrt-Fisher rule uses ``sqrt(p * (1 - p))``. Both mix their preference with
+a uniform share over every pool task, then round to integer masses. With
+the band rule, a task gets more
 mass when the head's predicted pass rate is inside the middle band, and
 ``explore_frac`` of all mass is shared by the tasks seen in fewer than
 ``explore_below`` rounds. Every task keeps a mass above zero: there is no
@@ -67,6 +69,11 @@ FISHER_MASS_RULE = (
     f"mass = max(1, round(((1 - uniform_frac) * q / sum(q) + uniform_frac / pool_size) * {MASS_SCALE})); "
     f"the uniform share applies to every pool task, and every mass is an integer above zero; MASS_SCALE = {MASS_SCALE}"
 )
+SQRT_FISHER_MASS_RULE = (
+    "q(task) = sqrt(p * (1 - p)), p = predicted_pass(head_ability, difficulty); "
+    f"mass = max(1, round(((1 - uniform_frac) * q / sum(q) + uniform_frac / pool_size) * {MASS_SCALE})); "
+    f"the uniform share applies to every pool task, and every mass is an integer above zero; MASS_SCALE = {MASS_SCALE}"
+)
 MASS_RULES = {
     "band": (
         "band_preference(predicted_pass(head_ability, difficulty), middle_band, band_floor); "
@@ -74,6 +81,7 @@ MASS_RULES = {
         f"every mass is an integer above zero; MASS_SCALE = {MASS_SCALE}"
     ),
     "fisher": FISHER_MASS_RULE,
+    "sqrt_fisher": SQRT_FISHER_MASS_RULE,
 }
 
 
@@ -107,9 +115,11 @@ def fisher_preference(pass_rate: float) -> float:
     return pass_rate * (1.0 - pass_rate)
 
 
-def fisher_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, uniform_frac: float) -> dict[str, int]:
-    """Whole-number masses: Fisher information mixed with a uniform share over every task."""
+def fisher_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, uniform_frac: float, sqrt: bool = False) -> dict[str, int]:
+    """Integer masses for Fisher (unchanged) or sqrt-Fisher preference."""
     information = {task: fisher_preference(predicted_pass(head_ability, row[0])) for task, row in tasks.items()}
+    if sqrt:
+        information = {task: math.sqrt(q) for task, q in information.items()}
     total = math.fsum(information.values())
     return {
         task: max(1, round(((1.0 - uniform_frac) * q / total + uniform_frac / len(tasks)) * MASS_SCALE))
@@ -137,8 +147,8 @@ def band_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, confi
 
 def sampling_masses(tasks: Mapping[str, Sequence[float]], head_ability: float, config: Mapping[str, Any]) -> dict[str, int]:
     """Whole-number masses under the configured draw rule."""
-    if config.get("draw_rule") == "fisher":
-        return fisher_masses(tasks, head_ability, config["uniform_frac"])
+    if config.get("draw_rule") in ("fisher", "sqrt_fisher"):
+        return fisher_masses(tasks, head_ability, config["uniform_frac"], sqrt=config["draw_rule"] == "sqrt_fisher")
     return band_masses(tasks, head_ability, config)
 
 
@@ -224,9 +234,9 @@ class IRTSampler:
     ) -> None:
         _need(bool(pool) and len(set(pool)) == len(pool), "the task pool must be non-empty with no repeated task")
         params = params or Params()
-        if params.irt_draw_rule == "fisher":
+        if params.irt_draw_rule in ("fisher", "sqrt_fisher"):
             config = {
-                "draw_rule": "fisher",
+                "draw_rule": params.irt_draw_rule,
                 "uniform_frac": float(params.irt_explore_frac),
                 "prior_precision": PRIOR_PRECISION,
                 "same_seed_correlation": SAME_SEED_CORRELATION,

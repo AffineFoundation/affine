@@ -2,9 +2,9 @@
 
 No GPU, no network, no chain. A simulated batch is a tiny JSON file that
 states its own ``quality``: how much the LoRA trained from it changes the
-pass rate. The simulated evaluator gives null M and every LoRA the same
-random number for the same task and sample, as the real seeds do, so the
-comparison is paired.
+pass rate. The simulated evaluator pairs null M sample 0 with every LoRA on
+the same task and sample. Later null-M samples are king-only and use their
+own random numbers, as the real independent seeds do.
 
 Use ``SimWorld`` in tests of your own part, and ``python -m sn120_v2 sim``
 for a full run.
@@ -144,7 +144,7 @@ class SimTrainer:
 
 
 class SimEvaluator:
-    """Scores null M and LoRAs with shared random numbers per task and sample."""
+    """Pair king sample 0 with each LoRA; later king samples are independent."""
 
     def __init__(self, store: LocalStore) -> None:
         self.store = store
@@ -160,7 +160,7 @@ class SimEvaluator:
         outcomes = {}
         for model, effect in models.items():
             strings = []
-            for sample in range(request.params.samples_per_task):
+            for sample in range(request.params.null_samples if model == NULL_MODEL else request.params.samples_per_task):
                 codes = []
                 for task_id in request.task_ids:
                     luck = rollout_seed(request.round_seed, task_id, sample) / 2**63

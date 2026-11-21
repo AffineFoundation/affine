@@ -26,10 +26,16 @@ from ..rollouts import RolloutCapture
 from ..sampling import rollout_seed
 from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
+
 from .batch import END_OF_TURN
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
+
+
+def samples_for_model(params: Params, model: str) -> int:
+    """The king's independent samples; every LoRA keeps its own count."""
+    return params.null_samples if model == NULL_MODEL else params.samples_per_task
 
 
 class TaskPool(Protocol):
@@ -395,7 +401,7 @@ class VllmEvaluator:
         models, table, clients = self._prepare(request)
         params, tasks = request.params, request.task_ids
         served = time.monotonic()
-        jobs = [(model, sample, index) for model in models for sample in range(params.samples_per_task) for index in range(len(tasks))]
+        jobs = [(model, sample, index) for model in models for sample in range(samples_for_model(params, model)) for index in range(len(tasks))]
         deadline_hit = False
 
         def rollout(job: tuple[str, int, int]) -> tuple[str, bool] | None:
@@ -415,7 +421,7 @@ class VllmEvaluator:
             raise self._cut(request, started, served, models, table, written, len(jobs), sum(reply is not None for reply in replies))
         generated = time.monotonic()
         codes = self._grade(tasks, jobs, replies, request)
-        outcomes = {model: tuple("".join(codes[model, sample, index] for index in range(len(tasks))) for sample in range(params.samples_per_task)) for model in models}
+        outcomes = {model: tuple("".join(codes[model, sample, index] for index in range(len(tasks))) for sample in range(samples_for_model(params, model))) for model in models}
         times = {"serve_s": served - started, "generate_s": generated - served, "grade_s": time.monotonic() - generated, "wall_s": time.monotonic() - started}
         counts = {"models": len(models), "tasks": len(tasks), "rollouts": len(jobs), "capped": sum(code == CAP for code in codes.values()), "n_gpus": len(self._urls), "max_loras": table, "open_files_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
         log_phase(self.config.work_dir, "eval", round_id=request.round_id, look=request.look, **times, **counts, **written_facts(written))
@@ -461,13 +467,12 @@ class VllmEvaluator:
         if hasattr(self.http, "reset"):
             self.http.reset()  # type: ignore[attr-defined]
         params, tasks = request.params, request.task_ids
-        samples = params.samples_per_task
         queues = [queue.Queue() for _ in self._urls]
         replies: queue.Queue[tuple[str, object]] = queue.Queue()
         stop = threading.Event()
         cut = threading.Event()
         dropped = {model for model in models if eliminated(model)}
-        jobs = [(model, sample, index) for model in models if model not in dropped for sample in range(samples) for index in range(len(tasks))]
+        jobs = [(model, sample, index) for model in models if model not in dropped for sample in range(samples_for_model(params, model)) for index in range(len(tasks))]
         unfinished = set(jobs)
         for gpu, target in enumerate(queues):
             for job in jobs:
@@ -518,7 +523,7 @@ class VllmEvaluator:
 
         failures: list[Exception] = []
         pending = set(jobs)
-        next_result = {(model, sample): 0 for model in models for sample in range(samples)}
+        next_result = {(model, sample): 0 for model in models for sample in range(samples_for_model(params, model))}
         ordered: dict[tuple[str, int, int], tuple[str, bool] | None] = {}
         codes: dict[tuple[str, int, int], str] = {}
         cancelled: set[tuple[str, int, int]] = set()
@@ -584,7 +589,7 @@ class VllmEvaluator:
                     break
                 codes[current] = outcome
                 next_result[key] += 1
-            common = self._common_prefix(codes, dropped, models, samples, len(tasks), params.eval_chunk_tasks)
+            common = self._common_prefix(codes, dropped, models, len(tasks), params.eval_chunk_tasks, params)
             if common == len(tasks) or (not unfinished and not ordered):
                 # Cancelled jobs no longer constrain the shared prefix.
                 # Other live models continue to fill every server.
@@ -603,7 +608,7 @@ class VllmEvaluator:
             # Log the cutoff for the operator without changing those codes.
             self._cut(request, started, served, models, table, written, len(jobs), finished)
         for model in models:
-            for sample in range(samples):
+            for sample in range(samples_for_model(params, model)):
                 if eliminated(model) or model in dropped:
                     continue
                 for index in range(common):
@@ -614,11 +619,11 @@ class VllmEvaluator:
         return common
 
     @staticmethod
-    def _common_prefix(codes: dict[tuple[str, int, int], str], dropped: set[str], models: list[str], samples: int, tasks: int, block: int) -> int:
+    def _common_prefix(codes: dict[tuple[str, int, int], str], dropped: set[str], models: list[str], tasks: int, block: int, params: Params) -> int:
         live = [model for model in models if model not in dropped]
         prefix = 0
         for index in range(tasks):
-            if all((model, sample, index) in codes for model in live for sample in range(samples)):
+            if all((model, sample, index) in codes for model in live for sample in range(samples_for_model(params, model))):
                 prefix = index + 1
             else:
                 break

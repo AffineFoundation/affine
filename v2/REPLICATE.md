@@ -128,7 +128,7 @@ Where things are, below `--work`:
 | `status`, `reason` | `winner`, `lost`, `no_decision`, `skip`, `not_trained` or `not_scored`, with the same meaning as in a real round, and the reason in words. |
 | `eliminated_at_look` | The look at which the LoRA was dropped, or `null`. |
 | `score` | `n_tasks`, `delta`, `se`, `z`, `pass_rate`, `null_pass_rate`, `cap_rate`, `null_cap_rate`, `cover`, `eligible`, `reasons`. `null` when nothing was scored. |
-| `null_outcomes`, `outcomes` | One string per sample index: one outcome code per task, in the order of the draw. Null M, then your LoRA. |
+| `null_outcomes`, `outcomes` | One string per sample index: one outcome code per task, in the order of the draw. Null M has `null_samples_per_task` strings (defaulting to `samples_per_task`); your LoRA has `samples_per_task` strings. Scoring compares each LoRA pass with the mean of the king's samples on that task. |
 | `lora` | `lora_hash`, `dir` (the LoRA files on your disk), `train_report`. Absent when the training failed. |
 | `phase_s` | Wall seconds: `training` and `evaluation`. |
 | `stopped_at_limit` | `true` only with `--round-clock`, when the time limit of the round ended the scoring. |
@@ -191,7 +191,7 @@ Two more facts that are not in the list, because they are about the machine and 
 **Exactly the same, on any machine:**
 
 - The draw of a round: the task ids, their order and their weights. It is a pure function of the public IRT snapshot and the public round seed. `--round-file` checks this against the draw that the box published (`same_draw`).
-- The seed of each rollout: `sha256("<round_seed>|<task_id>|<sample>")` as a 63-bit integer. Null M and every LoRA use the same seed for the same task.
+- The seed of each rollout: `sha256("<round_seed>|<task_id>|<sample>")` as a 63-bit integer. Null M and every LoRA share the same seed for sample 0 on the same task. When the king has more samples, its later samples are king-only and use their own sample indices.
 - The seed of the training job: `sha256("<round_seed>|train|<batch_sha256>")` as a 63-bit integer. The A matrices of the LoRA start from this seed, so they start the same.
 - The prompt of each task and every request setting (`temperature`, `top_p`, `top_k`, `max_output_tokens`, thinking on).
 - The rows that train, their advantages, and the tokens of each row.

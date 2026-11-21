@@ -83,7 +83,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False)
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2)
 
 
 def sentences(text: str) -> str:
@@ -95,7 +95,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
-    "rotation_rule": "info", "train_seed_scope": "batch",
+    "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2,
 }  # fmt: skip
 
 
@@ -162,6 +162,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         irt.MODEL,
         irt.DRAW_RULE,
         irt.FISHER_MASS_RULE,
+        irt.SQRT_FISHER_MASS_RULE if params.irt_draw_rule == "sqrt_fisher" else irt.MASS_RULES[params.irt_draw_rule],
         f"at most once each {admission.FAULT_HOLD_S // 60} minutes",
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
@@ -267,7 +268,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     first, second = (publisher.stated_params(one) for one in texts)
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
-    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted
     assert set(second) == public_fields

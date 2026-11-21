@@ -33,6 +33,11 @@ def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
     assert params.params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
     assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
+    assert params.null_samples_per_task is None and params.null_samples == params.samples_per_task
+    assert "null_samples_per_task" not in params.to_dict()
+    two = dataclasses.replace(params, null_samples_per_task=2)
+    assert two.to_dict()["null_samples_per_task"] == 2 and Params.from_dict(two.to_dict()).null_samples == 2
+    assert two.params_hash != params.params_hash
     raw = json.dumps(params.to_dict(), sort_keys=True)
     assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
     assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "4fb5d6fb049d98f57b0039897b758f9b5c8d6f5584475321df94b1bb3702133d"
@@ -89,7 +94,7 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
     assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
 
     default = Params()
-    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512,
+    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512, "null_samples_per_task": 2,
                "rotation_k": 31, "rotation_retire_p": 0.9, "rotation_n_min": 2,
                "rotation_retire_low_p": 0.1, "rotation_n_min_low": 7, "rotation_active_size": 20000}
     for name, value in changes.items():
@@ -149,6 +154,7 @@ def test_look_sizes_end_with_every_task():
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
+        {"null_samples_per_task": 0}, {"null_samples_per_task": -1}, {"null_samples_per_task": 1.5}, {"null_samples_per_task": True},
     ],
 )
 def test_an_invalid_setting_fails_closed(change):
@@ -210,6 +216,31 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
     for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)
+
+
+def test_kingx2_and_dedup_params_keep_their_combined_and_legacy_identities():
+    base = Params()
+    assert "null_samples_per_task" not in base.to_dict()
+    assert base.params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
+    both = dataclasses.replace(base, null_samples_per_task=2, irt_draw_rule="sqrt_fisher")
+    assert both.null_samples == 2 and both.dedup_enabled and both.train_seed_scope == "round"
+    restored = Params.from_dict(both.to_dict())
+    assert restored.to_dict() == both.to_dict() and restored.params_hash == both.params_hash
+    assert restored._legacy_fields is None
+
+    old_data = {name: value for name, value in both.to_dict().items() if name not in Params.LEGACY_FIELDS}
+    old = Params.from_dict(old_data)
+    assert (old.null_samples_per_task, old.irt_draw_rule, old.null_samples) == (2, "sqrt_fisher", 2)
+    assert (old.train_seed_scope, old.dedup_enabled, old.min_signal_rollouts, old.min_step_norm) == ("batch", False, 1, 0.0)
+    assert old._legacy_fields == frozenset(Params.LEGACY_FIELDS)
+    assert old.to_dict() == old_data and Params.from_dict(old.to_dict()).params_hash == old.params_hash
+
+    # Enabling the dedup rules on a king-x2 historical record writes only the
+    # explicitly selected legacy field; the king samples and sampler remain.
+    changed = dataclasses.replace(old, dedup_enabled=True)
+    assert changed.to_dict()["dedup_enabled"] is True and "train_seed_scope" not in changed.to_dict()
+    assert changed.null_samples == 2 and changed.irt_draw_rule == "sqrt_fisher"
+    assert Params.from_dict(changed.to_dict()).to_dict() == changed.to_dict()
 
 
 def test_legacy_params_replacement_is_explicit_and_never_keeps_stale_omissions():

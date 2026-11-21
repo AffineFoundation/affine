@@ -120,7 +120,7 @@ def synthetic_null_close(controller: Controller) -> dict[str, Any]:
     """Exercise result validation, judging and the real IRT update close path."""
     ticket = controller.tickets()[0]
     n = len(ticket.draw.task_ids)
-    outcomes = tuple("P" * n for _ in range(ticket.params.samples_per_task))
+    null = tuple("P" * n for _ in range(ticket.params.null_samples))
     entries = []
     for entry in ticket.entries:
         recipe = ticket.params.recipe.for_miner(entry.batch.train)
@@ -133,9 +133,10 @@ def synthetic_null_close(controller: Controller) -> dict[str, Any]:
                                 recipe.alpha, recipe.target_modules,
                                 TrainReport(1, 1, 0.0, 0.0, 1, 1, "offline", ticket.params.recipe.image_digests[0]))
         # Exactly null M's outcomes: scored and valid, but never a winner.
-        entries.append(EntryResult(entry.queue_pos, "scored", lora=artifact, outcomes=outcomes))
+        lora_outcomes = tuple("P" * n for _ in range(ticket.params.samples_per_task))
+        entries.append(EntryResult(entry.queue_pos, "scored", lora=artifact, outcomes=lora_outcomes))
     result = BoxResult(ticket.round_id, ticket.lease_id, ticket.box_id, ticket.digest(),
-                       ticket.head.version_id, ticket.params.recipe.image_digests[0], outcomes, tuple(entries),
+                       ticket.head.version_id, ticket.params.recipe.image_digests[0], null, tuple(entries),
                        ticket.issued_at + 1, ticket.issued_at + 2)
     before = controller.state.snapshot_id
     controller.submit_result(result, ticket.issued_at + 3)

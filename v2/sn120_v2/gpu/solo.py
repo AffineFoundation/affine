@@ -73,6 +73,7 @@ class SoloScheduler:
         self.runner, self.ticket, self.deadline = runner, ticket, deadline
         self.params, self.draw = ticket.params, ticket.draw
         self.n, self.samples = len(self.draw.task_ids), ticket.params.samples_per_task
+        self.null_samples = ticket.params.null_samples
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.owner_by_model: dict[str, int] = {}
@@ -80,9 +81,9 @@ class SoloScheduler:
         self.alive: set[int] = set()
         self.dropped: dict[int, int] = {}
         self.remaining = Counter({NULL_MODEL: 0})
-        self.next_result = {(NULL_MODEL, sample): 0 for sample in range(self.samples)}
+        self.next_result = {(NULL_MODEL, sample): 0 for sample in range(self.null_samples)}
         self.buffered: dict[tuple[str, int, int], str] = {}
-        self.null = [""] * self.samples
+        self.null = [""] * self.null_samples
         self.scored: dict[int, list[str]] = {}
         self.judged: set[tuple[int, int]] = set()
         self.cut = False
@@ -106,7 +107,15 @@ class SoloScheduler:
     def training_finished(self) -> None:
         with self.changed:
             self.training_done = True
+            self._cancel_null_if_unused()
             self.changed.notify_all()
+
+    def _cancel_null_if_unused(self) -> None:
+        """No future LoRA can use king work after training and the last drop."""
+        if self.training_done and not self.alive:
+            cancel = getattr(self.runner.evaluator.http, "cancel", None)
+            if cancel is not None:
+                cancel(NULL_MODEL)
 
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
@@ -171,6 +180,7 @@ class SoloScheduler:
                 self.scored[pos][:] = [text[:stop] for text in self.scored[pos]]
                 if hasattr(self.runner.evaluator.http, "cancel"):
                     self.runner.evaluator.http.cancel(self.trained[pos].lora_hash)  # type: ignore[attr-defined]
+                self._cancel_null_if_unused()
                 self.changed.notify_all()
 
     def deadline_cut(self) -> None:
@@ -266,7 +276,7 @@ class SoloWorker:
                             lora = next(lora for lora in self.trained_source.values() if lora.lora_hash == model)
                             self.evaluator._load_one(self.gpu, lora)
                         for index in range(start, stop):
-                            for sample in range(self.params.samples_per_task):
+                            for sample in range(self.params.null_samples if model == NULL_MODEL else self.params.samples_per_task):
                                 pending.add(submit(clients, model, sample, index))
                     if not pending:
                         break
@@ -296,7 +306,8 @@ class SoloWorker:
                     if not all(self.evaluator._solo_servers[self.gpu].alive() for _ in [0]):
                         raise InfraError(f"the vLLM server on GPU {self.gpu} died during solo scoring")
             finally:
-                if stopped and self.deadline and time.time() >= self.deadline:
+                if stopped and ((self.deadline and time.time() >= self.deadline)
+                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive)):
                     cancel = getattr(self.evaluator.http, "cancel", None)
                     if cancel is not None:
                         cancel(NULL_MODEL)
