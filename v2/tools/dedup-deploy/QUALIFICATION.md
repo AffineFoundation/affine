@@ -40,9 +40,11 @@ CPU/fake-driver results, **not physical-GPU qualification**. The final kit's
 14 frozen-input tests also passed. `llms.txt` remains byte-identical to
 `50afaca3`.
 
-The updated working-tree rollback fixture completed with exit 0 and emitted
+The committed `350f2d2d` rollback fixture completed with exit 0 and emitted
 **12 rollback/restore PASS lines** in
-`/home/bb/scratch/dedup-r093-final-rollback-71d287f6-v1.log`. They cover the
+`/home/bb/scratch/dedup-r093-final-rollback-committed-v1.log`: 11
+`ROLLBACK QUALIFICATION PASS` lines plus one `RESTORE VALIDATOR PASS` line.
+They cover the
 exact r000092 infrastructure-failed `no_decision` close, negative refusal
 controls, the historical and repaired params identities, native release
 readability, and bounded old-code recovery. The physical validator package
@@ -55,6 +57,56 @@ At the time this addendum was committed, the complete-suite terminal result
 and clean committed-kit normal/abort-after-open PASS rehearsals were still
 required. Earlier committed-kit PASS lines below belong to their explicitly
 named historical releases and are not evidence for this r000093 repair.
+
+The subsequent complete suite at production commit `71d287f6` reached a
+terminal **5 failed, 1,694 passed, 1 skipped** result in 1,341.92 seconds. Its
+log is `/home/bb/scratch/dedup-r093-full-suite-71d287f6-v3.log`. Failures are
+`test_admission_grade_pool.py::test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file`,
+`test_envs_math_grader.py::test_a_hung_or_dead_grade_is_not_passed_and_is_never_retried`,
+`test_gpu_torch.py::test_a_row_keeps_the_graph_of_no_decoder_layer_and_each_layer_runs_a_second_time_in_the_backward`,
+`test_no_legacy.py::test_v2_code_imports_no_legacy_module`, and
+`test_public_queue_files.py::test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte`.
+The last failure's actual/expected hashes match the already-recorded base
+failure. The no-legacy findings are the kit loader's explicit isolated-path
+uses. The full suite is not represented as green. An isolated recheck of the
+first three failures passed the two grading tests but still failed the
+backward-cache assertion: **1 failed, 2 passed** in 38.21 seconds. Its log is
+`/home/bb/scratch/dedup-r093-three-failures-isolated-v1.log`. This supports
+load sensitivity for the grading tests only; it does not clear any suite
+failure or establish physical-GPU behavior.
+
+Committed-kit rehearsal `350f2d2d` first required a named branch because the
+dry-run clones through `git clone --branch`; the detached attempt exited before
+fixture creation. Its named-branch normal and abort attempts then both failed
+in the fixture's second `synthesize.py` call with `AssertionError: r000092`,
+before apply, because that helper still assumed gate r000091. A subsequent
+development run exposed a second fixture issue: it opened predecessor r000092
+without running it, so r000093 could not open; the stopped run emitted no PASS.
+The fixture-only correction runs the real r000091/r000092 predecessors, prepares
+health inputs after the real gate worker stops, verifies `IDLE` at the configured
+gate, replaces its returned waiting seats, and gates new-loop startup on that
+preparation. No production assertion or behavior was relaxed.
+
+The corrected normal development rehearsal completed with exit 0 at
+`/home/bb/scratch/dedup-r093-final-normal-dev-v4.log`. It emitted the required
+`DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS`
+line, not a final committed-kit PASS. Its copied r000093 gate closed APPLIED
+with 2,000 tasks and no failed lease; apply used production commit `71d287f6`
+and canonical params `4c83d52f…`. The health round r000094 closed 2,000 tasks,
+the same loop opened r000095, public health passed, duplicate/null-update cuts
+were each one, and both admission-floor cuts were zero. Its external health log
+is `/home/bb/scratch/dedup-r093-final-normal-dev-v4/dedup-deploy-dry/here/autodeploy.log`.
+The corrected abort-after-open development rehearsal also completed with exit 0
+at `/home/bb/scratch/dedup-r093-final-abort-dev-v4.log`. It emitted the required
+`DRY DEVELOPMENT COMPLETE: bounded new-code finish and shimmed old rollback`
+line. Its induced worker crash left r000094 undecided and open; the reviewed
+new-code run then closed it APPLIED without discarding a stored result. The
+rollback restored `c5252865`/`bba7a409…`, started exactly one old-code loop,
+returned to old-code IDLE, and preserved generator/reserve bytes. Its copied
+autodeployer intentionally exits 1 after the induced public-health failure;
+the outer rehearsal accepts that only after all recovery assertions pass.
+Final clean committed-kit normal and abort rehearsals are still required; no
+PASS is inferred from either development completion.
 
 ## Historical approved release
 

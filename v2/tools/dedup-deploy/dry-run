@@ -280,12 +280,14 @@ assert len(seats)>=28
 from sn120_v2.queue import waiting
 selected=waiting(state.queue)[:state.params.batch_cap+2]
 assert len(selected)==state.params.batch_cap+2
-# The copied predecessor starts with r86 open. A later call sees the already
-# open r91 gate and may replace only the not-yet-open r92 selection.
+# The copied predecessor starts with r86 open. A later call sees the closed
+# configured gate and replaces its returned, not-yet-open health selection.
 gate=os.environ.get("DEDUP_GATE_ROUND","r000091")
-health_mode=state.round is not None and state.round.round_id==gate
+health_mode=(state.round is None and state.rounds and
+             state.rounds[-1].round_id==gate)
 predecessor=state.round is not None and state.round.round_id=="r000086"
-assert state.round is None or health_mode or predecessor,state.round.round_id
+assert health_mode or predecessor, (state.round, state.rounds[-1].round_id)
+assert not any(seat.leased for seat in selected) if health_mode else True
 quality_map={}
 quality_path=pathlib.Path(os.environ["DEDUP_DRY_QUALITY"])
 if quality_path.exists(): quality_map=json.loads(quality_path.read_text())
@@ -316,7 +318,7 @@ if not health_mode:
     quality_path.write_text(json.dumps(quality_map,sort_keys=True))
     print(json.dumps({"synthetic":True,"predecessor_queue_files":len(state.queue)}))
     raise SystemExit(0)
-assert state.round.round_id==gate and state.round.decision is None
+assert state.rounds[-1].round_id==gate and state.rounds[-1].decision is not None
 
 for index,seat in enumerate(selected):
     hotkey=seat.reg.hotkey
@@ -416,6 +418,10 @@ def run_bounded():
     stop.unlink(missing_ok=True); pidfile.unlink(missing_ok=True)
 
 def new_loop():
+    deadline=time.monotonic()+120
+    ready=pathlib.Path(os.environ["DEDUP_HEALTH_READY"])
+    while not ready.exists() and time.monotonic()<deadline: time.sleep(.05)
+    assert ready.exists(),"health inputs were not prepared before the new loop"
     with runlog.open("a") as out:
         out.write("run-loop: loop started\n")
         process=subprocess.Popen(cli,env=env,stdout=out,stderr=subprocess.STDOUT)
@@ -456,7 +462,16 @@ phase="gate"; process=None
 start=time.monotonic()
 while time.monotonic()-start<1800:
     if phase=="gate" and stop.exists():
-        run_bounded(); phase="wait-new"
+        run_bounded()
+        # Close is durable and the gate worker has exited. Replace only the
+        # returned gate selection before allowing the new health loop to open.
+        with (root/"synthetic-inputs.json").open("w") as out:
+            subprocess.run(
+                [sys.executable,"-I",str(root/"helpers/synthesize.py")],
+                stdout=out,check=True,timeout=180,
+            )
+        pathlib.Path(os.environ["DEDUP_HEALTH_READY"]).touch()
+        phase="wait-new"
     elif phase=="wait-new" and pidfile.exists():
         process=new_loop(); phase="failed" if process is None else "second"
     if phase in ("failed","second"): break
@@ -480,6 +495,8 @@ export DEDUP_RESERVE_PATH_FILE="$D/reserve-live.path" DEDUP_RESERVE_DIR="$D/live
 export DEDUP_GENERATOR_ROOT="$D" DEDUP_GENERATOR_INBOX="$D/generator/inbox" DEDUP_GENERATOR_PID="$D/generator/ingestd.pid" DEDUP_PRIOR_INDEX="$D/generator/prior-index.json"
 export SN120_RESERVE_PATH_FILE="$D/reserve-live.path" SN120_GENERATOR_INBOX="$D/generator/inbox" SN120_GENERATOR_LOG="$D/generator/ingestd.log" SN120_GENERATOR_LOCK="$D/generator/ingestd.lock" SN120_GENERATOR_POLL_S=120 SN120_PUBLIC_URL=http://127.0.0.1:9
 export DEDUP_FIRST_HEALTH="$HEALTH" DEDUP_SECOND_OPEN="$AFTER" DEDUP_GATE_ROUND="$GATE"
+export DEDUP_HEALTH_READY="$D/work/logs/health-inputs-ready"
+# Health inputs are ready only after the gate closes, before the new loop.
 # Every no-op-floor fixture is admitted. The selected stored-null seat keeps
 # its waiting queue position and exercises min(minibatches, active rows)=58.
 export DEDUP_DRY_STORED_NULL_POS=3
@@ -564,6 +581,7 @@ kill -TERM "$COMPETITOR" 2>/dev/null || true; wait "$COMPETITOR" 2>/dev/null || 
 # immediately after r86 closes and before r87 opens.
 run_old(){ "$PY" -I "$D/helpers/cli.py" run --state-dir "$D/operator-state" --stack dry_stack:stack --rounds 1 --max-idle 1 --idle-sleep 0 >> "$D/work/logs/run.log" 2>&1; }
 open_old(){ "$PY" -I "$D/helpers/open_only.py" "$1" >> "$D/work/logs/run.log" 2>&1; }
+[ "$GATE" = r000093 ] || { echo 'this fixture currently requires gate r000093' >&2; exit 64; }
 printf 'open: copied predecessor gate %s is open\n' "$GATE" > "$D/work/logs/run.log"
 run_old
 [ "$("${OP[@]}" journal-open r000087 | "$PY" -I -c 'import json,sys;print(json.load(sys.stdin)["round"] is None)')" = True ]
@@ -572,16 +590,10 @@ open_old r000087; run_old
 open_old r000088; run_old
 open_old r000089; run_old
 open_old r000090; run_old
-open_old r000091
-for round in r000092 r000093 r000094; do
-    if [ "$round" = "$GATE" ]; then break; fi
-    run_old; open_old "$round"
-done
+open_old r000091; run_old
+open_old r000092; run_old
+open_old r000093
 "${OP[@]}" journal-close r000090 > "$D/dispatch-journal-close.json"
-# These files were not consumed by old-code rounds. New params admit both
-# formerly rejected fixtures; the health round cuts one duplicate and one
-# separately simulated stored null update, not an admission-floor case.
-$PY -I "$D/helpers/synthesize.py" > "$D/synthetic-inputs.json"
 "${OP[@]}" journal-open "$GATE" > "$D/dispatch-journal-open.json"
 
 # The old gate stops through the genuine stop-after-round CLI mechanism.
