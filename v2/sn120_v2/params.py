@@ -254,8 +254,11 @@ class Params(Record):
     rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
     rotation_churn_max: int = 0  # optional operational cap on swaps; 0 = no cap beyond churn_frac and better candidates
 
-    # Judging.
-    z_bar: float = 1.0  # a winner needs z strictly above this
+    # Judging. The field-median gate adds a second, final-look z test against
+    # the per-task median of the post-dedup candidates plus the king.
+    z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    crown_gate: str = "field_median"
+    z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
     cap_hit_margin: float = 0.02
     min_scored_tasks: int = 100  # fewer scored tasks than this can never produce a winner
@@ -323,9 +326,10 @@ class Params(Record):
 
     # Records from before these fields use these values; new Params use the production defaults above.
     LEGACY_FIELDS = ("train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
-                     "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm")
+                     "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "crown_gate", "z_field_bar")
     LEGACY_VALUES = dict(train_seed_scope="batch", dedup_enabled=False, dedup_rollout_overlap=0.5,
-                         dedup_cos_shared_seed=0.135, dedup_cos_own_seed=0.002, min_signal_rollouts=1, min_step_norm=0.0)
+                         dedup_cos_shared_seed=0.135, dedup_cos_own_seed=0.002, min_signal_rollouts=1, min_step_norm=0.0,
+                         crown_gate="king", z_field_bar=1.0)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Params:
@@ -357,6 +361,8 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.crown_gate in ("king", "field_median"), "crown_gate must be 'king' or 'field_median'")
+        _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
         _need(_unit(self.dedup_rollout_overlap) and self.dedup_rollout_overlap > 0, "dedup_rollout_overlap must be in (0, 1]")
         _need(_unit(self.dedup_cos_shared_seed) and self.dedup_cos_shared_seed > 0, "dedup_cos_shared_seed must be in (0, 1]")

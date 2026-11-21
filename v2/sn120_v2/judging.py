@@ -50,9 +50,10 @@ Dropping cannot create a winner, so the final test needs no correction.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from fractions import Fraction
-from statistics import NormalDist
+from statistics import NormalDist, median
 from typing import Sequence
 
 from .errors import ContractError, HeadMismatchError
@@ -154,6 +155,34 @@ def estimate(weights: Sequence[float], diffs: Sequence[float]) -> tuple[float, f
 
 def cap_limit(null_cap_rate: float, params: Params) -> float:
     return max(params.cap_hit_floor, null_cap_rate + params.cap_hit_margin)
+
+
+def field_differences(own: Sequence[float], members: Sequence[Sequence[float]], n: int) -> list[float]:
+    """Own pass rate minus the field median on each of its scored tasks.
+
+    A member contributes only on tasks it ran. ``statistics.median`` averages
+    the two middle values on an even count, including a 0/1 split (0.5).
+    """
+    return [own[t] - median([rates[t] for rates in members if t < len(rates)]) for t in range(n)]
+
+
+def _with_field_gate(
+    score: Score,
+    weights: Sequence[float],
+    members: Sequence[Sequence[float]],
+    own_index: int,
+    params: Params,
+) -> Score:
+    diffs = field_differences(members[own_index], members, score.n_tasks)
+    delta, se = estimate(weights[:score.n_tasks], diffs)
+    z = delta / se if se > 0 else 0.0
+    reasons = list(score.reasons)
+    if not z > params.z_field_bar:
+        reasons.append(f"field z {z:.3f} is not above {params.z_field_bar:g}")
+    return dataclasses.replace(
+        score, field_delta=delta, field_se=se, field_z=z,
+        eligible=score.eligible and z > params.z_field_bar, reasons=tuple(reasons),
+    )
 
 
 def score_entry(
@@ -347,7 +376,7 @@ def decide(
         problems.append("null-M pass rates differ between boxes by more than calibration_tol")
 
     rows: list[tuple[object, EntryResult, str, str, Score | None]] = []
-    candidates: list[tuple[int, Score]] = []
+    field_scores: list[tuple[int, Score, Sequence[str]]] = []
     seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
     _need(len(seats) == sum(len(ticket.entries) for ticket, _ in leases), "a queue position occurs twice")
     copies = {}
@@ -360,6 +389,9 @@ def decide(
               "duplicate evidence does not match its frozen seat")
         copies[row.queue_pos] = row
     for ticket, result in leases:
+        if not any(e.status == SCORED for e in result.entries):
+            continue
+        null_scored = scored_prefix(result.null_outcomes)
         for seat, entry in zip(ticket.entries, result.entries):
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))
@@ -386,7 +418,28 @@ def decide(
                 rows.append((seat, entry, NO_DECISION, f"only {score.cover:.3f} of this LoRA's rollouts resolved", score))
             else:
                 rows.append((seat, entry, LOST, "", score))
-                candidates.append((seat.queue_pos, score))
+                # A dropped entry helps set the field only on its scored tasks;
+                # its final eligibility keeps the unchanged king/full-draw test.
+                field_scores.append((seat.queue_pos, score, entry.outcomes))
+
+    candidates = [(position, score) for position, score, _ in field_scores]
+    if params.crown_gate == "field_median" and field_scores:
+        king_rates = [
+            pass_rates(result.null_outcomes, scored_prefix(result.null_outcomes))
+            for ticket, result in leases
+            if any(e.status == SCORED for e in result.entries)
+        ]
+        king_n = max(len(rates) for rates in king_rates)
+        king = [math.fsum(rates[t] for rates in king_rates if t < len(rates)) /
+                sum(t < len(rates) for rates in king_rates) for t in range(king_n)]
+        members = [pass_rates(outcomes, score.n_tasks) for _, score, outcomes in field_scores] + [king]
+        candidates = [
+            (position, _with_field_gate(score, first.draw.weights, members, index, params))
+            for index, (position, score, _) in enumerate(field_scores)
+        ]
+        gated = {position: score for position, score in candidates}
+        rows = [(seat, entry, status, reason, gated[seat.queue_pos] if status == LOST else score)
+                for seat, entry, status, reason, score in rows]
 
     winner = pick_winner(candidates)
     entries = []
@@ -396,7 +449,10 @@ def decide(
             reason = "" if status == WINNER else "; ".join(score.reasons) or "another LoRA had a higher delta"
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
-    if winner is not None:
+    if winner is not None and params.crown_gate == "field_median":
+        why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
+               f"per-task median by more than {params.z_field_bar:g} SE")
+    elif winner is not None:
         why = f"entry {winner} beat M by more than {params.z_bar:g} standard error"
     elif problems:
         why = "no decision: " + "; ".join(problems)
@@ -404,6 +460,8 @@ def decide(
         why = "no entry was scored"
     else:
         why = f"null round: no LoRA beat M by more than {params.z_bar:g} standard error"
+        if params.crown_gate == "field_median":
+            why += f" and the field's per-task median by more than {params.z_field_bar:g} SE"
     return RoundDecision(
         round_id=first.round_id,
         head_version_id=first.head.version_id,

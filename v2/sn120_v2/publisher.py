@@ -93,6 +93,7 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
+RETIRED_KING_Z_BAR = 1.5
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -1220,9 +1221,21 @@ def _scoring_lines(params: Params) -> list[str]:
         "  dropped when (z + c_k) / sqrt(t_k) <= `z_bar`. No LoRA is dropped at a look with fewer than",
         f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
         "  open, the scoring ends.",
+        *([
+            "- Field-median win rule, in full: duplicates are removed first by the existing dedup, the round uses one round-wide",
+            "  training seed, and there are no eligibility floors. For each task t, m_t is the median of the per-task pass rates",
+            "  of the deduped scoring batches plus the king; an even 0/1 split gives 0.5. A batch dropped early contributes only",
+            "  on tasks it ran. For your scored tasks, d_t = your pass rate - m_t; `field_delta` is the weighted mean of d_t",
+            "  and `field_se` its standard error, with the same weights as the king estimate. `field_z` = `field_delta` / `field_se`,",
+            "  or 0 when `field_se` is 0. Crown only when `field_z` > `z_field_bar` AND paired z",
+            f"  against the king > `z_bar`. The highest delta among eligible LoRAs wins; otherwise the king stays. The old z {show(RETIRED_KING_Z_BAR)}",
+            "  king-only bar is retired. The thresholds are provisional and will be recalibrated.",
+        ] if params.crown_gate == "field_median" else []),
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
-        "  was dropped at a look does not. n is at least `min_scored_tasks`. z > `z_bar`. (its count of",
+        "  was dropped at a look does not. n is at least `min_scored_tasks`.",
+        *(["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
+        "  (its count of",
         *([
             f"  `{CAP}`) / (n x LoRA sample count) <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / (n x king sample count) +",
             "  `cap_hit_margin`), where the LoRA denominator is n x `samples_per_task` and the null M denominator is n x its number of",
@@ -1247,6 +1260,28 @@ def _scoring_lines(params: Params) -> list[str]:
         "  another time, and no run has measured how often. So your outcome strings and your delta can differ from",
         "  those of the box. The tests of the code start no vLLM server: they put a stand-in in its place. The box",
         "  runs vLLM on GPUs.",
+    ]
+
+
+def _win_rule_lines(params: Params) -> list[str]:
+    if params.crown_gate != "field_median":
+        return [
+            f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
+            f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
+            f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        ]
+    return [
+        "- Win rule (`crown_gate` = `field_median`): duplicates are removed first (the existing dedup), and the round has one",
+        "  round-wide training seed. There are no floors on how many candidates may be eligible.",
+        "- Per task t, the field median m_t is the median of the per-task pass rates of the deduped scoring batches plus the king.",
+        "  With an even number of members, the two middle values are averaged (0.5 for a 0/1 split). A batch dropped at an",
+        "  early look contributes only on the tasks it ran. On your scored tasks, d_t = your pass rate - m_t; `field_delta` is",
+        "  the weighted mean of d_t and `field_se` its standard error, using the same sampling weights as the king estimate.",
+        "  `field_z` = `field_delta` / `field_se`, or 0 when `field_se` is 0. There is no task re-weighting.",
+        f"- To crown, you need `field_z` > `z_field_bar` ({show(params.z_field_bar)}) AND paired z against the king > `z_bar`",
+        f"  ({show(params.z_bar)}), on at least {params.min_scored_tasks} tasks. The cap-hit limit is",
+        f"  max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}), as before. The old z {show(RETIRED_KING_Z_BAR)}",
+        "  king-only bar is retired. These thresholds are provisional and will be recalibrated.",
     ]
 
 
@@ -1305,9 +1340,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
             "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
             "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
         ]),
-        f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
-        f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
-        f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        *_win_rule_lines(params),
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
         "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round.",
         f"- Looks: scores are checked after {show(looks)} tasks. The win rule runs only at the last look. An early",
