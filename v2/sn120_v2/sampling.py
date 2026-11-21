@@ -17,6 +17,8 @@ from .errors import ContractError
 from .types import Draw, HeadVersion
 
 SEED_BITS = 63
+SEED_SCOPES = ("round", "batch")
+LEGACY_TRAIN_SEED_SCOPE = "batch"
 
 
 def make_round_seed(round_id: str, head_version_id: str, entropy: str) -> str:
@@ -35,9 +37,20 @@ def rollout_seed(round_seed: str, task_id: str, sample: int) -> int:
     return int(sha256_hex(text.encode("utf-8")), 16) >> (256 - SEED_BITS)
 
 
-def train_seed(round_seed: str, batch_sha256: str) -> int:
-    """Seed of one training job. It is part of the recovery key (head, batch, recipe, seed)."""
-    return int(sha256_hex(f"{round_seed}|train|{batch_sha256}".encode("utf-8")), 16) >> (256 - SEED_BITS)
+def train_seed(round_seed: str, batch_sha256: str, scope: str = "round") -> int:
+    """Seed of one training job, in the recovery key (head, batch, recipe, seed).
+
+    Round scope is exactly sha256("<round_seed>|train"); legacy batch scope retains the old suffix and golden values.
+    ``auto`` is only for deserialized legacy records: it means batch scope. New records must pin an explicit scope.
+    ``Controller.open_round`` reads callable entropy only after freezing batches, so round_seed and every seed derived
+    from it are unpredictable before those batches are frozen.
+    """
+    if scope == "auto":
+        scope = LEGACY_TRAIN_SEED_SCOPE
+    if scope not in SEED_SCOPES:
+        raise ContractError("train seed scope must be 'round' or 'batch'")
+    suffix = "" if scope == "round" else f"|{batch_sha256}"
+    return int(sha256_hex(f"{round_seed}|train{suffix}".encode("utf-8")), 16) >> (256 - SEED_BITS)
 
 
 def draw_rank(round_seed: str, task_id: str) -> str:

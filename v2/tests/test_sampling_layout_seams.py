@@ -16,7 +16,8 @@ def test_rollout_seed_is_sha256_of_seed_task_and_sample_and_of_nothing_else():
     base = rollout_seed("seed-1", "math:7", 0)
     assert base == int(hashlib.sha256(b"seed-1|math:7|0").hexdigest(), 16) >> 193 and 0 <= base < 2**63
     assert len({base, rollout_seed("seed-2", "math:7", 0), rollout_seed("seed-1", "math:8", 0), rollout_seed("seed-1", "math:7", 1)}) == 4
-    assert train_seed("seed-1", "a" * 64) == train_seed("seed-1", "a" * 64) != train_seed("seed-1", "b" * 64)
+    assert train_seed("seed-1", "a" * 64) == train_seed("seed-1", "b" * 64)
+    assert train_seed("seed-1", "a" * 64, "batch") != train_seed("seed-1", "b" * 64, "batch")
 
 
 def test_round_seed_changes_with_round_head_and_entropy():

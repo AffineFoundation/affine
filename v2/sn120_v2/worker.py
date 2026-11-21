@@ -155,7 +155,7 @@ class LocalRunner:
             head=ticket.head,
             entry=entry,
             params=ticket.params,
-            seed=train_seed(ticket.draw.round_seed, entry.batch.batch_sha256),
+            seed=train_seed(ticket.draw.round_seed, entry.batch.batch_sha256, ticket.params.train_seed_scope),
             gpu_ids=gpu_ids,
             out_prefix=layout.pending_lora_prefix(ticket.round_id, ticket.lease_id, entry.queue_pos),
         )
