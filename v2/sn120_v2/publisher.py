@@ -93,6 +93,11 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
+MERGED_EXPLANATION = (
+    "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
+    "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
+    "Before this change the LoRA was applied at serving time on top of the rounded bf16 king, which rounded most of a small update away."
+)
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
 # The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
 # the weights back to them), in seconds. An estimate for a LoRA of rank 64. No run has measured it.
@@ -248,7 +253,7 @@ def object_keys() -> dict[str, str]:
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
     """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
-    return {
+    doc = {
         "params_hash": params.params_hash,
         "recipe_id": params.recipe_id,
         "miner_settable": miner_settable(recipe),
@@ -299,6 +304,15 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "code": REPO + "/tree/v2/v2",
         **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
     }
+    if params.eval_merged:
+        doc["candidate_evaluation"] = {
+            "merged": True,
+            "model": "round_bf16(fp32 king master + your LoRA update)",
+            "tested_equals_installed": True,
+            "arithmetic": "the install fold kernel named in the head chain; the final base manifest hash is checked before install",
+            "explanation": MERGED_EXPLANATION,
+        }
+    return doc
 
 
 def refuse_private(value: Any, where: str = "snapshot") -> None:
@@ -1091,7 +1105,8 @@ def _server_command(params: Params) -> list[str]:
     The address of the server is left out: it is local to the box and changes no score.
     """
     argv = server_argv("<directory of the base files>", 0, params, params.max_num_seqs)
-    argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
+    if not params.eval_merged:
+        argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
     start = argv.index("-m")
     options: list[list[str]] = []
     for word in argv[start + 2 :]:
@@ -1128,18 +1143,30 @@ def _scoring_lines(params: Params) -> list[str]:
     return [
         "### The scoring procedure",
         "",
+        *([
+            f"- Merged-candidate evaluation: {MERGED_EXPLANATION}",
+            "  Each candidate has its own vLLM server for its merged base; null keeps the bf16 king base. A GPU serves one model at a time",
+            "  and may switch after its in-flight work finishes. No runtime LoRA is loaded. The candidate's result records the merged base",
+            "  manifest hash and install kernel; promotion refuses a fold whose base manifest differs.",
+        ] if params.eval_merged else []),
         "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
         "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
         "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
         "rules). Section 10 has the command that runs this code on your machine.",
         "",
         f"- Servers: an idle GPU may prewarm its normal vLLM server for null. A GPU never starts vLLM while its training job",
-        "  is active; after training exits it starts or reuses that same default-argv server. Each server",
-        f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
-        "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
-        "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
-        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
-        "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        *([
+            "  is active; after training exits it serves the candidate it trained, or null if it trained no candidate. Each merged",
+            f"  model is served under its candidate's `lora_hash`; null is `{NULL_MODEL}`. The servers run with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. The command of one merged server,",
+        ] if params.eval_merged else [
+            "  is active; after training exits it starts or reuses that same default-argv server. Each server",
+            f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
+            "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
+            "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
+            "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        ]),
         "  without its local address:",
         "",
         "```",
