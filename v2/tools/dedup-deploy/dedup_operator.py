@@ -570,8 +570,9 @@ def apply_checked_out() -> None:
             raise RuntimeError("new params did not enable round-seeded dedup and merged evaluation")
         if (state.params.dedup_rollout_overlap, state.params.dedup_cos_shared_seed,
                 state.params.dedup_cos_own_seed, state.params.min_signal_rollouts, state.params.min_step_norm,
-                state.params.z_bar) != (0.5, 0.135, 0.002, 1, 0.0, 1.5):
-            raise RuntimeError("new params do not match the reviewed dedup thresholds")
+                state.params.z_bar, state.params.crown_gate, state.params.z_field_bar) != (
+                    0.5, 0.135, 0.002, 1, 0.0, 0.0, "field_median", 1.0):
+            raise RuntimeError("new params do not match the reviewed field-gate thresholds")
         if state.params.batch_cap != EXPECT["batch_cap"]:
             raise RuntimeError("new params did not preserve genfeed batch_cap=6")
         verify_live_reserve(ingestd_before=saved_ingestd)

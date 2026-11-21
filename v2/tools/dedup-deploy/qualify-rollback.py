@@ -22,7 +22,8 @@ import tempfile
 
 KIT = Path(__file__).resolve().parent
 EXPECT = json.loads((KIT / "expect.json").read_text())
-NEW_PIN = EXPECT["new_params_hash"]
+NEW_PIN = "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
+REPAIRED_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 OLD_PIN = EXPECT["old_params_hash"]
 
@@ -127,8 +128,8 @@ def main() -> int:
     state = replay(rows)
     require_closed_dedup_history(rows, state)
     assert state.params.params_hash == OLD_PIN and state.round is None and state.params.z_bar == 1.0
-    assert {digest_params(row.data.get("params")) for row in rows if row.kind == "params_set" and row.data["params"].get("dedup_enabled")} == {HISTORICAL_PIN, NEW_PIN}
-    assert {row.data["round"]["params_hash"] for row in rows if row.kind == "round_opened" and row.data["round"]["params_hash"] in (HISTORICAL_PIN, NEW_PIN)} == {HISTORICAL_PIN, NEW_PIN}
+    assert {digest_params(row.data.get("params")) for row in rows if row.kind == "params_set" and row.data["params"].get("dedup_enabled")} == {HISTORICAL_PIN, REPAIRED_PIN, NEW_PIN}
+    assert {row.data["round"]["params_hash"] for row in rows if row.kind == "round_opened" and row.data["round"]["params_hash"] in (HISTORICAL_PIN, REPAIRED_PIN, NEW_PIN)} == {HISTORICAL_PIN, NEW_PIN}
     by_id = {record.round_id: record for record in state.rounds}
     failed = by_id[summary["failed_lease"]]
     assert [entry.status for entry in failed.decision.entries] == ["no_decision", "duplicate", "no_decision"]
@@ -160,6 +161,11 @@ def main() -> int:
                    for lease in infra.leases for entry in lease.entries)
     out("unsettled dedup infrastructure no_decision returns every seat uncharged, with no king or settlement")
     settled = by_id[summary["settled_null_stage_b"]]
+    assert settled.params_hash == NEW_PIN
+    gate_decision = next(row.data["decision"] for row in rows if row.kind == "round_settled"
+                         and row.data.get("round_id") == settled.round_id)
+    assert any(entry.get("score", {}).get("field_z") is not None for entry in gate_decision["entries"] if entry.get("score"))
+    assert settled.decision.entries[1].score.field_z is not None
     assert [entry.status for entry in settled.decision.entries] == ["null_update", "winner", "duplicate"]
     sealed_key = f"qualification/sealed/{settled.round_id}/{settled.leases[0].lease_id}.json"
     sealed = LocalStore(fixture / "store").get(sealed_key)
@@ -225,7 +231,7 @@ else: raise AssertionError(mode)
         raise AssertionError("a different dedup pin was accepted")
     repin = output / "repin"
     repin.mkdir()
-    shutil.copyfile(fixture / "incident-seq601-603/journal.jsonl", repin / "journal.jsonl")
+    shutil.copyfile(fixture / "journal.jsonl", repin / "journal.jsonl")
     helper = output / "loop_helper.py"
     helper.write_text('''import os
 from sn120_v2.controller import Stack
@@ -267,13 +273,13 @@ from sn120_v2.state import load
 from sn120_v2.store import LocalStore
 from sn120_v2.types import TrainReport
 from sn120_v2.weights_writer import main,read_view
-root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]
+root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; repaired_pin=sys.argv[5]; new_pin=sys.argv[6]
 before=(root/"journal.jsonl").read_bytes()
 rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
-assert history and all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
+assert history and all(r.data["params"]["z_bar"]==(0.0 if r.data["params"].get("crown_gate")=="field_median" else 1.5) and r.data["params"]["eval_merged"] is True for r in history)
 from sn120_v2.params import Params
-assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={historical_pin,new_pin}
+assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={historical_pin, repaired_pin, new_pin}
 assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)
 state=load(root/"journal.jsonl"); view=read_view(root)
 assert state.params.params_hash==view.params.params_hash==old_pin
@@ -282,7 +288,7 @@ assert state.params.train_seed_scope=="batch" and state.round is None
 assert state.kings and any(e.status=="duplicate" for r in state.rounds for e in r.decision.entries)
 settled=next(r for r in state.rounds if any(e.status=="null_update" for e in r.decision.entries))
 assert any(r.data["round"].get("duplicate_decisions") for r in rows if r.kind=="round_opened")
-store=LocalStore(pathlib.Path(sys.argv[6]))
+store=LocalStore(pathlib.Path(sys.argv[7]))
 raw=json.loads(store.get(f"qualification/sealed/{settled.round_id}/{settled.leases[0].lease_id}.json"))
 report=next(e["lora"]["report"] for e in raw["entries"] if e["lora"]["report"].get("step_norm_nonfinite"))
 assert TrainReport.from_dict(report).step_norm_nonfinite=="nan"
@@ -305,7 +311,7 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
                   "journal_unchanged":True,"chain_submissions":chain.submissions},sort_keys=True))
 ''')
     native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}
-    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store")],
+    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, REPAIRED_PIN, NEW_PIN, str(fixture / "store")],
                                cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if completed.returncode:
         raise AssertionError(completed.stderr + completed.stdout)

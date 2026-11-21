@@ -34,18 +34,26 @@ DEDUP_FIELDS = {
     "dedup_cos_own_seed": 0.002,
     "min_signal_rollouts": 1,
     "min_step_norm": 0.0,
-    "z_bar": 1.5,
     "eval_merged": True,
 }
+FIELD_GATE_FIELDS = {"crown_gate": "field_median", "z_field_bar": 1.0}
+RELEASE_FIELDS = DEDUP_FIELDS | FIELD_GATE_FIELDS | {"z_bar": 1.5}
 HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 REVIEWED_NEW_PARAMS_HASH = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
-REVIEWED_NEW_PARAMS_HASHES = frozenset((HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH))
+FIELD_GATE_PARAMS_HASH = "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
+REVIEWED_NEW_PARAMS_HASHES = frozenset((HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH, FIELD_GATE_PARAMS_HASH))
+REVIEWED_Z_BARS = {
+    HISTORICAL_NEW_PARAMS_HASH: 1.5,
+    REVIEWED_NEW_PARAMS_HASH: 1.5,
+    FIELD_GATE_PARAMS_HASH: 0.0,
+}
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 HISTORICAL_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
 REVIEWED_NEW_CODE_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
 REVIEWED_NEW_CODE_DIGESTS = {
     HISTORICAL_NEW_PARAMS_HASH: HISTORICAL_NEW_CODE_DIGEST,
     REVIEWED_NEW_PARAMS_HASH: REVIEWED_NEW_CODE_DIGEST,
+    FIELD_GATE_PARAMS_HASH: "22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1",
 }
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 
@@ -385,20 +393,26 @@ class Params(Record):
         """
         if not isinstance(data, Mapping):
             raise ConfigError("Params must be a JSON object")
-        fields = set(data) & set(DEDUP_FIELDS)
+        fields = set(data) & set(RELEASE_FIELDS)
         if fields:
-            if set(data) - {f.name for f in dataclasses.fields(cls)} != set(DEDUP_FIELDS) - {"z_bar"}:
+            unknown = set(data) - {f.name for f in dataclasses.fields(cls)}
+            if unknown not in (set(DEDUP_FIELDS), set(RELEASE_FIELDS) - {"z_bar"}):
                 # Let the ordinary strict decoder report any other new field.
                 return super().from_dict(data)
-            if {name: data[name] for name in DEDUP_FIELDS} != DEDUP_FIELDS:
-                raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             params_hash = digest(data)
             if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
-                raise ConfigError("historical params are not a reviewed dedup pin")
+                raise ConfigError("historical params are not a reviewed dedup or field-gate pin")
+            is_field_gate = params_hash == FIELD_GATE_PARAMS_HASH
+            present = set(RELEASE_FIELDS) if is_field_gate else set(DEDUP_FIELDS)
+            expected = RELEASE_FIELDS | {"z_bar": REVIEWED_Z_BARS[params_hash]}
+            if {name: data[name] for name in present} != {name: expected[name] for name in present}:
+                raise ConfigError("rollback compatibility accepts only the reviewed dedup or field-gate parameter values")
+            if not is_field_gate and any(name in data for name in FIELD_GATE_FIELDS):
+                raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
                 # Each reviewed release pins its own merged-evaluation worker code.
                 raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
-            data = {key: value for key, value in data.items() if key not in DEDUP_FIELDS}
+            data = {key: value for key, value in data.items() if key not in RELEASE_FIELDS}
             # Historical replay exposes the old worker identity too. The full
             # combined pin above authorizes this translation; the journal bytes
             # themselves remain untouched and native release readers still see

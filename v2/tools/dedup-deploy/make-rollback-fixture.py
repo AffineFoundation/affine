@@ -154,9 +154,15 @@ def main() -> int:
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
-    historical = dataclasses.replace(full, recipe=dataclasses.replace(
-        full.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
+    assert full.params_hash == "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
+    repaired_data = production | {"z_bar": 1.5, "recipe": production["recipe"] | {
+        "code_digest": "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"}}
+    repaired_data.pop("crown_gate")
+    repaired_data.pop("z_field_bar")
+    repaired = Params.from_dict(repaired_data)
+    assert repaired.params_hash == "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
+    historical = dataclasses.replace(repaired, recipe=dataclasses.replace(
+        repaired.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
     assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
     world.controller.set_params(full, world.clock())
     world.params = full
@@ -169,7 +175,8 @@ def main() -> int:
     world.clock = lambda: world.now
     world.runner.clock = world.clock
     assert full.dedup_enabled and full.train_seed_scope == "round" and full.min_step_norm == 0.0
-    assert full.min_signal_rollouts == 1 and full.z_bar == 1.5 and full.eval_merged
+    assert full.min_signal_rollouts == 1 and full.z_bar == 0.0 and full.z_field_bar == 1.0 and full.eval_merged
+    assert full.crown_gate == "field_median"
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):
@@ -412,12 +419,15 @@ def main() -> int:
                                 "InfraError: GPUs [4] are still in use; post-incident rehearsal", world.clock())
     post_incident = world.controller.state.rounds[-1]
     assert post_incident.round_id != infra.round_id and post_incident.outcome == "no_decision"
+    world.controller.set_params(repaired, world.clock())
+    world.controller.set_params(full, world.clock())
+    world.params = full
     from sn120_v2.journal import JournalRecord, read_journal
     incident_tail = [row for row in read_journal(root / "journal.jsonl") if row.data.get("round_id") == infra.round_id
                      or row.data.get("round", {}).get("round_id") == infra.round_id]
     post_incident_tail = [row for row in read_journal(root / "journal.jsonl")
                           if row.seq > incident_tail[-1].seq]
-    assert [row.kind for row in post_incident_tail] == ["params_set", "round_opened", "lease_failed", "round_closed"]
+    assert [row.kind for row in post_incident_tail] == ["params_set", "round_opened", "lease_failed", "round_closed", "params_set", "params_set"]
     incident_queue = set(world.controller.state.queue)
     assert len(incident_queue) == 6 and all(item.front for item in world.controller.state.queue.values())
     assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
@@ -446,7 +456,7 @@ def main() -> int:
     assert [(row.seq, row.kind) for row in read_journal(incident_path)[600:604]] == [
         (600, "params_set"), (601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
     assert read_journal(incident_path)[601].data["round"]["params_hash"] == historical.params_hash
-    assert read_journal(incident_path)[-3].data["round"]["params_hash"] == full.params_hash
+    assert read_journal(incident_path)[-5].data["round"]["params_hash"] == full.params_hash
     from sn120_v2.state import replay
     incident_state = replay(read_journal(incident_path))
     assert incident_state.rounds[-2].round_id == "r000092" and incident_state.round is None
