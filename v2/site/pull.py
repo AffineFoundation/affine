@@ -65,6 +65,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import build
 from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error

@@ -39,6 +39,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+# Direct execution uses site/ as sys.path[0], not the package's v2/ directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from sn120_v2 import layout
 from sn120_v2.headlog import GENESIS_ROUND
 from sn120_v2.public import SCHEMA
