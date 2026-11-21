@@ -26,6 +26,11 @@ OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 DEDUP_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 FIELD_PINS = {
+    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": "field_gate_params.json",
+    "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a": "field_gate_params_k1f1.json",
+    "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e": "field_gate_params_king_led.json",
+}
+OLD_FIELD_PINS = {
     "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1": "field_gate_params.json",
     "05a1b55556a14cd001f926f774a4231023851e43c2393ec41bcd23646fe6ca4b": "field_gate_params_k1f1.json",
     "0eb4867f6c08aa179015c9e927bb38d6ade14a022c406401a026280845a8e098": "field_gate_params_king_led.json",
@@ -112,7 +117,7 @@ def test_old_dedup_field_closed_journal_replays_with_legacy_behavior(tmp_path):
     from sn120_v2.params import Params as CompatParams
 
     original = [row.data["params"] for row in rows if row.kind == "params_set"]
-    assert [digest_params(data) for data in original] == [OLD_PIN, DEDUP_PIN, "05a1b55556a14cd001f926f774a4231023851e43c2393ec41bcd23646fe6ca4b"]
+    assert [digest_params(data) for data in original] == [OLD_PIN, DEDUP_PIN, "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a"]
     state = replay(read_journal(journal))
     require_closed_dedup_history(read_journal(journal), state)
     assert state.round is None
@@ -151,8 +156,11 @@ def test_open_field_round_blocks_rollback_before_any_write(tmp_path):
 def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path):
     _install_old_overlay(_old_v2(tmp_path))
     from sn120_v2.params import Params as CompatParams
-    for pin, name in FIELD_PINS.items():
+    # Pre-render field-gate records keep their exact old worker identity.
+    for pin, name in {**OLD_FIELD_PINS, **FIELD_PINS}.items():
         data = json.loads((ROOT / "ops" / name).read_text())
+        if pin in OLD_FIELD_PINS:
+            data["recipe"]["code_digest"] = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
         assert Params.from_dict(data).params_hash == pin
         old = CompatParams.from_dict(data)
         assert old.params_hash == OLD_PIN and old.z_bar == 1.0

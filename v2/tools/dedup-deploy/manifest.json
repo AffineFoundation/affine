@@ -5,7 +5,7 @@
     "rollback-compat/controller.py": "905d0975e3587d9c06299b35190c3c4fd15c59fffbac4defba96218673010533",
     "rollback-compat/dedup_compat.py": "7922063f72aa9d0edbc0f4fe912fd9b5979f8a6b4203142c34415a737899fef2",
     "rollback-compat/journal.py": "647843a03d044aa9bcf6a3903b8d211c977b4b1fb2690114addd96efcd3c5a66",
-    "rollback-compat/params.py": "1474046206c9ae58bbf9ce0d9b9657a3625ae161d8fa6e1c0984d0668aa2481a",
+    "rollback-compat/params.py": "61ec271f75bc44582f2adf1dde3cd0a88b78144ce9e7b4cabf7b06cb6358fc45",
     "rollback-compat/state.py": "46c6ca7dd93af02dfe1ccbf1b53251f8685d93760be04fc2793df6e4bde07819",
     "rollback-compat/types.py": "c90151b79716f43f5c5650525c0014d98318a3652e57eaccfd7b51bc27c15e6d"
   },
