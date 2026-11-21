@@ -53,7 +53,9 @@ STORE_DIR = "store"
 
 def sim_params(**changes: Any) -> Params:
     """Small parameters for fast CPU rounds."""
-    base = dict(n_tasks=64, min_scored_tasks=16, batch_cap=4, looks=(0.5, 1.0), recipe=Recipe(image_digests=(SIM_IMAGE,)))
+    # Simulation files are not affine batches and its fake updates are deliberately tiny: test new rules explicitly.
+    base = dict(n_tasks=64, min_scored_tasks=16, batch_cap=4, looks=(0.5, 1.0), recipe=Recipe(image_digests=(SIM_IMAGE,)),
+                train_seed_scope="batch", min_signal_rollouts=1, min_step_norm=0.0, dedup_enabled=False)
     return Params(**(base | changes))
 
 
@@ -130,7 +132,7 @@ class SimTrainer:
             rank=recipe.rank,
             alpha=recipe.alpha,
             target_modules=recipe.target_modules,
-            report=TrainReport(request.seed, recipe.steps, 0.5, 0.01, 1000, 0.1, "cpu", SIM_IMAGE),
+            report=TrainReport(request.seed, recipe.steps, 0.5, 0.1, 1000, 0.1, "cpu", SIM_IMAGE),
         )
 
     def close(self) -> None:

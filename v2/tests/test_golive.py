@@ -435,6 +435,20 @@ def test_the_round_summary_has_every_lora_the_winner_and_the_wall_times(tmp_path
     assert "no winner: null round" in round_text(json.loads(world.store.get(layout.round_file(null.round_id))))
 
 
+def test_round_summary_prints_nonfinite_norms_without_capped_formatting():
+    report = {
+        "round_id": "r000001", "outcome": "null", "reason": "null round",
+        "head_version_id": "a" * 64, "entries": [{
+            "queue_pos": 0, "uid": 1, "hotkey": "hk1", "status": "null_update",
+            "norm_before_cap": 0.0, "norm_before_cap_nonfinite": "nan",
+            "step_norm": 0.0, "step_norm_nonfinite": "nan", "reason": "non-finite norm",
+        }],
+        "seats": 1, "n_tasks": 1,
+    }
+    text = round_text(report)
+    assert "nonfinite" in text and "non-finite norm" in text and "update capped" not in text
+
+
 # ------------------------------------------------------------ the file verdicts in the public snapshot
 
 

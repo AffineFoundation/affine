@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
-from .admission import Invalid, check_batch
+from .admission import MIN_ROLLOUTS, Invalid, check_batch
 from .canonical import sha256_hex
 from .cli import read_state
 from .errors import ConfigError, V2Error
@@ -105,6 +105,7 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
 
     A group is taken when it has two different rewards, every rollout of it
     has at most ``cap`` tokens by ``count``, and the copy with it still
+    meets the pinned active-rollout floor and every other admission rule.
     passes ``check`` (``check`` returns "" or the code of the failed rule).
     The ``train`` object is left out, so the copy trains with the default
     recipe. Returns the bytes and a note, or None and the reason. When
@@ -134,6 +135,7 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
     source.sort(key=lambda group: max(len(row["output"]) for row in group["rollouts"]))
     kept: list[Any] = []
     best, size, rule, failed = None, 0, "", 0
+    valid_rule = ""
     for group in source:
         tokens = longest(group)
         if tokens is None:
@@ -145,16 +147,27 @@ def cut_batch(raw: bytes, groups: int, cap: int, count: Callable[[str], int], ch
         data = json.dumps(head | {"groups": kept + [group]}).encode()
         rule = check(data)
         if rule:
+            if rule == MIN_ROLLOUTS:
+                # A prefix below the signal floor is provisional, not a rejection of the next whole group.
+                # Every other failed rule still drops that group and keeps the bounded retry budget.
+                kept, best, size, valid_rule = kept + [group], data, max(size, tokens), rule
+                if len(kept) == groups:
+                    break
+                continue
             failed += 1
             if failed == MAX_FAILED_CHECKS:
                 break
             continue
-        kept, best, size = kept + [group], data, max(size, tokens)
+        kept, best, size, valid_rule = kept + [group], data, max(size, tokens), rule
         if len(kept) == groups:
             break
     if best is None and not rule:  # no group came as far as the cap or the check: each one failed in the tokenizer
         return None, f"{TOKEN_FAULT} of its {len(faults)} groups with two different rewards: {faults[0]}"
     if best is None:
+        return None, f"a copy of its short groups fails the check: {rule}"
+    if valid_rule == MIN_ROLLOUTS:
+        # The final provisional prefix still lacks signal. A later unrelated rejection must not discard an
+        # earlier prefix that passed the full check.
         return None, f"a copy of its short groups fails the check: {rule}"
     rollouts = sum(len(group["rollouts"]) for group in kept)
     return best, f"{len(kept)} of {len(value['groups'])} groups, {rollouts} rollouts, longest {size} tokens"
@@ -201,6 +214,8 @@ def admission_cut(admission: Any, groups: int) -> Callable[[str, bytes], tuple[b
     params, tokens, grader = admission.params, admission.tokens, admission.grader
 
     def cut(hotkey: str, raw: bytes) -> tuple[bytes | None, str]:
+        # The full checker needs no per-group note while a growing whole-group prefix is below the active floor.
+        # Reporting its last verdict here is fine; cut_batch keeps the groups that pass and tries the next group.
         def check(data: bytes) -> str:
             try:
                 check_batch(data, hotkey, params, tokens=tokens, grader=grader)
@@ -231,7 +246,11 @@ def cmd_copy(args: argparse.Namespace) -> int:
         access_key_id=require_env("V1_R2_ACCESS_KEY_ID"), secret_access_key=require_env("V1_R2_SECRET_ACCESS_KEY"),
     )  # fmt: skip
     count = args.count or params.batch_cap
-    copied, passed = copy_files(src, stack.store, hotkeys, count, None if args.whole else admission_cut(stack.admission, args.groups))
+    # The default recipe has group_size=0, which trains pairs, so ceil(floor / 2) prompts are necessary.
+    # Other group sizes can require more; --groups remains the explicit bound for those smoke recipes.
+    floor = max(params.min_signal_rollouts, params.recipe.minibatches)
+    groups = args.groups if args.groups is not None else (floor + 1) // 2
+    copied, passed = copy_files(src, stack.store, hotkeys, count, None if args.whole else admission_cut(stack.admission, groups))
     print("\n".join(copied), flush=True)
     print("\n".join(passed), file=sys.stderr)
     print(f"{len(copied)} of {count} files copied, for the first waiting seats in queue order", file=sys.stderr)
@@ -255,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--stack", default="sn120_v2.assembly:stack")
     sub.add_argument("--count", type=int, help="how many files (default: the pinned batch_cap), for the first waiting seats in queue order")
     sub.add_argument("--whole", action="store_true", help="copy whole files; the default is a small copy")
-    sub.add_argument("--groups", type=int, default=2, help="most groups (prompts) in a small copy")
+    sub.add_argument("--groups", type=int, help="most groups (prompts) in a small copy (default: enough for min_signal_rollouts)")
     sub.set_defaults(handler=cmd_copy)
     args = parser.parse_args(argv)
     try:

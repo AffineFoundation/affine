@@ -9,6 +9,7 @@
   checkpoint  read-only for the journal: with a stack that keeps the folded weight files on the box, upload the
               full files of the last folded head now and mark it as a checkpoint (``run`` can go on)
   round       print the summary of a closed round as a short text to paste
+  dedup-dryrun  offline analysis of explicit frozen batches and optional LoRA directories; writes nothing
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
               seats are first in the next round (this command takes over the journal). With a box result
@@ -52,6 +53,7 @@ from .payout import payees
 from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
+from .dedup import dryrun
 from .state import SEATS_FRONTED, State, load
 from .stopafter import SAID, StopRequest, say, stamp
 from .store import timed, verify_files
@@ -329,7 +331,7 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
     """Each parameter whose value differs, with both values. A value of the recipe has the name ``recipe.<name>``."""
 
     def flat(params: Params) -> dict[str, Any]:
-        data = {name: getattr(params, name) for name in Params.LEFT_OUT_AT_DEFAULT} | params.to_dict()
+        data = {name: getattr(params, name) for name in (*Params.LEFT_OUT_AT_DEFAULT, *Params.LEGACY_FIELDS)} | params.to_dict()
         # The stored form leaves out a recipe field that has its default (``Recipe.LEFT_OUT_AT_DEFAULT``). Here it is shown.
         recipe = {name: getattr(params.recipe, name) for name in Recipe.LEFT_OUT_AT_DEFAULT} | data.pop("recipe")
         return data | {f"recipe.{name}": value for name, value in recipe.items()}
@@ -341,7 +343,17 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
 def cmd_set_params(args: argparse.Namespace) -> int:
     controller, _ = open_controller(args, "set-params")
     before = controller.params
-    proposed = load_params(args.params)
+    # The round pins every behavior. A digest-only recovery file must not turn on new behavior by omission.
+    if controller.state.round is not None and controller.state.round.decision is not None:
+        try:
+            data = json.loads(Path(args.params).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ConfigError(f"cannot read params file {args.params}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ConfigError("a params override file must hold a JSON object")
+        proposed = Params.from_dict(before.to_dict() | data)
+    else:
+        proposed = load_params(args.params)
     check_env_pin(proposed)
     controller.set_params(proposed, now())
     after = controller.params
@@ -521,6 +533,15 @@ def cmd_force_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dedup_dryrun(args: argparse.Namespace) -> int:
+    """Read explicit local files only. No journal, object store, network, cache or first-seen update."""
+    params = load_params(args.params) if args.params else Params()
+    report = dryrun([Path(path) for path in args.batch], params, first_seen_unix=args.first_seen,
+                    lora_dirs=[Path(path) for path in args.lora or ()])
+    print(json.dumps(report, indent=2, allow_nan=False), flush=True)
+    return 0
+
+
 def raise_nofile_limit() -> None:
     """Give the run process room for vLLM sockets and grader worker pipes."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -572,6 +593,12 @@ def main(argv: list[str] | None = None) -> int:
     one = command("round", cmd_round, stack=True)
     one.add_argument("--round", help="round id, such as r000001 (default: the last closed round)")
     one.add_argument("--json", action="store_true", help="print the stored JSON record instead of the text")
+    dry = commands.add_parser("dedup-dryrun", help="offline duplicate/minimum-signal/null-update analysis; writes nothing")
+    dry.set_defaults(handler=cmd_dedup_dryrun)
+    dry.add_argument("--batch", action="append", required=True, help="frozen batch JSON; repeat in queue order")
+    dry.add_argument("--lora", action="append", help="directory with adapter_model.safetensors and train_report.json, in batch order")
+    dry.add_argument("--params", help="optional JSON parameter overrides; defaults to the new production defaults")
+    dry.add_argument("--first-seen", type=int, action="append", help="optional UTC first-seen per batch, in batch order; default queue order")
     setp = command("set-params", cmd_set_params, stack=True)
     setp.add_argument("--params", required=True, help="JSON file of parameter overrides on the defaults; the result replaces the pinned set")
     end = command("end-round", cmd_end_round, stack=True)

@@ -120,18 +120,22 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         "opened_at": record.opened_at,
         "closed_at": record.closed_at,
         "outcome": record.outcome,
-        "seats": len(seats),
+        "seats": len(seats) + len(record.duplicate_decisions),
         "skipped": len(record.skipped),
+        "duplicate_clusters": list(record.duplicate_clusters),
+        "duplicates": [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in record.duplicate_decisions],
     }
     if record.decision is None:
-        view["entries"] = [
+        view["entries"] = sorted([
             {"queue_pos": e.queue_pos, "uid": e.reg.uid, "hotkey": e.reg.hotkey, "registration_block": e.reg.registration_block, "batch_sha256": e.batch.batch_sha256}
             for e in seats
-        ]
+        ] + [entry_view(entry) for entry in record.duplicate_decisions], key=lambda row: row["queue_pos"])
     else:
         decision = record.decision
         view["entries"] = [entry_view(entry) for entry in decision.entries]
         view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": public_text(decision.reason), "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
+        view["duplicate_clusters"] = [*record.duplicate_clusters, *decision.duplicate_clusters]
+        view["duplicates"] = [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in decision.entries if entry.status == "duplicate"]
     if record.rotation is not None:
         from . import layout
 
@@ -258,7 +262,12 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         view["reason"] = public_text(reasons.get(view["queue_pos"], ""))
         if view["queue_pos"] in trained:
             train = trained[view["queue_pos"]]
-            view |= {"step_norm": train.step_norm, "norm_before_cap": train.norm_before_cap, "train_wall_s": train.wall_s}
+            train_data = train.to_dict()
+            view |= {"step_norm": train_data["step_norm"], "norm_before_cap": train_data["norm_before_cap"],
+                     "train_wall_s": train.wall_s}
+            for tag in ("step_norm_nonfinite", "norm_before_cap_nonfinite"):
+                if train_data.get(tag):
+                    view[tag] = train_data[tag]
     return report
 
 
@@ -294,8 +303,10 @@ def round_text(report: Mapping[str, Any]) -> str:
         numbers = f"{e['delta']:>+8.4f} {e['z']:>6.2f} {e['cap_rate']:>7.2%} {e['n_tasks']:>5}" if "z" in e else f"{'-':>8} {'-':>6} {'-':>7} {'-':>5}"
         before = e.get("norm_before_cap") or e.get("step_norm")  # the norm that training gave: the number that recipe.global_norm_cap is set from
         norm = f"{before:>9.4g}" if before is not None else f"{'-':>9}"
+        if e.get("norm_before_cap_nonfinite") or e.get("step_norm_nonfinite"):
+            norm = f"{'nonfinite':>9}"
         note = e.get("reason", "")
-        if before and e.get("step_norm", before) < before * (1 - 1e-9):
+        if before and not e.get("norm_before_cap_nonfinite") and not e.get("step_norm_nonfinite") and e.get("step_norm", before) < before * (1 - 1e-9):
             note = f"update capped to norm {e['step_norm']:.4g}" + (f"; {note}" if note else "")
         if e.get("eliminated_at_look") is not None:
             note = f"dropped at look {e['eliminated_at_look']}" + (f"; {note}" if note else "")

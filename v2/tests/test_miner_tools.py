@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import contextlib
 import importlib.util
 import io
@@ -52,7 +53,9 @@ class Box(dict):
         self.requests.append(request)
         if self.fail:
             raise InfraError("out of memory")
-        return self.build.artifact(request.head, request.entry, request.params)
+        artifact = self.build.artifact(request.head, request.entry, request.params)
+        report = dataclasses.replace(artifact.report, seed=request.seed)
+        return dataclasses.replace(artifact, report=report)
 
     def evaluate(self, request):
         self.events.append("evaluate")
@@ -181,7 +184,7 @@ def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp
     irt_file.write_text(json.dumps(snapshot))
     argv = ["reproduce", "--mining-json", mining_json(build, tmp_path), "--hotkey", HOTKEY, "--irt-snapshot", str(irt_file)]
     code, out = cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", "--train", '{"rank": 8}', str(batch))
-    assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8
+    assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8 and json.loads(out)["train_report"]["seed"] == box.requests[0].seed
     expected = draw_from_snapshot(snapshot, "seed-9", build.params().n_tasks)  # n_tasks comes from the contract
     assert (box.requests[1].task_ids, box.requests[1].round_seed) == (expected.task_ids, "seed-9")
 
@@ -245,6 +248,8 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
     assert doc["queue"]["next"][0]["hotkey"] == "hk11" and not doc["queue"]["next"][0]["file_valid"]
     miner_params, _ = tool.load_contract(str(tmp_path / "mining.json"))
     train = {row["key"]: row["choices"][:1] or (int(row["high"]) if row["integer"] else row["high"]) for row in doc["contract"]["miner_settable"]}
+    # A small two-rollout example cannot exercise the maximum recipe's active-rollout floor.
+    train["minibatches"] = 1
     raw = batch_bytes(train, "hk11")
     assert tool.check(raw, "hk11", miner_params, WordTokens())["rules_not_run"] == ["grader"]
     key = doc["contract"]["batch_file"]["private_object"].replace("HOTKEY", "hk11")

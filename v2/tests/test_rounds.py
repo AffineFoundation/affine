@@ -682,9 +682,13 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
         "n_tasks": {"before": 32, "after": Params().n_tasks},
         "looks": {"before": [0.5, 1.0], "after": list(Params().looks)},
         "min_scored_tasks": {"before": 16, "after": Params().min_scored_tasks},
+        "train_seed_scope": {"before": "batch", "after": "round"},
+        "dedup_enabled": {"before": False, "after": True},
+        "min_signal_rollouts": {"before": 1, "after": 64},
+        "min_step_norm": {"before": 0.0, "after": 0.02},
         "recipe.steps": {"before": 1, "after": 2},
     }, "a key that the file lacks is back at its default, and the output shows it"
     assert main(set_params("other.json")) == 0
     again = json.loads(capsys.readouterr().out)
-    assert again["params_hash"] == other.params_hash and len(again["changed"]) == 5 and load(state_dir / JOURNAL_FILE).params == other
+    assert again["params_hash"] == other.params_hash and len(again["changed"]) == 9 and load(state_dir / JOURNAL_FILE).params == other
     assert main(set_params("other.json")) == 0 and json.loads(capsys.readouterr().out)["changed"] == {}
