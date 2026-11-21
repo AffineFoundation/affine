@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .canonical import Record, is_sha256
+from .canonical import Record, _hints, from_jsonable, is_sha256, to_jsonable
 from .errors import BatchRejected, ConfigError
+
+SEED_SCOPES = ("round", "batch")
 
 # Identity of the launch model. The base hash is the manifest digest of the
 # published checkpoint files (see canonical.manifest_digest).
@@ -255,6 +257,18 @@ class Params(Record):
 
     recipe: Recipe = field(default_factory=Recipe)
 
+    # One training seed for every LoRA in a new round. Legacy records without this field decode as ``batch``.
+    # Legacy JSON omits these fields. ``None`` inherits their historical values; assigning a new value
+    # through dataclasses.replace writes it into params_hash and cannot silently preserve the old hash.
+    train_seed_scope: str = "round"
+    dedup_enabled: bool = True
+    dedup_rollout_overlap: float = 0.5
+    dedup_cos_shared_seed: float = 0.135
+    dedup_cos_own_seed: float = 0.002
+    min_signal_rollouts: int = 64
+    min_step_norm: float = 0.02
+    _legacy_fields: frozenset[str] | None = field(default=None, compare=False, repr=False)
+
     # Head.
     fold_every_k: int = 1  # fold stacked LoRAs into a new base after this many applies; 1 = every green
 
@@ -300,6 +314,31 @@ class Params(Record):
     weights_cadence_s: int = 3600
     weights_rate_limit_blocks: int = 100
 
+    # Records from before these fields use these values; new Params use the production defaults above.
+    LEGACY_FIELDS = ("train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
+                     "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm")
+    LEGACY_VALUES = dict(train_seed_scope="batch", dedup_enabled=False, dedup_rollout_overlap=0.5,
+                         dedup_cos_shared_seed=0.135, dedup_cos_own_seed=0.002, min_signal_rollouts=1, min_step_norm=0.0)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Params:
+        legacy = set(cls.LEGACY_FIELDS) - set(data)
+        params = from_jsonable(cls, data, cls.__name__)
+        if legacy:
+            for name in legacy:
+                object.__setattr__(params, name, cls.LEGACY_VALUES[name])
+            object.__setattr__(params, "_legacy_fields", frozenset(legacy))
+        return params
+
+    def to_dict(self) -> dict[str, Any]:
+        legacy = self._legacy_fields or ()
+        # Omission is valid only while the field retains the exact effective legacy value.
+        data = {f.name: to_jsonable(getattr(self, f.name), _hints(Params)[f.name])
+                for f in dataclasses.fields(self)
+                if not f.name.startswith("_") and (f.name not in legacy or getattr(self, f.name) != self.LEGACY_VALUES.get(f.name))
+                and not (f.name in self.LEFT_OUT_AT_DEFAULT and getattr(self, f.name) == f.default)}
+        return data
+
     budget_usd_per_hour: float = 200.0
 
     def __post_init__(self) -> None:
@@ -310,6 +349,12 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
+        _need(_unit(self.dedup_rollout_overlap) and self.dedup_rollout_overlap > 0, "dedup_rollout_overlap must be in (0, 1]")
+        _need(_unit(self.dedup_cos_shared_seed) and self.dedup_cos_shared_seed > 0, "dedup_cos_shared_seed must be in (0, 1]")
+        _need(_unit(self.dedup_cos_own_seed) and self.dedup_cos_own_seed > 0, "dedup_cos_own_seed must be in (0, 1]")
+        _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
+        _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
@@ -381,12 +426,18 @@ class GenesisSpec(Record):
 
 
 def load_params(path: str | Path) -> Params:
-    """Read a JSON file of overrides. Unknown keys and wrong types fail closed."""
+    """Read a file of *new overrides*, not a historical serialized Params record.
+
+    Missing new fields mean the current production defaults here. Only journal/store decoding via
+    ``Params.from_dict`` gives old records their legacy behavior and preserves their digest.
+    """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ConfigError(f"cannot read params file {path}: {exc}") from exc
-    return Params.from_dict(data)
+    if not isinstance(data, Mapping):
+        raise ConfigError("a params override file must hold a JSON object")
+    return from_jsonable(Params, data, "Params")
 
 
 def require_env(name: str, environ: Mapping[str, str] | None = None) -> str:

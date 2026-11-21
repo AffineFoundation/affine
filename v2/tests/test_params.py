@@ -31,16 +31,50 @@ def test_defaults_match_the_spec_parameter_table():
 def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     params = Params()
     assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
-    assert params.params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert params.params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
     assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
     raw = json.dumps(params.to_dict(), sort_keys=True)
     assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
-    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1"
+    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "4fb5d6fb049d98f57b0039897b758f9b5c8d6f5584475321df94b1bb3702133d"
     ticket = Build.ticket(params=params)
     assert ticket.digest() == ticket.digest()
     from sn120_v2.types import RoundTicket
     restored = RoundTicket.from_dict(ticket.to_dict())
     assert restored.digest() == ticket.digest() and restored.params == params
+
+    old = Params.from_dict({"n_tasks": 16, "min_scored_tasks": 8})
+    assert old.train_seed_scope == "batch" and old.dedup_enabled is False
+    ticket = Build.ticket(params=old)
+    restored = RoundTicket.from_dict(ticket.to_dict())
+    # Nested Params are legacy records too: a reopened old ticket trains and verifies with its original seed scope.
+    assert restored.params.to_dict() == old.to_dict() and restored.digest() == ticket.digest()
+    assert restored.params.train_seed_scope == "batch" and restored.params.dedup_enabled is False
+    assert "train_seed_scope" not in restored.to_dict()["params"]
+
+
+def test_new_empty_round_fields_keep_the_historical_canonical_form():
+    from sn120_v2.state import RoundRecord
+    from sn120_v2.types import RoundDecision
+
+    decision = RoundDecision("r000001", "head", None, (), 0, 0.0, 0.0)
+    data = decision.to_dict()
+    assert "duplicate_clusters" not in data
+    assert RoundDecision.from_dict(data).to_dict() == data
+    record = RoundRecord("r000001", "head", "params", "recipe", "seed", "snapshot", 1, 1, ())
+    data = record.to_dict()
+    assert "first_seen" not in data and "duplicate_decisions" not in data and "duplicate_clusters" not in data
+    assert RoundRecord.from_dict(data).to_dict() == data
+
+
+def test_nested_reserve_and_existing_factory_defaults_keep_their_identity():
+    from sn120_v2.rotation import Reserve, ReserveShard, Rotation
+
+    reserve = Reserve("a" * 64, ("task",), (ReserveShard("s", "b" * 64, 1, "2026-11-20"),))
+    assert Reserve.from_dict(reserve.to_dict()) == reserve
+    empty = Reserve("a" * 64)
+    assert empty.to_dict()["candidate_meta"] == {}
+    for record in (empty,):
+        assert type(record).from_dict(record.to_dict()).digest() == record.digest()
 
 
 def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
@@ -50,7 +84,7 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
     off = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
     on = dataclasses.replace(off, rotation_enabled=True)
     assert off.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
-    assert Params().params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert Params().params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
     assert changed_params(on, off) == {"rotation_enabled": {"before": True, "after": False}}
     assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
 
@@ -176,6 +210,20 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
     for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)
+
+
+def test_legacy_params_replacement_is_explicit_and_never_keeps_stale_omissions():
+    from pathlib import Path
+    old = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
+    unchanged = dataclasses.replace(old, n_tasks=old.n_tasks)
+    assert unchanged.to_dict() == old.to_dict() and unchanged.params_hash == old.params_hash
+    changed = dataclasses.replace(old, dedup_enabled=True)
+    assert changed.train_seed_scope == "batch"
+    # An old round keeps batch-scoped seeds, but an explicitly changed behavior is written and changes the hash.
+    assert "train_seed_scope" not in changed.to_dict()
+    assert changed.to_dict()["dedup_enabled"] is True and changed.params_hash != old.params_hash
+    restored = Params.from_json(changed.to_json())
+    assert restored.params_hash == changed.params_hash and restored.to_dict() == changed.to_dict()
 
 
 def test_load_params_applies_overrides_and_fails_closed(tmp_path):
