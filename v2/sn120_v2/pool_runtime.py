@@ -45,14 +45,75 @@ def load_rotation(store: ObjectStore, state_sha: str) -> Rotation:
         raise VerifyError("rotation state object does not match its content id")
     rotation = Rotation.from_json(raw)
     # The first live v1 state (r000066) was addressed by its byte hash;
-    # r000069 moved to the canonical digest. Both are strict, public, verified
-    # forms. A v2 lineage must use the canonical form, and a mixed v1->v2
-    # boundary is allowed to read the older state once.
+    # r000069 moved to the canonical digest. Both are strict, verified forms.
+    # A v2 lineage must use the canonical form, and a mixed v1->v2 boundary is
+    # allowed to read the older state once.
     if rotation.digest() != state_sha:
         if rotation.rule_version != INFO_RULE_VERSION:
             return rotation
         raise VerifyError("rotation state canonical bytes do not match its id")
     return rotation
+
+
+def public_previous(store: ObjectStore, previous_id: str, previous_rid: str, fetch) -> Rotation:
+    """Reconstruct a previous close without requiring a public state object.
+
+    The fetch callback receives an object key. The raw-SHA first v1 state is
+    supported by an optional local cache; a public-only verifier rebuilds its
+    ledger from the previous round's public draw and king outcomes.
+    """
+    state_key = layout.pool_rotation_state(previous_id)
+    if store.exists(state_key):
+        previous = load_rotation(store, previous_id)
+        if previous.round_id != previous_rid:
+            raise VerifyError("previous state names a different round")
+        return previous
+    previous_key = layout.pool_rotation(previous_rid)
+    fetch(previous_key)
+    previous = Rotation.from_json(store.get(previous_key))
+    previous_doc = json.loads(store.get(previous_key))
+    if previous.round_id != previous_rid:
+        raise VerifyError("previous public rotation names a different round")
+    report_key = layout.round_file(previous_rid)
+    fetch(report_key)
+    report = json.loads(store.get(report_key))
+    if report.get("round_id") != previous_rid:
+        raise VerifyError("previous round report has the wrong identity")
+    snapshot_id = report.get("irt_snapshot_id")
+    if not snapshot_id:
+        raise VerifyError("previous round report has no draw snapshot")
+    fetch(layout.irt_snapshot(snapshot_id))
+    source = json.loads(store.get(layout.irt_snapshot(snapshot_id)))
+    from .irt import draw_from_snapshot
+    rebuilt = draw_from_snapshot(source, report["round_seed"], report["n_tasks"])
+    if source.get("snapshot_id") != snapshot_id:
+        raise VerifyError("previous draw snapshot id differs from its public object")
+    draw = report.get("draw")
+    if draw:
+        if any(draw.get(key) != value for key, value in rebuilt.to_dict().items()):
+            raise VerifyError("previous round draw differs from its public snapshot/seed")
+        draw_ids = draw["task_ids"]
+    else:
+        # Older public reports omitted the draw, but name its exact inputs.
+        draw_ids = rebuilt.task_ids
+    ledger = previous.ledger
+    for null in report.get("null_outcomes", {}).values():
+        ledger = fold_ledger(ledger, previous.active_ids, draw_ids, null)
+    closed = Rotation.from_dict(previous.to_dict() | {"ledger": ledger})
+    if closed.digest() != previous_id:
+        # Early states were addressed by the SHA of json.dumps on their public
+        # dictionary, before canonical Record JSON was adopted. Preserve that
+        # historical byte identity only when the complete reconstruction
+        # authenticates it; never reinterpret a modern digest as a raw hash.
+        legacy_raw = json.dumps(previous_doc | {"ledger": ledger}, sort_keys=True, separators=(",", ":")).encode()
+        if sha256_hex(legacy_raw) != previous_id:
+            raise VerifyError("reconstructed previous rotation does not match prev_state_sha")
+        store.put(state_key, legacy_raw)
+        return load_rotation(store, previous_id)
+    # Cache only after authentication. This is verifier-private state, not a
+    # claim that the static site serves pool/state.
+    store.put(state_key, closed.to_json())
+    return load_rotation(store, previous_id)
 
 
 def mirror_reserve(store: ObjectStore, root: str | Path | None = None) -> None:

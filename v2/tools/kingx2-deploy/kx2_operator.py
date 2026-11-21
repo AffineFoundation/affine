@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 DRY = os.environ.get("KINGX2_DRY") == "1"
@@ -45,7 +46,7 @@ assert _spec is not None and _spec.loader is not None
 sys.modules["sn120_v2"] = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sys.modules["sn120_v2"])
 from sn120_v2 import layout  # noqa: E402
-from sn120_v2.canonical import canonical_json, sha256_hex  # noqa: E402
+from sn120_v2.canonical import sha256_hex  # noqa: E402
 from sn120_v2.cli import summary  # noqa: E402
 from sn120_v2.irt import verify_snapshot  # noqa: E402
 from sn120_v2.journal import read_journal  # noqa: E402
@@ -306,7 +307,7 @@ def sealed_result_leases() -> list[str]:
     """Check every lease; end-round itself checks only leases still marked open."""
     if DRY:
         from sn120_v2.store import LocalStore
-        root = os.environ.get("KINGX2_PUBLIC_ROOT")
+        root = os.environ.get("KINGX2_OBJECT_ROOT") or os.environ.get("KINGX2_PUBLIC_ROOT")
         if not root:
             raise RuntimeError("dry sealed-result check needs its isolated object-store root")
         store = LocalStore(root)
@@ -527,20 +528,17 @@ def open_check(rid: str) -> dict:
     if not rotation or rotation.get("size") != EXPECT["active_size"]:
         out["why"].append("journal active size is not 10000")
     try:
-        state = pub_get(layout.pool_rotation_state(rotation["state_sha"]), object_json=True)
-        if sha256_hex(canonical_json(state)) != rotation["state_sha"]:
-            out["why"].append("published rotation state content id mismatch")
-        actual = Rotation.from_dict(state)
-        expected = dict(rotation)
-        if expected.pop("state_sha") != actual.digest() or expected.pop("size") != len(actual.active_ids) or expected != actual.journal_block():
-            out["why"].append("published rotation state differs from the journal block")
-        active_raw = pub_get(layout.active_pool(actual.active_sha))
+        # The site deliberately serves the named rotation, not pool/state.
+        deadline = time.monotonic() + float(EXPECT["public_retry_seconds"])
+        actual = public_rotation(rid, rotation, deadline=deadline)
+        active_raw = public_poll(lambda left: pub_get(layout.active_pool(actual.active_sha), deadline=left), deadline=deadline)
         active_ids = json.loads(active_raw)
         if (sha256_hex(active_raw) != actual.active_sha or active_ids != list(actual.active_ids)
                 or active_ids != sorted(active_ids) or len(set(active_ids)) != len(active_ids)
                 or any(not isinstance(task, str) or not task for task in active_ids)):
             out["why"].append("content-addressed active bytes/ids differ from sorted unique rotation ids")
-        snapshot = pub_get(layout.irt_snapshot(record["snapshot_id"]), object_json=True)
+        snapshot = public_poll(lambda left: pub_get(layout.irt_snapshot(record["snapshot_id"]), deadline=left), deadline=deadline)
+        snapshot = json.loads(snapshot)
         verify_snapshot(snapshot)
         if snapshot["snapshot_id"] != record["snapshot_id"] or set(snapshot["tasks"]) != set(actual.active_ids):
             out["why"].append("IRT snapshot identity or active task set mismatch")
@@ -693,6 +691,7 @@ def health(rid: str) -> dict:
 
 
 def pub_get(key: str, *, object_json=False, deadline: float | None = None):
+    """One bounded public fetch. Callers choose the shared retry deadline."""
     root = os.environ.get("KINGX2_PUBLIC_ROOT")
     if root:
         raw = (Path(root) / key).read_bytes()
@@ -704,6 +703,34 @@ def pub_get(key: str, *, object_json=False, deadline: float | None = None):
     return json.loads(raw) if object_json else raw
 
 
+def public_poll(fetch, *, deadline: float | None = None):
+    """Retry transport/publication delays; never retry an integrity failure."""
+    deadline = time.monotonic() + float(EXPECT["public_retry_seconds"]) if deadline is None else deadline
+    while True:
+        try:
+            return fetch(deadline)
+        except (OSError, urllib.error.HTTPError) as error:
+            # HTTPError is also URLError/OSError. Only 404 and 5xx represent a
+            # possibly unfinished public mirror; schema/hash failures propagate.
+            if isinstance(error, urllib.error.HTTPError) and error.code != 404 and error.code < 500:
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+
+
+def public_rotation(rid: str, journal_rotation: dict, *, deadline: float | None = None) -> Rotation:
+    """Authenticate the site's named rotation against the local journal."""
+    rotation = json.loads(public_poll(
+        lambda left: pub_get(layout.pool_rotation(rid), deadline=left), deadline=deadline))
+    actual = Rotation.from_dict(rotation)
+    expected = dict(journal_rotation)
+    state_sha, size = expected.pop("state_sha", None), expected.pop("size", None)
+    if actual.digest() != state_sha or len(actual.active_ids) != size or actual.journal_block() != expected:
+        raise ValueError("public rotation differs from journal state_sha/size/block")
+    return actual
+
+
 def public_check(rid: str) -> dict:
     out = {"round": rid, "ok": False, "why": []}
     try:
@@ -712,26 +739,23 @@ def public_check(rid: str) -> dict:
         if opened is None:
             raise ValueError("round_opened not found")
         record = opened.data["round"]
-        rotation = json.loads(pub_get(layout.pool_rotation(record["round_id"])))
-        actual = Rotation.from_dict(rotation)
         journal_rotation = dict(opened.data.get("rotation") or record.get("rotation") or {})
-        state_sha, size = journal_rotation.pop("state_sha", None), journal_rotation.pop("size", None)
-        if (actual.journal_block() != journal_rotation or actual.digest() != state_sha
-                or len(actual.active_ids) != size or size != EXPECT["active_size"] or actual.round_id != rid):
-            out["why"].append("public rotation differs from journal identity/block")
+        deadline = time.monotonic() + float(EXPECT["public_retry_seconds"])
+        actual = public_rotation(rid, journal_rotation, deadline=deadline)
+        state_sha = journal_rotation["state_sha"]
+        if len(actual.active_ids) != EXPECT["active_size"] or actual.round_id != rid:
+            out["why"].append("public rotation round/active size differs from the expected deployment")
         out["active_size"] = len(actual.active_ids)
         out["rotation_state_sha"] = state_sha
-        active_raw = pub_get(layout.active_pool(actual.active_sha))
+        active_raw = public_poll(lambda left: pub_get(layout.active_pool(actual.active_sha), deadline=left), deadline=deadline)
         if sha256_hex(active_raw) != actual.active_sha:
             out["why"].append("active pool raw bytes do not match active_sha")
         active = json.loads(active_raw)
         if (active != list(actual.active_ids) or active != sorted(active)
                 or len(set(active)) != len(active) or any(not isinstance(task, str) or not task for task in active)):
             out["why"].append("content-addressed active pool is not the rotation's sorted unique ids")
-        state = pub_get(layout.pool_rotation_state(state_sha), object_json=True)
-        if sha256_hex(canonical_json(state)) != state_sha or Rotation.from_dict(state).journal_block() != journal_rotation:
-            out["why"].append("published rotation state differs from its content id/journal")
-        snapshot = json.loads(pub_get(layout.irt_snapshot(record["snapshot_id"])))
+        snapshot = json.loads(public_poll(
+            lambda left: pub_get(layout.irt_snapshot(record["snapshot_id"]), deadline=left), deadline=deadline))
         verify_snapshot(snapshot)
         if snapshot["snapshot_id"] != record["snapshot_id"] or set(snapshot["tasks"]) != set(actual.active_ids):
             out["why"].append("public IRT snapshot identity/active task set mismatch")
@@ -740,7 +764,7 @@ def public_check(rid: str) -> dict:
             out["why"].append("public IRT snapshot is not sqrt_fisher")
         if float(out["snapshot_config"].get("uniform_frac")) != float(load_params(HERE / "new-params.json").irt_explore_frac):
             out["why"].append("public IRT snapshot exploration share mismatch")
-        report = json.loads(pub_get(layout.round_file(rid)))
+        report = json.loads(public_poll(lambda left: pub_get(layout.round_file(rid), deadline=left), deadline=deadline))
         out["public_params_hash"] = report.get("params_hash")
         if report.get("params_hash") != EXPECT["new_params_hash"]:
             out["why"].append("public round params hash mismatch")
@@ -799,7 +823,7 @@ def main() -> int:
     elif command == "open-check":
         override = os.environ.get("KINGX2_DRY_OPEN_CHECK", "") if DRY else ""
         if override:
-            completed = sh(["bash", "-c", override + " " + shlex.quote(sys.argv[2])])
+            completed = sh(["bash", "-c", override + " " + shlex.quote(sys.argv[2])], timeout=float(EXPECT["public_retry_seconds"]) + 30)
             sys.stdout.write(completed.stdout)
         else:
             emit(open_check(sys.argv[2]))

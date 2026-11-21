@@ -78,9 +78,10 @@ from sn120_v2.store import LocalStore
 
 
 def stack(context):
-    # LocalStore keys already start with public/ and private/. Its object root
-    # is the fixture, not the fixture's public/ subdirectory.
-    store = LocalStore(Path(os.environ.get("KINGX2_PUBLIC_ROOT", Path(__file__).resolve().parents[2])))
+    # LocalStore keys already start with public/ and private/. The controller
+    # uses the full private object root; only the operator reads the separate
+    # production-like public projection.
+    store = LocalStore(Path(os.environ.get("KINGX2_OBJECT_ROOT", Path(__file__).resolve().parents[2])))
     state = context.load()
     pool = PoolRuntime(store, state.params, state, root=store.root / "reserve")
     sampler = IRTSampler(pool.active_ids, state.params, snapshot=stored_irt_snapshot(store, state))
@@ -273,7 +274,7 @@ elif mode == "drive":
         if alive.exists() and phase == "gate-stopped":
             # The driver began under old code. Do not keep its old Params class
             # when the real autodeploy switches the copied checkout.
-            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", KINGX2_V2=str(root / "repo/v2"), KINGX2_PUBLIC_ROOT=str(root))
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", KINGX2_V2=str(root / "repo/v2"), KINGX2_OBJECT_ROOT=str(root))
             env.pop("PYTHONPATH", None)
             run = lambda action: subprocess.check_output([sys.executable, "-I", str(pathlib.Path(__file__).resolve()), action, str(root), str(state), str(reserve)], env=env, text=True).strip()
             run("open-next")
@@ -333,6 +334,38 @@ from sn120_v2.cli import main
 
 raise SystemExit(main(sys.argv[1:]))
 PY
+cat > "$D/helpers/public_mirror.py" <<'PY'
+"""Project only the artifact families mirrored by the production static site.
+
+The controller writes pool/state into its object store, but the public site does
+not serve it. Keeping this projection separate from LocalStore makes a verifier
+that fetches private state fail in rehearsal just as it would in production.
+"""
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, os.environ["KINGX2_V2"])
+from sn120_v2 import layout
+from sn120_v2.store import LocalStore
+
+root = Path(sys.argv[1])
+source, public = LocalStore(root), LocalStore(root / "site")
+round_prefix = layout.round_file("x").partition("x")[0]
+prefixes = (layout.head_manifest("x").partition("x")[0], layout.irt_snapshot("x").partition("x")[0],
+            layout.active_pool("x").partition("x")[0], layout.pool_rotation("x").partition("x")[0],
+            layout.pool_ranking("x").partition("x")[0], "public/pool/reserve/")
+fixed = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+         layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY}
+keys = [key for key in source.list("public/") if key in fixed or key.startswith(prefixes)
+        or (key.startswith(round_prefix) and key.endswith(("/round.json", "/scores.json", "/batch.json")))]
+for key in keys:
+    raw = source.get(key)
+    if not public.exists(key) or public.get(key) != raw:
+        public.put(key, raw)
+assert not (root / "site/public/pool/state").exists(), "pool/state must remain verifier-private"
+assert source.list("public/pool/state/"), "fixture needs private state to prove the projection excludes it"
+print(f"public projection: {len(keys)} served objects; pool/state absent")
+PY
 export KINGX2_DRY_OPEN_CHECK="$D/here/open-check"
 # Controller.close writes the public round report, not the open. Exercise the
 # real public_check implementation against that local report when it arrives.
@@ -343,6 +376,7 @@ set -euo pipefail
 # The real loop publishes round.json at close, not at open. Keep inspecting
 # locally until that report exists, inside autodeploy's bounded retry window.
 for _ in $(seq 1 2400); do
+    "$KINGX2_PY" -I "$KINGX2_OBJECT_ROOT/helpers/public_mirror.py" "$KINGX2_OBJECT_ROOT"
     if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
         # The forced-failure scenario ends at its first open. Let the real
         # bounded public retry expire, then inspect the actual recovery.
@@ -356,7 +390,8 @@ done
 SH
 chmod +x "$D/here/public-check"
 export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
-export KINGX2_PUBLIC_ROOT="$D" KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
+export KINGX2_OBJECT_ROOT="$D" KINGX2_PUBLIC_ROOT="$D/site"
+export KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
 export KINGX2_RESERVE_PATH_FILE="$D/reserve-live.path" KINGX2_RESERVE_DIR="$D/live-reserve"
 export KINGX2_GENERATOR_ROOT="$D" KINGX2_GENERATOR_INBOX="$D/generator/inbox" KINGX2_GENERATOR_PID="$D/generator/ingestd.pid" KINGX2_PRIOR_INDEX="$D/generator/prior-index.json"
 export KINGX2_GENERATOR_EXPECTED="$D/generator-before.json" KINGX2_IDENTITY_DIR=here
@@ -372,6 +407,7 @@ cat > "$D/here/open-check" <<'SH'
 #!/usr/bin/env bash
 # An inspection override for the isolated autodeploy only; all paths are local.
 set -euo pipefail
+"$KINGX2_PY" -I "$KINGX2_OBJECT_ROOT/helpers/public_mirror.py" "$KINGX2_OBJECT_ROOT"
 "$KINGX2_PY" -I -c 'import importlib.util,json,sys; spec=importlib.util.spec_from_file_location("kingx2_dry_operator",sys.argv[1]); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); print(json.dumps(module.open_check(sys.argv[2]),indent=2,sort_keys=True))' "$KINGX2_HERE/kx2_operator.py" "$1"
 if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
     touch "$(dirname "$KINGX2_HERE")/work/logs/abort-open-observed"
@@ -387,7 +423,8 @@ printf 'qualified branch head %s; implementation %s\n' "$HEAD" c525286580c84d795
 printf '== Python 3.12 stdlib-shadowing regression: renamed entry point plus -I ==\n'
 $PY -I -c 'import json,operator,pathlib,sys; assert sys.version_info[:2]==(3,12),sys.version; assert operator.__file__.startswith("/usr/lib/python3.12/"),operator.__file__; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="c525286580c84d795b3ca7cbdf2302e96fce31ba"; print("Python",sys.version.split()[0],"stdlib operator",operator.__file__)' "$D/here/expect.json"
 export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
-export KINGX2_PUBLIC_ROOT="$D" KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
+export KINGX2_OBJECT_ROOT="$D" KINGX2_PUBLIC_ROOT="$D/site"
+export KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
 "${OP[@]}" work-dir
 "${OP[@]}" loop-count
 "${OP[@]}" journal-close r000082 > "$D/entrypoint-journal-close.json"
@@ -570,6 +607,9 @@ printf '["tampered-active-task"]\n' > "$D/$ACTIVE_KEY"
 "${OP[@]}" public-check "$RID" > "$D/public-tamper.json"
 grep -q 'active pool raw bytes do not match active_sha' "$D/public-tamper.json"
 cp "$D/active-before.json" "$D/$ACTIVE_KEY"
+$PY -I "$D/helpers/public_mirror.py" "$D"
+[ ! -e "$D/site/public/pool/state" ]
+printf '%s DRY PUBLIC-VISIBILITY GUARD PASS: private pool/state exists but is never publicly projected\n' "$(date -u +%FT%TZ)"
 printf '%s DRY PUBLIC-IDENTITY GUARD PASS: tampered active bytes rejected\n' "$(date -u +%FT%TZ)"
 printf '%s DRY AUTODEPLOY PASS: real wait/gate/apply/open/public/health/rearm; synthetic isolated loop only\n' "$(date -u +%FT%TZ)"
 # Preserve the successful new-code journal/code/params before exercising the
@@ -584,6 +624,7 @@ cp "$D/operator-state/journal.jsonl" "$SNAP/journal.jsonl"
 U="$D/undecided"
 mkdir "$U"
 cp -al "$D/public" "$U/public"
+cp -al "$D/site" "$U/site"
 cp -al "$D/private" "$U/private"
 cp -al "$D/reserve" "$U/reserve"
 mkdir -p "$U/state" "$U/here" "$U/work/logs"
@@ -619,7 +660,7 @@ printf '== explicit rollback on a separate genuinely undecided fixture ==\n'
 # Its own HERE avoids rollback-target and reserve-backup name collisions.
 [ ! -e "$U/private/rounds/r000088/r000088-l0/result.json" ]
 SEALED_JOURNAL=$(sha256sum "$D/operator-state/journal.jsonl")
-UOP=(env "KINGX2_HERE=$U/here" "KINGX2_STATE=$U/state" "KINGX2_PUBLIC_ROOT=$U" "KINGX2_IDENTITY_DIR=undecided/here" "KINGX2_DRY_SET_PARAMS=$PY -I $D/helpers/cli.py set-params --state-dir $U/state --stack dry_stack:stack --params" "KINGX2_DRY_END_ROUND=$PY -I $D/helpers/replay.py end-round $U $U/state $D/reserve" "$PY" -I "$D/here/kx2_operator.py")
+UOP=(env "KINGX2_HERE=$U/here" "KINGX2_STATE=$U/state" "KINGX2_OBJECT_ROOT=$U" "KINGX2_PUBLIC_ROOT=$U/site" "KINGX2_IDENTITY_DIR=undecided/here" "KINGX2_DRY_SET_PARAMS=$PY -I $D/helpers/cli.py set-params --state-dir $U/state --stack dry_stack:stack --params" "KINGX2_DRY_END_ROUND=$PY -I $D/helpers/replay.py end-round $U $U/state $D/reserve" "$PY" -I "$D/here/kx2_operator.py")
 "${UOP[@]}" rollback
 [ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
 $D/here/check-reserve

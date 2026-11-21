@@ -16,7 +16,7 @@ from sn120_v2.errors import ConfigError, VerifyError
 from sn120_v2.irt import MASS_RULES, IRTSampler
 from sn120_v2.journal import Journal, read_journal
 from sn120_v2.params import Params
-from sn120_v2.pool_runtime import PoolRuntime, active_file, load_rotation, replay_rotation
+from sn120_v2.pool_runtime import PoolRuntime, active_file, load_rotation, public_previous, replay_rotation
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.state import ROUND_OPENED, load
 from sn120_v2.store import LocalStore
@@ -260,6 +260,37 @@ def test_rotation_open_still_refuses_a_snapshot_other_than_the_last_closed(tmp_p
         pool.open("r000002", previous | {"snapshot_id": "not-the-last-closed-snapshot"}, state=world.controller.state)
 
 
+def test_public_previous_authenticates_legacy_byte_sha_encoding(tmp_path):
+    world, _ = rotated_world(tmp_path)
+    record = world.round()
+    previous = world.controller._rotation
+    named_key = layout.pool_rotation(record.round_id)
+    opened_doc = json.loads(world.store.get(named_key))
+    report = json.loads(world.store.get(layout.round_file(record.round_id)))
+    ledger = previous.ledger
+    # r000069-r000073 were addressed by json.dumps on the original public
+    # dictionary, which omitted fields introduced by later schemas.
+    legacy_doc = {key: value for key, value in opened_doc.items() if key in {
+        "round_id", "active_ids", "active_sha", "prev_active_sha", "admitted", "retired", "reserve_manifest_sha",
+        "queue_remaining", "next_up", "reserve_history", "ledger", "retired_archive", "source_snapshot_id",
+        "prev_state_sha", "initial_active_sha", "rule_params", "rule_version"}}
+    legacy_raw = json.dumps(legacy_doc | {"ledger": ledger}, sort_keys=True, separators=(",", ":")).encode()
+    legacy_sha = sha256_hex(legacy_raw)
+    assert legacy_sha != previous.digest()
+    store = LocalStore(tmp_path / "public-only")
+    for key in world.store.list("public/"):
+        if not key.startswith("public/pool/state/"):
+            store.put(key, world.store.get(key))
+    store.put(named_key, json.dumps(legacy_doc, sort_keys=True, separators=(",", ":")).encode())
+    fetched = []
+    def fetch(key):
+        assert not key.startswith("public/pool/state/")
+        fetched.append(key)
+    rebuilt = public_previous(store, legacy_sha, record.round_id, fetch)
+    assert rebuilt == previous and store.get(layout.pool_rotation_state(legacy_sha)) == legacy_raw
+    assert layout.round_file(record.round_id) in fetched and layout.irt_snapshot(report["irt_snapshot_id"]) in fetched
+
+
 @pytest.mark.parametrize("rotation_rule", ["v1", "info"])
 def test_replicate_rotation_cli_recomputes_from_public_files(tmp_path, monkeypatch, capsys, rotation_rule):
     from sn120_v2 import replicate
@@ -271,6 +302,10 @@ def test_replicate_rotation_cli_recomputes_from_public_files(tmp_path, monkeypat
     for key in world.store.list('public/'):
         store.put(key, world.store.get(key))
     view = json.loads(world.store.get(layout.round_file(record.round_id)))
+    # Production's public mirror does not expose pool/state. Third-party replay
+    # reconstructs the authenticated previous close into its private cache.
+    for key in list(store.list('public/pool/state/')):
+        store.delete(key)
     doc = {'contract': {'public_url': store.root.as_uri()}, 'head': world.publisher.snapshots[-1]['head'],
            'params': world.params.to_dict(), 'history': [view], 'round': None}
     source = tmp_path / 'mining.json'

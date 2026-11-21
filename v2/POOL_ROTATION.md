@@ -94,7 +94,7 @@ A_r = sorted((A_prev \\ W \\ retired) union Q[:n_admit])
 
 No high/low retirement happens with an empty queue. An above-target active set may shrink toward target without reserve admissions. Withdrawals can cause an otherwise empty reserve to change the set. `next_up` is the following `2*k` queue ids.
 
-The complete decision, its inputs, the ledger, last IRT rows and archive are public at `public/pool/rotation/<round_id>.json`. Its canonical hash is `state_sha`; `public/pool/state/<state_sha>.json` has the same bytes. `public/pool/retired.json` is the cumulative append-only-in-content archive; `retired_tasks.json` keeps complete Task rows for grading and exact readmission.
+The complete decision, its inputs, the opening ledger, last IRT rows and archive are public at `public/pool/rotation/<round_id>.json`. Its canonical hash is the opening `state_sha`. At close, the controller stores the ledger-updated state at `public/pool/state/<state_sha>.json` in its object store; the static public site does not serve that key. Public replay reconstructs and digest-checks the previous close from the named rotation, draw snapshot, round report and king outcomes, never requiring public `pool/state`. `public/pool/retired.json` is the cumulative append-only-in-content archive; `retired_tasks.json` keeps complete Task rows for grading and exact readmission.
 
 ## IRT and ledger
 
@@ -129,13 +129,13 @@ Retirements are ascending by score; admissions are descending. Every tie uses `s
 
 ### Public v2 files and replay
 
-In addition to the existing active, rotation, state, reserve and retired files:
+In addition to the existing active, rotation, reserve and retired files:
 
 - `public/pool/ranking/<round_id>.json` contains every candidate: `id`, previous `state`, `p`, `rounds_seen`, `score`, `flags`, `source_prefix`, `env`, `head_rollouts`, `head_passes`, and `admitted`/`retired`/`retire_reason` for this decision.
 - `public/pool/rotation/<round_id>.json` carries the same complete candidate ranking plus admitted IDs, retired IDs/reasons, `next_up`, `rule_params` and `retire_reason_counts`.
 - `public/pool/summary.json` aggregates the post-decision active composition and score histogram, reserve/retired counts, and the last 20 v2 rounds for the static `/pool` page (`pool.html`). The page has a top-50 upcoming queue and a client-side search over the complete latest ranking. All times are UTC.
 
-The first v1-to-v2 transition publishes the complete previous retired archive, candidate metadata and retired ledger it used. `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` fetches the public decision, ranking, source snapshot and state lineage and compares the complete recomputed `Rotation`, including the full ranking. The early live v1 `r000066` state is byte-SHA addressed; the later `r000069` state uses the canonical digest. The loader verifies the exact public key's SHA-256 and permits that legacy v1 state at the transition, while new v2 states always use the canonical digest.
+The first v1-to-v2 transition publishes the complete previous retired archive, candidate metadata and retired ledger it used. `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` fetches the public decision, ranking and source snapshot, reconstructs the previous close from public round evidence, and compares the complete recomputed `Rotation`, including the full ranking. The early live v1 `r000066` state is byte-SHA addressed; the later `r000069` state uses the canonical digest. Public-only replay reconstructs and authenticates both the early byte-SHA state encoding and canonical-digest rounds; new v2 states always use the canonical digest.
 
 Strict replayer schema additions (all optional and omitted on v1/old journals):
 

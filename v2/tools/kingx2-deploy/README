@@ -97,9 +97,12 @@ or params. After arming it:
    2,000 tasks, 10,000 active tasks and unchanged genfeed `batch_cap=6`, plus
    the exact pre-apply ingestd identity and external reserve.
 4. Starts exactly one new-code loop. r000087 must carry the new params, active
-   rotation and sqrt-Fisher IRT snapshot. Public rotation/state/active bytes,
-   snapshot identity and close-produced round report are checked with bounded
-   polling (default 20 minutes).
+   rotation and sqrt-Fisher IRT snapshot. The public named rotation is checked
+   against the journal's `state_sha`, size and rotation block; active bytes,
+   snapshot identity and the close-produced round report are also checked.
+   Public 404/5xx/timeout responses use bounded polling (default 20 minutes).
+   `pool/state` remains a private object-store artifact and is never required
+   from the public site.
 5. Requires the same loop to close r000087 and open r000088. The close must be
    `null`/`applied`, use the new params and 2,000 tasks, have no lease failure,
    and contain exactly two 2,000-character king null strings for every leased
@@ -143,7 +146,10 @@ KINGX2_DRY_ABORT_AFTER_OPEN=1 D=/home/bb/scratch/kingx2-r086-genfeed/final-abort
 `D` must be a fresh directory under `/home/bb/scratch`. The harness refuses a
 dirty source kit, clones the exact branch head, checks out old `d368b260`, and
 copies the kit from the committed branch archive. All eight files must compare
-byte-for-byte with the source. `new_commit` remains the pinned implementation;
+byte-for-byte with the source. Controller writes go to a full private object
+store, while operator fetches use a separate production-like public projection:
+it excludes `pool/state` and other artifact families the static site does not
+serve. `new_commit` remains the pinned implementation;
 only the copied public retry window is shortened for the fixture. The old
 r000082-open journal advances through synthetic old-code closes to the r000086
 gate. The real copied `autodeploy` drives the remainder.
