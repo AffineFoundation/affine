@@ -152,7 +152,7 @@ RULES: dict[str, str] = {
     "reasoning_share": "too small a share of the output tokens is reasoning",
     "answer_repeat": "one final answer is in too many rollouts",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
-    MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the minimum is max(min_signal_rollouts, recipe.minibatches)",
+    MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the floor is min_signal_rollouts",
     NULL_UPDATE: "when min_step_norm > 0, the miner's global_norm_cap is below it, so the stored update cannot be large enough to judge",
     TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
     TIME_LIMIT: f"the official grader cannot grade a rollout inside its time limit; {_AGAIN}",
@@ -576,9 +576,11 @@ def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], s
           f"global_norm_cap {recipe.global_norm_cap if recipe.global_norm_cap is not None else float('inf'):g} is below min_step_norm {params.min_step_norm:g}; the stored update can never reach the floor")
     active, tokens = signal_counts(groups, recipe, sizes)
     _need(active > 0, NO_SIGNAL, "no rollout has a reward that differs from the mean reward of its training group, so the file trains nothing")
-    floor = max(params.min_signal_rollouts, recipe.minibatches)
-    _need(active >= floor, MIN_ROLLOUTS,
-          f"only {active} rollouts have a nonzero advantage; the floor is {floor} (max(min_signal_rollouts={params.min_signal_rollouts}, minibatches={recipe.minibatches}))")
+    # The configured floor is explicit. Old code admitted any positive number
+    # of active rows; its trainer uses fewer minibatches when there are fewer
+    # rows, so minibatches must not add a hidden admission floor here.
+    _need(active >= params.min_signal_rollouts, MIN_ROLLOUTS,
+          f"only {active} rollouts have a nonzero advantage; the floor is {params.min_signal_rollouts} (min_signal_rollouts)")
     if sizes is None:
         return 0
     cost, cap = recipe.steps * tokens, params.max_train_token_steps

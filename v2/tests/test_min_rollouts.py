@@ -59,17 +59,16 @@ def test_63_active_rollouts_are_rejected_and_64_are_admitted(build):
     assert accepted.n_rollouts == 64 and accepted.train == {}
 
 
-def test_minibatches_raise_the_active_rollout_floor_above_the_static_minimum(build):
-    params = build.params(min_signal_rollouts=64)
-    # 70 active rollouts clear the static floor of 64, not 71 optimizer updates.
-    below = rejection(batch_file(70, train={"minibatches": 71}), params)
-    assert below.rule == MIN_ROLLOUTS
-    assert "only 70 rollouts" in str(below) and "floor is 71" in str(below)
-    assert check_batch(batch_file(71, train={"minibatches": 71}), HOTKEY, params).n_rollouts == 72
+def test_minibatches_do_not_add_an_implicit_active_rollout_floor(build):
+    params = build.params(min_signal_rollouts=1, min_step_norm=0.0)
+    # c5252865 admitted this file: with fewer active rows than requested
+    # minibatches, its trainer uses one nonempty minibatch per active row.
+    assert check_batch(batch_file(1, train={"minibatches": 71}), HOTKEY, params).n_rollouts == 4
+    assert rejection(batch_file(1, equal_rewards=True), params).rule == NO_SIGNAL
 
 
 def test_active_rollout_upper_bound_matches_the_largest_minibatch_setting(build):
-    params = build.params(min_signal_rollouts=64)
+    params = build.params(min_signal_rollouts=1)
     groups = [[f"upper-bound prompt {i}", [[f"different output {i}-{j}", float(j)] for j in range(4)]]
           for i in range(2000)]
     raw = json.dumps({"version": "affine-batch-v3", "hotkey": HOTKEY, "train": {"minibatches": 8000},
@@ -182,6 +181,21 @@ def test_judging_nan_update_is_terminal_not_a_score(build):
     assert decision.entries[0].status == NULL_UPDATE
     assert decision.entries[0].charged and decision.entries[0].score is None
     assert "non-finite" in decision.entries[0].reason or "nan" in decision.entries[0].reason
+
+
+def test_zero_norm_floor_admits_zero_and_small_finite_updates(build):
+    for norm in (0.0, 0.01):
+        params = build.params(min_signal_rollouts=1, min_step_norm=0.0)
+        assert check_batch(batch_file(1, train={"global_norm_cap": 0.01}), HOTKEY, params)
+        null = "P" * 10 + "F" * 90
+        strong = "P" * 30 + "F" * 70
+        params = build.params(n_tasks=100, min_scored_tasks=2, min_step_norm=0.0)
+        ticket = pure_ticket(build, 1, params)
+        result = pure_result(build, ticket, null, {0: strong})
+        scored = result.entries[0]
+        artifact = replace(scored.lora, report=replace(scored.lora.report, step_norm=norm))
+        decision = decide([(ticket, replace(result, entries=(replace(scored, lora=artifact),)))])
+        assert decision.winner_queue_pos == 0 and decision.entries[0].status == WINNER
 
 
 def test_best_scoring_null_update_cannot_beat_next_real_candidate(build):
