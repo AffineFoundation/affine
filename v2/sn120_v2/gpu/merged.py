@@ -9,8 +9,10 @@ is the proof that winner promotion checks before publishing a folded head.
 from __future__ import annotations
 
 import dataclasses
+import multiprocessing
 import shutil
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from ..canonical import is_sha256, manifest_digest
@@ -84,6 +86,49 @@ def build_candidate_base(
     except Exception:
         shutil.rmtree(out_base, ignore_errors=True)
         raise
+
+
+@dataclasses.dataclass(frozen=True)
+class _CandidateJob:
+    master_dir: Path
+    base_dir: Path
+    lora_dir: Path
+    rank: int
+    out_base: Path
+    kernel: str
+    device: str
+    threads: int | None
+    reserved: int
+
+
+def _build_candidate_job(job: _CandidateJob) -> TestedBase:
+    return build_candidate_base(
+        job.master_dir, job.base_dir, job.lora_dir, job.rank, job.out_base,
+        kernel=job.kernel, device=job.device, threads=job.threads, reserved=job.reserved,
+    )
+
+
+def candidate_in_child(
+    master_dir: Path,
+    base_dir: Path,
+    lora_dir: Path,
+    rank: int,
+    out_base: Path,
+    *,
+    kernel: str = FIXED_ORDER,
+    device: str = "cpu",
+    threads: int | None = None,
+    reserved: int = 0,
+) -> TestedBase:
+    """Run the real candidate builder in a spawned child.
+
+    A fixed-order build can create a CUDA context. It must not survive in the
+    controller, whose per-GPU worker thread waits for the driver to report the
+    device free before starting evaluation.
+    """
+    job = _CandidateJob(master_dir, base_dir, lora_dir, rank, out_base, kernel, device, threads, reserved)
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as pool:
+        return pool.submit(_build_candidate_job, job).result()
 
 
 def candidate_fold_settings() -> tuple[str, int | None]:

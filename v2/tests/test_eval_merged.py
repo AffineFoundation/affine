@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import runpy
 import shutil
+import textwrap
+import threading
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +72,137 @@ def test_install_hash_assertion_fails_closed(build):
         assert_fold_matches(ticket.params, dataclasses.replace(entry, tested_base_hash=""), build.h("merged"))
     with pytest.raises(InfraError, match="runtime-LoRA"):
         assert_fold_matches(build.params(), dataclasses.replace(entry, outcomes=(PASS * 8,)), build.h("merged"))
+
+
+def _candidate_build_observer(shim: Path, observation: Path, fail: bool) -> None:
+    """Observe the real builder, with CPU standing in for a driver."""
+    shim.mkdir()
+    package = Path(__file__).parents[1]
+    (shim / "sitecustomize.py").write_text(textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(package)!r})
+        import runpy
+        import json
+
+        import os
+        from pathlib import Path
+
+        from sn120_v2 import fold_kernel
+        from sn120_v2.gpu import merged
+
+        real_fold = fold_kernel.replay_fold
+        def observe(*args, **kwargs):
+            record = {{
+                "pid": os.getpid(), "ppid": os.getppid(), "thread": __import__("threading").current_thread().name,
+                "device": kwargs.get("device", "cpu"), "threads": kwargs.get("threads"), "kernel": kwargs.get("kernel"),
+            }}
+            Path({str(observation)!r}).write_text(json.dumps(record))
+            assert kwargs.get("device") == "cuda:4"
+            if {fail!r}:
+                Path(kwargs["out_base"] if "out_base" in kwargs else args[4]).mkdir(parents=True, exist_ok=True)
+                raise RuntimeError("driver failed after a partial candidate")
+            kwargs["device"] = "cpu"  # no CUDA device exists in this unit-test environment
+            return real_fold(*args, **kwargs)
+        fold_kernel.replay_fold = observe
+        real_build = merged.build_candidate_base
+        def reserved(*args, **kwargs):
+            assert kwargs["reserved"] == 37 and kwargs["threads"] == 1
+            return real_build(*args, **kwargs)
+        merged.build_candidate_base = reserved
+        """), encoding="utf-8")
+    # For a control run of the unpatched release, observe the already-running
+    # parent too. The fixed test does not set this: only its spawned child is patched.
+    if os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1":
+        runpy.run_path(str(shim / "sitecustomize.py"))
+
+
+def _candidate_tiny(root: Path):
+    root.mkdir()
+    return tiny_model(root)
+
+
+def _candidate_evaluator(tmp_path: Path, build, master: Path, base: Path, lora: Path):
+    from sn120_v2.gpu.evaluator import VllmEvaluator
+    from sn120_v2.gpu.plan import BoxConfig
+    from sn120_v2.store import LocalStore
+
+    ticket = build.ticket(n_entries=1, params=build.params(eval_merged=True))
+    artifact = build.artifact(ticket.head, ticket.entries[0], ticket.params)
+    artifact = dataclasses.replace(artifact, rank=2)
+    paths = {ticket.head.base_hash: base, ticket.head.base_fp32_master_digest: master, artifact.lora_hash: lora}
+    evaluator = VllmEvaluator(LocalStore(tmp_path / "store"), BoxConfig(tmp_path / "work", build.image), None, None)
+    evaluator.capture = None
+    evaluator.resident = SimpleNamespace(tree=lambda prefix, identity: paths[identity])
+    return evaluator, ticket, artifact
+
+
+def test_merged_build_runs_real_builder_in_a_spawned_child_and_releases_the_gpu(tmp_path, build, monkeypatch):
+    master, base, lora, rank = _candidate_tiny(tmp_path / "tiny")
+    expected = build_candidate_base(master, base, lora, rank, tmp_path / "inline", kernel=FIXED_ORDER, threads=1)
+    observer = tmp_path / "observer"
+    _candidate_build_observer(observer, tmp_path / "observation.json", False)
+    monkeypatch.setenv("PYTHONPATH", str(observer))  # inherited by production's ordinary spawn boundary
+    monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
+    monkeypatch.setenv("SN120_FOLD_THREADS", "1")
+    monkeypatch.setenv("SN120_FOLD_TWICE", "0")
+    evaluator, ticket, artifact = _candidate_evaluator(tmp_path, build, master, base, lora)
+    evaluator._merged_reserved[ticket.round_id] = 37  # an overlapping build's reservation reaches the real child
+    controller_pid = os.getpid()
+    with pytest.raises(InfraError, match=r"GPUs \[4\] are still in use"):
+        from sn120_v2.gpu.procs import wait_gpus_free
+        wait_gpus_free(1024, 0.0, report=lambda: "4, 1316\n")  # controller_pid owns this simulated driver context
+
+    def in_solo_gpu_thread():
+        nonlocal tested
+        tested = evaluator.build_merged(ticket.round_id, ticket.head, artifact, ticket.params, gpu=4)
+
+    tested = None
+    worker = threading.Thread(target=in_solo_gpu_thread, name="solo-gpu-4")
+    worker.start(), worker.join(timeout=120)
+    assert not worker.is_alive()
+    observation = json.loads((tmp_path / "observation.json").read_text())
+    assert tested is not None and observation["ppid"] == controller_pid and observation["pid"] != controller_pid
+    assert observation["thread"] == "MainThread"  # the buggy builder instead runs in solo-gpu-4
+    assert observation["device"] == "cuda:4" and observation["kernel"] == FIXED_ORDER and observation["threads"] == 1
+    assert tested.base_hash == expected.base_hash and tested.base_files == expected.base_files
+    assert all((tested.path / name).read_bytes() == (expected.path / name).read_bytes() for name in expected.base_files)
+    assert evaluator._merged_reserved[ticket.round_id] == 37  # only this build's reservation is released
+    # With the build child's PID/context gone, the same aggregate check passes.
+    from sn120_v2.gpu.procs import wait_gpus_free
+    wait_gpus_free(1024, 0.0, report=lambda: "\n".join(f"{gpu}, {6 if gpu != 4 else 0}" for gpu in range(8)))
+    evaluator.cleanup_merged(ticket.round_id)
+    assert not tested.path.exists() and not evaluator._merged_reserved
+
+
+def test_spawned_merged_build_keeps_infra_error_and_partial_cleanup(tmp_path, build, monkeypatch):
+    master, base, lora, rank = _candidate_tiny(tmp_path / "tiny")
+    observer = tmp_path / "observer"
+    _candidate_build_observer(observer, tmp_path / "observation.json", True)
+    monkeypatch.setenv("PYTHONPATH", str(observer))
+    monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
+    monkeypatch.setenv("SN120_FOLD_THREADS", "1")
+    monkeypatch.setenv("SN120_FOLD_TWICE", "0")
+    evaluator, ticket, artifact = _candidate_evaluator(tmp_path, build, master, base, lora)
+    evaluator._merged_reserved[ticket.round_id] = 37  # an overlapping build's reservation reaches the real child
+    with pytest.raises(InfraError, match="merged candidate build failed: RuntimeError: driver failed after a partial candidate"):
+        evaluator.build_merged(ticket.round_id, ticket.head, artifact, ticket.params, gpu=4)
+    assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id / artifact.lora_hash).exists()
+    assert evaluator._merged_reserved[ticket.round_id] == 37  # only this build's reservation is released
+
+
+def test_spawned_merged_build_classifies_a_dead_child_as_infra_error(tmp_path, build, monkeypatch):
+    master, base, lora, _ = tiny_model(tmp_path)
+    evaluator, ticket, artifact = _candidate_evaluator(tmp_path, build, master, base, lora)
+    observer = tmp_path / "observer"
+    observer.mkdir()
+    (observer / "sitecustomize.py").write_text("import os\nos._exit(73)\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(observer))
+    monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
+    monkeypatch.setenv("SN120_FOLD_THREADS", "1")
+    monkeypatch.setenv("SN120_FOLD_TWICE", "0")
+    with pytest.raises(InfraError, match="merged candidate build failed: BrokenProcessPool"):
+        evaluator.build_merged(ticket.round_id, ticket.head, artifact, ticket.params, gpu=4)
+    assert evaluator._merged_reserved[ticket.round_id] == 0
 
 
 def test_merged_build_checks_free_disk_and_never_serves_a_partial_directory(tmp_path, monkeypatch):
