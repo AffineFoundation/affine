@@ -22,7 +22,7 @@ from safetensors.torch import load_file, save_file
 
 from .. import layout
 from ..canonical import manifest_digest
-from ..errors import ContractError, VerifyError
+from ..errors import ContractError, InfraError, VerifyError
 from ..params import Params
 from ..seams import ObjectStore
 from ..types import FoldArtifact, HeadVersion
@@ -123,7 +123,11 @@ class LoraFolder:
         self.store, self.config = store, config
         self.resident = Resident(store, config.work_dir)
 
-    def fold(self, head: HeadVersion, params: Params, out_prefix: str) -> FoldArtifact:
+    def fold(self, head: HeadVersion, params: Params, out_prefix: str, tested=None) -> FoldArtifact:
+        from .merged import assert_fold_matches, assert_tested_result
+
+        if tested is not None:
+            assert_tested_result(params, tested)
         check_pins(self.config.image_digest, params)
         started = time.monotonic()
         if not head.loras:
@@ -140,7 +144,15 @@ class LoraFolder:
         shutil.rmtree(out, ignore_errors=True)
         try:
             fetched = time.monotonic()
-            fold_files(master_dir, base_dir, loras, out / "master", out / "base")
+            if params.eval_merged:
+                from ..headfold import FoldJob, run_fold
+
+                if tested is None or len(head.loras) != 1:
+                    raise InfraError("a merged-candidate install needs exactly one tested LoRA and its fold proof")
+                folded = run_fold(FoldJob(master_dir, base_dir, tuple((self.resident.tree(layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras), out / "master", out / "base", kernel=tested.tested_fold_kernel))
+                assert_fold_matches(params, tested, manifest_digest(folded.base_files))
+            else:
+                fold_files(master_dir, base_dir, loras, out / "master", out / "base")
             summed = time.monotonic()
             base_files, _ = upload_tree(self.store, out / "base", f"{out_prefix}/base")
             master_files, _ = upload_tree(self.store, out / "master", f"{out_prefix}/master")

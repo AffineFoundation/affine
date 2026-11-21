@@ -175,17 +175,29 @@ def lora_table(params: Params, batches: int = 0) -> int:
     return batches or params.max_loras_per_box
 
 
-def server_argv(base_dir: str, port: int, params: Params, max_seqs: int | None = None, max_loras: int | None = None) -> list[str]:
+def server_argv(
+    base_dir: str,
+    port: int,
+    params: Params,
+    max_seqs: int | None = None,
+    max_loras: int | None = None,
+    *,
+    model_name: str = NULL_MODEL,
+    merged: bool | None = None,
+) -> list[str]:
     rank = params.recipe.bound("rank")
     max_rank = int(rank.high) if rank else params.recipe.rank
     max_seqs = params.max_num_seqs if max_seqs is None else max_seqs
+    merged = params.eval_merged if merged is None else merged
+    if merged and not params.eval_merged:
+        raise ContractError("a merged-model server requires eval_merged")
     return [
         *(sys.executable, "-m", "vllm.entrypoints.openai.api_server"),
-        *("--model", base_dir, "--served-model-name", NULL_MODEL),
+        *("--model", base_dir, "--served-model-name", model_name),
         *("--host", "127.0.0.1", "--port", str(port)),
         *("--dtype", params.dtype, *(("--kv-cache-dtype", params.kv_cache_dtype) if params.kv_cache_dtype != "auto" else ()), "--max-model-len", str(params.max_context_tokens)),
-        *("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)),
-        *("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank)),
+        *(("--enable-prefix-caching", "--enable-lora", "--max-num-seqs", str(max_seqs)) if not merged else ("--enable-prefix-caching", "--max-num-seqs", str(max_seqs))),
+        *((("--max-loras", str(max_loras or lora_table(params)), "--max-lora-rank", str(max_rank))) if not merged else ()),
         *("--limit-mm-per-prompt", '{"image":0,"video":0}'),
     ]
 
@@ -268,6 +280,9 @@ class VllmEvaluator:
         self._solo_server_clients: dict[int, int] = {}
         self._solo_urls: dict[int, str] = {}
         self._solo_loaded: dict[int, set[str]] = {}
+        self._solo_models: dict[int, str] = {}
+        self._merged_lock = threading.Lock()
+        self._merged_reserved: dict[str, int] = {}
         self._solo_start_locks: dict[int, threading.Lock] = {}
         self._solo_lock = threading.RLock()
         self._solo_clients: int | None = None
@@ -324,6 +339,8 @@ class VllmEvaluator:
 
     def _prepare(self, request: EvalRequest) -> tuple[list[str], int, int]:
         params = request.params
+        if params.eval_merged:
+            raise InfraError("eval_merged requires the solo merged-model evaluator; streaming and block LoRA serving are refused")
         check_pins(self.config.image_digest, params)
         if any(lora.head_version_id != request.head.version_id for lora in request.loras):
             raise ContractError("a LoRA of this look was trained on another head")
@@ -432,8 +449,52 @@ class VllmEvaluator:
 
         return SoloWorker(self, ticket, trained, deadline, gpu)
 
+    def build_merged(self, round_id: str, head: HeadVersion, lora, params: Params, gpu: int):
+        """Build one candidate's base after training, using the install arithmetic."""
+        import shutil
+
+        from .. import layout
+        from .merged import build_candidate_base, candidate_fold_settings
+
+        if not params.eval_merged:
+            raise InfraError("a merged candidate can only be built with eval_merged")
+        kernel, threads = candidate_fold_settings()
+        base_dir = self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
+        master_dir = self.resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
+        lora_dir = self.resident.tree(lora.prefix, lora.lora_hash)
+        out = self.config.work_dir / "merged-candidates" / round_id / lora.lora_hash
+        need = sum(file.stat().st_size for file in base_dir.rglob("*") if file.is_file())
+        with self._merged_lock:
+            reserved = self._merged_reserved.get(round_id, 0)
+            self._merged_reserved[round_id] = reserved + need
+        try:
+            return build_candidate_base(
+                master_dir, base_dir, lora_dir, lora.rank, out, kernel=kernel,
+                device=f"cuda:{gpu}" if kernel == "fixed-order-v1" else "cpu",
+                threads=threads, reserved=reserved,
+            )
+        except InfraError:
+            raise
+        except Exception as exc:
+            raise InfraError(f"merged candidate build failed: {type(exc).__name__}: {exc}") from exc
+        finally:
+            with self._merged_lock:
+                self._merged_reserved[round_id] -= need
+            if not out.is_dir():
+                shutil.rmtree(out, ignore_errors=True)
+
+    def cleanup_merged(self, round_id: str) -> None:
+        """Merged bases are round-local inputs; their hashes remain in the result."""
+        import shutil
+
+        shutil.rmtree(self.config.work_dir / "merged-candidates" / round_id, ignore_errors=True)
+        with self._merged_lock:
+            self._merged_reserved.pop(round_id, None)
+
     def _load_one(self, gpu: int, lora) -> None:
         """Load one adapter on one solo server, once per server lifetime."""
+        if getattr(self, "_solo_models", {}).get(gpu, NULL_MODEL) != NULL_MODEL:
+            raise InfraError("a runtime LoRA cannot be loaded on a merged-model server")
         if lora.lora_hash in self._solo_loaded.get(gpu, set()):
             return
         with self._solo_lock:
@@ -641,32 +702,38 @@ class VllmEvaluator:
 
         wait_gpus_free(self.settings.free_limit_mib, self.settings.free_timeout_s, report=report, sleep=self.sleep)
 
-    def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
-        """Start or reuse exactly one GPU's server, independent of its peers."""
+    def _serve_one(self, head: HeadVersion, params: Params, table: int, gpu: int, model: str = NULL_MODEL, base_dir: Path | None = None) -> str:
+        """Start or reuse exactly one GPU's server for one model, independent of its peers."""
+        if model != NULL_MODEL and not params.eval_merged:
+            raise ContractError("a candidate needs its own model directory in eval_merged mode")
+        if params.eval_merged and model != NULL_MODEL and base_dir is None:
+            raise InfraError("a merged candidate server needs its tested base directory")
         with self._solo_lock:
             start_lock = self._solo_start_locks.setdefault(gpu, threading.Lock())
         with start_lock:
-            return self._start_one(head, params, table, gpu)
+            return self._start_one(head, params, table, gpu, model, base_dir)
 
-    def _start_one(self, head: HeadVersion, params: Params, table: int, gpu: int) -> str:
+    def _start_one(self, head: HeadVersion, params: Params, table: int, gpu: int, model: str = NULL_MODEL, base_dir: Path | None = None) -> str:
         """One GPU startup, without blocking startup or loading on its peers."""
         clients = self._solo_clients if self._solo_clients is not None else self.clients_for(params)
         with self._solo_lock:
+            models = getattr(self, "_solo_models", {})
             existing = self._solo_servers.get(gpu)
-            if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
+            if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and models.get(gpu, NULL_MODEL) == model:
                 return self._solo_urls[gpu]
             self._solo_servers.pop(gpu, None)
             self._solo_server_clients.pop(gpu, None)
             self._solo_urls.pop(gpu, None)
             self._solo_loaded.pop(gpu, None)
+            models.pop(gpu, None)
         if existing is not None:
             existing.stop()
-        base_dir = resident_head(self.resident, head)
+        base_dir = base_dir or resident_head(self.resident, head)
         self._wait_one_gpu_free(gpu)
         logs = self.config.work_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         port = self.settings.first_port + gpu
-        argv = server_argv(str(base_dir), port, params, clients, table)
+        argv = server_argv(str(base_dir), port, params, clients, table, model_name=model, merged=params.eval_merged)
         # Spawning and the health wait are slow: never hold the shared Solo
         # lock while another GPU can start, load an adapter, or claim work.
         server = self.spawn(argv, server_env(gpu, self.config.work_dir), logs / f"vllm-{gpu}.log")
@@ -677,18 +744,21 @@ class VllmEvaluator:
             if gpu in self._solo_servers:
                 server.stop()
                 existing = self._solo_servers[gpu]
-                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients:
+                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and getattr(self, "_solo_models", {}).get(gpu, NULL_MODEL) == model:
                     return self._solo_urls[gpu]
                 self._solo_servers.pop(gpu, None)
                 self._solo_server_clients.pop(gpu, None)
                 self._solo_urls.pop(gpu, None)
                 self._solo_loaded.pop(gpu, None)
+                getattr(self, "_solo_models", {}).pop(gpu, None)
                 existing.stop()
             self._head, self._table = head, table
             self._solo_servers[gpu] = server
             self._solo_server_clients[gpu] = clients
             self._solo_urls[gpu] = url
             self._solo_loaded[gpu] = set()
+            models[gpu] = model
+            self._solo_models = models
         waited = 0.0
         while True:
             try:
@@ -703,6 +773,7 @@ class VllmEvaluator:
                             self._solo_server_clients.pop(gpu, None)
                             self._solo_urls.pop(gpu, None)
                             self._solo_loaded.pop(gpu, None)
+                            getattr(self, "_solo_models", {}).pop(gpu, None)
                     raise InfraError(f"the vLLM server at {url} did not start") from None
                 self.sleep(5.0)
                 waited += 5.0
@@ -713,6 +784,7 @@ class VllmEvaluator:
             self._solo_server_clients.pop(gpu, None)
             self._solo_urls.pop(gpu, None)
             self._solo_loaded.pop(gpu, None)
+            getattr(self, "_solo_models", {}).pop(gpu, None)
         if server is not None:
             server.stop()
 
@@ -728,6 +800,7 @@ class VllmEvaluator:
             except Exception as exc:  # noqa: BLE001 - release the other resources too
                 errors.append(exc)
         self._solo_servers, self._solo_server_clients, self._solo_urls, self._solo_loaded = {}, {}, {}, {}
+        self._solo_models = {}
         self._solo_start_locks = {}
         self._solo_clients = None
         self._solo_scheduler = None
@@ -770,6 +843,8 @@ class VllmEvaluator:
         raise InfraError(f"a grader worker died on {len(ended)} replies in every one of {self.settings.grade_tries} tries; the look is not scored")
 
     def _serve(self, head: HeadVersion, params: Params, table: int) -> None:
+        if params.eval_merged:
+            raise InfraError("eval_merged requires solo per-candidate servers; shared runtime-LoRA serving is refused")
         if self._head is not None and self._head.version_id == head.version_id and self._table == table:
             if all(server.alive() for server in self._servers):
                 return

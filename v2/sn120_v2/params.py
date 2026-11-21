@@ -199,6 +199,7 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
+        "eval_merged",
     )
 
     netuid: int = 120
@@ -227,6 +228,10 @@ class Params(Record):
     dtype: str = "bfloat16"
     kv_cache_dtype: str = "auto"
     max_num_seqs: int = 256
+
+    # Serve a candidate's merged base, made by the install fold, instead of a runtime LoRA.
+    # Omitted while false so the parameter sets of every earlier round keep their hash.
+    eval_merged: bool = False
 
     # Task draw.
     irt_draw_rule: str = "fisher"
@@ -373,6 +378,8 @@ class Params(Record):
         _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
+        _need(type(self.eval_merged) is bool, "eval_merged must be true or false")
+        _need(not self.eval_merged or self.fold_every_k == 1, "merged-candidate evaluation needs fold_every_k = 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
         _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")

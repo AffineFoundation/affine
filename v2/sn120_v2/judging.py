@@ -261,6 +261,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
     look_sizes = params.look_sizes(n)
     for seat, entry in zip(ticket.entries, result.entries):
         what = f"entry {entry.queue_pos}"
+        from .gpu.merged import assert_tested_result
+
+        assert_tested_result(params, entry)
         if entry.status != SCORED:
             _need(not entry.outcomes and entry.eliminated_at_look is None, f"{what}: an unscored entry has no outcomes")
             continue
