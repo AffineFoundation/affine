@@ -692,3 +692,45 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     again = json.loads(capsys.readouterr().out)
     assert again["params_hash"] == expected_other.params_hash and len(again["changed"]) == 5 and load(state_dir / JOURNAL_FILE).params == expected_other
     assert main(set_params("other.json")) == 0 and json.loads(capsys.readouterr().out)["changed"] == {}
+
+
+def test_a_deployed_old_journal_needs_set_params_before_a_new_rule_round(tmp_path, capsys):
+    state_dir = tmp_path / "state"
+    world = SimWorld(state_dir, sim_params())
+    world.register(1, 0.3)
+    assert all(name not in world.controller.params.to_dict() for name in Params.LEGACY_FIELDS)
+    override = tmp_path / "params.json"
+    override.write_text(json.dumps({"recipe": {"image_digests": [SIM_IMAGE]}}))
+    run = ["run", "--state-dir", str(state_dir), "--stack", "sn120_v2.sim:stack", "--rounds", "1"]
+
+    # Restart with new code: open_stack/load_stack replays the pinned record; --params is only a hash check here.
+    world.reopen()
+    assert world.controller.params.train_seed_scope == "batch"
+    assert world.controller.params.dedup_enabled is False
+    assert main([*run, "--params", str(override)]) == 2
+    assert "params differs from the parameters pinned in the journal" in capsys.readouterr().err
+    ticket = world.controller.open_round(world.clock(), "entropy")[0]
+    assert ticket.params.train_seed_scope == "batch" and ticket.params.dedup_enabled is False
+    world.controller.fail_lease(ticket.lease_id, "test close", world.clock())
+
+    # The reviewed between-rounds operator action writes the new Params record into the journal.
+    assert main([
+        "set-params", "--state-dir", str(state_dir), "--params", str(override),
+        "--stack", "sn120_v2.sim:stack",
+    ]) == 0
+    changed = json.loads(capsys.readouterr().out)["changed"]
+    assert {name: changed[name]["after"] for name in (
+        "train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm",
+    )} == {
+        "train_seed_scope": "round", "dedup_enabled": True,
+        "min_signal_rollouts": 64, "min_step_norm": 0.02,
+    }
+    # Restart once more and use the production open path: the ticket carries the pinned new values, not CLI defaults.
+    world.reopen()
+    world.now += world.controller.params.apply_retry_s
+    ticket = world.controller.open_round(world.clock(), "entropy")[0]
+    assert ticket.params.params_hash == load(state_dir / JOURNAL_FILE).params.params_hash
+    assert (
+        ticket.params.train_seed_scope, ticket.params.dedup_enabled,
+        ticket.params.min_signal_rollouts, ticket.params.min_step_norm,
+    ) == ("round", True, 64, 0.02)

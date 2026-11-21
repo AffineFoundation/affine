@@ -349,6 +349,34 @@ def test_no_numpy_fallback_matches_rectangular_lora_math(build, monkeypatch):
     assert cosine(matrix, matrix) == pytest.approx(1.0)
 
 
+def test_stage_b_without_numpy_skips_before_reading_loras(build, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def without_numpy(name, *args, **kwargs):
+        if name == "numpy":
+            raise ImportError("no module named numpy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_numpy)
+    params = build.params()
+    entries = entries_with_hashes(build, 2)
+    artifacts = {
+        entry.queue_pos: lora_artifact(build, entry, params, b"", 100 + entry.queue_pos)
+        for entry in entries
+    }
+    reads, logs = [], []
+    dropped, clusters = stage_b(
+        entries, artifacts, first_seen(entries), params,
+        lambda key: reads.append(key) or b"",
+        {entry.queue_pos: 100 + entry.queue_pos for entry in entries},
+        log=logs.append,
+    )
+    assert dropped == [] and clusters == [] and reads == []
+    assert len(logs) == 1 and "stage B skipped" in logs[0] and "numpy unavailable" in logs[0]
+
+
 def test_stage_b_does_not_compare_through_a_dropped_lora(build):
     # B has cosine .5 with A; C has cosine .447 with A, enough to drop
     # through B if B were retained as an anchor. Only B may drop.

@@ -375,6 +375,12 @@ def stage_b(
     if not params.dedup_enabled:
         return [], []
     say = log or (lambda text: None)
+    try:
+        import numpy  # noqa: F401
+    except ImportError as exc:
+        # Production LoRAs are far too large for the pure-Python arithmetic helpers.
+        say(f"dedup stage B skipped: numpy unavailable ({exc}); no drops")
+        return [], []
     null = set(excluded)
     ordered = sorted((entry for entry in entries if entry.queue_pos in artifacts and entry.queue_pos not in null),
                      key=lambda entry: (first_seen.get(entry.batch.batch_sha256, math.inf), entry.queue_pos))
