@@ -307,7 +307,15 @@ elif mode == "drive":
             else:
                 raise AssertionError("open-check did not finish")
             first = run("close-first").rsplit(" ", 1)[-1]
-            (root / "work/logs/phases.jsonl").write_text(json.dumps({"at": 1795203001, "phase": "solo_eval", "round_id": first, "wall_s": 1234.0}) + "\n")
+            # Production emits round_text's wall summary, not per-GPU phase
+            # records. Generate this block with the real public-report formatter.
+            from sn120_v2.public import round_text
+            report = json.loads(store.get(layout.round_file(first)))
+            report["wall_s"]["evaluation"] = 6984
+            store.put(layout.round_file(first), canonical_json(report))
+            with runlog.open("a") as out:
+                out.write(round_text(report) + "\n")
+            assert not (root / "work/logs/phases.jsonl").exists()
             (root / "work/logs/first-closed").write_text(first + "\n")
             second = run("open-second")
             with runlog.open("a") as out: out.write(f"run-loop: loop started\nopen: round {second} is open\n")
@@ -600,7 +608,9 @@ grep '^.* PASS: king-x2 ' "$D/here/autodeploy.log"
 $D/here/check-reserve
 $D/here/check-generator
 printf '%s DRY GENERATOR PRESERVATION PASS: same ingestd pid/start, reserve selector/state/inbox intact through apply\n' "$(date -u +%FT%TZ)"
-RID=$($PY -I -c 'import json,sys; from pathlib import Path; files=list(Path(sys.argv[1]).glob("health-r[0-9][0-9][0-9][0-9][0-9][0-9].json")); assert len(files)==1,files; row=json.loads(files[0].read_text()); assert row["ok"],row; print(row["round"])' "$D/here")
+RID=$($PY -I -c 'import json,sys; from pathlib import Path; files=list(Path(sys.argv[1]).glob("health-r[0-9][0-9][0-9][0-9][0-9][0-9].json")); assert len(files)==1,files; row=json.loads(files[0].read_text()); assert row["ok"],row; assert row["eval_wall_s"]==6984 and row["run_log_eval_wall_s"]==6984 and row["eval_phase_wall_s"]==[],row; assert row["eval_timing_evidence"]=="run_log",row; print(row["round"])' "$D/here")
+[ ! -e "$D/work/logs/phases.jsonl" ]
+grep '^wall time: train .* | eval 116m24s | ' "$D/work/logs/run.log"
 ACTIVE_KEY=$($PY -I -c 'import json,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.journal import read_journal; rows=read_journal(sys.argv[1]); row=next(row for row in rows if row.kind=="round_opened" and row.data["round"]["round_id"]==sys.argv[3]); print("public/pool/active/"+row.data["round"]["rotation"]["active_sha"]+".json")' "$D/operator-state/journal.jsonl" "$D/repo/v2" "$RID")
 cp "$D/$ACTIVE_KEY" "$D/active-before.json"
 printf '["tampered-active-task"]\n' > "$D/$ACTIVE_KEY"

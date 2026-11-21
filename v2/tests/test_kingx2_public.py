@@ -25,6 +25,7 @@ def isolated_public_root(tmp_path, monkeypatch):
     # pub_get resolves its root at call time, not while the module is loaded.
     # Keep every test on its synthetic LocalStore and away from affine.io.
     monkeypatch.setenv("KINGX2_PUBLIC_ROOT", str(tmp_path / "public"))
+    monkeypatch.setenv("KINGX2_WORK_DIR", str(tmp_path / "work"))
 
 def operator(tmp_path: Path):
     # The real entry point is invoked with -I. This fixture also loads its
@@ -153,3 +154,78 @@ def test_public_poll_does_not_retry_forbidden_or_corrupt_content(tmp_path, monke
     assert len(calls) == 1
     with pytest.raises(ValueError):
         module.public_poll(lambda deadline: json.loads(b"not json"))
+
+
+def test_run_log_eval_wall_reads_only_this_rounds_production_summary(tmp_path):
+    module = operator(tmp_path)
+    log = tmp_path / "run.log"
+    log.write_text(
+        "SN120 v2 round r000086: NULL\nwall time: train 1m00s | eval 1m00s | total 2m00s\n"
+        "2026-11-21T12:00:00Z SN120 v2 round r000087: NULL\n"
+        "wall time: train 8m22s | eval 116m24s | promote 0m01s | fold 0m02s | total 124m49s\n"
+        "text containing SN120 v2 round r000088: NULL is not a report header\n"
+        "wall time: eval 9m99s\n"
+    )
+    assert module.run_log_eval_wall("r000087", log) == 6984
+    assert module.run_log_eval_wall("r000086", log) == 60
+    assert module.run_log_eval_wall("r000088", log) is None
+    assert module.run_log_eval_wall("r000087", tmp_path / "missing.log") is None
+
+
+def health_fixture(tmp_path, monkeypatch, *, phases=False, eval_wall=6984):
+    module, rid, rotation = fixture(tmp_path)
+    module.EXPECT["n_tasks"] = 4
+    module.EXPECT["null_samples"] = 2
+    module.read_journal = lambda path: []
+    module.journal_close_summary = lambda rid, next_open_ok: {
+        "clean": True, "why": [], "outcome": "null", "n_tasks": 4,
+        "round_n_tasks": 4, "round_params_hash": module.EXPECT["new_params_hash"],
+        "boxes": ["box-a"],
+    }
+    minutes, seconds = divmod(eval_wall, 60)
+    report = {
+        "round_id": rid, "params_hash": module.EXPECT["new_params_hash"],
+        "outcome": "null", "n_tasks": 4, "wall_s": {"training": 1, "evaluation": eval_wall},
+        "null_outcomes": {"box-a": ["P" * 4, "P" * 4]},
+    }
+    (tmp_path / "public" / layout.round_file(rid)).write_bytes(canonical_json(report))
+    run_log = tmp_path / "work/logs/run.log"
+    run_log.parent.mkdir(parents=True)
+    run_log.write_text(f"SN120 v2 round {rid}: NULL\nwall time: train 0m01s | eval {minutes}m{seconds:02d}s\n")
+    monkeypatch.setenv("KINGX2_WORK_DIR", str(tmp_path / "work"))
+    if phases:
+        phase_log = tmp_path / "work/logs/phases.jsonl"
+        phase_log.write_text(json.dumps({"phase": "eval", "round_id": rid, "wall_s": eval_wall}) + "\n")
+    return module, rid
+
+
+@pytest.mark.parametrize("phases", [False, True])
+def test_health_accepts_public_eval_wall_without_production_phase_records(tmp_path, monkeypatch, phases):
+    module, rid = health_fixture(tmp_path, monkeypatch, phases=phases)
+    result = module.health(rid)
+    assert result["ok"], result
+    assert result["eval_wall_s"] == 6984 and result["run_log_eval_wall_s"] == 6984
+    assert result["eval_phase_wall_s"] == ([{"at": None, "phase": "eval", "look": None, "wall_s": 6984}] if phases else [])
+    assert result["eval_timing_evidence"] == ("phases" if phases else "run_log")
+
+
+def test_health_accepts_missing_run_log_but_rejects_conflicting_or_missing_wall_time(tmp_path, monkeypatch):
+    module, rid = health_fixture(tmp_path, monkeypatch)
+    (tmp_path / "work/logs/run.log").unlink()
+    result = module.health(rid)
+    assert result["ok"] and result["eval_timing_evidence"] == "public_eval_wall_s", result
+    (tmp_path / "work/logs/run.log").write_text(f"SN120 v2 round {rid}: NULL\nwall time: train 0m01s | eval 116m24s\n")
+    result = module.health(rid)
+    report_path = tmp_path / "public" / layout.round_file(rid)
+    report = json.loads(report_path.read_bytes())
+    report["wall_s"]["evaluation"] = 6984.4
+    report_path.write_bytes(canonical_json(report))
+    assert module.health(rid)["ok"]
+    report["wall_s"]["evaluation"] = 6987
+    report_path.write_bytes(canonical_json(report))
+    result = module.health(rid)
+    assert not result["ok"] and "run-log evaluation wall time differs" in result["why"][-1]
+    report["wall_s"]["evaluation"] = 0
+    report_path.write_bytes(canonical_json(report))
+    result = module.health(rid)
+    assert not result["ok"] and "public round evaluation wall time is missing or not positive" in result["why"]

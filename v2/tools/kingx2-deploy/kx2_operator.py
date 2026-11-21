@@ -623,6 +623,32 @@ def public_round(rid: str) -> dict:
     return {"raw": raw, "report": report}
 
 
+def run_log_eval_wall(rid: str, path: Path) -> int | None:
+    """Read this round's eval field from the actual ``round_text`` run-log block.
+
+    The GPU phase JSONL is optional in production. ``run`` instead prints the
+    public round report's text, whose ``_span`` fields are whole seconds.
+    """
+    in_round = False
+    found = None
+    if not path.is_file():
+        return None
+    for line in path.read_text(errors="replace").splitlines():
+        header = re.match(r"^[0-9:.TZ -]*SN120 v2 round (r[0-9]{6}):", line)
+        if header:
+            in_round = header.group(1) == rid
+            continue
+        if not in_round:
+            continue
+        summary = re.search(r"(?:^|\s)wall time: (.*)$", line)
+        if summary:
+            match = re.search(r"(?:^|\| )eval ([0-9]+)m([0-9]{2})s(?: \||$)", summary.group(1))
+            if match:
+                found = int(match.group(1)) * 60 + int(match.group(2))
+                in_round = False
+    return found
+
+
 def health(rid: str) -> dict:
     """A failed health check is a report, not an exception, for shell rollback."""
     out = {"round": rid, "ok": False, "why": []}
@@ -675,9 +701,13 @@ def health(rid: str) -> dict:
                         phases.append({"at": row.get("at"), "phase": row["phase"], "look": row.get("look"), "wall_s": row["wall_s"]})
                 except (ValueError, TypeError):
                     continue
-        if not phases:
-            out["why"].append("no local eval/solo_eval/eval_stream/eval_cut phase timing for this round")
         out["eval_phase_wall_s"] = phases
+        run_log = Path(os.environ.get("KINGX2_RUN_LOG", str(work_dir() / "logs/run.log")))
+        out["run_log_eval_wall_s"] = run_log_eval_wall(rid, run_log)
+        out["eval_timing_evidence"] = "phases" if phases else ("run_log" if out["run_log_eval_wall_s"] is not None else "public_eval_wall_s")
+        if (type(out["run_log_eval_wall_s"]) is int and type(eval_wall) in (int, float)
+                and abs(out["run_log_eval_wall_s"] - eval_wall) > 1):
+            out["why"].append("run-log evaluation wall time differs from the public round report")
         limits = load_params(HERE / "new-params.json")
         scoring_deadline = limits.round_time_limit_s - limits.promote_reserve_s
         out["timing_limits_s"] = {"round": limits.round_time_limit_s, "scoring_before_reserve": scoring_deadline,
