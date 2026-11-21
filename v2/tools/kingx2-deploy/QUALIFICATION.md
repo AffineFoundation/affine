@@ -187,7 +187,7 @@ Compatible-schema synthetic follow-ups use the pinned implementation to read
 historical new-schema journal records after old params/code are restored. No
 GPU workload, production connection or production health claim is involved.
 
-Final committed-kit rehearsal destinations:
+Earlier committed-kit rehearsal destinations:
 
 - Normal: `/home/bb/scratch/kingx2-r086-genfeed/final-normal/dry-run.log`.
 - Abort after open: `/home/bb/scratch/kingx2-r086-genfeed/final-abort/dry-run.log`.
@@ -228,14 +228,21 @@ by autodeploy. That pair is not a PASS. The failed logs are preserved at
 `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-normal/dry-run.log` and
 `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-abort/dry-run.log`.
 The fixture now writes progress to stderr, leaving the report's stdout
-machine-readable; the unchanged autodeploy JSON contract is retained. Both
-rehearsals will rerun from a fresh commit.
+machine-readable; the unchanged autodeploy JSON contract is retained.
 
+`2ccfa324e8d06c11758efe633171b6ecc01b433c` fixes the false open-check
 failure caused by requiring the non-public `pool/state` object. Both open and
 public checks authenticate `pool/rotation/<rid>.json` against the journal's
 `state_sha`, size and block, then verify the public active set and IRT snapshot.
 Transient 404/5xx, timeout and connection failures retry within the configured
 bounded window; integrity and schema failures still fail immediately.
+
+A later `d4f38380a0e46e76d5e76c87c7d5db39bfb36a60` normal/abort pair was
+stopped and superseded when the production health-timing finding expanded this
+fix's scope. Its competing-deploy guard passed, but neither rehearsal reached a
+terminal outcome; that pair is not a PASS. Its logs remain at
+`/home/bb/scratch/kingx2-public-open-fix-d4f38380-normal/dry-run.log` and
+`/home/bb/scratch/kingx2-public-open-fix-d4f38380-abort/dry-run.log`.
 
 The public root in the rehearsal now projects only the public families mirrored
 by the static site. Private state is required in the object store and forbidden
@@ -245,13 +252,47 @@ named rotation, public round report, draw snapshot and public outcomes,
 including historical raw-byte and current canonical state hashes. No genfeed
 public-state dependency was found; private controller state persistence remains.
 
+The separate production r000087 health finding was also a false failure: its
+only reported reason was the absence of local
+`eval`/`solo_eval`/`eval_stream`/`eval_cut` phase timing. Production instead
+had a positive public `eval_wall_s=6984` and a run-log summary containing
+`eval 116m24s`. `fa55ead0f5c041b957fe2031519432db9d082acf` accepts valid
+positive, bounded public evaluation wall time when phase records are absent,
+and reads this round's actual `round_text` run-log summary when available. A
+run-log/public disagreement greater than one second still fails closed. The
+fixture now uses 6,984 seconds in its synthetic result so the unchanged
+controller-published report and real production-format `round_text` block both
+contain `eval 116m24s`. It has no `phases.jsonl` and explicitly requires health
+to use that evidence.
+
+The `fa55ead0f5c041b957fe2031519432db9d082acf` normal rehearsal exposed a
+fixture-only inconsistency: its first open and public named-rotation check
+passed, but its public report retained 1,234 seconds while the separately
+rewritten log said 6,984 seconds. Health correctly rejected that conflict; this
+is not a PASS. Its subsequent rollback remained blocked because the synthetic
+loop did not honor the later stop request; the watchdog stayed disarmed, and
+the harness exited 1. That failed normal log has SHA-256
+`0fff554bb7672f5869f3443463729d51761cb9e1d91df896967dd3917909c31b`.
+The abort-after-open scenario also passed its first open, then intentionally
+lost its loop and timed out waiting for the unavailable round report. Its
+expected nonzero autodeploy result completed the real no-decision rollback,
+restored old params/code and one old loop, re-armed the watchdog, and preserved
+generator/reserve state. It passed those recovery assertions but is not a
+complete normal deployment PASS. Its log has SHA-256
+`65db931d00cb047bcc8b09665f0fd2a3b0d5afa64eeb2efeffb24c4390c05603`.
+Both logs are preserved at the `kingx2-public-open-fix-fa55ead0-normal` and
+`kingx2-public-open-fix-fa55ead0-abort` destinations.
+
 - Focused public/rotation regression suite:
-  `/home/bb/scratch/kingx2-public-open-fix-focused.log` (exit 0, **52 passed,
-  1 skipped**; SHA-256
-  `740486f7f13a0b7144414c1c3d2355b2019a54573a8d52e53ea4f30172abba3c`).
+  `/home/bb/scratch/kingx2-public-open-fix-fa55ead0-focused.log` (exit 0,
+  **55 passed, 1 skipped**; SHA-256
+  `50d4863c78fbc9bfeceafb87047cd4a960727d8a4d58ed7b8bc7258835bfb74a`).
+  The skip is `v2/tests/test_pool_rotation.py:71`: pristine-v2 golden
+  generation was not run in this environment.
 - Genfeed consumer/deploy regression suite:
-  `/home/bb/scratch/kingx2-public-open-fix-genfeed.log` (exit 0, **15 passed**;
-  SHA-256 `511fb971caf59261241ec2a3919d9d10c7dcb9ec044ee07d50b2db465184f057`).
+  `/home/bb/scratch/kingx2-public-open-fix-fa55ead0-genfeed.log` (exit 0,
+  **15 passed**; SHA-256
+  `511fb971caf59261241ec2a3919d9d10c7dcb9ec044ee07d50b2db465184f057`).
 - Copied-artifact public-only r000082 replay:
   `/home/bb/scratch/kingx2-public-open-fix-r82-replay.log` (exit 0; SHA-256
   `187f775ff828d9b7aeee44871d9438a82234468a8d34ef4bb27b3644d74b3740`).
@@ -260,12 +301,11 @@ public-state dependency was found; private controller state persistence remains.
   copied local artifacts, not a production read. A separate attempted r000083
   replay could not start because that local copy lacks its public round report;
   it is not counted as replay evidence.
-- Normal restricted-public committed-kit rehearsal:
-  `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-normal/dry-run.log`.
-  **Pending terminal outcome.**
-- Abort-after-open restricted-public committed-kit rehearsal:
-  `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-abort/dry-run.log`.
-  **Pending terminal outcome.**
+- Final normal restricted-public, production-log-format committed-kit rehearsal:
+  **Pending a new committed candidate after the fixture correction above.**
+- Final abort-after-open restricted-public, production-log-format committed-kit
+  rehearsal: **Pending a new committed candidate after the fixture correction
+  above.**
 
 These focused results do not replace the full-suite results and limitations
 above. The two rehearsals use the exact candidate kit and copied inputs with

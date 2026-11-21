@@ -138,6 +138,10 @@ def close_current(store, state, reserve):
     king_count = getattr(ticket.params, "null_samples", ticket.params.samples_per_task)
     null = tuple("P" * n for _ in range(king_count))
     entries = []
+    # Use production-like evaluation timing in the actual synthetic result.
+    # Controller.close derives public wall_s from this result, so round_text
+    # cannot disagree with the public report used by health.
+    evaluation_wall = 6984 if os.environ.get("KINGX2_DRY_ABORT_AFTER_OPEN") != "1" and os.environ.get("KINGX2_DRY_STORE_RESULT_AFTER_OPEN") != "1" else 1234
     for seat in ticket.entries:
         recipe = ticket.params.recipe.for_miner(seat.batch.train)
         raw = canonical_json({"synthetic": seat.queue_pos})
@@ -145,7 +149,7 @@ def close_current(store, state, reserve):
         files = {"weight": sha256_hex(raw)}
         artifact = LoRAArtifact(manifest_digest(files), files, {"weight": len(raw)}, f"offline/loras/{seat.queue_pos}", ticket.head.version_id, seat.batch.batch_sha256, ticket.params.recipe_id, recipe.rank, recipe.alpha, recipe.target_modules, TrainReport(1, 1, 0.0, 0.0, 1, 1, "offline", ticket.params.recipe.image_digests[0]))
         entries.append(EntryResult(seat.queue_pos, "scored", lora=artifact, outcomes=tuple("P" * n for _ in range(ticket.params.samples_per_task))))
-    result = BoxResult(ticket.round_id, ticket.lease_id, ticket.box_id, ticket.digest(), ticket.head.version_id, ticket.params.recipe.image_digests[0], null, tuple(entries), ticket.issued_at + 1, ticket.issued_at + 2, phase_s={"training": 1, "evaluation": 1234})
+    result = BoxResult(ticket.round_id, ticket.lease_id, ticket.box_id, ticket.digest(), ticket.head.version_id, ticket.params.recipe.image_digests[0], null, tuple(entries), ticket.issued_at + 1, ticket.issued_at + 2, phase_s={"training": 1, "evaluation": evaluation_wall})
     current.submit_result(result, ticket.issued_at + 3)
     assert current.state.round is None and current.state.rounds[-1].outcome == "null"
     return record.round_id
@@ -308,11 +312,10 @@ elif mode == "drive":
                 raise AssertionError("open-check did not finish")
             first = run("close-first").rsplit(" ", 1)[-1]
             # Production emits round_text's wall summary, not per-GPU phase
-            # records. Generate this block with the real public-report formatter.
+            # records. Format the unchanged, controller-published public report.
             from sn120_v2.public import round_text
             report = json.loads(store.get(layout.round_file(first)))
-            report["wall_s"]["evaluation"] = 6984
-            store.put(layout.round_file(first), canonical_json(report))
+            assert report["wall_s"]["evaluation"] == 6984
             with runlog.open("a") as out:
                 out.write(round_text(report) + "\n")
             assert not (root / "work/logs/phases.jsonl").exists()
